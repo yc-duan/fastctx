@@ -1,0 +1,91 @@
+[package]
+name = "fastctx"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "FastCtx — fast, context-efficient repository tools for AI agents."
+authors = ["yc-duan <dy2958830371@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yc-duan/fastctx"
+readme = "README.md"
+documentation = "https://docs.rs/fastctx"
+keywords = ["mcp", "codex", "ripgrep", "filesystem"]
+categories = ["command-line-utilities", "development-tools"]
+include = [
+    "/build.rs",
+    "/src/**",
+    "/tests/**",
+    "/README.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+    "/NOTICE",
+    "/THIRD_PARTY_LICENSES.md",
+    "/third-party/**",
+]
+
+[features]
+default = ["pdf"]
+pdf = ["dep:pdfium-render"]
+
+[dependencies]
+base64 = "0.22.1"
+bpe-openai = "0.3.0"
+chardetng = "1.0.0"
+clap = { version = "4.5.53", features = ["derive"] }
+crossterm = "0.29.0"
+dunce = "1.0.5"
+encoding_rs = "0.8.35"
+flate2 = "1.1.5"
+fs2 = "0.4.3"
+globset = "0.4.18"
+grep-matcher = "0.1.8"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.16"
+hex = "0.4.3"
+ignore = "0.4.28"
+image = { version = "0.25.8", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+pdfium-render = { version = "=0.9.2", optional = true, default-features = false, features = ["image_025", "pdfium_7763", "thread_safe"] }
+process-wrap = { version = "9.1.0", default-features = false, features = ["std", "job-object", "process-session"] }
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29"] }
+regex = "1.12.2"
+regex-syntax = "0.8.11"
+rmcp = { version = "=2.2.0", features = ["transport-io"] }
+schemars = "1.2.1"
+semver = "1.0.28"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+strsim = "0.11.1"
+sys-locale = "0.3.2"
+tar = "0.4.44"
+time = { version = "0.3.53", features = ["formatting", "macros", "parsing"] }
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+toml_edit = { version = "0.22.27", features = ["serde"] }
+ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
+url = "2.5.8"
+walkdir = "2.5.0"
+zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
+
+[build-dependencies]
+flate2 = "1.1.5"
+hex = "0.4.3"
+sha2 = "0.10.9"
+tar = "0.4.44"
+ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+filetime = "0.2.26"
+lopdf = { version = "0.44.0", default-features = false }
+tempfile = "3.23.0"
+tiktoken-rs = "0.12.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true

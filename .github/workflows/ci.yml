@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: Prepare Git Bash temporary directories
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $git = (Get-Command git.exe -ErrorAction Stop).Source
+          $cursor = Split-Path $git -Parent
+          $gitRoot = $null
+          while ($cursor) {
+            if (Test-Path (Join-Path $cursor "usr/bin/bash.exe")) {
+              $gitRoot = $cursor
+              break
+            }
+            $parent = Split-Path $cursor -Parent
+            if (-not $parent -or $parent -eq $cursor) { break }
+            $cursor = $parent
+          }
+          if (-not $gitRoot) { throw "Cannot locate the Git for Windows root from $git" }
+          $tempPaths = @(
+            (Join-Path $gitRoot "tmp")
+            $env:TEMP
+            $env:TMP
+            [System.IO.Path]::GetTempPath()
+            (Join-Path $env:USERPROFILE "AppData/Local/Temp")
+          ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique
+          foreach ($path in $tempPaths) {
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+          }
+          $bash = Join-Path $gitRoot "usr/bin/bash.exe"
+          & $bash --noprofile --norc -c "mkdir -p /tmp && test -d /tmp"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Git Bash could not create and resolve its POSIX /tmp directory"
+          }
+
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check
+        run: cargo check --locked --all-targets --target ${{ matrix.target }}
+
+      - name: Check without PDF support
+        run: cargo check --locked --no-default-features --all-targets --target ${{ matrix.target }}
+
+      - name: Test contracts
+        run: cargo test --locked --all-features --target ${{ matrix.target }}
+
+      - name: Test contracts without PDF support
+        run: cargo test --locked --no-default-features --target ${{ matrix.target }}
+
+      - name: Test release profile
+        run: cargo test --locked --release --target ${{ matrix.target }}
+
+      - name: Lint
+        run: cargo clippy --locked --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
+
+      - name: Lint without PDF support
+        run: cargo clippy --locked --no-default-features --all-targets --target ${{ matrix.target }} -- -D warnings
+
+      - name: Set up Node.js for npm packaging
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Build npm binary
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Pack and verify npm installation
+        shell: pwsh
+        run: |
+          $binary = if ($IsWindows) { "fastctx.exe" } else { "fastctx" }
+          ./scripts/stage-npm-package.ps1 `
+            -Target "${{ matrix.target }}" `
+            -Binary "target/${{ matrix.target }}/release/$binary" `
+            -IncludeRootPackages
+          $version = (Select-String -LiteralPath Cargo.toml -Pattern '^version = "([^"]+)"$').Matches[0].Groups[1].Value
+          $platform = switch ("${{ matrix.target }}") {
+            "x86_64-pc-windows-msvc" { "fastctx-win32-x64-$version.tgz" }
+            "x86_64-unknown-linux-gnu" { "fastctx-linux-x64-$version.tgz" }
+            "x86_64-apple-darwin" { "fastctx-darwin-x64-$version.tgz" }
+            "aarch64-apple-darwin" { "fastctx-darwin-arm64-$version.tgz" }
+          }
+          ./scripts/verify-npm-install.ps1 `
+            -PlatformTarball "dist/npm/$platform" `
+            -MainTarball "dist/npm/fastctx-$version.tgz" `
+            -AliasTarball "dist/npm/codex-fastctx-$version.tgz"
+
+  package:
+    name: Package dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify distribution contract
+        shell: pwsh
+        run: ./scripts/verify-distribution-contract.ps1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --locked --dry-run
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - shell: pwsh
+        run: ./scripts/pack-npm-root.ps1
+
+  supply-chain:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.19.7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.0
+      - run: cargo deny check
+      - run: mkdir -p target && cargo about generate --locked --format json --fail --output-file target/licenses.json
+
+  msrv:
+    name: Rust 1.88 minimum version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-1.88.0
+      - run: cargo check --locked --all-targets

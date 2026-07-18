@@ -1,0 +1,12 @@
+{
+  "name": "@fastctx/darwin-x64",
+  "version": "0.1.0",
+  "description": "FastCtx binary for macOS x64",
+  "author": "yc-duan <dy2958830371@gmail.com>",
+  "license": "MIT OR Apache-2.0",
+  "repository": "github:yc-duan/fastctx",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "files": ["bin/fastctx", "licenses/**"],
+  "publishConfig": {"access": "public"}
+}

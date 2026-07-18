@@ -1,0 +1,12 @@
+{
+  "name": "@fastctx/win32-x64",
+  "version": "0.1.0",
+  "description": "FastCtx binary for Windows x64",
+  "author": "yc-duan <dy2958830371@gmail.com>",
+  "license": "MIT OR Apache-2.0",
+  "repository": "github:yc-duan/fastctx",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/fastctx.exe", "licenses/**"],
+  "publishConfig": {"access": "public"}
+}

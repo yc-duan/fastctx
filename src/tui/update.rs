@@ -1,0 +1,395 @@
+//! Localized copy for the startup update and npm propagation screens.
+
+use crate::control::i18n::Language;
+
+#[derive(Debug)]
+pub(crate) struct UpdateMessages {
+    pub(crate) available_title: &'static str,
+    pub(crate) available_body: &'static str,
+    pub(crate) pending_title: &'static str,
+    pub(crate) pending_body: &'static str,
+    pub(crate) action_update: &'static str,
+    pub(crate) action_continue: &'static str,
+    pub(crate) action_check: &'static str,
+    pub(crate) checking: &'static str,
+    pub(crate) check_failed: &'static str,
+    pub(crate) update_failed: &'static str,
+    pub(crate) up_to_date: &'static str,
+    pub(crate) updated: &'static str,
+    pub(crate) updated_runtime: &'static str,
+    pub(crate) runtime_unchanged: &'static str,
+}
+
+macro_rules! update_messages {
+    ($available_title:expr, $available_body:expr, $pending_title:expr, $pending_body:expr,
+     $action_update:expr, $action_continue:expr, $action_check:expr, $checking:expr, $check_failed:expr,
+     $update_failed:expr, $up_to_date:expr, $updated:expr, $updated_runtime:expr,
+     $runtime_unchanged:expr $(,)?) => {
+        UpdateMessages {
+            available_title: $available_title,
+            available_body: $available_body,
+            pending_title: $pending_title,
+            pending_body: $pending_body,
+            action_update: $action_update,
+            action_continue: $action_continue,
+            action_check: $action_check,
+            checking: $checking,
+            check_failed: $check_failed,
+            update_failed: $update_failed,
+            up_to_date: $up_to_date,
+            updated: $updated,
+            updated_runtime: $updated_runtime,
+            runtime_unchanged: $runtime_unchanged,
+        }
+    };
+}
+
+const EN: UpdateMessages = update_messages!(
+    "Update available",
+    "FastCtx v{current} → v{latest}\nSource: {source}\n\nUpdate automatically and restart, or continue with the current version.",
+    "Waiting for npm",
+    "FastCtx v{latest} is released, but npm still reports v{registry}.\n\nFastCtx already used a fresh isolated cache. The remaining delay is npm registry propagation.",
+    "Update & restart",
+    "Continue",
+    "Check for updates",
+    "Checking for updates…",
+    "Update check failed",
+    "Update failed; the previous version was reopened",
+    "FastCtx is up to date.",
+    "Updated to v{version}.",
+    "Updated to v{version}. The Codex runtime was updated too.",
+    "Updated to v{version}, but the Codex runtime was left unchanged",
+);
+
+const ZH_CN: UpdateMessages = update_messages!(
+    "发现更新",
+    "FastCtx v{current} → v{latest}\n来源：{source}\n\n可自动更新并重启，或继续使用当前版本。",
+    "等待 npm 同步",
+    "FastCtx v{latest} 已发布，但 npm 仍显示 v{registry}。\n\nFastCtx 已使用全新的独立缓存；当前延迟来自 npm 仓库同步。",
+    "更新并重启",
+    "继续使用",
+    "检查更新",
+    "正在检查更新…",
+    "更新检查失败",
+    "更新失败，已重新打开先前版本",
+    "FastCtx 已是最新版本。",
+    "已更新至 v{version}。",
+    "已更新至 v{version}，Codex 运行环境也已同步。",
+    "已更新至 v{version}，但 Codex 运行环境保持不变",
+);
+
+const ZH_TW: UpdateMessages = update_messages!(
+    "發現更新",
+    "FastCtx v{current} → v{latest}\n來源：{source}\n\n可自動更新並重新啟動，或繼續使用目前版本。",
+    "等待 npm 同步",
+    "FastCtx v{latest} 已發布，但 npm 仍顯示 v{registry}。\n\nFastCtx 已使用全新的獨立快取；目前延遲來自 npm 套件庫同步。",
+    "更新並重新啟動",
+    "繼續使用",
+    "檢查更新",
+    "正在檢查更新…",
+    "更新檢查失敗",
+    "更新失敗，已重新開啟先前版本",
+    "FastCtx 已是最新版本。",
+    "已更新至 v{version}。",
+    "已更新至 v{version}，Codex 執行環境也已同步。",
+    "已更新至 v{version}，但 Codex 執行環境維持不變",
+);
+
+const JA: UpdateMessages = update_messages!(
+    "アップデートがあります",
+    "FastCtx v{current} → v{latest}\n入手元: {source}\n\n自動更新して再起動するか、現在のバージョンで続行できます。",
+    "npm の同期を待機中",
+    "FastCtx v{latest} は公開済みですが、npm はまだ v{registry} を返しています。\n\nFastCtx は新しい隔離キャッシュを使用済みです。残りは npm レジストリの反映待ちです。",
+    "更新して再起動",
+    "続行",
+    "アップデートを確認",
+    "更新を確認中…",
+    "更新確認に失敗しました",
+    "更新に失敗したため、以前のバージョンを再度開きました",
+    "FastCtx は最新です。",
+    "v{version} に更新しました。",
+    "v{version} に更新し、Codex ランタイムも同期しました。",
+    "v{version} に更新しましたが、Codex ランタイムは変更していません",
+);
+
+const KO: UpdateMessages = update_messages!(
+    "업데이트 사용 가능",
+    "FastCtx v{current} → v{latest}\n소스: {source}\n\n자동으로 업데이트하고 다시 시작하거나 현재 버전으로 계속할 수 있습니다.",
+    "npm 동기화 대기 중",
+    "FastCtx v{latest}가 출시되었지만 npm은 아직 v{registry}를 보고합니다.\n\nFastCtx는 이미 새 격리 캐시를 사용했습니다. 남은 지연은 npm 레지스트리 전파입니다.",
+    "업데이트 후 다시 시작",
+    "계속",
+    "업데이트 확인",
+    "업데이트 확인 중…",
+    "업데이트 확인 실패",
+    "업데이트에 실패하여 이전 버전을 다시 열었습니다",
+    "FastCtx가 최신 버전입니다.",
+    "v{version} 업데이트를 완료했습니다.",
+    "v{version} 업데이트를 완료했으며 Codex 런타임도 동기화했습니다.",
+    "v{version} 업데이트를 완료했지만 Codex 런타임은 변경하지 않았습니다",
+);
+
+const ES: UpdateMessages = update_messages!(
+    "Actualización disponible",
+    "FastCtx v{current} → v{latest}\nOrigen: {source}\n\nActualiza y reinicia automáticamente, o continúa con la versión actual.",
+    "Esperando a npm",
+    "FastCtx v{latest} ya está publicado, pero npm aún informa v{registry}.\n\nFastCtx ya usó una caché aislada nueva. La demora restante es la propagación del registro npm.",
+    "Actualizar y reiniciar",
+    "Continuar",
+    "Buscar actualizaciones",
+    "Buscando actualizaciones…",
+    "Falló la comprobación",
+    "La actualización falló; se reabrió la versión anterior",
+    "FastCtx está actualizado.",
+    "Actualizado a v{version}.",
+    "Actualizado a v{version}. El entorno de Codex también se sincronizó.",
+    "Actualizado a v{version}, pero el entorno de Codex no cambió",
+);
+
+const FR: UpdateMessages = update_messages!(
+    "Mise à jour disponible",
+    "FastCtx v{current} → v{latest}\nSource : {source}\n\nMettez à jour et redémarrez automatiquement, ou continuez avec la version actuelle.",
+    "En attente de npm",
+    "FastCtx v{latest} est publié, mais npm indique encore v{registry}.\n\nFastCtx a déjà utilisé un cache isolé neuf. Le délai restant vient de la propagation du registre npm.",
+    "Mettre à jour et redémarrer",
+    "Continuer",
+    "Rechercher les mises à jour",
+    "Recherche de mises à jour…",
+    "Échec de la vérification",
+    "La mise à jour a échoué ; la version précédente a été rouverte",
+    "FastCtx est à jour.",
+    "Mise à jour vers v{version} effectuée.",
+    "Mise à jour vers v{version} effectuée. L'environnement Codex a aussi été synchronisé.",
+    "Mise à jour vers v{version} effectuée, mais l'environnement Codex reste inchangé",
+);
+
+const DE: UpdateMessages = update_messages!(
+    "Update verfügbar",
+    "FastCtx v{current} → v{latest}\nQuelle: {source}\n\nAutomatisch aktualisieren und neu starten oder mit der aktuellen Version fortfahren.",
+    "Warten auf npm",
+    "FastCtx v{latest} ist veröffentlicht, aber npm meldet noch v{registry}.\n\nFastCtx hat bereits einen frischen isolierten Cache verwendet. Die verbleibende Verzögerung liegt an der npm-Registry.",
+    "Aktualisieren und neu starten",
+    "Fortfahren",
+    "Nach Updates suchen",
+    "Suche nach Updates…",
+    "Update-Prüfung fehlgeschlagen",
+    "Das Update ist fehlgeschlagen; die vorherige Version wurde erneut geöffnet",
+    "FastCtx ist aktuell.",
+    "Auf v{version} aktualisiert.",
+    "Auf v{version} aktualisiert. Die Codex-Laufzeit wurde ebenfalls synchronisiert.",
+    "Auf v{version} aktualisiert, aber die Codex-Laufzeit blieb unverändert",
+);
+
+const PT_BR: UpdateMessages = update_messages!(
+    "Atualização disponível",
+    "FastCtx v{current} → v{latest}\nOrigem: {source}\n\nAtualize e reinicie automaticamente ou continue com a versão atual.",
+    "Aguardando o npm",
+    "FastCtx v{latest} foi lançado, mas o npm ainda informa v{registry}.\n\nO FastCtx já usou um cache isolado novo. O atraso restante é a propagação do registro npm.",
+    "Atualizar e reiniciar",
+    "Continuar",
+    "Verificar atualizações",
+    "Verificando atualizações…",
+    "Falha ao verificar atualização",
+    "A atualização falhou; a versão anterior foi reaberta",
+    "O FastCtx está atualizado.",
+    "Atualizado para v{version}.",
+    "Atualizado para v{version}. O ambiente do Codex também foi sincronizado.",
+    "Atualizado para v{version}, mas o ambiente do Codex permaneceu inalterado",
+);
+
+const RU: UpdateMessages = update_messages!(
+    "Доступно обновление",
+    "FastCtx v{current} → v{latest}\nИсточник: {source}\n\nОбновить автоматически и перезапустить или продолжить с текущей версией.",
+    "Ожидание npm",
+    "FastCtx v{latest} уже выпущен, но npm всё ещё сообщает v{registry}.\n\nFastCtx уже использовал новый изолированный кэш. Осталась задержка распространения реестра npm.",
+    "Обновить и перезапустить",
+    "Продолжить",
+    "Проверить обновления",
+    "Проверка обновлений…",
+    "Не удалось проверить обновление",
+    "Обновление не удалось; предыдущая версия открыта снова",
+    "FastCtx уже обновлён.",
+    "Обновлено до v{version}.",
+    "Обновлено до v{version}. Среда Codex также синхронизирована.",
+    "Обновлено до v{version}, но среда Codex осталась без изменений",
+);
+
+const IT: UpdateMessages = update_messages!(
+    "Aggiornamento disponibile",
+    "FastCtx v{current} → v{latest}\nOrigine: {source}\n\nAggiorna e riavvia automaticamente oppure continua con la versione attuale.",
+    "In attesa di npm",
+    "FastCtx v{latest} è stato pubblicato, ma npm riporta ancora v{registry}.\n\nFastCtx ha già usato una cache isolata nuova. Il ritardo rimanente dipende dalla propagazione del registro npm.",
+    "Aggiorna e riavvia",
+    "Continua",
+    "Controlla aggiornamenti",
+    "Verifica aggiornamenti…",
+    "Verifica aggiornamenti non riuscita",
+    "Aggiornamento non riuscito; è stata riaperta la versione precedente",
+    "FastCtx è aggiornato.",
+    "Aggiornato alla v{version}.",
+    "Aggiornato alla v{version}. Anche l'ambiente Codex è stato sincronizzato.",
+    "Aggiornato alla v{version}, ma l'ambiente Codex è rimasto invariato",
+);
+
+const TR: UpdateMessages = update_messages!(
+    "Güncelleme mevcut",
+    "FastCtx v{current} → v{latest}\nKaynak: {source}\n\nOtomatik güncelleyip yeniden başlatın veya mevcut sürümle devam edin.",
+    "npm bekleniyor",
+    "FastCtx v{latest} yayımlandı, ancak npm hâlâ v{registry} bildiriyor.\n\nFastCtx zaten yeni ve yalıtılmış bir önbellek kullandı. Kalan gecikme npm kayıt yayılımından kaynaklanıyor.",
+    "Güncelle ve yeniden başlat",
+    "Devam et",
+    "Güncellemeleri denetle",
+    "Güncellemeler denetleniyor…",
+    "Güncelleme denetimi başarısız",
+    "Güncelleme başarısız oldu; önceki sürüm yeniden açıldı",
+    "FastCtx güncel.",
+    "v{version} sürümüne güncellendi.",
+    "v{version} sürümüne güncellendi. Codex çalışma ortamı da eşitlendi.",
+    "v{version} sürümüne güncellendi, ancak Codex çalışma ortamı değişmedi",
+);
+
+const PL: UpdateMessages = update_messages!(
+    "Dostępna aktualizacja",
+    "FastCtx v{current} → v{latest}\nŹródło: {source}\n\nZaktualizuj automatycznie i uruchom ponownie albo kontynuuj z bieżącą wersją.",
+    "Oczekiwanie na npm",
+    "FastCtx v{latest} został wydany, ale npm nadal zgłasza v{registry}.\n\nFastCtx użył już świeżej, odizolowanej pamięci podręcznej. Pozostałe opóźnienie wynika z propagacji rejestru npm.",
+    "Aktualizuj i uruchom ponownie",
+    "Kontynuuj",
+    "Sprawdź aktualizacje",
+    "Sprawdzanie aktualizacji…",
+    "Sprawdzanie nie powiodło się",
+    "Aktualizacja nie powiodła się; ponownie otwarto poprzednią wersję",
+    "FastCtx jest aktualny.",
+    "Zaktualizowano do v{version}.",
+    "Zaktualizowano do v{version}. Środowisko Codex również zsynchronizowano.",
+    "Zaktualizowano do v{version}, ale środowisko Codex pozostało bez zmian",
+);
+
+const NL: UpdateMessages = update_messages!(
+    "Update beschikbaar",
+    "FastCtx v{current} → v{latest}\nBron: {source}\n\nWerk automatisch bij en start opnieuw, of ga door met de huidige versie.",
+    "Wachten op npm",
+    "FastCtx v{latest} is uitgebracht, maar npm meldt nog v{registry}.\n\nFastCtx gebruikte al een verse geïsoleerde cache. De resterende vertraging komt door verspreiding in het npm-register.",
+    "Bijwerken en herstarten",
+    "Doorgaan",
+    "Controleren op updates",
+    "Controleren op updates…",
+    "Updatecontrole mislukt",
+    "De update is mislukt; de vorige versie is opnieuw geopend",
+    "FastCtx is actueel.",
+    "Bijgewerkt naar v{version}.",
+    "Bijgewerkt naar v{version}. De Codex-runtime is ook gesynchroniseerd.",
+    "Bijgewerkt naar v{version}, maar de Codex-runtime bleef ongewijzigd",
+);
+
+const VI: UpdateMessages = update_messages!(
+    "Có bản cập nhật",
+    "FastCtx v{current} → v{latest}\nNguồn: {source}\n\nTự động cập nhật và khởi động lại, hoặc tiếp tục với phiên bản hiện tại.",
+    "Đang chờ npm",
+    "FastCtx v{latest} đã phát hành nhưng npm vẫn báo v{registry}.\n\nFastCtx đã dùng bộ nhớ đệm cô lập mới. Độ trễ còn lại là do registry npm đang lan truyền.",
+    "Cập nhật và khởi động lại",
+    "Tiếp tục",
+    "Kiểm tra cập nhật",
+    "Đang kiểm tra cập nhật…",
+    "Kiểm tra cập nhật thất bại",
+    "Cập nhật thất bại; phiên bản trước đã được mở lại",
+    "FastCtx đã là bản mới nhất.",
+    "Đã cập nhật lên v{version}.",
+    "Đã cập nhật lên v{version}. Môi trường Codex cũng đã được đồng bộ.",
+    "Đã cập nhật lên v{version}, nhưng môi trường Codex không thay đổi",
+);
+
+const ID: UpdateMessages = update_messages!(
+    "Pembaruan tersedia",
+    "FastCtx v{current} → v{latest}\nSumber: {source}\n\nPerbarui dan mulai ulang secara otomatis, atau lanjutkan dengan versi saat ini.",
+    "Menunggu npm",
+    "FastCtx v{latest} sudah dirilis, tetapi npm masih melaporkan v{registry}.\n\nFastCtx sudah memakai cache terisolasi yang baru. Sisa jeda berasal dari propagasi registry npm.",
+    "Perbarui dan mulai ulang",
+    "Lanjutkan",
+    "Periksa pembaruan",
+    "Memeriksa pembaruan…",
+    "Pemeriksaan pembaruan gagal",
+    "Pembaruan gagal; versi sebelumnya dibuka kembali",
+    "FastCtx sudah terbaru.",
+    "Diperbarui ke v{version}.",
+    "Diperbarui ke v{version}. Lingkungan Codex juga telah disinkronkan.",
+    "Diperbarui ke v{version}, tetapi lingkungan Codex tidak diubah",
+);
+
+const UK: UpdateMessages = update_messages!(
+    "Доступне оновлення",
+    "FastCtx v{current} → v{latest}\nДжерело: {source}\n\nОновити автоматично й перезапустити або продовжити з поточною версією.",
+    "Очікування npm",
+    "FastCtx v{latest} уже випущено, але npm усе ще повідомляє v{registry}.\n\nFastCtx уже використав новий ізольований кеш. Решта затримки спричинена поширенням у реєстрі npm.",
+    "Оновити й перезапустити",
+    "Продовжити",
+    "Перевірити оновлення",
+    "Перевірка оновлень…",
+    "Не вдалося перевірити оновлення",
+    "Оновлення не вдалося; попередню версію відкрито знову",
+    "FastCtx уже оновлено.",
+    "Оновлено до v{version}.",
+    "Оновлено до v{version}. Середовище Codex також синхронізовано.",
+    "Оновлено до v{version}, але середовище Codex залишилося без змін",
+);
+
+pub(crate) const fn messages(language: Language) -> &'static UpdateMessages {
+    match language {
+        Language::En => &EN,
+        Language::ZhCn => &ZH_CN,
+        Language::ZhTw => &ZH_TW,
+        Language::Ja => &JA,
+        Language::Ko => &KO,
+        Language::Es => &ES,
+        Language::Fr => &FR,
+        Language::De => &DE,
+        Language::PtBr => &PT_BR,
+        Language::Ru => &RU,
+        Language::It => &IT,
+        Language::Tr => &TR,
+        Language::Pl => &PL,
+        Language::Nl => &NL,
+        Language::Vi => &VI,
+        Language::Id => &ID,
+        Language::Uk => &UK,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::messages;
+    use crate::control::i18n::ALL_LANGUAGES;
+
+    #[test]
+    fn every_update_locale_is_complete_and_keeps_placeholders() {
+        for language in ALL_LANGUAGES {
+            let messages = messages(language);
+            for value in [
+                messages.available_title,
+                messages.available_body,
+                messages.pending_title,
+                messages.pending_body,
+                messages.action_update,
+                messages.action_continue,
+                messages.action_check,
+                messages.checking,
+                messages.check_failed,
+                messages.update_failed,
+                messages.up_to_date,
+                messages.updated,
+                messages.updated_runtime,
+                messages.runtime_unchanged,
+            ] {
+                assert!(!value.trim().is_empty(), "{}", language.code());
+            }
+            assert!(messages.available_body.contains("{current}"));
+            assert!(messages.available_body.contains("{latest}"));
+            assert!(messages.available_body.contains("{source}"));
+            assert!(messages.pending_body.contains("{latest}"));
+            assert!(messages.pending_body.contains("{registry}"));
+            assert!(messages.updated.contains("{version}"));
+            assert!(messages.updated_runtime.contains("{version}"));
+            assert!(messages.runtime_unchanged.contains("{version}"));
+        }
+    }
+}

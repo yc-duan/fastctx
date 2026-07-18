@@ -1,0 +1,11 @@
+# Rust
+/target
+/dist
+/packages/fastctx-*/bin/
+/packages/*/licenses/
+
+# Local working files (not part of the published source)
+AGENTS.md
+CLAUDE.md
+.sisyphus/
+dev-notes/

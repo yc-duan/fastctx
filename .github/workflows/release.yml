@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: fastctx.exe
+            archive: fastctx-x86_64-pc-windows-msvc.zip
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: fastctx
+            archive: fastctx-x86_64-unknown-linux-gnu.tar.gz
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: fastctx
+            archive: fastctx-x86_64-apple-darwin.tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary: fastctx
+            archive: fastctx-aarch64-apple-darwin.tar.gz
+
+    steps:
+      - name: Prepare Git Bash temporary directories
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $git = (Get-Command git.exe -ErrorAction Stop).Source
+          $cursor = Split-Path $git -Parent
+          $gitRoot = $null
+          while ($cursor) {
+            if (Test-Path (Join-Path $cursor "usr/bin/bash.exe")) {
+              $gitRoot = $cursor
+              break
+            }
+            $parent = Split-Path $cursor -Parent
+            if (-not $parent -or $parent -eq $cursor) { break }
+            $cursor = $parent
+          }
+          if (-not $gitRoot) { throw "Cannot locate the Git for Windows root from $git" }
+          $tempPaths = @(
+            (Join-Path $gitRoot "tmp")
+            $env:TEMP
+            $env:TMP
+            [System.IO.Path]::GetTempPath()
+            (Join-Path $env:USERPROFILE "AppData/Local/Temp")
+          ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique
+          foreach ($path in $tempPaths) {
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+          }
+          $bash = Join-Path $gitRoot "usr/bin/bash.exe"
+          & $bash --noprofile --norc -c "mkdir -p /tmp && test -d /tmp"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Git Bash could not create and resolve its POSIX /tmp directory"
+          }
+
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Test release contracts
+        run: cargo test --locked --release --target ${{ matrix.target }}
+
+      - name: Build single-file executable
+        env:
+          FASTCTX_DISTRIBUTION: github-release
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Stage release archive
+        shell: pwsh
+        run: |
+          ./scripts/stage-release-archive.ps1 `
+            -Target "${{ matrix.target }}" `
+            -Binary "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Pack and verify npm artifact
+        shell: pwsh
+        run: |
+          $version = (Select-String -LiteralPath Cargo.toml -Pattern '^version = "([^"]+)"$').Matches[0].Groups[1].Value
+          $package = switch ("${{ matrix.target }}") {
+            "x86_64-pc-windows-msvc" { "fastctx-win32-x64-$version.tgz" }
+            "x86_64-unknown-linux-gnu" { "fastctx-linux-x64-$version.tgz" }
+            "x86_64-apple-darwin" { "fastctx-darwin-x64-$version.tgz" }
+            "aarch64-apple-darwin" { "fastctx-darwin-arm64-$version.tgz" }
+          }
+          $verificationDirectory = "target/npm-release-verification"
+          ./scripts/stage-npm-package.ps1 `
+            -Target "${{ matrix.target }}" `
+            -Binary "target/${{ matrix.target }}/release/${{ matrix.binary }}" `
+            -OutputDirectory $verificationDirectory `
+            -IncludeRootPackages
+          ./scripts/verify-npm-install.ps1 `
+            -PlatformTarball "$verificationDirectory/$package" `
+            -MainTarball "$verificationDirectory/fastctx-$version.tgz" `
+            -AliasTarball "$verificationDirectory/codex-fastctx-$version.tgz"
+          New-Item -ItemType Directory -Force -Path "dist/npm" | Out-Null
+          Copy-Item -LiteralPath "$verificationDirectory/$package" -Destination "dist/npm/$package"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.target }}
+          path: |
+            dist/release/${{ matrix.archive }}
+            dist/npm/*.tgz
+          if-no-files-found: error
+
+  publish-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Pack npm launcher and compatibility alias
+        shell: pwsh
+        run: ./scripts/pack-npm-root.ps1 -OutputDirectory "dist/npm"
+      - name: Finalize and verify release artifacts
+        shell: pwsh
+        run: |
+          ./scripts/verify-distribution-contract.ps1
+          ./scripts/finalize-release-assets.ps1
+          ./scripts/verify-release-assets.ps1
+      - name: Retain npm packages for manual publishing
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs-${{ github.ref_name }}
+          path: dist/npm/*.tgz
+          if-no-files-found: error
+          retention-days: 90
+      - name: Verify annotated release identity
+        shell: pwsh
+        run: ./scripts/verify-release-identity.ps1 -TagName $env:GITHUB_REF_NAME
+      - name: Create exact GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="$RUNNER_TEMP/fastctx-release-notes.md"
+          cat > "$notes" <<'EOF'
+          Initial release.
+
+          - Context-efficient repository tools for coding agents
+          - Persistent background Bash jobs
+          - Safe Codex integration with a multilingual control TUI
+          EOF
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release delete "${GITHUB_REF_NAME}" --yes
+          fi
+          gh release create "${GITHUB_REF_NAME}" dist/release/* \
+            --verify-tag \
+            --title "FastCtx ${GITHUB_REF_NAME}" \
+            --notes-file "$notes"
