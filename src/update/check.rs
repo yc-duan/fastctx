@@ -2,10 +2,14 @@
 
 use super::cache::{self, CachedOutcome, CheckStatus};
 use super::model::{
-    CheckFailure, CheckFailureKind, NpmMode, NpmProvenance, StartupUpdate, UpdatePlan,
+    CheckFailure, CheckFailureKind, NPMMIRROR_REGISTRY, NpmDiscovery, NpmMode, NpmProvenance,
+    NpmRegistryProbe, NpmVersionAuthority, OFFICIAL_NPM_REGISTRY, StartupUpdate, UpdatePlan,
 };
 use crate::control::paths::ControlPaths;
+use crate::control::settings::{self, UpdateSource};
 use semver::Version;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read;
@@ -18,7 +22,6 @@ use url::Url;
 
 const GITHUB_LATEST_URL: &str = "https://github.com/yc-duan/fastctx/releases/latest";
 const GITHUB_RELEASE_BASE: &str = "https://github.com/yc-duan/fastctx/releases/download";
-const NPM_REGISTRY: &str = "https://registry.npmjs.org/";
 const GITHUB_RELEASE_DISTRIBUTION: &str = "github-release";
 const NPM_QUERY_TIMEOUT: Duration = Duration::from_secs(8);
 const GITHUB_TIMEOUT: Duration = Duration::from_secs(6);
@@ -39,6 +42,79 @@ enum InstallChannel {
     Npm(NpmProvenance),
     GithubRelease,
     Unsupported,
+}
+
+#[derive(Clone, Debug)]
+struct NpmCheckContext {
+    source_policy: UpdateSource,
+    configured_registry: Option<String>,
+    configured_registry_failure: Option<CheckFailure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RegistryCandidate {
+    source_name: String,
+    registry: String,
+    selectable: bool,
+}
+
+#[derive(Clone, Debug)]
+struct RegistryLatest {
+    candidate: RegistryCandidate,
+    result: Result<Version, CheckFailure>,
+}
+
+struct CacheResolution<'a> {
+    channel: &'a InstallChannel,
+    channel_key: &'a str,
+    current_version: &'a str,
+    directory: &'a Path,
+    force: bool,
+    checked_at: SystemTime,
+    npm_context: Option<&'a NpmCheckContext>,
+}
+
+trait NpmProbeBackend: Sync {
+    fn latest_github_version(&self) -> Result<Version, CheckFailure>;
+
+    fn latest_npm_version(&self, registry: &str, package: &str) -> Result<Version, CheckFailure>;
+
+    fn exact_npm_version_exists(
+        &self,
+        registry: &str,
+        package: &str,
+        target_version: &str,
+    ) -> Result<bool, CheckFailure>;
+}
+
+struct LiveNpmProbeBackend<'a> {
+    paths: &'a ControlPaths,
+    provenance: &'a NpmProvenance,
+}
+
+impl NpmProbeBackend for LiveNpmProbeBackend<'_> {
+    fn latest_github_version(&self) -> Result<Version, CheckFailure> {
+        latest_github_version()
+    }
+
+    fn latest_npm_version(&self, registry: &str, package: &str) -> Result<Version, CheckFailure> {
+        latest_npm_version(self.paths, self.provenance, registry, package)
+    }
+
+    fn exact_npm_version_exists(
+        &self,
+        registry: &str,
+        package: &str,
+        target_version: &str,
+    ) -> Result<bool, CheckFailure> {
+        exact_npm_version_exists(
+            self.paths,
+            self.provenance,
+            registry,
+            package,
+            target_version,
+        )
+    }
 }
 
 /// Checks the authoritative channel, using a successful result cached for 24 hours.
@@ -73,11 +149,25 @@ pub(crate) fn spawn_update_check(
 
 /// Reads the last matching update attempt without touching the network or creating storage.
 pub(crate) fn last_check_status(paths: &ControlPaths) -> CheckStatus {
+    let update_status = match settings::update_settings_status(paths) {
+        Ok(status) => status,
+        Err(error) => {
+            return CheckStatus {
+                detail: format!("Cannot read update settings: {error}"),
+            };
+        }
+    };
+    let mut status_prefix = format!("source={}", update_status.source.as_str());
+    if update_status.source_fell_back {
+        status_prefix.push_str(" (invalid stored value fell back to auto)");
+    }
     if update_check_disabled() {
-        return CheckStatus {
-            detail: "Automatic update checks are disabled by FASTCTX_DISABLE_UPDATE_CHECK."
-                .to_string(),
-        };
+        status_prefix.push_str("; automatic checks disabled by FASTCTX_DISABLE_UPDATE_CHECK");
+    }
+    if !update_status.auto_check {
+        status_prefix.push_str(
+            "; automatic checks disabled by update.auto_check (manual checks remain available)",
+        );
     }
     let current_executable = match std::env::current_exe() {
         Ok(path) => path,
@@ -108,23 +198,53 @@ pub(crate) fn last_check_status(paths: &ControlPaths) -> CheckStatus {
             };
         }
     };
-    let Some(channel_key) = channel_key(&channel) else {
+    let npm_context = match &channel {
+        InstallChannel::Npm(provenance) => {
+            Some(prepare_npm_context(provenance, update_status.source))
+        }
+        _ => None,
+    };
+    let Some(channel_key) = channel_key(&channel, npm_context.as_ref()) else {
         return CheckStatus {
-            detail: "Automatic update checks are unavailable for this installation source."
-                .to_string(),
+            detail: format!(
+                "{status_prefix}; automatic update checks are unavailable for this installation source."
+            ),
         };
     };
-    cache::status(
+    let cached = cache::status(
         &cache::directory(),
         &channel_key,
         &current_version.to_string(),
-    )
+    );
+    CheckStatus {
+        detail: format!("{status_prefix}; {}", cached.detail),
+    }
 }
 
 fn check_for_update_at(paths: &ControlPaths, force: bool, checked_at: SystemTime) -> StartupUpdate {
-    if update_check_disabled() {
-        return StartupUpdate::None;
-    }
+    let settings = match settings::load(paths) {
+        Ok(settings) => settings,
+        Err(error) => {
+            return StartupUpdate::Failed(structural(format!(
+                "cannot read update settings: {error}"
+            )));
+        }
+    };
+    run_update_check_if_enabled(
+        force,
+        update_check_disabled(),
+        settings.update.auto_check,
+        || check_for_update_enabled(paths, force, checked_at, settings.update.source),
+    )
+    .unwrap_or(StartupUpdate::None)
+}
+
+fn check_for_update_enabled(
+    paths: &ControlPaths,
+    force: bool,
+    checked_at: SystemTime,
+    update_source: UpdateSource,
+) -> StartupUpdate {
     let current_executable = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
@@ -150,44 +270,55 @@ fn check_for_update_at(paths: &ControlPaths, force: bool, checked_at: SystemTime
         Ok(channel) => channel,
         Err(error) => return StartupUpdate::Failed(structural(error)),
     };
-    let Some(channel_key) = channel_key(&channel) else {
+    let npm_context = match &channel {
+        InstallChannel::Npm(provenance) => Some(prepare_npm_context(provenance, update_source)),
+        _ => None,
+    };
+    let Some(channel_key) = channel_key(&channel, npm_context.as_ref()) else {
         return StartupUpdate::None;
     };
     let directory = cache::directory();
     let version_text = current_version.to_string();
     resolve_with_cache(
-        &channel,
-        &channel_key,
-        &version_text,
-        &directory,
-        force,
-        checked_at,
-        || probe_channel(paths, &channel, &current_version),
+        CacheResolution {
+            channel: &channel,
+            channel_key: &channel_key,
+            current_version: &version_text,
+            directory: &directory,
+            force,
+            checked_at,
+            npm_context: npm_context.as_ref(),
+        },
+        || probe_channel(paths, &channel, &current_version, npm_context.as_ref()),
     )
 }
 
 fn resolve_with_cache(
-    channel: &InstallChannel,
-    channel_key: &str,
-    current_version: &str,
-    directory: &Path,
-    force: bool,
-    checked_at: SystemTime,
+    request: CacheResolution<'_>,
     probe: impl FnOnce() -> Result<CachedOutcome, CheckFailure>,
 ) -> StartupUpdate {
+    let CacheResolution {
+        channel,
+        channel_key,
+        current_version,
+        directory,
+        force,
+        checked_at,
+        npm_context,
+    } = request;
     if force {
         // A forced failure must not leave a still-fresh success suppressing the next startup retry.
         cache::invalidate_success(directory, channel_key);
     } else if let Some(cached) =
         cache::load_fresh_success(directory, channel_key, current_version, checked_at)
-        && let Some(result) = startup_from_cached(channel, cached)
+        && let Some(result) = startup_from_cached(channel, cached, npm_context)
     {
         return result;
     }
 
     match probe() {
         Ok(cached) => {
-            let Some(result) = startup_from_cached(channel, cached.clone()) else {
+            let Some(result) = startup_from_cached(channel, cached.clone(), npm_context) else {
                 return StartupUpdate::Failed(structural(
                     "the update check produced an outcome for the wrong installation channel",
                 ));
@@ -237,6 +368,7 @@ fn probe_channel(
     paths: &ControlPaths,
     channel: &InstallChannel,
     current_version: &Version,
+    npm_context: Option<&NpmCheckContext>,
 ) -> Result<CachedOutcome, CheckFailure> {
     match channel {
         InstallChannel::Unsupported => Ok(CachedOutcome::Current),
@@ -250,79 +382,423 @@ fn probe_channel(
                 })
             }
         }
-        InstallChannel::Npm(provenance) => {
-            // These are independent publication surfaces. Concurrent queries keep the normal
-            // no-update path bounded by the slower request rather than their combined timeouts.
-            let (registry_result, release_result) = std::thread::scope(|scope| {
-                let registry = scope.spawn(|| latest_npm_version(paths, provenance));
-                let release = scope.spawn(latest_github_version);
-                (
-                    registry
-                        .join()
-                        .unwrap_or_else(|_| Err(transient("the npm update-check worker panicked"))),
-                    release.join().unwrap_or_else(|_| {
-                        Err(transient("the GitHub update-check worker panicked"))
-                    }),
-                )
-            });
-            npm_update_result(current_version, registry_result, release_result)
-        }
+        InstallChannel::Npm(provenance) => probe_npm_channel(
+            paths,
+            provenance,
+            current_version,
+            npm_context.expect("npm channels always have source context"),
+        ),
     }
 }
 
-fn npm_update_result(
+fn probe_npm_channel(
+    paths: &ControlPaths,
+    provenance: &NpmProvenance,
     current_version: &Version,
-    registry_result: Result<Version, CheckFailure>,
-    release_result: Result<Version, CheckFailure>,
+    context: &NpmCheckContext,
 ) -> Result<CachedOutcome, CheckFailure> {
-    let registry_version = registry_result?;
-    if registry_version > *current_version {
-        return Ok(CachedOutcome::NpmAvailable {
-            target_version: registry_version.to_string(),
+    let backend = LiveNpmProbeBackend { paths, provenance };
+    probe_npm_channel_with_backend(provenance, current_version, context, &backend)
+}
+
+fn probe_npm_channel_with_backend(
+    provenance: &NpmProvenance,
+    current_version: &Version,
+    context: &NpmCheckContext,
+    backend: &(impl NpmProbeBackend + ?Sized),
+) -> Result<CachedOutcome, CheckFailure> {
+    let candidates = registry_candidates(context)?;
+    let mut registries = candidates.clone();
+    if !registries
+        .iter()
+        .any(|candidate| candidate.registry == OFFICIAL_NPM_REGISTRY)
+    {
+        registries.push(RegistryCandidate {
+            source_name: "official npm (version authority)".to_string(),
+            registry: OFFICIAL_NPM_REGISTRY.to_string(),
+            selectable: false,
         });
     }
-    match release_result {
-        Ok(release_version) if release_version > *current_version => {
-            Ok(CachedOutcome::NpmPending {
-                release_version: release_version.to_string(),
-                registry_version: registry_version.to_string(),
+
+    let (latest, github_result) = std::thread::scope(|scope| {
+        let github = scope.spawn(|| backend.latest_github_version());
+        let handles = registries
+            .into_iter()
+            .map(|candidate| {
+                scope.spawn(move || RegistryLatest {
+                    result: backend.latest_npm_version(&candidate.registry, "fastctx"),
+                    candidate,
+                })
             })
+            .collect::<Vec<_>>();
+        let latest = handles
+            .into_iter()
+            .map(|handle| {
+                handle.join().unwrap_or_else(|_| RegistryLatest {
+                    candidate: RegistryCandidate {
+                        source_name: "unknown npm source".to_string(),
+                        registry: String::new(),
+                        selectable: false,
+                    },
+                    result: Err(transient("an npm source-check worker panicked")),
+                })
+            })
+            .collect::<Vec<_>>();
+        let github_result = github
+            .join()
+            .unwrap_or_else(|_| Err(transient("the GitHub update-check worker panicked")));
+        (latest, github_result)
+    });
+
+    let official_result = latest
+        .iter()
+        .find(|probe| probe.candidate.registry == OFFICIAL_NPM_REGISTRY)
+        .map(|probe| probe.result.clone())
+        .unwrap_or_else(|| Err(transient("the official npm registry was not probed")));
+    let (target_version, authority) =
+        authoritative_npm_target(&github_result, &official_result, &latest)?;
+    let github_version = github_result.as_ref().ok().map(ToString::to_string);
+    let official_version = official_result.as_ref().ok().map(ToString::to_string);
+    let platform_package = platform_npm_package()
+        .ok_or_else(|| structural("this npm platform has no published FastCtx package"))?;
+    let probes = probe_registry_readiness(
+        backend,
+        provenance,
+        latest,
+        &target_version,
+        platform_package,
+    );
+    Ok(build_npm_outcome(
+        context,
+        current_version,
+        &candidates,
+        target_version,
+        authority,
+        github_version,
+        official_version,
+        platform_package,
+        probes,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_npm_outcome(
+    context: &NpmCheckContext,
+    current_version: &Version,
+    candidates: &[RegistryCandidate],
+    target_version: Version,
+    authority: NpmVersionAuthority,
+    github_version: Option<String>,
+    official_version: Option<String>,
+    platform_package: &str,
+    probes: Vec<NpmRegistryProbe>,
+) -> CachedOutcome {
+    let selected = select_ready_candidate(candidates, &probes);
+    let (selected_registry, selected_source) = selected
+        .map(|(registry, source)| (Some(registry), Some(source)))
+        .unwrap_or((None, None));
+    let selection_reason = match (&selected_source, context.source_policy) {
+        (Some(source), UpdateSource::Auto) => {
+            format!("auto selected the first reachable complete source: {source}")
         }
-        Ok(_) => Ok(CachedOutcome::Current),
-        Err(error) => Err(error),
+        (Some(source), _) => format!("the configured source policy selected {source}"),
+        (None, UpdateSource::Auto) => {
+            "no auto candidate has both the main and platform packages yet".to_string()
+        }
+        (None, _)
+            if candidates.iter().any(|candidate| {
+                probes
+                    .iter()
+                    .any(|probe| probe.registry == candidate.registry && probe.reachable)
+            }) =>
+        {
+            "the configured source is reachable but not complete yet".to_string()
+        }
+        (None, _) => "the configured source could not be reached".to_string(),
+    };
+    let discovery = NpmDiscovery {
+        source_policy: context.source_policy.as_str().to_string(),
+        configured_registry: context.configured_registry.clone(),
+        target_version: target_version.to_string(),
+        authority,
+        github_version,
+        official_version,
+        platform_package: platform_package.to_string(),
+        probes,
+        selected_registry,
+        selected_source,
+        selection_reason,
+    };
+
+    if target_version <= *current_version {
+        CachedOutcome::NpmCurrent { discovery }
+    } else if discovery.selected_registry.is_some() {
+        CachedOutcome::NpmAvailable { discovery }
+    } else {
+        CachedOutcome::NpmPending { discovery }
     }
 }
 
-fn startup_from_cached(channel: &InstallChannel, cached: CachedOutcome) -> Option<StartupUpdate> {
+fn select_ready_candidate(
+    candidates: &[RegistryCandidate],
+    probes: &[NpmRegistryProbe],
+) -> Option<(String, String)> {
+    candidates.iter().find_map(|candidate| {
+        probes
+            .iter()
+            .find(|probe| probe.registry == candidate.registry && probe.is_ready())
+            .map(|probe| (probe.registry.clone(), probe.source_name.clone()))
+    })
+}
+
+fn registry_candidates(context: &NpmCheckContext) -> Result<Vec<RegistryCandidate>, CheckFailure> {
+    let configured = || {
+        context
+            .configured_registry
+            .clone()
+            .map(|registry| RegistryCandidate {
+                source_name: "npm config".to_string(),
+                registry,
+                selectable: true,
+            })
+    };
+    let official = || RegistryCandidate {
+        source_name: "official npm".to_string(),
+        registry: OFFICIAL_NPM_REGISTRY.to_string(),
+        selectable: true,
+    };
+    let mirror = || RegistryCandidate {
+        source_name: "npmmirror".to_string(),
+        registry: NPMMIRROR_REGISTRY.to_string(),
+        selectable: true,
+    };
+    let raw = match context.source_policy {
+        UpdateSource::Auto => configured()
+            .into_iter()
+            .chain([official(), mirror()])
+            .collect::<Vec<_>>(),
+        UpdateSource::NpmConfig => vec![configured().ok_or_else(|| {
+            context
+                .configured_registry_failure
+                .clone()
+                .unwrap_or_else(|| {
+                    transient("npm config get registry did not return a usable registry")
+                })
+        })?],
+        UpdateSource::Official => vec![official()],
+        UpdateSource::Npmmirror => vec![mirror()],
+    };
+    let mut seen = BTreeSet::new();
+    Ok(raw
+        .into_iter()
+        .filter(|candidate| seen.insert(candidate.registry.clone()))
+        .collect())
+}
+
+fn authoritative_npm_target(
+    github: &Result<Version, CheckFailure>,
+    official: &Result<Version, CheckFailure>,
+    sources: &[RegistryLatest],
+) -> Result<(Version, NpmVersionAuthority), CheckFailure> {
+    let official_versions = [github.as_ref().ok(), official.as_ref().ok()]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(version) = official_versions.into_iter().max() {
+        return Ok((version, NpmVersionAuthority::Official));
+    }
+    if let Some(version) = sources
+        .iter()
+        .filter(|source| source.candidate.selectable)
+        .filter_map(|source| source.result.as_ref().ok())
+        .cloned()
+        .max()
+    {
+        return Ok((version, NpmVersionAuthority::MirrorFallback));
+    }
+    let failures = std::iter::once(github.as_ref().err())
+        .chain(std::iter::once(official.as_ref().err()))
+        .chain(sources.iter().map(|source| source.result.as_ref().err()))
+        .flatten()
+        .collect::<Vec<_>>();
+    let kind = if failures
+        .iter()
+        .any(|failure| failure.kind == CheckFailureKind::Structural)
+    {
+        CheckFailureKind::Structural
+    } else {
+        CheckFailureKind::Transient
+    };
+    let detail = failures
+        .iter()
+        .map(|failure| failure.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(CheckFailure {
+        kind,
+        message: format!("no npm version authority was reachable: {detail}"),
+    })
+}
+
+fn probe_registry_readiness(
+    backend: &(impl NpmProbeBackend + ?Sized),
+    provenance: &NpmProvenance,
+    latest: Vec<RegistryLatest>,
+    target_version: &Version,
+    platform_package: &str,
+) -> Vec<NpmRegistryProbe> {
+    std::thread::scope(|scope| {
+        latest
+            .into_iter()
+            .map(|latest| {
+                scope.spawn(move || {
+                    registry_readiness(
+                        backend,
+                        provenance,
+                        latest,
+                        target_version,
+                        platform_package,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| {
+                handle.join().unwrap_or_else(|_| NpmRegistryProbe {
+                    source_name: "unknown npm source".to_string(),
+                    registry: String::new(),
+                    reachable: false,
+                    latest_version: None,
+                    main_package_ready: false,
+                    platform_package_ready: false,
+                    error: Some("an npm preflight worker panicked".to_string()),
+                    error_kind: Some(CheckFailureKind::Transient),
+                })
+            })
+            .collect()
+    })
+}
+
+fn registry_readiness(
+    backend: &(impl NpmProbeBackend + ?Sized),
+    provenance: &NpmProvenance,
+    latest: RegistryLatest,
+    target_version: &Version,
+    platform_package: &str,
+) -> NpmRegistryProbe {
+    let RegistryLatest { candidate, result } = latest;
+    let latest_version = match result {
+        Ok(version) => version,
+        Err(failure) => {
+            return NpmRegistryProbe {
+                source_name: candidate.source_name,
+                registry: candidate.registry,
+                reachable: false,
+                latest_version: None,
+                main_package_ready: false,
+                platform_package_ready: false,
+                error: Some(failure.message),
+                error_kind: Some(failure.kind),
+            };
+        }
+    };
+    let target = target_version.to_string();
+    let mut packages = vec!["fastctx".to_string()];
+    if provenance.package != "fastctx" {
+        packages.push(provenance.package.clone());
+    }
+    packages.push(platform_package.to_string());
+    let results = std::thread::scope(|scope| {
+        packages
+            .iter()
+            .map(|package| {
+                scope.spawn(|| {
+                    backend.exact_npm_version_exists(&candidate.registry, package, &target)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err(transient("an npm package preflight worker panicked")))
+            })
+            .collect::<Vec<_>>()
+    });
+    let main_count = if provenance.package == "fastctx" {
+        1
+    } else {
+        2
+    };
+    let main_package_ready = results
+        .iter()
+        .take(main_count)
+        .all(|result| matches!(result, Ok(true)));
+    let platform_package_ready = matches!(results.last(), Some(Ok(true)));
+    let failure = results.iter().find_map(|result| result.as_ref().err());
+    NpmRegistryProbe {
+        source_name: candidate.source_name,
+        registry: candidate.registry,
+        reachable: true,
+        latest_version: Some(latest_version.to_string()),
+        main_package_ready,
+        platform_package_ready,
+        error: failure.map(|failure| failure.message.clone()),
+        error_kind: failure.map(|failure| failure.kind),
+    }
+}
+
+fn startup_from_cached(
+    channel: &InstallChannel,
+    cached: CachedOutcome,
+    npm_context: Option<&NpmCheckContext>,
+) -> Option<StartupUpdate> {
     match (channel, cached) {
         (_, CachedOutcome::Current) => Some(StartupUpdate::None),
         (InstallChannel::GithubRelease, CachedOutcome::GithubAvailable { target_version }) => {
-            github_update_plan(&target_version).map(StartupUpdate::Available)
+            github_update_plan(&target_version)
+                .map(Box::new)
+                .map(StartupUpdate::Available)
         }
-        (InstallChannel::Npm(provenance), CachedOutcome::NpmAvailable { target_version })
-            if stable_version(&target_version).is_some() =>
+        (InstallChannel::Npm(_), CachedOutcome::NpmCurrent { discovery })
+            if discovery_matches_context(&discovery, npm_context?) =>
         {
-            Some(StartupUpdate::Available(UpdatePlan::Npm {
+            Some(StartupUpdate::NpmCurrent {
+                discovery: Box::new(discovery),
+            })
+        }
+        (InstallChannel::Npm(provenance), CachedOutcome::NpmAvailable { discovery })
+            if discovery_matches_context(&discovery, npm_context?)
+                && stable_version(&discovery.target_version).is_some()
+                && discovery.selected_registry.is_some()
+                && discovery.selected_source.is_some() =>
+        {
+            let target_version = discovery.target_version.clone();
+            Some(StartupUpdate::Available(Box::new(UpdatePlan::Npm {
                 provenance: provenance.clone(),
                 target_version,
-            }))
+                registry: discovery.selected_registry.clone()?,
+                source_name: discovery.selected_source.clone()?,
+                discovery: Box::new(discovery),
+            })))
         }
-        (
-            InstallChannel::Npm(_),
-            CachedOutcome::NpmPending {
-                release_version,
-                registry_version,
-            },
-        ) if stable_version(&release_version).is_some()
-            && stable_version(&registry_version).is_some() =>
+        (InstallChannel::Npm(_), CachedOutcome::NpmPending { discovery })
+            if discovery_matches_context(&discovery, npm_context?)
+                && stable_version(&discovery.target_version).is_some() =>
         {
             Some(StartupUpdate::NpmPending {
-                release_version,
-                registry_version,
+                target_version: discovery.target_version.clone(),
+                discovery: Box::new(discovery),
             })
         }
         _ => None,
     }
+}
+
+fn discovery_matches_context(discovery: &NpmDiscovery, context: &NpmCheckContext) -> bool {
+    discovery.source_policy == context.source_policy.as_str()
+        && discovery.configured_registry == context.configured_registry
 }
 
 fn github_update_plan(target_version: &str) -> Option<UpdatePlan> {
@@ -343,11 +819,49 @@ fn stable_version(value: &str) -> Option<Version> {
         .filter(|version| version.pre.is_empty())
 }
 
-fn channel_key(channel: &InstallChannel) -> Option<String> {
+fn channel_key(channel: &InstallChannel, npm_context: Option<&NpmCheckContext>) -> Option<String> {
     match channel {
-        InstallChannel::Npm(provenance) => Some(format!("npm-{}", provenance.package)),
+        InstallChannel::Npm(provenance) => {
+            let context = npm_context?;
+            let registry = context
+                .configured_registry
+                .as_deref()
+                .unwrap_or("unavailable");
+            let digest = Sha256::digest(registry.as_bytes());
+            let fingerprint = digest[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            Some(format!(
+                "npm-{}-{}-{fingerprint}",
+                provenance.package,
+                context.source_policy.as_str()
+            ))
+        }
         InstallChannel::GithubRelease => Some("github-release".to_string()),
         InstallChannel::Unsupported => None,
+    }
+}
+
+fn prepare_npm_context(provenance: &NpmProvenance, source_policy: UpdateSource) -> NpmCheckContext {
+    if !matches!(source_policy, UpdateSource::Auto | UpdateSource::NpmConfig) {
+        return NpmCheckContext {
+            source_policy,
+            configured_registry: None,
+            configured_registry_failure: None,
+        };
+    }
+    match effective_npm_registry(provenance) {
+        Ok(registry) => NpmCheckContext {
+            source_policy,
+            configured_registry: Some(registry),
+            configured_registry_failure: None,
+        },
+        Err(failure) => NpmCheckContext {
+            source_policy,
+            configured_registry: None,
+            configured_registry_failure: Some(failure),
+        },
     }
 }
 
@@ -374,6 +888,19 @@ fn update_check_disabled() -> bool {
                 "1" | "true" | "yes"
             )
         })
+}
+
+fn automatic_check_disabled(force: bool, environment_disabled: bool, auto_check: bool) -> bool {
+    !force && (environment_disabled || !auto_check)
+}
+
+fn run_update_check_if_enabled<T>(
+    force: bool,
+    environment_disabled: bool,
+    auto_check: bool,
+    check: impl FnOnce() -> T,
+) -> Option<T> {
+    (!automatic_check_disabled(force, environment_disabled, auto_check)).then(check)
 }
 
 fn detect_install_channel(
@@ -531,22 +1058,117 @@ fn same_existing_path(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn effective_npm_registry(provenance: &NpmProvenance) -> Result<String, CheckFailure> {
+    let mut command = crate::process_policy::noninteractive_command(&provenance.node);
+    command
+        .arg(&provenance.npm_cli)
+        .args(["config", "get", "registry"])
+        .env("NO_UPDATE_NOTIFIER", "1")
+        .env("NPM_CONFIG_UPDATE_NOTIFIER", "false")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = wait_with_output(
+        command.spawn().map_err(|error| {
+            transient(format!(
+                "cannot start npm through {}: {error}",
+                crate::paths::display_path(&provenance.node)
+            ))
+        })?,
+        NPM_QUERY_TIMEOUT,
+    )
+    .map_err(transient)?;
+    if !output.status.success() {
+        let detail = one_line(&String::from_utf8_lossy(&output.stderr));
+        return Err(transient(if detail.is_empty() {
+            "npm config get registry failed".to_string()
+        } else {
+            format!("npm config get registry failed: {detail}")
+        }));
+    }
+    normalize_registry_url(one_line(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn normalize_registry_url(value: String) -> Result<String, CheckFailure> {
+    if value.is_empty() || matches!(value.as_str(), "null" | "undefined") {
+        return Err(transient(
+            "npm config get registry returned no usable registry",
+        ));
+    }
+    let mut url = Url::parse(&value)
+        .map_err(|error| transient(format!("npm returned an invalid registry URL: {error}")))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(transient(
+            "npm returned a registry URL with an unsupported or unsafe shape",
+        ));
+    }
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    Ok(url.to_string())
+}
+
 fn latest_npm_version(
     paths: &ControlPaths,
     provenance: &NpmProvenance,
+    registry: &str,
+    package: &str,
 ) -> Result<Version, CheckFailure> {
     let cache =
         create_private_temp_directory(&paths.fastctx_dir, "npm-check").map_err(transient)?;
-    let result = run_npm_view(provenance, &cache);
+    let result = run_npm_view(provenance, package, registry, &cache).and_then(|version| {
+        version.ok_or_else(|| {
+            transient(format!(
+                "npm registry {registry} does not expose {package}'s latest version"
+            ))
+        })
+    });
     let _ = fs::remove_dir_all(&cache);
     result
 }
 
-fn run_npm_view(provenance: &NpmProvenance, cache: &Path) -> Result<Version, CheckFailure> {
+fn exact_npm_version_exists(
+    paths: &ControlPaths,
+    provenance: &NpmProvenance,
+    registry: &str,
+    package: &str,
+    target_version: &str,
+) -> Result<bool, CheckFailure> {
+    let cache =
+        create_private_temp_directory(&paths.fastctx_dir, "npm-preflight").map_err(transient)?;
+    let package_spec = format!("{package}@{target_version}");
+    let result = run_npm_view(provenance, &package_spec, registry, &cache).and_then(|version| {
+        let Some(version) = version else {
+            return Ok(false);
+        };
+        if version.to_string() != target_version {
+            return Err(structural(format!(
+                "npm registry {registry} returned v{version} for exact request {package_spec}"
+            )));
+        }
+        Ok(true)
+    });
+    let _ = fs::remove_dir_all(&cache);
+    result
+}
+
+fn run_npm_view(
+    provenance: &NpmProvenance,
+    package_spec: &str,
+    registry: &str,
+    cache: &Path,
+) -> Result<Option<Version>, CheckFailure> {
     let mut command = crate::process_policy::noninteractive_command(&provenance.node);
     command
         .arg(&provenance.npm_cli)
-        .args(npm_view_arguments(&provenance.package, cache))
+        .args(npm_view_arguments(package_spec, registry, cache))
         .env("NO_UPDATE_NOTIFIER", "1")
         .env("NPM_CONFIG_UPDATE_NOTIFIER", "false")
         .env_remove("NPM_CONFIG_OFFLINE")
@@ -566,13 +1188,16 @@ fn run_npm_view(provenance: &NpmProvenance, cache: &Path) -> Result<Version, Che
     .map_err(transient)?;
     if !output.status.success() {
         let detail = one_line(&String::from_utf8_lossy(&output.stderr));
+        if detail.contains("E404") || detail.contains("404") {
+            return Ok(None);
+        }
         return Err(transient(if detail.is_empty() {
-            "npm could not read FastCtx's latest published version".to_string()
+            format!("npm could not query {package_spec} from {registry}")
         } else {
-            format!("npm could not read FastCtx's latest published version: {detail}")
+            format!("npm could not query {package_spec} from {registry}: {detail}")
         }));
     }
-    parse_npm_latest(&output.stdout)
+    parse_npm_latest(&output.stdout).map(Some)
 }
 
 fn parse_npm_latest(bytes: &[u8]) -> Result<Version, CheckFailure> {
@@ -592,15 +1217,15 @@ fn parse_npm_latest(bytes: &[u8]) -> Result<Version, CheckFailure> {
     Ok(version)
 }
 
-fn npm_view_arguments(package: &str, cache: &Path) -> Vec<OsString> {
+fn npm_view_arguments(package_spec: &str, registry: &str, cache: &Path) -> Vec<OsString> {
     vec![
         OsString::from("view"),
-        OsString::from(package),
-        OsString::from("dist-tags.latest"),
+        OsString::from(package_spec),
+        OsString::from("version"),
         OsString::from("--json"),
         OsString::from("--prefer-online"),
         OsString::from("--registry"),
-        OsString::from(NPM_REGISTRY),
+        OsString::from(registry),
         OsString::from("--cache"),
         cache.as_os_str().to_os_string(),
         OsString::from("--fetch-retries"),
@@ -775,6 +1400,16 @@ fn expected_release_archive_name() -> Option<&'static str> {
     }
 }
 
+fn platform_npm_package() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => Some("@fastctx/win32-x64"),
+        ("linux", "x86_64") => Some("@fastctx/linux-x64"),
+        ("macos", "x86_64") => Some("@fastctx/darwin-x64"),
+        ("macos", "aarch64") => Some("@fastctx/darwin-arm64"),
+        _ => None,
+    }
+}
+
 fn create_private_temp_directory(base: &Path, purpose: &str) -> Result<PathBuf, String> {
     let root = std::env::temp_dir();
     for _ in 0..32 {
@@ -829,18 +1464,135 @@ fn one_line(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        InstallChannel, NODE_ENV, NPM_CLI_ENV, NPM_HANDOFF_ENV, NPM_LAUNCHER_ENV,
-        NPM_LAUNCHER_PID_ENV, NPM_MARKER_ENV, NPM_MODE_ENV, NPM_PACKAGE_ENV,
-        detect_install_channel, github_update_plan, npm_update_result, npm_view_arguments,
-        parse_latest_redirect, parse_npm_latest, resolve_with_cache, transient,
+        CacheResolution, InstallChannel, NODE_ENV, NPM_CLI_ENV, NPM_HANDOFF_ENV, NPM_LAUNCHER_ENV,
+        NPM_LAUNCHER_PID_ENV, NPM_MARKER_ENV, NPM_MODE_ENV, NPM_PACKAGE_ENV, NpmCheckContext,
+        NpmProbeBackend, RegistryCandidate, RegistryLatest, authoritative_npm_target,
+        automatic_check_disabled, build_npm_outcome, detect_install_channel, github_update_plan,
+        normalize_registry_url, npm_view_arguments, parse_latest_redirect, parse_npm_latest,
+        probe_npm_channel_with_backend, registry_candidates, resolve_with_cache,
+        run_update_check_if_enabled, select_ready_candidate, transient,
     };
     use crate::control::paths::ControlPaths;
+    use crate::control::settings::UpdateSource;
     use crate::update::cache::{self, CachedOutcome, SUCCESS_TTL};
-    use crate::update::model::{CheckFailureKind, NpmMode, NpmProvenance, StartupUpdate};
+    use crate::update::model::{
+        CheckFailure, CheckFailureKind, NPMMIRROR_REGISTRY, NpmDiscovery, NpmMode, NpmProvenance,
+        NpmRegistryProbe, NpmVersionAuthority, OFFICIAL_NPM_REGISTRY, StartupUpdate,
+    };
     use semver::Version;
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::time::{Duration, UNIX_EPOCH};
+
+    fn npm_provenance_fixture() -> NpmProvenance {
+        NpmProvenance {
+            package: "fastctx".to_string(),
+            mode: NpmMode::Global,
+            node: "node".into(),
+            npm_cli: "npm-cli.js".into(),
+            launcher: "launcher.js".into(),
+            launcher_pid: 42,
+            handoff_file: "handoff".into(),
+        }
+    }
+
+    fn npm_context_fixture(
+        source_policy: UpdateSource,
+        configured_registry: Option<&str>,
+    ) -> NpmCheckContext {
+        NpmCheckContext {
+            source_policy,
+            configured_registry: configured_registry.map(str::to_string),
+            configured_registry_failure: configured_registry
+                .is_none()
+                .then(|| transient("npm config unavailable")),
+        }
+    }
+
+    fn ready_probe(source_name: &str, registry: &str, version: &str) -> NpmRegistryProbe {
+        NpmRegistryProbe {
+            source_name: source_name.to_string(),
+            registry: registry.to_string(),
+            reachable: true,
+            latest_version: Some(version.to_string()),
+            main_package_ready: true,
+            platform_package_ready: true,
+            error: None,
+            error_kind: None,
+        }
+    }
+
+    fn npm_discovery_fixture(context: &NpmCheckContext, target_version: &str) -> NpmDiscovery {
+        let probe = ready_probe("official npm", OFFICIAL_NPM_REGISTRY, target_version);
+        NpmDiscovery {
+            source_policy: context.source_policy.as_str().to_string(),
+            configured_registry: context.configured_registry.clone(),
+            target_version: target_version.to_string(),
+            authority: NpmVersionAuthority::Official,
+            github_version: Some(target_version.to_string()),
+            official_version: Some(target_version.to_string()),
+            platform_package: super::platform_npm_package()
+                .unwrap_or("@fastctx/unsupported")
+                .to_string(),
+            probes: vec![probe],
+            selected_registry: Some(OFFICIAL_NPM_REGISTRY.to_string()),
+            selected_source: Some("official npm".to_string()),
+            selection_reason: "fixture selected official npm".to_string(),
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct SimulatedRegistry {
+        latest: Option<Version>,
+        main_package_ready: bool,
+        platform_package_ready: bool,
+    }
+
+    struct SimulatedRegistryBackend {
+        github_latest: Option<Version>,
+        platform_package: String,
+        registries: BTreeMap<String, SimulatedRegistry>,
+    }
+
+    impl NpmProbeBackend for SimulatedRegistryBackend {
+        fn latest_github_version(&self) -> Result<Version, CheckFailure> {
+            self.github_latest
+                .clone()
+                .ok_or_else(|| transient("simulated GitHub outage"))
+        }
+
+        fn latest_npm_version(
+            &self,
+            registry: &str,
+            _package: &str,
+        ) -> Result<Version, CheckFailure> {
+            self.registries
+                .get(registry)
+                .and_then(|state| state.latest.clone())
+                .ok_or_else(|| transient(format!("simulated registry outage: {registry}")))
+        }
+
+        fn exact_npm_version_exists(
+            &self,
+            registry: &str,
+            package: &str,
+            target_version: &str,
+        ) -> Result<bool, CheckFailure> {
+            let Some(state) = self.registries.get(registry) else {
+                return Err(transient(format!("simulated registry outage: {registry}")));
+            };
+            if state.latest.as_ref().map(ToString::to_string).as_deref() != Some(target_version) {
+                return Ok(false);
+            }
+            if package == "fastctx" {
+                Ok(state.main_package_ready)
+            } else if package == self.platform_package {
+                Ok(state.platform_package_ready)
+            } else {
+                Ok(false)
+            }
+        }
+    }
 
     #[test]
     fn npm_launcher_provenance_wins_over_executable_location() {
@@ -989,21 +1741,25 @@ mod tests {
     }
 
     #[test]
-    fn npm_check_bypasses_the_shared_cache_and_pins_the_public_registry() {
-        let arguments = npm_view_arguments("fastctx", std::path::Path::new("/isolated/cache"))
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+    fn npm_check_bypasses_the_shared_cache_and_pins_the_selected_registry() {
+        let arguments = npm_view_arguments(
+            "fastctx@0.2.0",
+            "https://registry.example.test/custom/",
+            std::path::Path::new("/isolated/cache"),
+        )
+        .into_iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
         assert_eq!(
             arguments,
             [
                 "view",
-                "fastctx",
-                "dist-tags.latest",
+                "fastctx@0.2.0",
+                "version",
                 "--json",
                 "--prefer-online",
                 "--registry",
-                "https://registry.npmjs.org/",
+                "https://registry.example.test/custom/",
                 "--cache",
                 "/isolated/cache",
                 "--fetch-retries",
@@ -1015,6 +1771,29 @@ mod tests {
             ]
         );
         assert!(!arguments.iter().any(|value| value == "clean"));
+    }
+
+    #[test]
+    fn registry_urls_are_normalized_without_accepting_credentials_or_query_state() {
+        assert_eq!(
+            normalize_registry_url("https://registry.example.test/npm".to_string()).unwrap(),
+            "https://registry.example.test/npm/"
+        );
+        assert_eq!(
+            normalize_registry_url("http://localhost:4873/".to_string()).unwrap(),
+            "http://localhost:4873/"
+        );
+        for value in [
+            "file:///tmp/registry",
+            "https://user:secret@registry.example.test/",
+            "https://registry.example.test/?token=secret",
+            "not a URL",
+        ] {
+            assert!(
+                normalize_registry_url(value.to_string()).is_err(),
+                "{value}"
+            );
+        }
     }
 
     #[test]
@@ -1032,92 +1811,314 @@ mod tests {
     }
 
     #[test]
-    fn npm_update_decision_distinguishes_cache_staleness_from_registry_propagation() {
-        let current = Version::new(0, 1, 0);
+    fn official_version_authority_cannot_be_elevated_by_a_newer_mirror() {
+        let mirror = RegistryLatest {
+            candidate: RegistryCandidate {
+                source_name: "npmmirror".to_string(),
+                registry: NPMMIRROR_REGISTRY.to_string(),
+                selectable: true,
+            },
+            result: Ok(Version::new(9, 0, 0)),
+        };
+        let (target, authority) = authoritative_npm_target(
+            &Ok(Version::new(0, 2, 0)),
+            &Ok(Version::new(0, 1, 9)),
+            &[mirror],
+        )
+        .unwrap();
+        assert_eq!(target, Version::new(0, 2, 0));
+        assert_eq!(authority, NpmVersionAuthority::Official);
+    }
 
-        assert_eq!(
-            npm_update_result(
-                &current,
-                Ok(Version::new(0, 2, 0)),
-                Err(transient("GitHub unavailable")),
+    #[test]
+    fn mirror_is_a_version_signal_only_when_both_official_channels_are_unavailable() {
+        let mirror = RegistryLatest {
+            candidate: RegistryCandidate {
+                source_name: "npmmirror".to_string(),
+                registry: NPMMIRROR_REGISTRY.to_string(),
+                selectable: true,
+            },
+            result: Ok(Version::new(0, 3, 0)),
+        };
+        let (target, authority) = authoritative_npm_target(
+            &Err(transient("GitHub unavailable")),
+            &Err(transient("official npm unavailable")),
+            &[mirror],
+        )
+        .unwrap();
+        assert_eq!(target, Version::new(0, 3, 0));
+        assert_eq!(authority, NpmVersionAuthority::MirrorFallback);
+    }
+
+    #[test]
+    fn auto_registry_candidates_follow_the_contract_order_and_deduplicate() {
+        let cases = [
+            (
+                Some(OFFICIAL_NPM_REGISTRY),
+                vec![OFFICIAL_NPM_REGISTRY, NPMMIRROR_REGISTRY],
+            ),
+            (
+                Some(NPMMIRROR_REGISTRY),
+                vec![NPMMIRROR_REGISTRY, OFFICIAL_NPM_REGISTRY],
+            ),
+            (
+                Some("https://registry.example.test/custom/"),
+                vec![
+                    "https://registry.example.test/custom/",
+                    OFFICIAL_NPM_REGISTRY,
+                    NPMMIRROR_REGISTRY,
+                ],
+            ),
+            (None, vec![OFFICIAL_NPM_REGISTRY, NPMMIRROR_REGISTRY]),
+        ];
+        for (configured, expected) in cases {
+            let context = npm_context_fixture(UpdateSource::Auto, configured);
+            let actual = registry_candidates(&context)
+                .unwrap()
+                .into_iter()
+                .map(|candidate| candidate.registry)
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "configured={configured:?}");
+        }
+    }
+
+    #[test]
+    fn isolated_registry_matrix_selects_the_first_complete_auto_source() {
+        struct Scenario {
+            name: &'static str,
+            configured_registry: Option<&'static str>,
+            mirror_ready: bool,
+            official_ready: bool,
+            expected_registry: &'static str,
+        }
+
+        let scenarios = [
+            Scenario {
+                name: "npm config is official",
+                configured_registry: Some(OFFICIAL_NPM_REGISTRY),
+                mirror_ready: true,
+                official_ready: true,
+                expected_registry: OFFICIAL_NPM_REGISTRY,
+            },
+            Scenario {
+                name: "npm config is a complete mirror",
+                configured_registry: Some(NPMMIRROR_REGISTRY),
+                mirror_ready: true,
+                official_ready: true,
+                expected_registry: NPMMIRROR_REGISTRY,
+            },
+            Scenario {
+                name: "configured mirror is still propagating",
+                configured_registry: Some(NPMMIRROR_REGISTRY),
+                mirror_ready: false,
+                official_ready: true,
+                expected_registry: OFFICIAL_NPM_REGISTRY,
+            },
+            Scenario {
+                name: "npm config source is unavailable",
+                configured_registry: None,
+                mirror_ready: true,
+                official_ready: true,
+                expected_registry: OFFICIAL_NPM_REGISTRY,
+            },
+        ];
+
+        for scenario in scenarios {
+            let context = npm_context_fixture(UpdateSource::Auto, scenario.configured_registry);
+            let platform_package = super::platform_npm_package().unwrap().to_string();
+            let registry_state = |ready| SimulatedRegistry {
+                latest: Some(Version::new(0, 2, 0)),
+                main_package_ready: ready,
+                platform_package_ready: ready,
+            };
+            let backend = SimulatedRegistryBackend {
+                github_latest: Some(Version::new(0, 2, 0)),
+                platform_package,
+                registries: BTreeMap::from([
+                    (
+                        OFFICIAL_NPM_REGISTRY.to_string(),
+                        registry_state(scenario.official_ready),
+                    ),
+                    (
+                        NPMMIRROR_REGISTRY.to_string(),
+                        registry_state(scenario.mirror_ready),
+                    ),
+                ]),
+            };
+            let outcome = probe_npm_channel_with_backend(
+                &npm_provenance_fixture(),
+                &Version::new(0, 1, 0),
+                &context,
+                &backend,
             )
-            .unwrap(),
-            CachedOutcome::NpmAvailable {
-                target_version: "0.2.0".to_string()
-            }
+            .unwrap();
+            let CachedOutcome::NpmAvailable { discovery } = outcome else {
+                panic!("{} did not produce an installable update", scenario.name);
+            };
+            assert_eq!(
+                discovery.selected_registry.as_deref(),
+                Some(scenario.expected_registry),
+                "{}",
+                scenario.name
+            );
+        }
+    }
+
+    #[test]
+    fn strict_source_policies_never_fall_through_to_another_registry() {
+        let configured = "https://registry.example.test/custom/";
+        for (policy, expected) in [
+            (UpdateSource::NpmConfig, configured),
+            (UpdateSource::Official, OFFICIAL_NPM_REGISTRY),
+            (UpdateSource::Npmmirror, NPMMIRROR_REGISTRY),
+        ] {
+            let context = npm_context_fixture(policy, Some(configured));
+            let candidates = registry_candidates(&context).unwrap();
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(candidates[0].registry, expected);
+        }
+        let unavailable = npm_context_fixture(UpdateSource::NpmConfig, None);
+        assert!(
+            registry_candidates(&unavailable)
+                .unwrap_err()
+                .message
+                .contains("npm config unavailable")
         );
+    }
+
+    #[test]
+    fn strict_incomplete_source_stays_pending_even_when_another_registry_is_ready() {
+        let context = npm_context_fixture(UpdateSource::Npmmirror, None);
+        let candidates = registry_candidates(&context).unwrap();
+        let mut mirror = ready_probe("npmmirror", NPMMIRROR_REGISTRY, "0.2.0");
+        mirror.platform_package_ready = false;
+        let official = ready_probe("official npm", OFFICIAL_NPM_REGISTRY, "0.2.0");
+
+        let outcome = build_npm_outcome(
+            &context,
+            &Version::new(0, 1, 0),
+            &candidates,
+            Version::new(0, 2, 0),
+            NpmVersionAuthority::Official,
+            Some("0.2.0".to_string()),
+            Some("0.2.0".to_string()),
+            "@fastctx/test-platform",
+            vec![mirror, official],
+        );
+        let CachedOutcome::NpmPending { discovery } = outcome else {
+            panic!("a strict incomplete source must not fall through");
+        };
+        assert!(discovery.selected_registry.is_none());
         assert_eq!(
-            npm_update_result(&current, Ok(current.clone()), Ok(Version::new(0, 2, 0)),).unwrap(),
-            CachedOutcome::NpmPending {
-                release_version: "0.2.0".to_string(),
-                registry_version: "0.1.0".to_string(),
-            }
+            discovery.selection_reason,
+            "the configured source is reachable but not complete yet"
         );
+    }
+
+    #[test]
+    fn selection_skips_a_half_installed_source_and_uses_the_next_complete_candidate() {
+        let candidates = vec![
+            RegistryCandidate {
+                source_name: "npm config".to_string(),
+                registry: NPMMIRROR_REGISTRY.to_string(),
+                selectable: true,
+            },
+            RegistryCandidate {
+                source_name: "official npm".to_string(),
+                registry: OFFICIAL_NPM_REGISTRY.to_string(),
+                selectable: true,
+            },
+        ];
+        let mut mirror = ready_probe("npm config", NPMMIRROR_REGISTRY, "0.2.0");
+        mirror.platform_package_ready = false;
+        let official = ready_probe("official npm", OFFICIAL_NPM_REGISTRY, "0.2.0");
         assert_eq!(
-            npm_update_result(
-                &current,
-                Err(transient("npm unavailable")),
-                Ok(current.clone()),
-            )
-            .unwrap_err()
-            .message,
-            "npm unavailable"
+            select_ready_candidate(&candidates, &[mirror, official]),
+            Some((
+                OFFICIAL_NPM_REGISTRY.to_string(),
+                "official npm".to_string()
+            ))
         );
-        assert_eq!(
-            npm_update_result(
-                &current,
-                Ok(current.clone()),
-                Err(transient("GitHub unavailable")),
-            )
-            .unwrap_err()
-            .message,
-            "GitHub unavailable"
-        );
+    }
+
+    #[test]
+    fn manual_checks_bypass_both_automatic_check_switches() {
+        for (force, environment_disabled, auto_check, expected) in [
+            (false, false, true, false),
+            (false, true, true, true),
+            (false, false, false, true),
+            (false, true, false, true),
+            (true, true, false, false),
+        ] {
+            assert_eq!(
+                automatic_check_disabled(force, environment_disabled, auto_check),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn auto_check_false_is_a_rejecting_network_oracle_and_manual_check_still_runs() {
+        let automatic = run_update_check_if_enabled(false, false, false, || {
+            panic!("disabled automatic checks must never reach the injected network probe")
+        });
+        assert_eq!(automatic, None::<()>);
+
+        let environment_disabled = run_update_check_if_enabled(false, true, true, || {
+            panic!("the environment kill switch must never reach the injected network probe")
+        });
+        assert_eq!(environment_disabled, None::<()>);
+
+        let calls = std::cell::Cell::new(0);
+        let manual = run_update_check_if_enabled(true, true, false, || {
+            calls.set(calls.get() + 1);
+            42
+        });
+        assert_eq!(manual, Some(42));
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]
     fn ttl_hit_is_a_zero_probe_oracle_and_force_bypasses_it() {
         let temp = tempfile::tempdir().unwrap();
         let checked_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let channel = InstallChannel::Npm(NpmProvenance {
-            package: "fastctx".to_string(),
-            mode: NpmMode::Exec,
-            node: "node".into(),
-            npm_cli: "npm-cli.js".into(),
-            launcher: "launcher.js".into(),
-            launcher_pid: 42,
-            handoff_file: "handoff".into(),
-        });
+        let channel = InstallChannel::Npm(npm_provenance_fixture());
+        let context = npm_context_fixture(UpdateSource::Official, None);
+        let discovery = npm_discovery_fixture(&context, "0.2.0");
         cache::record_success(
             temp.path(),
             "npm-fastctx",
             "0.1.0",
             checked_at,
-            &CachedOutcome::NpmAvailable {
-                target_version: "0.2.0".to_string(),
-            },
+            &CachedOutcome::NpmAvailable { discovery },
         )
         .unwrap();
 
         let result = resolve_with_cache(
-            &channel,
-            "npm-fastctx",
-            "0.1.0",
-            temp.path(),
-            false,
-            checked_at + SUCCESS_TTL,
+            CacheResolution {
+                channel: &channel,
+                channel_key: "npm-fastctx",
+                current_version: "0.1.0",
+                directory: temp.path(),
+                force: false,
+                checked_at: checked_at + SUCCESS_TTL,
+                npm_context: Some(&context),
+            },
             || panic!("a fresh cache hit must not call the network probe"),
         );
         assert!(matches!(result, StartupUpdate::Available(_)));
 
         let calls = std::cell::Cell::new(0);
         let result = resolve_with_cache(
-            &channel,
-            "npm-fastctx",
-            "0.1.0",
-            temp.path(),
-            true,
-            checked_at + Duration::from_secs(1),
+            CacheResolution {
+                channel: &channel,
+                channel_key: "npm-fastctx",
+                current_version: "0.1.0",
+                directory: temp.path(),
+                force: true,
+                checked_at: checked_at + Duration::from_secs(1),
+                npm_context: Some(&context),
+            },
             || {
                 calls.set(calls.get() + 1);
                 Ok(CachedOutcome::Current)
@@ -1131,15 +2132,8 @@ mod tests {
     fn expired_cache_calls_the_injected_probe_once() {
         let temp = tempfile::tempdir().unwrap();
         let checked_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let channel = InstallChannel::Npm(NpmProvenance {
-            package: "fastctx".to_string(),
-            mode: NpmMode::Global,
-            node: "node".into(),
-            npm_cli: "npm-cli.js".into(),
-            launcher: "launcher.js".into(),
-            launcher_pid: 7,
-            handoff_file: "handoff".into(),
-        });
+        let channel = InstallChannel::Npm(npm_provenance_fixture());
+        let context = npm_context_fixture(UpdateSource::Official, None);
         cache::record_success(
             temp.path(),
             "npm-fastctx",
@@ -1150,16 +2144,19 @@ mod tests {
         .unwrap();
         let calls = std::cell::Cell::new(0);
         let result = resolve_with_cache(
-            &channel,
-            "npm-fastctx",
-            "0.1.0",
-            temp.path(),
-            false,
-            checked_at + SUCCESS_TTL + Duration::from_secs(1),
+            CacheResolution {
+                channel: &channel,
+                channel_key: "npm-fastctx",
+                current_version: "0.1.0",
+                directory: temp.path(),
+                force: false,
+                checked_at: checked_at + SUCCESS_TTL + Duration::from_secs(1),
+                npm_context: Some(&context),
+            },
             || {
                 calls.set(calls.get() + 1);
                 Ok(CachedOutcome::NpmAvailable {
-                    target_version: "0.2.0".to_string(),
+                    discovery: npm_discovery_fixture(&context, "0.2.0"),
                 })
             },
         );
@@ -1174,12 +2171,15 @@ mod tests {
         std::fs::create_dir(temp.path().join("cache-github-release.json")).unwrap();
 
         let result = resolve_with_cache(
-            &InstallChannel::GithubRelease,
-            "github-release",
-            "0.1.0",
-            temp.path(),
-            false,
-            checked_at,
+            CacheResolution {
+                channel: &InstallChannel::GithubRelease,
+                channel_key: "github-release",
+                current_version: "0.1.0",
+                directory: temp.path(),
+                force: false,
+                checked_at,
+                npm_context: None,
+            },
             || Ok(CachedOutcome::Current),
         );
 

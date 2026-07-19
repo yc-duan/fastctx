@@ -11,4 +11,8 @@ pub(crate) use helper::{
     UPDATE_FINALIZE_ENV, UpdateStart, begin_update, cleanup_replaced_binaries, finalize_update,
     run_update_helper,
 };
-pub(crate) use model::{CheckFailure, CheckFailureKind, StartupUpdate, UpdatePlan};
+#[cfg(test)]
+pub(crate) use model::NpmRegistryProbe;
+pub(crate) use model::{
+    CheckFailure, CheckFailureKind, NpmDiscovery, NpmVersionAuthority, StartupUpdate, UpdatePlan,
+};

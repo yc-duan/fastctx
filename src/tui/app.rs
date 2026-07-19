@@ -25,9 +25,9 @@ const JOB_TAIL_LINES: usize = 512;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Screen {
-    UpdateAvailable,
-    UpdatePending,
+    Update,
     UpdateChecking,
+    UpdateConfirm,
     Language { first_run: bool },
     Main,
     ApplyHome,
@@ -129,7 +129,6 @@ pub(crate) struct Toast {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Effect {
     RetryUpdate,
-    RecheckUpdateStatus,
     SaveLanguage { first_run: bool },
     SaveConfig,
     PlanApply,
@@ -147,7 +146,6 @@ enum Effect {
 enum UpdateCheckPurpose {
     Startup,
     UpdatePage,
-    Status,
 }
 
 pub(crate) struct App {
@@ -173,7 +171,6 @@ pub(crate) struct App {
     pub should_quit: bool,
     pub(crate) update_state: StartupUpdate,
     current_executable: PathBuf,
-    home_screen: Screen,
     exit_update: Option<UpdatePlan>,
     pub(crate) apply_plan: Option<ApplyPlan>,
     pub(crate) unapply_plan: Option<UnapplyPlan>,
@@ -209,13 +206,7 @@ impl App {
         } else {
             Screen::Language { first_run: true }
         };
-        let screen = match &startup_update {
-            StartupUpdate::Available(_) => Screen::UpdateAvailable,
-            StartupUpdate::NpmPending { .. } => Screen::UpdatePending,
-            StartupUpdate::None | StartupUpdate::Failed(_) | StartupUpdate::InstallFailed(_) => {
-                home_screen
-            }
-        };
+        let screen = home_screen;
         let selected = if matches!(screen, Screen::Language { .. }) {
             language_index(language)
         } else {
@@ -251,6 +242,18 @@ impl App {
             }
         });
         let startup_failure = match &startup_update {
+            StartupUpdate::Available(_) => Some(Toast {
+                message: update_copy::messages(notice_language)
+                    .available_title
+                    .to_string(),
+                warning: false,
+            }),
+            StartupUpdate::NpmPending { .. } => Some(Toast {
+                message: update_copy::messages(notice_language)
+                    .pending_title
+                    .to_string(),
+                warning: false,
+            }),
             StartupUpdate::Failed(error) if error.kind == CheckFailureKind::Structural => {
                 Some(Toast {
                     message: format!(
@@ -278,7 +281,9 @@ impl App {
                 ),
                 warning: true,
             }),
-            _ => None,
+            StartupUpdate::None | StartupUpdate::NpmCurrent { .. } | StartupUpdate::Failed(_) => {
+                None
+            }
         };
         Ok(Self {
             config_draft: ConfigDraft::from_settings(&settings),
@@ -304,7 +309,6 @@ impl App {
             update_state: startup_update,
             current_executable: std::env::current_exe()
                 .map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?,
-            home_screen,
             exit_update: None,
             apply_plan: None,
             unapply_plan: None,
@@ -430,8 +434,8 @@ impl App {
             return;
         }
         match self.screen {
-            Screen::UpdateAvailable => self.handle_update_available(key.code),
-            Screen::UpdatePending => self.handle_update_pending(key.code),
+            Screen::Update => self.handle_update(key.code),
+            Screen::UpdateConfirm => self.handle_update_confirm(key.code),
             Screen::Language { first_run } => self.handle_language(key.code, first_run),
             Screen::Main => self.handle_main(key.code),
             Screen::ApplyHome => self.handle_apply_home(key.code),
@@ -474,13 +478,6 @@ impl App {
             Effect::RetryUpdate => {
                 self.update_check = Some((
                     UpdateCheckPurpose::UpdatePage,
-                    crate::update::spawn_update_check(self.paths.clone(), true),
-                ));
-                Ok(())
-            }
-            Effect::RecheckUpdateStatus => {
-                self.update_check = Some((
-                    UpdateCheckPurpose::Status,
                     crate::update::spawn_update_check(self.paths.clone(), true),
                 ));
                 Ok(())
@@ -642,41 +639,63 @@ impl App {
         }
     }
 
-    fn handle_update_available(&mut self, key: KeyCode) {
+    fn handle_update(&mut self, key: KeyCode) {
+        if matches!(
+            key,
+            KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
+        ) && self.detail_viewport.handle_key(key)
+        {
+            return;
+        }
         match key {
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
                 self.selected = 1 - self.selected.min(1);
             }
             KeyCode::Enter if self.selected == 0 => {
-                if let StartupUpdate::Available(plan) = &self.update_state {
-                    self.exit_update = Some(plan.clone());
-                    self.should_quit = true;
+                if matches!(self.update_state, StartupUpdate::Available(_)) {
+                    self.screen = Screen::UpdateConfirm;
+                    self.selected = 0;
+                } else {
+                    self.start_update_check();
                 }
             }
-            KeyCode::Enter | KeyCode::Esc => self.continue_after_update(),
+            KeyCode::Char('r') | KeyCode::Char('R') => self.start_update_check(),
+            KeyCode::Enter | KeyCode::Esc => self.back_to_main(),
             _ => {}
         }
     }
 
-    fn handle_update_pending(&mut self, key: KeyCode) {
+    fn handle_update_confirm(&mut self, key: KeyCode) {
         match key {
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
                 self.selected = 1 - self.selected.min(1);
             }
-            KeyCode::Enter if self.selected == 0 => {
-                self.screen = Screen::UpdateChecking;
-                self.pending = Some(Effect::RetryUpdate);
+            KeyCode::Enter if self.selected == 1 => {
+                if let StartupUpdate::Available(plan) = &self.update_state {
+                    self.exit_update = Some((**plan).clone());
+                    self.should_quit = true;
+                } else {
+                    self.screen = Screen::Update;
+                    self.selected = 0;
+                }
             }
-            KeyCode::Enter | KeyCode::Esc => self.continue_after_update(),
+            KeyCode::Enter | KeyCode::Esc => {
+                self.screen = Screen::Update;
+                self.selected = 0;
+            }
             _ => {}
         }
+    }
+
+    fn start_update_check(&mut self) {
+        self.screen = Screen::UpdateChecking;
+        self.pending = Some(Effect::RetryUpdate);
     }
 
     fn resolve_update_check(&mut self, purpose: UpdateCheckPurpose, result: StartupUpdate) {
         match purpose {
             UpdateCheckPurpose::Startup => self.resolve_startup_update(result),
             UpdateCheckPurpose::UpdatePage => self.resolve_update_page_check(result),
-            UpdateCheckPurpose::Status => self.resolve_status_update_check(result),
         }
     }
 
@@ -696,6 +715,9 @@ impl App {
                     warning: false,
                 });
             }
+            current @ StartupUpdate::NpmCurrent { .. } => {
+                self.update_state = current;
+            }
             StartupUpdate::Failed(error) if error.kind == CheckFailureKind::Structural => {
                 self.update_state = StartupUpdate::Failed(error.clone());
                 self.toast = Some(Toast {
@@ -704,124 +726,35 @@ impl App {
                 });
             }
             StartupUpdate::InstallFailed(error) => {
+                self.update_state = StartupUpdate::InstallFailed(error.clone());
                 self.toast = Some(Toast {
                     message: format!("{}: {error}", self.update_messages().update_failed),
                     warning: true,
                 });
             }
-            StartupUpdate::None | StartupUpdate::Failed(_) => {
+            failed @ StartupUpdate::Failed(_) => {
+                self.update_state = failed;
+            }
+            StartupUpdate::None => {
                 self.update_state = StartupUpdate::None;
             }
         }
     }
 
     fn resolve_update_page_check(&mut self, result: StartupUpdate) {
-        match result {
-            StartupUpdate::None => {
-                self.update_state = StartupUpdate::None;
-                self.continue_after_update();
-                self.toast = Some(Toast {
-                    message: self.update_messages().up_to_date.to_string(),
-                    warning: false,
-                });
-            }
-            available @ StartupUpdate::Available(_) => {
-                self.update_state = available;
-                self.screen = Screen::UpdateAvailable;
-                self.selected = 0;
-            }
-            pending @ StartupUpdate::NpmPending { .. } => {
-                self.update_state = pending;
-                self.screen = Screen::UpdatePending;
-                self.selected = 0;
-            }
-            StartupUpdate::Failed(error) => {
-                self.screen = Screen::UpdatePending;
-                self.selected = 0;
-                if error.kind == CheckFailureKind::Structural {
-                    self.toast = Some(Toast {
-                        message: format!(
-                            "{}: {}",
-                            self.update_messages().check_failed,
-                            error.message
-                        ),
-                        warning: true,
-                    });
-                }
-            }
-            StartupUpdate::InstallFailed(error) => {
-                self.continue_after_update();
-                self.toast = Some(Toast {
-                    message: format!("{}: {error}", self.update_messages().update_failed),
-                    warning: true,
-                });
-            }
-        }
-    }
-
-    fn resolve_status_update_check(&mut self, result: StartupUpdate) {
-        self.update_state = match result {
-            StartupUpdate::None => {
-                self.toast = Some(Toast {
-                    message: self.update_messages().up_to_date.to_string(),
-                    warning: false,
-                });
-                StartupUpdate::None
-            }
-            available @ StartupUpdate::Available(_) => {
-                self.toast = Some(Toast {
-                    message: self.update_messages().available_title.to_string(),
-                    warning: false,
-                });
-                available
-            }
-            pending @ StartupUpdate::NpmPending { .. } => {
-                self.toast = Some(Toast {
-                    message: self.update_messages().pending_title.to_string(),
-                    warning: false,
-                });
-                pending
-            }
-            StartupUpdate::Failed(error) => {
-                if error.kind == CheckFailureKind::Structural {
-                    self.toast = Some(Toast {
-                        message: format!(
-                            "{}: {}",
-                            self.update_messages().check_failed,
-                            error.message
-                        ),
-                        warning: true,
-                    });
-                    StartupUpdate::Failed(error)
-                } else {
-                    StartupUpdate::None
-                }
-            }
-            StartupUpdate::InstallFailed(error) => {
-                self.toast = Some(Toast {
-                    message: format!("{}: {error}", self.update_messages().update_failed),
-                    warning: true,
-                });
-                StartupUpdate::InstallFailed(error)
-            }
-        };
-        let report = doctor::run(&self.paths);
-        self.status = if report.checks.is_empty() {
-            StatusState::Empty
-        } else {
-            StatusState::Ready(report)
-        };
-        self.screen = Screen::Status;
+        let current = matches!(
+            result,
+            StartupUpdate::None | StartupUpdate::NpmCurrent { .. }
+        );
+        self.update_state = result;
+        self.screen = Screen::Update;
         self.selected = 0;
-    }
-
-    fn continue_after_update(&mut self) {
-        self.screen = self.home_screen;
-        self.selected = if matches!(self.home_screen, Screen::Language { .. }) {
-            language_index(self.language)
-        } else {
-            0
-        };
+        if current {
+            self.toast = Some(Toast {
+                message: self.update_messages().up_to_date.to_string(),
+                warning: false,
+            });
+        }
     }
 
     fn handle_language(&mut self, key: KeyCode, first_run: bool) {
@@ -839,8 +772,8 @@ impl App {
 
     fn handle_main(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Up | KeyCode::Char('k') => self.move_previous(6),
-            KeyCode::Down | KeyCode::Char('j') => self.move_next(6),
+            KeyCode::Up | KeyCode::Char('k') => self.move_previous(7),
+            KeyCode::Down | KeyCode::Char('j') => self.move_next(7),
             KeyCode::Enter => match self.selected {
                 0 => self.set_screen(Screen::ApplyHome),
                 1 => {
@@ -860,22 +793,21 @@ impl App {
                     self.pending = Some(Effect::LoadJobs);
                 }
                 3 => {
+                    self.set_screen(Screen::Update);
+                }
+                4 => {
                     self.status = StatusState::Loading;
                     self.screen = Screen::Status;
                     self.pending = Some(Effect::RunDoctor);
                 }
-                4 => self.set_screen(Screen::About),
-                5 => {
+                5 => self.set_screen(Screen::About),
+                6 => {
                     self.selected = language_index(self.language);
                     self.screen = Screen::Language { first_run: false };
                 }
                 _ => {}
             },
-            KeyCode::Char('u') | KeyCode::Char('U') => match &self.update_state {
-                StartupUpdate::Available(_) => self.set_screen(Screen::UpdateAvailable),
-                StartupUpdate::NpmPending { .. } => self.set_screen(Screen::UpdatePending),
-                _ => {}
-            },
+            KeyCode::Char('u') | KeyCode::Char('U') => self.set_screen(Screen::Update),
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             _ => {}
         }
@@ -1105,8 +1037,7 @@ impl App {
                 self.pending = Some(Effect::RunDoctor);
             }
             KeyCode::Char('u') | KeyCode::Char('U') => {
-                self.screen = Screen::UpdateChecking;
-                self.pending = Some(Effect::RecheckUpdateStatus);
+                self.set_screen(Screen::Update);
             }
             KeyCode::Esc => self.back_to_main(),
             _ => {}
@@ -1160,7 +1091,6 @@ impl App {
                     }
                     Effect::KillJob { .. } => Screen::JobsKilling,
                     Effect::RetryUpdate => Screen::UpdateChecking,
-                    Effect::RecheckUpdateStatus => Screen::UpdateChecking,
                 };
                 self.pending = Some(effect);
             }
@@ -1325,11 +1255,14 @@ fn language_index(language: Language) -> usize {
 mod tests {
     use super::{App, Effect, Screen};
     use crate::control::paths::ControlPaths;
-    use crate::control::settings::{Tier, ToolBudgetLevel};
+    use crate::control::settings::{Tier, ToolBudgetLevel, UpdateSource};
     use crate::shell::jobs::{JobSourceSummary, JobSummary, JobSummaryStatus};
     use crate::tui::config::{ConfigCursor, ConfigItemId, ConfigValue};
     use crate::tui::jobs::{JobsDetail, JobsState};
-    use crate::update::{CheckFailure, CheckFailureKind, StartupUpdate, UpdatePlan};
+    use crate::update::{
+        CheckFailure, CheckFailureKind, NpmDiscovery, NpmRegistryProbe, NpmVersionAuthority,
+        StartupUpdate, UpdatePlan,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1348,6 +1281,31 @@ mod tests {
         std::fs::write(&executable, b"binary").unwrap();
         let app = App::for_test(paths, executable);
         (temp, app)
+    }
+
+    fn pending_discovery(target_version: &str) -> NpmDiscovery {
+        NpmDiscovery {
+            source_policy: "auto".to_string(),
+            configured_registry: Some("https://registry.npmmirror.com/".to_string()),
+            target_version: target_version.to_string(),
+            authority: NpmVersionAuthority::Official,
+            github_version: Some(target_version.to_string()),
+            official_version: Some(target_version.to_string()),
+            platform_package: "@fastctx/test-platform".to_string(),
+            probes: vec![NpmRegistryProbe {
+                source_name: "npmmirror".to_string(),
+                registry: "https://registry.npmmirror.com/".to_string(),
+                reachable: true,
+                latest_version: Some("0.1.0".to_string()),
+                main_package_ready: false,
+                platform_package_ready: false,
+                error: None,
+                error_kind: None,
+            }],
+            selected_registry: None,
+            selected_source: None,
+            selection_reason: "the configured source is still propagating".to_string(),
+        }
     }
 
     fn job(id: &str) -> JobSummary {
@@ -1546,13 +1504,15 @@ mod tests {
             ConfigItemId::JobStorageLimit,
             ConfigItemId::MaxRunningJobs,
             ConfigItemId::JobListLimit,
+            ConfigItemId::UpdateAutoCheck,
+            ConfigItemId::UpdateSource,
         ] {
             assert_eq!(app.config_cursor.entry().item, expected);
             app.handle_key(key(KeyCode::Down));
         }
         assert_eq!(app.config_cursor, ConfigCursor::default());
         app.handle_key(key(KeyCode::Up));
-        assert_eq!(app.config_cursor.entry().item, ConfigItemId::JobListLimit);
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::UpdateSource);
     }
 
     #[test]
@@ -1564,8 +1524,18 @@ mod tests {
 
         app.handle_key(key(KeyCode::Tab));
         assert_eq!(app.config_cursor.entry().item, ConfigItemId::FastShell);
-        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT));
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(
+            app.config_cursor.entry().item,
+            ConfigItemId::UpdateAutoCheck
+        );
+        app.handle_key(key(KeyCode::Tab));
         assert_eq!(app.config_cursor.entry().item, ConfigItemId::OutputTier);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT));
+        assert_eq!(
+            app.config_cursor.entry().item,
+            ConfigItemId::UpdateAutoCheck
+        );
         app.handle_key(key(KeyCode::BackTab));
         assert_eq!(app.config_cursor.entry().item, ConfigItemId::FastShell);
     }
@@ -1629,6 +1599,34 @@ mod tests {
         assert_eq!(persisted.fastshell.job_storage_limit_mib, 2_048);
         assert_eq!(persisted.fastshell.max_running_jobs, 256);
         assert_eq!(persisted.fastshell.job_list_limit, 50);
+        assert!(persisted.applied.is_none());
+    }
+
+    #[test]
+    fn update_preferences_save_immediately_without_apply() {
+        let (_temp, mut app) = fixture();
+        app.settings.language = Some("en".to_string());
+        app.screen = Screen::Config;
+        app.config_cursor = ConfigCursor::default().next_group().next_group();
+        assert_eq!(
+            app.config_cursor.entry().item,
+            ConfigItemId::UpdateAutoCheck
+        );
+
+        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::UpdateSource);
+        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+
+        assert_eq!(app.screen, Screen::Main);
+        assert!(!app.settings.update.auto_check);
+        assert_eq!(app.settings.update.source, UpdateSource::NpmConfig);
+        assert!(app.settings.applied.is_none());
+        let persisted = crate::control::settings::load(&app.paths).unwrap();
+        assert!(!persisted.update.auto_check);
+        assert_eq!(persisted.update.source, UpdateSource::NpmConfig);
         assert!(persisted.applied.is_none());
     }
 
@@ -1825,14 +1823,16 @@ mod tests {
             checksums_url: "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/SHA256SUMS"
                 .to_string(),
         };
-        sender.send(StartupUpdate::Available(plan.clone())).unwrap();
+        sender
+            .send(StartupUpdate::Available(Box::new(plan.clone())))
+            .unwrap();
         app.poll_update_check();
         assert_eq!(app.screen, Screen::Main);
-        assert_eq!(app.update_state, StartupUpdate::Available(plan));
+        assert_eq!(app.update_state, StartupUpdate::Available(Box::new(plan)));
         assert_eq!(app.toast.as_ref().map(|toast| toast.warning), Some(false));
 
         app.handle_key(key(KeyCode::Char('u')));
-        assert_eq!(app.screen, Screen::UpdateAvailable);
+        assert_eq!(app.screen, Screen::Update);
     }
 
     #[test]
@@ -1868,7 +1868,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_update_precedes_first_run_and_supports_update_or_continue() {
+    fn startup_update_never_preempts_first_run_and_the_update_page_confirms_installation() {
         let temp = tempfile::tempdir().unwrap();
         let paths = ControlPaths::for_home(temp.path());
         let plan = UpdatePlan::GithubRelease {
@@ -1879,26 +1879,41 @@ mod tests {
             checksums_url: "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/SHA256SUMS"
                 .to_string(),
         };
-        let mut app =
-            App::load_with_startup(paths.clone(), StartupUpdate::Available(plan.clone()), None)
-                .unwrap();
-        assert_eq!(app.screen, Screen::UpdateAvailable);
+        let mut app = App::load_with_startup(
+            paths.clone(),
+            StartupUpdate::Available(Box::new(plan.clone())),
+            None,
+        )
+        .unwrap();
+        assert_eq!(app.screen, Screen::Language { first_run: true });
+        assert_eq!(
+            app.toast.as_ref().map(|toast| toast.message.as_str()),
+            Some(app.update_messages().available_title)
+        );
+        app.set_screen(Screen::Update);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::UpdateConfirm);
+        assert!(!app.should_quit);
+        app.handle_key(key(KeyCode::Right));
         app.handle_key(key(KeyCode::Enter));
         assert!(app.should_quit);
         assert_eq!(app.take_update_plan(), Some(plan));
 
+        let discovery = pending_discovery("0.2.0");
         let mut app = App::load_with_startup(
             paths,
             StartupUpdate::NpmPending {
-                release_version: "0.2.0".to_string(),
-                registry_version: "0.1.0".to_string(),
+                target_version: "0.2.0".to_string(),
+                discovery: Box::new(discovery),
             },
             None,
         )
         .unwrap();
-        assert_eq!(app.screen, Screen::UpdatePending);
-        app.handle_key(key(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Language { first_run: true });
+        assert_eq!(
+            app.toast.as_ref().map(|toast| toast.message.as_str()),
+            Some(app.update_messages().pending_title)
+        );
         assert!(!app.should_quit);
         assert!(app.take_update_plan().is_none());
 

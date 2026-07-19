@@ -1,13 +1,13 @@
 //! Versioned, machine-private update-check cache and last-attempt status.
 
-use super::model::CheckFailureKind;
+use super::model::{CheckFailureKind, NpmDiscovery, NpmVersionAuthority};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 const MAX_RECORD_BYTES: u64 = 64 * 1024;
 pub(crate) const SUCCESS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 static RECORD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -16,16 +16,10 @@ static RECORD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[serde(tag = "result", rename_all = "kebab-case")]
 pub(crate) enum CachedOutcome {
     Current,
-    GithubAvailable {
-        target_version: String,
-    },
-    NpmAvailable {
-        target_version: String,
-    },
-    NpmPending {
-        release_version: String,
-        registry_version: String,
-    },
+    GithubAvailable { target_version: String },
+    NpmCurrent { discovery: NpmDiscovery },
+    NpmAvailable { discovery: NpmDiscovery },
+    NpmPending { discovery: NpmDiscovery },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -34,10 +28,12 @@ enum LastOutcome {
     Current,
     Available {
         target_version: String,
+        source: Option<String>,
     },
     NpmPending {
-        release_version: String,
-        registry_version: String,
+        target_version: String,
+        source: Option<String>,
+        authority: NpmVersionAuthority,
     },
     Failed {
         kind: CheckFailureKind,
@@ -172,14 +168,28 @@ pub(crate) fn status(directory: &Path, channel_key: &str, current_version: &str)
     let timestamp = format_utc(record.checked_at_unix);
     let result = match record.outcome {
         LastOutcome::Current => format!("checked {timestamp}; v{current_version} is current"),
-        LastOutcome::Available { target_version } => {
-            format!("checked {timestamp}; v{target_version} is available")
+        LastOutcome::Available {
+            target_version,
+            source,
+        } => {
+            let source = source
+                .map(|source| format!(" from {source}"))
+                .unwrap_or_default();
+            format!("checked {timestamp}; v{target_version} is available{source}")
         }
         LastOutcome::NpmPending {
-            release_version,
-            registry_version,
+            target_version,
+            source,
+            authority,
         } => format!(
-            "checked {timestamp}; GitHub has v{release_version}, while npm currently has v{registry_version}"
+            "checked {timestamp}; v{target_version} is known via {}, but {} is not yet complete",
+            match authority {
+                NpmVersionAuthority::Official => "official version authority",
+                NpmVersionAuthority::MirrorFallback => {
+                    "a mirror because both official channels were unavailable"
+                }
+            },
+            source.unwrap_or_else(|| "the configured source set".to_string())
         ),
         LastOutcome::Failed { kind, message } => format!(
             "checked {timestamp}; {} failure: {message}",
@@ -195,16 +205,19 @@ pub(crate) fn status(directory: &Path, channel_key: &str, current_version: &str)
 fn last_success(outcome: &CachedOutcome) -> LastOutcome {
     match outcome {
         CachedOutcome::Current => LastOutcome::Current,
-        CachedOutcome::GithubAvailable { target_version }
-        | CachedOutcome::NpmAvailable { target_version } => LastOutcome::Available {
+        CachedOutcome::GithubAvailable { target_version } => LastOutcome::Available {
             target_version: target_version.clone(),
+            source: Some("GitHub Release".to_string()),
         },
-        CachedOutcome::NpmPending {
-            release_version,
-            registry_version,
-        } => LastOutcome::NpmPending {
-            release_version: release_version.clone(),
-            registry_version: registry_version.clone(),
+        CachedOutcome::NpmCurrent { .. } => LastOutcome::Current,
+        CachedOutcome::NpmAvailable { discovery } => LastOutcome::Available {
+            target_version: discovery.target_version.clone(),
+            source: discovery.selected_registry.clone(),
+        },
+        CachedOutcome::NpmPending { discovery } => LastOutcome::NpmPending {
+            target_version: discovery.target_version.clone(),
+            source: discovery.selected_registry.clone(),
+            authority: discovery.authority,
         },
     }
 }

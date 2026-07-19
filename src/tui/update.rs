@@ -18,13 +18,20 @@ pub(crate) struct UpdateMessages {
     pub(crate) updated: &'static str,
     pub(crate) updated_runtime: &'static str,
     pub(crate) runtime_unchanged: &'static str,
+    pub(crate) page_title: &'static str,
+    pub(crate) auto_check_label: &'static str,
+    pub(crate) source_label: &'static str,
+    pub(crate) auto_check_note: &'static str,
+    pub(crate) source_note: &'static str,
+    pub(crate) sources_title: &'static str,
 }
 
 macro_rules! update_messages {
     ($available_title:expr, $available_body:expr, $pending_title:expr, $pending_body:expr,
      $action_update:expr, $action_continue:expr, $action_check:expr, $checking:expr, $check_failed:expr,
      $update_failed:expr, $up_to_date:expr, $updated:expr, $updated_runtime:expr,
-     $runtime_unchanged:expr $(,)?) => {
+     $runtime_unchanged:expr, $page_title:expr, $auto_check_label:expr, $source_label:expr,
+     $auto_check_note:expr, $source_note:expr, $sources_title:expr $(,)?) => {
         UpdateMessages {
             available_title: $available_title,
             available_body: $available_body,
@@ -40,6 +47,12 @@ macro_rules! update_messages {
             updated: $updated,
             updated_runtime: $updated_runtime,
             runtime_unchanged: $runtime_unchanged,
+            page_title: $page_title,
+            auto_check_label: $auto_check_label,
+            source_label: $source_label,
+            auto_check_note: $auto_check_note,
+            source_note: $source_note,
+            sources_title: $sources_title,
         }
     };
 }
@@ -59,6 +72,12 @@ const EN: UpdateMessages = update_messages!(
     "Updated to v{version}.",
     "Updated to v{version}. The Codex runtime was updated too.",
     "Updated to v{version}, but the Codex runtime was left unchanged",
+    "Updates",
+    "Automatic checks",
+    "Download source",
+    "Check silently when the TUI starts. Manual checks always remain available.",
+    "Choose how npm download sources are selected. The version still comes from official authority.",
+    "Source checks",
 );
 
 const ZH_CN: UpdateMessages = update_messages!(
@@ -76,6 +95,12 @@ const ZH_CN: UpdateMessages = update_messages!(
     "已更新至 v{version}。",
     "已更新至 v{version}，Codex 运行环境也已同步。",
     "已更新至 v{version}，但 Codex 运行环境保持不变",
+    "更新",
+    "自动检查",
+    "下载源",
+    "TUI 启动时静默检查；手动检查始终可用。",
+    "选择 npm 下载源的选取方式；目标版本仍以官方权威为准。",
+    "来源探测",
 );
 
 const ZH_TW: UpdateMessages = update_messages!(
@@ -93,6 +118,12 @@ const ZH_TW: UpdateMessages = update_messages!(
     "已更新至 v{version}。",
     "已更新至 v{version}，Codex 執行環境也已同步。",
     "已更新至 v{version}，但 Codex 執行環境維持不變",
+    "更新",
+    "自動檢查",
+    "下載來源",
+    "TUI 啟動時靜默檢查；手動檢查始終可用。",
+    "選擇 npm 下載來源的選取方式；目標版本仍以官方權威為準。",
+    "來源檢查",
 );
 
 const JA: UpdateMessages = update_messages!(
@@ -110,6 +141,12 @@ const JA: UpdateMessages = update_messages!(
     "v{version} に更新しました。",
     "v{version} に更新し、Codex ランタイムも同期しました。",
     "v{version} に更新しましたが、Codex ランタイムは変更していません",
+    "アップデート",
+    "自動確認",
+    "ダウンロード元",
+    "TUI の起動時に静かに確認します。手動確認は常に利用できます。",
+    "npm のダウンロード元を選びます。対象バージョンは公式情報を基準にします。",
+    "入手元の確認",
 );
 
 const KO: UpdateMessages = update_messages!(
@@ -127,6 +164,12 @@ const KO: UpdateMessages = update_messages!(
     "v{version} 업데이트를 완료했습니다.",
     "v{version} 업데이트를 완료했으며 Codex 런타임도 동기화했습니다.",
     "v{version} 업데이트를 완료했지만 Codex 런타임은 변경하지 않았습니다",
+    "업데이트",
+    "자동 확인",
+    "다운로드 소스",
+    "TUI 시작 시 조용히 확인합니다. 수동 확인은 항상 사용할 수 있습니다.",
+    "npm 다운로드 소스 선택 방식을 정합니다. 대상 버전은 공식 권한을 따릅니다.",
+    "소스 확인",
 );
 
 const ES: UpdateMessages = update_messages!(
@@ -144,6 +187,12 @@ const ES: UpdateMessages = update_messages!(
     "Actualizado a v{version}.",
     "Actualizado a v{version}. El entorno de Codex también se sincronizó.",
     "Actualizado a v{version}, pero el entorno de Codex no cambió",
+    "Actualizaciones",
+    "Comprobación automática",
+    "Origen de descarga",
+    "Comprueba silenciosamente al iniciar la TUI. La comprobación manual siempre está disponible.",
+    "Elige cómo se seleccionan los orígenes npm. La versión sigue viniendo de la autoridad oficial.",
+    "Comprobación de orígenes",
 );
 
 const FR: UpdateMessages = update_messages!(
@@ -161,6 +210,12 @@ const FR: UpdateMessages = update_messages!(
     "Mise à jour vers v{version} effectuée.",
     "Mise à jour vers v{version} effectuée. L'environnement Codex a aussi été synchronisé.",
     "Mise à jour vers v{version} effectuée, mais l'environnement Codex reste inchangé",
+    "Mises à jour",
+    "Vérification automatique",
+    "Source de téléchargement",
+    "Vérifie discrètement au démarrage de la TUI. La vérification manuelle reste disponible.",
+    "Choisissez la sélection des sources npm. La version reste déterminée par l'autorité officielle.",
+    "Vérification des sources",
 );
 
 const DE: UpdateMessages = update_messages!(
@@ -178,6 +233,12 @@ const DE: UpdateMessages = update_messages!(
     "Auf v{version} aktualisiert.",
     "Auf v{version} aktualisiert. Die Codex-Laufzeit wurde ebenfalls synchronisiert.",
     "Auf v{version} aktualisiert, aber die Codex-Laufzeit blieb unverändert",
+    "Updates",
+    "Automatische Prüfung",
+    "Downloadquelle",
+    "Prüft beim TUI-Start unauffällig. Manuelle Prüfungen bleiben immer verfügbar.",
+    "Legt die Auswahl der npm-Quellen fest. Die Version stammt weiterhin von offizieller Stelle.",
+    "Quellenprüfung",
 );
 
 const PT_BR: UpdateMessages = update_messages!(
@@ -195,6 +256,12 @@ const PT_BR: UpdateMessages = update_messages!(
     "Atualizado para v{version}.",
     "Atualizado para v{version}. O ambiente do Codex também foi sincronizado.",
     "Atualizado para v{version}, mas o ambiente do Codex permaneceu inalterado",
+    "Atualizações",
+    "Verificação automática",
+    "Origem do download",
+    "Verifica silenciosamente ao iniciar a TUI. A verificação manual permanece disponível.",
+    "Escolha como as origens npm são selecionadas. A versão continua vindo da autoridade oficial.",
+    "Verificação de origens",
 );
 
 const RU: UpdateMessages = update_messages!(
@@ -212,6 +279,12 @@ const RU: UpdateMessages = update_messages!(
     "Обновлено до v{version}.",
     "Обновлено до v{version}. Среда Codex также синхронизирована.",
     "Обновлено до v{version}, но среда Codex осталась без изменений",
+    "Обновления",
+    "Автоматическая проверка",
+    "Источник загрузки",
+    "Тихо проверять при запуске TUI. Ручная проверка доступна всегда.",
+    "Выберите порядок источников npm. Версия по-прежнему определяется официальными каналами.",
+    "Проверка источников",
 );
 
 const IT: UpdateMessages = update_messages!(
@@ -229,6 +302,12 @@ const IT: UpdateMessages = update_messages!(
     "Aggiornato alla v{version}.",
     "Aggiornato alla v{version}. Anche l'ambiente Codex è stato sincronizzato.",
     "Aggiornato alla v{version}, ma l'ambiente Codex è rimasto invariato",
+    "Aggiornamenti",
+    "Controllo automatico",
+    "Origine download",
+    "Controlla silenziosamente all'avvio della TUI. Il controllo manuale resta sempre disponibile.",
+    "Scegli come selezionare le origini npm. La versione resta determinata dall'autorità ufficiale.",
+    "Controllo origini",
 );
 
 const TR: UpdateMessages = update_messages!(
@@ -246,6 +325,12 @@ const TR: UpdateMessages = update_messages!(
     "v{version} sürümüne güncellendi.",
     "v{version} sürümüne güncellendi. Codex çalışma ortamı da eşitlendi.",
     "v{version} sürümüne güncellendi, ancak Codex çalışma ortamı değişmedi",
+    "Güncellemeler",
+    "Otomatik denetim",
+    "İndirme kaynağı",
+    "TUI başlarken sessizce denetler. Elle denetim her zaman kullanılabilir.",
+    "npm indirme kaynaklarının nasıl seçileceğini belirler. Sürüm yine resmî kaynaktan gelir.",
+    "Kaynak denetimleri",
 );
 
 const PL: UpdateMessages = update_messages!(
@@ -263,6 +348,12 @@ const PL: UpdateMessages = update_messages!(
     "Zaktualizowano do v{version}.",
     "Zaktualizowano do v{version}. Środowisko Codex również zsynchronizowano.",
     "Zaktualizowano do v{version}, ale środowisko Codex pozostało bez zmian",
+    "Aktualizacje",
+    "Automatyczne sprawdzanie",
+    "Źródło pobierania",
+    "Sprawdza po cichu przy starcie TUI. Ręczne sprawdzanie jest zawsze dostępne.",
+    "Wybierz sposób doboru źródeł npm. Wersja nadal pochodzi z oficjalnego źródła.",
+    "Sprawdzanie źródeł",
 );
 
 const NL: UpdateMessages = update_messages!(
@@ -280,6 +371,12 @@ const NL: UpdateMessages = update_messages!(
     "Bijgewerkt naar v{version}.",
     "Bijgewerkt naar v{version}. De Codex-runtime is ook gesynchroniseerd.",
     "Bijgewerkt naar v{version}, maar de Codex-runtime bleef ongewijzigd",
+    "Updates",
+    "Automatisch controleren",
+    "Downloadbron",
+    "Controleert stil bij het starten van de TUI. Handmatig controleren blijft altijd mogelijk.",
+    "Kies hoe npm-bronnen worden geselecteerd. De versie blijft van de officiële autoriteit komen.",
+    "Broncontroles",
 );
 
 const VI: UpdateMessages = update_messages!(
@@ -297,6 +394,12 @@ const VI: UpdateMessages = update_messages!(
     "Đã cập nhật lên v{version}.",
     "Đã cập nhật lên v{version}. Môi trường Codex cũng đã được đồng bộ.",
     "Đã cập nhật lên v{version}, nhưng môi trường Codex không thay đổi",
+    "Bản cập nhật",
+    "Tự động kiểm tra",
+    "Nguồn tải xuống",
+    "Kiểm tra âm thầm khi TUI khởi động. Luôn có thể kiểm tra thủ công.",
+    "Chọn cách dùng nguồn tải npm. Phiên bản vẫn do nguồn chính thức quyết định.",
+    "Kiểm tra nguồn",
 );
 
 const ID: UpdateMessages = update_messages!(
@@ -314,6 +417,12 @@ const ID: UpdateMessages = update_messages!(
     "Diperbarui ke v{version}.",
     "Diperbarui ke v{version}. Lingkungan Codex juga telah disinkronkan.",
     "Diperbarui ke v{version}, tetapi lingkungan Codex tidak diubah",
+    "Pembaruan",
+    "Pemeriksaan otomatis",
+    "Sumber unduhan",
+    "Memeriksa secara senyap saat TUI dimulai. Pemeriksaan manual selalu tersedia.",
+    "Pilih cara sumber npm ditentukan. Versi tetap berasal dari otoritas resmi.",
+    "Pemeriksaan sumber",
 );
 
 const UK: UpdateMessages = update_messages!(
@@ -331,6 +440,12 @@ const UK: UpdateMessages = update_messages!(
     "Оновлено до v{version}.",
     "Оновлено до v{version}. Середовище Codex також синхронізовано.",
     "Оновлено до v{version}, але середовище Codex залишилося без змін",
+    "Оновлення",
+    "Автоматична перевірка",
+    "Джерело завантаження",
+    "Тихо перевіряє під час запуску TUI. Ручна перевірка завжди доступна.",
+    "Виберіть порядок джерел npm. Версія й надалі визначається офіційними каналами.",
+    "Перевірка джерел",
 );
 
 pub(crate) const fn messages(language: Language) -> &'static UpdateMessages {
@@ -379,6 +494,12 @@ mod tests {
                 messages.updated,
                 messages.updated_runtime,
                 messages.runtime_unchanged,
+                messages.page_title,
+                messages.auto_check_label,
+                messages.source_label,
+                messages.auto_check_note,
+                messages.source_note,
+                messages.sources_title,
             ] {
                 assert!(!value.trim().is_empty(), "{}", language.code());
             }

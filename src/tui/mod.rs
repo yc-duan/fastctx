@@ -23,7 +23,7 @@ use std::time::Duration;
 
 pub(crate) enum TuiOutcome {
     Exit,
-    Update(crate::update::UpdatePlan),
+    Update(Box<crate::update::UpdatePlan>),
 }
 
 /// Starts the full-screen TUI and restores the terminal on every exit path.
@@ -199,7 +199,7 @@ fn run_loop(
         app.poll_update_check();
         if app.should_quit {
             return Ok(match app.take_update_plan() {
-                Some(plan) => TuiOutcome::Update(plan),
+                Some(plan) => TuiOutcome::Update(Box::new(plan)),
                 None => TuiOutcome::Exit,
             });
         }

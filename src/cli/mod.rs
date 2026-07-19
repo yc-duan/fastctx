@@ -204,7 +204,7 @@ fn run_tui(
         crate::tui::TuiOutcome::Update(plan) => {
             let current_executable = std::env::current_exe()
                 .map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?;
-            match crate::update::begin_update(&paths, plan, &current_executable)? {
+            match crate::update::begin_update(&paths, *plan, &current_executable)? {
                 crate::update::UpdateStart::Completed => Ok(ExitCode::SUCCESS),
                 crate::update::UpdateStart::NpmLauncherWait => {
                     Ok(ExitCode::from(crate::update::NPM_LAUNCHER_WAIT_EXIT_CODE))

@@ -37,6 +37,104 @@ pub struct JobLimitStatus {
     pub list_limit_fell_back: bool,
 }
 
+/// Effective machine-level update settings plus persisted-value diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UpdateSettingsStatus {
+    /// Whether TUI startup checks are enabled.
+    pub auto_check: bool,
+    /// Effective npm update-source policy.
+    pub source: UpdateSource,
+    /// Whether a present persisted source value was invalid and fell back to `auto`.
+    pub source_fell_back: bool,
+}
+
+/// npm download-source policy for source-aware updates.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateSource {
+    /// Probe the effective npm registry, official npm, and npmmirror in deterministic order.
+    #[default]
+    Auto,
+    /// Strictly use the registry returned by `npm config get registry`.
+    NpmConfig,
+    /// Strictly use the official npm registry.
+    Official,
+    /// Strictly use registry.npmmirror.com.
+    Npmmirror,
+}
+
+impl UpdateSource {
+    /// Stable configuration value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::NpmConfig => "npm-config",
+            Self::Official => "official",
+            Self::Npmmirror => "npmmirror",
+        }
+    }
+
+    /// Parses a persisted source value, returning `None` for an unsupported value.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "npm-config" => Some(Self::NpmConfig),
+            "official" => Some(Self::Official),
+            "npmmirror" => Some(Self::Npmmirror),
+            _ => None,
+        }
+    }
+
+    /// Selects the previous source cyclically.
+    pub const fn previous(self) -> Self {
+        match self {
+            Self::Auto => Self::Npmmirror,
+            Self::NpmConfig => Self::Auto,
+            Self::Official => Self::NpmConfig,
+            Self::Npmmirror => Self::Official,
+        }
+    }
+
+    /// Selects the next source cyclically.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Auto => Self::NpmConfig,
+            Self::NpmConfig => Self::Official,
+            Self::Official => Self::Npmmirror,
+            Self::Npmmirror => Self::Auto,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for UpdateSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(value.as_str().and_then(Self::parse).unwrap_or(Self::Auto))
+    }
+}
+
+/// Machine-level update preferences saved independently from Apply.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Whether TUI startup should automatically check for updates.
+    pub auto_check: bool,
+    /// npm download-source policy.
+    pub source: UpdateSource,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            source: UpdateSource::Auto,
+        }
+    }
+}
+
 /// Codex host output tier.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -337,6 +435,8 @@ pub struct FastCtxSettings {
     pub tool_budgets: ToolBudgets,
     /// Optional fastshell server, disabled by default.
     pub fastshell: FastShellSettings,
+    /// Machine-level update preferences, effective immediately when saved.
+    pub update: UpdateSettings,
     /// Legacy config key accepted but omitted from every newly written settings file.
     #[serde(default, skip_serializing)]
     pub fastedit: FeatureToggle,
@@ -353,6 +453,7 @@ impl Default for FastCtxSettings {
             tier: Tier::Standard,
             tool_budgets: ToolBudgets::default(),
             fastshell: FastShellSettings::default(),
+            update: UpdateSettings::default(),
             fastedit: FeatureToggle::default(),
             applied: None,
         }
@@ -406,6 +507,41 @@ pub fn job_limit_status(paths: &ControlPaths) -> Result<JobLimitStatus, String> 
         storage_limit_fell_back: invalid("job_storage_limit_mib", None),
         running_limit_fell_back: invalid("max_running_jobs", None),
         list_limit_fell_back: invalid("job_list_limit", Some(MAX_JOB_LIST_LIMIT as i64)),
+    })
+}
+
+/// Inspects raw update settings so Status can report an invalid-source fallback.
+pub fn update_settings_status(paths: &ControlPaths) -> Result<UpdateSettingsStatus, String> {
+    let settings = load(paths)?;
+    let source = match fs::read_to_string(&paths.fastctx_config) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(format!(
+                "Cannot read fastctx settings {}: {error}",
+                crate::paths::display_path(&paths.fastctx_config)
+            ));
+        }
+    };
+    let source_fell_back = if source.is_empty() {
+        false
+    } else {
+        let document = source.parse::<toml_edit::DocumentMut>().map_err(|error| {
+            format!(
+                "Cannot parse fastctx settings {}: {error}. Repair or remove the file and retry.",
+                crate::paths::display_path(&paths.fastctx_config)
+            )
+        })?;
+        document
+            .get("update")
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|table| table.get("source"))
+            .is_some_and(|item| item.as_str().and_then(UpdateSource::parse).is_none())
+    };
+    Ok(UpdateSettingsStatus {
+        auto_check: settings.update.auto_check,
+        source: settings.update.source,
+        source_fell_back,
     })
 }
 
@@ -533,8 +669,8 @@ pub fn save(paths: &ControlPaths, settings: &FastCtxSettings) -> Result<bool, St
 mod tests {
     use super::{
         CURRENT_SCHEMA_VERSION, DEFAULT_JOB_LIST_LIMIT, DEFAULT_JOB_STORAGE_LIMIT_MIB,
-        DEFAULT_MAX_RUNNING_JOBS, MAX_JOB_LIST_LIMIT, ManagedFileRecord, Tier, encode,
-        job_limit_status, load_from,
+        DEFAULT_MAX_RUNNING_JOBS, MAX_JOB_LIST_LIMIT, ManagedFileRecord, Tier, UpdateSource,
+        encode, job_limit_status, load_from, update_settings_status,
     };
     use crate::control::paths::ControlPaths;
 
@@ -562,6 +698,28 @@ mod tests {
         assert!(error.contains("Unsupported fastctx language \"bogus\""));
         assert!(error.contains("zh-CN"));
         assert!(error.contains("uk"));
+    }
+
+    #[test]
+    fn invalid_update_source_falls_back_to_auto_and_remains_diagnosable() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        std::fs::write(
+            &paths.fastctx_config,
+            b"schema_version = 1\n\n[update]\nauto_check = false\nsource = \"untrusted-mirror\"\n",
+        )
+        .unwrap();
+
+        let settings = load_from(&paths.fastctx_config).unwrap();
+        assert!(!settings.update.auto_check);
+        assert_eq!(settings.update.source, UpdateSource::Auto);
+        let status = update_settings_status(&paths).unwrap();
+        assert!(!status.auto_check);
+        assert_eq!(status.source, UpdateSource::Auto);
+        assert!(status.source_fell_back);
+        let encoded = String::from_utf8(encode(&settings).unwrap()).unwrap();
+        assert!(encoded.contains("[update]\nauto_check = false\nsource = \"auto\""));
     }
 
     #[test]

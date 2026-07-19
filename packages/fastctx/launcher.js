@@ -5,6 +5,9 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const fastctxHome = process.platform === 'win32'
+  ? process.env.USERPROFILE || os.homedir()
+  : process.env.HOME || os.homedir();
 
 const targets = {
   'win32-x64': ['@fastctx/win32-x64', 'fastctx.exe'],
@@ -19,14 +22,44 @@ if (!target) {
   process.exit(1);
 }
 
-let packageRoot;
+let executable;
+let platformPackageMissing = false;
 try {
-  packageRoot = path.dirname(require.resolve(`${target[0]}/package.json`));
+  const packageRoot = path.dirname(require.resolve(`${target[0]}/package.json`));
+  const packagedExecutable = path.join(packageRoot, 'bin', target[1]);
+  if (!fs.statSync(packagedExecutable).isFile()) {
+    platformPackageMissing = true;
+  } else {
+    executable = packagedExecutable;
+  }
 } catch (_) {
-  console.error(`fastctx: platform package ${target[0]} is missing; reinstall fastctx`);
-  process.exit(1);
+  platformPackageMissing = true;
 }
-const executable = path.join(packageRoot, 'bin', target[1]);
+if (platformPackageMissing) {
+  const stableExecutable = path.join(fastctxHome, '.fastctx', 'bin', target[1]);
+  let stableCopyReady = false;
+  try {
+    stableCopyReady = fs.statSync(stableExecutable).isFile();
+  } catch (_) {
+    stableCopyReady = false;
+  }
+  if (stableCopyReady) {
+    executable = stableExecutable;
+    console.error(
+      `fastctx: platform package ${target[0]} is missing; using the stable copy at ${stableExecutable}`,
+    );
+  } else {
+    console.error(
+      [
+        `fastctx: platform package ${target[0]} is missing, and no stable copy is installed.`,
+        'Your configured npm registry may not have synchronized the platform package yet.',
+        'Retry once from the official registry:',
+        '  npm install --global fastctx --registry=https://registry.npmjs.org/',
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+}
 const args = process.argv.slice(2);
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && args[0] !== 'serve');
 const tuiLaunch = interactive && (args.length === 0 || args[0] === 'ui');
@@ -37,7 +70,6 @@ const npmLauncher = process.env.FASTCTX_NPM_LAUNCHER || __filename;
 const npmMode = process.env.npm_command === 'exec' || npmLauncher.includes(`${path.sep}_npx${path.sep}`)
   ? 'exec'
   : 'global';
-const fastctxHome = process.env.HOME || process.env.USERPROFILE || os.homedir();
 const npmHandoff = path.join(
   fastctxHome,
   '.fastctx',

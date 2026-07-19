@@ -11,7 +11,7 @@ use crate::control::doctor::DoctorCheckStatus;
 use crate::control::i18n::ALL_LANGUAGES;
 use crate::control::settings::{Tier, ToolBudgetLevel};
 use crate::shell::jobs::{JobSourceSummary, JobSummary};
-use crate::update::StartupUpdate;
+use crate::update::{NpmDiscovery, NpmVersionAuthority, StartupUpdate};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -70,7 +70,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut App) {
 
 fn uses_narrow_layout(area: Rect, screen: Screen) -> bool {
     match screen {
-        Screen::Config | Screen::Jobs => false,
+        Screen::Config | Screen::Jobs | Screen::Update | Screen::UpdateConfirm => false,
         Screen::ApplyPreview
         | Screen::UnapplyPreview
         | Screen::Status
@@ -129,8 +129,9 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     match app.screen {
-        Screen::UpdateAvailable | Screen::UpdatePending => render_update(frame, app, area),
+        Screen::Update => render_update(frame, app, area),
         Screen::UpdateChecking => render_loading(frame, app, area, app.update_messages().checking),
+        Screen::UpdateConfirm => render_update_confirmation(frame, app, area),
         Screen::Language { .. } => render_languages(frame, app, area),
         Screen::Main => render_main(frame, app, area),
         Screen::ApplyHome => render_apply_home(frame, app, area),
@@ -175,48 +176,107 @@ fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     }
 }
 
-fn render_update(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_update(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let messages = app.update_messages();
-    let (title, body, primary) = match &app.update_state {
-        StartupUpdate::Available(plan) => (
+    let mut lines = Vec::new();
+    let primary = if let StartupUpdate::Available(plan) = &app.update_state {
+        lines.push(Line::styled(
             messages.available_title,
-            messages
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        ));
+        append_current_version(&mut lines);
+        append_styled_text_lines(
+            &mut lines,
+            &messages
                 .available_body
                 .replace("{current}", env!("CARGO_PKG_VERSION"))
                 .replace("{latest}", plan.target_version())
                 .replace("{source}", &plan.source_label()),
-            messages.action_update,
-        ),
-        StartupUpdate::NpmPending {
-            release_version,
-            registry_version,
-        } => (
-            messages.pending_title,
-            messages
-                .pending_body
-                .replace("{latest}", release_version)
-                .replace("{registry}", registry_version),
-            app.messages().action_retry,
-        ),
-        _ => (
-            messages.check_failed,
-            app.messages().operation_failed.to_string(),
-            app.messages().action_retry,
-        ),
+            Style::default().fg(theme::fg()),
+        );
+        if let Some(discovery) = plan.npm_discovery() {
+            append_npm_discovery_lines(&mut lines, discovery, app, area.width);
+        }
+        messages.action_update
+    } else {
+        match &app.update_state {
+            StartupUpdate::NpmCurrent { discovery } => {
+                lines.push(Line::styled(
+                    messages.up_to_date,
+                    Style::default().fg(theme::success()),
+                ));
+                append_current_version(&mut lines);
+                append_npm_discovery_lines(&mut lines, discovery, app, area.width);
+            }
+            StartupUpdate::NpmPending {
+                target_version,
+                discovery,
+            } => {
+                lines.push(Line::styled(
+                    messages.pending_title,
+                    Style::default()
+                        .fg(theme::warning())
+                        .add_modifier(Modifier::BOLD),
+                ));
+                append_current_version(&mut lines);
+                append_styled_text_lines(
+                    &mut lines,
+                    &messages
+                        .pending_body
+                        .replace("{latest}", target_version)
+                        .replace(
+                            "{registry}",
+                            discovery
+                                .probes
+                                .iter()
+                                .filter_map(|probe| probe.latest_version.as_deref())
+                                .max()
+                                .unwrap_or("unknown"),
+                        ),
+                    Style::default().fg(theme::warning()),
+                );
+                append_npm_discovery_lines(&mut lines, discovery, app, area.width);
+            }
+            StartupUpdate::Failed(error) => {
+                lines.push(Line::styled(
+                    format!("{}: {}", messages.check_failed, error.message),
+                    Style::default().fg(theme::danger()),
+                ));
+                append_current_version(&mut lines);
+            }
+            StartupUpdate::InstallFailed(error) => {
+                lines.push(Line::styled(
+                    format!("{}: {error}", messages.update_failed),
+                    Style::default().fg(theme::danger()),
+                ));
+                append_current_version(&mut lines);
+            }
+            StartupUpdate::None => {
+                lines.push(Line::styled(
+                    messages.up_to_date,
+                    Style::default().fg(theme::muted()),
+                ));
+                append_current_version(&mut lines);
+            }
+            StartupUpdate::Available(_) => unreachable!("available was handled above"),
+        }
+        messages.action_check
     };
-    let popup = centered_rect(78, 58, area);
+    let popup = inner(area, 2, 1);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(3)])
-        .split(inner(popup, 2, 1));
-    frame.render_widget(Clear, popup);
+        .constraints([Constraint::Min(3), Constraint::Length(3)])
+        .split(popup);
+    let visible_rows = usize::from(chunks[0].height.saturating_sub(2));
+    app.detail_viewport.update(lines.len(), visible_rows);
     frame.render_widget(
-        Paragraph::new(body)
-            .alignment(Alignment::Center)
+        Paragraph::new(lines)
             .style(Style::default().fg(theme::fg()))
-            .block(panel(title).border_style(Style::default().fg(theme::accent())))
-            .wrap(Wrap { trim: false }),
-        popup,
+            .block(panel(messages.page_title).border_style(Style::default().fg(theme::accent())))
+            .scroll((app.detail_viewport.offset() as u16, 0)),
+        chunks[0],
     );
     render_labeled_actions(
         frame,
@@ -225,6 +285,131 @@ fn render_update(frame: &mut Frame<'_>, app: &App, area: Rect) {
         primary,
         messages.action_continue,
     );
+}
+
+fn append_current_version(lines: &mut Vec<Line<'static>>) {
+    lines.push(detail_line(
+        "FastCtx",
+        &format!("v{}", env!("CARGO_PKG_VERSION")),
+    ));
+    lines.push(Line::raw(""));
+}
+
+fn append_styled_text_lines(lines: &mut Vec<Line<'static>>, text: &str, style: Style) {
+    lines.extend(
+        text.split('\n')
+            .map(|line| Line::styled(line.to_string(), style)),
+    );
+}
+
+fn append_npm_discovery_lines(
+    lines: &mut Vec<Line<'static>>,
+    discovery: &NpmDiscovery,
+    app: &App,
+    width: u16,
+) {
+    lines.push(Line::raw(""));
+    lines.push(detail_line("update.source", &discovery.source_policy));
+    lines.push(detail_line(
+        "Version authority",
+        match discovery.authority {
+            NpmVersionAuthority::Official => "GitHub / official npm",
+            NpmVersionAuthority::MirrorFallback => "mirror fallback (official unavailable)",
+        },
+    ));
+    lines.push(Line::styled(
+        app.update_messages().sources_title,
+        Style::default()
+            .fg(theme::fg())
+            .add_modifier(Modifier::BOLD),
+    ));
+    let limit = usize::from(width.saturating_sub(12)).max(16);
+    for probe in &discovery.probes {
+        let marker = if probe.is_ready() {
+            "✓"
+        } else if probe.reachable {
+            "◐"
+        } else {
+            "×"
+        };
+        let color = if probe.is_ready() {
+            theme::success()
+        } else if probe.reachable {
+            theme::warning()
+        } else {
+            theme::danger()
+        };
+        let selected = discovery.selected_registry.as_deref() == Some(probe.registry.as_str());
+        lines.push(Line::from(vec![
+            Span::styled(format!("{marker} "), Style::default().fg(color)),
+            Span::styled(
+                probe.source_name.clone(),
+                Style::default()
+                    .fg(if selected {
+                        theme::accent()
+                    } else {
+                        theme::fg()
+                    })
+                    .add_modifier(if selected {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
+            ),
+            Span::styled(
+                format!("  {}", truncate_end(&probe.registry, limit)),
+                Style::default().fg(theme::muted()),
+            ),
+        ]));
+        let latest = probe.latest_version.as_deref().unwrap_or("—");
+        lines.push(Line::styled(
+            format!(
+                "   latest v{latest} · fastctx {} · {} {}",
+                check_mark(probe.main_package_ready),
+                discovery.platform_package,
+                check_mark(probe.platform_package_ready)
+            ),
+            Style::default().fg(theme::muted()),
+        ));
+        if let Some(error) = &probe.error {
+            lines.push(Line::styled(
+                format!("   {}", truncate_end(error, limit)),
+                Style::default().fg(color),
+            ));
+        }
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        discovery.selection_reason.clone(),
+        Style::default().fg(theme::muted()),
+    ));
+}
+
+const fn check_mark(value: bool) -> &'static str {
+    if value { "✓" } else { "×" }
+}
+
+fn render_update_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let Some(plan) = (match &app.update_state {
+        StartupUpdate::Available(plan) => Some(plan),
+        _ => None,
+    }) else {
+        render_message_panel(
+            frame,
+            area,
+            app.update_messages().check_failed,
+            app.messages().operation_failed,
+            theme::danger(),
+        );
+        return;
+    };
+    let prompt = app
+        .update_messages()
+        .available_body
+        .replace("{current}", env!("CARGO_PKG_VERSION"))
+        .replace("{latest}", plan.target_version())
+        .replace("{source}", &plan.source_label());
+    render_confirmation(frame, app, area, &prompt, theme::accent());
 }
 
 fn render_labeled_actions(
@@ -323,6 +508,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         messages.menu_apply,
         messages.menu_config,
         app.job_messages().menu,
+        app.update_messages().page_title,
         messages.menu_status,
         messages.menu_about,
         messages.menu_language,
@@ -363,16 +549,20 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .unwrap_or_else(|| "—".to_string());
         details.push(detail_line(app.job_messages().title, &count));
     }
+    if app.selected == 3 {
+        details.push(detail_line(
+            app.update_messages().page_title,
+            &update_state_summary(app),
+        ));
+    }
     match &app.update_state {
         StartupUpdate::Available(plan) => details.push(detail_line(
             app.update_messages().action_check,
             &format!("v{} · U", plan.target_version()),
         )),
-        StartupUpdate::NpmPending {
-            release_version, ..
-        } => details.push(detail_line(
+        StartupUpdate::NpmPending { target_version, .. } => details.push(detail_line(
             app.update_messages().action_check,
-            &format!("v{release_version} · U"),
+            &format!("v{target_version} · U"),
         )),
         _ => {}
     }
@@ -389,6 +579,25 @@ fn detail_line(label: &str, value: &str) -> Line<'static> {
         Span::styled(format!("{label}  "), Style::default().fg(theme::muted())),
         Span::styled(value.to_string(), Style::default().fg(theme::fg())),
     ])
+}
+
+fn update_state_summary(app: &App) -> String {
+    match &app.update_state {
+        StartupUpdate::Available(plan) => {
+            format!("v{} · {}", plan.target_version(), plan.source_label())
+        }
+        StartupUpdate::NpmCurrent { discovery } => discovery
+            .selected_source
+            .as_deref()
+            .map(|source| format!("v{} · {source}", discovery.target_version))
+            .unwrap_or_else(|| format!("v{} · current", discovery.target_version)),
+        StartupUpdate::NpmPending { target_version, .. } => {
+            format!("v{target_version} · propagation pending")
+        }
+        StartupUpdate::Failed(error) => format!("check failed · {}", error.message),
+        StartupUpdate::InstallFailed(error) => format!("update failed · {error}"),
+        StartupUpdate::None => format!("v{} · current", env!("CARGO_PKG_VERSION")),
+    }
 }
 
 fn tier_note(app: &App, tier: Tier) -> &'static str {
@@ -673,7 +882,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         match *row {
             ConfigListRow::Group(group) => table_rows.push(Row::new(vec![
                 Cell::from(Line::styled(
-                    config::group_title(group, messages).to_string(),
+                    config::group_title(group, messages, app.update_messages()).to_string(),
                     Style::default()
                         .fg(theme::fg())
                         .add_modifier(Modifier::BOLD),
@@ -740,12 +949,18 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         config::group_spec(entry.group).parent(),
                         messages,
                         app.job_messages(),
+                        app.update_messages(),
                     ),
                     Style::default().fg(theme::muted()),
                 ),
                 Span::styled("  ›  ", Style::default().fg(theme::border())),
                 Span::styled(
-                    config::item_label(entry.item, messages, app.job_messages()),
+                    config::item_label(
+                        entry.item,
+                        messages,
+                        app.job_messages(),
+                        app.update_messages(),
+                    ),
                     Style::default()
                         .fg(theme::accent())
                         .add_modifier(Modifier::BOLD),
@@ -781,12 +996,18 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ConfigValue::Toggle(enabled) => {
             let note = match entry.item {
                 ConfigItemId::FastShell => messages.fastshell_note,
+                ConfigItemId::UpdateAutoCheck => app.update_messages().auto_check_note,
                 _ => messages.extensions_note,
             };
-            vec![
+            let mut lines = vec![
                 Line::from(vec![
                     Span::styled(
-                        config::item_label(entry.item, messages, app.job_messages()),
+                        config::item_label(
+                            entry.item,
+                            messages,
+                            app.job_messages(),
+                            app.update_messages(),
+                        ),
                         Style::default()
                             .fg(theme::accent())
                             .add_modifier(Modifier::BOLD),
@@ -805,12 +1026,15 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 ]),
                 Line::raw(""),
                 Line::styled(note, Style::default().fg(theme::fg())),
-                Line::raw(""),
-                Line::styled(
+            ];
+            if entry.item == ConfigItemId::FastShell {
+                lines.push(Line::raw(""));
+                lines.push(Line::styled(
                     messages.extensions_note,
                     Style::default().fg(theme::muted()),
-                ),
-            ]
+                ));
+            }
+            lines
         }
         ConfigValue::Number(value) => {
             let note = match entry.item {
@@ -822,7 +1046,12 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             vec![
                 Line::from(vec![
                     Span::styled(
-                        config::item_label(entry.item, messages, app.job_messages()),
+                        config::item_label(
+                            entry.item,
+                            messages,
+                            app.job_messages(),
+                            app.update_messages(),
+                        ),
                         Style::default()
                             .fg(theme::accent())
                             .add_modifier(Modifier::BOLD),
@@ -844,10 +1073,36 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 ),
             ]
         }
+        ConfigValue::Source(source) => vec![
+            Line::from(vec![
+                Span::styled(
+                    app.update_messages().source_label,
+                    Style::default()
+                        .fg(theme::accent())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ·  ", Style::default().fg(theme::border())),
+                Span::styled(
+                    source.as_str(),
+                    Style::default()
+                        .fg(theme::fg())
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::raw(""),
+            Line::styled(
+                app.update_messages().source_note,
+                Style::default().fg(theme::fg()),
+            ),
+        ],
     };
     let mut detail = Paragraph::new(detail).wrap(Wrap { trim: false });
     if !compact {
-        detail = detail.block(panel(config::group_title(entry.group, messages)));
+        detail = detail.block(panel(config::group_title(
+            entry.group,
+            messages,
+            app.update_messages(),
+        )));
     }
     frame.render_widget(detail, chunks[1]);
 }
@@ -1486,7 +1741,13 @@ fn config_item_row(
             Span::styled(marker, Style::default().fg(theme::accent())),
             Span::styled(hierarchy, Style::default().fg(theme::border())),
             Span::styled(
-                config::item_label(item, app.messages(), app.job_messages()).to_string(),
+                config::item_label(
+                    item,
+                    app.messages(),
+                    app.job_messages(),
+                    app.update_messages(),
+                )
+                .to_string(),
                 if selected {
                     Style::default()
                         .fg(theme::accent())
@@ -2089,9 +2350,9 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let messages = app.messages();
     let mut lines = Vec::new();
     let selected = match app.screen {
-        Screen::UpdateAvailable => app.update_messages().available_title.to_string(),
-        Screen::UpdatePending => app.update_messages().pending_title.to_string(),
+        Screen::Update => update_state_summary(app),
         Screen::UpdateChecking => app.update_messages().checking.to_string(),
+        Screen::UpdateConfirm => app.update_messages().available_title.to_string(),
         Screen::Language { .. } => format!(
             "{} · {}",
             ALL_LANGUAGES[app.selected].code(),
@@ -2101,6 +2362,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             messages.menu_apply,
             messages.menu_config,
             app.job_messages().menu,
+            app.update_messages().page_title,
             messages.menu_status,
             messages.menu_about,
             messages.menu_language,
@@ -2143,7 +2405,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .fg(theme::fg())
             .add_modifier(Modifier::BOLD),
     ));
-    if matches!(app.screen, Screen::UpdateAvailable | Screen::UpdatePending) {
+    if app.screen == Screen::Update {
         let detail = match &app.update_state {
             StartupUpdate::Available(plan) => format!(
                 "v{} → v{} · {}",
@@ -2151,20 +2413,23 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 plan.target_version(),
                 plan.source_label()
             ),
-            StartupUpdate::NpmPending {
-                release_version,
-                registry_version,
-            } => format!("GitHub v{release_version} · npm v{registry_version}"),
+            StartupUpdate::NpmPending { target_version, .. } => {
+                format!("v{target_version} · propagation pending")
+            }
+            StartupUpdate::NpmCurrent { discovery } => {
+                format!("v{} · current", discovery.target_version)
+            }
+            StartupUpdate::Failed(error) => error.message.clone(),
             _ => String::new(),
         };
         lines.push(Line::styled(
             truncate_end(&detail, usize::from(area.width.saturating_sub(4))),
             Style::default().fg(theme::muted()),
         ));
-        let primary = if app.screen == Screen::UpdateAvailable {
+        let primary = if matches!(app.update_state, StartupUpdate::Available(_)) {
             app.update_messages().action_update
         } else {
-            messages.action_retry
+            app.update_messages().action_check
         };
         lines.push(Line::from(vec![
             Span::styled(
@@ -2233,23 +2498,13 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         return;
     }
     let hints = match app.screen {
-        Screen::UpdateAvailable | Screen::UpdatePending => {
-            vec![messages.footer_move, messages.footer_select]
-        }
+        Screen::Update => vec![
+            messages.footer_move,
+            messages.footer_select,
+            app.update_messages().action_check,
+            messages.footer_back,
+        ],
         Screen::UpdateChecking => vec![app.update_messages().checking],
-        Screen::Main
-            if matches!(
-                &app.update_state,
-                StartupUpdate::Available(_) | StartupUpdate::NpmPending { .. }
-            ) =>
-        {
-            vec![
-                messages.footer_move,
-                messages.footer_select,
-                app.update_messages().action_check,
-                messages.footer_quit,
-            ]
-        }
         Screen::Main => vec![
             messages.footer_move,
             messages.footer_select,
@@ -2465,15 +2720,30 @@ fn config_narrow_summary(app: &App) -> String {
     match entry.role {
         ConfigItemRole::Parent => format!(
             "{} › {} · {}",
-            config::group_title(entry.group, messages),
-            config::item_label(entry.item, messages, app.job_messages()),
+            config::group_title(entry.group, messages, app.update_messages()),
+            config::item_label(
+                entry.item,
+                messages,
+                app.job_messages(),
+                app.update_messages(),
+            ),
             value
         ),
         ConfigItemRole::Child { .. } => format!(
             "{} › {} › {} · {}",
-            config::group_title(entry.group, messages),
-            config::item_label(group.parent(), messages, app.job_messages()),
-            config::item_label(entry.item, messages, app.job_messages()),
+            config::group_title(entry.group, messages, app.update_messages()),
+            config::item_label(
+                group.parent(),
+                messages,
+                app.job_messages(),
+                app.update_messages(),
+            ),
+            config::item_label(
+                entry.item,
+                messages,
+                app.job_messages(),
+                app.update_messages(),
+            ),
             value
         ),
     }
@@ -2496,6 +2766,7 @@ fn config_value_label(
             }
         }
         ConfigValue::Number(value) => value.to_string(),
+        ConfigValue::Source(source) => source.as_str().to_string(),
     }
 }
 
@@ -2506,6 +2777,7 @@ fn config_value_color(value: ConfigValue) -> Color {
         ConfigValue::Toggle(true) => theme::success(),
         ConfigValue::Toggle(false) => theme::muted(),
         ConfigValue::Number(_) => theme::fg(),
+        ConfigValue::Source(_) => theme::accent(),
     }
 }
 
@@ -2541,7 +2813,9 @@ mod tests {
     use crate::tui::config::{ConfigCursor, ConfigItemId};
     use crate::tui::jobs::{JobsDetail, JobsState};
     use crate::tui::theme::{self, ColorMode, Theme};
-    use crate::update::{StartupUpdate, UpdatePlan};
+    use crate::update::{
+        NpmDiscovery, NpmRegistryProbe, NpmVersionAuthority, StartupUpdate, UpdatePlan,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -2641,26 +2915,34 @@ mod tests {
         std::fs::write(&executable, b"binary").unwrap();
         let mut app = App::for_test(paths, executable);
         app.settings.language = Some("en".to_string());
-        app.screen = Screen::UpdateAvailable;
-        app.update_state = StartupUpdate::Available(UpdatePlan::GithubRelease {
+        app.screen = Screen::Update;
+        app.update_state = StartupUpdate::Available(Box::new(UpdatePlan::GithubRelease {
             target_version: "0.2.0".to_string(),
             archive_name: "fixture.zip".to_string(),
             archive_url: "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/fixture.zip"
                 .to_string(),
             checksums_url: "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/SHA256SUMS"
                 .to_string(),
-        });
+        }));
 
         for (width, height) in [(100, 24), (40, 10)] {
+            app.detail_viewport = Default::default();
             let backend = TestBackend::new(width, height);
             let mut terminal = Terminal::new(backend).unwrap();
-            terminal.draw(|frame| render(frame, &mut app)).unwrap();
-            let text = buffer_text(&terminal);
+            let mut text = String::new();
+            loop {
+                terminal.draw(|frame| render(frame, &mut app)).unwrap();
+                text.push_str(&buffer_text(&terminal));
+                if !app.detail_viewport.can_move_down() {
+                    break;
+                }
+                app.handle_key(key(KeyCode::PageDown));
+            }
             for expected in [
                 app.update_messages().available_title,
                 app.update_messages().action_update,
                 app.update_messages().action_continue,
-                "v0.1.0 → v0.2.0",
+                &format!("v{} → v0.2.0", env!("CARGO_PKG_VERSION")),
                 "GitHub Release",
             ] {
                 assert!(
@@ -2669,6 +2951,77 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn npm_update_page_keeps_source_evidence_reachable_in_a_narrow_terminal() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.settings.language = Some("en".to_string());
+        app.language = Language::En;
+        app.screen = Screen::Update;
+        let registry = "https://registry.npmmirror.com/";
+        app.update_state = StartupUpdate::NpmCurrent {
+            discovery: Box::new(NpmDiscovery {
+                source_policy: "auto".to_string(),
+                configured_registry: Some(registry.to_string()),
+                target_version: env!("CARGO_PKG_VERSION").to_string(),
+                authority: NpmVersionAuthority::Official,
+                github_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                official_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                platform_package: "@fastctx/win32-x64".to_string(),
+                probes: vec![
+                    NpmRegistryProbe {
+                        source_name: "npm config".to_string(),
+                        registry: registry.to_string(),
+                        reachable: true,
+                        latest_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                        main_package_ready: true,
+                        platform_package_ready: true,
+                        error: None,
+                        error_kind: None,
+                    },
+                    NpmRegistryProbe {
+                        source_name: "official npm".to_string(),
+                        registry: "https://registry.npmjs.org/".to_string(),
+                        reachable: true,
+                        latest_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                        main_package_ready: true,
+                        platform_package_ready: true,
+                        error: None,
+                        error_kind: None,
+                    },
+                ],
+                selected_registry: Some(registry.to_string()),
+                selected_source: Some("npm config".to_string()),
+                selection_reason: "auto selected the first reachable complete source: npm config"
+                    .to_string(),
+            }),
+        };
+
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut text = String::new();
+        loop {
+            terminal.draw(|frame| render(frame, &mut app)).unwrap();
+            text.push_str(&buffer_text(&terminal));
+            if !app.detail_viewport.can_move_down() {
+                break;
+            }
+            app.handle_key(key(KeyCode::PageDown));
+        }
+        assert!(contains_visible_text(
+            &text,
+            app.update_messages().page_title
+        ));
+        assert!(contains_visible_text(&text, "official npm"), "{text}");
+        assert!(
+            contains_visible_text(&text, "auto selected the first"),
+            "{text}"
+        );
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -3500,15 +3853,15 @@ mod tests {
         let detail_row = row_containing(&terminal, "Runs a foreground").unwrap();
         assert!(run_row < detail_row, "{middle}");
 
-        while app.config_cursor.entry().item != ConfigItemId::JobListLimit {
+        while app.config_cursor.entry().item != ConfigItemId::UpdateSource {
             app.config_cursor = app.config_cursor.next();
         }
-        assert_eq!(app.config_cursor.entry().item, ConfigItemId::JobListLimit);
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::UpdateSource);
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let bottom = buffer_text(&terminal);
         assert!(contains_visible_text(
             &bottom,
-            app.job_messages().job_list_limit_label
+            app.update_messages().source_label
         ));
         assert!(contains_visible_text(
             &bottom,

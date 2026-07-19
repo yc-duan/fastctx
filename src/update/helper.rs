@@ -1,8 +1,12 @@
 //! Copied updater helper, verified installation, rollback, restart, and finalization.
 
-use super::model::{NpmMode, NpmProvenance, UpdatePlan, UpdateRequest};
+use super::model::{
+    NPMMIRROR_REGISTRY, NpmMode, NpmProvenance, NpmVersionAuthority, OFFICIAL_NPM_REGISTRY,
+    UpdatePlan, UpdateRequest,
+};
 use crate::control::apply::{AppliedBinarySync, synchronize_applied_binary};
 use crate::control::paths::ControlPaths;
+use crate::control::settings::UpdateSource;
 use crate::control::transaction;
 use fs2::FileExt;
 use semver::Version;
@@ -25,8 +29,7 @@ pub(crate) const UPDATE_FAILURE_ENV: &str = "FASTCTX_UPDATE_FAILURE";
 /// Private exit code telling the npm launcher to wait on its handoff marker.
 pub(crate) const NPM_LAUNCHER_WAIT_EXIT_CODE: u8 = 75;
 
-const REQUEST_SCHEMA_VERSION: u32 = 1;
-const NPM_REGISTRY: &str = "https://registry.npmjs.org/";
+const REQUEST_SCHEMA_VERSION: u32 = 2;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const MAX_RELEASE_ASSET_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: u64 = 64 * 1024;
@@ -332,7 +335,16 @@ fn run_update_helper_inner(
         UpdatePlan::Npm {
             provenance,
             target_version,
-        } => apply_npm_update(paths, request_path, request, provenance, target_version),
+            registry,
+            ..
+        } => apply_npm_update(
+            paths,
+            request_path,
+            request,
+            provenance,
+            target_version,
+            registry,
+        ),
         UpdatePlan::GithubRelease { .. } => apply_release_update(paths, request_path, request),
     };
     let session = match result {
@@ -450,12 +462,13 @@ fn apply_npm_update(
     request: &UpdateRequest,
     provenance: &NpmProvenance,
     target_version: &str,
+    registry: &str,
 ) -> Result<UpdatedSession, String> {
     let cache = create_private_subdirectory(&update_directory(paths), "npm-update")?;
     match provenance.mode {
         NpmMode::Global => {
             let operation = || {
-                install_npm_version(provenance, target_version, &cache)?;
+                install_npm_version(provenance, target_version, registry, &cache)?;
                 let mut child = spawn_npm_launcher(provenance, request_path)?;
                 if let Err(error) = wait_for_health(&mut child, &request.health_file) {
                     let _ = child.kill();
@@ -467,8 +480,12 @@ fn apply_npm_update(
             let rollback = || {
                 let rollback_cache =
                     create_private_subdirectory(&update_directory(paths), "npm-rollback")?;
-                let result =
-                    install_npm_version(provenance, &request.current_version, &rollback_cache);
+                let result = install_npm_version(
+                    provenance,
+                    &request.current_version,
+                    registry,
+                    &rollback_cache,
+                );
                 let _ = fs::remove_dir_all(&rollback_cache);
                 result
             };
@@ -487,7 +504,8 @@ fn apply_npm_update(
             })
         }
         NpmMode::Exec => {
-            let mut child = spawn_npm_exec(provenance, target_version, &cache, request_path)?;
+            let mut child =
+                spawn_npm_exec(provenance, target_version, registry, &cache, request_path)?;
             if let Err(error) = wait_for_health(&mut child, &request.health_file) {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -532,12 +550,13 @@ fn finish_failed_update(
 fn install_npm_version(
     provenance: &NpmProvenance,
     version: &str,
+    registry: &str,
     cache: &Path,
 ) -> Result<(), String> {
     let spec = format!("{}@{version}", provenance.package);
     let status = Command::new(&provenance.node)
         .arg(&provenance.npm_cli)
-        .args(npm_install_arguments(&spec, cache))
+        .args(npm_install_arguments(&spec, registry, cache))
         .env("NO_UPDATE_NOTIFIER", "1")
         .env("NPM_CONFIG_UPDATE_NOTIFIER", "false")
         .env_remove("NPM_CONFIG_OFFLINE")
@@ -557,14 +576,14 @@ fn install_npm_version(
     }
 }
 
-fn npm_install_arguments(spec: &str, cache: &Path) -> Vec<OsString> {
+fn npm_install_arguments(spec: &str, registry: &str, cache: &Path) -> Vec<OsString> {
     vec![
         OsString::from("install"),
         OsString::from("--global"),
         OsString::from(spec),
         OsString::from("--prefer-online"),
         OsString::from("--registry"),
-        OsString::from(NPM_REGISTRY),
+        OsString::from(registry),
         OsString::from("--cache"),
         cache.as_os_str().to_os_string(),
         OsString::from("--ignore-scripts"),
@@ -582,6 +601,7 @@ fn npm_install_arguments(spec: &str, cache: &Path) -> Vec<OsString> {
 fn spawn_npm_exec(
     provenance: &NpmProvenance,
     version: &str,
+    registry: &str,
     cache: &Path,
     request_path: &Path,
 ) -> Result<Child, String> {
@@ -593,7 +613,7 @@ fn spawn_npm_exec(
             "--yes",
             "--prefer-online",
             "--registry",
-            NPM_REGISTRY,
+            registry,
             "--cache",
         ])
         .arg(cache)
@@ -1170,7 +1190,13 @@ fn validate_plan(plan: &UpdatePlan) -> Result<(), String> {
         return Err("update plan does not target a stable release version".to_string());
     }
     match plan {
-        UpdatePlan::Npm { provenance, .. } => {
+        UpdatePlan::Npm {
+            provenance,
+            target_version,
+            registry,
+            source_name,
+            discovery,
+        } => {
             if !matches!(provenance.package.as_str(), "fastctx" | "codex-fastctx") {
                 return Err("update plan has an unsupported npm package".to_string());
             }
@@ -1187,6 +1213,42 @@ fn validate_plan(plan: &UpdatePlan) -> Result<(), String> {
             if provenance.launcher_pid == 0 {
                 return Err("update plan has an invalid npm launcher process id".to_string());
             }
+            validate_registry_url(registry)?;
+            if discovery.target_version != *target_version {
+                return Err(
+                    "update plan target does not match its npm discovery evidence".to_string(),
+                );
+            }
+            let source_policy = UpdateSource::parse(&discovery.source_policy)
+                .ok_or_else(|| "update plan has an unsupported npm source policy".to_string())?;
+            if discovery.selected_registry.as_deref() != Some(registry)
+                || discovery.selected_source.as_deref() != Some(source_name)
+            {
+                return Err(
+                    "update plan source does not match its npm discovery evidence".to_string(),
+                );
+            }
+            let selected_probe = discovery
+                .probes
+                .iter()
+                .find(|probe| {
+                    probe.registry == *registry
+                        && probe.source_name == *source_name
+                        && probe.is_ready()
+                })
+                .ok_or_else(|| {
+                    "update plan source did not pass the exact two-package preflight".to_string()
+                })?;
+            validate_registry_url(&selected_probe.registry)?;
+            if discovery.platform_package != expected_npm_platform_package().unwrap_or_default() {
+                return Err("update plan names an npm package for another platform".to_string());
+            }
+            validate_selected_source_policy(
+                source_policy,
+                discovery.configured_registry.as_deref(),
+                registry,
+            )?;
+            validate_npm_version_authority(discovery)?;
         }
         UpdatePlan::GithubRelease {
             archive_name,
@@ -1211,6 +1273,99 @@ fn validate_plan(plan: &UpdatePlan) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn validate_registry_url(value: &str) -> Result<(), String> {
+    let url = Url::parse(value).map_err(|error| format!("invalid npm registry URL: {error}"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.path().ends_with('/')
+        || url.to_string() != value
+    {
+        return Err(
+            "update plan has an unsupported or non-normalized npm registry URL".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_selected_source_policy(
+    policy: UpdateSource,
+    configured_registry: Option<&str>,
+    selected_registry: &str,
+) -> Result<(), String> {
+    let allowed = match policy {
+        UpdateSource::Auto => {
+            configured_registry == Some(selected_registry)
+                || matches!(
+                    selected_registry,
+                    OFFICIAL_NPM_REGISTRY | NPMMIRROR_REGISTRY
+                )
+        }
+        UpdateSource::NpmConfig => configured_registry == Some(selected_registry),
+        UpdateSource::Official => selected_registry == OFFICIAL_NPM_REGISTRY,
+        UpdateSource::Npmmirror => selected_registry == NPMMIRROR_REGISTRY,
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err("update plan selected a registry outside its source policy".to_string())
+    }
+}
+
+fn validate_npm_version_authority(discovery: &super::model::NpmDiscovery) -> Result<(), String> {
+    let parse = |label: &str, value: &str| {
+        let version = Version::parse(value)
+            .map_err(|error| format!("update plan has invalid {label} version: {error}"))?;
+        if !version.pre.is_empty() || !version.build.is_empty() {
+            return Err(format!("update plan has a non-stable {label} version"));
+        }
+        Ok(version)
+    };
+    let target = parse("target", &discovery.target_version)?;
+    let github = discovery
+        .github_version
+        .as_deref()
+        .map(|value| parse("GitHub", value))
+        .transpose()?;
+    let official = discovery
+        .official_version
+        .as_deref()
+        .map(|value| parse("official npm", value))
+        .transpose()?;
+    let authoritative = [github, official].into_iter().flatten().max();
+    match authoritative {
+        Some(version)
+            if discovery.authority == NpmVersionAuthority::Official && version == target =>
+        {
+            Ok(())
+        }
+        Some(_) => Err(
+            "update plan target does not match the highest official version authority".to_string(),
+        ),
+        None if discovery.authority == NpmVersionAuthority::MirrorFallback => {
+            let mirror_max = discovery
+                .probes
+                .iter()
+                .filter_map(|probe| probe.latest_version.as_deref())
+                .map(|value| parse("mirror", value))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .max();
+            if mirror_max.as_ref() == Some(&target) {
+                Ok(())
+            } else {
+                Err("update plan mirror fallback does not match its source evidence".to_string())
+            }
+        }
+        None => {
+            Err("update plan claims official authority without an official version".to_string())
+        }
+    }
 }
 
 fn prepare_update_directory(paths: &ControlPaths) -> Result<PathBuf, String> {
@@ -1495,14 +1650,27 @@ fn expected_release_archive_name() -> Option<&'static str> {
     }
 }
 
+fn expected_npm_platform_package() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => Some("@fastctx/win32-x64"),
+        ("linux", "x86_64") => Some("@fastctx/linux-x64"),
+        ("macos", "x86_64") => Some("@fastctx/darwin-x64"),
+        ("macos", "aarch64") => Some("@fastctx/darwin-arm64"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        NpmLauncherHandoff, extract_release_binary, finish_failed_update, npm_install_arguments,
-        replace_release_with_rollback, run_with_npm_rollback, sha256_hex,
+        NpmLauncherHandoff, REQUEST_SCHEMA_VERSION, extract_release_binary, finish_failed_update,
+        npm_install_arguments, replace_release_with_rollback, run_with_npm_rollback, sha256_hex,
         validate_download_response_url, validate_plan, verify_release_archive, write_handoff,
     };
-    use crate::update::model::UpdatePlan;
+    use crate::update::model::{
+        NpmDiscovery, NpmMode, NpmProvenance, NpmRegistryProbe, NpmVersionAuthority,
+        OFFICIAL_NPM_REGISTRY, UpdatePlan,
+    };
     use std::io::{Cursor, Write};
 
     #[test]
@@ -1663,16 +1831,19 @@ mod tests {
 
     #[test]
     fn npm_install_is_exact_script_free_and_uses_an_isolated_cache() {
-        let arguments =
-            npm_install_arguments("fastctx@0.2.0", std::path::Path::new("/isolated/cache"))
-                .into_iter()
-                .map(|value| value.to_string_lossy().into_owned())
-                .collect::<Vec<_>>();
+        let arguments = npm_install_arguments(
+            "fastctx@0.2.0",
+            "https://registry.example.test/custom/",
+            std::path::Path::new("/isolated/cache"),
+        )
+        .into_iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
         for expected in [
             "fastctx@0.2.0",
             "--global",
             "--prefer-online",
-            "https://registry.npmjs.org/",
+            "https://registry.example.test/custom/",
             "--cache",
             "/isolated/cache",
             "--ignore-scripts",
@@ -1681,6 +1852,61 @@ mod tests {
         }
         assert!(!arguments.iter().any(|value| value == "latest"));
         assert!(!arguments.iter().any(|value| value == "clean"));
+    }
+
+    #[test]
+    fn npm_plan_requires_exact_main_and_platform_preflight_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let target_version = "0.2.0";
+        let source_name = "official npm";
+        let platform_package = super::expected_npm_platform_package().unwrap();
+        let discovery = NpmDiscovery {
+            source_policy: "official".to_string(),
+            configured_registry: None,
+            target_version: target_version.to_string(),
+            authority: NpmVersionAuthority::Official,
+            github_version: Some(target_version.to_string()),
+            official_version: Some(target_version.to_string()),
+            platform_package: platform_package.to_string(),
+            probes: vec![NpmRegistryProbe {
+                source_name: source_name.to_string(),
+                registry: OFFICIAL_NPM_REGISTRY.to_string(),
+                reachable: true,
+                latest_version: Some(target_version.to_string()),
+                main_package_ready: true,
+                platform_package_ready: true,
+                error: None,
+                error_kind: None,
+            }],
+            selected_registry: Some(OFFICIAL_NPM_REGISTRY.to_string()),
+            selected_source: Some(source_name.to_string()),
+            selection_reason: "the configured source policy selected official npm".to_string(),
+        };
+        let mut plan = UpdatePlan::Npm {
+            provenance: NpmProvenance {
+                package: "fastctx".to_string(),
+                mode: NpmMode::Global,
+                node: temp.path().join("node"),
+                npm_cli: temp.path().join("npm-cli.js"),
+                launcher: temp.path().join("launcher.js"),
+                launcher_pid: 42,
+                handoff_file: temp.path().join("npm-launcher-42.handoff"),
+            },
+            target_version: target_version.to_string(),
+            registry: OFFICIAL_NPM_REGISTRY.to_string(),
+            source_name: source_name.to_string(),
+            discovery: Box::new(discovery),
+        };
+        validate_plan(&plan).unwrap();
+
+        let UpdatePlan::Npm { discovery, .. } = &mut plan else {
+            unreachable!();
+        };
+        discovery.probes[0].platform_package_ready = false;
+        assert_eq!(
+            validate_plan(&plan).unwrap_err(),
+            "update plan source did not pass the exact two-package preflight"
+        );
     }
 
     #[test]
@@ -1770,7 +1996,7 @@ mod tests {
         write_handoff(
             &handoff,
             &NpmLauncherHandoff {
-                schema_version: 1,
+                schema_version: REQUEST_SCHEMA_VERSION,
                 state: "starting",
                 helper_pid: 0,
                 helper_executable: &helper,
@@ -1786,7 +2012,7 @@ mod tests {
         write_handoff(
             &handoff,
             &NpmLauncherHandoff {
-                schema_version: 1,
+                schema_version: REQUEST_SCHEMA_VERSION,
                 state: "done",
                 helper_pid: 42,
                 helper_executable: &helper,

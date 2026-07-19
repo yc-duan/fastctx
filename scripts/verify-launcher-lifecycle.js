@@ -206,6 +206,88 @@ function linkOrCopyExecutable(source, target) {
   if (process.platform !== 'win32') fs.chmodSync(target, 0o755);
 }
 
+function assertMissingPlatformPackageUsesStableCopyOrGivesAnActionableExit() {
+  const targets = {
+    'win32-x64': ['@fastctx/win32-x64', 'fastctx.exe'],
+    'linux-x64': ['@fastctx/linux-x64', 'fastctx'],
+    'darwin-x64': ['@fastctx/darwin-x64', 'fastctx'],
+    'darwin-arm64': ['@fastctx/darwin-arm64', 'fastctx'],
+  };
+  const target = targets[`${process.platform}-${process.arch}`];
+  if (!target) return;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fastctx-platform-fallback-'));
+  try {
+    const inputLauncher = fs.readFileSync(launcher, 'utf8');
+    const mainLauncher = inputLauncher.includes("require('fastctx/launcher.js')")
+      ? require.resolve('fastctx/launcher.js', { paths: [path.dirname(launcher)] })
+      : launcher;
+    const packageRoot = path.join(workspace, 'node_modules', 'fastctx');
+    fs.mkdirSync(packageRoot, { recursive: true });
+    const fixtureLauncher = path.join(packageRoot, 'launcher.js');
+    fs.copyFileSync(mainLauncher, fixtureLauncher);
+
+    const installedPlatformRoot = path.dirname(
+      require.resolve(`${target[0]}/package.json`, { paths: [path.dirname(mainLauncher)] }),
+    );
+    const installedExecutable = path.join(installedPlatformRoot, 'bin', target[1]);
+    const fixtureHome = path.join(workspace, 'home');
+    const stableExecutable = path.join(fixtureHome, '.fastctx', 'bin', target[1]);
+    fs.mkdirSync(path.dirname(stableExecutable), { recursive: true });
+    linkOrCopyExecutable(installedExecutable, stableExecutable);
+    const environment = {
+      ...process.env,
+      HOME: process.platform === 'win32' ? path.join(workspace, 'stale-home') : fixtureHome,
+      USERPROFILE: fixtureHome,
+    };
+    const assertFallback = (label) => {
+      const fallback = spawnSync(process.execPath, [fixtureLauncher, '--version'], {
+        encoding: 'utf8',
+        env: environment,
+        windowsHide: true,
+      });
+      if (fallback.status !== 0 || !fallback.stdout.includes('fastctx ')) {
+        throw new Error(`${label} stable-copy fallback failed: ${fallback.stderr || fallback.error || ''}`);
+      }
+      if (
+        !fallback.stderr.includes(`platform package ${target[0]} is missing; using the stable copy`) ||
+        !fallback.stderr.includes(stableExecutable)
+      ) {
+        throw new Error(`${label} stable-copy fallback omitted its warning: ${fallback.stderr}`);
+      }
+    };
+
+    assertFallback('missing package');
+    const malformedPackageRoot = path.join(workspace, 'node_modules', ...target[0].split('/'));
+    fs.mkdirSync(malformedPackageRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(malformedPackageRoot, 'package.json'),
+      `${JSON.stringify({ name: target[0], version: '0.1.0' }, null, 2)}\n`,
+    );
+    assertFallback('missing native executable');
+
+    fs.unlinkSync(stableExecutable);
+    const unavailable = spawnSync(process.execPath, [fixtureLauncher, '--version'], {
+      encoding: 'utf8',
+      env: environment,
+      windowsHide: true,
+    });
+    if (unavailable.status !== 1) {
+      throw new Error(`double-missing launcher exited ${unavailable.status}`);
+    }
+    for (const expected of [
+      `platform package ${target[0]} is missing`,
+      'registry may not have synchronized',
+      'npm install --global fastctx --registry=https://registry.npmjs.org/',
+    ]) {
+      if (!unavailable.stderr.includes(expected)) {
+        throw new Error(`double-missing launcher omitted ${expected}: ${unavailable.stderr}`);
+      }
+    }
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+}
+
 function assertUpdateHandoffKeepsLauncherAlive() {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fastctx-handoff-'));
   try {
@@ -403,6 +485,7 @@ require(${JSON.stringify(fixtureLauncher)});
 }
 
 async function main() {
+  assertMissingPlatformPackageUsesStableCopyOrGivesAnActionableExit();
   assertUpdateHandoffKeepsLauncherAlive();
   const invalid = spawnSync(process.execPath, [launcher, '__invalid_subcommand__'], {
     encoding: 'utf8',
