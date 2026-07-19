@@ -2,7 +2,18 @@ name: CI
 
 on:
   push:
+    # Branches only. A release tag always points at a commit already tested
+    # here, and the release workflow re-runs the test matrix on its own
+    # artifacts, so tag pushes would only compete for runners with the release.
+    branches:
+      - "**"
   pull_request:
+
+# Superseded runs for the same ref are useless and starve the release workflow
+# of concurrent runners.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
