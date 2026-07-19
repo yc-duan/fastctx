@@ -422,7 +422,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
             false,
         ),
     ];
-    let stale_binaries = find_stale_binaries(paths)?;
+    let stale_binaries = find_stale_binaries(paths, &options.current_executable)?;
     let mut preview = preview_apply(
         &changes,
         &expected,
@@ -1232,19 +1232,31 @@ fn same_path(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn find_stale_binaries(paths: &ControlPaths) -> Result<Vec<PathBuf>, String> {
-    crate::control::leftovers::stale_binary_siblings(&paths.installed_binary)
+fn find_stale_binaries(
+    paths: &ControlPaths,
+    current_executable: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let mut stale = crate::control::leftovers::stale_binary_siblings(&paths.installed_binary)?;
+    if !same_path(current_executable, &paths.installed_binary) {
+        stale.extend(crate::control::leftovers::stale_binary_siblings(
+            current_executable,
+        )?);
+    }
+    stale.sort();
+    stale.dedup();
+    Ok(stale)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AppliedBinarySync, ApplyOptions, UnapplyOptions, commit_apply, commit_unapply, plan_apply,
-        plan_unapply, synchronize_applied_binary,
+        AppliedBinarySync, ApplyOptions, PreviewAction, PreviewTarget, UnapplyOptions,
+        commit_apply, commit_unapply, plan_apply, plan_unapply, synchronize_applied_binary,
     };
     use crate::control::agents::AGENTS_SECTION;
     use crate::control::paths::ControlPaths;
     use crate::control::settings::{Tier, ToolBudgetLevel, ToolBudgets};
+    use std::path::Path;
 
     fn fixture() -> (tempfile::TempDir, ControlPaths, std::path::PathBuf) {
         let temp = tempfile::tempdir().unwrap();
@@ -1983,6 +1995,49 @@ mod tests {
         assert_eq!(std::fs::read(&paths.codex_config).unwrap(), config);
         assert!(!paths.installed_binary.exists());
         assert!(!paths.fastctx_config.exists());
+    }
+
+    #[test]
+    fn apply_previews_and_removes_leftovers_beside_both_running_and_stable_binaries() {
+        let (_temp, paths, source) = fixture();
+        std::fs::create_dir_all(&paths.fastctx_bin_dir).unwrap();
+        let owned_leftovers = |target: &Path| {
+            let name = target.file_name().unwrap().to_string_lossy();
+            [
+                target
+                    .parent()
+                    .unwrap()
+                    .join(format!(".{name}.fastctx-old-12.0")),
+                target.parent().unwrap().join(format!("{name}~RF1a2B.TMP")),
+            ]
+        };
+        let mut stale = owned_leftovers(&source).into_iter().collect::<Vec<_>>();
+        stale.extend(owned_leftovers(&paths.installed_binary));
+        for path in &stale {
+            std::fs::write(path, b"owned stale binary").unwrap();
+        }
+        let unrelated = source.parent().unwrap().join("other~RF1a2B.TMP");
+        std::fs::write(&unrelated, b"user file").unwrap();
+
+        let plan = plan_apply(&paths, options(source)).unwrap();
+        for path in &stale {
+            assert!(
+                plan.preview().iter().any(|item| {
+                    item.path == *path
+                        && item.action == PreviewAction::Delete
+                        && item.target == PreviewTarget::Binary
+                }),
+                "missing cleanup preview for {}",
+                crate::paths::display_path(path)
+            );
+        }
+        let receipt = commit_apply(plan, true).unwrap();
+
+        assert!(receipt.changed_targets >= stale.len());
+        for path in stale {
+            assert!(!path.exists(), "{}", crate::paths::display_path(&path));
+        }
+        assert_eq!(std::fs::read(unrelated).unwrap(), b"user file");
     }
 
     #[cfg(windows)]
