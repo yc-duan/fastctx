@@ -4,9 +4,10 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -22,6 +23,7 @@ jobs:
             archive: fastctx-x86_64-pc-windows-msvc.zip
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            zig_target: x86_64-unknown-linux-gnu.2.31
             binary: fastctx
             archive: fastctx-x86_64-unknown-linux-gnu.tar.gz
           - os: macos-15-intel
@@ -71,6 +73,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - name: Install pinned Zig
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: mlugg/setup-zig@v2.2.1
+        with:
+          version: 0.14.1
+      - name: Install pinned cargo-zigbuild
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo install cargo-zigbuild --locked --version 0.23.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
@@ -79,9 +89,76 @@ jobs:
         run: cargo test --locked --release --target ${{ matrix.target }}
 
       - name: Build single-file executable
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
         env:
           FASTCTX_DISTRIBUTION: github-release
         run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Build glibc 2.31 Linux executable
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        env:
+          FASTCTX_DISTRIBUTION: github-release
+        run: cargo zigbuild --locked --release --target ${{ matrix.zig_target }}
+
+      - name: Enforce Linux GLIBC symbol floors
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          highest_glibc() {
+            local file="$1"
+            LANG=C readelf -W --version-info --dyn-syms "$file" |
+              sed -nE 's/.*Name: GLIBC_([0-9]+(\.[0-9]+)+).*/\1/p' |
+              sort -Vu |
+              tail -n 1
+          }
+
+          version_at_most() {
+            local actual="$1"
+            local maximum="$2"
+            [[ "$(printf '%s\n%s\n' "$actual" "$maximum" | sort -V | tail -n 1)" == "$maximum" ]]
+          }
+
+          assert_glibc_at_most() {
+            local file="$1"
+            local maximum="$2"
+            local label="$3"
+            local actual
+            actual="$(highest_glibc "$file")"
+            if [[ -z "$actual" ]]; then
+              echo "::error::$label exposes no GLIBC version requirements"
+              return 1
+            fi
+            if ! version_at_most "$actual" "$maximum"; then
+              echo "::error::$label requires GLIBC_$actual, above GLIBC_$maximum"
+              return 1
+            fi
+            echo "$label: highest required symbol is GLIBC_$actual (maximum GLIBC_$maximum)"
+          }
+
+          binary="target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          assert_glibc_at_most "$binary" "2.31" "FastCtx Linux executable"
+
+          if assert_glibc_at_most "$binary" "2.17" "negative-control executable"; then
+            echo "::error::The GLIBC gate negative control unexpectedly accepted a 2.17 floor"
+            exit 1
+          fi
+          echo "Negative control correctly rejected the executable at a GLIBC_2.17 floor"
+
+          mapfile -t pdfium_libraries < <(
+            find "target/${{ matrix.target }}/release/build" \
+              -type f \
+              -path '*/out/bundled-pdfium/libpdfium.so' \
+              -print
+          )
+          if [[ "${#pdfium_libraries[@]}" -eq 0 ]]; then
+            echo "::error::The embedded libpdfium.so build input was not found"
+            exit 1
+          fi
+          for pdfium in "${pdfium_libraries[@]}"; do
+            assert_glibc_at_most "$pdfium" "2.16" "Embedded Pdfium"
+          done
 
       - name: Stage release archive
         shell: pwsh
@@ -89,6 +166,40 @@ jobs:
           ./scripts/stage-release-archive.ps1 `
             -Target "${{ matrix.target }}" `
             -Binary "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+
+      - name: Smoke-test Linux on glibc 2.31 and 2.35
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > target/glibc-smoke.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          binary=/opt/fastctx
+          version="$("$binary" --version)"
+          [[ "$version" == fastctx\ * ]]
+          responses="$(
+            printf '%s\n' \
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"glibc-smoke","version":"1.0"}}}' \
+              '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+              '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' |
+              timeout 15s "$binary" serve
+          )"
+          grep -Eq '"id"[[:space:]]*:[[:space:]]*1' <<<"$responses"
+          grep -Eq '"id"[[:space:]]*:[[:space:]]*2' <<<"$responses"
+          grep -Eq '"name"[[:space:]]*:[[:space:]]*"read"' <<<"$responses"
+          grep -Eq '"name"[[:space:]]*:[[:space:]]*"replace"' <<<"$responses"
+          SCRIPT
+          chmod +x target/glibc-smoke.sh
+          binary="$PWD/target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          probe="$PWD/target/glibc-smoke.sh"
+          for image in ubuntu:20.04 ubuntu:22.04; do
+            docker run --rm \
+              --volume "$binary:/opt/fastctx:ro" \
+              --volume "$probe:/opt/glibc-smoke:ro" \
+              "$image" \
+              /bin/bash /opt/glibc-smoke
+          done
 
       - uses: actions/setup-node@v6
         with:
@@ -128,6 +239,8 @@ jobs:
   publish-release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -156,9 +269,11 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Verify annotated release identity
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: ./scripts/verify-release-identity.ps1 -TagName $env:GITHUB_REF_NAME
       - name: Create exact GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -177,3 +292,7 @@ jobs:
             --verify-tag \
             --title "FastCtx ${GITHUB_REF_NAME}" \
             --notes-file "$notes"
+      - name: Confirm dry-run boundary
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Release artifacts were built and verified without creating or replacing a GitHub Release."

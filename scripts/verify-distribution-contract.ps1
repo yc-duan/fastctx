@@ -90,7 +90,16 @@ foreach ($required in @(
     "verify-release-assets.ps1",
     "verify-release-identity.ps1 -TagName `$env:GITHUB_REF_NAME",
     "dist/release/*",
-    "npm-tarballs-"
+    "npm-tarballs-",
+    "workflow_dispatch:",
+    "cargo install cargo-zigbuild --locked --version 0.23.0",
+    "cargo zigbuild --locked --release --target `${{ matrix.zig_target }}",
+    "x86_64-unknown-linux-gnu.2.31",
+    "Negative control correctly rejected",
+    "libpdfium.so",
+    "ubuntu:20.04",
+    "ubuntu:22.04",
+    "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
 )) {
     if (-not $releaseWorkflow.Contains($required)) {
         throw "Release workflow is missing distribution contract marker: $required"
