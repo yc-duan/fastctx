@@ -33,6 +33,14 @@ fastctx
 For a one-off run without installing, `npx fastctx` opens the same control
 terminal.
 
+If your npm registry is a mirror that has not synchronized this release yet,
+the install can fail with `404 Not Found` on the platform package. Install once
+from the official registry:
+
+```console
+npm install --global fastctx --registry=https://registry.npmjs.org/
+```
+
 This package is the launcher: it selects the matching scoped platform package
 (`@fastctx/win32-x64`, `@fastctx/linux-x64`, or the corresponding macOS
 package) locally and starts the complete binary. There is no postinstall script

@@ -65,6 +65,24 @@ If GitHub has published a release but npm has not exposed the matching version y
 
 **Unapply** stops FastCtx process images running from the managed bin directory, removes the configuration managed by FastCtx, and deletes its managed data. Shared settings changed by the user after Apply are preserved.
 
+### If the install returns 404
+
+Mirror registries copy new releases from the official registry on a delay. Right after a release, an install through a mirror can fail with `404 Not Found` — most often on the platform package, which npm installs as an optional dependency and skips silently, leaving `fastctx` installed but unable to start.
+
+Install once from the official registry:
+
+```console
+npm install --global fastctx --registry=https://registry.npmjs.org/
+```
+
+The flag applies to this command only and leaves the npm configuration unchanged. To use the official registry permanently:
+
+```console
+npm config set registry https://registry.npmjs.org/ --location=user
+```
+
+After installation, the **Update** screen probes the npm registry configured on this machine, the official registry, and registry.npmmirror.com, then installs from the first source that carries both the launcher and the matching platform package. Version numbers always come from the official registry and GitHub, so a mirror can never announce a version the official source has not published.
+
 ### One-off run
 
 ```console

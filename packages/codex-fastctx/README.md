@@ -29,3 +29,7 @@ npx codex-fastctx
 ```
 
 Prefer installing `fastctx` directly unless you specifically need this name.
+
+If your npm registry is a mirror that has not synchronized this release yet,
+the install can fail with `404 Not Found` on the platform package. Add
+`--registry=https://registry.npmjs.org/` to that single install command.
