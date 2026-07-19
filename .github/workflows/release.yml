@@ -302,3 +302,113 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "Release artifacts were built and verified without creating or replacing a GitHub Release."
+
+  publish-npm:
+    name: Publish npm packages
+    needs: publish-release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Trusted publishing exchanges this short-lived OIDC identity for a
+      # registry credential. No npm token exists in this repository.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tarballs-${{ github.ref_name }}
+          path: dist/npm
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Use an npm release that supports trusted publishing
+        run: npm install --global npm@latest
+      - name: Publish packages in dependency order
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+
+          publish_package() {
+            local name="$1"
+            local tarball="dist/npm/$2-${version}.tgz"
+            if [[ ! -f "$tarball" ]]; then
+              echo "::error::Missing tarball $tarball"
+              exit 1
+            fi
+            # Published versions are immutable, so a partially published release
+            # can only be finished by skipping what already landed. This check
+            # keeps a re-run of this job safe instead of failing on E403.
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "::notice::$name@$version is already published; skipping"
+              return
+            fi
+            echo "Publishing $name@$version"
+            npm publish "$tarball" --access public
+          }
+
+          # Dependents last: the launcher's optionalDependencies must resolve.
+          publish_package "@fastctx/win32-x64" "fastctx-win32-x64"
+          publish_package "@fastctx/linux-x64" "fastctx-linux-x64"
+          publish_package "@fastctx/darwin-x64" "fastctx-darwin-x64"
+          publish_package "@fastctx/darwin-arm64" "fastctx-darwin-arm64"
+          publish_package "fastctx" "fastctx"
+          publish_package "codex-fastctx" "codex-fastctx"
+      - name: Confirm registry visibility
+        shell: bash
+        run: |
+          set -uo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          packages=(
+            "@fastctx/win32-x64"
+            "@fastctx/linux-x64"
+            "@fastctx/darwin-x64"
+            "@fastctx/darwin-arm64"
+            "fastctx"
+            "codex-fastctx"
+          )
+          # The registry read path lags publish by minutes, so absence here is a
+          # propagation notice rather than a failed publish.
+          lagging=()
+          for name in "${packages[@]}"; do
+            visible=""
+            for _ in $(seq 1 10); do
+              if npm view "$name@$version" version >/dev/null 2>&1; then
+                visible="yes"
+                break
+              fi
+              sleep 30
+            done
+            if [[ -n "$visible" ]]; then
+              echo "$name@$version is visible"
+            else
+              lagging+=("$name")
+            fi
+          done
+          if [[ "${#lagging[@]}" -gt 0 ]]; then
+            echo "::warning::Still propagating after 5 minutes: ${lagging[*]}"
+          fi
+      - name: Request npmmirror synchronization
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Mirrors copy new versions lazily, which strands users whose registry
+          # is a mirror. This asks npmmirror to enqueue each package now; the
+          # response only acknowledges the request, not its completion.
+          for name in \
+            "%40fastctx%2Fwin32-x64" \
+            "%40fastctx%2Flinux-x64" \
+            "%40fastctx%2Fdarwin-x64" \
+            "%40fastctx%2Fdarwin-arm64" \
+            "fastctx" \
+            "codex-fastctx"
+          do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+              "https://registry.npmmirror.com/-/package/${name}/syncs" || echo "000")"
+            if [[ "$status" == "2"* ]]; then
+              echo "Sync queued for ${name} (HTTP ${status})"
+            else
+              echo "::warning::npmmirror sync request for ${name} returned HTTP ${status}"
+            fi
+          done
