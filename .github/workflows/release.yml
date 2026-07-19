@@ -1,5 +1,11 @@
 name: Release
 
+# Pushing a tag is a push event, so GitHub applies the skip markers ([skip ci],
+# [ci skip], [no ci], [skip actions], [actions skip]) from the message of the
+# commit the tag points at. A release commit carrying one silently suppresses
+# this entire workflow: the tag lands, no build runs, and no release appears.
+# Keep those markers out of any commit that a release tag will point at.
+# 2026-07-19: this happened once and cost a tag delete plus a re-tag.
 on:
   push:
     tags:
