@@ -26,8 +26,12 @@ Job commands, working directories, rolling output, and exit status stay in the
 current user's private local directory and are never uploaded by FastCtx.
 
 ```console
-npx fastctx
+npm install --global fastctx
+fastctx
 ```
+
+For a one-off run without installing, `npx fastctx` opens the same control
+terminal.
 
 This package is the launcher: it selects the matching scoped platform package
 (`@fastctx/win32-x64`, `@fastctx/linux-x64`, or the corresponding macOS

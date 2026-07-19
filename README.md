@@ -9,10 +9,11 @@ FastCtx is a local Rust tool runtime. It provides file reading, content search, 
 Repository operations run in a persistent process with stable input schemas and output formats. The model can gather the context it needs in fewer steps and spend more attention on understanding code, planning changes, and verifying results.
 
 ```console
-npx fastctx
+npm install --global fastctx
+fastctx
 ```
 
-The command opens the control terminal. Review the proposed changes, select **Apply**, then start a new ChatGPT / Codex session.
+The `fastctx` command opens the control terminal. Review the proposed changes, select **Apply**, then start a new ChatGPT / Codex session.
 
 FastCtx currently provides first-class setup for ChatGPT App and Codex CLI. Any MCP client can also register `fastctx serve` directly.
 
@@ -36,12 +37,13 @@ This greatly reduces the attention the model spends on tool mechanics, such as c
 
 ## Installation
 
-### Using npx
+### Install with npm
 
 Requires Node.js 18 or later:
 
 ```console
-npx fastctx
+npm install --global fastctx
+fastctx
 ```
 
 The first launch opens the full-screen control terminal. The interface supports 17 languages and provides these main actions:
@@ -63,12 +65,13 @@ If GitHub has published a release but npm has not exposed the matching version y
 
 **Unapply** stops FastCtx process images running from the managed bin directory, removes the configuration managed by FastCtx, and deletes its managed data. Shared settings changed by the user after Apply are preserved.
 
-### Global installation
+### One-off run
 
 ```console
-npm install --global fastctx
-fastctx
+npx fastctx
 ```
+
+`npx` opens the same control terminal without a global installation. Apply still copies the binary to `~/.fastctx/bin/`, so the applied setup keeps working after the npx cache is cleaned; only the `fastctx` command itself requires the global installation.
 
 ### Non-interactive use
 
