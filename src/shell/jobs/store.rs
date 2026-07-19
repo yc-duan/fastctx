@@ -426,9 +426,9 @@ pub(crate) fn scan_registry(root: &Path) -> Result<RegistrySnapshot, JobRegistry
             }
             continue;
         };
-        if meta.schema_version != JOB_SCHEMA_VERSION {
+        if !(1..=JOB_SCHEMA_VERSION).contains(&meta.schema_version) {
             return Err(JobRegistryError::data(format!(
-                "Cannot read job {id}: metadata schema {} is unsupported by this FastCtx (expected {}). Upgrade FastCtx or remove the finished record.",
+                "Cannot read job {id}: metadata schema {} is unsupported by this FastCtx (expected 1 through {}). Upgrade FastCtx or remove the finished record.",
                 meta.schema_version, JOB_SCHEMA_VERSION
             )));
         }
@@ -874,6 +874,7 @@ mod tests {
             command: "printf test".to_string(),
             cwd: "/fixture".to_string(),
             login_shell: false,
+            encoding: None,
             supervisor,
             origin: OriginSnapshot {
                 server_pid: 7,
@@ -1063,6 +1064,9 @@ mod tests {
         let complete = serde_json::to_string(&SpoolLine {
             seq: 1,
             text: "kept".to_string(),
+            raw_bytes: None,
+            total_bytes: 0,
+            stream_encoding: None,
             truncated: false,
             had_loss: false,
         })
@@ -1070,6 +1074,9 @@ mod tests {
         let partial = serde_json::to_string(&SpoolLine {
             seq: 2,
             text: "partial".to_string(),
+            raw_bytes: None,
+            total_bytes: 0,
+            stream_encoding: None,
             truncated: false,
             had_loss: false,
         })
@@ -1117,6 +1124,9 @@ mod tests {
         let complete = serde_json::to_string(&SpoolLine {
             seq: 1,
             text: "kept".to_string(),
+            raw_bytes: None,
+            total_bytes: 0,
+            stream_encoding: None,
             truncated: false,
             had_loss: false,
         })
@@ -1154,6 +1164,9 @@ mod tests {
             serde_json::to_string(&SpoolLine {
                 seq,
                 text: text.to_string(),
+                raw_bytes: None,
+                total_bytes: 0,
+                stream_encoding: None,
                 truncated: false,
                 had_loss: false,
             })

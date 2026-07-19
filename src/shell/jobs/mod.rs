@@ -11,9 +11,12 @@ use crate::budget::{TokenBudget, estimate_tokens};
 use crate::control::paths::ControlPaths;
 use crate::model::ToolResponse;
 use crate::shell::JobListStatus;
+use crate::shell::encoding::{
+    OutputEncoding, decode_job, job_garble_note, validate_output_encoding,
+};
 use crate::shell::output::{
-    budget_too_small_message, compose_response, dropped_note, global_token_budget,
-    job_output_token_budget, plural, terminal_response,
+    budget_too_small_message, compose_response, compose_response_with_tail, dropped_note,
+    global_token_budget, job_output_token_budget, plural, terminal_response,
 };
 use model::{JobRecord, JobStatus, LaunchSpec, SpoolLine, TerminationKind};
 use std::collections::{BTreeMap, HashMap};
@@ -41,6 +44,8 @@ struct OutputSnapshot {
     total_lines: u64,
     had_loss: bool,
     capture_error: Option<model::CaptureErrorRecord>,
+    default_encoding: Option<OutputEncoding>,
+    anchor: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -162,6 +167,7 @@ impl JobManager {
         command: &str,
         cwd: &Path,
         login_shell: bool,
+        encoding: Option<OutputEncoding>,
     ) -> ToolResponse {
         let paths = match self.paths() {
             Ok(paths) => paths,
@@ -237,6 +243,7 @@ impl JobManager {
             command: command.to_string(),
             cwd: cwd.to_path_buf(),
             login_shell,
+            encoding: encoding.map(|encoding| encoding.label().to_string()),
             origin: store::origin_snapshot(&server_cwd),
         };
         match host::launch_supervisor(executable, &spec) {
@@ -262,6 +269,7 @@ impl JobManager {
         job_id: &str,
         wait_ms: u64,
         after_seq: Option<u64>,
+        encoding: Option<OutputEncoding>,
         cancelled: impl Fn() -> bool,
     ) -> ToolResponse {
         let paths = match self.paths() {
@@ -314,6 +322,20 @@ impl JobManager {
             .into_iter()
             .filter(|line| line.seq > anchor)
             .collect::<Vec<_>>();
+        let default_encoding = match record
+            .meta
+            .encoding
+            .as_deref()
+            .map(validate_output_encoding)
+            .transpose()
+        {
+            Ok(encoding) => encoding,
+            Err(error) => {
+                return ToolResponse::error(format!(
+                    "Cannot read job {job_id}: its stored output encoding is invalid ({error})"
+                ));
+            }
+        };
         let snapshot = OutputSnapshot {
             status: record.status,
             lines,
@@ -321,8 +343,10 @@ impl JobManager {
             total_lines: spool.total_lines,
             had_loss: spool.had_loss,
             capture_error: spool.capture_error,
+            default_encoding,
+            anchor,
         };
-        let page = match format_snapshot(job_id, wait_ms, &snapshot, budget) {
+        let page = match format_snapshot(job_id, wait_ms, &snapshot, encoding, budget) {
             Ok(page) => page,
             Err(error) => return ToolResponse::error(error),
         };
@@ -428,19 +452,19 @@ fn format_snapshot(
     job_id: &str,
     wait_ms: u64,
     snapshot: &OutputSnapshot,
+    call_encoding: Option<OutputEncoding>,
     budget: TokenBudget,
 ) -> Result<FormattedPage, String> {
-    let mut notes = Vec::new();
+    let mut fixed_notes = Vec::new();
     if let Some(note) = dropped_note(snapshot.dropped) {
-        notes.push(note);
+        fixed_notes.push(note);
     }
     if let Some(error) = &snapshot.capture_error {
-        notes.push(format!(
+        fixed_notes.push(format!(
             "(Note: output capture failed after seq {}: {}. This does not kill the process; its exit status remains available, but redirect the command to a file for a full log.)",
             error.after_seq, error.reason
         ));
     }
-    let leading = (!notes.is_empty()).then(|| notes.join("\n\n"));
     if snapshot.lines.is_empty() {
         let terminal = match &snapshot.status {
             JobStatus::Running => format!(
@@ -448,6 +472,7 @@ fn format_snapshot(
             ),
             status => complete_terminal(job_id, status, snapshot.total_lines, snapshot.had_loss),
         };
+        let leading = (!fixed_notes.is_empty()).then(|| fixed_notes.join("\n\n"));
         let response = compose_response(leading.as_deref(), &[], &terminal);
         if estimate_tokens(&response) > budget.value {
             return Err(budget_too_small_message(budget));
@@ -465,20 +490,31 @@ fn format_snapshot(
         let shown = low + (high - low) / 2;
         let selected = &snapshot.lines[..shown];
         let last_seq = selected.last().expect("selected output is non-empty").seq;
+        let encoded = selected
+            .iter()
+            .map(SpoolLine::encoded_line)
+            .collect::<Vec<_>>();
+        let decoded = decode_job(&encoded, call_encoding, snapshot.default_encoding);
         let terminal = page_terminal(
             job_id,
             &snapshot.status,
             shown,
             snapshot.lines.len(),
             snapshot.total_lines,
-            snapshot.had_loss,
+            snapshot.had_loss || decoded.had_truncation,
             last_seq,
         );
-        let body = selected
-            .iter()
-            .map(|line| line.text.clone())
-            .collect::<Vec<_>>();
-        let response = compose_response(leading.as_deref(), &body, &terminal);
+        let mut notes = fixed_notes.clone();
+        if let Some(note) = job_garble_note(decoded.invalid_sequences, snapshot.anchor) {
+            notes.push(note);
+        }
+        let leading = (!notes.is_empty()).then(|| notes.join("\n\n"));
+        let response = compose_response_with_tail(
+            leading.as_deref(),
+            &decoded.lines,
+            decoded.transcoding_note.as_deref(),
+            &terminal,
+        );
         if estimate_tokens(&response) <= budget.value {
             best = Some(FormattedPage {
                 response,
@@ -832,8 +868,22 @@ pub(crate) fn refresh_tail(
         store::find_record(&paths.jobs_dir, job_id)?.ok_or_else(|| missing_job_text(job_id))?;
     let delta = store::read_spool_delta(&record, &mut tail.cursor)?;
     let appended = delta.lines.len();
+    let default_encoding = record
+        .meta
+        .encoding
+        .as_deref()
+        .map(validate_output_encoding)
+        .transpose()
+        .map_err(|error| {
+            format!("Cannot read job {job_id}: its stored output encoding is invalid ({error})")
+        })?;
+    let encoded = delta
+        .lines
+        .iter()
+        .map(SpoolLine::encoded_line)
+        .collect::<Vec<_>>();
     tail.lines
-        .extend(delta.lines.into_iter().map(|line| line.text));
+        .extend(decode_job(&encoded, None, default_encoding).lines);
     if tail.lines.len() > max_lines {
         tail.lines.drain(..tail.lines.len() - max_lines);
     }
@@ -961,6 +1011,7 @@ mod tests {
                 command: command.to_string(),
                 cwd: cwd.to_string(),
                 login_shell: false,
+                encoding: None,
                 supervisor: ProcessIdentity {
                     pid: 42,
                     started: "token".to_string(),
@@ -1035,6 +1086,7 @@ mod tests {
                     command: format!("printf {id}"),
                     cwd: server_cwd.to_string(),
                     login_shell: false,
+                    encoding: None,
                     supervisor: supervisor.clone(),
                     origin: OriginSnapshot {
                         server_pid,
@@ -1282,6 +1334,7 @@ mod tests {
             "printf should-not-run",
             temp.path(),
             false,
+            None,
         );
         assert!(response.is_error);
         match response.content.into_iter().next().unwrap() {
@@ -1310,7 +1363,10 @@ mod tests {
                 total_lines: 3,
                 had_loss: false,
                 capture_error: None,
+                default_encoding: None,
+                anchor: 0,
             },
+            None,
             budget,
         )
         .unwrap();
@@ -1332,7 +1388,10 @@ mod tests {
                     after_seq: 1,
                     reason: "disk unavailable".to_string(),
                 }),
+                default_encoding: None,
+                anchor: 0,
             },
+            None,
             budget,
         )
         .unwrap();

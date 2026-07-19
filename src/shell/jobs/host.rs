@@ -218,6 +218,12 @@ pub(crate) fn run_job_host() -> Result<(), String> {
 }
 
 fn supervise(spec: LaunchSpec) -> Result<(), String> {
+    let default_encoding = spec
+        .encoding
+        .as_deref()
+        .map(crate::shell::encoding::validate_output_encoding)
+        .transpose()
+        .map_err(|error| format!("Cannot start the background job supervisor: {error}"))?;
     let mut process = spawn_bash(&spec.bash, &spec.command, &spec.cwd, spec.login_shell)
         .map_err(|error| format!("Cannot start the command: {error}."))?;
     let mut watchdog = match WatchdogGuard::arm(process.id()) {
@@ -238,6 +244,7 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
         command: spec.command,
         cwd: display_path(&spec.cwd),
         login_shell: spec.login_shell,
+        encoding: spec.encoding.clone(),
         supervisor,
         origin: spec.origin,
         started_at: utc_now(),
@@ -266,7 +273,7 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
         return Err(error);
     }
 
-    let mut spool = Some(SpoolWriter::new(&spec.job_dir));
+    let mut spool = Some(SpoolWriter::new(&spec.job_dir, default_encoding));
     let mut total_lines = 0_u64;
     let mut had_loss = false;
     let mut capture_error = None;

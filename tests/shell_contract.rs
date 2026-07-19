@@ -43,7 +43,10 @@ fn foreground_run_preserves_order_normalizes_output_and_marks_long_line_loss() {
     assert_eq!(response["result"]["isError"], false);
     assert_eq!(
         mcp_text(&response),
-        "one\ntwo\nthree\nprogress\n�\n\n(Complete: exited 42; 5 lines.)"
+        format!(
+            "{}\n\none\ntwo\nthree\nprogress\n�\n\n(Complete: exited 42; 5 lines.)",
+            expected_run_garble_note(1)
+        )
     );
 
     let long = session.call(
@@ -52,11 +55,151 @@ fn foreground_run_preserves_order_normalizes_output_and_marks_long_line_loss() {
     );
     let text = mcp_text(&long);
     assert!(text.starts_with(&"0".repeat(2_000)));
-    assert!(text.contains("... [line truncated: 400000 chars total]"));
+    assert!(text.contains("... [line truncated: 400000 bytes total]"));
     assert!(text.ends_with(
         "(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)"
     ));
     assert_no_shell_artifacts(temp.path());
+    assert!(session.close().success());
+}
+
+#[test]
+fn foreground_delivery_time_decoding_covers_explicit_auto_bom_and_lossy_paths() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut session = shell_session(temp.path(), None);
+
+    let gbk = session.call(
+        "run",
+        serde_json::json!({
+            "command": "printf '\\326\\320\\316\\304\\n'",
+            "encoding": "gbk",
+            "login_shell": false
+        }),
+    );
+    assert_eq!(gbk["result"]["isError"], false);
+    assert_eq!(
+        mcp_text(&gbk),
+        "中文\n\n(Note: decoded from GBK as requested; output is UTF-8.)\n(Complete: exited 0; 1 line.)"
+    );
+
+    let shift_jis = session.call(
+        "run",
+        serde_json::json!({
+            "command": "printf '\\202\\240\\n\\202\\242\\n'",
+            "encoding": "shift_jis",
+            "login_shell": false
+        }),
+    );
+    assert_eq!(
+        mcp_text(&shift_jis),
+        "あ\nい\n\n(Note: decoded from Shift_JIS as requested; output is UTF-8.)\n(Complete: exited 0; 2 lines.)"
+    );
+
+    let automatic = session.call(
+        "run",
+        serde_json::json!({
+            "command": "for i in {1..10}; do printf '\\326\\320\\316\\304\\n'; done",
+            "login_shell": false
+        }),
+    );
+    let automatic_body = std::iter::repeat_n("中文", 10)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        mcp_text(&automatic),
+        format!(
+            "{automatic_body}\n\n(Note: decoded from GBK; output is UTF-8.)\n(Complete: exited 0; 10 lines.)"
+        )
+    );
+
+    let utf16 = session.call(
+        "run",
+        serde_json::json!({
+            "command": "printf '\\377\\376\\055N\\207e\\012\\000'",
+            "login_shell": false
+        }),
+    );
+    assert_eq!(
+        mcp_text(&utf16),
+        "中文\n\n(Note: decoded from UTF-16LE; output is UTF-8.)\n(Complete: exited 0; 1 line.)"
+    );
+
+    let no_bom = session.call(
+        "run",
+        serde_json::json!({
+            "command": "printf '\\055N\\207e'",
+            "login_shell": false
+        }),
+    );
+    assert_eq!(no_bom["result"]["isError"], false);
+    assert!(!mcp_text(&no_bom).contains("中文"));
+    assert!(!mcp_text(&no_bom).contains("decoded from UTF-16"));
+    assert!(mcp_text(&no_bom).contains("shown as U+FFFD"));
+
+    let garbage = session.call(
+        "run",
+        serde_json::json!({
+            "command": "printf '\\001\\377\\376\\200'",
+            "login_shell": false
+        }),
+    );
+    assert_eq!(
+        garbage["result"]["isError"], false,
+        "arbitrary output bytes must remain data, not a tool error"
+    );
+    assert_eq!(
+        mcp_text(&garbage),
+        format!(
+            "{}\n\n\u{1}���\n\n(Complete: exited 0; 1 line.)",
+            expected_run_garble_note(3)
+        )
+    );
+
+    let long_gbk = session.call(
+        "run",
+        serde_json::json!({
+            "command": "for i in {1..2001}; do printf '\\326\\320'; done",
+            "encoding": "gbk",
+            "login_shell": false
+        }),
+    );
+    let long_gbk_text = mcp_text(&long_gbk);
+    assert!(
+        long_gbk_text.starts_with(&format!(
+            "{}... [line truncated: 4002 bytes total]",
+            "中".repeat(2_000)
+        )),
+        "{long_gbk_text}"
+    );
+    assert!(long_gbk_text.ends_with(
+        "(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)"
+    ));
+
+    assert!(session.close().success());
+}
+
+#[test]
+fn shell_process_environment_forces_only_python_standard_streams_to_utf8() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut command = shell_command(temp.path(), None);
+    command
+        .env_remove("PYTHONIOENCODING")
+        .env_remove("PYTHONUTF8")
+        .env_remove("JAVA_TOOL_OPTIONS");
+    let mut session = McpSession::start(command);
+    let response = session.call(
+        "run",
+        serde_json::json!({
+            "command": "printf '%s|%s|%s' \"$PYTHONIOENCODING\" \"${PYTHONUTF8-unset}\" \"${JAVA_TOOL_OPTIONS-unset}\"",
+            "login_shell": false
+        }),
+    );
+    assert_eq!(
+        mcp_text(&response),
+        "utf-8|unset|unset\n\n(Complete: exited 0; 1 line.)"
+    );
     assert!(session.close().success());
 }
 
@@ -300,6 +443,141 @@ fn background_default_cursor_and_explicit_after_seq_are_lossless_and_idempotent(
     );
     assert_no_shell_artifacts(temp.path());
     assert!(second.close().success());
+}
+
+#[test]
+fn background_raw_bytes_support_default_decoding_and_same_page_explicit_rereads() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut first = shell_session(temp.path(), None);
+    let started = first.call(
+        "run_background",
+        serde_json::json!({
+            "command": "printf '\\326\\320\\316\\304\\n'; sleep 10",
+            "login_shell": false
+        }),
+    );
+    let job_id = started_job_id(mcp_text(&started));
+    let lossy = wait_for_job_page(&mut first, &job_id, None, "after_seq=0");
+    assert_eq!(
+        lossy,
+        format!(
+            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)",
+            expected_job_garble_note(4, 0)
+        )
+    );
+    assert!(first.close().success());
+
+    let mut second = shell_session(temp.path(), None);
+    let restored = wait_for_job_page(&mut second, &job_id, Some("gbk"), "中文");
+    assert_eq!(
+        restored,
+        format!(
+            "中文\n\n(Note: decoded from GBK as requested; output is UTF-8.)\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)"
+        )
+    );
+    let killed = second.call("job_kill", serde_json::json!({"job_id": job_id}));
+    assert_eq!(
+        mcp_text(&killed),
+        format!("(Complete: job {job_id} killed.)")
+    );
+
+    let default_started = second.call(
+        "run_background",
+        serde_json::json!({
+            "command": "printf '\\326\\320\\316\\304\\n'; sleep 10",
+            "encoding": "gbk",
+            "login_shell": false
+        }),
+    );
+    let default_id = started_job_id(mcp_text(&default_started));
+    let inherited = wait_for_job_page(&mut second, &default_id, None, "中文");
+    assert_eq!(
+        inherited,
+        format!(
+            "中文\n\n(Note: decoded from GBK as requested; output is UTF-8.)\n(Partial: job {default_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)"
+        )
+    );
+    let overridden = wait_for_job_page(&mut second, &default_id, Some("utf-8"), "after_seq=0");
+    assert_eq!(
+        overridden,
+        format!(
+            "{}\n\n����\n\n(Partial: job {default_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)",
+            expected_job_garble_note(4, 0)
+        )
+    );
+    let killed = second.call("job_kill", serde_json::json!({"job_id": default_id}));
+    assert_eq!(
+        mcp_text(&killed),
+        format!("(Complete: job {default_id} killed.)")
+    );
+    assert!(second.close().success());
+}
+
+#[test]
+fn background_default_utf8_decoding_stays_fixed_across_pages() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut session = shell_session(temp.path(), None);
+    let started = session.call(
+        "run_background",
+        serde_json::json!({
+            "command": "printf '\\326\\320\\316\\304\\n'; sleep 1; printf '\\326\\320\\316\\304\\n'; sleep 10",
+            "login_shell": false
+        }),
+    );
+    let job_id = started_job_id(mcp_text(&started));
+
+    let first = wait_for_job_page_after(&mut session, &job_id, 0, None, "����");
+    assert_eq!(
+        first,
+        format!(
+            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)",
+            expected_job_garble_note(4, 0)
+        )
+    );
+    let second = wait_for_job_page_after(&mut session, &job_id, 1, None, "����");
+    assert_eq!(
+        second,
+        format!(
+            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=2 for more.)",
+            expected_job_garble_note(4, 1)
+        )
+    );
+
+    let killed = session.call("job_kill", serde_json::json!({"job_id": job_id}));
+    assert_eq!(
+        mcp_text(&killed),
+        format!("(Complete: job {job_id} killed.)")
+    );
+    assert!(session.close().success());
+}
+
+#[test]
+fn background_long_line_preserves_byte_count_and_marks_terminal_loss() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut session = shell_session(temp.path(), None);
+    let started = session.call(
+        "run_background",
+        serde_json::json!({
+            "command": "printf '%0400000d' 0",
+            "login_shell": false
+        }),
+    );
+    let job_id = started_job_id(mcp_text(&started));
+    let output = wait_for_complete_from(&mut session, &job_id, Some(0));
+    assert!(
+        output.starts_with(&format!(
+            "{}... [line truncated: 400000 bytes total]",
+            "0".repeat(2_000)
+        )),
+        "{output}"
+    );
+    assert!(output.ends_with(&format!(
+        "(Complete: job {job_id} exited 0; 1 line total, but some output was dropped or truncated — redirect the command to a file (command > file 2>&1) for the full log.)"
+    )));
+    assert!(session.close().success());
 }
 
 #[test]
@@ -637,6 +915,68 @@ fn capture_failure_keeps_the_command_running_and_falls_back_to_the_exit_record()
 }
 
 #[test]
+fn output_encoding_errors_are_exact_and_precede_process_side_effects() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let foreground_marker = temp.path().join("foreground-marker.txt");
+    let background_marker = temp.path().join("background-marker.txt");
+    let mut session = shell_session(temp.path(), None);
+
+    let cases = [
+        (
+            "run",
+            serde_json::json!({
+                "command": format!("printf touched > {}", bash_quote(&foreground_marker)),
+                "encoding": "wat"
+            }),
+            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", \"windows-1252\", \"utf-16le\", or \"utf-32le\".",
+        ),
+        (
+            "run",
+            serde_json::json!({
+                "command": format!("printf touched > {}", bash_quote(&foreground_marker)),
+                "encoding": "utf-16le"
+            }),
+            "Encoding \"utf-16le\" is not supported for command output. UTF-16/UTF-32 output is decoded automatically when the stream starts with a BOM; otherwise redirect the command to a file (command > file 2>&1) and read it with the read tool.",
+        ),
+        (
+            "run_background",
+            serde_json::json!({
+                "command": format!(
+                    "printf touched > {}; sleep 10",
+                    bash_quote(&background_marker)
+                ),
+                "encoding": "utf-32be"
+            }),
+            "Encoding \"utf-32be\" is not supported for command output. UTF-16/UTF-32 output is decoded automatically when the stream starts with a BOM; otherwise redirect the command to a file (command > file 2>&1) and read it with the read tool.",
+        ),
+        (
+            "job_output",
+            serde_json::json!({
+                "job_id": "missing",
+                "encoding": "wat"
+            }),
+            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", \"windows-1252\", \"utf-16le\", or \"utf-32le\".",
+        ),
+    ];
+    for (tool, arguments, expected) in cases {
+        let response = session.call(tool, arguments);
+        assert_eq!(response["result"]["isError"], true, "{response}");
+        assert_eq!(mcp_text(&response), expected);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        !foreground_marker.exists(),
+        "invalid foreground encoding allowed the command to run"
+    );
+    assert!(
+        !background_marker.exists(),
+        "invalid background encoding allowed the command to run"
+    );
+    assert!(session.close().success());
+}
+
+#[test]
 fn shell_error_catalog_uses_fastctx_names_and_rejects_invalid_inputs() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
@@ -912,6 +1252,106 @@ fn wait_for_job_text(session: &mut McpSession, job_id: &str, needle: &str) -> St
             return text;
         }
     }
+}
+
+fn wait_for_job_page(
+    session: &mut McpSession,
+    job_id: &str,
+    encoding: Option<&str>,
+    needle: &str,
+) -> String {
+    wait_for_job_page_after(session, job_id, 0, encoding, needle)
+}
+
+fn wait_for_job_page_after(
+    session: &mut McpSession,
+    job_id: &str,
+    after_seq: u64,
+    encoding: Option<&str>,
+    needle: &str,
+) -> String {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "job {job_id} never produced {needle:?}"
+        );
+        let mut arguments = serde_json::json!({
+            "job_id": job_id,
+            "wait_ms": 2_000,
+            "after_seq": after_seq
+        });
+        if let Some(encoding) = encoding {
+            arguments["encoding"] = encoding.into();
+        }
+        let output = session.call("job_output", arguments);
+        let text = mcp_text(&output).to_string();
+        if text.contains(needle) {
+            return text;
+        }
+    }
+}
+
+fn expected_run_garble_note(invalid_sequences: u64) -> String {
+    let noun = if invalid_sequences == 1 {
+        "sequence"
+    } else {
+        "sequences"
+    };
+    match expected_legacy_code_page_label() {
+        Some(label) => format!(
+            "(Note: {invalid_sequences} invalid byte {noun} shown as U+FFFD — the command likely wrote {label}, this system's legacy code page. Re-run with encoding=\"{label}\", or redirect to a file and use the read tool.)"
+        ),
+        None => format!(
+            "(Note: {invalid_sequences} invalid byte {noun} shown as U+FFFD. If the text looks garbled, pass the source encoding via the encoding parameter.)"
+        ),
+    }
+}
+
+fn expected_job_garble_note(invalid_sequences: u64, anchor: u64) -> String {
+    let noun = if invalid_sequences == 1 {
+        "sequence"
+    } else {
+        "sequences"
+    };
+    match expected_legacy_code_page_label() {
+        Some(label) => format!(
+            "(Note: {invalid_sequences} invalid byte {noun} shown as U+FFFD — the job likely wrote {label}, this system's legacy code page. Call job_output again with after_seq={anchor} and encoding=\"{label}\" to re-read this page.)"
+        ),
+        None => format!(
+            "(Note: {invalid_sequences} invalid byte {noun} shown as U+FFFD. If the text looks garbled, call job_output again with after_seq={anchor} and the source encoding via encoding.)"
+        ),
+    }
+}
+
+#[cfg(windows)]
+fn expected_legacy_code_page_label() -> Option<&'static str> {
+    use windows_sys::Win32::Globalization::GetACP;
+
+    // SAFETY: GetACP has no preconditions and is the independent OS oracle for this golden.
+    match unsafe { GetACP() } {
+        874 => Some("windows-874"),
+        932 => Some("shift_jis"),
+        936 => Some("gbk"),
+        949 => Some("euc-kr"),
+        950 => Some("big5"),
+        1_250 => Some("windows-1250"),
+        1_251 => Some("windows-1251"),
+        1_252 => Some("windows-1252"),
+        1_253 => Some("windows-1253"),
+        1_254 => Some("windows-1254"),
+        1_255 => Some("windows-1255"),
+        1_256 => Some("windows-1256"),
+        1_257 => Some("windows-1257"),
+        1_258 => Some("windows-1258"),
+        54_936 => Some("gb18030"),
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+fn expected_legacy_code_page_label() -> Option<&'static str> {
+    None
 }
 
 fn wait_until(mut timeout: Duration, mut predicate: impl FnMut() -> bool) {

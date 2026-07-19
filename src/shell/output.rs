@@ -6,6 +6,7 @@ use crate::budget::{
 };
 use crate::model::ToolResponse;
 use crate::shell::buffer::{BufferedLine, LineRing};
+use crate::shell::encoding::{EncodedLine, OutputEncoding, decode_run, run_garble_note};
 use crate::shell::normalize::StreamNormalizer;
 use std::io::Read;
 
@@ -28,18 +29,16 @@ impl CapturedOutput {
         self.ring.dropped_lines()
     }
 
-    pub(crate) fn had_truncation(&self) -> bool {
-        self.ring.had_truncation()
-    }
-
     #[cfg(test)]
     fn from_lines(lines: &[(&str, bool)], limit: usize) -> Self {
         let mut ring = LineRing::with_limit(limit);
         for (text, truncated) in lines {
             ring.push(crate::shell::normalize::NormalizedLine {
-                text: (*text).to_string(),
+                bytes: text.as_bytes().to_vec(),
+                total_bytes: text.len() as u64,
                 terminated: true,
-                truncated: *truncated,
+                stream_encoding: None,
+                raw_truncated: *truncated,
             });
         }
         Self { ring }
@@ -148,37 +147,62 @@ pub(crate) fn format_foreground(
     output: &CapturedOutput,
     exit_code: i32,
     timeout_ms: Option<u64>,
+    encoding: Option<OutputEncoding>,
 ) -> ToolResponse {
     let budget = match run_token_budget() {
         Ok(budget) => budget,
         Err(error) => return ToolResponse::error(error),
     };
-    format_foreground_with_budget(output, exit_code, timeout_ms, budget)
+    format_foreground_with_budget(output, exit_code, timeout_ms, encoding, budget)
 }
 
 fn format_foreground_with_budget(
     output: &CapturedOutput,
     exit_code: i32,
     timeout_ms: Option<u64>,
+    encoding: Option<OutputEncoding>,
     budget: TokenBudget,
 ) -> ToolResponse {
     let retained = output.retained_lines();
-    let lines = retained
+    let encoded = retained
         .iter()
-        .map(|line| line.text.clone())
+        .map(|line| EncodedLine {
+            bytes: &line.bytes,
+            total_bytes: line.total_bytes,
+            stream_encoding: line.stream_encoding,
+            legacy_text: None,
+            known_truncated: line.raw_truncated,
+        })
         .collect::<Vec<_>>();
+    let decoded = decode_run(&encoded, encoding);
+    let lines = decoded.lines;
     let total = output.total_lines();
     let dropped = output.dropped_lines();
 
     if dropped == 0 {
-        let terminal = full_terminal(exit_code, timeout_ms, total, output.had_truncation());
-        let response = compose_response(None, &lines, &terminal);
+        let terminal = full_terminal(exit_code, timeout_ms, total, decoded.had_truncation);
+        let leading = run_garble_note(decoded.invalid_sequences);
+        let response = compose_response_with_tail(
+            leading.as_deref(),
+            &lines,
+            decoded.transcoding_note.as_deref(),
+            &terminal,
+        );
         if estimate_tokens(&response) <= budget.value {
             return ToolResponse::text(response);
         }
     }
 
-    match largest_head_tail_that_fits(&lines, total, dropped, exit_code, timeout_ms, budget.value) {
+    let window = ForegroundWindow {
+        lines: &lines,
+        invalid_per_line: &decoded.invalid_sequences_per_line,
+        transcoding_note: decoded.transcoding_note.as_deref(),
+        total,
+        dropped,
+        exit_code,
+        timeout_ms,
+    };
+    match largest_head_tail_that_fits(&window, budget.value) {
         Some(response) => ToolResponse::text(response),
         None => ToolResponse::error(budget_too_small_message(budget)),
     }
@@ -227,39 +251,39 @@ fn window_terminal(
     }
 }
 
-fn largest_head_tail_that_fits(
-    lines: &[String],
+struct ForegroundWindow<'a> {
+    lines: &'a [String],
+    invalid_per_line: &'a [u64],
+    transcoding_note: Option<&'a str>,
     total: u64,
     dropped: u64,
     exit_code: i32,
     timeout_ms: Option<u64>,
-    budget: usize,
-) -> Option<String> {
-    let note = dropped_note(dropped);
-    let base = window_candidate(
-        lines,
-        total,
-        0,
-        0,
-        note.as_deref(),
-        &window_terminal(exit_code, timeout_ms, 0, 0, total),
-    );
+}
+
+#[derive(Clone, Copy)]
+struct WindowBounds {
+    first: usize,
+    last: usize,
+}
+
+fn largest_head_tail_that_fits(window: &ForegroundWindow<'_>, budget: usize) -> Option<String> {
+    let base = window_candidate(window, WindowBounds { first: 0, last: 0 });
     let base_tokens = estimate_tokens(&base);
     if base_tokens > budget {
         return None;
     }
 
     let head_target = budget.saturating_sub(base_tokens) / 10;
-    let first = largest_prefix_within(lines, head_target);
-    let remaining = lines.len().saturating_sub(first);
+    let first = largest_prefix_within(window.lines, head_target);
+    let remaining = window.lines.len().saturating_sub(first);
 
     let mut low = 0;
     let mut high = remaining;
     let mut best = base;
     while low <= high {
         let last = low + (high - low) / 2;
-        let terminal = window_terminal(exit_code, timeout_ms, first, last, total);
-        let candidate = window_candidate(lines, total, first, last, note.as_deref(), &terminal);
+        let candidate = window_candidate(window, WindowBounds { first, last });
         if estimate_tokens(&candidate) <= budget {
             best = candidate;
             low = last.saturating_add(1);
@@ -294,24 +318,47 @@ fn largest_prefix_within(lines: &[String], token_target: usize) -> usize {
     best
 }
 
-fn window_candidate(
-    lines: &[String],
-    total: u64,
-    first: usize,
-    last: usize,
-    note: Option<&str>,
-    terminal: &str,
-) -> String {
+fn window_candidate(window: &ForegroundWindow<'_>, bounds: WindowBounds) -> String {
+    let WindowBounds { first, last } = bounds;
     let mut body = Vec::with_capacity(first.saturating_add(last).saturating_add(1));
-    body.extend(lines.iter().take(first).cloned());
-    let omitted = total.saturating_sub(first.saturating_add(last) as u64);
+    body.extend(window.lines.iter().take(first).cloned());
+    let omitted = window
+        .total
+        .saturating_sub(first.saturating_add(last) as u64);
     if omitted > 0 {
         body.push(format!("... [{omitted} lines omitted] ..."));
     }
     if last > 0 {
-        body.extend(lines[lines.len() - last..].iter().cloned());
+        body.extend(window.lines[window.lines.len() - last..].iter().cloned());
     }
-    compose_response(note, &body, terminal)
+    let invalid = window
+        .invalid_per_line
+        .iter()
+        .take(first)
+        .chain(window.invalid_per_line.iter().rev().take(last))
+        .copied()
+        .fold(0_u64, u64::saturating_add);
+    let garble_note = run_garble_note(invalid);
+    let drop_note = dropped_note(window.dropped);
+    let leading = match (drop_note.as_deref(), garble_note.as_deref()) {
+        (Some(drop_note), Some(garble_note)) => Some(format!("{drop_note}\n\n{garble_note}")),
+        (Some(drop_note), None) => Some(drop_note.to_string()),
+        (None, Some(garble_note)) => Some(garble_note.to_string()),
+        (None, None) => None,
+    };
+    let terminal = window_terminal(
+        window.exit_code,
+        window.timeout_ms,
+        first,
+        last,
+        window.total,
+    );
+    compose_response_with_tail(
+        leading.as_deref(),
+        &body,
+        window.transcoding_note,
+        &terminal,
+    )
 }
 
 pub(crate) fn dropped_note(dropped: u64) -> Option<String> {
@@ -329,13 +376,32 @@ pub(crate) fn compose_response(
     lines: &[String],
     terminal: &str,
 ) -> String {
-    let body = compose_lines(lines, terminal);
+    compose_response_with_tail(leading_note, lines, None, terminal)
+}
+
+pub(crate) fn compose_response_with_tail(
+    leading_note: Option<&str>,
+    lines: &[String],
+    trailing_note: Option<&str>,
+    terminal: &str,
+) -> String {
+    let mut notes = Vec::with_capacity(2);
+    if let Some(note) = trailing_note {
+        notes.push(note.to_string());
+    }
+    notes.push(terminal.to_string());
+    let body = if lines.is_empty() {
+        notes.join("\n")
+    } else {
+        format!("{}\n\n{}", lines.join("\n"), notes.join("\n"))
+    };
     match leading_note {
         Some(note) => format!("{note}\n\n{body}"),
         None => body,
     }
 }
 
+#[cfg(test)]
 pub(crate) fn compose_lines(lines: &[String], note: &str) -> String {
     let body = lines.join("\n");
     if lines.is_empty() {
@@ -352,8 +418,8 @@ pub(crate) fn plural<'a>(count: u64, singular: &'a str, plural: &'a str) -> &'a 
 #[cfg(test)]
 mod tests {
     use super::{
-        CapturedOutput, compose_lines, dropped_note, format_foreground_with_budget, full_terminal,
-        window_terminal,
+        CapturedOutput, capture_foreground, compose_lines, dropped_note,
+        format_foreground_with_budget, full_terminal, window_terminal,
     };
     use crate::budget::TokenBudget;
 
@@ -367,26 +433,33 @@ mod tests {
     #[test]
     fn complete_timeout_and_long_line_status_notes_match_the_contract() {
         assert_eq!(
-            format_foreground_with_budget(&CapturedOutput::default(), 0, None, budget(8_500)),
+            format_foreground_with_budget(&CapturedOutput::default(), 0, None, None, budget(8_500),),
             crate::ToolResponse::text("(Complete: exited 0; no output.)")
         );
         let one = CapturedOutput::from_lines(&[("one", false)], usize::MAX);
         assert_eq!(
-            format_foreground_with_budget(&one, 42, None, budget(8_500)),
+            format_foreground_with_budget(&one, 42, None, None, budget(8_500)),
             crate::ToolResponse::text("one\n\n(Complete: exited 42; 1 line.)")
         );
-        let long = CapturedOutput::from_lines(
-            &[("prefix... [line truncated: 3000 chars total]", true)],
-            usize::MAX,
+        let long = capture_foreground(std::io::Cursor::new(vec![b'x'; 3_000])).unwrap();
+        let long_line = format!(
+            "{}... [line truncated: 3000 bytes total]",
+            "x".repeat(2_000)
         );
         assert_eq!(
-            format_foreground_with_budget(&long, 0, None, budget(8_500)),
-            crate::ToolResponse::text(
-                "prefix... [line truncated: 3000 chars total]\n\n(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)"
-            )
+            format_foreground_with_budget(&long, 0, None, None, budget(8_500)),
+            crate::ToolResponse::text(format!(
+                "{long_line}\n\n(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)"
+            ))
         );
         assert_eq!(
-            format_foreground_with_budget(&CapturedOutput::default(), 137, Some(1), budget(8_500)),
+            format_foreground_with_budget(
+                &CapturedOutput::default(),
+                137,
+                Some(1),
+                None,
+                budget(8_500),
+            ),
             crate::ToolResponse::text(
                 "(Partial: timed out after 1 ms and the process tree was killed; no output captured. Increase timeout_ms or use run_background.)"
             )
@@ -403,7 +476,7 @@ mod tests {
             .map(|(line, truncated)| (line.as_str(), *truncated))
             .collect::<Vec<_>>();
         let output = CapturedOutput::from_lines(&borrowed, usize::MAX);
-        let response = format_foreground_with_budget(&output, 0, None, budget(160));
+        let response = format_foreground_with_budget(&output, 0, None, None, budget(160));
         let text = match &response.content[0] {
             crate::ToolContent::Text(text) => text,
             crate::ToolContent::Image { .. } => panic!("expected text"),
@@ -421,7 +494,7 @@ mod tests {
     fn ring_loss_is_reported_at_the_page_front_and_in_the_partial_terminal() {
         let per_line = std::mem::size_of::<crate::shell::buffer::BufferedLine>() + 4;
         let output = CapturedOutput::from_lines(&[("one", false), ("two", false)], per_line);
-        let response = format_foreground_with_budget(&output, 0, None, budget(8_500));
+        let response = format_foreground_with_budget(&output, 0, None, None, budget(8_500));
         let text = match &response.content[0] {
             crate::ToolContent::Text(text) => text,
             crate::ToolContent::Image { .. } => panic!("expected text"),

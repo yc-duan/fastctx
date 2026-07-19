@@ -219,6 +219,8 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
             "the full output, redirect it to a file (command > file 2>&1) and page that\n",
             "file with the read tool. Default timeout 120000 ms (max 240000) — start\n",
             "anything longer with run_background. cwd must be absolute when given.\n",
+            "If the output looks garbled (U+FFFD), pass encoding with the source\n",
+            "encoding label (e.g. \"gbk\"). ",
             "The last line states Complete or Partial."
         ))
     );
@@ -232,6 +234,7 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
         run.input_schema["properties"]["login_shell"]["default"],
         true
     );
+    assert!(run.input_schema["properties"].get("encoding").is_some());
     let background = shell
         .iter()
         .find(|tool| tool.name == "run_background")
@@ -261,6 +264,11 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
         background.input_schema["properties"]["login_shell"]["default"],
         true
     );
+    assert!(
+        background.input_schema["properties"]
+            .get("encoding")
+            .is_some()
+    );
     let output = shell.iter().find(|tool| tool.name == "job_output").unwrap();
     assert_eq!(
         output.description.as_deref(),
@@ -270,7 +278,9 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
             "returns as soon as new output or the exit arrives, otherwise when the wait\n",
             "elapses. A Partial note gives an after_seq cursor — pass it back to resume\n",
             "idempotently if a call was lost. Works for jobs started in earlier\n",
-            "sessions. Keep calling until the last line says Complete."
+            "sessions. If output looks garbled (U+FFFD), call again with encoding set\n",
+            "to the source encoding (e.g. \"gbk\") — stored bytes are re-decoded\n",
+            "losslessly. Keep calling until the last line says Complete."
         ))
     );
     assert_eq!(
@@ -283,6 +293,7 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
         120_000
     );
     assert_eq!(output.input_schema["properties"]["after_seq"]["minimum"], 0);
+    assert!(output.input_schema["properties"].get("encoding").is_some());
     let list = shell.iter().find(|tool| tool.name == "job_list").unwrap();
     assert_eq!(
         list.description.as_deref(),

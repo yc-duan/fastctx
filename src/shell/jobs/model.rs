@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-pub(super) const JOB_SCHEMA_VERSION: u32 = 1;
+pub(super) const JOB_SCHEMA_VERSION: u32 = 2;
 pub(super) const META_FILE: &str = "meta.json";
 pub(super) const EXIT_FILE: &str = "exit.json";
 pub(super) const CAPTURE_ERROR_FILE: &str = "capture-error.json";
@@ -32,6 +32,9 @@ pub(crate) struct JobMeta {
     pub(crate) command: String,
     pub(crate) cwd: String,
     pub(crate) login_shell: bool,
+    /// Default delivery-time decoder selected when this job was started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) encoding: Option<String>,
     pub(crate) supervisor: ProcessIdentity,
     pub(crate) origin: OriginSnapshot,
     pub(crate) started_at: String,
@@ -83,7 +86,20 @@ pub(crate) struct CaptureErrorRecord {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct SpoolLine {
     pub(crate) seq: u64,
+    /// UTF-8 text from schema v1 records, retained for backward compatibility.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) text: String,
+    /// Raw normalized bytes written by schema v2 supervisors.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "optional_base64"
+    )]
+    pub(crate) raw_bytes: Option<Vec<u8>>,
+    #[serde(default)]
+    pub(crate) total_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) stream_encoding: Option<crate::shell::normalize::StreamEncoding>,
     pub(crate) truncated: bool,
     /// Lifetime loss flag propagated forward so retained segments remain self-describing.
     pub(crate) had_loss: bool,
@@ -98,7 +114,61 @@ pub(crate) struct LaunchSpec {
     pub(crate) command: String,
     pub(crate) cwd: PathBuf,
     pub(crate) login_shell: bool,
+    #[serde(default)]
+    pub(crate) encoding: Option<String>,
     pub(crate) origin: OriginSnapshot,
+}
+
+impl SpoolLine {
+    pub(crate) fn encoded_line(&self) -> crate::shell::encoding::EncodedLine<'_> {
+        match self.raw_bytes.as_deref() {
+            Some(bytes) => crate::shell::encoding::EncodedLine {
+                bytes,
+                total_bytes: self.total_bytes.max(bytes.len() as u64),
+                stream_encoding: self.stream_encoding,
+                legacy_text: None,
+                known_truncated: self.truncated,
+            },
+            None => crate::shell::encoding::EncodedLine {
+                bytes: &[],
+                total_bytes: self.total_bytes.max(self.text.len() as u64),
+                stream_encoding: None,
+                legacy_text: Some(&self.text),
+                known_truncated: self.truncated,
+            },
+        }
+    }
+}
+
+mod optional_base64 {
+    use base64::Engine;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(bytes) => {
+                serializer.serialize_some(&base64::engine::general_purpose::STANDARD.encode(bytes))
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Option::<String>::deserialize(deserializer)?;
+        value
+            .map(|value| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(value)
+                    .map_err(serde::de::Error::custom)
+            })
+            .transpose()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -149,5 +219,6 @@ mod tests {
         assert_eq!(meta.origin.server_pid, 7);
         assert_eq!(meta.origin.server_started, None);
         assert_eq!(meta.origin.parent_pid, None);
+        assert_eq!(meta.encoding, None);
     }
 }

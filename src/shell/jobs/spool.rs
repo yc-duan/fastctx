@@ -4,6 +4,7 @@ use super::model::SpoolLine;
 use super::store::segment_paths;
 use crate::paths::display_path;
 use crate::shell::buffer::OUTPUT_BUFFER_BYTES;
+use crate::shell::encoding::{EncodedLine, OutputEncoding, job_line_is_truncated};
 use crate::shell::normalize::NormalizedLine;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -28,16 +29,18 @@ pub(crate) struct SpoolWriter {
     segment: Option<OpenSegment>,
     next_seq: u64,
     had_loss: bool,
+    default_encoding: Option<OutputEncoding>,
     last_flush: Instant,
 }
 
 impl SpoolWriter {
-    pub(crate) fn new(directory: &Path) -> Self {
+    pub(crate) fn new(directory: &Path, default_encoding: Option<OutputEncoding>) -> Self {
         Self {
             directory: directory.to_path_buf(),
             segment: None,
             next_seq: 1,
             had_loss: false,
+            default_encoding,
             last_flush: Instant::now(),
         }
     }
@@ -54,11 +57,24 @@ impl SpoolWriter {
         if self.segment.is_none() {
             self.segment = Some(open_segment(&self.directory, seq)?);
         }
+        let truncated = job_line_is_truncated(
+            EncodedLine {
+                bytes: &line.bytes,
+                total_bytes: line.total_bytes,
+                stream_encoding: line.stream_encoding,
+                legacy_text: None,
+                known_truncated: line.raw_truncated,
+            },
+            self.default_encoding,
+        );
         let record = SpoolLine {
             seq,
-            text: line.text,
-            truncated: line.truncated,
-            had_loss: self.had_loss || line.truncated,
+            text: String::new(),
+            raw_bytes: Some(line.bytes),
+            total_bytes: line.total_bytes,
+            stream_encoding: line.stream_encoding,
+            truncated,
+            had_loss: self.had_loss || truncated,
         };
         let mut bytes = serde_json::to_vec(&record)
             .map_err(|error| format!("Cannot encode background output at seq {seq}: {error}"))?;
@@ -72,7 +88,7 @@ impl SpoolWriter {
         })?;
         segment.logical_bytes = segment.logical_bytes.saturating_add(bytes.len() as u64);
         self.next_seq = self.next_seq.saturating_add(1);
-        self.had_loss |= line.truncated;
+        self.had_loss |= truncated;
         if segment.writer.buffer().len() >= FLUSH_BYTES {
             self.flush()?;
         }
@@ -204,14 +220,16 @@ mod tests {
     #[test]
     fn disk_window_drops_old_segments_without_stopping_or_miscounting_output() {
         let temp = tempfile::tempdir().unwrap();
-        let mut spool = SpoolWriter::new(temp.path());
+        let mut spool = SpoolWriter::new(temp.path(), None);
         let payload = "x".repeat(1_990);
         for index in 0..5_000 {
             spool
                 .append(NormalizedLine {
-                    text: format!("{index:04}-{payload}"),
+                    bytes: format!("{index:04}-{payload}").into_bytes(),
+                    total_bytes: 1_995,
                     terminated: true,
-                    truncated: false,
+                    stream_encoding: None,
+                    raw_truncated: false,
                 })
                 .unwrap();
         }

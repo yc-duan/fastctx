@@ -2,6 +2,7 @@
 
 pub(crate) mod bash;
 mod buffer;
+mod encoding;
 mod foreground;
 pub(crate) mod jobs;
 mod normalize;
@@ -42,6 +43,9 @@ pub struct RunRequest {
     #[serde(default = "default_login_shell")]
     #[schemars(default = "default_login_shell")]
     pub login_shell: bool,
+    /// Known source encoding of the command's output, as a WHATWG label like "gbk" or
+    /// "shift_jis". The response is always UTF-8. Omit for automatic detection.
+    pub encoding: Option<String>,
 }
 
 /// Parameters for starting a background bash command.
@@ -56,6 +60,9 @@ pub struct RunBackgroundRequest {
     #[serde(default = "default_login_shell")]
     #[schemars(default = "default_login_shell")]
     pub login_shell: bool,
+    /// Default source encoding for this job's output when read with job_output (WHATWG label
+    /// like "gbk"). Each job_output call may override it.
+    pub encoding: Option<String>,
 }
 
 /// Parameters for incrementally reading a background job.
@@ -71,6 +78,9 @@ pub struct JobOutputRequest {
     /// continue where your last call left off; pass it to re-anchor idempotently if a call was lost.
     #[schemars(range(min = 0))]
     pub after_seq: Option<u64>,
+    /// Decode this job's stored output with this source encoding for this call (WHATWG label
+    /// like "gbk"). Overrides the job's default. The response is always UTF-8.
+    pub encoding: Option<String>,
 }
 
 /// Parameters for terminating a background job tree.
@@ -146,6 +156,15 @@ impl FastShell {
         if let Err(error) = output::validate_run_budget(timeout_ms) {
             return ToolResponse::error(error);
         }
+        let encoding = match request
+            .encoding
+            .as_deref()
+            .map(encoding::validate_output_encoding)
+            .transpose()
+        {
+            Ok(encoding) => encoding,
+            Err(error) => return ToolResponse::error(error),
+        };
         let cwd = match resolve_cwd(request.cwd.as_deref()) {
             Ok(cwd) => cwd,
             Err(error) => return ToolResponse::error(error),
@@ -160,6 +179,7 @@ impl FastShell {
             &cwd,
             timeout_ms,
             request.login_shell,
+            encoding,
             cancelled,
         )
     }
@@ -169,6 +189,15 @@ impl FastShell {
         if request.command.trim().is_empty() {
             return ToolResponse::error("Invalid command: it must be a non-empty string.");
         }
+        let encoding = match request
+            .encoding
+            .as_deref()
+            .map(encoding::validate_output_encoding)
+            .transpose()
+        {
+            Ok(encoding) => encoding,
+            Err(error) => return ToolResponse::error(error),
+        };
         let cwd = match resolve_cwd(request.cwd.as_deref()) {
             Ok(cwd) => cwd,
             Err(error) => return ToolResponse::error(error),
@@ -178,7 +207,7 @@ impl FastShell {
             Err(error) => return ToolResponse::error(error),
         };
         self.jobs
-            .start(&bash, &request.command, &cwd, request.login_shell)
+            .start(&bash, &request.command, &cwd, request.login_shell, encoding)
     }
 
     /// Returns output after an explicit sequence anchor or the server-side cursor.
@@ -197,8 +226,22 @@ impl FastShell {
                 "Invalid wait_ms value: {wait_ms}. Expected an integer from 0 to 120000."
             ));
         }
-        self.jobs
-            .output_until_cancelled(&request.job_id, wait_ms, request.after_seq, cancelled)
+        let encoding = match request
+            .encoding
+            .as_deref()
+            .map(encoding::validate_output_encoding)
+            .transpose()
+        {
+            Ok(encoding) => encoding,
+            Err(error) => return ToolResponse::error(error),
+        };
+        self.jobs.output_until_cancelled(
+            &request.job_id,
+            wait_ms,
+            request.after_seq,
+            encoding,
+            cancelled,
+        )
     }
 
     /// Terminates a job's whole process tree, or reports its prior exit.
@@ -281,6 +324,7 @@ mod tests {
                 cwd: None,
                 timeout_ms: None,
                 login_shell: true,
+                encoding: None,
             }),
             crate::ToolResponse::error("Invalid command: it must be a non-empty string.")
         );
@@ -289,6 +333,7 @@ mod tests {
                 job_id: "missing".to_string(),
                 wait_ms: Some(120_001),
                 after_seq: None,
+                encoding: None,
             }),
             crate::ToolResponse::error(
                 "Invalid wait_ms value: 120001. Expected an integer from 0 to 120000."

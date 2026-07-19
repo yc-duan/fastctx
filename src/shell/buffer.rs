@@ -1,6 +1,7 @@
 //! Bounded line-oriented storage for foreground command output.
 
 use crate::shell::normalize::NormalizedLine;
+use crate::shell::normalize::StreamEncoding;
 use std::collections::VecDeque;
 use std::mem::size_of;
 
@@ -11,14 +12,16 @@ pub(crate) const OUTPUT_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BufferedLine {
     pub(crate) seq: u64,
-    pub(crate) text: String,
-    pub(crate) truncated: bool,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) total_bytes: u64,
+    pub(crate) stream_encoding: Option<StreamEncoding>,
+    pub(crate) raw_truncated: bool,
 }
 
 impl BufferedLine {
     fn storage_bytes(&self) -> usize {
         size_of::<Self>()
-            .saturating_add(self.text.len())
+            .saturating_add(self.bytes.len())
             .saturating_add(1)
     }
 }
@@ -54,12 +57,14 @@ impl LineRing {
     pub(crate) fn push(&mut self, line: NormalizedLine) -> u64 {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.saturating_add(1);
-        self.had_truncation |= line.truncated;
+        self.had_truncation |= line.raw_truncated;
 
         let buffered = BufferedLine {
             seq,
-            text: line.text,
-            truncated: line.truncated,
+            bytes: line.bytes,
+            total_bytes: line.total_bytes,
+            stream_encoding: line.stream_encoding,
+            raw_truncated: line.raw_truncated,
         };
         let required = buffered.storage_bytes();
 
@@ -71,9 +76,8 @@ impl LineRing {
             self.had_drop = true;
         }
 
-        // A normalized line is capped at 2,000 Unicode characters, so this can only
-        // happen with an intentionally tiny test buffer. Treat it as lost rather than
-        // violating the memory bound.
+        // A raw line prefix is bounded, but a deliberately tiny test ring can still
+        // be smaller than one record. Treat it as lost rather than violating the limit.
         if required > self.limit_bytes {
             self.had_drop = true;
             return seq;
@@ -92,6 +96,7 @@ impl LineRing {
         self.total_lines().saturating_sub(self.lines.len() as u64)
     }
 
+    #[cfg(test)]
     pub(crate) fn had_truncation(&self) -> bool {
         self.had_truncation
     }
@@ -114,9 +119,11 @@ mod tests {
 
     fn line(text: &str, truncated: bool) -> NormalizedLine {
         NormalizedLine {
-            text: text.to_string(),
+            bytes: text.as_bytes().to_vec(),
+            total_bytes: text.len() as u64,
             terminated: true,
-            truncated,
+            stream_encoding: None,
+            raw_truncated: truncated,
         }
     }
 
@@ -131,7 +138,7 @@ mod tests {
         assert_eq!(
             ring.all()
                 .into_iter()
-                .map(|line| (line.seq, line.text))
+                .map(|line| (line.seq, String::from_utf8(line.bytes).unwrap()))
                 .collect::<Vec<_>>(),
             [(2, "two".to_string()), (3, "six".to_string())]
         );
@@ -143,7 +150,7 @@ mod tests {
     #[test]
     fn truncation_is_a_lifetime_loss_even_without_eviction() {
         let mut ring = LineRing::new();
-        ring.push(line("short... [line truncated: 3000 chars total]", true));
+        ring.push(line("short", true));
         assert!(ring.had_truncation());
         assert!(!ring.had_drop);
     }

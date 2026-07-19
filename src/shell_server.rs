@@ -16,7 +16,7 @@ use std::sync::Arc;
 impl FastCtxServer {
     #[tool(
         name = "run",
-        description = "Run a shell command with bash (Git Bash on Windows; system bash elsewhere)\nand return its merged stdout+stderr with the exit code. Write POSIX bash —\nnever PowerShell. Commands must be non-interactive: there is no TTY or\nstdin; use flags like -y or --no-edit. A non-zero exit code is a normal\nresult, not an error. Oversized output is truncated (with a note); to get\nthe full output, redirect it to a file (command > file 2>&1) and page that\nfile with the read tool. Default timeout 120000 ms (max 240000) — start\nanything longer with run_background. cwd must be absolute when given.\nThe last line states Complete or Partial.",
+        description = "Run a shell command with bash (Git Bash on Windows; system bash elsewhere)\nand return its merged stdout+stderr with the exit code. Write POSIX bash —\nnever PowerShell. Commands must be non-interactive: there is no TTY or\nstdin; use flags like -y or --no-edit. A non-zero exit code is a normal\nresult, not an error. Oversized output is truncated (with a note); to get\nthe full output, redirect it to a file (command > file 2>&1) and page that\nfile with the read tool. Default timeout 120000 ms (max 240000) — start\nanything longer with run_background. cwd must be absolute when given.\nIf the output looks garbled (U+FFFD), pass encoding with the source\nencoding label (e.g. \"gbk\"). The last line states Complete or Partial.",
         annotations(
             title = "Run bash command",
             read_only_hint = false,
@@ -59,7 +59,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "job_output",
-        description = "Return a background job's new output since the last call, plus its status\n(running, exited with its code, or interrupted). wait_ms long-polls: it\nreturns as soon as new output or the exit arrives, otherwise when the wait\nelapses. A Partial note gives an after_seq cursor — pass it back to resume\nidempotently if a call was lost. Works for jobs started in earlier\nsessions. Keep calling until the last line says Complete.",
+        description = "Return a background job's new output since the last call, plus its status\n(running, exited with its code, or interrupted). wait_ms long-polls: it\nreturns as soon as new output or the exit arrives, otherwise when the wait\nelapses. A Partial note gives an after_seq cursor — pass it back to resume\nidempotently if a call was lost. Works for jobs started in earlier\nsessions. If output looks garbled (U+FFFD), call again with encoding set\nto the source encoding (e.g. \"gbk\") — stored bytes are re-decoded\nlosslessly. Keep calling until the last line says Complete.",
         annotations(
             title = "Read background job output",
             read_only_hint = true,

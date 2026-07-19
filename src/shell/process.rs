@@ -120,7 +120,8 @@ pub(crate) fn spawn_bash(
         .env("EDITOR", "true")
         .env("VISUAL", "true")
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("PYTHONUNBUFFERED", "1");
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8");
 
     #[cfg(windows)]
     if !login_shell {

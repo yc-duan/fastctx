@@ -1,17 +1,62 @@
-//! Streaming terminal-output normalization with deterministic, bounded line storage.
+//! Streaming terminal-output normalization with deterministic, bounded raw-byte storage.
 
-const MAX_LINE_CHARS: usize = 2_000;
-const UTF8_FLUSH_BYTES: usize = 8 * 1024;
+use serde::{Deserialize, Serialize};
 
-/// One normalized output line and whether the source ended it with a line break.
+/// Raw bytes retained per normalized line. This covers 2,000 characters even
+/// for the widest WHATWG encodings while keeping a single-line stream bounded.
+const MAX_LINE_PREFIX_BYTES: usize = 64 * 1024;
+
+/// A BOM-locked stream encoding whose code-unit width affects line splitting.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum StreamEncoding {
+    Utf16Le,
+    Utf16Be,
+    Utf32Le,
+    Utf32Be,
+}
+
+impl StreamEncoding {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Utf16Le => "UTF-16LE",
+            Self::Utf16Be => "UTF-16BE",
+            Self::Utf32Le => "UTF-32LE",
+            Self::Utf32Be => "UTF-32BE",
+        }
+    }
+
+    const fn unit_bytes(self) -> usize {
+        match self {
+            Self::Utf16Le | Self::Utf16Be => 2,
+            Self::Utf32Le | Self::Utf32Be => 4,
+        }
+    }
+
+    fn ascii_unit(self, bytes: &[u8]) -> Option<u8> {
+        let value = match self {
+            Self::Utf16Le => u32::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+            Self::Utf16Be => u32::from(u16::from_be_bytes([bytes[0], bytes[1]])),
+            Self::Utf32Le => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            Self::Utf32Be => u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        };
+        u8::try_from(value).ok().filter(u8::is_ascii)
+    }
+}
+
+/// One normalized output line whose source bytes remain available for delivery-time decoding.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedLine {
-    /// Display text after ANSI stripping, lossy UTF-8 decoding, and line truncation.
-    pub(crate) text: String,
+    /// Prefix after ANSI stripping and line-ending normalization.
+    pub(crate) bytes: Vec<u8>,
+    /// Full normalized byte count even when only a bounded prefix is retained.
+    pub(crate) total_bytes: u64,
     /// True when CR, LF, or CRLF terminated this line.
     pub(crate) terminated: bool,
-    /// True when characters beyond the 2,000-character presentation limit were discarded.
-    pub(crate) truncated: bool,
+    /// BOM-locked encoding for wide streams; absent for ASCII-compatible streams.
+    pub(crate) stream_encoding: Option<StreamEncoding>,
+    /// True when bytes beyond the bounded raw prefix were discarded.
+    pub(crate) raw_truncated: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,90 +68,37 @@ enum EscapeState {
     OscEscape,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamMode {
+    Bytes,
+    Wide(StreamEncoding),
+}
+
 #[derive(Debug, Default)]
 struct LineAccumulator {
-    pending_utf8: Vec<u8>,
-    prefix: String,
-    total_chars: usize,
+    prefix: Vec<u8>,
+    total_bytes: u64,
 }
 
 impl LineAccumulator {
-    fn push_byte(&mut self, byte: u8) {
-        self.pending_utf8.push(byte);
-        if self.pending_utf8.len() >= UTF8_FLUSH_BYTES {
-            self.decode_pending(false);
-        }
+    fn push(&mut self, bytes: &[u8]) {
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len() as u64);
+        let remaining = MAX_LINE_PREFIX_BYTES.saturating_sub(self.prefix.len());
+        self.prefix
+            .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
     }
 
     fn has_content(&self) -> bool {
-        self.total_chars > 0 || !self.pending_utf8.is_empty()
+        self.total_bytes > 0
     }
 
-    fn finish(mut self, terminated: bool) -> NormalizedLine {
-        self.decode_pending(true);
-        let truncated = self.total_chars > MAX_LINE_CHARS;
-        if truncated {
-            self.prefix.push_str(&format!(
-                "... [line truncated: {} chars total]",
-                self.total_chars
-            ));
-        }
+    fn finish(self, terminated: bool, stream_encoding: Option<StreamEncoding>) -> NormalizedLine {
         NormalizedLine {
-            text: self.prefix,
+            raw_truncated: self.total_bytes > self.prefix.len() as u64,
+            bytes: self.prefix,
+            total_bytes: self.total_bytes,
             terminated,
-            truncated,
-        }
-    }
-
-    fn decode_pending(&mut self, final_chunk: bool) {
-        let mut consumed = 0;
-        while consumed < self.pending_utf8.len() {
-            match std::str::from_utf8(&self.pending_utf8[consumed..]) {
-                Ok(valid) => {
-                    let valid = valid.to_owned();
-                    self.push_valid(&valid);
-                    consumed = self.pending_utf8.len();
-                }
-                Err(error) => {
-                    let valid_end = consumed + error.valid_up_to();
-                    if valid_end > consumed {
-                        let valid = unsafe {
-                            // from_utf8 reported this exact prefix as valid.
-                            std::str::from_utf8_unchecked(&self.pending_utf8[consumed..valid_end])
-                        }
-                        .to_owned();
-                        self.push_valid(&valid);
-                    }
-                    consumed = valid_end;
-                    match error.error_len() {
-                        Some(length) => {
-                            self.push_char(char::REPLACEMENT_CHARACTER);
-                            consumed = consumed.saturating_add(length);
-                        }
-                        None if final_chunk => {
-                            self.push_char(char::REPLACEMENT_CHARACTER);
-                            consumed = self.pending_utf8.len();
-                        }
-                        None => break,
-                    }
-                }
-            }
-        }
-        if consumed > 0 {
-            self.pending_utf8.drain(..consumed);
-        }
-    }
-
-    fn push_valid(&mut self, valid: &str) {
-        for character in valid.chars() {
-            self.push_char(character);
-        }
-    }
-
-    fn push_char(&mut self, character: char) {
-        self.total_chars = self.total_chars.saturating_add(1);
-        if self.total_chars <= MAX_LINE_CHARS {
-            self.prefix.push(character);
+            stream_encoding,
         }
     }
 }
@@ -114,6 +106,9 @@ impl LineAccumulator {
 /// Incrementally removes ANSI CSI/OSC sequences and normalizes all CR forms to LF lines.
 #[derive(Debug)]
 pub(crate) struct StreamNormalizer {
+    mode: Option<StreamMode>,
+    bom_probe: Vec<u8>,
+    wide_pending: Vec<u8>,
     escape: EscapeState,
     pending_cr: bool,
     line: LineAccumulator,
@@ -122,55 +117,34 @@ pub(crate) struct StreamNormalizer {
 impl StreamNormalizer {
     pub(crate) fn new() -> Self {
         Self {
+            mode: None,
+            bom_probe: Vec::with_capacity(4),
+            wide_pending: Vec::with_capacity(4),
             escape: EscapeState::Text,
             pending_cr: false,
             line: LineAccumulator::default(),
         }
     }
 
-    /// Consumes an arbitrary byte chunk without corrupting split UTF-8 or escape sequences.
+    /// Consumes an arbitrary byte chunk without decoding or corrupting split code units.
     pub(crate) fn push(&mut self, bytes: &[u8], output: &mut Vec<NormalizedLine>) {
-        for &byte in bytes {
-            match self.escape {
-                EscapeState::Text => {
-                    if byte == 0x1b {
-                        self.escape = EscapeState::Escape;
-                    } else {
-                        self.push_text_byte(byte, output);
-                    }
-                }
-                EscapeState::Escape => {
-                    self.escape = match byte {
-                        b'[' => EscapeState::Csi,
-                        b']' => EscapeState::Osc,
-                        _ => EscapeState::Text,
-                    };
-                }
-                EscapeState::Csi => {
-                    if (0x40..=0x7e).contains(&byte) {
-                        self.escape = EscapeState::Text;
-                    }
-                }
-                EscapeState::Osc => match byte {
-                    0x07 => self.escape = EscapeState::Text,
-                    0x1b => self.escape = EscapeState::OscEscape,
-                    _ => {}
-                },
-                EscapeState::OscEscape => {
-                    self.escape = if byte == b'\\' {
-                        EscapeState::Text
-                    } else if byte == 0x1b {
-                        EscapeState::OscEscape
-                    } else {
-                        EscapeState::Osc
-                    };
-                }
-            }
+        if self.mode.is_none() {
+            self.bom_probe.extend_from_slice(bytes);
+            self.select_mode(false, output);
+            return;
         }
+        self.process(bytes, output);
     }
 
     /// Flushes a final unterminated line and any pending isolated carriage return.
     pub(crate) fn finish(mut self, output: &mut Vec<NormalizedLine>) {
+        if self.mode.is_none() {
+            self.select_mode(true, output);
+        }
+        if !self.wide_pending.is_empty() {
+            let pending = std::mem::take(&mut self.wide_pending);
+            self.push_text_unit(&pending, None, output);
+        }
         if self.pending_cr {
             self.emit_line(true, output);
             self.pending_cr = false;
@@ -179,23 +153,95 @@ impl StreamNormalizer {
         }
     }
 
-    fn push_text_byte(&mut self, byte: u8, output: &mut Vec<NormalizedLine>) {
+    fn select_mode(&mut self, final_chunk: bool, output: &mut Vec<NormalizedLine>) {
+        let Some((mode, bom_len)) = detect_stream_mode(&self.bom_probe, final_chunk) else {
+            return;
+        };
+        self.mode = Some(mode);
+        let buffered = std::mem::take(&mut self.bom_probe);
+        self.process(&buffered[bom_len.min(buffered.len())..], output);
+    }
+
+    fn process(&mut self, bytes: &[u8], output: &mut Vec<NormalizedLine>) {
+        match self
+            .mode
+            .expect("stream mode is selected before processing")
+        {
+            StreamMode::Bytes => {
+                for &byte in bytes {
+                    self.process_unit(&[byte], Some(byte), output);
+                }
+            }
+            StreamMode::Wide(encoding) => {
+                for &byte in bytes {
+                    self.wide_pending.push(byte);
+                    if self.wide_pending.len() == encoding.unit_bytes() {
+                        let unit = std::mem::take(&mut self.wide_pending);
+                        let ascii = encoding.ascii_unit(&unit);
+                        self.process_unit(&unit, ascii, output);
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_unit(&mut self, raw: &[u8], ascii: Option<u8>, output: &mut Vec<NormalizedLine>) {
+        match self.escape {
+            EscapeState::Text => {
+                if ascii == Some(0x1b) {
+                    self.escape = EscapeState::Escape;
+                } else {
+                    self.push_text_unit(raw, ascii, output);
+                }
+            }
+            EscapeState::Escape => {
+                self.escape = match ascii {
+                    Some(b'[') => EscapeState::Csi,
+                    Some(b']') => EscapeState::Osc,
+                    _ => EscapeState::Text,
+                };
+            }
+            EscapeState::Csi => {
+                if ascii.is_some_and(|byte| (0x40..=0x7e).contains(&byte)) {
+                    self.escape = EscapeState::Text;
+                }
+            }
+            EscapeState::Osc => match ascii {
+                Some(0x07) => self.escape = EscapeState::Text,
+                Some(0x1b) => self.escape = EscapeState::OscEscape,
+                _ => {}
+            },
+            EscapeState::OscEscape => {
+                self.escape = match ascii {
+                    Some(b'\\') => EscapeState::Text,
+                    Some(0x1b) => EscapeState::OscEscape,
+                    _ => EscapeState::Osc,
+                };
+            }
+        }
+    }
+
+    fn push_text_unit(&mut self, raw: &[u8], ascii: Option<u8>, output: &mut Vec<NormalizedLine>) {
         if self.pending_cr {
             self.emit_line(true, output);
             self.pending_cr = false;
-            if byte == b'\n' {
+            if ascii == Some(b'\n') {
                 return;
             }
         }
-        match byte {
-            b'\r' => self.pending_cr = true,
-            b'\n' => self.emit_line(true, output),
-            _ => self.line.push_byte(byte),
+        match ascii {
+            Some(b'\r') => self.pending_cr = true,
+            Some(b'\n') => self.emit_line(true, output),
+            _ => self.line.push(raw),
         }
     }
 
     fn emit_line(&mut self, terminated: bool, output: &mut Vec<NormalizedLine>) {
-        let line = std::mem::take(&mut self.line).finish(terminated);
+        let stream_encoding = match self.mode {
+            Some(StreamMode::Wide(encoding)) => Some(encoding),
+            _ => None,
+        };
+        let line = std::mem::take(&mut self.line).finish(terminated, stream_encoding);
         output.push(line);
     }
 }
@@ -206,9 +252,54 @@ impl Default for StreamNormalizer {
     }
 }
 
+fn detect_stream_mode(bytes: &[u8], final_chunk: bool) -> Option<(StreamMode, usize)> {
+    const UTF32_BE_BOM: &[u8] = &[0x00, 0x00, 0xfe, 0xff];
+    const UTF32_LE_BOM: &[u8] = &[0xff, 0xfe, 0x00, 0x00];
+    const UTF8_BOM: &[u8] = &[0xef, 0xbb, 0xbf];
+    const UTF16_LE_BOM: &[u8] = &[0xff, 0xfe];
+    const UTF16_BE_BOM: &[u8] = &[0xfe, 0xff];
+
+    if bytes.starts_with(UTF32_BE_BOM) {
+        return Some((StreamMode::Wide(StreamEncoding::Utf32Be), 4));
+    }
+    if bytes.starts_with(UTF32_LE_BOM) {
+        return Some((StreamMode::Wide(StreamEncoding::Utf32Le), 4));
+    }
+    if bytes.starts_with(UTF8_BOM) {
+        return Some((StreamMode::Bytes, 3));
+    }
+    if bytes.starts_with(UTF16_BE_BOM) {
+        return Some((StreamMode::Wide(StreamEncoding::Utf16Be), 2));
+    }
+    if bytes.starts_with(UTF16_LE_BOM) {
+        if bytes.len() >= 3 && bytes[2] != 0 {
+            return Some((StreamMode::Wide(StreamEncoding::Utf16Le), 2));
+        }
+        if bytes.len() >= 4 || final_chunk {
+            return Some((StreamMode::Wide(StreamEncoding::Utf16Le), 2));
+        }
+        return None;
+    }
+
+    let possible_bom = [
+        UTF32_BE_BOM,
+        UTF32_LE_BOM,
+        UTF8_BOM,
+        UTF16_LE_BOM,
+        UTF16_BE_BOM,
+    ]
+    .iter()
+    .any(|bom| bom.starts_with(bytes));
+    if possible_bom && !final_chunk {
+        None
+    } else {
+        Some((StreamMode::Bytes, 0))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{NormalizedLine, StreamNormalizer};
+    use super::{NormalizedLine, StreamEncoding, StreamNormalizer};
 
     fn normalize(chunks: &[&[u8]]) -> Vec<NormalizedLine> {
         let mut normalizer = StreamNormalizer::new();
@@ -220,6 +311,16 @@ mod tests {
         lines
     }
 
+    fn line(bytes: &[u8], terminated: bool) -> NormalizedLine {
+        NormalizedLine {
+            bytes: bytes.to_vec(),
+            total_bytes: bytes.len() as u64,
+            terminated,
+            stream_encoding: None,
+            raw_truncated: false,
+        }
+    }
+
     #[test]
     fn strips_split_ansi_and_normalizes_crlf_and_isolated_cr() {
         assert_eq!(
@@ -229,60 +330,80 @@ mod tests {
                 b"\ntwo\rthree\x1b]0;title\x1b\\"
             ]),
             vec![
+                line(b"one red", true),
+                line(b"two", true),
+                line(b"three", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_split_multibyte_bytes_without_decoding_them() {
+        assert_eq!(
+            normalize(&[&[0xe7, 0x95], &[0x8c, 0xff]]),
+            vec![line(&[0xe7, 0x95, 0x8c, 0xff], false)]
+        );
+    }
+
+    #[test]
+    fn ascii_line_boundaries_do_not_split_gbk_or_shift_jis_characters() {
+        assert_eq!(
+            normalize(&[&[0xd6], &[0xd0, 0xce, 0xc4, b'\n', 0x93, 0xfa, 0x96, 0x7b]]),
+            vec![
+                line(&[0xd6, 0xd0, 0xce, 0xc4], true),
+                line(&[0x93, 0xfa, 0x96, 0x7b], false),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_utf16le_bom_locks_wide_line_boundaries_and_strips_wide_ansi() {
+        let raw = [
+            0xff, 0xfe, b'a', 0, 0x1b, 0, b'[', 0, b'3', 0, b'1', 0, b'm', 0, b'b', 0, b'\r', 0,
+            b'\n', 0, b'c', 0,
+        ];
+        let lines = normalize(&[&raw[..1], &raw[1..7], &raw[7..]]);
+        assert_eq!(
+            lines,
+            vec![
                 NormalizedLine {
-                    text: "one red".to_string(),
+                    bytes: vec![b'a', 0, b'b', 0],
+                    total_bytes: 4,
                     terminated: true,
-                    truncated: false,
+                    stream_encoding: Some(StreamEncoding::Utf16Le),
+                    raw_truncated: false,
                 },
                 NormalizedLine {
-                    text: "two".to_string(),
-                    terminated: true,
-                    truncated: false,
-                },
-                NormalizedLine {
-                    text: "three".to_string(),
+                    bytes: vec![b'c', 0],
+                    total_bytes: 2,
                     terminated: false,
-                    truncated: false,
+                    stream_encoding: Some(StreamEncoding::Utf16Le),
+                    raw_truncated: false,
                 },
             ]
         );
     }
 
     #[test]
-    fn keeps_split_multibyte_utf8_and_replaces_only_invalid_bytes() {
-        assert_eq!(
-            normalize(&[&[0xe7, 0x95], &[0x8c, 0xff]]),
-            vec![NormalizedLine {
-                text: "界�".to_string(),
-                terminated: false,
-                truncated: false,
-            }]
-        );
-    }
-
-    #[test]
-    fn truncates_overlong_lines_without_retaining_the_full_raw_line() {
-        let input = "界".repeat(400_000);
-        let lines = normalize(&[input.as_bytes()]);
+    fn overlong_lines_keep_a_bounded_prefix_and_exact_byte_count() {
+        let input = vec![b'x'; 400_000];
+        let lines = normalize(&[&input]);
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].text.starts_with(&"界".repeat(2_000)));
-        assert!(
-            lines[0]
-                .text
-                .ends_with("... [line truncated: 400000 chars total]")
-        );
-        assert!(lines[0].truncated);
-        assert!(lines[0].text.len() < 10_000);
+        assert_eq!(lines[0].bytes.len(), 64 * 1024);
+        assert_eq!(lines[0].total_bytes, 400_000);
+        assert!(lines[0].raw_truncated);
     }
 
     #[test]
-    fn incomplete_utf8_at_eof_matches_lossy_decoding() {
+    fn incomplete_wide_code_unit_at_eof_is_preserved_for_lossy_delivery() {
         assert_eq!(
-            normalize(&[&[0xf0, 0x9f]]),
+            normalize(&[&[0xff, 0xfe, b'a']]),
             vec![NormalizedLine {
-                text: "�".to_string(),
+                bytes: vec![b'a'],
+                total_bytes: 1,
                 terminated: false,
-                truncated: false,
+                stream_encoding: Some(StreamEncoding::Utf16Le),
+                raw_truncated: false,
             }]
         );
     }

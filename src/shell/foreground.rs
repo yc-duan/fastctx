@@ -1,6 +1,7 @@
 //! Foreground command supervision with timeout and output-independent process life.
 
 use crate::model::ToolResponse;
+use crate::shell::encoding::OutputEncoding;
 use crate::shell::output::{capture_foreground, format_foreground};
 use crate::shell::process::{exit_code, spawn_bash};
 use std::path::Path;
@@ -13,6 +14,7 @@ pub(crate) fn run(
     cwd: &Path,
     timeout_ms: u64,
     login_shell: bool,
+    encoding: Option<OutputEncoding>,
     cancelled: impl Fn() -> bool,
 ) -> ToolResponse {
     let mut process = match spawn_bash(bash, command, cwd, login_shell) {
@@ -94,5 +96,6 @@ pub(crate) fn run(
         &captured,
         exit_code(status),
         timed_out.then_some(timeout_ms),
+        encoding,
     )
 }
