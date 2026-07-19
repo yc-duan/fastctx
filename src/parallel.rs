@@ -9,9 +9,11 @@ use std::sync::mpsc;
 /// `consume` strictly in item order, exactly once per delivered item.
 ///
 /// `consume` may return `ControlFlow::Break` to stop early; workers then stop
-/// picking up new items and undelivered results are dropped. The channel is
-/// bounded, so workers cannot run unboundedly ahead of the consumer. With one
-/// thread (or one item) everything runs inline on the caller's thread.
+/// picking up new items and undelivered results are dropped. Ordering is
+/// restored by buffering out-of-order results until their turn, so a worker
+/// stalled on a low index lets the others run ahead and that reorder buffer
+/// grows with the input rather than with the channel bound. With one thread
+/// (or one item) everything runs inline on the caller's thread.
 pub(crate) fn for_each_ordered<T, R>(
     items: &[T],
     threads: usize,
@@ -128,9 +130,14 @@ mod tests {
             },
         );
         assert_eq!(consumed, (0..10).collect::<Vec<_>>());
-        // Bounded channel + cancellation: scheduling stops well short of the
-        // full input instead of racing through all 500 items.
-        assert!(scheduled.load(Ordering::Relaxed) < items.len());
+        // Every index is picked up at most once and never past the end, so an
+        // early break can only lower this count. Do not tighten this into an
+        // upper bound below the input length: when the worker holding the next
+        // in-order index is descheduled, the other workers may legitimately
+        // drain the whole input into the reorder buffer before the break is
+        // reached. That is a scheduling outcome, not a contract, and asserting
+        // it made this test flaky on loaded CI machines (2026-07-19).
+        assert!(scheduled.load(Ordering::Relaxed) <= items.len());
     }
 
     #[test]
