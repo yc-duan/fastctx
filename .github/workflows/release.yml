@@ -279,11 +279,11 @@ jobs:
         run: |
           notes="$RUNNER_TEMP/fastctx-release-notes.md"
           cat > "$notes" <<'EOF'
-          Initial release.
+          FastCtx v0.1.1 is a compatibility and update-reliability release.
 
-          - Context-efficient repository tools for coding agents
-          - Persistent background Bash jobs
-          - Safe Codex integration with a multilingual control TUI
+          - Adds source-aware npm updates with half-install protection and stable-copy recovery
+          - Restores Linux compatibility down to glibc 2.31
+          - Preserves shell output bytes for Windows legacy-encoding recovery
           EOF
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release delete "${GITHUB_REF_NAME}" --yes
