@@ -264,26 +264,40 @@ fn render_update(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         }
         messages.action_check
     };
-    let popup = inner(area, 2, 1);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
-        .split(popup);
-    let visible_rows = usize::from(chunks[0].height.saturating_sub(2));
-    app.detail_viewport.update(lines.len(), visible_rows);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(Style::default().fg(theme::fg()))
-            .block(panel(messages.page_title).border_style(Style::default().fg(theme::accent())))
-            .scroll((app.detail_viewport.offset() as u16, 0)),
-        chunks[0],
-    );
-    render_labeled_actions(
-        frame,
-        chunks[1],
+    let action_lines = labeled_action_lines(
         app.selected,
         primary,
         messages.action_continue,
+        area.width.saturating_sub(4),
+    );
+    let action_height = u16::try_from(action_lines.len()).unwrap_or(u16::MAX);
+    let vertical_padding = u16::from(area.height >= action_height.saturating_add(5));
+    let popup = inner(area, 2, vertical_padding);
+    let body_has_panel = popup.height >= action_height.saturating_add(3);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(if body_has_panel { 3 } else { 1 }),
+            Constraint::Length(action_height),
+        ])
+        .split(popup);
+    let visible_rows = usize::from(if body_has_panel {
+        chunks[0].height.saturating_sub(2)
+    } else {
+        chunks[0].height
+    });
+    app.detail_viewport.update(lines.len(), visible_rows);
+    let mut body = Paragraph::new(lines)
+        .style(Style::default().fg(theme::fg()))
+        .scroll((app.detail_viewport.offset() as u16, 0));
+    if body_has_panel {
+        body = body
+            .block(panel(messages.page_title).border_style(Style::default().fg(theme::accent())));
+    }
+    frame.render_widget(body, chunks[0]);
+    frame.render_widget(
+        Paragraph::new(action_lines).alignment(Alignment::Center),
+        chunks[1],
     );
 }
 
@@ -412,13 +426,12 @@ fn render_update_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     render_confirmation(frame, app, area, &prompt, theme::accent());
 }
 
-fn render_labeled_actions(
-    frame: &mut Frame<'_>,
-    area: Rect,
+fn labeled_action_lines(
     selected: usize,
     primary: &str,
     secondary: &str,
-) {
+    width: u16,
+) -> Vec<Line<'static>> {
     let style = |active: bool, color| {
         if active {
             Style::default()
@@ -429,21 +442,41 @@ fn render_labeled_actions(
             Style::default().fg(color)
         }
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!("  {primary}  "),
-                style(selected == 0, theme::accent()),
-            ),
-            Span::raw("     "),
-            Span::styled(
-                format!("  {secondary}  "),
-                style(selected == 1, theme::muted()),
-            ),
-        ]))
-        .alignment(Alignment::Center),
-        area,
+    let standard_primary = Span::styled(
+        format!("  {primary}  "),
+        style(selected == 0, theme::accent()),
     );
+    let standard_secondary = Span::styled(
+        format!("  {secondary}  "),
+        style(selected == 1, theme::muted()),
+    );
+    let inline = Line::from(vec![
+        standard_primary.clone(),
+        Span::raw("     "),
+        standard_secondary.clone(),
+    ]);
+    if inline.width() <= usize::from(width) {
+        return vec![inline];
+    }
+
+    let compact_primary = Span::styled(
+        format!(" {primary} "),
+        style(selected == 0, theme::accent()),
+    );
+    let compact_secondary = Span::styled(
+        format!(" {secondary} "),
+        style(selected == 1, theme::muted()),
+    );
+    let compact = Line::from(vec![
+        compact_primary.clone(),
+        Span::raw("   "),
+        compact_secondary.clone(),
+    ]);
+    if compact.width() <= usize::from(width) {
+        vec![compact]
+    } else {
+        vec![Line::from(compact_primary), Line::from(compact_secondary)]
+    }
 }
 
 fn render_languages(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
@@ -2801,8 +2834,8 @@ fn budget_label(level: ToolBudgetLevel) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        elapsed_hms_at, exact_started_at, job_list_columns, jobs_footer, relative_started_at_at,
-        render, truncate_display_width, wrap_detail_lines,
+        elapsed_hms_at, exact_started_at, job_list_columns, jobs_footer, labeled_action_lines,
+        relative_started_at_at, render, truncate_display_width, wrap_detail_lines,
     };
     use crate::control::apply::OperationReceipt;
     use crate::control::doctor::{DoctorCheck, DoctorCheckStatus, DoctorReport};
@@ -2915,6 +2948,7 @@ mod tests {
         std::fs::write(&executable, b"binary").unwrap();
         let mut app = App::for_test(paths, executable);
         app.settings.language = Some("en".to_string());
+        app.language = Language::En;
         app.screen = Screen::Update;
         app.update_state = StartupUpdate::Available(Box::new(UpdatePlan::GithubRelease {
             target_version: "0.2.0".to_string(),
@@ -2925,7 +2959,7 @@ mod tests {
                 .to_string(),
         }));
 
-        for (width, height) in [(100, 24), (40, 10)] {
+        for (width, height) in [(100, 24), (40, 10), (40, 9)] {
             app.detail_viewport = Default::default();
             let backend = TestBackend::new(width, height);
             let mut terminal = Terminal::new(backend).unwrap();
@@ -2949,6 +2983,62 @@ mod tests {
                     contains_visible_text(&text, expected),
                     "{width}x{height} missing {expected}\n{text}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn minimum_width_update_screen_keeps_every_localized_action_complete() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.screen = Screen::Update;
+        app.update_state = StartupUpdate::Available(Box::new(UpdatePlan::GithubRelease {
+            target_version: "0.2.0".to_string(),
+            archive_name: "fixture.zip".to_string(),
+            archive_url: "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/fixture.zip"
+                .to_string(),
+            checksums_url: "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/SHA256SUMS"
+                .to_string(),
+        }));
+
+        for height in [9_u16, 10] {
+            for language in ALL_LANGUAGES {
+                app.language = language;
+                app.settings.language = Some(language.code().to_string());
+                app.detail_viewport = Default::default();
+                let messages = app.update_messages();
+                let expected_action_rows = labeled_action_lines(
+                    app.selected,
+                    messages.action_update,
+                    messages.action_continue,
+                    36,
+                );
+                assert!(
+                    expected_action_rows.len() <= 2
+                        && expected_action_rows.iter().all(|line| line.width() <= 36),
+                    "{} actions exceed the minimum-width action area",
+                    language.code()
+                );
+
+                let backend = TestBackend::new(40, height);
+                let mut terminal = Terminal::new(backend).unwrap();
+                terminal.draw(|frame| render(frame, &mut app)).unwrap();
+                let text = buffer_text(&terminal);
+                let rows = text.split('\n').collect::<Vec<_>>();
+                let action_region_rows = expected_action_rows.len().saturating_add(2);
+                let action_region =
+                    rows[rows.len().saturating_sub(action_region_rows)..].join("\n");
+
+                for expected in [messages.action_update, messages.action_continue] {
+                    assert!(
+                        contains_visible_text(&action_region, expected),
+                        "{} at 40x{height} missing {expected} from its action area\n{text}",
+                        language.code()
+                    );
+                }
             }
         }
     }
