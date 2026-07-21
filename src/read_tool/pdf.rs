@@ -76,8 +76,7 @@ pub(super) fn read_pdf(
     }) {
         Ok(response) => response,
         Err(PdfOperationError::TimedOut) => ToolResponse::error(format!(
-            "PDF operation on {} timed out and was aborted. The file may be malformed; other file types are unaffected.",
-            path_display
+            "PDF operation on {path_display} timed out and was aborted. The file may be malformed; other file types are unaffected."
         )),
         Err(PdfOperationError::Unavailable(reason)) => pdf_engine_error(&reason),
     }
