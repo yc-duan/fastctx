@@ -397,7 +397,7 @@ mod tests {
             .map(|index| ((index * 7_919) % 997, index))
             .collect::<Vec<_>>();
         let mut oracle = input.clone();
-        oracle.sort_by(|left, right| left.0.cmp(&right.0));
+        oracle.sort_by_key(|item| item.0);
 
         for parallelism in [1, 4] {
             let executor = Arc::new(GrepGlobExecutor::with_test_parallelism(parallelism));
