@@ -1,0 +1,21 @@
+[package]
+name = "compat-v011-capture"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+description = "Audited one-shot capture harness for the FastCtx v0.1.1 compatibility corpus"
+
+[workspace]
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tempfile = "3.27"
+tiktoken-rs = "0.12"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

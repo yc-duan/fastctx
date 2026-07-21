@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-ignore-project",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 8,
+  "normalized_text_sha256": "05cb2dc2f632a524b026f53b1462b55b1ba0412630dcec8e09d5efc58fd60baa"
+}

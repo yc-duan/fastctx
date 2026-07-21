@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-content-context",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "NEEDLE",
+    "path": "{{ROOT}}/README.md",
+    "output_mode": "content",
+    "context": 1,
+    "line_numbers": true,
+    "head_limit": 100,
+    "offset": 0
+  }
+}

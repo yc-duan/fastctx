@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "case_id": "glob-modified-page",
+  "tool": "glob",
+  "arguments": {
+    "pattern": "**/*.rs",
+    "path": "{{ROOT}}",
+    "filter_mode": "project",
+    "sort": "modified",
+    "offset": 1,
+    "limit": 2
+  }
+}

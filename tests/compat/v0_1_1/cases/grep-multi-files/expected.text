@@ -1,0 +1,10 @@
+{{ROOT}}/docs/guide.md
+{{ROOT}}/notes/crlf.txt
+{{ROOT}}/notes/todo.txt
+{{ROOT}}/src/nested/mod.rs
+{{ROOT}}/src/lib.rs
+{{ROOT}}/src/main.rs
+{{ROOT}}/README.md
+{{ROOT}}/.hidden.txt
+
+(Complete: all 8 files shown.)

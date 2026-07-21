@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "glob-modified-page",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 2,
+  "normalized_text_sha256": "19ebf11a4f39f02a0fcdc9ec09b65c45850ace55b52c777c054e82b41523ef26"
+}

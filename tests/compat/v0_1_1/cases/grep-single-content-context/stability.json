@@ -1,0 +1,2183 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-content-context",
+  "platforms": {
+    "linux-x64": {
+      "oracles": {
+        "release": {
+          "runs": 32,
+          "raw_stdout_sha256": [
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d"
+          ],
+          "normalized_sha256": [
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+          ],
+          "statuses": [
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            }
+          ],
+          "replacement_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unique_normalized_hashes": 1,
+          "maximum_response_tokens": 38,
+          "minimum_budget_slack": 8462
+        },
+        "source-built": {
+          "runs": 32,
+          "raw_stdout_sha256": [
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d"
+          ],
+          "normalized_sha256": [
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+          ],
+          "statuses": [
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            }
+          ],
+          "replacement_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unique_normalized_hashes": 1,
+          "maximum_response_tokens": 38,
+          "minimum_budget_slack": 8462
+        }
+      }
+    },
+    "macos-arm64": {
+      "oracles": {
+        "release": {
+          "runs": 32,
+          "raw_stdout_sha256": [
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d"
+          ],
+          "normalized_sha256": [
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+          ],
+          "statuses": [
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            }
+          ],
+          "replacement_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unique_normalized_hashes": 1,
+          "maximum_response_tokens": 38,
+          "minimum_budget_slack": 8462
+        },
+        "source-built": {
+          "runs": 32,
+          "raw_stdout_sha256": [
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d"
+          ],
+          "normalized_sha256": [
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+          ],
+          "statuses": [
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            }
+          ],
+          "replacement_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unique_normalized_hashes": 1,
+          "maximum_response_tokens": 38,
+          "minimum_budget_slack": 8462
+        }
+      }
+    },
+    "macos-x64": {
+      "oracles": {
+        "release": {
+          "runs": 32,
+          "raw_stdout_sha256": [
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d"
+          ],
+          "normalized_sha256": [
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+          ],
+          "statuses": [
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            }
+          ],
+          "replacement_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unique_normalized_hashes": 1,
+          "maximum_response_tokens": 38,
+          "minimum_budget_slack": 8462
+        },
+        "source-built": {
+          "runs": 32,
+          "raw_stdout_sha256": [
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d"
+          ],
+          "normalized_sha256": [
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+          ],
+          "statuses": [
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            }
+          ],
+          "replacement_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unique_normalized_hashes": 1,
+          "maximum_response_tokens": 38,
+          "minimum_budget_slack": 8462
+        }
+      }
+    },
+    "windows-x64": {
+      "oracles": {
+        "release": {
+          "runs": 32,
+          "raw_stdout_sha256": [
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d"
+          ],
+          "normalized_sha256": [
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+          ],
+          "statuses": [
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            }
+          ],
+          "replacement_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unique_normalized_hashes": 1,
+          "maximum_response_tokens": 38,
+          "minimum_budget_slack": 8462
+        },
+        "source-built": {
+          "runs": 32,
+          "raw_stdout_sha256": [
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d",
+            "7c66f221aaf5b2ba217e4057245af0bf2a59cc50aa60131803cc163c69db307d"
+          ],
+          "normalized_sha256": [
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827",
+            "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+          ],
+          "statuses": [
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            },
+            {
+              "exit_code": 0,
+              "is_error": false,
+              "content_kind": "text"
+            }
+          ],
+          "replacement_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unique_normalized_hashes": 1,
+          "maximum_response_tokens": 38,
+          "minimum_budget_slack": 8462
+        }
+      }
+    }
+  },
+  "common_normalized_sha256": "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+}

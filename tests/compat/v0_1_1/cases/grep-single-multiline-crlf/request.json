@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-multiline-crlf",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "one\\\\nxxxNEEDLE",
+    "path": "{{ROOT}}/notes/crlf.txt",
+    "output_mode": "content",
+    "multiline": true,
+    "line_numbers": true,
+    "head_limit": 100,
+    "offset": 0
+  }
+}

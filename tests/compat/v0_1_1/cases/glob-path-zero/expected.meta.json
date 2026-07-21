@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "glob-path-zero",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 0,
+  "normalized_text_sha256": "1130a83a6e723b5af3a994e37ef0d5251d31131607adde8f34c732276775e6c1"
+}

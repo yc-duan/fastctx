@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "case_id": "grep-multi-files",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "needle",
+    "path": "{{ROOT}}",
+    "glob": "**/*.{rs,md,txt}",
+    "output_mode": "files_with_matches",
+    "case_insensitive": true,
+    "head_limit": 100,
+    "offset": 0
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "glob-all-files",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 15,
+  "normalized_text_sha256": "174b06211f195081db3a2a2c4d773dbb1a4e76009ec5a275439071dd07f55f60"
+}

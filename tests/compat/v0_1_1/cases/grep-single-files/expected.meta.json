@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-files",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 1,
+  "normalized_text_sha256": "3cf90a1dde50201ef9d42991de3d3eb92773bc72e2f890c3c7c755f8fa81f0ff"
+}

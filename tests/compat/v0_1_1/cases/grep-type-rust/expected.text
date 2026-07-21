@@ -1,0 +1,5 @@
+{{ROOT}}/src/nested/mod.rs:1
+{{ROOT}}/src/lib.rs:2
+{{ROOT}}/src/main.rs:1
+
+(Complete: 4 occurrences across 3 files.)

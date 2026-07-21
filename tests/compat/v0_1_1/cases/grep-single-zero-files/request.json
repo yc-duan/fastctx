@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-zero-files",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "absent",
+    "path": "{{ROOT}}/README.md",
+    "output_mode": "files_with_matches",
+    "head_limit": 100,
+    "offset": 0
+  }
+}

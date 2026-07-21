@@ -1,0 +1,11 @@
+{{ROOT}}/src/nested/mod.rs
+needle nested
+
+{{ROOT}}/src/lib.rs
+needle one
+needle two
+
+{{ROOT}}/src/main.rs
+    println!("Needle");
+
+(Complete: all 4 results shown.)

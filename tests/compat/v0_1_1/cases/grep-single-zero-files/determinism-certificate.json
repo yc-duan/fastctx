@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-zero-files",
+  "fixture_tree_sha256": "0d4e62e22ec65a837b4274892fdeddc22fd10dfc10a989a35c0c145530c47c2d",
+  "all_components_safe_utf8": true,
+  "all_contents_strict_utf8": true,
+  "forbidden_features_found": [],
+  "sort": {
+    "kind": "single_file",
+    "readback_keys": [
+      "mtime=00000000002000000000;path_hex=2e67697469676e6f7265",
+      "mtime=00000000002000000040;path_hex=2e68696464656e2e747874",
+      "mtime=00000000002000000020;path_hex=2e69676e6f7265",
+      "mtime=00000000002000000060;path_hex=524541444d452e6d64",
+      "mtime=00000000002000000280;path_hex=646f63732f67756964652e6d64",
+      "mtime=00000000002000000260;path_hex=656d7074792e747874",
+      "mtime=00000000002000000220;path_hex=69676e6f7265642d6469722f7365637265742e7273",
+      "mtime=00000000002000000200;path_hex=69676e6f7265642e747874",
+      "mtime=00000000002000000160;path_hex=6e6f7465732f63726c662e747874",
+      "mtime=00000000002000000180;path_hex=6e6f7465732f6f6363757272656e6365732e747874",
+      "mtime=00000000002000000140;path_hex=6e6f7465732f746f646f2e747874",
+      "mtime=00000000002000000240;path_hex=736372617463682e6361636865",
+      "mtime=00000000002000000100;path_hex=7372632f6c69622e7273",
+      "mtime=00000000002000000080;path_hex=7372632f6d61696e2e7273",
+      "mtime=00000000002000000120;path_hex=7372632f6e65737465642f6d6f642e7273"
+    ],
+    "all_total_keys_unique": true
+  },
+  "request_is_success_path": true,
+  "immutable_capture_root": true,
+  "budget": {
+    "limit": 8500,
+    "oracle_tokens": 7,
+    "slack": 8493
+  }
+}

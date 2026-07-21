@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "case_id": "glob-path-one",
+  "tool": "glob",
+  "arguments": {
+    "pattern": "README.md",
+    "path": "{{ROOT}}",
+    "filter_mode": "project",
+    "sort": "path",
+    "offset": 0,
+    "limit": 100
+  }
+}

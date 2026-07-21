@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "token_budget": 8500,
+  "files": [
+    {
+      "path": ".gitignore",
+      "text": "ignored.txt\nignored-dir/\n*.cache\n",
+      "mtime_unix_seconds": 2000000000
+    },
+    {
+      "path": ".ignore",
+      "text": "notes/private.txt\n",
+      "mtime_unix_seconds": 2000000020
+    },
+    {
+      "path": ".hidden.txt",
+      "text": "hidden needle\n",
+      "mtime_unix_seconds": 2000000040
+    },
+    {
+      "path": "README.md",
+      "text": "before\nNEEDLE root\nafter\ngap\nfar\nNEEDLE again\nafter again\n",
+      "mtime_unix_seconds": 2000000060
+    },
+    {
+      "path": "src/main.rs",
+      "text": "fn main() {\r\n    println!(\"Needle\");\r\n}\r\n",
+      "mtime_unix_seconds": 2000000080
+    },
+    {
+      "path": "src/lib.rs",
+      "text": "pub fn alpha() {}\nneedle one\nneedle two\n",
+      "mtime_unix_seconds": 2000000100
+    },
+    {
+      "path": "src/nested/mod.rs",
+      "text": "prefix\nneedle nested\nsuffix\n",
+      "mtime_unix_seconds": 2000000120
+    },
+    {
+      "path": "notes/todo.txt",
+      "text": "first\nNEEDLE upper\nlast\n",
+      "mtime_unix_seconds": 2000000140
+    },
+    {
+      "path": "notes/crlf.txt",
+      "text": "one\r\nxxxNEEDLE\r\n",
+      "mtime_unix_seconds": 2000000160
+    },
+    {
+      "path": "notes/occurrences.txt",
+      "text": "START id=12 id=34 END\n",
+      "mtime_unix_seconds": 2000000180
+    },
+    {
+      "path": "ignored.txt",
+      "text": "needle ignored\n",
+      "mtime_unix_seconds": 2000000200
+    },
+    {
+      "path": "ignored-dir/secret.rs",
+      "text": "needle secret\n",
+      "mtime_unix_seconds": 2000000220
+    },
+    {
+      "path": "scratch.cache",
+      "text": "needle cache\n",
+      "mtime_unix_seconds": 2000000240
+    },
+    {
+      "path": "empty.txt",
+      "text": "",
+      "mtime_unix_seconds": 2000000260
+    },
+    {
+      "path": "docs/guide.md",
+      "text": "guide needle\n",
+      "mtime_unix_seconds": 2000000280
+    }
+  ]
+}

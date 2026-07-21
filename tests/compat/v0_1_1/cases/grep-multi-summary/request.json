@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "case_id": "grep-multi-summary",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "needle",
+    "path": "{{ROOT}}",
+    "glob": "**/*.{rs,md,txt}",
+    "output_mode": "summary",
+    "case_insensitive": true,
+    "head_limit": 100,
+    "offset": 0
+  }
+}

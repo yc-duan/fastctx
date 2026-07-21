@@ -1,0 +1,13 @@
+{{ROOT}}/notes/crlf.txt
+2:xxxNEEDLE
+
+{{ROOT}}/notes/todo.txt
+2:NEEDLE upper
+
+{{ROOT}}/src/nested/mod.rs
+2:needle nested
+
+{{ROOT}}/src/lib.rs
+2:needle one
+
+(Partial: results 2-5 shown; more exist. Continue with offset=5.)

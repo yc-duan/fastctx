@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-multi-content-page",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 4,
+  "normalized_text_sha256": "9161a2039944911be05e0a3109448fc73d3bccd134e9d25d75cd8d1fa92bf1f7"
+}

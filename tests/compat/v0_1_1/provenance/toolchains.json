@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "platforms": {
+    "linux-x64": {
+      "target": "x86_64-unknown-linux-gnu",
+      "runner": "Docker Desktop 29.4.1; rust:1.92-bookworm@sha256:e90e846de4124376164ddfbaab4b0774c7bdeef5e738866295e5a90a34a307a2; Linux 6.6.87.2-microsoft-standard-WSL2 x86_64",
+      "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+      "cargo": "cargo 1.92.0 (344c4567c 2025-10-21)",
+      "source_build": "FASTCTX_DISTRIBUTION=github-release cargo build --locked --release",
+      "release_asset": "fastctx-x86_64-unknown-linux-gnu.tar.gz"
+    },
+    "macos-arm64": {
+      "cargo": "cargo 1.92.0 (344c4567c 2025-10-21)",
+      "release_asset": "fastctx-aarch64-apple-darwin.tar.gz",
+      "runner": "macos14-20260629.0180.1; Darwin sat12-dp147-d243ea60-d240-41f4-a5a4-cfba935de159-1AC1B284DE4B.local 23.6.0 Darwin Kernel Version 23.6.0: Tue Apr 21 20:17:41 PDT 2026; root:xnu-10063.141.1.712.16~1/RELEASE_ARM64_VMAPPLE arm64",
+      "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+      "source_build": "FASTCTX_DISTRIBUTION=github-release cargo build --locked --release",
+      "target": "aarch64-apple-darwin"
+    },
+    "macos-x64": {
+      "cargo": "cargo 1.92.0 (344c4567c 2025-10-21)",
+      "release_asset": "fastctx-x86_64-apple-darwin.tar.gz",
+      "runner": "macos15-20260715.0340.1; Darwin sjc20-cw761-1229b880-8f8a-4421-b02c-07202db03db9-869CF79B98BE.local 24.6.0 Darwin Kernel Version 24.6.0: Tue Apr 21 20:17:54 PDT 2026; root:xnu-11417.140.69.710.16~1/RELEASE_X86_64 x86_64",
+      "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+      "source_build": "FASTCTX_DISTRIBUTION=github-release cargo build --locked --release",
+      "target": "x86_64-apple-darwin"
+    },
+    "windows-x64": {
+      "target": "x86_64-pc-windows-msvc",
+      "runner": "Windows 11 ProfessionalWorkstation 10.0.26200",
+      "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+      "cargo": "cargo 1.92.0 (344c4567c 2025-10-21)",
+      "source_build": "FASTCTX_DISTRIBUTION=github-release cargo build --locked --release",
+      "release_asset": "fastctx-x86_64-pc-windows-msvc.zip"
+    }
+  }
+}

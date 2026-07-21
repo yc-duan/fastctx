@@ -1,0 +1,4 @@
+# Frozen compatibility evidence can change only with an audited recapture.
+/tests/compat/v0_1_1/ @yc-duan
+/tools/compat-v011-capture/ @yc-duan
+/tools/verify-v011-assets.py @yc-duan

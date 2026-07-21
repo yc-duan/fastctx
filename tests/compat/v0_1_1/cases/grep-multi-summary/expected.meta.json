@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-multi-summary",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 0,
+  "normalized_text_sha256": "bc13bac818e1ce8dc622b72543ea12b8ff19f82cfc7bce79d020f31db890b9a2"
+}

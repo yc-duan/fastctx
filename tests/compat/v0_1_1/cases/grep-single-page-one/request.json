@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-page-one",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "\\\\d+",
+    "path": "{{ROOT}}/notes/occurrences.txt",
+    "output_mode": "content",
+    "only_matching": true,
+    "line_numbers": true,
+    "head_limit": 1,
+    "offset": 0
+  }
+}

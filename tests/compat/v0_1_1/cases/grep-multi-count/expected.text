@@ -1,0 +1,10 @@
+{{ROOT}}/docs/guide.md:1
+{{ROOT}}/notes/crlf.txt:1
+{{ROOT}}/notes/todo.txt:1
+{{ROOT}}/src/nested/mod.rs:1
+{{ROOT}}/src/lib.rs:2
+{{ROOT}}/src/main.rs:1
+{{ROOT}}/README.md:2
+{{ROOT}}/.hidden.txt:1
+
+(Complete: 10 occurrences across 8 files.)

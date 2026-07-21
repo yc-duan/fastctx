@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "case_id": "grep-type-rust",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "needle",
+    "path": "{{ROOT}}",
+    "type": "rust",
+    "output_mode": "count",
+    "case_insensitive": true,
+    "head_limit": 100,
+    "offset": 0
+  }
+}

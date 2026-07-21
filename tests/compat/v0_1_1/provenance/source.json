@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "tag": "v0.1.1",
+  "commit": "64a6a45f88e65a2c0305e36673fa5e3f99d95384",
+  "tree": "21efd928f328a5adb063f182fb8655626889fb3a",
+  "version": "0.1.1",
+  "source_archive_sha256": "dc314bfb011c9bfb12f8c55bb639e47e1fd1053e040c980eed9c0c49b43f7dd3",
+  "cargo_lock_sha256": "ac793ebb95f5f62f62f44db067d0c1ef0779a618aef25cbc490ca35f1ec0e33f"
+}

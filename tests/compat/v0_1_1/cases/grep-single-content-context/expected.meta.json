@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-content-context",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 0,
+  "normalized_text_sha256": "276d1fe0d43b8f0c832231bdc99c5033c298a7c1f84a28d62165890a7b4f7827"
+}

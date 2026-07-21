@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "glob-path-many-page-one",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 2,
+  "normalized_text_sha256": "effdd9b3c84473704a8c8ae19b5b2746767cee64919441da6f03c00bc980f451"
+}

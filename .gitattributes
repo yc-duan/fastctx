@@ -1,0 +1,2 @@
+tests/compat/v0_1_1/cases/**/expected.text -text
+tests/compat/v0_1_1/raw/** -text

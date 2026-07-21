@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-zero-content",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "needle",
+    "path": "{{ROOT}}/empty.txt",
+    "output_mode": "content",
+    "head_limit": 100,
+    "offset": 0
+  }
+}

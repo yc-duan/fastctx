@@ -143,6 +143,8 @@ jobs:
         shell: pwsh
         run: ./scripts/verify-distribution-contract.ps1
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify frozen v0.1.1 compatibility evidence
+        run: python3 tools/verify-v011-assets.py
       - uses: Swatinem/rust-cache@v2
       - run: cargo publish --locked --dry-run
       - uses: actions/setup-node@v6

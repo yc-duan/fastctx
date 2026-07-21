@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-type-rust",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 3,
+  "normalized_text_sha256": "53bf0c7b19f9e329a7e1addee543161330e0a1161d4872e477d5f06ba2c0415d"
+}

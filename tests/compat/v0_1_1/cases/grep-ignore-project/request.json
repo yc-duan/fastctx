@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "case_id": "grep-ignore-project",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "needle",
+    "path": "{{ROOT}}",
+    "glob": "**/*",
+    "output_mode": "files_with_matches",
+    "case_insensitive": true,
+    "head_limit": 100,
+    "offset": 0
+  }
+}

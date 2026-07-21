@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-count",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 1,
+  "normalized_text_sha256": "8ce92f9c8c458127300f3c764e89b2f3da691dbb7218fd08a8d31573b836201e"
+}

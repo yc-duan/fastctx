@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-glob-filter",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 3,
+  "normalized_text_sha256": "faf5462cadd3457d710b879c73f008a6f6bd340ba9f2364842ed656baf5309fd"
+}

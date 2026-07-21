@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-summary",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "needle",
+    "path": "{{ROOT}}/src/lib.rs",
+    "output_mode": "summary",
+    "head_limit": 100,
+    "offset": 0
+  }
+}

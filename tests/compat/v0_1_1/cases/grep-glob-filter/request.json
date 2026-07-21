@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "case_id": "grep-glob-filter",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "needle",
+    "path": "{{ROOT}}",
+    "glob": "src/**/*.rs",
+    "output_mode": "content",
+    "case_insensitive": true,
+    "line_numbers": false,
+    "head_limit": 100,
+    "offset": 0
+  }
+}

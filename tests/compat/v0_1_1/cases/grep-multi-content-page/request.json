@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "case_id": "grep-multi-content-page",
+  "tool": "grep",
+  "arguments": {
+    "pattern": "needle",
+    "path": "{{ROOT}}",
+    "glob": "**/*.{rs,md,txt}",
+    "output_mode": "content",
+    "case_insensitive": true,
+    "line_numbers": true,
+    "head_limit": 4,
+    "offset": 1
+  }
+}

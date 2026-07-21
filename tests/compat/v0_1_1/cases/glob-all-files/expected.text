@@ -1,0 +1,17 @@
+{{ROOT}}/.gitignore
+{{ROOT}}/.hidden.txt
+{{ROOT}}/.ignore
+{{ROOT}}/README.md
+{{ROOT}}/docs/guide.md
+{{ROOT}}/empty.txt
+{{ROOT}}/ignored-dir/secret.rs
+{{ROOT}}/ignored.txt
+{{ROOT}}/notes/crlf.txt
+{{ROOT}}/notes/occurrences.txt
+{{ROOT}}/notes/todo.txt
+{{ROOT}}/scratch.cache
+{{ROOT}}/src/lib.rs
+{{ROOT}}/src/main.rs
+{{ROOT}}/src/nested/mod.rs
+
+(Complete: all 15 files shown.)

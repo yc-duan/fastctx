@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "case_id": "glob-path-many-page-one",
+  "tool": "glob",
+  "arguments": {
+    "pattern": "**/*.rs",
+    "path": "{{ROOT}}",
+    "filter_mode": "project",
+    "sort": "path",
+    "offset": 0,
+    "limit": 2
+  }
+}

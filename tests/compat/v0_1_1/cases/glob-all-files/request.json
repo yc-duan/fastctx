@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "case_id": "glob-all-files",
+  "tool": "glob",
+  "arguments": {
+    "pattern": "**/*",
+    "path": "{{ROOT}}",
+    "filter_mode": "all",
+    "sort": "path",
+    "offset": 0,
+    "limit": 100
+  }
+}

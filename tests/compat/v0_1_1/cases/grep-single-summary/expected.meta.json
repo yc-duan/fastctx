@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "case_id": "grep-single-summary",
+  "is_error": false,
+  "content_kind": "text",
+  "replacement_count": 0,
+  "normalized_text_sha256": "69ba500aa29bb4882d0c0f3d105021e1e505fcd5a57dd7d453a155d537ee6545"
+}
