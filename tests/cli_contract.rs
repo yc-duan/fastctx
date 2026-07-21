@@ -34,6 +34,12 @@ fn help_version_ui_guard_and_language_errors_are_scriptable() {
     assert!(jobs_help.status.success());
     let jobs_help = String::from_utf8(jobs_help.stdout).unwrap();
     assert!(jobs_help.contains("kill"), "{jobs_help}");
+    for subcommand in ["apply", "unapply", "status", "doctor"] {
+        let output = command().args([subcommand, "--help"]).output().unwrap();
+        assert!(output.status.success(), "{subcommand}");
+        let output = String::from_utf8(output.stdout).unwrap();
+        assert!(output.contains("--codex-home"), "{subcommand}: {output}");
+    }
 
     let ui = command().arg("ui").output().unwrap();
     assert!(!ui.status.success());
@@ -501,6 +507,189 @@ fn noninteractive_apply_bootstraps_a_fresh_home_without_codex_cli_or_profile() {
 }
 
 #[test]
+fn codex_home_env_selects_the_profile_without_moving_fastctx_state() {
+    let temp = profile_test_home();
+    let profile = temp.path().join("relocated-codex-profile");
+
+    let applied = isolated_command(temp.path())
+        .args(["apply", "--yes"])
+        .env("CODEX_HOME", &profile)
+        .output()
+        .unwrap();
+    assert_success(&applied);
+    assert!(profile.join("config.toml").is_file());
+    assert!(profile.join("AGENTS.md").is_file());
+    assert!(!profile.join(".codex").exists());
+    assert!(!temp.path().join(".codex").exists());
+    assert!(temp.path().join(".fastctx/config.toml").is_file());
+
+    let status = isolated_command(temp.path())
+        .arg("status")
+        .env("CODEX_HOME", &profile)
+        .output()
+        .unwrap();
+    assert_success(&status);
+    let status = String::from_utf8(status.stdout).unwrap();
+    assert!(status.contains("[PASS] Codex profile"), "{status}");
+    assert!(status.contains(&normalized(&profile)), "{status}");
+    assert!(status.contains("source: env"), "{status}");
+
+    let removed = isolated_command(temp.path())
+        .args(["unapply", "--yes"])
+        .env("CODEX_HOME", &profile)
+        .output()
+        .unwrap();
+    assert_success(&removed);
+    assert!(!profile.exists());
+    assert!(!temp.path().join(".fastctx").exists());
+}
+
+#[test]
+fn codex_home_flag_overrides_the_live_environment_for_all_control_commands() {
+    let temp = profile_test_home();
+    let environment_profile = temp.path().join("environment-profile");
+    let flag_profile = temp.path().join("flag-profile");
+
+    let applied = isolated_command(temp.path())
+        .arg("apply")
+        .arg("--codex-home")
+        .arg(&flag_profile)
+        .arg("--yes")
+        .env("CODEX_HOME", &environment_profile)
+        .output()
+        .unwrap();
+    assert_success(&applied);
+    assert!(flag_profile.join("config.toml").is_file());
+    assert!(!environment_profile.exists());
+
+    for subcommand in ["status", "doctor"] {
+        let status = isolated_command(temp.path())
+            .arg(subcommand)
+            .arg("--codex-home")
+            .arg(&flag_profile)
+            .env("CODEX_HOME", &environment_profile)
+            .output()
+            .unwrap();
+        assert_success(&status);
+        let status = String::from_utf8(status.stdout).unwrap();
+        assert!(status.contains(&normalized(&flag_profile)), "{status}");
+        assert!(status.contains("source: flag"), "{status}");
+        assert!(
+            !status.contains(&normalized(&environment_profile)),
+            "{status}"
+        );
+    }
+
+    let switched_status = isolated_command(temp.path())
+        .arg("status")
+        .env("CODEX_HOME", &environment_profile)
+        .output()
+        .unwrap();
+    assert_success(&switched_status);
+    let switched_status = String::from_utf8(switched_status.stdout).unwrap();
+    assert!(switched_status.contains("source: env"), "{switched_status}");
+    assert!(
+        switched_status.contains("[INFO] Applied state"),
+        "{switched_status}"
+    );
+    assert!(
+        switched_status.contains("saved Apply receipt targets"),
+        "{switched_status}"
+    );
+
+    let mismatched_apply = isolated_command(temp.path())
+        .args(["apply", "--yes"])
+        .env("CODEX_HOME", &environment_profile)
+        .output()
+        .unwrap();
+    assert!(!mismatched_apply.status.success());
+    let mismatch = String::from_utf8(mismatched_apply.stderr).unwrap();
+    assert!(
+        mismatch.contains("does not match the last Apply receipt"),
+        "{mismatch}"
+    );
+    assert!(mismatch.contains("source: env"), "{mismatch}");
+    assert!(!environment_profile.exists());
+
+    let mismatched_unapply = isolated_command(temp.path())
+        .args(["unapply", "--yes"])
+        .env("CODEX_HOME", &environment_profile)
+        .output()
+        .unwrap();
+    assert!(!mismatched_unapply.status.success());
+    let mismatch = String::from_utf8(mismatched_unapply.stderr).unwrap();
+    assert!(
+        mismatch.contains("does not match the last Apply receipt"),
+        "{mismatch}"
+    );
+    assert!(mismatch.contains("source: env"), "{mismatch}");
+    assert!(flag_profile.join("config.toml").is_file());
+    assert!(temp.path().join(".fastctx/config.toml").is_file());
+
+    let removed = isolated_command(temp.path())
+        .arg("unapply")
+        .arg("--codex-home")
+        .arg(&flag_profile)
+        .arg("--yes")
+        .env("CODEX_HOME", &environment_profile)
+        .output()
+        .unwrap();
+    assert_success(&removed);
+    assert!(!flag_profile.exists());
+    assert!(!environment_profile.exists());
+}
+
+#[test]
+fn default_profile_source_is_visible_when_no_override_exists() {
+    let temp = profile_test_home();
+    let status = isolated_command(temp.path())
+        .arg("status")
+        .output()
+        .unwrap();
+    assert_success(&status);
+    let status = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        status.contains(&normalized(&temp.path().join(".codex"))),
+        "{status}"
+    );
+    assert!(status.contains("source: default"), "{status}");
+}
+
+#[test]
+fn codex_home_non_directory_is_reported_at_the_selected_target_without_writes() {
+    let temp = profile_test_home();
+    let profile = temp.path().join("profile-is-a-file");
+    std::fs::write(&profile, b"user-owned").unwrap();
+
+    let status = isolated_command(temp.path())
+        .arg("doctor")
+        .arg("--codex-home")
+        .arg(&profile)
+        .output()
+        .unwrap();
+    assert_eq!(status.status.code(), Some(1));
+    let status = String::from_utf8(status.stdout).unwrap();
+    assert!(status.contains("[FAIL] Codex profile"), "{status}");
+    assert!(status.contains(&normalized(&profile)), "{status}");
+    assert!(status.contains("source: flag"), "{status}");
+
+    let apply = isolated_command(temp.path())
+        .arg("apply")
+        .arg("--codex-home")
+        .arg(&profile)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert!(!apply.status.success());
+    let error = String::from_utf8(apply.stderr).unwrap();
+    assert!(error.contains("is not a directory"), "{error}");
+    assert!(error.contains(&normalized(&profile)), "{error}");
+    assert_eq!(std::fs::read(&profile).unwrap(), b"user-owned");
+    assert!(!temp.path().join(".fastctx").exists());
+    assert!(!temp.path().join(".codex").exists());
+}
+
+#[test]
 fn apply_status_and_unapply_cover_both_shell_states() {
     for fastshell in [false, true] {
         let temp = tempfile::tempdir().unwrap();
@@ -782,10 +971,18 @@ fn isolated_command(home: &Path) -> Command {
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
+        .env_remove("CODEX_HOME")
         .env("TMPDIR", home)
         .env("TMP", home)
         .env("TEMP", home);
     command
+}
+
+fn profile_test_home() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("fastctx-codex-home-")
+        .tempdir_in(std::env::current_dir().unwrap())
+        .unwrap()
 }
 
 fn start_persistent_job(home: &Path, command: &str) -> String {

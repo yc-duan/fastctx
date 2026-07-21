@@ -146,35 +146,32 @@ pub fn run(paths: &ControlPaths) -> DoctorReport {
     };
 
     let settings = settings::load(paths);
+    let saved_settings = settings.as_ref().ok();
+    let all_applied = saved_settings.and_then(|settings| settings.applied.as_ref());
+    let profile_applied = all_applied.filter(|record| record.targets_codex_profile(paths));
     checks.push(match settings.as_ref() {
-        Ok(settings) => check_drift(paths, Some(settings), config_bytes.as_deref()),
+        Ok(settings) => check_drift(
+            paths,
+            Some(settings),
+            profile_applied,
+            config_bytes.as_deref(),
+        ),
         Err(error) => DoctorCheck::fail(
             "Applied state",
             error.clone(),
             "Repair ~/.fastctx/config.toml or re-run Apply after moving the damaged file aside.",
         ),
     });
-    checks.push(check_binary(
-        paths,
-        settings
-            .as_ref()
-            .ok()
-            .and_then(|settings| settings.applied.as_ref()),
-    ));
+    checks.push(check_binary(paths, all_applied));
     checks.push(check_running_instances(paths));
-    let saved_settings = settings.as_ref().ok();
-    let applied = settings
-        .as_ref()
-        .ok()
-        .and_then(|settings| settings.applied.as_ref());
-    checks.push(check_mcp(&paths.installed_binary, applied));
+    checks.push(check_mcp(&paths.installed_binary, profile_applied));
     checks.push(check_agents(
         paths,
-        applied.is_some(),
-        applied.is_some_and(|record| record.fastshell_enabled),
+        profile_applied.is_some(),
+        profile_applied.is_some_and(|record| record.fastshell_enabled),
     ));
     let fastshell_desired = saved_settings.is_some_and(|settings| settings.fastshell.enabled);
-    let fastshell_applied = applied.is_some_and(|record| record.fastshell_enabled);
+    let fastshell_applied = profile_applied.is_some_and(|record| record.fastshell_enabled);
     checks.push(check_extension_state(
         "fastshell",
         fastshell_desired,
@@ -259,35 +256,29 @@ fn check_job_limits(paths: &ControlPaths) -> DoctorCheck {
 }
 
 fn check_profile(paths: &ControlPaths) -> DoctorCheck {
+    let profile = crate::paths::display_path(&paths.codex_dir);
+    let source = paths.codex_home_source.as_str();
     match std::fs::metadata(&paths.codex_dir) {
         Ok(metadata) if metadata.is_dir() => DoctorCheck::pass(
             "Codex profile",
-            format!(
-                "Configuration root: {}",
-                crate::paths::display_path(&paths.codex_dir)
-            ),
+            format!("Configuration root: {profile} (source: {source})."),
         ),
         Ok(_) => DoctorCheck::fail(
             "Codex profile",
             format!(
-                "{} exists but is not a directory.",
-                crate::paths::display_path(&paths.codex_dir)
+                "Configuration root {profile} (source: {source}) exists but is not a directory."
             ),
             "Move or remove that path so Apply can create the configuration directory.",
         ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => DoctorCheck::info(
             "Codex profile",
             format!(
-                "{} does not exist yet; Apply will create it.",
-                crate::paths::display_path(&paths.codex_dir)
+                "Configuration root {profile} (source: {source}) does not exist yet; Apply will create it."
             ),
         ),
         Err(error) => DoctorCheck::fail(
             "Codex profile",
-            format!(
-                "Cannot inspect {}: {error}",
-                crate::paths::display_path(&paths.codex_dir)
-            ),
+            format!("Cannot inspect configuration root {profile} (source: {source}): {error}"),
             "Fix the path or permissions, then run fastctx status again.",
         ),
     }
@@ -296,9 +287,22 @@ fn check_profile(paths: &ControlPaths) -> DoctorCheck {
 fn check_drift(
     paths: &ControlPaths,
     settings: Option<&settings::FastCtxSettings>,
+    profile_applied: Option<&settings::AppliedRecord>,
     config: Option<&[u8]>,
 ) -> DoctorCheck {
-    let Some(record) = settings.and_then(|settings| settings.applied.as_ref()) else {
+    let Some(record) = profile_applied else {
+        if let Some(record) = settings.and_then(|settings| settings.applied.as_ref()) {
+            let recorded_profile = Path::new(&record.codex_config.path)
+                .parent()
+                .unwrap_or_else(|| Path::new(&record.codex_config.path));
+            return DoctorCheck::info(
+                "Applied state",
+                format!(
+                    "The saved Apply receipt targets {}; fastctx has not been applied in the selected profile. Run fastctx apply when ready.",
+                    crate::paths::display_path(recorded_profile)
+                ),
+            );
+        }
         return DoctorCheck::info(
             "Applied state",
             "fastctx has not been applied in this profile. Run fastctx apply when ready.",
@@ -1040,7 +1044,12 @@ mod tests {
         host_rewritten
             .extend_from_slice(b"\n[plugins.runtime]\nlast_refresh = \"2026-07-17T00:01:00Z\"\n");
 
-        let status = check_drift(&paths, Some(&settings), Some(&host_rewritten));
+        let status = check_drift(
+            &paths,
+            Some(&settings),
+            settings.applied.as_ref(),
+            Some(&host_rewritten),
+        );
         assert_eq!(status.status, DoctorCheckStatus::Pass, "{status:?}");
 
         let managed_drift_source = String::from_utf8(host_rewritten).unwrap();
@@ -1054,7 +1063,12 @@ mod tests {
                 "FASTCTX_TOKEN_BUDGET = \"1234\"",
             )
             .into_bytes();
-        let status = check_drift(&paths, Some(&settings), Some(&managed_drift));
+        let status = check_drift(
+            &paths,
+            Some(&settings),
+            settings.applied.as_ref(),
+            Some(&managed_drift),
+        );
         assert_eq!(status.status, DoctorCheckStatus::Fail, "{status:?}");
         assert!(
             status

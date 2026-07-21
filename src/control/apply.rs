@@ -303,7 +303,17 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
 
     let settings_original = transaction::read_snapshot(&paths.fastctx_config)?;
     let mut current_settings = settings::load(paths)?;
-    let previous_applied = current_settings.applied.clone();
+    if let Some(record) = current_settings
+        .applied
+        .as_ref()
+        .filter(|record| !record.targets_codex_profile(paths))
+    {
+        return Err(receipt_profile_mismatch(paths, record));
+    }
+    let previous_applied = current_settings
+        .applied
+        .clone()
+        .filter(|record| record.targets_codex_profile(paths));
     let codex_dir_created = previous_applied
         .as_ref()
         .map(|record| record.codex_dir_created || codex_dir_missing)
@@ -492,7 +502,15 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
         .filter(|process| process.identity.pid != std::process::id())
         .collect::<Vec<_>>();
     let settings_original = transaction::read_snapshot(&paths.fastctx_config)?;
-    let applied = settings::load(paths)?.applied;
+    let loaded_settings = settings::load(paths)?;
+    if let Some(record) = loaded_settings
+        .applied
+        .as_ref()
+        .filter(|record| !record.targets_codex_profile(paths))
+    {
+        return Err(receipt_profile_mismatch(paths, record));
+    }
+    let applied = loaded_settings.applied;
     let codex_dir_cleanup = applied
         .as_ref()
         .is_some_and(|record| record.codex_dir_created)
@@ -889,6 +907,19 @@ fn codex_directory_will_be_created(paths: &ControlPaths) -> Result<bool, String>
             crate::paths::display_path(&paths.codex_dir)
         )),
     }
+}
+
+fn receipt_profile_mismatch(paths: &ControlPaths, record: &AppliedRecord) -> String {
+    let recorded_profile = Path::new(&record.codex_config.path)
+        .parent()
+        .unwrap_or_else(|| Path::new(&record.codex_config.path));
+    format!(
+        "The selected Codex profile {} (source: {}) does not match the last Apply receipt for {}. Run fastctx unapply --codex-home {} first, then retry; FastCtx will not use ownership evidence from one profile against another.",
+        crate::paths::display_path(&paths.codex_dir),
+        paths.codex_home_source.as_str(),
+        crate::paths::display_path(recorded_profile),
+        crate::paths::display_path(recorded_profile),
+    )
 }
 
 fn file_write(

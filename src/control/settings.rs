@@ -406,7 +406,7 @@ pub struct AppliedRecord {
     /// Legacy receipt field accepted so older installations can be re-applied safely.
     #[serde(default, skip_serializing)]
     pub fastedit_enabled: bool,
-    /// Whether Apply created `~/.codex/`; Unapply removes that owned shell only while it remains empty.
+    /// Whether Apply created the effective Codex profile directory; Unapply removes that owned shell only while it remains empty.
     #[serde(default)]
     pub codex_dir_created: bool,
     /// Ownership receipt for Codex config.
@@ -418,6 +418,24 @@ pub struct AppliedRecord {
     pub codex_agents_inserted_separator: Option<InsertedSeparator>,
     /// Content hash of the self-installed binary.
     pub binary_sha256: String,
+}
+
+impl AppliedRecord {
+    /// Reports whether this receipt owns the Codex files selected by the current profile resolver.
+    pub fn targets_codex_profile(&self, paths: &ControlPaths) -> bool {
+        paths_refer_to_same_location(Path::new(&self.codex_config.path), &paths.codex_config)
+            && paths_refer_to_same_location(Path::new(&self.codex_agents.path), &paths.codex_agents)
+    }
+}
+
+fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (dunce::canonicalize(left), dunce::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 /// FastCtx's own configuration.

@@ -46,6 +46,9 @@ enum Command {
     Ui,
     /// Preview and apply the ChatGPT/Codex integration.
     Apply {
+        /// Codex profile directory; overrides CODEX_HOME and the default.
+        #[arg(long, value_name = "PATH")]
+        codex_home: Option<PathBuf>,
         /// Host output tier; defaults to the saved selection.
         #[arg(long, value_enum)]
         tier: Option<Tier>,
@@ -55,12 +58,20 @@ enum Command {
     },
     /// Preview and remove the ChatGPT/Codex integration.
     Unapply {
+        /// Codex profile directory; overrides CODEX_HOME and the default.
+        #[arg(long, value_name = "PATH")]
+        codex_home: Option<PathBuf>,
         /// Accept the preview without prompting.
         #[arg(long)]
         yes: bool,
     },
     /// Run all local integration checks.
-    Status,
+    #[command(visible_alias = "doctor")]
+    Status {
+        /// Codex profile directory; overrides CODEX_HOME and the default.
+        #[arg(long, value_name = "PATH")]
+        codex_home: Option<PathBuf>,
+    },
     /// Set the TUI language.
     Lang {
         /// One of the 17 supported language codes.
@@ -147,9 +158,13 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
             let paths = ControlPaths::discover()?;
             run_tui_with_check(paths)
         }
-        Some(Command::Apply { tier, yes }) => run_apply(tier, yes),
-        Some(Command::Unapply { yes }) => run_unapply(yes),
-        Some(Command::Status) => run_status(),
+        Some(Command::Apply {
+            codex_home,
+            tier,
+            yes,
+        }) => run_apply(codex_home, tier, yes),
+        Some(Command::Unapply { codex_home, yes }) => run_unapply(codex_home, yes),
+        Some(Command::Status { codex_home }) => run_status(codex_home),
         Some(Command::Lang { code }) => run_lang(&code),
         Some(Command::Jobs { command }) => run_jobs(command),
         #[cfg(unix)]
@@ -388,8 +403,12 @@ async fn wait_for_server_termination_signal() {
     std::future::pending::<()>().await
 }
 
-fn run_apply(tier: Option<Tier>, yes: bool) -> Result<ExitCode, String> {
-    let paths = ControlPaths::discover()?;
+fn run_apply(
+    codex_home: Option<PathBuf>,
+    tier: Option<Tier>,
+    yes: bool,
+) -> Result<ExitCode, String> {
+    let paths = ControlPaths::discover_with_codex_home(codex_home)?;
     let saved = settings::load(&paths)?;
     let plan = plan_apply(
         &paths,
@@ -434,8 +453,8 @@ fn run_apply(tier: Option<Tier>, yes: bool) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_unapply(yes: bool) -> Result<ExitCode, String> {
-    let paths = ControlPaths::discover()?;
+fn run_unapply(codex_home: Option<PathBuf>, yes: bool) -> Result<ExitCode, String> {
+    let paths = ControlPaths::discover_with_codex_home(codex_home)?;
     let plan = plan_unapply(
         &paths,
         UnapplyOptions {
@@ -486,10 +505,10 @@ fn run_unapply(yes: bool) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_status() -> Result<ExitCode, String> {
+fn run_status(codex_home: Option<PathBuf>) -> Result<ExitCode, String> {
     use crate::control::doctor::DoctorCheckStatus;
 
-    let paths = ControlPaths::discover()?;
+    let paths = ControlPaths::discover_with_codex_home(codex_home)?;
     let report = doctor::run(&paths);
     for check in &report.checks {
         let label = match check.status {
