@@ -1345,10 +1345,11 @@ mod tests {
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            use std::os::unix::fs::PermissionsExt;
-
-            std::fs::copy("/bin/sh", &target).unwrap();
-            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::control::processes::publish_unix_executable_fixture(
+                std::path::Path::new("/bin/sh"),
+                &target,
+            )
+            .unwrap();
             std::process::Command::new(target)
                 .args(["-c", "while :; do sleep 1; done"])
                 .stdin(std::process::Stdio::null())

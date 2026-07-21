@@ -16,6 +16,21 @@ use std::time::Instant;
 
 const TERMINATION_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Copies and atomically publishes a Unix executable used by process-lifecycle tests.
+#[cfg(all(test, unix, not(target_os = "macos")))]
+pub(crate) fn publish_unix_executable_fixture(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let staging = target.with_extension("fastctx-staged");
+    std::fs::copy(source, &staging)?;
+    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))?;
+    let staged_file = std::fs::File::open(&staging)?;
+    staged_file.sync_all()?;
+    drop(staged_file);
+    // 2026-07-21: publish only after every fixture handle closes; Linux runners may reject an immediate exec with ETXTBSY.
+    std::fs::rename(staging, target)
+}
+
 /// Stable process snapshot used by Status and by Unapply's preview/commit boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct InstalledProcess {
@@ -825,9 +840,8 @@ mod tests {
         let managed = temp.path().join("bin");
         std::fs::create_dir(&managed).unwrap();
         let executable = managed.join("fastctx");
-        std::fs::copy("/bin/sh", &executable).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        super::publish_unix_executable_fixture(std::path::Path::new("/bin/sh"), &executable)
+            .unwrap();
         let mut child = std::process::Command::new(&executable)
             .args(["-c", "while :; do sleep 1; done"])
             .spawn()
