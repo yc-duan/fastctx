@@ -70,6 +70,7 @@ fn tracked_code_files(root: &Path) -> Vec<PathBuf> {
             .filter(|path| !path.is_empty())
             .map(|path| tracked_path(root, path))
             .filter(|path| is_code_file(path))
+            .filter(|path| path.is_file())
             .collect(),
         _ => fallback_code_files(root),
     }
