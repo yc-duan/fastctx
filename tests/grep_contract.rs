@@ -1,7 +1,7 @@
 mod common;
 
-use common::{cwd, error_text, normalized, set_mtime, text, write};
-use fastctx::grep_tool::{GrepRequest, OutputMode, grep_files};
+use common::{cwd, error_text, grep_files, normalized, set_mtime, text, write};
+use fastctx::grep_tool::{GrepRequest, OutputMode};
 
 fn request(path: &std::path::Path, pattern: &str, mode: OutputMode) -> GrepRequest {
     GrepRequest {
@@ -1117,7 +1117,7 @@ fn grep_limit_probe_does_not_open_later_unneeded_files() {
 
 #[cfg(unix)]
 #[test]
-fn grep_lists_non_utf8_filenames_lossily_without_dropping_legal_neighbors() {
+fn grep_lists_non_utf8_filenames_canonically_without_dropping_legal_neighbors() {
     use std::os::unix::ffi::OsStringExt;
 
     let temp = tempfile::tempdir().unwrap();
@@ -1135,8 +1135,7 @@ fn grep_lists_non_utf8_filenames_lossily_without_dropping_legal_neighbors() {
     set_mtime(&invalid, 1_700_000_002);
     set_mtime(&legal, 1_700_000_001);
 
-    let invalid_display = normalized(&invalid);
-    assert!(invalid_display.contains('\u{FFFD}'));
+    let invalid_display = format!("{}/~fastctx~b6261642dff2e747874~", normalized(temp.path()));
     assert_eq!(
         text(grep_files(request(
             temp.path(),

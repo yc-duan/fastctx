@@ -216,6 +216,8 @@ Searches respect `.gitignore` and `.ignore` by default, include hidden files, an
 
 Files with uncertain encodings appear in a skip report with their path, reason, and resolution parameters. Use `encoding` for a single file and `fallback_encoding` for a directory search.
 
+If a file changes during a directory search, `grep` reports that file as skipped and continues; a changing single-file target returns an error so partial matches never masquerade as complete results.
+
 ### `glob`
 
 `glob` finds files with a pattern relative to the search root:
@@ -242,6 +244,8 @@ Main parameters:
 - `sort: "path"`: use a stable path order;
 - `sort: "modified"`: order files from newest to oldest;
 - `offset` / `limit`: page through the result set.
+
+`grep` and `glob` render filename components that are unsafe to place directly in a line as reversible `~fastctx~b...~` or `~fastctx~w...~` escapes. Copy the whole component exactly into a later grep/glob call; do not decode or edit it.
 
 ### `replace`
 

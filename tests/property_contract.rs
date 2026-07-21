@@ -1,8 +1,8 @@
 mod common;
 
-use common::{McpSession, mcp_text, normalized, text, write};
-use fastctx::glob_tool::{FilterMode, GlobRequest, SortMode, glob_files};
-use fastctx::grep_tool::{GrepRequest, OutputMode, grep_files};
+use common::{McpSession, glob_files, grep_files, mcp_text, normalized, text, write};
+use fastctx::glob_tool::{FilterMode, GlobRequest, SortMode};
+use fastctx::grep_tool::{GrepRequest, OutputMode};
 use fastctx::read_tool::{ReadRequest, read_file};
 use std::process::Command;
 
@@ -88,6 +88,79 @@ fn independent_o200k_oracle_keeps_high_entropy_outputs_below_the_budget() {
     }
 
     assert!(session.close().success());
+}
+
+#[test]
+fn stdio_grep_and_glob_errors_obey_tiny_budgets_with_an_independent_oracle() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.txt");
+    write(&source, b"hit\n");
+    let missing = temp.path().join("missing");
+    let tokenizer = tiktoken_rs::o200k_base_singleton();
+
+    for budget in [1_usize, 2] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_fastctx"));
+        command
+            .arg("serve")
+            .env("FASTCTX_TOKEN_BUDGET", budget.to_string())
+            .env("FASTCTX_GREP_TOKEN_BUDGET", budget.to_string())
+            .env("FASTCTX_GLOB_TOKEN_BUDGET", budget.to_string());
+        let mut session = McpSession::start(command);
+
+        let responses = [
+            session.call(
+                "grep",
+                serde_json::json!({"pattern": "hit", "path": normalized(&missing)}),
+            ),
+            session.call(
+                "grep",
+                serde_json::json!({"pattern": "[", "path": normalized(&source)}),
+            ),
+            session.call(
+                "grep",
+                serde_json::json!({
+                    "pattern": "hit",
+                    "path": normalized(&source),
+                    "encoding": "not-a-real-encoding"
+                }),
+            ),
+            session.call(
+                "grep",
+                serde_json::json!({
+                    "pattern": "hit",
+                    "path": normalized(&source),
+                    "output_mode": "content"
+                }),
+            ),
+            session.call(
+                "glob",
+                serde_json::json!({"pattern": "**/*", "path": normalized(&missing)}),
+            ),
+            session.call(
+                "glob",
+                serde_json::json!({"pattern": "[", "path": normalized(temp.path())}),
+            ),
+            session.call(
+                "glob",
+                serde_json::json!({
+                    "pattern": "**/*.txt",
+                    "path": normalized(temp.path()),
+                    "filter_mode": "all"
+                }),
+            ),
+        ];
+
+        for response in responses {
+            assert_eq!(response["result"]["isError"], true, "{response}");
+            let output = mcp_text(&response);
+            let tokens = tokenizer.encode_ordinary(output).len();
+            assert!(
+                tokens <= budget,
+                "independent oracle counted {tokens} tokens over budget {budget}: {output:?}"
+            );
+        }
+        assert!(session.close().success());
+    }
 }
 
 #[test]

@@ -78,13 +78,17 @@ fn default_tool_definitions_publish_replace_with_explicit_permissions() {
             "optional context), \"count\" (per-file occurrence counts — total matches, not\n",
             "matching-line count), \"summary\" (global totals only).\n",
             "Respects .gitignore; searches hidden files; skips .git and binaries. Files are\n",
-            "decoded to UTF-8 before searching; files whose encoding can't be determined are\n",
-            "skipped and listed (never silently) — pass fallback_encoding (directory) or\n",
-            "encoding (single file) to resolve them. Matching is line-by-line: `^` and `$`\n",
-            "anchor line boundaries and are CRLF-aware. Set multiline=true for patterns\n",
-            "spanning lines (`.` matches newlines; `\\n` also matches `\\r\\n`). The last line of every successful result\n",
-            "states Complete or Partial — continue only with the exact offset a Partial note\n",
-            "provides; errors are self-contained."
+            "decoded to UTF-8 before searching; files whose encoding can't be determined, or\n",
+            "that change during a directory search, are skipped and listed (never silently) —\n",
+            "pass fallback_encoding (directory) or encoding (single file) to resolve encoding;\n",
+            "a changing single-file target returns an error. Matching is line-by-line: `^` and\n",
+            "`$` anchor line boundaries and are CRLF-aware. Set multiline=true for patterns\n",
+            "spanning lines (`.` matches newlines; `\\n` also matches `\\r\\n`). A path component\n",
+            "of the form ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows\n",
+            "UTF-16) is a filename escape; copy that whole component verbatim in later calls\n",
+            "and do not decode or rewrite it. The last line of every successful result states\n",
+            "Complete or Partial — continue only with the exact offset a Partial note provides;\n",
+            "errors are self-contained."
         ))
     );
     assert_eq!(
@@ -113,10 +117,12 @@ fn default_tool_definitions_publish_replace_with_explicit_permissions() {
             "paths sorted by path (or newest first with sort=\"modified\"), 100 per page.\n",
             "filter_mode \"project\" (default) respects .gitignore and skips .git;\n",
             "filter_mode \"all\" lists everything. Omit `path` to search the session working\n",
-            "directory — omit the field entirely, never pass \"null\" or \"undefined\". The\n",
-            "last line of every successful result states Complete or Partial — continue\n",
-            "only with the exact offset a Partial note provides; errors are\n",
-            "self-contained."
+            "directory — omit the field entirely, never pass \"null\" or \"undefined\". A path\n",
+            "component of the form ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~\n",
+            "(Windows UTF-16) is a filename escape; copy that whole component verbatim in\n",
+            "later calls and do not decode or rewrite it. The last line of every successful\n",
+            "result states Complete or Partial — continue only with the exact offset a Partial\n",
+            "note provides; errors are self-contained."
         ))
     );
     assert_eq!(

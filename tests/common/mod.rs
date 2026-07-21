@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+use fastctx::glob_tool::GlobRequest;
+use fastctx::grep_tool::GrepRequest;
 use fastctx::{ToolContent, ToolResponse};
 use filetime::{FileTime, set_file_mtime};
 use lopdf::content::{Content, Operation};
@@ -31,6 +33,14 @@ pub fn error_text(response: ToolResponse) -> String {
         ToolContent::Text(text) => text,
         content => panic!("expected text error, got {content:?}"),
     }
+}
+
+pub fn grep_files(request: GrepRequest) -> ToolResponse {
+    fastctx::grep_tool::grep_files(request, tokio_util::sync::CancellationToken::new())
+}
+
+pub fn glob_files(request: GlobRequest) -> ToolResponse {
+    fastctx::glob_tool::glob_files(request, tokio_util::sync::CancellationToken::new())
 }
 
 pub fn normalized(path: &Path) -> String {

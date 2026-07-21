@@ -1,24 +1,30 @@
 //! Project filtering, deterministic ordering, and resumable paging for the glob tool.
 
-use crate::budget::{GLOB_TOKEN_BUDGET_ENV, assemble_text, estimate_tokens, tool_token_budget};
-use crate::model::ToolResponse;
-use crate::paths::{
-    canonical_existing, display_path, io_error_message, missing_search_path_message,
-    parse_input_path,
+use crate::bounded_sort::sort_cancelable;
+use crate::budget::{
+    ErrorBudgetAdapter, ErrorClass, GLOB_TOKEN_BUDGET_ENV, error_budget_hint, tool_token_budget,
 };
-use crate::traversal::{project_walk_error_path, walk_thread_count};
+use crate::file_executor::GrepGlobExecutor;
+use crate::model::ToolResponse;
+use crate::operation::{OpError, OperationCtx, RequestWorkGuard};
+use crate::path_codec::{PathRecord, ResolvedRoot, RootRequirement, resolve_search_root};
+use crate::render_plan::{LineRenderGraph, RenderPlanError};
+use crate::traversal::{TraversalFailure, TraversalLimit, collect_walk_batched};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
-use ignore::{WalkBuilder, WalkState};
+use ignore::WalkBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::SystemTime;
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio_util::sync::CancellationToken;
 
 const DEFAULT_LIMIT: usize = 100;
 const MAX_LIMIT: usize = 1_000;
 const MAX_RESULTS: usize = 100_000;
+const TOO_MANY_MATCHES_ERROR: &str =
+    "Too many matches: over 100000 files matched. Narrow the pattern or path.";
 
 /// Project filtering policy used by glob traversal.
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, Eq, PartialEq)]
@@ -62,15 +68,68 @@ pub struct GlobRequest {
 
 #[derive(Debug, Eq, PartialEq)]
 struct MatchEntry {
-    path: String,
-    modified: SystemTime,
+    path: PathRecord,
 }
 
-/// Finds files according to the filtering, ordering, and paging contract.
-pub fn glob_files(request: GlobRequest) -> ToolResponse {
-    let root = match resolve_root(request.path.as_deref()) {
+#[cfg(test)]
+#[derive(Default)]
+struct GlobCollectionProbe {
+    metadata_lookups: AtomicUsize,
+}
+
+/// Finds files within a caller-owned cancellation scope.
+///
+/// Cancellation is checked throughout traversal, collection, sorting,
+/// rendering, and token verification. A cancelled operation returns an error
+/// response and never exposes a partial success body.
+pub fn glob_files(request: GlobRequest, cancellation: CancellationToken) -> ToolResponse {
+    let (mut guard, operation) = RequestWorkGuard::new(
+        rmcp::model::RequestId::String(Arc::from("direct-glob")),
+        cancellation,
+    );
+    let response = glob_files_with_execution(request, operation, GrepGlobExecutor::shared());
+    guard.disarm();
+    response
+}
+
+fn glob_files_with_execution(
+    request: GlobRequest,
+    operation: OperationCtx,
+    executor: Arc<GrepGlobExecutor>,
+) -> ToolResponse {
+    let adapter = ErrorBudgetAdapter::new(
+        error_budget_hint(GLOB_TOKEN_BUDGET_ENV),
+        GLOB_TOKEN_BUDGET_ENV,
+    );
+    let budget = match tool_token_budget(GLOB_TOKEN_BUDGET_ENV) {
+        Ok(budget) => budget,
+        Err(message) => return adapter.error(ErrorClass::Budget, message),
+    };
+    adapter.adapt(glob_files_with_execution_unadapted(
+        request,
+        budget.value,
+        budget.variable,
+        &operation,
+        &executor,
+        #[cfg(test)]
+        None,
+    ))
+}
+
+fn glob_files_with_execution_unadapted(
+    request: GlobRequest,
+    budget: usize,
+    budget_variable: &str,
+    operation: &OperationCtx,
+    executor: &Arc<GrepGlobExecutor>,
+    #[cfg(test)] collection_probe: Option<&GlobCollectionProbe>,
+) -> ToolResponse {
+    if operation.check().is_err() {
+        return ToolResponse::error("Request cancelled.");
+    }
+    let root = match resolve_search_root(request.path.as_deref(), RootRequirement::Directory) {
         Ok(root) => root,
-        Err(response) => return response,
+        Err(message) => return ToolResponse::error(message),
     };
     let matcher = match build_matcher(&request.pattern) {
         Ok(matcher) => matcher,
@@ -82,58 +141,52 @@ pub fn glob_files(request: GlobRequest) -> ToolResponse {
             "Invalid limit value: {limit}. Expected an integer from 1 to 1000."
         ));
     }
-    let budget = match tool_token_budget(GLOB_TOKEN_BUDGET_ENV) {
-        Ok(budget) => budget,
+    let sort = request.sort.unwrap_or_default();
+    let matches = match collect_matches(
+        &root,
+        &matcher,
+        request.filter_mode.unwrap_or_default(),
+        sort,
+        operation,
+        executor,
+        #[cfg(test)]
+        collection_probe,
+    ) {
+        Ok(matches) => matches,
         Err(message) => return ToolResponse::error(message),
     };
-    let mut matches =
-        match collect_matches(&root, &matcher, request.filter_mode.unwrap_or_default()) {
-            Ok(matches) => matches,
-            Err(message) => return ToolResponse::error(message),
-        };
-    match request.sort.unwrap_or_default() {
-        SortMode::Path => {
-            matches.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()))
-        }
-        SortMode::Modified => matches.sort_by(|left, right| {
-            right
-                .modified
-                .cmp(&left.modified)
-                .then_with(|| left.path.as_bytes().cmp(right.path.as_bytes()))
-        }),
-    }
+    let matches = match sort_cancelable(
+        matches,
+        move |left, right| compare_match_entries(sort, left, right),
+        Some(operation),
+        Some(executor),
+    ) {
+        Ok(sorted) => sorted.items,
+        Err(error) => return ToolResponse::error(error.to_string()),
+    };
     format_matches(
         &matches,
         request.offset.unwrap_or(0),
         limit,
-        budget.value,
-        budget.variable,
+        budget,
+        budget_variable,
+        Some(operation),
+        #[cfg(test)]
+        None,
     )
 }
 
-fn resolve_root(input: Option<&str>) -> Result<PathBuf, ToolResponse> {
-    let root = match input {
-        Some(input) => {
-            let parsed = parse_input_path(input);
-            if !parsed.is_absolute() || !parsed.exists() {
-                return Err(ToolResponse::error(missing_search_path_message(input)));
-            }
-            let metadata = fs::metadata(&parsed)
-                .map_err(|error| ToolResponse::error(io_error_message(&parsed, &error)))?;
-            if !metadata.is_dir() {
-                return Err(ToolResponse::error(format!(
-                    "Path is not a directory: {}",
-                    display_path(&parsed)
-                )));
-            }
-            canonical_existing(&parsed).unwrap_or(parsed)
-        }
-        None => {
-            let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            canonical_existing(&current).unwrap_or(current)
-        }
-    };
-    Ok(root)
+/// Runs glob on the server's request cancellation scope and shared executor.
+pub(crate) fn glob_files_cancellable(
+    operation: OperationCtx,
+    executor: Arc<GrepGlobExecutor>,
+    request: GlobRequest,
+) -> Result<ToolResponse, OpError> {
+    let work = operation.inline_work();
+    work.check_inline()?;
+    let response = glob_files_with_execution(request, operation.clone(), executor);
+    work.check_inline()?;
+    Ok(response)
 }
 
 fn build_matcher(pattern: &str) -> Result<GlobSet, String> {
@@ -151,11 +204,18 @@ fn glob_error(error: &impl std::fmt::Display) -> String {
 }
 
 fn collect_matches(
-    root: &Path,
+    root: &ResolvedRoot,
     matcher: &GlobSet,
     filter_mode: FilterMode,
+    sort: SortMode,
+    operation: &OperationCtx,
+    executor: &Arc<GrepGlobExecutor>,
+    #[cfg(test)] collection_probe: Option<&GlobCollectionProbe>,
 ) -> Result<Vec<MatchEntry>, String> {
-    let mut builder = WalkBuilder::new(root);
+    if operation.check().is_err() {
+        return Err("Request cancelled.".to_string());
+    }
+    let mut builder = WalkBuilder::new(&root.native);
     match filter_mode {
         FilterMode::Project => {
             builder
@@ -177,113 +237,126 @@ fn collect_matches(
                 .follow_links(false);
         }
     }
-    builder.threads(walk_thread_count());
-    // Determinism comes from the post-collection sort; the capacity error
-    // fires at the same "one match past MAX_RESULTS" boundary as before.
-    let collected = Mutex::new(Vec::new());
-    let failure = Mutex::new(None::<String>);
-    builder.build_parallel().run(|| {
-        Box::new(|entry| {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => {
-                    let message = if let Some(io_error) = error.io_error() {
-                        let path = project_walk_error_path(&error).unwrap_or(root);
-                        io_error_message(path, io_error)
-                    } else {
-                        format!("Cannot traverse path: {error}")
-                    };
-                    record_glob_failure(&failure, message);
-                    return WalkState::Quit;
-                }
-            };
+    collect_walk_batched(
+        builder,
+        &root.native,
+        Some(operation),
+        Some(executor),
+        Some(TraversalLimit {
+            maximum: MAX_RESULTS,
+            message: TOO_MANY_MATCHES_ERROR,
+        }),
+        |entry| {
             if !entry
                 .file_type()
                 .is_some_and(|file_type| file_type.is_file() || file_type.is_symlink())
             {
-                return WalkState::Continue;
+                return Ok(None);
             }
-            match evaluate_match(root, &entry, matcher) {
-                Ok(Some(matched)) => {
-                    let mut sink = collected.lock().expect("glob sink poisoned");
-                    if let Err(message) = ensure_result_capacity(sink.len()) {
-                        record_glob_failure(&failure, message);
-                        return WalkState::Quit;
-                    }
-                    sink.push(matched);
-                    WalkState::Continue
-                }
-                Ok(None) => WalkState::Continue,
-                Err(message) => {
-                    record_glob_failure(&failure, message);
-                    WalkState::Quit
-                }
-            }
-        })
-    });
-    if let Some(message) = failure.into_inner().expect("glob failure poisoned") {
-        return Err(message);
-    }
-    Ok(collected.into_inner().expect("glob sink poisoned"))
+            evaluate_match(
+                root,
+                entry,
+                matcher,
+                sort,
+                #[cfg(test)]
+                collection_probe,
+            )
+        },
+    )
+    .map(|collected| collected.items)
 }
 
-/// Keeps the first failure; later racing failures are equivalent fail-fast picks.
-fn record_glob_failure(failure: &Mutex<Option<String>>, message: String) {
-    let mut slot = failure.lock().expect("glob failure poisoned");
-    if slot.is_none() {
-        *slot = Some(message);
+fn compare_match_entries(
+    sort: SortMode,
+    left: &MatchEntry,
+    right: &MatchEntry,
+) -> std::cmp::Ordering {
+    match sort {
+        SortMode::Path => left
+            .path
+            .display
+            .as_bytes()
+            .cmp(right.path.display.as_bytes())
+            .then_with(|| left.path.native_key.cmp(&right.path.native_key)),
+        SortMode::Modified => right.path.modified.cmp(&left.path.modified).then_with(|| {
+            left.path
+                .display
+                .as_bytes()
+                .cmp(right.path.display.as_bytes())
+                .then_with(|| left.path.native_key.cmp(&right.path.native_key))
+        }),
     }
 }
 
-/// Stat-then-match, preserving the sequential path's error surface: metadata
-/// failures abort the walk even for files the pattern would not match.
 fn evaluate_match(
-    root: &Path,
+    root: &ResolvedRoot,
     entry: &ignore::DirEntry,
     matcher: &GlobSet,
-) -> Result<Option<MatchEntry>, String> {
+    sort: SortMode,
+    #[cfg(test)] collection_probe: Option<&GlobCollectionProbe>,
+) -> Result<Option<MatchEntry>, TraversalFailure> {
     let path = entry.path();
+    let preliminary = PathRecord::without_metadata(path, &root.native);
+    if !matcher.is_match(preliminary.relative_match.as_ref()) {
+        return Ok(None);
+    }
+    if sort == SortMode::Path
+        && entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file())
+    {
+        return Ok(Some(MatchEntry { path: preliminary }));
+    }
     let metadata = if entry
         .file_type()
         .is_some_and(|file_type| file_type.is_symlink())
     {
         // Symlinks keep the follow-and-check semantics (broken links skip).
+        #[cfg(test)]
+        record_metadata_lookup(collection_probe);
         match fs::metadata(path) {
             Ok(metadata) if metadata.is_file() => metadata,
             Ok(_) => return Ok(None),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(io_error_message(path, &error)),
+            Err(error) => return Err(TraversalFailure::from_io(path, &error)),
         }
     } else {
+        #[cfg(test)]
+        record_metadata_lookup(collection_probe);
         match entry.metadata() {
             Ok(metadata) if metadata.is_file() => metadata,
             Ok(_) => return Ok(None),
             // Fall back to the plain stat so rare metadata failures keep the
             // exact error/skip semantics of the original lookup.
-            Err(_) => match fs::metadata(path) {
-                Ok(metadata) if metadata.is_file() => metadata,
-                Ok(_) => return Ok(None),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(error) => return Err(io_error_message(path, &error)),
-            },
+            Err(_) => {
+                #[cfg(test)]
+                record_metadata_lookup(collection_probe);
+                match fs::metadata(path) {
+                    Ok(metadata) if metadata.is_file() => metadata,
+                    Ok(_) => return Ok(None),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(error) => return Err(TraversalFailure::from_io(path, &error)),
+                }
+            }
         }
     };
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    if !matcher.is_match(display_path(relative)) {
-        return Ok(None);
-    }
-    let modified = metadata
-        .modified()
-        .map_err(|error| io_error_message(path, &error))?;
-    Ok(Some(MatchEntry {
-        path: display_path(path),
-        modified,
-    }))
+    let record =
+        PathRecord::from_metadata(path, &root.native, &metadata, sort == SortMode::Modified)
+            .map_err(|error| TraversalFailure::from_io(path, &error))?;
+    Ok(Some(MatchEntry { path: record }))
 }
 
+#[cfg(test)]
+fn record_metadata_lookup(probe: Option<&GlobCollectionProbe>) {
+    if let Some(probe) = probe {
+        probe.metadata_lookups.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
 fn ensure_result_capacity(current: usize) -> Result<(), String> {
     if current >= MAX_RESULTS {
-        Err("Too many matches: over 100000 files matched. Narrow the pattern or path.".to_string())
+        Err(TOO_MANY_MATCHES_ERROR.to_string())
     } else {
         Ok(())
     }
@@ -295,6 +368,8 @@ fn format_matches(
     limit: usize,
     budget: usize,
     budget_variable: &str,
+    operation: Option<&OperationCtx>,
+    #[cfg(test)] metrics_out: Option<&mut crate::render_plan::RenderPlanMetrics>,
 ) -> ToolResponse {
     let total = matches.len();
     if total == 0 {
@@ -302,6 +377,9 @@ fn format_matches(
             "(Complete: no files matched.)".to_string(),
             budget,
             budget_variable,
+            operation,
+            #[cfg(test)]
+            metrics_out,
         );
     }
     if offset >= total {
@@ -313,19 +391,52 @@ fn format_matches(
             ),
             budget,
             budget_variable,
+            operation,
+            #[cfg(test)]
+            metrics_out,
         );
     }
 
     let maximum = limit.min(total - offset);
+    let lines = matches[offset..offset + maximum]
+        .iter()
+        .map(|entry| Arc::clone(&entry.path.display))
+        .collect::<Vec<_>>();
+    let mut graph = match LineRenderGraph::new(
+        lines,
+        operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),
+    ) {
+        Ok(graph) => graph,
+        Err(error) => return render_plan_failure(error),
+    };
     for shown in (1..=maximum).rev() {
-        let lines = matches[offset..offset + shown]
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
         let terminal = glob_terminal(offset, shown, total);
-        let output = assemble_text(&lines, &[terminal]);
-        if estimate_tokens(&output) <= budget {
-            return ToolResponse::text(output);
+        let notes = [terminal];
+        let tokens = match graph.probe_notes(
+            shown,
+            &notes,
+            operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),
+        ) {
+            Ok(tokens) => tokens,
+            Err(error) => return render_plan_failure(error),
+        };
+        if tokens <= budget {
+            let rendered = match graph.finish(
+                shown,
+                &notes,
+                tokens,
+                budget,
+                operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),
+            ) {
+                Ok(rendered) => rendered,
+                Err(error) => return render_plan_failure(error),
+            };
+            debug_assert!(rendered.tokens <= budget);
+            #[cfg(test)]
+            if let Some(metrics_out) = metrics_out {
+                *metrics_out = graph.metrics();
+            }
+            return ToolResponse::text(rendered.text);
         }
     }
     budget_too_small(budget, budget_variable)
@@ -358,35 +469,152 @@ fn counted(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {noun}")
 }
 
-fn status_response(status: String, budget: usize, budget_variable: &str) -> ToolResponse {
-    if estimate_tokens(&status) <= budget {
-        ToolResponse::text(status)
+fn status_response(
+    status: String,
+    budget: usize,
+    budget_variable: &str,
+    operation: Option<&OperationCtx>,
+    #[cfg(test)] metrics_out: Option<&mut crate::render_plan::RenderPlanMetrics>,
+) -> ToolResponse {
+    let mut graph = match LineRenderGraph::new(
+        Vec::new(),
+        operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),
+    ) {
+        Ok(graph) => graph,
+        Err(error) => return render_plan_failure(error),
+    };
+    let notes = [status];
+    let tokens = match graph.probe_notes(
+        0,
+        &notes,
+        operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),
+    ) {
+        Ok(tokens) => tokens,
+        Err(error) => return render_plan_failure(error),
+    };
+    if tokens > budget {
+        return budget_too_small(budget, budget_variable);
+    }
+    let rendered = match graph.finish(
+        0,
+        &notes,
+        tokens,
+        budget,
+        operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),
+    ) {
+        Ok(rendered) => rendered,
+        Err(error) => return render_plan_failure(error),
+    };
+    #[cfg(test)]
+    if let Some(metrics_out) = metrics_out {
+        *metrics_out = graph.metrics();
+    }
+    ToolResponse::text(rendered.text)
+}
+
+fn render_plan_failure(error: RenderPlanError) -> ToolResponse {
+    if error.is_cancelled() {
+        ToolResponse::error("Request cancelled.")
     } else {
-        budget_too_small(budget, budget_variable)
+        ToolResponse::error(format!("Internal glob rendering failure: {error}"))
     }
 }
 
 fn budget_too_small(budget: usize, budget_variable: &str) -> ToolResponse {
-    ToolResponse::error(format!(
-        "{budget_variable}={budget} is too small to return the required glob truncation note. Increase it and retry."
-    ))
+    ErrorBudgetAdapter::new(budget, budget_variable).error(
+        ErrorClass::Budget,
+        format!(
+            "{budget_variable}={budget} is too small to return the required glob truncation note. Increase it and retry."
+        ),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MatchEntry, ensure_result_capacity, format_matches};
-    use crate::ToolContent;
+    use super::{
+        FilterMode, GlobCollectionProbe, GlobRequest, MatchEntry, SortMode, build_matcher,
+        collect_matches, ensure_result_capacity, format_matches,
+        glob_files_with_execution_unadapted,
+    };
+    use crate::file_executor::{GrepGlobExecutor, LedgerSnapshot};
+    use crate::operation::RequestWorkGuard;
+    use crate::path_codec::{PathRecord, RootRequirement, resolve_search_root};
+    use crate::render_plan::RenderPlanMetrics;
+    use crate::{ToolContent, ToolResponse};
+    use rmcp::model::RequestId;
+    use std::fs;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::SystemTime;
+    use tokio_util::sync::CancellationToken;
+
+    fn match_entry(path: String) -> MatchEntry {
+        let mut record = PathRecord::without_metadata(Path::new(&path), Path::new(""));
+        record.modified = Some(SystemTime::UNIX_EPOCH);
+        MatchEntry { path: record }
+    }
+
+    fn glob_with_parallelism(
+        request: GlobRequest,
+        parallelism: usize,
+    ) -> (ToolResponse, LedgerSnapshot, LedgerSnapshot) {
+        let (mut guard, operation) = RequestWorkGuard::new(
+            RequestId::String(Arc::from(format!("glob-p{parallelism}"))),
+            CancellationToken::new(),
+        );
+        let executor = Arc::new(GrepGlobExecutor::with_test_parallelism(parallelism));
+        let response = glob_files_with_execution_unadapted(
+            request,
+            100_000_000,
+            "FASTCTX_TOKEN_BUDGET",
+            &operation,
+            &executor,
+            None,
+        );
+        guard.disarm();
+        executor.wait_for_test_quiescence();
+        (
+            response,
+            executor.test_burst_ledger(),
+            executor.test_ticket_ledger(),
+        )
+    }
+
+    fn assert_released_once(ledger: LedgerSnapshot) {
+        assert_eq!(ledger.allocated, ledger.released);
+        assert_eq!(ledger.live, 0);
+        assert_eq!(ledger.duplicate_releases, 0);
+    }
+
+    fn response_path_lines(response: &ToolResponse) -> Vec<String> {
+        assert!(!response.is_error, "{response:?}");
+        let [ToolContent::Text(text)] = response.content.as_slice() else {
+            panic!("expected one text response");
+        };
+        let body = text
+            .split_once("\n\n")
+            .map_or(text.as_str(), |(body, _)| body);
+        if body.starts_with('(') {
+            Vec::new()
+        } else {
+            body.lines().map(str::to_string).collect()
+        }
+    }
+
+    fn safe_fixture_display(path: &Path) -> String {
+        let native = path.to_string_lossy();
+        #[cfg(windows)]
+        let native = native.strip_prefix(r"\\?\").unwrap_or(native.as_ref());
+        native.replace('\\', "/")
+    }
 
     #[test]
     fn token_budget_keeps_the_page_prefix_and_returns_an_exact_offset() {
         let matches = (1..=3)
-            .map(|index| MatchEntry {
-                path: format!("{index}-{}", "x".repeat(100)),
-                modified: SystemTime::UNIX_EPOCH,
-            })
+            .map(|index| match_entry(format!("{index}-{}", "x".repeat(100))))
             .collect::<Vec<_>>();
-        let response = format_matches(&matches, 0, 3, 55, "FASTCTX_TOKEN_BUDGET");
+        let response = format_matches(&matches, 0, 3, 55, "FASTCTX_TOKEN_BUDGET", None, None);
         assert!(!response.is_error, "{response:?}");
         let ToolContent::Text(output) = &response.content[0] else {
             panic!("expected text");
@@ -402,18 +630,17 @@ mod tests {
 
     #[test]
     fn tiny_budget_fails_instead_of_returning_an_empty_success() {
-        let matches = vec![MatchEntry {
-            path: "/a/very/long/path.txt".to_string(),
-            modified: SystemTime::UNIX_EPOCH,
-        }];
-        let response = format_matches(&matches, 0, 1, 1, "FASTCTX_TOKEN_BUDGET");
+        let matches = vec![match_entry("/a/very/long/path.txt".to_string())];
+        let response = format_matches(&matches, 0, 1, 1, "FASTCTX_TOKEN_BUDGET", None, None);
         assert!(response.is_error);
-        assert_eq!(
-            response.content,
-            vec![ToolContent::Text(
-                "FASTCTX_TOKEN_BUDGET=1 is too small to return the required glob truncation note. Increase it and retry."
-                    .to_string()
-            )]
+        let [ToolContent::Text(text)] = response.content.as_slice() else {
+            panic!("expected one text error");
+        };
+        assert!(
+            tiktoken_rs::o200k_base_singleton()
+                .encode_ordinary(text)
+                .len()
+                <= 1
         );
     }
 
@@ -424,5 +651,172 @@ mod tests {
             ensure_result_capacity(100_000).unwrap_err(),
             "Too many matches: over 100000 files matched. Narrow the pattern or path."
         );
+    }
+
+    #[test]
+    fn render_work_and_full_tokenization_are_linear_at_every_public_limit() {
+        let matches = (0..1_000)
+            .map(|index| match_entry(format!("/root/{index:04}.txt")))
+            .collect::<Vec<_>>();
+
+        for limit in [100, 250, 500, 1_000] {
+            let mut metrics = RenderPlanMetrics::default();
+            let response = format_matches(
+                &matches,
+                0,
+                limit,
+                usize::MAX,
+                "FASTCTX_TOKEN_BUDGET",
+                None,
+                Some(&mut metrics),
+            );
+            assert!(!response.is_error, "{response:?}");
+            assert_eq!(metrics.render_units_built, limit);
+            assert_eq!(metrics.full_tokenizer_calls, 1);
+            assert_eq!(metrics.token_suffix_probes, 1);
+            assert!(metrics.token_prefix_appends <= limit * 2);
+            assert_eq!(
+                metrics.render_bytes_built,
+                matches[..limit]
+                    .iter()
+                    .map(|entry| entry.path.display.len())
+                    .sum::<usize>()
+            );
+        }
+    }
+
+    #[test]
+    fn glob_filter_runs_before_metadata_and_path_sort_avoids_mtime_stat() {
+        let fixture = tempfile::tempdir().unwrap();
+        fs::File::create(fixture.path().join("selected.txt")).unwrap();
+        for index in 0..512 {
+            fs::File::create(fixture.path().join(format!("ignored-{index:03}.bin"))).unwrap();
+        }
+        let root_input = fixture.path().to_string_lossy().into_owned();
+        let root = resolve_search_root(Some(&root_input), RootRequirement::Directory).unwrap();
+        let matcher = build_matcher("*.txt").unwrap();
+        let (mut guard, operation) = RequestWorkGuard::new(
+            RequestId::String(Arc::from("glob-filter-before-metadata")),
+            CancellationToken::new(),
+        );
+        let executor = Arc::new(GrepGlobExecutor::with_test_parallelism(4));
+
+        let path_probe = GlobCollectionProbe::default();
+        let path_matches = collect_matches(
+            &root,
+            &matcher,
+            FilterMode::All,
+            SortMode::Path,
+            &operation,
+            &executor,
+            Some(&path_probe),
+        )
+        .unwrap();
+        assert_eq!(path_matches.len(), 1);
+        assert_eq!(path_probe.metadata_lookups.load(Ordering::Relaxed), 0);
+
+        let modified_probe = GlobCollectionProbe::default();
+        let modified_matches = collect_matches(
+            &root,
+            &matcher,
+            FilterMode::All,
+            SortMode::Modified,
+            &operation,
+            &executor,
+            Some(&modified_probe),
+        )
+        .unwrap();
+        assert_eq!(modified_matches.len(), 1);
+        assert_eq!(modified_probe.metadata_lookups.load(Ordering::Relaxed), 1);
+
+        guard.disarm();
+        executor.wait_for_test_quiescence();
+    }
+
+    #[test]
+    fn p1_and_p4_pages_match_an_independent_full_sort_without_gaps_or_duplicates() {
+        let fixture = tempfile::tempdir().unwrap();
+        let mut created = Vec::new();
+        for directory_index in 0..17 {
+            let directory = fixture.path().join(format!("batch-{directory_index:02}"));
+            fs::create_dir(&directory).unwrap();
+            for file_index in 0..247 {
+                let path = directory.join(format!("item-{file_index:03}.txt"));
+                fs::File::create(&path).unwrap();
+                let modified = fs::metadata(&path).unwrap().modified().unwrap();
+                created.push((
+                    modified,
+                    safe_fixture_display(&fs::canonicalize(&path).unwrap()),
+                ));
+            }
+        }
+
+        for sort in [SortMode::Path, SortMode::Modified] {
+            let mut oracle = created.clone();
+            match sort {
+                SortMode::Path => {
+                    oracle.sort_by(|left, right| left.1.as_bytes().cmp(right.1.as_bytes()))
+                }
+                SortMode::Modified => oracle.sort_by(|left, right| {
+                    right
+                        .0
+                        .cmp(&left.0)
+                        .then_with(|| left.1.as_bytes().cmp(right.1.as_bytes()))
+                }),
+            }
+            let oracle = oracle
+                .into_iter()
+                .map(|(_, display)| display)
+                .collect::<Vec<_>>();
+            let mut reconstructed = Vec::new();
+            for offset in (0..oracle.len()).step_by(1_000) {
+                let request = GlobRequest {
+                    pattern: "**/*.txt".to_string(),
+                    path: Some(fixture.path().to_string_lossy().into_owned()),
+                    filter_mode: Some(FilterMode::All),
+                    sort: Some(sort),
+                    offset: Some(offset),
+                    limit: Some(1_000),
+                };
+                let (serial, serial_burst, serial_tickets) =
+                    glob_with_parallelism(request.clone(), 1);
+                let (parallel, parallel_burst, parallel_tickets) =
+                    glob_with_parallelism(request, 4);
+                assert_eq!(parallel, serial);
+                let lines = response_path_lines(&parallel);
+                let end = (offset + 1_000).min(oracle.len());
+                assert_eq!(lines, oracle[offset..end]);
+                reconstructed.extend(lines);
+                for ledger in [
+                    serial_burst,
+                    serial_tickets,
+                    parallel_burst,
+                    parallel_tickets,
+                ] {
+                    assert_released_once(ledger);
+                }
+            }
+            assert_eq!(reconstructed, oracle);
+
+            let arbitrary_offset = 113;
+            let arbitrary_limit = 257;
+            let arbitrary = GlobRequest {
+                pattern: "**/*.txt".to_string(),
+                path: Some(fixture.path().to_string_lossy().into_owned()),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(sort),
+                offset: Some(arbitrary_offset),
+                limit: Some(arbitrary_limit),
+            };
+            let (serial, _, _) = glob_with_parallelism(arbitrary.clone(), 1);
+            let (parallel, burst, tickets) = glob_with_parallelism(arbitrary, 4);
+            assert_eq!(parallel, serial);
+            assert_eq!(
+                response_path_lines(&parallel),
+                oracle[arbitrary_offset..arbitrary_offset + arbitrary_limit]
+            );
+            assert_released_once(burst);
+            assert_released_once(tickets);
+        }
     }
 }

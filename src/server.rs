@@ -1,16 +1,19 @@
 //! Unified rmcp registration, feature gating, and shared tool state.
 
+use crate::budget::{GLOB_TOKEN_BUDGET_ENV, GREP_TOKEN_BUDGET_ENV};
 use crate::edit::ReplaceService;
-use crate::glob_tool::{GlobRequest, glob_files};
-use crate::grep_tool::{GrepRequest, grep_files};
+use crate::file_executor::GrepGlobExecutor;
+use crate::glob_tool::{GlobRequest, glob_files_cancellable};
+use crate::grep_tool::{GrepRequest, grep_files_cancellable};
 use crate::read_tool::{ReadRequest, read_file};
 use crate::server_manifest::{ToolContract, ToolManifest};
-use crate::server_support::run_blocking;
+use crate::server_support::{run_blocking, run_blocking_cancellable};
 use crate::shell::FastShell;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, tool, tool_handler, tool_router};
+use rmcp::service::RequestContext;
+use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -40,6 +43,7 @@ pub struct FastCtxServer {
     pub(crate) shell: FastShell,
     pub(crate) replace: ReplaceService,
     pub(crate) file_permits: Arc<Semaphore>,
+    pub(crate) grep_glob_executor: Arc<GrepGlobExecutor>,
     pub(crate) shell_permits: Arc<Semaphore>,
     pub(crate) replace_permits: Arc<Semaphore>,
 }
@@ -69,6 +73,7 @@ impl FastCtxServer {
             shell: FastShell::new(),
             replace: ReplaceService::new(),
             file_permits: Arc::new(Semaphore::new(MAX_FILE_OPERATIONS)),
+            grep_glob_executor: GrepGlobExecutor::shared(),
             shell_permits: Arc::new(Semaphore::new(MAX_SHELL_OPERATIONS)),
             replace_permits: Arc::new(Semaphore::new(MAX_REPLACE_OPERATIONS)),
         }
@@ -115,7 +120,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "grep",
-        description = "Fast regex content search (ripgrep engine; Rust regex, no lookaround). Output\nmodes: \"files_with_matches\" (default, paths only), \"content\" (matching lines,\noptional context), \"count\" (per-file occurrence counts — total matches, not\nmatching-line count), \"summary\" (global totals only).\nRespects .gitignore; searches hidden files; skips .git and binaries. Files are\ndecoded to UTF-8 before searching; files whose encoding can't be determined are\nskipped and listed (never silently) — pass fallback_encoding (directory) or\nencoding (single file) to resolve them. Matching is line-by-line: `^` and `$`\nanchor line boundaries and are CRLF-aware. Set multiline=true for patterns\nspanning lines (`.` matches newlines; `\\n` also matches `\\r\\n`). The last line of every successful result\nstates Complete or Partial — continue only with the exact offset a Partial note\nprovides; errors are self-contained.",
+        description = "Fast regex content search (ripgrep engine; Rust regex, no lookaround). Output\nmodes: \"files_with_matches\" (default, paths only), \"content\" (matching lines,\noptional context), \"count\" (per-file occurrence counts — total matches, not\nmatching-line count), \"summary\" (global totals only).\nRespects .gitignore; searches hidden files; skips .git and binaries. Files are\ndecoded to UTF-8 before searching; files whose encoding can't be determined, or\nthat change during a directory search, are skipped and listed (never silently) —\npass fallback_encoding (directory) or encoding (single file) to resolve encoding;\na changing single-file target returns an error. Matching is line-by-line: `^` and\n`$` anchor line boundaries and are CRLF-aware. Set multiline=true for patterns\nspanning lines (`.` matches newlines; `\\n` also matches `\\r\\n`). A path component\nof the form ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows\nUTF-16) is a filename escape; copy that whole component verbatim in later calls\nand do not decode or rewrite it. The last line of every successful result states\nComplete or Partial — continue only with the exact offset a Partial note provides;\nerrors are self-contained.",
         annotations(
             title = "Search file contents",
             read_only_hint = true,
@@ -123,13 +128,25 @@ impl FastCtxServer {
             open_world_hint = false
         )
     )]
-    async fn grep(&self, Parameters(request): Parameters<GrepRequest>) -> CallToolResult {
-        run_blocking(Arc::clone(&self.file_permits), move || grep_files(request)).await
+    async fn grep(
+        &self,
+        Parameters(request): Parameters<GrepRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        run_blocking_cancellable(
+            context.id,
+            context.ct,
+            Arc::clone(&self.file_permits),
+            Arc::clone(&self.grep_glob_executor),
+            GREP_TOKEN_BUDGET_ENV,
+            move |operation, executor| grep_files_cancellable(operation, executor, request),
+        )
+        .await
     }
 
     #[tool(
         name = "glob",
-        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Returns absolute\npaths sorted by path (or newest first with sort=\"modified\"), 100 per page.\nfilter_mode \"project\" (default) respects .gitignore and skips .git;\nfilter_mode \"all\" lists everything. Omit `path` to search the session working\ndirectory — omit the field entirely, never pass \"null\" or \"undefined\". The\nlast line of every successful result states Complete or Partial — continue\nonly with the exact offset a Partial note provides; errors are\nself-contained.",
+        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Returns absolute\npaths sorted by path (or newest first with sort=\"modified\"), 100 per page.\nfilter_mode \"project\" (default) respects .gitignore and skips .git;\nfilter_mode \"all\" lists everything. Omit `path` to search the session working\ndirectory — omit the field entirely, never pass \"null\" or \"undefined\". A path\ncomponent of the form ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~\n(Windows UTF-16) is a filename escape; copy that whole component verbatim in\nlater calls and do not decode or rewrite it. The last line of every successful\nresult states Complete or Partial — continue only with the exact offset a Partial\nnote provides; errors are self-contained.",
         annotations(
             title = "Match file paths",
             read_only_hint = true,
@@ -137,8 +154,20 @@ impl FastCtxServer {
             open_world_hint = false
         )
     )]
-    async fn glob(&self, Parameters(request): Parameters<GlobRequest>) -> CallToolResult {
-        run_blocking(Arc::clone(&self.file_permits), move || glob_files(request)).await
+    async fn glob(
+        &self,
+        Parameters(request): Parameters<GlobRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        run_blocking_cancellable(
+            context.id,
+            context.ct,
+            Arc::clone(&self.file_permits),
+            Arc::clone(&self.grep_glob_executor),
+            GLOB_TOKEN_BUDGET_ENV,
+            move |operation, executor| glob_files_cancellable(operation, executor, request),
+        )
+        .await
     }
 }
 

@@ -1,7 +1,6 @@
 //! Binary detection, trusted encoding classification, and UTF-8 transcoding.
 
-use crate::binary::detect_binary_type;
-use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
+use crate::file_snapshot::{SealedSnapshot, SnapshotReader};
 use encoding_rs::{
     BIG5, DecoderResult, EUC_KR, EncoderResult, Encoding, GBK, SHIFT_JIS, UTF_8, UTF_16BE,
     UTF_16LE, WINDOWS_1252,
@@ -9,6 +8,12 @@ use encoding_rs::{
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
+
+#[cfg(test)]
+mod reference_v011;
+mod snapshot_pipeline;
+
+pub(crate) use snapshot_pipeline::{EncodingPipelineFailure, validate_snapshot_encoding};
 
 const BINARY_PROBE_BYTES: usize = 8 * 1024;
 const DECODE_CHUNK_BYTES: usize = 64 * 1024;
@@ -26,21 +31,22 @@ const FIXED_LEGACY_ENCODINGS: [(&str, &Encoding); 5] = [
     ("euc-kr", EUC_KR),
 ];
 
-/// One validation input: an on-disk file or an already-read byte snapshot.
+/// One validation input: an on-disk file or an immutable byte snapshot.
 ///
 /// Both variants drive the exact same chunked validation machinery, so the
-/// trust hierarchy has a single implementation. `Bytes` lets hot paths read a
-/// file once and run validation plus search on the same snapshot instead of
-/// re-opening the file for every validation pass.
+/// trust hierarchy has a single implementation. Grep uses `Snapshot` so every
+/// pass and the regex search observe the same single-open capture.
 #[derive(Clone, Copy)]
 pub(crate) enum ByteSource<'a> {
     File(&'a Path),
     Bytes(&'a [u8]),
+    Snapshot(&'a SealedSnapshot),
 }
 
 enum SourceReader<'a> {
     File(BufReader<File>),
     Bytes(io::Cursor<&'a [u8]>),
+    Snapshot(SnapshotReader<'a>),
 }
 
 impl<'a> SourceReader<'a> {
@@ -52,6 +58,9 @@ impl<'a> SourceReader<'a> {
                     .unwrap_or(usize::MAX)
                     .min(bytes.len());
                 Ok(SourceReader::Bytes(io::Cursor::new(&bytes[start..])))
+            }
+            ByteSource::Snapshot(snapshot) => {
+                snapshot.open_reader(start).map(SourceReader::Snapshot)
             }
         }
     }
@@ -70,6 +79,7 @@ impl Read for SourceReader<'_> {
         match self {
             SourceReader::File(reader) => reader.read(output),
             SourceReader::Bytes(cursor) => cursor.read(output),
+            SourceReader::Snapshot(reader) => reader.read(output),
         }
     }
 }
@@ -117,9 +127,17 @@ pub(crate) struct EditableDecodedText {
 }
 
 impl ValidatedFileEncoding {
-    /// Reopens the same file and returns a streaming reader that strictly transcodes to UTF-8.
-    pub(crate) fn open_reader(&self, path: &Path) -> io::Result<Utf8Reader<'static>> {
-        Utf8Reader::open(path, self.detected.clone())
+    /// Returns the raw snapshot offset where decoded UTF-8 begins when no transcoding is needed.
+    pub(crate) fn utf8_snapshot_start(&self) -> Option<u64> {
+        (self.detected.kind == EncodingKind::EncodingRs(UTF_8)).then_some(self.detected.bom_len)
+    }
+
+    /// Opens a streaming UTF-8 reader over the exact source that was validated.
+    pub(crate) fn open_source_reader<'a>(
+        &self,
+        source: ByteSource<'a>,
+    ) -> io::Result<Utf8Reader<'a>> {
+        Utf8Reader::open_source(source, self.detected.clone())
     }
 
     /// Decodes an already-validated snapshot for in-memory search.
@@ -388,169 +406,26 @@ pub(crate) fn validate_source_encoding(
     source: ByteSource<'_>,
     explicit_encoding: Option<&str>,
 ) -> io::Result<EncodingDecision> {
-    let prefix = read_prefix(source)?;
-    if let Some(value) = explicit_encoding {
-        let detected = match explicit_detected_encoding(value, &prefix) {
-            Ok(detected) => detected,
-            Err(rejection) => return Ok(EncodingDecision::Rejected(rejection)),
-        };
-        return match validate_selected_encoding(source, &detected, false)? {
-            Some(stats) => {
-                let explicit_utf8_warning =
-                    is_legacy_encoding(detected.kind) && raw_source_is_multibyte_utf8(source)?;
-                Ok(EncodingDecision::Text(validated(
-                    detected,
-                    stats,
-                    explicit_utf8_warning,
-                )))
-            }
-            None => Ok(EncodingDecision::Rejected(
-                EncodingRejection::ExplicitMalformed {
-                    encoding: value.to_string(),
-                },
-            )),
-        };
-    }
-
-    if let Some(detected) = bom_detected_encoding(&prefix) {
-        if detected.kind == EncodingKind::EncodingRs(UTF_8) && has_binary_nul(&prefix) {
-            return Ok(EncodingDecision::Binary);
+    match snapshot_pipeline::validate_source(source, explicit_encoding, None) {
+        Ok(decision) => Ok(decision),
+        Err(EncodingPipelineFailure::Io(error)) => Err(error),
+        Err(EncodingPipelineFailure::Stopped(_)) => {
+            unreachable!("shared validation without a work checkpoint cannot stop")
         }
-        return match validate_selected_encoding(source, &detected, false)? {
-            Some(stats) => Ok(EncodingDecision::Text(validated(detected, stats, false))),
-            None => Ok(EncodingDecision::Rejected(EncodingRejection::BomMismatch {
-                encoding: detected
-                    .source_encoding
-                    .or(match detected.origin {
-                        EncodingOrigin::Bom(encoding) => Some(encoding),
-                        _ => None,
-                    })
-                    .unwrap_or("UTF-8"),
-            })),
-        };
-    }
-
-    if has_binary_nul(&prefix) {
-        return Ok(EncodingDecision::Binary);
-    }
-
-    let utf8 = DetectedEncoding {
-        kind: EncodingKind::EncodingRs(UTF_8),
-        bom_len: 0,
-        source_encoding: None,
-        origin: EncodingOrigin::Automatic,
-    };
-    if let Some(stats) = validate_selected_encoding(source, &utf8, false)? {
-        if stats.has_iso_2022_escape {
-            return Ok(EncodingDecision::Rejected(
-                EncodingRejection::Iso2022JpSignature,
-            ));
-        }
-        return Ok(EncodingDecision::Text(validated(utf8, stats, false)));
-    }
-    if detect_binary_type(&prefix).is_some() {
-        return Ok(EncodingDecision::Binary);
-    }
-
-    let (candidate, non_ascii_bytes) = guess_legacy_encoding(source)?;
-    let candidate_detected = DetectedEncoding {
-        kind: EncodingKind::EncodingRs(candidate),
-        bom_len: 0,
-        source_encoding: Some(candidate.name()),
-        origin: EncodingOrigin::Automatic,
-    };
-    if let Some(conflict_hex_offset) = first_conflicting_utf8_hex_offset(source)? {
-        return Ok(EncodingDecision::Rejected(
-            EncodingRejection::MixedOrInconsistent {
-                conflict_hex_offset: Some(conflict_hex_offset),
-            },
-        ));
-    }
-    if non_ascii_bytes >= LEGACY_EVIDENCE_BYTES
-        && let Some(stats) = validate_selected_encoding(source, &candidate_detected, true)?
-    {
-        if legacy_segments_are_inconsistent(source, candidate)? {
-            return Ok(EncodingDecision::Rejected(
-                EncodingRejection::MixedOrInconsistent {
-                    conflict_hex_offset: None,
-                },
-            ));
-        }
-        if !candidate.is_single_byte() {
-            return Ok(EncodingDecision::Text(validated(
-                candidate_detected,
-                stats,
-                false,
-            )));
-        }
-    }
-
-    let mut candidates = Vec::new();
-    for (label, encoding) in FIXED_LEGACY_ENCODINGS {
-        let detected = DetectedEncoding {
-            kind: EncodingKind::EncodingRs(encoding),
-            bom_len: 0,
-            source_encoding: Some(encoding.name()),
-            origin: EncodingOrigin::Automatic,
-        };
-        if validate_selected_encoding(source, &detected, true)?.is_some() {
-            candidates.push(label);
-        }
-    }
-    if candidates.is_empty() {
-        Ok(EncodingDecision::Rejected(EncodingRejection::Undecodable))
-    } else {
-        Ok(EncodingDecision::Rejected(EncodingRejection::Ambiguous {
-            candidates,
-        }))
     }
 }
 
 /// Applies the same trust classification to in-memory bytes, returning None for ambiguous, binary, or malformed input.
 pub fn decode_text(bytes: &[u8]) -> Option<DecodedText> {
-    if let Some(detected) = bom_detected_encoding(bytes) {
-        if detected.kind == EncodingKind::EncodingRs(UTF_8) && has_binary_nul(bytes) {
-            return None;
-        }
-        return decode_bytes(bytes, &detected).map(|text| DecodedText {
-            text,
-            source_encoding: detected.source_encoding.map(str::to_string),
-        });
-    }
-    if has_binary_nul(bytes) {
+    let EncodingDecision::Text(validated) =
+        validate_source_encoding(ByteSource::Bytes(bytes), None).ok()?
+    else {
         return None;
-    }
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        if contains_iso_2022_escape(text.as_bytes()) {
-            return None;
-        }
-        return Some(DecodedText {
-            text: text.to_string(),
-            source_encoding: None,
-        });
-    }
-    if detect_binary_type(bytes).is_some() {
-        return None;
-    }
-
-    let mut detector = EncodingDetector::new(Iso2022JpDetection::Allow);
-    detector.feed(bytes, true);
-    let candidate = detector.guess(None, Utf8Detection::Deny);
-    let non_ascii_bytes = bytes.iter().filter(|byte| !byte.is_ascii()).count();
-    if non_ascii_bytes < LEGACY_EVIDENCE_BYTES
-        || candidate.is_single_byte()
-        || !hard_validate_bytes(candidate, bytes)
-        || first_conflicting_utf8_hex_offset_bytes(bytes).is_some()
-        || legacy_segments_are_inconsistent_bytes(bytes, candidate)
-    {
-        return None;
-    }
-    candidate
-        .decode_without_bom_handling_and_without_replacement(bytes)
-        .map(|text| DecodedText {
-            text: text.into_owned(),
-            source_encoding: Some(candidate.name().to_string()),
-        })
+    };
+    decode_bytes(bytes, &validated.detected).map(|text| DecodedText {
+        text,
+        source_encoding: validated.detected.source_encoding.map(str::to_string),
+    })
 }
 
 fn validated(
@@ -570,19 +445,6 @@ fn validated(
 pub(crate) fn canonical_encoding_label(value: &str) -> Result<&'static str, EncodingRejection> {
     let detected = explicit_detected_encoding(value, &[])?;
     Ok(detected.source_encoding.unwrap_or("UTF-8"))
-}
-
-fn read_prefix(source: ByteSource<'_>) -> io::Result<Vec<u8>> {
-    match source {
-        ByteSource::File(path) => {
-            let mut prefix = Vec::new();
-            File::open(path)?
-                .take(BINARY_PROBE_BYTES as u64)
-                .read_to_end(&mut prefix)?;
-            Ok(prefix)
-        }
-        ByteSource::Bytes(bytes) => Ok(bytes[..bytes.len().min(BINARY_PROBE_BYTES)].to_vec()),
-    }
 }
 
 fn bom_detected_encoding(bytes: &[u8]) -> Option<DetectedEncoding> {
@@ -681,28 +543,6 @@ fn matching_bom_len(kind: EncodingKind, bytes: &[u8]) -> u64 {
     }
 }
 
-fn guess_legacy_encoding(source: ByteSource<'_>) -> io::Result<(&'static Encoding, usize)> {
-    let mut reader = SourceReader::open(source, 0)?;
-    let mut detector = EncodingDetector::new(Iso2022JpDetection::Allow);
-    let mut buffer = [0_u8; DECODE_CHUNK_BYTES];
-    let mut non_ascii_bytes = 0_usize;
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            detector.feed(&[], true);
-            break;
-        }
-        non_ascii_bytes = non_ascii_bytes.saturating_add(
-            buffer[..count]
-                .iter()
-                .filter(|byte| !byte.is_ascii())
-                .count(),
-        );
-        detector.feed(&buffer[..count], false);
-    }
-    Ok((detector.guess(None, Utf8Detection::Deny), non_ascii_bytes))
-}
-
 fn is_legacy_encoding(kind: EncodingKind) -> bool {
     matches!(
         kind,
@@ -711,34 +551,21 @@ fn is_legacy_encoding(kind: EncodingKind) -> bool {
     )
 }
 
-fn raw_source_is_multibyte_utf8(source: ByteSource<'_>) -> io::Result<bool> {
-    let utf8 = DetectedEncoding {
-        kind: EncodingKind::EncodingRs(UTF_8),
-        bom_len: 0,
-        source_encoding: None,
-        origin: EncodingOrigin::Automatic,
-    };
-    Ok(validate_selected_encoding(source, &utf8, false)?.is_some_and(|stats| stats.has_non_ascii))
+/// Incremental form of the v0.1.1 strong-UTF-8-prefix conflict detector.
+pub(crate) struct Utf8ConflictProbe {
+    scanner: Utf8PrefixScanner,
 }
 
-fn first_conflicting_utf8_hex_offset(source: ByteSource<'_>) -> io::Result<Option<usize>> {
-    let mut reader = SourceReader::open(source, 0)?;
-    let mut scanner = Utf8PrefixScanner::default();
-    let mut buffer = [0_u8; DECODE_CHUNK_BYTES];
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            return Ok(scanner.finish());
-        }
-        if let Some(offset) = scanner.push(&buffer[..count]) {
-            return Ok(Some(offset));
+impl Utf8ConflictProbe {
+    pub(crate) fn new() -> Self {
+        Self {
+            scanner: Utf8PrefixScanner::default(),
         }
     }
-}
 
-fn first_conflicting_utf8_hex_offset_bytes(bytes: &[u8]) -> Option<usize> {
-    let mut scanner = Utf8PrefixScanner::default();
-    scanner.push(bytes).or_else(|| scanner.finish())
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> Option<usize> {
+        self.scanner.push(bytes)
+    }
 }
 
 #[derive(Default)]
@@ -810,155 +637,6 @@ impl Utf8PrefixScanner {
     }
 }
 
-fn legacy_segments_are_inconsistent(
-    source: ByteSource<'_>,
-    whole_encoding: &'static Encoding,
-) -> io::Result<bool> {
-    let mut reader = SourceReader::open(source, 0)?;
-    let mut scanner = LegacySegmentScanner::new(whole_encoding);
-    let mut buffer = [0_u8; DECODE_CHUNK_BYTES];
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            return Ok(scanner.finish());
-        }
-        if scanner.push(&buffer[..count]) {
-            return Ok(true);
-        }
-    }
-}
-
-fn legacy_segments_are_inconsistent_bytes(bytes: &[u8], whole_encoding: &'static Encoding) -> bool {
-    let mut scanner = LegacySegmentScanner::new(whole_encoding);
-    scanner.push(bytes) || scanner.finish()
-}
-
-struct LegacySegmentScanner {
-    whole_encoding: &'static Encoding,
-    pending: Vec<u8>,
-}
-
-impl LegacySegmentScanner {
-    fn new(whole_encoding: &'static Encoding) -> Self {
-        Self {
-            whole_encoding,
-            pending: Vec::with_capacity(LEGACY_SEGMENT_MAX_BYTES),
-        }
-    }
-
-    fn push(&mut self, input: &[u8]) -> bool {
-        for byte in input {
-            self.pending.push(*byte);
-            if *byte == b'\n' && has_segment_evidence(&self.pending) {
-                if self.inspect_pending() {
-                    return true;
-                }
-                self.pending.clear();
-            } else if self.pending.len() >= LEGACY_SEGMENT_MAX_BYTES {
-                let end = aligned_prefix_len(self.whole_encoding, &self.pending);
-                if end == 0 {
-                    continue;
-                }
-                if segment_disagrees(self.whole_encoding, &self.pending[..end]) {
-                    return true;
-                }
-                self.pending.drain(..end);
-            }
-        }
-        false
-    }
-
-    fn finish(&mut self) -> bool {
-        self.inspect_pending()
-    }
-
-    fn inspect_pending(&self) -> bool {
-        has_segment_evidence(&self.pending)
-            && hard_validate_bytes(self.whole_encoding, &self.pending)
-            && segment_disagrees(self.whole_encoding, &self.pending)
-    }
-}
-
-fn aligned_prefix_len(encoding: &'static Encoding, bytes: &[u8]) -> usize {
-    (0..=4)
-        .filter_map(|trim| bytes.len().checked_sub(trim))
-        .find(|end| hard_validate_bytes(encoding, &bytes[..*end]))
-        .unwrap_or(0)
-}
-
-fn has_legacy_segment_evidence(bytes: &[u8]) -> bool {
-    bytes.iter().filter(|byte| !byte.is_ascii()).count() >= LEGACY_EVIDENCE_BYTES
-}
-
-fn has_segment_evidence(bytes: &[u8]) -> bool {
-    has_legacy_segment_evidence(bytes) || is_strong_utf8_segment(bytes)
-}
-
-fn segment_disagrees(whole_encoding: &'static Encoding, bytes: &[u8]) -> bool {
-    if is_strong_utf8_segment(bytes) {
-        return true;
-    }
-    let mut detector = EncodingDetector::new(Iso2022JpDetection::Allow);
-    detector.feed(bytes, true);
-    let candidate = detector.guess(None, Utf8Detection::Deny);
-    candidate != whole_encoding
-        && !candidate.is_single_byte()
-        && hard_validate_bytes(candidate, bytes)
-}
-
-fn is_strong_utf8_segment(bytes: &[u8]) -> bool {
-    bytes.len() >= UTF8_SEGMENT_MIN_BYTES
-        && bytes.iter().filter(|byte| !byte.is_ascii()).count() >= UTF8_SEGMENT_MIN_NON_ASCII_BYTES
-        && std::str::from_utf8(bytes).is_ok()
-}
-
-fn contains_iso_2022_escape(bytes: &[u8]) -> bool {
-    bytes
-        .windows(2)
-        .any(|pair| pair[0] == 0x1B && matches!(pair[1], b'(' | b'$'))
-}
-
-fn validate_selected_encoding(
-    source: ByteSource<'_>,
-    detected: &DetectedEncoding,
-    enforce_legacy_hard_checks: bool,
-) -> io::Result<Option<ValidationStats>> {
-    let mut decoder = DecodedChunkReader::open(source, detected.clone())?;
-    let mut stats = ValidationStats::default();
-    let mut roundtrip = if enforce_legacy_hard_checks {
-        let EncodingKind::EncodingRs(encoding) = detected.kind else {
-            return Ok(None);
-        };
-        Some(RoundTripVerifier::open(source, detected.bom_len, encoding)?)
-    } else {
-        None
-    };
-
-    loop {
-        let chunk = match decoder.next_chunk() {
-            Ok(Some(chunk)) => chunk,
-            Ok(None) => break,
-            Err(DecodeFailure::Malformed) => return Ok(None),
-            Err(DecodeFailure::Io(error)) => return Err(error),
-        };
-        if enforce_legacy_hard_checks && chunk.chars().any(is_disallowed_legacy_character) {
-            return Ok(None);
-        }
-        if let Some(verifier) = roundtrip.as_mut()
-            && !verifier.push(&chunk)?
-        {
-            return Ok(None);
-        }
-        stats.observe(&chunk);
-    }
-    if let Some(verifier) = roundtrip.as_mut()
-        && !verifier.finish()?
-    {
-        return Ok(None);
-    }
-    Ok(Some(stats))
-}
-
 fn is_disallowed_legacy_character(character: char) -> bool {
     let value = character as u32;
     (value <= 0x1F && !matches!(character, '\t' | '\n' | '\r'))
@@ -968,7 +646,7 @@ fn is_disallowed_legacy_character(character: char) -> bool {
         || value & 0xFFFF == 0xFFFF
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ValidationStats {
     decoded_any: bool,
     newline_count: usize,
@@ -1006,71 +684,76 @@ impl ValidationStats {
     }
 }
 
-struct RoundTripVerifier<'a> {
-    encoder: encoding_rs::Encoder,
-    source: SourceReader<'a>,
-}
-
-impl<'a> RoundTripVerifier<'a> {
-    fn open(source: ByteSource<'a>, bom_len: u64, encoding: &'static Encoding) -> io::Result<Self> {
-        Ok(Self {
-            encoder: encoding.new_encoder(),
-            source: SourceReader::open(source, bom_len)?,
-        })
-    }
-
-    fn push(&mut self, text: &str) -> io::Result<bool> {
-        self.encode_and_compare(text, false)
-    }
-
-    fn finish(&mut self) -> io::Result<bool> {
-        if !self.encode_and_compare("", true)? {
-            return Ok(false);
-        }
-        let mut extra = [0_u8; 1];
-        Ok(self.source.read(&mut extra)? == 0)
-    }
-
-    fn encode_and_compare(&mut self, mut text: &str, last: bool) -> io::Result<bool> {
-        let mut first = true;
-        while first || !text.is_empty() {
-            first = false;
-            let capacity = self
-                .encoder
-                .max_buffer_length_from_utf8_without_replacement(text.len())
-                .unwrap_or(text.len().saturating_mul(4).saturating_add(16))
-                .saturating_add(16)
-                .max(16);
-            let mut encoded = Vec::with_capacity(capacity);
-            let (result, read) =
-                self.encoder
-                    .encode_from_utf8_to_vec_without_replacement(text, &mut encoded, last);
-            if !self.compare_bytes(&encoded)? {
-                return Ok(false);
-            }
-            text = &text[read..];
-            match result {
-                EncoderResult::InputEmpty => return Ok(text.is_empty()),
-                EncoderResult::OutputFull => continue,
-                EncoderResult::Unmappable(_) => return Ok(false),
-            }
-        }
-        Ok(true)
-    }
-
-    fn compare_bytes(&mut self, encoded: &[u8]) -> io::Result<bool> {
-        let mut expected = vec![0_u8; encoded.len()];
-        match self.source.read_exact(&mut expected) {
-            Ok(()) => Ok(expected == encoded),
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-}
-
 enum DecodeFailure {
     Io(io::Error),
     Malformed,
+}
+
+/// A strict decoder used only to establish irreversible capture-time failures.
+pub(crate) struct StrictStreamingValidator {
+    decoder: ChunkDecoder,
+    malformed: bool,
+}
+
+impl StrictStreamingValidator {
+    fn new(detected: &DetectedEncoding) -> Self {
+        Self {
+            decoder: chunk_decoder_for(detected),
+            malformed: false,
+        }
+    }
+
+    /// Returns true once the already-observed prefix can never decode successfully.
+    pub(crate) fn feed(&mut self, input: &[u8]) -> bool {
+        if self.malformed {
+            return true;
+        }
+        let result = match &mut self.decoder {
+            ChunkDecoder::Utf8 { carry } => decode_utf8_chunk(carry, input, false),
+            ChunkDecoder::EncodingRs(decoder) => decode_encoding_rs_chunk(decoder, input, false),
+            ChunkDecoder::Utf32 {
+                little_endian,
+                carry,
+            } => decode_utf32_chunk(carry, input, false, *little_endian),
+        };
+        self.malformed = result.is_err();
+        self.malformed
+    }
+}
+
+/// Capture-time decoder selected by an authoritative BOM.
+pub(crate) struct BomStreamingValidator {
+    pub(crate) validator: StrictStreamingValidator,
+    pub(crate) bom_len: usize,
+    pub(crate) encoding: &'static str,
+    pub(crate) is_utf8: bool,
+}
+
+/// Builds the same strict decoder and matching-BOM offset as explicit validation.
+pub(crate) fn explicit_streaming_validator(
+    value: &str,
+    prefix: &[u8],
+) -> Result<(StrictStreamingValidator, usize), EncodingRejection> {
+    let detected = explicit_detected_encoding(value, prefix)?;
+    Ok((
+        StrictStreamingValidator::new(&detected),
+        detected.bom_len as usize,
+    ))
+}
+
+/// Builds the same strict decoder selected by the normal BOM precedence.
+pub(crate) fn bom_streaming_validator(prefix: &[u8]) -> Option<BomStreamingValidator> {
+    let detected = bom_detected_encoding(prefix)?;
+    let encoding = match detected.origin {
+        EncodingOrigin::Bom(encoding) => encoding,
+        _ => unreachable!("BOM detection always records a BOM origin"),
+    };
+    Some(BomStreamingValidator {
+        validator: StrictStreamingValidator::new(&detected),
+        bom_len: detected.bom_len as usize,
+        encoding,
+        is_utf8: detected.kind == EncodingKind::EncodingRs(UTF_8),
+    })
 }
 
 impl From<io::Error> for DecodeFailure {
@@ -1092,18 +775,6 @@ struct DecodedChunkReader<'a> {
 }
 
 impl<'a> DecodedChunkReader<'a> {
-    fn open_file(
-        path: &Path,
-        detected: DetectedEncoding,
-    ) -> io::Result<DecodedChunkReader<'static>> {
-        let source = SourceReader::open_file(path, detected.bom_len)?;
-        Ok(DecodedChunkReader {
-            source,
-            decoder: chunk_decoder_for(&detected),
-            finished: false,
-        })
-    }
-
     fn open(source: ByteSource<'a>, detected: DetectedEncoding) -> io::Result<Self> {
         Ok(Self {
             source: SourceReader::open(source, detected.bom_len)?,
@@ -1246,10 +917,10 @@ pub(crate) struct Utf8Reader<'a> {
     pending_offset: usize,
 }
 
-impl Utf8Reader<'static> {
-    fn open(path: &Path, detected: DetectedEncoding) -> io::Result<Self> {
+impl<'a> Utf8Reader<'a> {
+    fn open_source(source: ByteSource<'a>, detected: DetectedEncoding) -> io::Result<Self> {
         Ok(Self {
-            decoder: DecodedChunkReader::open_file(path, detected)?,
+            decoder: DecodedChunkReader::open(source, detected)?,
             pending: Vec::new(),
             pending_offset: 0,
         })
@@ -1312,25 +983,6 @@ fn decode_utf32_bytes(bytes: &[u8], little_endian: bool) -> Option<String> {
         output.push(char::from_u32(unit)?);
     }
     Some(output)
-}
-
-fn hard_validate_bytes(encoding: &'static Encoding, bytes: &[u8]) -> bool {
-    let Some(decoded) = encoding.decode_without_bom_handling_and_without_replacement(bytes) else {
-        return false;
-    };
-    if decoded.chars().any(is_disallowed_legacy_character) {
-        return false;
-    }
-    let mut encoder = encoding.new_encoder();
-    let capacity = encoder
-        .max_buffer_length_from_utf8_without_replacement(decoded.len())
-        .unwrap_or(decoded.len().saturating_mul(4).saturating_add(16))
-        .saturating_add(16)
-        .max(16);
-    let mut encoded = Vec::with_capacity(capacity);
-    let (result, read) =
-        encoder.encode_from_utf8_to_vec_without_replacement(&decoded, &mut encoded, true);
-    result == EncoderResult::InputEmpty && read == decoded.len() && encoded == bytes
 }
 
 #[cfg(test)]
@@ -1438,7 +1090,9 @@ mod tests {
         let EncodingDecision::Text(validated) = validate_file_encoding(path, None).unwrap() else {
             panic!("expected trusted text");
         };
-        let mut reader = validated.open_reader(path).unwrap();
+        let mut reader = validated
+            .open_source_reader(super::ByteSource::File(path))
+            .unwrap();
         let mut actual = String::new();
         reader.read_to_string(&mut actual).unwrap();
         assert_eq!(actual, expected);

@@ -1,7 +1,7 @@
 mod common;
 
-use common::{cwd, error_text, normalized, set_mtime, text, write};
-use fastctx::glob_tool::{FilterMode, GlobRequest, SortMode, glob_files};
+use common::{cwd, error_text, glob_files, normalized, set_mtime, text, write};
+use fastctx::glob_tool::{FilterMode, GlobRequest, SortMode};
 
 fn request(path: &std::path::Path, pattern: &str) -> GlobRequest {
     GlobRequest {
@@ -167,7 +167,7 @@ fn glob_includes_file_symlinks_without_following_directory_symlinks() {
 
 #[cfg(unix)]
 #[test]
-fn glob_lists_non_utf8_filenames_lossily_without_dropping_legal_neighbors() {
+fn glob_lists_non_utf8_filenames_canonically_without_dropping_legal_neighbors() {
     use std::os::unix::ffi::OsStringExt;
 
     let temp = tempfile::tempdir().unwrap();
@@ -183,14 +183,15 @@ fn glob_lists_non_utf8_filenames_lossily_without_dropping_legal_neighbors() {
     }
     write(&legal, b"legal name");
 
-    let invalid_display = normalized(&invalid);
-    assert!(invalid_display.contains('\u{FFFD}'));
+    let invalid_display = format!("{}/~fastctx~b6261642dff2e747874~", normalized(temp.path()));
+    let mut input = request(temp.path(), "*");
+    input.filter_mode = Some(FilterMode::All);
     assert_eq!(
-        text(glob_files(request(temp.path(), "*.txt"))),
+        text(glob_files(input)),
         format!(
             "{}\n{}\n\n(Complete: all 2 files shown.)",
-            invalid_display,
-            normalized(&legal)
+            normalized(&legal),
+            invalid_display
         )
     );
 }
