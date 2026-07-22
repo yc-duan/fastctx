@@ -290,13 +290,35 @@ pub async fn run_server() -> Result<ExitCode, String> {
 /// Starts the single server with the requested optional tool groups.
 pub async fn run_server_with_options(options: ServerOptions) -> Result<ExitCode, String> {
     let parent = crate::process_identity::parent_identity_from_environment()?;
-    let service = FastCtxServer::with_options(options)
-        .serve((
-            crate::stdio_transport::DetachedStdin::start()?,
-            tokio::io::stdout(),
-        ))
+    let stdin = crate::stdio_transport::DetachedStdin::start()?;
+    run_server_with_io(options, parent, stdin, tokio::io::stdout()).await
+}
+
+async fn run_server_with_io<W>(
+    options: ServerOptions,
+    parent: Option<Option<crate::process_identity::ProcessIdentity>>,
+    stdin: crate::stdio_transport::DetachedStdin,
+    stdout: W,
+) -> Result<ExitCode, String>
+where
+    W: tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
+    let stdin_eof = stdin.eof_token();
+    let stdin_read_error = stdin.read_error_receiver();
+    let stdin_read_error_wait = wait_for_stdin_read_error(stdin_read_error.clone());
+    tokio::pin!(stdin_read_error_wait);
+    let service = match FastCtxServer::with_options(options)
+        .serve((stdin, stdout))
         .await
-        .map_err(|error| format!("Cannot start the MCP server: {error}"))?;
+    {
+        Ok(service) => service,
+        Err(error) => {
+            return Err(stdin_read_error
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| format!("Cannot start the MCP server: {error}")));
+        }
+    };
     let cancellation = service.cancellation_token();
     let mut waiting = tokio::spawn(service.waiting());
 
@@ -333,7 +355,21 @@ pub async fn run_server_with_options(options: ServerOptions) -> Result<ExitCode,
     tokio::pin!(parent_exit_future);
 
     let result = tokio::select! {
-        result = &mut waiting => flatten_service_wait(result),
+        result = &mut waiting => match stdin_read_error.borrow().clone() {
+            Some(error) => Err(error),
+            None => flatten_service_wait(result),
+        },
+        () = stdin_eof.cancelled() => {
+            cancellation.cancel();
+            wait_for_bounded_service_shutdown(&mut waiting).await
+        }
+        error = &mut stdin_read_error_wait => {
+            cancellation.cancel();
+            match wait_for_bounded_service_shutdown(&mut waiting).await {
+                Ok(()) => Err(error),
+                Err(shutdown_error) => Err(format!("{error}; {shutdown_error}")),
+            }
+        }
         () = &mut parent_exit_future => {
             cancellation.cancel();
             wait_for_bounded_service_shutdown(&mut waiting).await
@@ -352,6 +388,19 @@ pub async fn run_server_with_options(options: ServerOptions) -> Result<ExitCode,
 }
 
 const SERVER_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+async fn wait_for_stdin_read_error(
+    mut receiver: tokio::sync::watch::Receiver<Option<String>>,
+) -> String {
+    loop {
+        if let Some(error) = receiver.borrow().clone() {
+            return error;
+        }
+        if receiver.changed().await.is_err() {
+            return std::future::pending::<String>().await;
+        }
+    }
+}
 
 type ServiceWaitResult =
     Result<Result<rmcp::service::QuitReason, tokio::task::JoinError>, tokio::task::JoinError>;
@@ -603,5 +652,63 @@ fn print_receipt(receipt: &crate::control::apply::OperationReceipt) {
     println!("Changed {} target(s).", receipt.changed_targets);
     for note in &receipt.notes {
         println!("{note}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ServerOptions, run_server_with_io};
+    use crate::stdio_transport::DetachedStdin;
+    use std::io::{Cursor, Read};
+    use std::time::Duration;
+
+    struct BytesThenError {
+        bytes: Cursor<Vec<u8>>,
+    }
+
+    impl Read for BytesThenError {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            let read = self.bytes.read(output)?;
+            if read == 0 {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "injected established-session stdin failure",
+                ))
+            } else {
+                Ok(read)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn established_server_reports_stdin_read_error() {
+        let initialize = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "stdin-error-contract", "version": "1.0"}
+            }
+        }))
+        .unwrap();
+        let mut input = initialize;
+        input.push(b'\n');
+        let stdin = DetachedStdin::start_with_reader(BytesThenError {
+            bytes: Cursor::new(input),
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            run_server_with_io(ServerOptions::default(), None, stdin, tokio::io::sink()),
+        )
+        .await
+        .expect("established server did not surface the stdin read error");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Cannot read MCP stdin: injected established-session stdin failure"
+        );
     }
 }

@@ -3,13 +3,14 @@ mod common;
 use common::{McpSession, mcp_text, normalized};
 use serde_json::Value;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const PROCESS_DEADLINE: Duration = Duration::from_secs(10);
 const IDLE_PROBE: Duration = Duration::from_millis(1_500);
+const EOF_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 
 #[test]
 fn parent_watch_exits_without_stdin_eof_but_preserves_live_and_opted_out_servers() {
@@ -137,6 +138,131 @@ fn parent_watch_ends_foreground_work_but_preserves_detached_background_jobs() {
     assert!(
         !escaped_marker.exists(),
         "foreground work must not outlive the server that owns its response"
+    );
+}
+
+#[test]
+fn stdin_eof_ends_inflight_foreground_work_promptly() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let temp_dir = root.join("tmp");
+    std::fs::create_dir(&temp_dir).unwrap();
+    let pid_path = root.join("foreground.pid");
+    let escaped_marker = root.join("escaped.txt");
+    let foreground_command = foreground_fixture_command(&pid_path, &escaped_marker);
+    let response_path = root.join("response.jsonl");
+    let output = File::create(&response_path).unwrap();
+    let (stdin_reader, mut stdin_writer) = anonymous_pipe();
+    let mut server = Command::new(env!("CARGO_BIN_EXE_fastctx"))
+        .args(["serve", "--enable-shell"])
+        .current_dir(root)
+        .env("HOME", root)
+        .env("USERPROFILE", root)
+        .env("TMPDIR", &temp_dir)
+        .env("TMP", &temp_dir)
+        .env("TEMP", &temp_dir)
+        .env_remove("FASTCTX_NO_PARENT_WATCH")
+        .stdin(Stdio::from(stdin_reader))
+        .stdout(Stdio::from(output))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    write_initialize(&mut stdin_writer);
+    wait_for_nonempty_file(&response_path, PROCESS_DEADLINE);
+    send_json(
+        &mut stdin_writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {}
+        }),
+    );
+    send_json(
+        &mut stdin_writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "run",
+                "arguments": {
+                    "command": foreground_command,
+                    "login_shell": false,
+                    "timeout_ms": 60_000
+                }
+            }
+        }),
+    );
+    let foreground_pid = wait_for_pid_file(&pid_path, PROCESS_DEADLINE);
+    let foreground = ProcessProbe::capture(foreground_pid);
+
+    let eof_started = Instant::now();
+    drop(stdin_writer);
+    let Some(status) = wait_for_child_exit(&mut server, EOF_SHUTDOWN_DEADLINE) else {
+        let _ = server.kill();
+        let _ = server.wait();
+        terminate_process(&foreground);
+        panic!(
+            "serve did not exit within {:?} after stdin EOF with an in-flight request",
+            EOF_SHUTDOWN_DEADLINE
+        );
+    };
+    let eof_delay = eof_started.elapsed();
+    assert!(status.success(), "serve failed after stdin EOF: {status}");
+    assert!(
+        eof_delay < EOF_SHUTDOWN_DEADLINE,
+        "serve took {eof_delay:?} to exit after stdin EOF"
+    );
+    wait_for_process_exit(&foreground, PROCESS_DEADLINE);
+    assert!(
+        !escaped_marker.exists(),
+        "in-flight foreground work must not outlive stdin EOF"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn stdin_startup_read_error_is_not_reported_as_clean_eof() {
+    let temp = tempfile::tempdir().unwrap();
+    let unreadable_stdin = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(temp.path().join("write-only-stdin"))
+        .unwrap();
+    let mut server = Command::new(env!("CARGO_BIN_EXE_fastctx"))
+        .arg("serve")
+        .env_remove("FASTCTX_NO_PARENT_WATCH")
+        .stdin(Stdio::from(unreadable_stdin))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let Some(status) = wait_for_child_exit(&mut server, EOF_SHUTDOWN_DEADLINE) else {
+        let _ = server.kill();
+        let _ = server.wait();
+        panic!(
+            "serve did not report a startup stdin read error within {:?}",
+            EOF_SHUTDOWN_DEADLINE
+        );
+    };
+    let mut stderr = String::new();
+    server
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+
+    assert!(
+        !status.success(),
+        "stdin read error was reported as success"
+    );
+    assert!(
+        stderr.contains("Cannot read MCP stdin:"),
+        "missing stdin read diagnostic: {stderr:?}"
     );
 }
 
@@ -472,6 +598,19 @@ fn wait_for_child(child: &mut Child, timeout: Duration) -> std::process::ExitSta
         if Instant::now() >= deadline {
             let _ = child.kill();
             return child.wait().unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return Some(status);
+        }
+        if Instant::now() >= deadline {
+            return None;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
