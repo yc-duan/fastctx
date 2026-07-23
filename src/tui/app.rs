@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 const JOB_LIST_REFRESH: Duration = Duration::from_secs(1);
 const JOB_TAIL_REFRESH: Duration = Duration::from_millis(300);
 const JOB_TAIL_LINES: usize = 512;
+const STARTUP_UPDATE_GATE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Screen {
@@ -161,6 +162,12 @@ enum UpdateCheckPurpose {
     UpdatePage,
 }
 
+struct ActiveUpdateCheck {
+    purpose: UpdateCheckPurpose,
+    receiver: Receiver<StartupUpdate>,
+    startup_deadline: Option<Instant>,
+}
+
 pub(crate) struct App {
     pub paths: ControlPaths,
     pub settings: FastCtxSettings,
@@ -192,7 +199,8 @@ pub(crate) struct App {
     retry_effect: Option<Effect>,
     last_jobs_refresh: Option<Instant>,
     last_tail_refresh: Option<Instant>,
-    update_check: Option<(UpdateCheckPurpose, Receiver<StartupUpdate>)>,
+    startup_update_check_requested: bool,
+    update_check: Option<ActiveUpdateCheck>,
 }
 
 impl App {
@@ -256,18 +264,6 @@ impl App {
             }
         });
         let startup_failure = match &startup_update {
-            StartupUpdate::Available(_) => Some(Toast {
-                message: update_copy::messages(notice_language)
-                    .available_title
-                    .to_string(),
-                warning: false,
-            }),
-            StartupUpdate::NpmPending { .. } => Some(Toast {
-                message: update_copy::messages(notice_language)
-                    .pending_title
-                    .to_string(),
-                warning: false,
-            }),
             StartupUpdate::Failed(error) if error.kind == CheckFailureKind::Structural => {
                 Some(Toast {
                     message: format!(
@@ -295,9 +291,11 @@ impl App {
                 ),
                 warning: true,
             }),
-            StartupUpdate::None | StartupUpdate::NpmCurrent { .. } | StartupUpdate::Failed(_) => {
-                None
-            }
+            StartupUpdate::None
+            | StartupUpdate::NpmCurrent { .. }
+            | StartupUpdate::Available(_)
+            | StartupUpdate::NpmPending { .. }
+            | StartupUpdate::Failed(_) => None,
         };
         Ok(Self {
             config_draft: ConfigDraft::from_settings(&settings),
@@ -331,6 +329,7 @@ impl App {
             retry_effect: None,
             last_jobs_refresh: Some(Instant::now()),
             last_tail_refresh: None,
+            startup_update_check_requested: false,
             update_check: None,
         })
     }
@@ -392,15 +391,45 @@ impl App {
     }
 
     pub(crate) fn set_startup_update_check(&mut self, receiver: Receiver<StartupUpdate>) {
-        self.update_check = Some((UpdateCheckPurpose::Startup, receiver));
+        self.update_check = Some(ActiveUpdateCheck {
+            purpose: UpdateCheckPurpose::Startup,
+            receiver,
+            startup_deadline: None,
+        });
+        if self.settings.language.is_some() {
+            self.enter_startup_update_gate();
+        }
+    }
+
+    pub(crate) fn request_startup_update_check(&mut self) {
+        self.startup_update_check_requested = true;
+        if self.settings.language.is_some() {
+            self.start_requested_startup_update_check();
+        }
+    }
+
+    fn start_requested_startup_update_check(&mut self) {
+        if !std::mem::take(&mut self.startup_update_check_requested) {
+            return;
+        }
+        if let Some(receiver) = crate::update::spawn_startup_update_check(self.paths.clone()) {
+            self.set_startup_update_check(receiver);
+        }
     }
 
     pub(crate) fn poll_update_check(&mut self) {
-        let Some((purpose, receiver)) = self.update_check.as_ref() else {
+        self.poll_update_check_at(Instant::now());
+    }
+
+    fn poll_update_check_at(&mut self, now: Instant) {
+        let Some(check) = self.update_check.as_ref() else {
             return;
         };
-        let purpose = *purpose;
-        let result = match receiver.try_recv() {
+        if check.purpose == UpdateCheckPurpose::Startup && self.screen != Screen::UpdateChecking {
+            return;
+        }
+        let purpose = check.purpose;
+        let result = match check.receiver.try_recv() {
             Ok(result) => Some(result),
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => Some(StartupUpdate::Failed(CheckFailure {
@@ -411,7 +440,30 @@ impl App {
         if let Some(result) = result {
             self.update_check = None;
             self.resolve_update_check(purpose, result);
+        } else if purpose == UpdateCheckPurpose::Startup
+            && check
+                .startup_deadline
+                .is_some_and(|deadline| now >= deadline)
+        {
+            // Dropping the receiver only detaches the UI. The worker still completes its
+            // single bounded probe and commits any successful cache record.
+            self.update_check = None;
+            self.update_state = StartupUpdate::None;
+            self.back_to_main();
         }
+    }
+
+    fn enter_startup_update_gate(&mut self) {
+        let Some(check) = self.update_check.as_mut() else {
+            return;
+        };
+        if check.purpose != UpdateCheckPurpose::Startup {
+            return;
+        }
+        check.startup_deadline = Some(Instant::now() + STARTUP_UPDATE_GATE_TIMEOUT);
+        self.screen = Screen::UpdateChecking;
+        self.selected = 0;
+        self.toast = None;
     }
 
     pub fn has_pending_effect(&self) -> bool {
@@ -503,17 +555,31 @@ impl App {
         let is_kill_effect = matches!(&effect, Effect::KillJob { .. });
         let result = match effect {
             Effect::RetryUpdate => {
-                self.update_check = Some((
-                    UpdateCheckPurpose::UpdatePage,
-                    crate::update::spawn_update_check(self.paths.clone(), true),
-                ));
+                self.update_check = Some(ActiveUpdateCheck {
+                    purpose: UpdateCheckPurpose::UpdatePage,
+                    receiver: crate::update::spawn_update_check(self.paths.clone(), true),
+                    startup_deadline: None,
+                });
                 Ok(())
             }
-            Effect::SaveLanguage { first_run: _ } => {
+            Effect::SaveLanguage { first_run } => {
                 let mut updated = self.settings.clone();
                 updated.language = Some(self.language.code().to_string());
                 self.save_settings(&updated).map(|_| {
                     self.settings = updated;
+                    if first_run {
+                        self.start_requested_startup_update_check();
+                        if self
+                            .update_check
+                            .as_ref()
+                            .is_some_and(|check| check.purpose == UpdateCheckPurpose::Startup)
+                        {
+                            if self.screen != Screen::UpdateChecking {
+                                self.enter_startup_update_gate();
+                            }
+                            return;
+                        }
+                    }
                     self.screen = Screen::Main;
                     self.selected = 0;
                 })
@@ -772,23 +838,22 @@ impl App {
         match result {
             available @ StartupUpdate::Available(_) => {
                 self.update_state = available;
-                self.toast = Some(Toast {
-                    message: self.update_messages().available_title.to_string(),
-                    warning: false,
-                });
+                self.screen = Screen::Update;
+                self.selected = 0;
+                self.toast = None;
             }
             pending @ StartupUpdate::NpmPending { .. } => {
                 self.update_state = pending;
-                self.toast = Some(Toast {
-                    message: self.update_messages().pending_title.to_string(),
-                    warning: false,
-                });
+                self.back_to_main();
             }
             current @ StartupUpdate::NpmCurrent { .. } => {
                 self.update_state = current;
+                self.back_to_main();
             }
             StartupUpdate::Failed(error) if error.kind == CheckFailureKind::Structural => {
                 self.update_state = StartupUpdate::Failed(error.clone());
+                self.screen = Screen::Main;
+                self.selected = 0;
                 self.toast = Some(Toast {
                     message: format!("{}: {}", self.update_messages().check_failed, error.message),
                     warning: true,
@@ -796,6 +861,8 @@ impl App {
             }
             StartupUpdate::InstallFailed(error) => {
                 self.update_state = StartupUpdate::InstallFailed(error.clone());
+                self.screen = Screen::Main;
+                self.selected = 0;
                 self.toast = Some(Toast {
                     message: format!("{}: {error}", self.update_messages().update_failed),
                     warning: true,
@@ -803,9 +870,11 @@ impl App {
             }
             failed @ StartupUpdate::Failed(_) => {
                 self.update_state = failed;
+                self.back_to_main();
             }
             StartupUpdate::None => {
                 self.update_state = StartupUpdate::None;
+                self.back_to_main();
             }
         }
     }
@@ -1414,6 +1483,7 @@ mod tests {
         StartupUpdate, UpdatePlan,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::time::{Duration, Instant};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -2225,18 +2295,10 @@ mod tests {
     }
 
     #[test]
-    fn startup_update_receiver_never_blocks_the_home_screen_and_resolves_in_place() {
+    fn startup_update_gate_waits_behind_first_run_language_then_opens_the_update_page() {
         let (_temp, mut app) = fixture();
-        app.settings.language = Some("en".to_string());
-        app.screen = Screen::Main;
         let (sender, receiver) = std::sync::mpsc::channel();
         app.set_startup_update_check(receiver);
-
-        app.poll_update_check();
-        assert_eq!(app.screen, Screen::Main);
-        assert_eq!(app.update_state, StartupUpdate::None);
-        assert!(app.toast.is_none());
-
         let plan = UpdatePlan::GithubRelease {
             target_version: "0.2.0".to_string(),
             archive_name: "fixture.zip".to_string(),
@@ -2248,20 +2310,54 @@ mod tests {
         sender
             .send(StartupUpdate::Available(Box::new(plan.clone())))
             .unwrap();
-        app.poll_update_check();
-        assert_eq!(app.screen, Screen::Main);
-        assert_eq!(app.update_state, StartupUpdate::Available(Box::new(plan)));
-        assert_eq!(app.toast.as_ref().map(|toast| toast.warning), Some(false));
 
-        app.handle_key(key(KeyCode::Char('u')));
+        app.poll_update_check();
+        assert_eq!(app.screen, Screen::Language { first_run: true });
+        assert_eq!(app.update_state, StartupUpdate::None);
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::UpdateChecking);
+        assert!(app.toast.is_none());
+
+        app.poll_update_check();
         assert_eq!(app.screen, Screen::Update);
+        assert_eq!(app.update_state, StartupUpdate::Available(Box::new(plan)));
+        assert_eq!(app.selected, 0);
+        assert!(app.toast.is_none());
     }
 
     #[test]
-    fn startup_update_failures_follow_the_quiet_transient_single_warning_structural_contract() {
+    fn first_run_does_not_even_spawn_the_startup_probe_before_language_is_saved() {
+        let (_temp, mut app) = fixture();
+        app.request_startup_update_check();
+
+        assert_eq!(app.screen, Screen::Language { first_run: true });
+        assert!(app.startup_update_check_requested);
+        assert!(app.update_check.is_none());
+
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+        assert!(!app.startup_update_check_requested);
+        assert_eq!(app.screen, Screen::Main);
+        assert!(app.update_check.is_none());
+    }
+
+    #[test]
+    fn startup_gate_deadline_transient_pending_and_current_are_silent_but_structural_warns_once() {
         let (_temp, mut app) = fixture();
         app.settings.language = Some("en".to_string());
         app.screen = Screen::Main;
+
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        app.set_startup_update_check(receiver);
+        assert_eq!(app.screen, Screen::UpdateChecking);
+        app.update_check.as_mut().unwrap().startup_deadline =
+            Some(Instant::now() - Duration::from_millis(1));
+        app.poll_update_check();
+        assert_eq!(app.screen, Screen::Main);
+        assert_eq!(app.update_state, StartupUpdate::None);
+        assert!(app.toast.is_none());
+
         let (sender, receiver) = std::sync::mpsc::channel();
         app.set_startup_update_check(receiver);
         sender
@@ -2271,6 +2367,26 @@ mod tests {
             }))
             .unwrap();
         app.poll_update_check();
+        assert_eq!(app.screen, Screen::Main);
+        assert!(app.toast.is_none());
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.set_startup_update_check(receiver);
+        sender
+            .send(StartupUpdate::NpmPending {
+                target_version: "0.2.0".to_string(),
+                discovery: Box::new(pending_discovery("0.2.0")),
+            })
+            .unwrap();
+        app.poll_update_check();
+        assert_eq!(app.screen, Screen::Main);
+        assert!(app.toast.is_none());
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.set_startup_update_check(receiver);
+        sender.send(StartupUpdate::None).unwrap();
+        app.poll_update_check();
+        assert_eq!(app.screen, Screen::Main);
         assert!(app.toast.is_none());
 
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -2282,6 +2398,7 @@ mod tests {
             }))
             .unwrap();
         app.poll_update_check();
+        assert_eq!(app.screen, Screen::Main);
         let toast = app.toast.take().unwrap();
         assert!(toast.warning);
         assert!(toast.message.contains("latest tag is invalid"));
@@ -2290,7 +2407,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_update_never_preempts_first_run_and_the_update_page_confirms_installation() {
+    fn startup_available_can_continue_or_escape_to_main_and_can_confirm_installation() {
         let temp = tempfile::tempdir().unwrap();
         let paths = ControlPaths::for_home(temp.path());
         let plan = UpdatePlan::GithubRelease {
@@ -2301,18 +2418,38 @@ mod tests {
             checksums_url: "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/SHA256SUMS"
                 .to_string(),
         };
-        let mut app = App::load_with_startup(
-            paths.clone(),
-            StartupUpdate::Available(Box::new(plan.clone())),
-            None,
-        )
-        .unwrap();
-        assert_eq!(app.screen, Screen::Language { first_run: true });
-        assert_eq!(
-            app.toast.as_ref().map(|toast| toast.message.as_str()),
-            Some(app.update_messages().available_title)
-        );
+        let mut settings = FastCtxSettings {
+            language: Some("en".to_string()),
+            ..FastCtxSettings::default()
+        };
+        crate::control::settings::save(&paths, &settings).unwrap();
+        let mut app = App::load_with_startup(paths.clone(), StartupUpdate::None, None).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.set_startup_update_check(receiver);
+        sender
+            .send(StartupUpdate::Available(Box::new(plan.clone())))
+            .unwrap();
+        app.poll_update_check();
+        assert_eq!(app.screen, Screen::Update);
+        assert_eq!(app.selected, 0);
+        assert!(app.toast.is_none());
+
+        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::Main);
+        assert!(!app.should_quit);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.set_startup_update_check(receiver);
+        sender
+            .send(StartupUpdate::Available(Box::new(plan.clone())))
+            .unwrap();
+        app.poll_update_check();
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Main);
+
         app.set_screen(Screen::Update);
+        app.update_state = StartupUpdate::Available(Box::new(plan.clone()));
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.screen, Screen::UpdateConfirm);
         assert!(!app.should_quit);
@@ -2321,27 +2458,24 @@ mod tests {
         assert!(app.should_quit);
         assert_eq!(app.take_update_plan(), Some(plan));
 
-        let discovery = pending_discovery("0.2.0");
+        settings.language = None;
+        crate::control::settings::save(&paths, &settings).unwrap();
         let mut app = App::load_with_startup(
-            paths,
+            paths.clone(),
             StartupUpdate::NpmPending {
                 target_version: "0.2.0".to_string(),
-                discovery: Box::new(discovery),
+                discovery: Box::new(pending_discovery("0.2.0")),
             },
             None,
         )
         .unwrap();
         assert_eq!(app.screen, Screen::Language { first_run: true });
-        assert_eq!(
-            app.toast.as_ref().map(|toast| toast.message.as_str()),
-            Some(app.update_messages().pending_title)
-        );
+        assert!(app.toast.is_none());
         assert!(!app.should_quit);
         assert!(app.take_update_plan().is_none());
 
-        let temp = tempfile::tempdir().unwrap();
         let mut app = App::load_with_startup(
-            ControlPaths::for_home(temp.path()),
+            paths,
             StartupUpdate::InstallFailed("injected failure".to_string()),
             None,
         )

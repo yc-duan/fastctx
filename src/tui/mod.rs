@@ -15,7 +15,7 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::{Backend, CrosstermBackend};
 use std::io;
 use std::panic::{self, AssertUnwindSafe, PanicHookInfo};
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub(crate) fn run(
     paths: ControlPaths,
     startup_update: crate::update::StartupUpdate,
     startup_notice: Option<crate::update::FinalizeNotice>,
-    startup_check: Option<std::sync::mpsc::Receiver<crate::update::StartupUpdate>>,
+    check_for_updates_at_startup: bool,
 ) -> Result<TuiOutcome, String> {
     let panic_hook = PanicHookGuard::install();
     let terminal_guard = TerminalGuard::enter(CrosstermControl)?;
@@ -47,7 +47,7 @@ pub(crate) fn run(
             paths,
             startup_update,
             startup_notice,
-            startup_check,
+            check_for_updates_at_startup,
         )
     }));
     drop(terminal);
@@ -184,19 +184,14 @@ fn run_loop(
     paths: ControlPaths,
     startup_update: crate::update::StartupUpdate,
     startup_notice: Option<crate::update::FinalizeNotice>,
-    startup_check: Option<std::sync::mpsc::Receiver<crate::update::StartupUpdate>>,
+    check_for_updates_at_startup: bool,
 ) -> Result<TuiOutcome, String> {
     let mut app = app::App::load_with_startup(paths, startup_update, startup_notice)?;
-    if let Some(receiver) = startup_check {
-        app.set_startup_update_check(receiver);
+    if check_for_updates_at_startup {
+        app.request_startup_update_check();
     }
     loop {
-        app.tick();
-        terminal
-            .draw(|frame| view::render(frame, &mut app))
-            .map_err(|error| format!("Cannot draw the terminal UI: {error}"))?;
-        // Poll only after drawing so even an immediate cache hit cannot replace the first frame.
-        app.poll_update_check();
+        draw_then_poll_update(terminal, &mut app)?;
         if app.should_quit {
             return Ok(match app.take_update_plan() {
                 Some(plan) => TuiOutcome::Update(Box::new(plan)),
@@ -220,9 +215,28 @@ fn run_loop(
     }
 }
 
+fn draw_then_poll_update<B: Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut app::App,
+) -> Result<(), String> {
+    app.tick();
+    terminal
+        .draw(|frame| view::render(frame, app))
+        .map_err(|error| format!("Cannot draw the terminal UI: {error}"))?;
+    // The startup gate is polled only after its loading frame has reached the terminal.
+    app.poll_update_check();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{TerminalControl, TerminalGuard};
+    use super::{TerminalControl, TerminalGuard, draw_then_poll_update};
+    use crate::control::i18n::Language;
+    use crate::control::paths::ControlPaths;
+    use crate::tui::app::{App, Screen};
+    use crate::update::{StartupUpdate, UpdatePlan};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::cell::RefCell;
     use std::io;
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -301,5 +315,50 @@ mod tests {
                 Action::DisableRaw,
             ]
         );
+    }
+
+    #[test]
+    fn ready_startup_result_cannot_replace_the_loading_first_frame() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"fixture").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.settings.language = Some("en".to_string());
+        app.language = Language::En;
+        app.screen = Screen::Main;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.set_startup_update_check(receiver);
+        sender
+            .send(StartupUpdate::Available(Box::new(
+                UpdatePlan::GithubRelease {
+                    target_version: "99.88.77".to_string(),
+                    archive_name: "fixture.zip".to_string(),
+                    archive_url:
+                        "https://github.com/yc-duan/fastctx/releases/download/v99.88.77/fixture.zip"
+                            .to_string(),
+                    checksums_url:
+                        "https://github.com/yc-duan/fastctx/releases/download/v99.88.77/SHA256SUMS"
+                            .to_string(),
+                },
+            )))
+            .unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+
+        draw_then_poll_update(&mut terminal, &mut app).unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(
+            rendered.contains(app.update_messages().checking),
+            "rendered first frame: {rendered:?}"
+        );
+        assert!(!rendered.contains("99.88.77"));
+        assert_eq!(app.screen, Screen::Update);
     }
 }

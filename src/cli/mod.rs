@@ -127,7 +127,7 @@ pub async fn run() -> Result<ExitCode, String> {
             paths,
             crate::update::StartupUpdate::None,
             Some(notice),
-            None,
+            false,
         );
     }
     if let Some(error) = std::env::var_os(crate::update::UPDATE_FAILURE_ENV) {
@@ -140,7 +140,7 @@ pub async fn run() -> Result<ExitCode, String> {
             paths,
             crate::update::StartupUpdate::InstallFailed(error.to_string_lossy().into_owned()),
             None,
-            None,
+            false,
         );
     }
     run_cli(Cli::parse()).await
@@ -200,22 +200,21 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
 
 fn run_tui_with_check(paths: ControlPaths) -> Result<ExitCode, String> {
     crate::update::cleanup_replaced_binaries(&paths);
-    let startup_check = crate::update::spawn_update_check(paths.clone(), false);
-    run_tui(
-        paths,
-        crate::update::StartupUpdate::None,
-        None,
-        Some(startup_check),
-    )
+    run_tui(paths, crate::update::StartupUpdate::None, None, true)
 }
 
 fn run_tui(
     paths: ControlPaths,
     startup_update: crate::update::StartupUpdate,
     startup_notice: Option<crate::update::FinalizeNotice>,
-    startup_check: Option<std::sync::mpsc::Receiver<crate::update::StartupUpdate>>,
+    check_for_updates_at_startup: bool,
 ) -> Result<ExitCode, String> {
-    match crate::tui::run(paths.clone(), startup_update, startup_notice, startup_check)? {
+    match crate::tui::run(
+        paths.clone(),
+        startup_update,
+        startup_notice,
+        check_for_updates_at_startup,
+    )? {
         crate::tui::TuiOutcome::Exit => Ok(ExitCode::SUCCESS),
         crate::tui::TuiOutcome::Update(plan) => {
             let current_executable = std::env::current_exe()

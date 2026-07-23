@@ -606,17 +606,6 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             &update_state_summary(app),
         ));
     }
-    match &app.update_state {
-        StartupUpdate::Available(plan) => details.push(detail_line(
-            app.update_messages().action_check,
-            &format!("v{} · U", plan.target_version()),
-        )),
-        StartupUpdate::NpmPending { target_version, .. } => details.push(detail_line(
-            app.update_messages().action_check,
-            &format!("v{target_version} · U"),
-        )),
-        _ => {}
-    }
     frame.render_widget(
         Paragraph::new(details)
             .block(panel(messages.app_title))
@@ -3375,7 +3364,9 @@ mod tests {
         app.settings.language = Some("en".to_string());
         app.language = Language::En;
 
-        app.screen = Screen::UpdateChecking;
+        let (_slow_sender, slow_receiver) = std::sync::mpsc::channel();
+        app.set_startup_update_check(slow_receiver);
+        assert_eq!(app.screen, Screen::UpdateChecking);
         let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let text = buffer_text(&terminal);
@@ -3590,6 +3581,29 @@ mod tests {
             &text,
             app.messages().tier_note_standard
         ));
+
+        app.update_state = StartupUpdate::Available(Box::new(UpdatePlan::GithubRelease {
+            target_version: "99.88.77".to_string(),
+            archive_name: "fixture.zip".to_string(),
+            archive_url:
+                "https://github.com/yc-duan/fastctx/releases/download/v99.88.77/fixture.zip"
+                    .to_string(),
+            checksums_url:
+                "https://github.com/yc-duan/fastctx/releases/download/v99.88.77/SHA256SUMS"
+                    .to_string(),
+        }));
+        app.selected = 0;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert!(
+            !buffer_text(&terminal).contains("99.88.77"),
+            "an update result must not add an unconditional main-menu reminder"
+        );
+        app.selected = 3;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert!(
+            buffer_text(&terminal).contains("99.88.77"),
+            "the focused Update item must retain its result summary"
+        );
     }
 
     #[test]
