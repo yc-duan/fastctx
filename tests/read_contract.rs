@@ -271,6 +271,33 @@ fn batch_read_rejects_every_request_shape_error_before_file_processing() {
 }
 
 #[test]
+fn batch_read_reports_a_relative_entry_inline_without_discarding_neighbors() {
+    let temp = tempfile::tempdir().unwrap();
+    let valid = temp.path().join("valid.txt");
+    write(&valid, b"valid");
+    let relative = "batch-relative-9f81e043.txt";
+    let response = read_file(batch_request(vec![
+        BatchReadEntry {
+            path: relative.to_string(),
+            offset: None,
+            limit: None,
+            encoding: None,
+        },
+        batch_entry(&valid),
+    ]));
+
+    assert!(!response.is_error);
+    assert_eq!(
+        text(response),
+        format!(
+            "=== {relative} ===\nFile does not exist: {relative}\nNote: the session working directory is {cwd}.\n\n=== {valid} (lines 1-1 of 1) ===\n1\tvalid\n\n(Complete: 2 files processed.)",
+            cwd = cwd(),
+            valid = normalized(&valid),
+        )
+    );
+}
+
+#[test]
 fn batch_read_accepts_the_full_thirty_two_entry_boundary() {
     let temp = tempfile::tempdir().unwrap();
     let entries = (0..32)

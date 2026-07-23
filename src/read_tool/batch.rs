@@ -89,15 +89,19 @@ fn validate_entries(entries: &[BatchReadEntry]) -> Result<(), String> {
             return Err("Invalid limit value: 0. Expected an integer >= 1.".to_string());
         }
         let parsed = parse_input_path(&entry.path);
-        if !parsed.is_absolute() {
-            return Err(missing_read_file_message(&entry.path));
-        }
         if let Some(encoding) = entry.encoding.as_deref()
             && let Err(rejection) = canonical_encoding_label(encoding)
         {
             return Err(rejection.message(""));
         }
-        let key_path = canonical_existing(&parsed).unwrap_or(parsed);
+        // A relative entry is an existence problem, not a request-shape one, so it is
+        // reported in its own segment and never discards its neighbors. Keeping it out
+        // of canonicalization also stops it from resolving into a false duplicate.
+        let key_path = if parsed.is_absolute() {
+            canonical_existing(&parsed).unwrap_or(parsed)
+        } else {
+            parsed
+        };
         let mut key = display_path(&key_path);
         #[cfg(windows)]
         key.make_ascii_lowercase();
@@ -170,6 +174,12 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
 fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEntry {
     let parsed = parse_input_path(&entry.path);
     let input_display = display_path(&parsed);
+    if !parsed.is_absolute() {
+        return PreparedEntry {
+            path: input_display,
+            outcome: PreparedOutcome::Message(missing_read_file_message(&entry.path)),
+        };
+    }
     let metadata = match fs::metadata(&parsed) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
