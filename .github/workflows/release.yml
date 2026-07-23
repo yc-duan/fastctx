@@ -285,15 +285,10 @@ jobs:
         run: |
           notes="$RUNNER_TEMP/fastctx-release-notes.md"
           cat > "$notes" <<'EOF'
-          FastCtx v0.2.0 rebuilds the grep/glob engine and adds search resource controls.
+          FastCtx v0.2.1 repairs in-app updates from v0.1.1.
 
-          - Rewrites the grep/glob execution pipeline: cancellable searches, single-open capture-and-classify, bounded in-process parallelism, and exact o200k budgeting, with v0.1.1 output preserved byte-for-byte
-          - Adds `search.max_cpu_cores`, an opt-in cap on the CPU cores a search may use (the default stays full-speed)
-          - Adds a "reset all settings to defaults" action in the control terminal
-          - Fixes Codex profile operations to honor `CODEX_HOME`, and adds a `--codex-home` flag
-          - Fixes a stdin-EOF shutdown stall so an in-flight search exits promptly when the client disconnects
-          - Fixes an "access denied (os error 5)" edit-lock failure on Windows installs owned by an elevated account
-          - Fixes npm update checks failing with "did not provide FASTCTX_NPM_CLI" on decoupled Node/npm layouts such as Homebrew
+          - Fixes the in-app update from v0.1.1 failing with "updated FastCtx exited before finalization" and rolling back: the updated binary now reads update requests written by v0.1.1, so the update page upgrades straight to v0.2.1. If your update to v0.2.0 failed, just run the update again.
+          - Includes everything in v0.2.0: the rebuilt grep/glob engine (cancellable searches, bounded in-process parallelism, exact o200k budgeting, byte-for-byte v0.1.1 output), the opt-in `search.max_cpu_cores` cap, the settings-reset action, `CODEX_HOME` support with a `--codex-home` flag, the stdin-EOF shutdown fix, the Windows elevated-install edit-lock fix, and the decoupled Node/npm layout fix for update checks.
           EOF
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release delete "${GITHUB_REF_NAME}" --yes
