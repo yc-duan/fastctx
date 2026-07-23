@@ -1146,7 +1146,10 @@ fn load_request(paths: &ControlPaths, path: &Path) -> Result<UpdateRequest, Stri
         return Err("update request is not a safe regular file".to_string());
     }
     let bytes = fs::read(path).map_err(|error| format!("Cannot read update request: {error}"))?;
-    let request: UpdateRequest = serde_json::from_slice(&bytes)
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Cannot parse update request: {error}"))?;
+    migrate_schema_two_request(&mut value);
+    let request: UpdateRequest = serde_json::from_value(value)
         .map_err(|error| format!("Cannot parse update request: {error}"))?;
     if request.schema_version != REQUEST_SCHEMA_VERSION {
         return Err(format!(
@@ -1180,6 +1183,41 @@ fn load_request(paths: &ControlPaths, path: &Path) -> Result<UpdateRequest, Stri
         }
     }
     Ok(request)
+}
+
+/// Upgrades a schema-2 update request (written by FastCtx <= 0.1.1) in place.
+///
+/// The request file is always written by the outgoing version and read by the
+/// freshly installed one, so this reader must keep accepting the previous
+/// schema; a strict-only reader breaks every in-app upgrade across a schema
+/// bump and rolls it back (observed on 0.1.1 -> 0.2.0, 2026-07-22). Schema 2
+/// predates `NpmProvenance::driver`, and its `npm_cli` was always the
+/// npm-cli.js node script, so `node-script` is the only faithful driver value.
+/// Later bumps must chain their own step migration here instead of widening
+/// this one.
+fn migrate_schema_two_request(value: &mut serde_json::Value) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    if object
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(2)
+    {
+        return;
+    }
+    if let Some(provenance) = object
+        .get_mut("plan")
+        .and_then(|plan| plan.get_mut("provenance"))
+        .and_then(serde_json::Value::as_object_mut)
+        && !provenance.contains_key("driver")
+    {
+        provenance.insert(
+            "driver".to_string(),
+            serde_json::Value::String("node-script".to_string()),
+        );
+    }
+    object.insert("schema_version".to_string(), serde_json::Value::from(3u32));
 }
 
 fn validate_plan(plan: &UpdatePlan) -> Result<(), String> {
@@ -1709,6 +1747,161 @@ mod tests {
         OFFICIAL_NPM_REGISTRY, UpdatePlan,
     };
     use std::io::{Cursor, Write};
+
+    /// Hand-written v0.1.1 (schema 2) npm request: independent of the current
+    /// serializers, with no `driver` key in the provenance.
+    fn golden_v0_1_1_npm_request(
+        home: &std::path::Path,
+        update_dir: &std::path::Path,
+        platform_package: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": 2,
+            "current_version": "0.1.1",
+            "plan": {
+                "channel": "npm",
+                "provenance": {
+                    "package": "fastctx",
+                    "mode": "global",
+                    "node": home.join("node"),
+                    "npm_cli": home.join("npm-cli.js"),
+                    "launcher": home.join("launcher.js"),
+                    "launcher_pid": 42,
+                    "handoff_file": update_dir.join("npm-launcher-42.handoff"),
+                },
+                "target_version": "0.2.0",
+                "registry": OFFICIAL_NPM_REGISTRY,
+                "source_name": "official npm",
+                "discovery": {
+                    "source_policy": "official",
+                    "configured_registry": null,
+                    "target_version": "0.2.0",
+                    "authority": "official",
+                    "github_version": "0.2.0",
+                    "official_version": "0.2.0",
+                    "platform_package": platform_package,
+                    "probes": [{
+                        "source_name": "official npm",
+                        "registry": OFFICIAL_NPM_REGISTRY,
+                        "reachable": true,
+                        "latest_version": "0.2.0",
+                        "main_package_ready": true,
+                        "platform_package_ready": true,
+                        "error": null,
+                        "error_kind": null,
+                    }],
+                    "selected_registry": OFFICIAL_NPM_REGISTRY,
+                    "selected_source": "official npm",
+                    "selection_reason": "the configured source policy selected official npm",
+                },
+            },
+            "target_executable": home.join("fastctx-previous"),
+            "helper_executable": update_dir.join("helper-golden"),
+            "health_file": update_dir.join("health-golden"),
+        })
+    }
+
+    fn write_request_value(
+        update_dir: &std::path::Path,
+        request: &serde_json::Value,
+    ) -> std::path::PathBuf {
+        let request_path = update_dir.join("request-golden.json");
+        std::fs::write(&request_path, serde_json::to_vec(request).unwrap()).unwrap();
+        request_path
+    }
+
+    #[test]
+    fn schema_two_npm_requests_from_v0_1_1_still_load() {
+        let Some(platform_package) = super::expected_npm_platform_package() else {
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let paths = crate::control::paths::ControlPaths::for_home(temp.path());
+        let update_dir = super::prepare_update_directory(&paths).unwrap();
+        let request = golden_v0_1_1_npm_request(temp.path(), &update_dir, platform_package);
+        let request_path = write_request_value(&update_dir, &request);
+
+        let loaded = super::load_request(&paths, &request_path).unwrap();
+        assert_eq!(loaded.schema_version, REQUEST_SCHEMA_VERSION);
+        let UpdatePlan::Npm { provenance, .. } = &loaded.plan else {
+            panic!("the golden v0.1.1 request must load as an npm plan");
+        };
+        assert!(matches!(provenance.driver, NpmDriver::NodeScript));
+    }
+
+    #[test]
+    fn schema_two_github_requests_from_v0_1_1_still_load() {
+        let Some(archive_name) = super::expected_release_archive_name() else {
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let paths = crate::control::paths::ControlPaths::for_home(temp.path());
+        let update_dir = super::prepare_update_directory(&paths).unwrap();
+        let base = "https://github.com/yc-duan/fastctx/releases/download/v0.2.0";
+        let request = serde_json::json!({
+            "schema_version": 2,
+            "current_version": "0.1.1",
+            "plan": {
+                "channel": "github-release",
+                "target_version": "0.2.0",
+                "archive_name": archive_name,
+                "archive_url": format!("{base}/{archive_name}"),
+                "checksums_url": format!("{base}/SHA256SUMS"),
+            },
+            "target_executable": temp.path().join("fastctx-previous"),
+            "helper_executable": update_dir.join("helper-golden"),
+            "health_file": update_dir.join("health-golden"),
+        });
+        let request_path = write_request_value(&update_dir, &request);
+
+        let loaded = super::load_request(&paths, &request_path).unwrap();
+        assert_eq!(loaded.schema_version, REQUEST_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn current_schema_requests_must_still_carry_the_npm_driver() {
+        let Some(platform_package) = super::expected_npm_platform_package() else {
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let paths = crate::control::paths::ControlPaths::for_home(temp.path());
+        let update_dir = super::prepare_update_directory(&paths).unwrap();
+        let mut request = golden_v0_1_1_npm_request(temp.path(), &update_dir, platform_package);
+        request["schema_version"] = serde_json::Value::from(REQUEST_SCHEMA_VERSION);
+        let request_path = write_request_value(&update_dir, &request);
+
+        let error = super::load_request(&paths, &request_path).unwrap_err();
+        assert!(error.contains("Cannot parse update request"), "{error}");
+        assert!(error.contains("driver"), "{error}");
+    }
+
+    #[test]
+    fn unknown_future_request_schemas_are_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = crate::control::paths::ControlPaths::for_home(temp.path());
+        let update_dir = super::prepare_update_directory(&paths).unwrap();
+        let request = serde_json::json!({
+            "schema_version": 4,
+            "current_version": "0.1.1",
+            "plan": {
+                "channel": "github-release",
+                "target_version": "0.2.0",
+                "archive_name": "fastctx-any.zip",
+                "archive_url": "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/fastctx-any.zip",
+                "checksums_url": "https://github.com/yc-duan/fastctx/releases/download/v0.2.0/SHA256SUMS",
+            },
+            "target_executable": temp.path().join("fastctx-previous"),
+            "helper_executable": update_dir.join("helper-golden"),
+            "health_file": update_dir.join("health-golden"),
+        });
+        let request_path = write_request_value(&update_dir, &request);
+
+        let error = super::load_request(&paths, &request_path).unwrap_err();
+        assert!(
+            error.contains("unsupported update request schema 4"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn aggregate_checksums_are_an_independent_exact_filename_oracle() {
