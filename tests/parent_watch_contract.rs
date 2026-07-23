@@ -3,7 +3,7 @@ mod common;
 use common::{McpSession, mcp_text, normalized};
 use serde_json::Value;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -224,6 +224,8 @@ fn stdin_eof_ends_inflight_foreground_work_promptly() {
 #[cfg(windows)]
 #[test]
 fn stdin_startup_read_error_is_not_reported_as_clean_eof() {
+    use std::io::Read;
+
     let temp = tempfile::tempdir().unwrap();
     let unreadable_stdin = OpenOptions::new()
         .create(true)
@@ -687,52 +689,25 @@ fn direct_parent_pid(pid: u32) -> Option<u32> {
     parent
 }
 
-#[cfg(unix)]
 fn anonymous_pipe() -> (File, File) {
-    use std::os::fd::FromRawFd;
-
-    let mut descriptors = [0; 2];
-    // SAFETY: pipe initializes both descriptors, which are immediately transferred to File.
-    assert_eq!(unsafe { libc::pipe(descriptors.as_mut_ptr()) }, 0);
-    // SAFETY: successful pipe returned two newly owned descriptors.
-    unsafe {
+    // std::io::pipe keeps both ends out of spawned children (CLOEXEC / non-inheritable), so the
+    // test process holds the sole writer and dropping it delivers EOF. A raw libc::pipe leaked
+    // the write end into the server itself, which made stdin EOF undeliverable (2026-07-22).
+    let (reader, writer) = std::io::pipe().expect("anonymous pipe");
+    #[cfg(unix)]
+    {
+        use std::os::fd::OwnedFd;
         (
-            File::from_raw_fd(descriptors[0]),
-            File::from_raw_fd(descriptors[1]),
+            File::from(OwnedFd::from(reader)),
+            File::from(OwnedFd::from(writer)),
         )
     }
-}
-
-#[cfg(windows)]
-fn anonymous_pipe() -> (File, File) {
-    use std::os::windows::io::FromRawHandle;
-    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
-    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-    use windows_sys::Win32::System::Pipes::CreatePipe;
-
-    let mut read = std::ptr::null_mut();
-    let mut write = std::ptr::null_mut();
-    let attributes = SECURITY_ATTRIBUTES {
-        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: std::ptr::null_mut(),
-        bInheritHandle: 1,
-    };
-    // SAFETY: output pointers and the security attributes remain valid for the call.
-    assert_ne!(
-        unsafe { CreatePipe(&mut read, &mut write, &attributes, 0) },
-        0
-    );
-    // The fixture parent must inherit only the read side; the test keeps the sole writer open.
-    // SAFETY: write is a valid pipe handle returned by CreatePipe.
-    assert_ne!(
-        unsafe { SetHandleInformation(write, HANDLE_FLAG_INHERIT, 0) },
-        0
-    );
-    // SAFETY: successful CreatePipe returned two newly owned handles.
-    unsafe {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::OwnedHandle;
         (
-            File::from_raw_handle(read.cast()),
-            File::from_raw_handle(write.cast()),
+            File::from(OwnedHandle::from(reader)),
+            File::from(OwnedHandle::from(writer)),
         )
     }
 }
