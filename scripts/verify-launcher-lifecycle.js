@@ -197,6 +197,13 @@ async function assertMcpTools(args, expectedTools) {
   }
 }
 
+function canonicalTempWorkspace(prefix) {
+  // macOS puts os.tmpdir() behind the /var -> /private/var symlink while the launcher
+  // reports realpath-canonical npm paths; canonicalizing the workspace root keeps the
+  // fixture tree symlink-free so path-equality assertions hold everywhere (2026-07-22).
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
 function linkOrCopyExecutable(source, target) {
   if (process.platform !== 'win32') {
     fs.copyFileSync(source, target);
@@ -211,7 +218,7 @@ function linkOrCopyExecutable(source, target) {
 }
 
 function assertNpmInvocationProvenanceAcrossLayouts() {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fastctx-npm-driver-'));
+  const workspace = canonicalTempWorkspace('fastctx-npm-driver-');
   try {
     const targets = {
       'win32-x64': ['@fastctx/win32-x64', 'fastctx.exe'],
@@ -484,7 +491,7 @@ function assertMissingPlatformPackageUsesStableCopyOrGivesAnActionableExit() {
   };
   const target = targets[`${process.platform}-${process.arch}`];
   if (!target) return;
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fastctx-platform-fallback-'));
+  const workspace = canonicalTempWorkspace('fastctx-platform-fallback-');
   try {
     const inputLauncher = fs.readFileSync(launcher, 'utf8');
     const mainLauncher = inputLauncher.includes("require('fastctx/launcher.js')")
@@ -558,7 +565,7 @@ function assertMissingPlatformPackageUsesStableCopyOrGivesAnActionableExit() {
 }
 
 function assertUpdateHandoffKeepsLauncherAlive() {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fastctx-handoff-'));
+  const workspace = canonicalTempWorkspace('fastctx-handoff-');
   try {
     const packageRoot = path.join(workspace, 'node_modules', 'fastctx');
     fs.mkdirSync(packageRoot, { recursive: true });
