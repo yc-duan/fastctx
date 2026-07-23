@@ -359,7 +359,14 @@ fn check_drift(
     };
     let legacy_fastedit =
         settings.is_some_and(|settings| settings.fastedit.enabled) || record.fastedit_enabled;
-    match codex_config::drift(config, &expected).and_then(|mut items| {
+    match codex_config::drift_applied(
+        config,
+        &expected,
+        record.tool_output_token_limit,
+        record.fastctx_token_budget,
+        record.tool_timeout_sec,
+    )
+    .and_then(|mut items| {
         items.extend(receipt_drift(paths, record)?);
         if legacy_fastedit {
             items.push("legacy fastedit configuration".to_string());
@@ -991,8 +998,9 @@ mod tests {
             applied_at_utc: "2026-07-12T00:00:00Z".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             command: crate::paths::display_path(&paths.installed_binary),
-            tier: Tier::Standard,
+            tier: Tier::Compact,
             tool_output_token_limit: 10_000,
+            tool_timeout_sec: None,
             previous_token_limit_present: false,
             previous_token_limit: None,
             fastctx_token_budget: 8_500,
@@ -1038,7 +1046,7 @@ mod tests {
         std::fs::write(&paths.codex_agents, agents).unwrap();
         let expected = ExpectedConfig {
             command: crate::paths::display_path(&paths.installed_binary),
-            tier: Tier::Standard,
+            tier: Tier::Compact,
             tool_budgets: ToolBudgets::default(),
             fastshell_enabled: false,
         };
@@ -1057,8 +1065,9 @@ mod tests {
             applied_at_utc: "2026-07-17T00:00:00Z".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             command: expected.command.clone(),
-            tier: Tier::Standard,
+            tier: Tier::Compact,
             tool_output_token_limit: 10_000,
+            tool_timeout_sec: Some(codex_config::TOOL_TIMEOUT_SECONDS),
             previous_token_limit_present: false,
             previous_token_limit: None,
             fastctx_token_budget: 8_500,

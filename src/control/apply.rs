@@ -377,6 +377,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
             command: expected.command.clone(),
             tier: options.tier,
             tool_output_token_limit: options.tier.host_limit(),
+            tool_timeout_sec: Some(codex_config::TOOL_TIMEOUT_SECONDS),
             previous_token_limit_present,
             previous_token_limit,
             fastctx_token_budget: options.tier.fastctx_budget(),
@@ -885,6 +886,7 @@ fn record_matches(record: &AppliedRecord, context: &RecordMatchContext<'_>) -> b
         && record.fastshell_enabled == expected.fastshell_enabled
         && !record.fastedit_enabled
         && record.tool_output_token_limit == expected.tier.host_limit()
+        && record.tool_timeout_sec == Some(codex_config::TOOL_TIMEOUT_SECONDS)
         && record.fastctx_token_budget == expected.tier.fastctx_budget()
         && record.codex_dir_created == *codex_dir_created
         && record.codex_config.path == crate::paths::display_path(&paths.codex_config)
@@ -1061,6 +1063,7 @@ fn preview_apply(
                         server_args_preview(expected)
                     )),
                     PreviewDetail::kept("[mcp_servers.fastctx] startup_timeout_sec = 120"),
+                    PreviewDetail::kept("[mcp_servers.fastctx] tool_timeout_sec = 300"),
                     PreviewDetail::kept("direct_only_tool_namespaces += \"mcp__fastctx\""),
                 ]);
                 match previous_token_limit {
@@ -1410,7 +1413,7 @@ mod tests {
 
     fn options(executable: std::path::PathBuf) -> ApplyOptions {
         ApplyOptions {
-            tier: Tier::High,
+            tier: Tier::Standard,
             tool_budgets: ToolBudgets {
                 read: ToolBudgetLevel::Inherit,
                 grep: ToolBudgetLevel::Percent50,
@@ -1648,7 +1651,7 @@ mod tests {
         )
         .unwrap();
         let mut changed = options(executable.clone());
-        changed.tier = Tier::ExtraHigh;
+        changed.tier = Tier::High;
         commit_apply(plan_apply(&paths, changed).unwrap(), true).unwrap();
 
         let unapply = plan_unapply(
@@ -1805,7 +1808,7 @@ mod tests {
         )
         .unwrap();
         let mut later_fastctx_change = options(executable.clone());
-        later_fastctx_change.tier = Tier::ExtraHigh;
+        later_fastctx_change.tier = Tier::High;
         commit_apply(plan_apply(&paths, later_fastctx_change).unwrap(), true).unwrap();
 
         let unapply = plan_unapply(

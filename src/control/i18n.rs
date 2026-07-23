@@ -276,9 +276,9 @@ pub(crate) struct Messages {
     pub(crate) label_unchanged: &'static str,
     pub(crate) manual_cleanup_note: &'static str,
     pub(crate) tier_label: &'static str,
+    pub(crate) tier_note_compact: &'static str,
     pub(crate) tier_note_standard: &'static str,
     pub(crate) tier_note_high: &'static str,
-    pub(crate) tier_note_extra_high: &'static str,
     pub(crate) tier_explainer: &'static str,
     pub(crate) tier_definition: &'static str,
     pub(crate) tier_values_note: &'static str,
@@ -352,9 +352,9 @@ impl Messages {
             self.label_unchanged,
             self.manual_cleanup_note,
             self.tier_label,
+            self.tier_note_compact,
             self.tier_note_standard,
             self.tier_note_high,
-            self.tier_note_extra_high,
             self.tier_explainer,
             self.tier_definition,
             self.tier_values_note,
@@ -396,7 +396,7 @@ macro_rules! messages {
      $back_hint:expr, $quit_hint:expr, $narrow:expr,
      $verb_install:expr, $verb_modify:expr, $verb_record:expr, $verb_delete:expr,
      $verb_keep:expr, $unchanged:expr, $manual_cleanup:expr,
-     $tier_label:expr, $tier_standard:expr, $tier_high:expr, $tier_extra:expr,
+     $tier_label:expr, $tier_compact:expr, $tier_standard:expr, $tier_high:expr,
      $tier_explainer:expr, $budgets_note:expr, $adjust_hint:expr, $save_hint:expr,
      $cancel_hint:expr, $tier_definition:expr, $tier_values_note:expr,
      $purpose_binary:expr, $purpose_codex_config:expr, $purpose_agents:expr,
@@ -448,9 +448,9 @@ macro_rules! messages {
             label_unchanged: $unchanged,
             manual_cleanup_note: $manual_cleanup,
             tier_label: $tier_label,
+            tier_note_compact: $tier_compact,
             tier_note_standard: $tier_standard,
             tier_note_high: $tier_high,
-            tier_note_extra_high: $tier_extra,
             tier_explainer: $tier_explainer,
             tier_definition: $tier_definition,
             tier_values_note: $tier_values_note,
@@ -524,8 +524,8 @@ const EN: Messages = messages!(
     "Unchanged",
     "The running binary cannot delete itself; clean it up manually afterwards.",
     "Output tier",
-    "Matches the Codex default. Recommended.",
-    "Raises the global Codex output limit — affects every tool, not just FastCtx.",
+    "Matches the Codex factory default; choose it when context is especially tight or you prefer the smallest per-call output.",
+    "Recommended. Raises the global Codex limit for every tool and gives multi-file reads and batch results the right packing capacity.",
     "Maximum output per tool call; fills the context fastest. Choose only when you truly need it.",
     "Bigger is not better: every tool result permanently occupies the model's context window. The higher the limit, the larger each return and the faster the context fills up. Raise the tier only when a task truly needs to swallow very long content in one go, or you are sure you want the model to read more per tool call.",
     "Per-tool share of the FastCtx budget. glob defaults to 50% — path lists are low-density output.",
@@ -597,8 +597,8 @@ const ZH_CN: Messages = messages!(
     "无变更",
     "运行中的二进制无法删除自身，请稍后手工清理。",
     "输出档位",
-    "与 Codex 默认一致，推荐。",
-    "提高的是 Codex 全局输出上限——影响所有工具，不只 FastCtx。",
+    "与 Codex 出厂默认一致；上下文特别紧张、或偏好最小单次输出时选用。",
+    "推荐档。提高的是 Codex 全局上限，影响所有工具，并为多文件读取与批量结果提供合适的装箱容量。",
     "单次工具输出上限最大，上下文填得最快——仅在确有需要时选用。",
     "更大并不更好：每个工具结果都会永久占据模型的上下文窗口。上限越高，单次返回越大，上下文被填满得越快。只有任务确实需要一口气吞下超长内容、或你确定需要模型一次工具调用读入更多内容时才升档。",
     "单工具占全局预算的比例。glob 默认 50%——路径列表是低密度输出。",
@@ -670,8 +670,8 @@ const ZH_TW: Messages = messages!(
     "無變更",
     "執行中的二進位檔無法刪除自身，請稍後手動清理。",
     "輸出檔位",
-    "與 Codex 預設一致，建議使用。",
-    "提高的是 Codex 全域輸出上限——影響所有工具，不只 FastCtx。",
+    "與 Codex 出廠預設一致；上下文特別吃緊、或偏好最小單次輸出時選用。",
+    "建議使用。提高的是 Codex 全域上限，影響所有工具，並為多檔案讀取與批次結果提供合適的裝箱容量。",
     "單次工具輸出上限最高，上下文填滿得也最快——僅在確有需要時選用。",
     "更大並不更好：每個工具結果都會永久佔據模型的上下文視窗。上限越高，單次回傳越大，上下文被填滿得越快。只有任務確實需要一口氣讀入超長內容、或你確定需要模型一次工具呼叫讀入更多內容時才升檔。",
     "單一工具佔全域預算的比例。glob 預設 50%——路徑清單是低密度輸出。",
@@ -743,8 +743,8 @@ const JA: Messages = messages!(
     "変更なし",
     "実行中のバイナリは自己削除できません。後で手動で削除してください。",
     "出力ティア",
-    "Codex の既定値と同じ。推奨。",
-    "Codex 全体の出力上限を引き上げます——FastCtx だけでなくすべてのツールに影響します。",
+    "Codex の初期値と同じです。コンテキストが特に厳しい場合や、1 回の出力を最小にしたい場合に選びます。",
+    "推奨。Codex 全体の上限をすべてのツールに対して引き上げ、複数ファイル読み取りと一括結果に適切な格納容量を与えます。",
     "1 回のツール呼び出しで返せる量が最大で、コンテキストも最も速く埋まります。本当に必要な場合のみ選択してください。",
     "大きいほど良いわけではありません：ツールの結果はモデルのコンテキストウィンドウを恒久的に占有します。上限が高いほど 1 回の返却が大きくなり、コンテキストが埋まるのも速くなります。非常に長い内容を一度に読み込む必要がある場合、または 1 回のツール呼び出しでより多く読み込ませたいと確信できる場合にのみ上げてください。",
     "ツールごとの全体予算に対する割合。glob の既定は 50%——パス一覧は情報密度の低い出力です。",
@@ -816,8 +816,8 @@ const KO: Messages = messages!(
     "변경 없음",
     "실행 중인 바이너리는 스스로 삭제할 수 없습니다. 나중에 수동으로 정리하세요.",
     "출력 티어",
-    "Codex 기본값과 동일. 권장.",
-    "Codex 전역 출력 상한을 높입니다 — FastCtx뿐 아니라 모든 도구에 영향을 줍니다.",
+    "Codex 공장 기본값과 같습니다. 컨텍스트가 특히 빠듯하거나 호출당 출력을 최소화하려면 선택하세요.",
+    "권장. 모든 도구의 Codex 전역 상한을 높이고 다중 파일 읽기와 일괄 결과에 알맞은 패킹 용량을 제공합니다.",
     "한 번의 도구 호출에서 반환되는 양이 가장 많아 컨텍스트가 가장 빠르게 찹니다. 꼭 필요할 때만 선택하세요.",
     "클수록 좋은 것이 아닙니다: 모든 도구 결과는 모델의 컨텍스트 창을 영구히 차지합니다. 상한이 높을수록 반환이 커지고 컨텍스트가 더 빨리 가득 찹니다. 매우 긴 내용을 한 번에 읽어야 하거나, 한 번의 도구 호출로 더 많이 읽게 하려는 확신이 있을 때만 올리세요.",
     "도구별 전역 예산 비율. glob 기본값은 50% — 경로 목록은 밀도가 낮은 출력입니다.",
@@ -889,8 +889,8 @@ const ES: Messages = messages!(
     "Sin cambios",
     "El binario en ejecución no puede eliminarse a sí mismo; límpielo manualmente después.",
     "Nivel de salida",
-    "Igual al valor predeterminado de Codex. Recomendado.",
-    "Eleva el límite global de salida de Codex: afecta a todas las herramientas, no solo a FastCtx.",
+    "Coincide con el valor de fábrica de Codex; úsalo cuando el contexto sea muy ajustado o prefieras la salida mínima por llamada.",
+    "Recomendado. Eleva el límite global de Codex para todas las herramientas y da la capacidad adecuada a lecturas múltiples y resultados por lotes.",
     "Máxima salida por llamada de herramienta; llena el contexto más rápido. Elígelo solo cuando realmente lo necesites.",
     "Más grande no es mejor: cada resultado ocupa permanentemente la ventana de contexto del modelo. Cuanto mayor sea el límite, mayor será cada retorno y más rápido se llenará el contexto. Suba el nivel solo si una tarea realmente necesita leer contenido muy largo de una vez, o está seguro de que quiere que el modelo lea más por llamada.",
     "Proporción del presupuesto por herramienta. glob usa 50% por defecto: las listas de rutas son salida de baja densidad.",
@@ -962,8 +962,8 @@ const FR: Messages = messages!(
     "Aucun changement",
     "Le binaire en cours d’exécution ne peut pas se supprimer lui-même ; nettoyez-le manuellement ensuite.",
     "Niveau de sortie",
-    "Identique à la valeur par défaut de Codex. Recommandé.",
-    "Augmente la limite de sortie globale de Codex — affecte tous les outils, pas seulement FastCtx.",
+    "Identique à la valeur d’usine de Codex ; choisissez-le si le contexte est très contraint ou si vous préférez la sortie minimale par appel.",
+    "Recommandé. Augmente la limite globale de Codex pour tous les outils et offre la bonne capacité aux lectures multi-fichiers et résultats groupés.",
     "Sortie maximale par appel d’outil ; remplit le contexte le plus vite. À choisir uniquement si vous en avez vraiment besoin.",
     "Plus grand n’est pas meilleur : chaque résultat occupe définitivement la fenêtre de contexte du modèle. Plus la limite est haute, plus chaque retour est volumineux et plus vite le contexte se remplit. N’augmentez le niveau que si une tâche doit vraiment lire un contenu très long d’un coup, ou si vous êtes sûr de vouloir que le modèle lise plus par appel.",
     "Part du budget par outil. glob est à 50 % par défaut — les listes de chemins sont une sortie peu dense.",
@@ -1035,8 +1035,8 @@ const DE: Messages = messages!(
     "Unverändert",
     "Die laufende Binärdatei kann sich nicht selbst löschen; bitte später manuell entfernen.",
     "Ausgabestufe",
-    "Entspricht dem Codex-Standard. Empfohlen.",
-    "Erhöht das globale Codex-Ausgabelimit — betrifft alle Tools, nicht nur FastCtx.",
+    "Entspricht dem Codex-Werksstandard; wählen Sie dies bei besonders knappem Kontext oder für die kleinste Ausgabe pro Aufruf.",
+    "Empfohlen. Erhöht das globale Codex-Limit für alle Tools und bietet die richtige Kapazität für Mehrdatei-Lesevorgänge und Stapelergebnisse.",
     "Maximale Ausgabe pro Tool-Aufruf; füllt den Kontext am schnellsten. Nur wählen, wenn Sie es wirklich brauchen.",
     "Größer ist nicht besser: Jedes Tool-Ergebnis belegt dauerhaft das Kontextfenster des Modells. Je höher das Limit, desto größer jede Rückgabe und desto schneller füllt sich der Kontext. Nur erhöhen, wenn eine Aufgabe sehr lange Inhalte wirklich auf einmal lesen muss oder Sie sicher mehr pro Tool-Aufruf lesen lassen wollen.",
     "Anteil des Budgets pro Tool. glob standardmäßig 50 % — Pfadlisten sind Ausgabe mit geringer Dichte.",
@@ -1108,8 +1108,8 @@ const PT_BR: Messages = messages!(
     "Sem alterações",
     "O binário em execução não pode se excluir; limpe manualmente depois.",
     "Nível de saída",
-    "Igual ao padrão do Codex. Recomendado.",
-    "Aumenta o limite global de saída do Codex — afeta todas as ferramentas, não só o FastCtx.",
+    "Igual ao padrão de fábrica do Codex; escolha quando o contexto estiver muito apertado ou preferir a menor saída por chamada.",
+    "Recomendado. Aumenta o limite global do Codex para todas as ferramentas e dá a capacidade certa para leituras de vários arquivos e resultados em lote.",
     "Máxima saída por chamada de ferramenta; preenche o contexto mais rápido. Escolha apenas quando realmente precisar.",
     "Maior não é melhor: cada resultado ocupa permanentemente a janela de contexto do modelo. Quanto maior o limite, maior cada retorno e mais rápido o contexto enche. Suba o nível apenas se uma tarefa realmente precisar ler conteúdo muito longo de uma vez, ou se você tiver certeza de que quer que o modelo leia mais por chamada.",
     "Fração do orçamento por ferramenta. glob usa 50% por padrão — listas de caminhos são saída de baixa densidade.",
@@ -1181,8 +1181,8 @@ const RU: Messages = messages!(
     "Без изменений",
     "Работающий бинарный файл не может удалить сам себя; удалите его вручную позже.",
     "Уровень вывода",
-    "Совпадает со значением Codex по умолчанию. Рекомендуется.",
-    "Повышает глобальный лимит вывода Codex — влияет на все инструменты, не только FastCtx.",
+    "Совпадает с заводским значением Codex; выбирайте при особенно тесном контексте или если нужен минимальный вывод за вызов.",
+    "Рекомендуется. Повышает глобальный лимит Codex для всех инструментов и даёт подходящую ёмкость чтению нескольких файлов и пакетным результатам.",
     "Максимальный объём вывода за один вызов инструмента; контекст заполняется быстрее всего. Выбирайте только при реальной необходимости.",
     "Больше не значит лучше: каждый результат инструмента навсегда занимает контекстное окно модели. Чем выше лимит, тем больше каждый ответ и тем быстрее заполняется контекст. Повышайте уровень, только если задача действительно требует прочитать очень длинное содержимое за раз, или вы уверены, что модели нужно читать больше за один вызов.",
     "Доля бюджета на инструмент. glob по умолчанию 50 % — списки путей являются выводом низкой плотности.",
@@ -1254,8 +1254,8 @@ const IT: Messages = messages!(
     "Nessuna modifica",
     "Il binario in esecuzione non può eliminarsi da solo; ripulirlo manualmente in seguito.",
     "Livello di output",
-    "Uguale al valore predefinito di Codex. Consigliato.",
-    "Alza il limite globale di output di Codex — riguarda tutti gli strumenti, non solo FastCtx.",
+    "Uguale al valore di fabbrica di Codex; sceglilo quando il contesto è molto ristretto o preferisci l’output minimo per chiamata.",
+    "Consigliato. Alza il limite globale di Codex per tutti gli strumenti e offre la capacità corretta a letture multi-file e risultati in batch.",
     "Output massimo per chiamata dello strumento; riempie il contesto più rapidamente. Sceglilo solo se ne hai davvero bisogno.",
     "Più grande non è meglio: ogni risultato occupa in modo permanente la finestra di contesto del modello. Più alto è il limite, più grande è ogni risposta e più in fretta si riempie il contesto. Alza il livello solo se un'attività deve davvero leggere contenuti molto lunghi in una volta, o sei sicuro di voler far leggere di più al modello per chiamata.",
     "Quota di budget per strumento. glob è al 50% per impostazione predefinita — gli elenchi di percorsi sono output a bassa densità.",
@@ -1327,8 +1327,8 @@ const TR: Messages = messages!(
     "Değişiklik yok",
     "Çalışan ikili dosya kendini silemez; daha sonra elle temizleyin.",
     "Çıktı kademesi",
-    "Codex varsayılanıyla aynı. Önerilir.",
-    "Codex’in genel çıktı sınırını yükseltir — yalnızca FastCtx’i değil tüm araçları etkiler.",
+    "Codex fabrika varsayılanıyla aynıdır; bağlam çok darsa veya çağrı başına en küçük çıktıyı tercih ediyorsanız seçin.",
+    "Önerilir. Tüm araçlar için Codex genel sınırını yükseltir ve çoklu dosya okumaları ile toplu sonuçlara uygun paketleme kapasitesi sağlar.",
     "Araç çağrısı başına en yüksek çıktı; bağlamı en hızlı doldurur. Yalnızca gerçekten gerektiğinde seçin.",
     "Daha büyük daha iyi değildir: her araç sonucu modelin bağlam penceresini kalıcı olarak doldurur. Sınır ne kadar yüksekse her dönüş o kadar büyük olur ve bağlam o kadar hızlı dolar. Kademeyi yalnızca bir görev gerçekten çok uzun içeriği tek seferde okumayı gerektiriyorsa veya modelin bir araç çağrısında daha fazla okumasını istediğinizden eminseniz yükseltin.",
     "Araç başına bütçe payı. glob varsayılanı %50 — yol listeleri düşük yoğunluklu çıktıdır.",
@@ -1400,8 +1400,8 @@ const PL: Messages = messages!(
     "Bez zmian",
     "Uruchomiony plik binarny nie może usunąć sam siebie; usuń go później ręcznie.",
     "Poziom wyjścia",
-    "Zgodny z domyślnym Codex. Zalecany.",
-    "Podnosi globalny limit wyjścia Codex — dotyczy wszystkich narzędzi, nie tylko FastCtx.",
+    "Zgodny z fabrycznym ustawieniem Codex; wybierz przy bardzo ciasnym kontekście lub gdy wolisz najmniejszy wynik na wywołanie.",
+    "Zalecany. Podnosi globalny limit Codex dla wszystkich narzędzi i zapewnia właściwą pojemność odczytom wielu plików oraz wynikom wsadowym.",
     "Maksymalny wynik jednego wywołania narzędzia; najszybciej zapełnia kontekst. Wybieraj tylko wtedy, gdy naprawdę tego potrzebujesz.",
     "Większe nie znaczy lepsze: każdy wynik narzędzia trwale zajmuje okno kontekstu modelu. Im wyższy limit, tym większy każdy zwrot i tym szybciej zapełnia się kontekst. Podnoś poziom tylko wtedy, gdy zadanie naprawdę wymaga wczytania bardzo długiej treści naraz lub masz pewność, że model ma czytać więcej na jedno wywołanie.",
     "Udział budżetu na narzędzie. glob domyślnie 50% — listy ścieżek to wyjście o niskiej gęstości.",
@@ -1473,8 +1473,8 @@ const NL: Messages = messages!(
     "Ongewijzigd",
     "Het draaiende binaire bestand kan zichzelf niet verwijderen; ruim het later handmatig op.",
     "Uitvoerniveau",
-    "Gelijk aan de Codex-standaard. Aanbevolen.",
-    "Verhoogt de globale uitvoerlimiet van Codex — geldt voor alle tools, niet alleen FastCtx.",
+    "Gelijk aan de Codex-fabrieksstandaard; kies dit bij zeer krappe context of voor de kleinste uitvoer per aanroep.",
+    "Aanbevolen. Verhoogt de globale Codex-limiet voor alle tools en biedt de juiste capaciteit voor meerbestandslezingen en batchresultaten.",
     "Maximale uitvoer per toolaanroep; vult de context het snelst. Kies dit alleen als u het echt nodig hebt.",
     "Groter is niet beter: elk toolresultaat bezet permanent het contextvenster van het model. Hoe hoger de limiet, hoe groter elke respons en hoe sneller de context volloopt. Verhoog het niveau alleen als een taak echt zeer lange inhoud in één keer moet lezen, of als u zeker weet dat het model meer per aanroep moet lezen.",
     "Budgetaandeel per tool. glob staat standaard op 50% — padlijsten zijn uitvoer met lage dichtheid.",
@@ -1546,8 +1546,8 @@ const VI: Messages = messages!(
     "Không thay đổi",
     "Tệp nhị phân đang chạy không thể tự xóa; hãy dọn thủ công sau.",
     "Mức đầu ra",
-    "Giống mặc định của Codex. Khuyên dùng.",
-    "Nâng giới hạn đầu ra toàn cục của Codex — ảnh hưởng đến mọi công cụ, không chỉ FastCtx.",
+    "Giống mặc định gốc của Codex; chọn khi ngữ cảnh đặc biệt chật hoặc bạn muốn đầu ra nhỏ nhất cho mỗi lần gọi.",
+    "Khuyên dùng. Nâng giới hạn toàn cục Codex cho mọi công cụ và cung cấp dung lượng đóng gói phù hợp cho đọc nhiều tệp và kết quả theo lô.",
     "Lượng đầu ra mỗi lần gọi công cụ lớn nhất, làm đầy ngữ cảnh nhanh nhất. Chỉ chọn khi thực sự cần.",
     "Lớn hơn không có nghĩa là tốt hơn: mỗi kết quả công cụ chiếm vĩnh viễn cửa sổ ngữ cảnh của mô hình. Giới hạn càng cao, mỗi lần trả về càng lớn và ngữ cảnh càng nhanh đầy. Chỉ nâng mức khi tác vụ thực sự cần đọc nội dung rất dài trong một lần, hoặc bạn chắc chắn muốn mô hình đọc nhiều hơn mỗi lần gọi công cụ.",
     "Tỷ lệ ngân sách cho từng công cụ. glob mặc định 50% — danh sách đường dẫn là đầu ra mật độ thấp.",
@@ -1619,8 +1619,8 @@ const ID: Messages = messages!(
     "Tidak berubah",
     "Biner yang sedang berjalan tidak dapat menghapus dirinya sendiri; bersihkan secara manual nanti.",
     "Tingkat keluaran",
-    "Sama dengan bawaan Codex. Disarankan.",
-    "Menaikkan batas keluaran global Codex — memengaruhi semua alat, bukan hanya FastCtx.",
+    "Sama dengan bawaan pabrik Codex; pilih saat konteks sangat ketat atau Anda menginginkan keluaran terkecil per panggilan.",
+    "Disarankan. Menaikkan batas global Codex untuk semua alat dan memberi kapasitas kemasan yang tepat bagi pembacaan banyak berkas serta hasil batch.",
     "Keluaran maksimum per panggilan alat; paling cepat memenuhi konteks. Pilih hanya jika Anda benar-benar membutuhkannya.",
     "Lebih besar bukan berarti lebih baik: setiap hasil alat menempati jendela konteks model secara permanen. Semakin tinggi batasnya, semakin besar setiap hasil dan semakin cepat konteks terisi. Naikkan tingkat hanya jika tugas benar-benar perlu membaca konten sangat panjang sekaligus, atau Anda yakin ingin model membaca lebih banyak per panggilan alat.",
     "Porsi anggaran per alat. glob bawaannya 50% — daftar path adalah keluaran berkepadatan rendah.",
@@ -1692,8 +1692,8 @@ const UK: Messages = messages!(
     "Без змін",
     "Запущений бінарний файл не може видалити сам себе; приберіть його вручну пізніше.",
     "Рівень виводу",
-    "Збігається зі стандартним значенням Codex. Рекомендовано.",
-    "Підвищує глобальний ліміт виводу Codex — впливає на всі інструменти, не лише FastCtx.",
+    "Збігається із заводським значенням Codex; обирайте за особливо тісного контексту або якщо потрібен мінімальний вивід на виклик.",
+    "Рекомендовано. Підвищує глобальний ліміт Codex для всіх інструментів і дає належну місткість читанню кількох файлів та пакетним результатам.",
     "Максимальний обсяг виводу за один виклик інструмента; контекст заповнюється найшвидше. Обирайте лише за справжньої потреби.",
     "Більше не означає краще: кожен результат інструмента назавжди займає контекстне вікно моделі. Що вищий ліміт, то більша кожна відповідь і то швидше заповнюється контекст. Підвищуйте рівень лише якщо завдання справді потребує прочитати дуже довгий вміст за раз, або ви впевнені, що моделі треба читати більше за один виклик.",
     "Частка бюджету на інструмент. glob типово 50 % — списки шляхів є виводом низької щільності.",
@@ -1757,18 +1757,34 @@ mod tests {
     }
 
     #[test]
-    fn extra_high_note_describes_single_call_risk_without_a_multiplier() {
+    fn high_note_describes_single_call_risk_without_a_multiplier() {
         assert_eq!(
-            Language::En.messages().tier_note_extra_high,
+            Language::En.messages().tier_note_compact,
+            "Matches the Codex factory default; choose it when context is especially tight or you prefer the smallest per-call output."
+        );
+        assert_eq!(
+            Language::En.messages().tier_note_standard,
+            "Recommended. Raises the global Codex limit for every tool and gives multi-file reads and batch results the right packing capacity."
+        );
+        assert_eq!(
+            Language::En.messages().tier_note_high,
             "Maximum output per tool call; fills the context fastest. Choose only when you truly need it."
         );
         assert_eq!(
-            Language::ZhCn.messages().tier_note_extra_high,
+            Language::ZhCn.messages().tier_note_compact,
+            "与 Codex 出厂默认一致；上下文特别紧张、或偏好最小单次输出时选用。"
+        );
+        assert_eq!(
+            Language::ZhCn.messages().tier_note_standard,
+            "推荐档。提高的是 Codex 全局上限，影响所有工具，并为多文件读取与批量结果提供合适的装箱容量。"
+        );
+        assert_eq!(
+            Language::ZhCn.messages().tier_note_high,
             "单次工具输出上限最大，上下文填得最快——仅在确有需要时选用。"
         );
 
         for language in ALL_LANGUAGES {
-            let note = language.messages().tier_note_extra_high;
+            let note = language.messages().tier_note_high;
             assert!(
                 !mentions_multiplier(note),
                 "{} still frames the tier as a multiple of the default: {note}",
@@ -1819,7 +1835,7 @@ mod tests {
         }
     }
 
-    /// Multiplier-language probe: Extra High must not be framed as a multiple of the default tier.
+    /// Multiplier-language probe: High must not be framed as a multiple of the default tier.
     /// Covers 2.5×/2,5×, multiplication signs, a number followed by x, and East Asian multiplier words.
     /// None of these tokens can legitimately appear in the frozen body text, so the false-positive surface is zero.
     fn mentions_multiplier(note: &str) -> bool {

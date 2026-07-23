@@ -1438,6 +1438,7 @@ mod tests {
             command: "fastctx".to_string(),
             tier: Tier::High,
             tool_output_token_limit: 16_000,
+            tool_timeout_sec: None,
             previous_token_limit_present: true,
             previous_token_limit: Some(10_000),
             fastctx_token_budget: 13_600,
@@ -1907,7 +1908,7 @@ mod tests {
         let receipt = receipt();
         app.settings.language = Some("zh-CN".to_string());
         app.language = Language::ZhCn;
-        app.settings.tier = Tier::ExtraHigh;
+        app.settings.tier = Tier::High;
         app.settings.tool_budgets.grep = ToolBudgetLevel::Percent25;
         app.settings.fastshell.enabled = true;
         app.settings.fastshell.job_storage_limit_mib = 4_096;

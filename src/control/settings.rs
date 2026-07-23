@@ -166,67 +166,69 @@ impl Default for UpdateSettings {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum Tier {
-    /// Codex default of 10k with an 8.5k FastCtx budget.
+    /// Codex factory default of 10k with an 8.5k FastCtx budget.
+    Compact,
+    /// Recommended 16k host limit with a 13.6k FastCtx budget.
     #[default]
     Standard,
-    /// Codex 16k with a 13.6k FastCtx budget.
-    High,
     /// Codex 25k with a 21.25k FastCtx budget.
-    ExtraHigh,
+    #[serde(alias = "extra-high")]
+    #[value(alias = "extra-high")]
+    High,
 }
 
 impl Tier {
     /// Host token limit written to Codex.
     pub const fn host_limit(self) -> i64 {
         match self {
-            Self::Standard => 10_000,
-            Self::High => 16_000,
-            Self::ExtraHigh => 25_000,
+            Self::Compact => 10_000,
+            Self::Standard => 16_000,
+            Self::High => 25_000,
         }
     }
 
     /// Global token budget written to the FastCtx environment.
     pub const fn fastctx_budget(self) -> usize {
         match self {
-            Self::Standard => 8_500,
-            Self::High => 13_600,
-            Self::ExtraHigh => 21_250,
+            Self::Compact => 8_500,
+            Self::Standard => 13_600,
+            Self::High => 21_250,
         }
     }
 
     /// Stable English identifier used by configuration and CLI.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Compact => "compact",
             Self::Standard => "standard",
             Self::High => "high",
-            Self::ExtraHigh => "extra-high",
         }
     }
 
     /// Tier proper name shown by the UI and kept in English in every language.
     pub const fn display_name(self) -> &'static str {
         match self {
+            Self::Compact => "Compact",
             Self::Standard => "Standard",
             Self::High => "High",
-            Self::ExtraHigh => "Extra High",
         }
     }
 
     /// Selects the previous tier cyclically.
     pub const fn previous(self) -> Self {
         match self {
-            Self::Standard => Self::ExtraHigh,
+            Self::Compact => Self::High,
+            Self::Standard => Self::Compact,
             Self::High => Self::Standard,
-            Self::ExtraHigh => Self::High,
         }
     }
 
     /// Selects the next tier cyclically.
     pub const fn next(self) -> Self {
         match self {
+            Self::Compact => Self::Standard,
             Self::Standard => Self::High,
-            Self::High => Self::ExtraHigh,
-            Self::ExtraHigh => Self::Standard,
+            Self::High => Self::Compact,
         }
     }
 }
@@ -418,6 +420,9 @@ pub struct AppliedRecord {
     pub tier: Tier,
     /// Host token limit written to Codex.
     pub tool_output_token_limit: i64,
+    /// Explicit Codex MCP tool timeout written by Apply; absent in pre-2026-07-23 receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_timeout_sec: Option<i64>,
     /// Whether the shared host key existed before Apply.
     pub previous_token_limit_present: bool,
     /// Pre-Apply value of the shared host key, present only when the key existed.
@@ -821,9 +826,9 @@ mod tests {
     #[test]
     fn tier_budget_mapping_preserves_fifteen_percent_host_headroom() {
         let expected = [
-            (Tier::Standard, 10_000, 8_500),
-            (Tier::High, 16_000, 13_600),
-            (Tier::ExtraHigh, 25_000, 21_250),
+            (Tier::Compact, 10_000, 8_500),
+            (Tier::Standard, 16_000, 13_600),
+            (Tier::High, 25_000, 21_250),
         ];
 
         for (tier, host_limit, fastctx_budget) in expected {
@@ -989,10 +994,11 @@ mod tests {
             version: "0.1.1".to_string(),
             command: "fastctx".to_string(),
             tier: Tier::High,
-            tool_output_token_limit: 16_000,
+            tool_output_token_limit: 25_000,
+            tool_timeout_sec: Some(300),
             previous_token_limit_present: true,
             previous_token_limit: Some(10_000),
-            fastctx_token_budget: 13_600,
+            fastctx_token_budget: 21_250,
             tool_budgets: super::ToolBudgets::default(),
             fastshell_enabled: true,
             fastedit_enabled: false,
@@ -1004,7 +1010,7 @@ mod tests {
         };
         let mut settings = FastCtxSettings {
             language: Some("zh-CN".to_string()),
-            tier: Tier::ExtraHigh,
+            tier: Tier::High,
             applied: Some(receipt.clone()),
             ..FastCtxSettings::default()
         };
@@ -1072,6 +1078,22 @@ mod tests {
                 .unwrap()
                 .starts_with(b"schema_version = 1\n")
         );
+    }
+
+    #[test]
+    fn retired_extra_high_tier_migrates_by_intent_without_changing_the_schema() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        let original = b"schema_version = 1\ntier = \"extra-high\"\n";
+        std::fs::write(&path, original).unwrap();
+
+        let settings = load_from(&path).unwrap();
+        assert_eq!(settings.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(settings.tier, Tier::High);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let encoded = String::from_utf8(encode(&settings).unwrap()).unwrap();
+        assert!(encoded.contains("tier = \"high\""), "{encoded}");
+        assert!(!encoded.contains("extra-high"), "{encoded}");
     }
 
     #[test]

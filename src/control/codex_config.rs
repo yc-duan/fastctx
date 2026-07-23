@@ -10,6 +10,8 @@ const LEGACY_FASTREAD_NAMESPACE: &str = "mcp__fastread";
 const LEGACY_FASTSHELL_NAMESPACE: &str = "mcp__fastshell";
 const LEGACY_FASTEDIT_NAMESPACE: &str = "mcp__fastedit";
 const STARTUP_TIMEOUT_SECONDS: i64 = 120;
+/// MCP tool timeout written by Apply so 240-second tool waits retain a 60-second return margin.
+pub(crate) const TOOL_TIMEOUT_SECONDS: i64 = 300;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct LegacyRemoval {
@@ -251,6 +253,40 @@ pub fn has_namespace(original: &[u8], namespace: &str) -> bool {
 
 /// Checks each Codex configuration item against the Apply receipt.
 pub fn drift(original: &[u8], expected: &ExpectedConfig) -> Result<Vec<String>, String> {
+    drift_with_limits(
+        original,
+        expected,
+        expected.tier.host_limit(),
+        expected.tier.fastctx_budget(),
+        Some(TOOL_TIMEOUT_SECONDS),
+    )
+}
+
+/// Checks managed configuration against the exact numeric values recorded by an Apply receipt.
+/// Older receipts omit `tool_timeout_sec`; that missing ownership evidence must not create false drift.
+pub fn drift_applied(
+    original: &[u8],
+    expected: &ExpectedConfig,
+    host_limit: i64,
+    fastctx_budget: usize,
+    tool_timeout_sec: Option<i64>,
+) -> Result<Vec<String>, String> {
+    drift_with_limits(
+        original,
+        expected,
+        host_limit,
+        fastctx_budget,
+        tool_timeout_sec,
+    )
+}
+
+fn drift_with_limits(
+    original: &[u8],
+    expected: &ExpectedConfig,
+    host_limit: i64,
+    fastctx_budget: usize,
+    tool_timeout_sec: Option<i64>,
+) -> Result<Vec<String>, String> {
     let document = parse(original)?;
     let mut drift = Vec::new();
     let fastctx = document
@@ -268,12 +304,18 @@ pub fn drift(original: &[u8], expected: &ExpectedConfig) -> Result<Vec<String>, 
             {
                 drift.push("mcp_servers.fastctx.startup_timeout_sec".to_string());
             }
+            if let Some(tool_timeout_sec) = tool_timeout_sec
+                && table.get("tool_timeout_sec").and_then(Item::as_integer)
+                    != Some(tool_timeout_sec)
+            {
+                drift.push("mcp_servers.fastctx.tool_timeout_sec".to_string());
+            }
             let env = table
                 .get("env")
                 .and_then(Item::as_table_like)
                 .ok_or_else(|| "mcp_servers.fastctx.env is missing or not a table".to_string());
             match env {
-                Ok(env) => check_env(env, expected, &mut drift),
+                Ok(env) => check_env(env, expected, fastctx_budget, &mut drift),
                 Err(_) => drift.push("mcp_servers.fastctx.env".to_string()),
             }
             let actual_args = table.get("args").and_then(Item::as_array);
@@ -314,7 +356,7 @@ pub fn drift(original: &[u8], expected: &ExpectedConfig) -> Result<Vec<String>, 
     if document
         .get("tool_output_token_limit")
         .and_then(Item::as_integer)
-        != Some(expected.tier.host_limit())
+        != Some(host_limit)
     {
         drift.push("tool_output_token_limit".to_string());
     }
@@ -446,6 +488,7 @@ fn build_fastctx_table(expected: &ExpectedConfig) -> Table {
     }
     table.insert("args", Item::Value(Value::Array(args)));
     table.insert("startup_timeout_sec", value(STARTUP_TIMEOUT_SECONDS));
+    table.insert("tool_timeout_sec", value(TOOL_TIMEOUT_SECONDS));
     let mut env = Table::new();
     env.insert("FASTCTX_TOKEN_BUDGET", value(global.to_string()));
     insert_tool_budget(
@@ -670,8 +713,12 @@ fn insert_tool_budget(table: &mut Table, key: &str, budget: Option<usize>) {
     }
 }
 
-fn check_env(env: &dyn toml_edit::TableLike, expected: &ExpectedConfig, drift: &mut Vec<String>) {
-    let global = expected.tier.fastctx_budget();
+fn check_env(
+    env: &dyn toml_edit::TableLike,
+    expected: &ExpectedConfig,
+    global: usize,
+    drift: &mut Vec<String>,
+) {
     check_env_value(env, "FASTCTX_TOKEN_BUDGET", Some(global), drift);
     check_env_value(
         env,
@@ -720,13 +767,13 @@ fn check_env_value(
 
 #[cfg(test)]
 mod tests {
-    use super::{ExpectedConfig, apply, drift, unapply};
+    use super::{ExpectedConfig, TOOL_TIMEOUT_SECONDS, apply, drift, drift_applied, unapply};
     use crate::control::settings::{Tier, ToolBudgetLevel, ToolBudgets};
 
     fn expected() -> ExpectedConfig {
         ExpectedConfig {
             command: "C:/Users/test/.fastctx/bin/fastctx.exe".to_string(),
-            tier: Tier::High,
+            tier: Tier::Standard,
             tool_budgets: ToolBudgets {
                 read: ToolBudgetLevel::Inherit,
                 grep: ToolBudgetLevel::Percent50,
@@ -759,6 +806,7 @@ mod tests {
         let fastctx = output.find("mcp__fastctx").unwrap();
         assert!(alpha < omega && omega < fastctx, "{output}");
         assert!(output.contains("tool_output_token_limit = 16000 # keep this comment"));
+        assert!(output.contains("tool_timeout_sec = 300"));
         assert_eq!(edit.conflict.unwrap().current, 10_000);
         assert!(drift(&edit.bytes, &expected()).unwrap().is_empty());
     }
@@ -871,8 +919,48 @@ mod tests {
             assert_eq!(args, expected_args);
             assert_eq!(source.matches("mcp__fastctx").count(), 1);
             assert!(!source.contains("approval_mode"));
+            assert_eq!(
+                document["mcp_servers"]["fastctx"]["tool_timeout_sec"].as_integer(),
+                Some(TOOL_TIMEOUT_SECONDS)
+            );
             assert!(drift(&bytes, &expected).unwrap().is_empty());
         }
+    }
+
+    #[test]
+    fn legacy_receipt_limits_and_missing_tool_timeout_do_not_report_false_drift() {
+        let mut expected = expected();
+        expected.tier = Tier::High;
+        let legacy = concat!(
+            "tool_output_token_limit = 16000\n",
+            "[mcp_servers.fastctx]\n",
+            "command = \"C:/Users/test/.fastctx/bin/fastctx.exe\"\n",
+            "args = [\"serve\"]\n",
+            "startup_timeout_sec = 120\n",
+            "[mcp_servers.fastctx.env]\n",
+            "FASTCTX_TOKEN_BUDGET = \"13600\"\n",
+            "FASTCTX_GREP_TOKEN_BUDGET = \"6800\"\n",
+            "FASTCTX_GLOB_TOKEN_BUDGET = \"3400\"\n",
+            "[features.code_mode]\n",
+            "direct_only_tool_namespaces = [\"mcp__fastctx\"]\n",
+        );
+
+        assert!(
+            drift_applied(legacy.as_bytes(), &expected, 16_000, 13_600, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            drift_applied(
+                legacy.as_bytes(),
+                &expected,
+                16_000,
+                13_600,
+                Some(TOOL_TIMEOUT_SECONDS),
+            )
+            .unwrap(),
+            vec!["mcp_servers.fastctx.tool_timeout_sec"]
+        );
     }
 
     #[test]

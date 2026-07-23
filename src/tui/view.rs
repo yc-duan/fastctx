@@ -653,19 +653,19 @@ fn update_state_summary(app: &App) -> String {
 
 fn tier_note(app: &App, tier: Tier) -> &'static str {
     match tier {
+        Tier::Compact => app.messages().tier_note_compact,
         Tier::Standard => app.messages().tier_note_standard,
         Tier::High => app.messages().tier_note_high,
-        Tier::ExtraHigh => app.messages().tier_note_extra_high,
     }
 }
 
-/// Tier colors use neutral white for Standard, amber caution for High, and vermilion warning for Extra High.
-/// The one-way neutral-to-warning progression signals increasing caution; green is deliberately avoided so upgrades do not read as better.
+/// Compact stays muted, Standard uses neutral emphasis, and High uses amber caution.
+/// Green is deliberately avoided so a larger output limit never reads as inherently better.
 fn tier_color(tier: Tier) -> Color {
     match tier {
+        Tier::Compact => theme::muted(),
         Tier::Standard => theme::accent(),
         Tier::High => theme::warning(),
-        Tier::ExtraHigh => theme::danger(),
     }
 }
 

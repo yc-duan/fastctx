@@ -440,7 +440,7 @@ fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
     std::fs::write(codex.join("AGENTS.md"), agents).unwrap();
 
     let first = isolated_command(temp.path())
-        .args(["apply", "--tier", "high", "--yes"])
+        .args(["apply", "--tier", "standard", "--yes"])
         .output()
         .unwrap();
     assert_success(&first);
@@ -458,6 +458,7 @@ fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
     let applied = std::fs::read_to_string(codex.join("config.toml")).unwrap();
     assert!(applied.contains("[mcp_servers.fastctx]"), "{applied}");
     assert!(applied.contains("mcp__fastctx"), "{applied}");
+    assert!(applied.contains("tool_timeout_sec = 300"), "{applied}");
     assert!(
         applied.contains("tool_output_token_limit = 16000 # user value"),
         "{applied}"
@@ -477,7 +478,7 @@ fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
         .map(|path| std::fs::read(path).unwrap())
         .collect::<Vec<_>>();
     let second = isolated_command(temp.path())
-        .args(["apply", "--tier", "high", "--yes"])
+        .args(["apply", "--tier", "standard", "--yes"])
         .output()
         .unwrap();
     assert_success(&second);
@@ -528,7 +529,7 @@ fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
         "{host_status_text}"
     );
     let host_reapply = isolated_command(temp.path())
-        .args(["apply", "--tier", "high", "--yes"])
+        .args(["apply", "--tier", "standard", "--yes"])
         .output()
         .unwrap();
     assert_success(&host_reapply);
@@ -638,7 +639,9 @@ fn noninteractive_apply_bootstraps_a_fresh_home_without_codex_cli_or_profile() {
     assert!(codex.join("AGENTS.md").is_file());
     let config = std::fs::read_to_string(codex.join("config.toml")).unwrap();
     assert!(config.contains("[mcp_servers.fastctx]"), "{config}");
-    assert!(config.contains("FASTCTX_TOKEN_BUDGET = \"8500\""));
+    assert!(config.contains("tool_output_token_limit = 16000"));
+    assert!(config.contains("tool_timeout_sec = 300"));
+    assert!(config.contains("FASTCTX_TOKEN_BUDGET = \"13600\""));
 
     let mut status = isolated_command(temp.path());
     status.arg("status").env("PATH", &empty_path);
@@ -1107,7 +1110,10 @@ fn a_non_tty_apply_without_yes_refuses_a_shared_limit_conflict_without_writes() 
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Re-run with --yes"));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("Re-run with --yes"), "{error}");
+    let preview = String::from_utf8_lossy(&output.stdout);
+    assert!(preview.contains("25000"), "{preview}");
     assert_eq!(std::fs::read(codex.join("config.toml")).unwrap(), config);
     assert!(!temp.path().join(".fastctx").exists());
 }
