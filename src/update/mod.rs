@@ -4,6 +4,7 @@ mod cache;
 mod check;
 mod helper;
 mod model;
+mod npm_invocation;
 
 pub(crate) use check::{last_check_status, spawn_update_check};
 pub(crate) use helper::{

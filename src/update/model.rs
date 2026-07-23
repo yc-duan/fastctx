@@ -37,6 +37,16 @@ pub(crate) enum NpmMode {
     Exec,
 }
 
+/// Structure used to invoke the npm installation that launched FastCtx.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum NpmDriver {
+    /// Run the npm CLI JavaScript entry point with the recorded Node.js executable.
+    NodeScript,
+    /// Run a native executable or executable version-manager shim directly.
+    Executable,
+}
+
 /// Provenance supplied by the npm launcher.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct NpmProvenance {
@@ -44,9 +54,11 @@ pub(crate) struct NpmProvenance {
     pub(crate) package: String,
     /// Whether the package is global or ephemeral.
     pub(crate) mode: NpmMode,
-    /// Node.js executable used to run npm without shell interpolation.
+    /// Node.js executable that launched FastCtx and runs `node-script` npm drivers.
     pub(crate) node: PathBuf,
-    /// npm CLI JavaScript entry point.
+    /// Whether npm is a Node.js entry point or a directly executable driver.
+    pub(crate) driver: NpmDriver,
+    /// npm CLI JavaScript entry point or directly executable driver path.
     pub(crate) npm_cli: PathBuf,
     /// Launcher entry point to execute after a global update.
     pub(crate) launcher: PathBuf,

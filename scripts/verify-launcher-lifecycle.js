@@ -198,12 +198,281 @@ async function assertMcpTools(args, expectedTools) {
 }
 
 function linkOrCopyExecutable(source, target) {
+  if (process.platform !== 'win32') {
+    fs.copyFileSync(source, target);
+    fs.chmodSync(target, 0o755);
+    return;
+  }
   try {
     fs.linkSync(source, target);
   } catch (_) {
     fs.copyFileSync(source, target);
   }
-  if (process.platform !== 'win32') fs.chmodSync(target, 0o755);
+}
+
+function assertNpmInvocationProvenanceAcrossLayouts() {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'fastctx-npm-driver-'));
+  try {
+    const targets = {
+      'win32-x64': ['@fastctx/win32-x64', 'fastctx.exe'],
+      'linux-x64': ['@fastctx/linux-x64', 'fastctx'],
+      'darwin-x64': ['@fastctx/darwin-x64', 'fastctx'],
+      'darwin-arm64': ['@fastctx/darwin-arm64', 'fastctx'],
+    };
+    const target = targets[`${process.platform}-${process.arch}`];
+    if (!target) return;
+    const inputLauncher = fs.readFileSync(launcher, 'utf8');
+    const mainLauncher = inputLauncher.includes("require('fastctx/launcher.js')")
+      ? require.resolve('fastctx/launcher.js', { paths: [path.dirname(launcher)] })
+      : launcher;
+    const detachedNode = path.join(
+      workspace,
+      'detached-node',
+      'versions',
+      '22.0.0',
+      'bin',
+      process.platform === 'win32' ? 'node.exe' : 'node',
+    );
+    fs.mkdirSync(path.dirname(detachedNode), { recursive: true });
+    linkOrCopyExecutable(process.execPath, detachedNode);
+    const emptyPath = path.join(workspace, 'empty-path');
+    fs.mkdirSync(emptyPath);
+
+    const prepareLauncher = (nodeModules) => {
+      const fixtureLauncher = path.join(nodeModules, 'fastctx', 'launcher.js');
+      fs.mkdirSync(path.dirname(fixtureLauncher), { recursive: true });
+      fs.copyFileSync(mainLauncher, fixtureLauncher);
+      const platformRoot = path.join(nodeModules, target[0]);
+      fs.mkdirSync(path.join(platformRoot, 'bin'), { recursive: true });
+      fs.writeFileSync(
+        path.join(platformRoot, 'package.json'),
+        JSON.stringify({ name: target[0], version: '0.0.0' }),
+      );
+      linkOrCopyExecutable(process.execPath, path.join(platformRoot, 'bin', target[1]));
+      return fixtureLauncher;
+    };
+
+    const isolatedLauncher = prepareLauncher(path.join(workspace, 'isolated', 'node_modules'));
+    const captureBootstrap = path.join(workspace, 'capture-provenance.js');
+    fs.writeFileSync(
+      captureBootstrap,
+      `'use strict';
+if (process.env.FASTCTX_NPM_LAUNCHER_VERSION) {
+  require('node:fs').writeFileSync(
+    process.env.FASTCTX_PROVENANCE_CAPTURE,
+    JSON.stringify({
+      version: process.env.FASTCTX_NPM_LAUNCHER_VERSION,
+      package: process.env.FASTCTX_NPM_PACKAGE,
+      mode: process.env.FASTCTX_NPM_MODE,
+      node: process.env.FASTCTX_NODE_EXECUTABLE,
+      driver: process.env.FASTCTX_NPM_DRIVER,
+      npmCli: process.env.FASTCTX_NPM_CLI,
+      launcher: process.env.FASTCTX_NPM_LAUNCHER,
+      launcherPid: process.env.FASTCTX_NPM_LAUNCHER_PID,
+      handoff: process.env.FASTCTX_NPM_HANDOFF,
+    }),
+  );
+  process.exit(0);
+}
+`,
+    );
+    let captureSequence = 0;
+    const capture = (label, fixtureLauncher, overrides = {}, spawnOptions = {}) => {
+      captureSequence += 1;
+      const capturePath = path.join(workspace, `provenance-${captureSequence}.json`);
+      const outerBootstrap = `
+Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+process.argv = [process.execPath, ${JSON.stringify(fixtureLauncher)}];
+require(${JSON.stringify(fixtureLauncher)});
+`;
+      const environment = {
+        ...process.env,
+        HOME: path.join(workspace, 'home'),
+        USERPROFILE: path.join(workspace, 'home'),
+        PATH: emptyPath,
+        NODE_OPTIONS: `--require="${captureBootstrap.replace(/\\/g, '/')}"`,
+        FASTCTX_PROVENANCE_CAPTURE: capturePath,
+        ...overrides,
+      };
+      for (const name of [
+        'FASTCTX_NPM_LAUNCHER_VERSION',
+        'FASTCTX_NPM_PACKAGE',
+        'FASTCTX_NPM_MODE',
+        'FASTCTX_NODE_EXECUTABLE',
+        'FASTCTX_NPM_DRIVER',
+        'FASTCTX_NPM_CLI',
+        'FASTCTX_NPM_LAUNCHER',
+        'FASTCTX_NPM_LAUNCHER_PID',
+        'FASTCTX_NPM_HANDOFF',
+      ]) {
+        delete environment[name];
+      }
+      if (!Object.prototype.hasOwnProperty.call(overrides, 'npm_execpath')) {
+        delete environment.npm_execpath;
+      }
+      const result = spawnSync(detachedNode, ['-e', outerBootstrap], {
+        encoding: 'utf8',
+        env: environment,
+        timeout: 10000,
+        windowsHide: true,
+        ...spawnOptions,
+      });
+      if (result.status !== 0) {
+        throw new Error(`${label} fixture exited ${result.status}: ${result.stderr || result.error || ''}`);
+      }
+      const captured = JSON.parse(fs.readFileSync(capturePath, 'utf8'));
+      for (const name of ['version', 'package', 'mode', 'node', 'launcher', 'launcherPid', 'handoff']) {
+        if (!captured[name]) throw new Error(`${label} omitted ${name}: ${JSON.stringify(captured)}`);
+      }
+      if (captured.package !== 'fastctx' || captured.mode !== 'global') {
+        throw new Error(`${label} reported the wrong package or mode: ${JSON.stringify(captured)}`);
+      }
+      return captured;
+    };
+
+    const driverDirectory = path.join(workspace, 'npm-driver', 'bin');
+    fs.mkdirSync(driverDirectory, { recursive: true });
+    const npmDriver = path.join(
+      driverDirectory,
+      process.platform === 'win32' ? 'npm.exe' : 'npm',
+    );
+    linkOrCopyExecutable(process.execPath, npmDriver);
+    const captured = capture('detached executable', isolatedLauncher, { PATH: driverDirectory });
+    if (
+      captured.version !== '2' ||
+      captured.driver !== 'executable' ||
+      path.resolve(captured.npmCli) !== path.resolve(npmDriver)
+    ) {
+      throw new Error(
+        `launcher did not discover the detached npm executable from PATH: ${JSON.stringify(captured)}`,
+      );
+    }
+
+    const explicitNpmCli = path.join(workspace, 'explicit', 'npm-cli.js');
+    fs.mkdirSync(path.dirname(explicitNpmCli), { recursive: true });
+    fs.writeFileSync(explicitNpmCli, 'explicit npm fixture');
+    const explicit = capture('npm_execpath', isolatedLauncher, {
+      PATH: driverDirectory,
+      npm_execpath: explicitNpmCli,
+    });
+    if (
+      explicit.version !== '1' ||
+      explicit.driver !== undefined ||
+      path.resolve(explicit.npmCli) !== path.resolve(explicitNpmCli)
+    ) {
+      throw new Error(`npm_execpath did not win provenance priority: ${JSON.stringify(explicit)}`);
+    }
+
+    const prefixLayouts = [
+      [
+        'platform global prefix',
+        process.platform === 'win32'
+          ? path.join(workspace, 'platform-prefix', 'node_modules')
+          : path.join(workspace, 'platform-prefix', 'lib', 'node_modules'),
+      ],
+      [
+        'Homebrew decoupled prefix',
+        path.join(workspace, 'homebrew-prefix', 'lib', 'node_modules'),
+      ],
+    ];
+    for (const [label, prefixNodeModules] of prefixLayouts) {
+      const prefixLauncher = prepareLauncher(prefixNodeModules);
+      const prefixNpmCli = path.join(prefixNodeModules, 'npm', 'bin', 'npm-cli.js');
+      fs.mkdirSync(path.dirname(prefixNpmCli), { recursive: true });
+      fs.writeFileSync(prefixNpmCli, 'prefix npm fixture');
+      const prefixReceipt = capture(label, prefixLauncher);
+      if (
+        prefixReceipt.version !== '1' ||
+        prefixReceipt.driver !== undefined ||
+        path.resolve(prefixReceipt.npmCli) !== path.resolve(prefixNpmCli)
+      ) {
+        throw new Error(`${label} did not discover prefix npm CLI: ${JSON.stringify(prefixReceipt)}`);
+      }
+    }
+
+    if (process.platform === 'win32') {
+      const cmdPrefix = path.join(workspace, 'cmd-prefix');
+      fs.mkdirSync(cmdPrefix, { recursive: true });
+      fs.writeFileSync(path.join(cmdPrefix, 'npm.cmd'), '@echo off\r\n');
+      const cmdNpmCli = path.join(cmdPrefix, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+      fs.mkdirSync(path.dirname(cmdNpmCli), { recursive: true });
+      fs.writeFileSync(cmdNpmCli, 'cmd npm fixture');
+      const cmdReceipt = capture('Windows npm.cmd', isolatedLauncher, { PATH: cmdPrefix });
+      if (
+        cmdReceipt.version !== '1' ||
+        cmdReceipt.driver !== undefined ||
+        path.resolve(cmdReceipt.npmCli) !== path.resolve(cmdNpmCli)
+      ) {
+        throw new Error(`launcher did not convert npm.cmd to npm CLI: ${JSON.stringify(cmdReceipt)}`);
+      }
+    } else {
+      const symlinkPrefix = path.join(workspace, 'symlink-prefix');
+      const symlinkBin = path.join(symlinkPrefix, 'bin');
+      const symlinkNpmCli = path.join(symlinkPrefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+      fs.mkdirSync(symlinkBin, { recursive: true });
+      fs.mkdirSync(path.dirname(symlinkNpmCli), { recursive: true });
+      fs.writeFileSync(symlinkNpmCli, 'symlink npm fixture');
+      fs.symlinkSync(symlinkNpmCli, path.join(symlinkBin, 'npm'));
+      const symlinkReceipt = capture('Unix npm symlink', isolatedLauncher, { PATH: symlinkBin });
+      if (
+        symlinkReceipt.version !== '1' ||
+        symlinkReceipt.driver !== undefined ||
+        path.resolve(symlinkReceipt.npmCli) !== path.resolve(symlinkNpmCli)
+      ) {
+        throw new Error(`launcher did not resolve the npm symlink target: ${JSON.stringify(symlinkReceipt)}`);
+      }
+
+      const shimPrefix = path.join(workspace, 'volta-style-shim');
+      const shimBin = path.join(shimPrefix, 'bin');
+      const shimTarget = path.join(shimPrefix, 'volta-shim');
+      const shimCommand = path.join(shimBin, 'npm');
+      fs.mkdirSync(shimBin, { recursive: true });
+      linkOrCopyExecutable(process.execPath, shimTarget);
+      fs.symlinkSync(shimTarget, shimCommand);
+      const shimReceipt = capture('argv0-sensitive Unix npm shim', isolatedLauncher, {
+        PATH: shimBin,
+      });
+      if (
+        shimReceipt.version !== '2' ||
+        shimReceipt.driver !== 'executable' ||
+        path.resolve(shimReceipt.npmCli) !== path.resolve(shimCommand)
+      ) {
+        throw new Error(`launcher did not preserve the npm shim invocation path: ${JSON.stringify(shimReceipt)}`);
+      }
+    }
+
+    const unavailable = capture('unavailable npm', isolatedLauncher);
+    if (
+      unavailable.version !== '2' ||
+      unavailable.driver !== 'unavailable' ||
+      unavailable.npmCli !== ''
+    ) {
+      throw new Error(`launcher did not report npm as unavailable: ${JSON.stringify(unavailable)}`);
+    }
+
+    // An empty PATH segment must not fall back to the working directory: a planted
+    // npm there must never be discovered as an update driver.
+    const poisonedWorkingDirectory = path.join(workspace, 'poisoned-cwd');
+    fs.mkdirSync(poisonedWorkingDirectory, { recursive: true });
+    linkOrCopyExecutable(
+      process.execPath,
+      path.join(poisonedWorkingDirectory, process.platform === 'win32' ? 'npm.exe' : 'npm'),
+    );
+    const emptySegment = capture(
+      'empty PATH segment',
+      isolatedLauncher,
+      { PATH: path.delimiter },
+      { cwd: poisonedWorkingDirectory },
+    );
+    if (emptySegment.driver !== 'unavailable' || emptySegment.npmCli !== '') {
+      throw new Error(
+        `launcher resolved npm from the working directory through an empty PATH segment: ${JSON.stringify(emptySegment)}`,
+      );
+    }
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 }
 
 function assertMissingPlatformPackageUsesStableCopyOrGivesAnActionableExit() {
@@ -331,6 +600,7 @@ function assertUpdateHandoffKeepsLauncherAlive() {
       'FASTCTX_NPM_PACKAGE',
       'FASTCTX_NPM_MODE',
       'FASTCTX_NODE_EXECUTABLE',
+      'FASTCTX_NPM_DRIVER',
       'FASTCTX_NPM_CLI',
       'FASTCTX_NPM_LAUNCHER',
       'FASTCTX_NPM_LAUNCHER_PID',
@@ -371,7 +641,7 @@ function assertUpdateHandoffKeepsLauncherAlive() {
 const fs = require('node:fs');
 setTimeout(() => {
   fs.writeFileSync(process.argv[2], JSON.stringify({
-    schema_version: 1,
+    schema_version: 2,
     state: 'done',
     helper_pid: process.pid,
     helper_executable: process.argv[3],
@@ -401,6 +671,9 @@ if (process.env.FASTCTX_NPM_LAUNCHER_VERSION === '1') {
   ]) {
     if (!process.env[name]) throw new Error('launcher omitted ' + name);
   }
+  if (process.env.FASTCTX_NPM_DRIVER) {
+    throw new Error('v1 provenance unexpectedly included a driver');
+  }
   if (process.env.FASTCTX_NPM_MODE !== 'exec') {
     throw new Error('expected exec provenance');
   }
@@ -426,7 +699,7 @@ if (process.env.FASTCTX_NPM_LAUNCHER_VERSION === '1') {
     helperPid = helper.pid;
   }
   fs.writeFileSync(handoff, JSON.stringify({
-    schema_version: 1,
+    schema_version: process.env.FASTCTX_HANDOFF_FIXTURE_BEHAVIOR === 'wrong-schema' ? 1 : 2,
     state: 'running',
     helper_pid: helperPid,
     helper_executable: helperExecutable,
@@ -442,8 +715,10 @@ process.argv = [process.execPath, ${JSON.stringify(fixtureLauncher)}];
 require(${JSON.stringify(fixtureLauncher)});
 `;
 
-    for (const behavior of ['success', 'failure', 'missing']) {
-      const helperExecutable = path.join(workspace, `helper-${behavior}`);
+    for (const behavior of ['success', 'failure', 'missing', 'tampered-path', 'wrong-schema']) {
+      const helperExecutable = behavior === 'tampered-path'
+        ? path.join(workspace, `helper-${behavior}`)
+        : path.join(fixtureHome, '.fastctx', 'update', `helper-${behavior}`);
       const started = Date.now();
       const result = spawnSync(
         process.execPath,
@@ -475,8 +750,12 @@ require(${JSON.stringify(fixtureLauncher)});
       if (behavior === 'success' && elapsed < 300) {
         throw new Error(`npm launcher returned before the updater session ended (${elapsed} ms)`);
       }
-      if (fs.existsSync(helperExecutable)) {
-        throw new Error(`${behavior} update helper was not cleaned up`);
+      const helperExists = fs.existsSync(helperExecutable);
+      const rejectedBeforeCleanup = behavior === 'tampered-path' || behavior === 'wrong-schema';
+      if (helperExists !== rejectedBeforeCleanup) {
+        throw new Error(
+          `${behavior} update helper cleanup mismatch: exists=${helperExists}`,
+        );
       }
     }
   } finally {
@@ -485,7 +764,13 @@ require(${JSON.stringify(fixtureLauncher)});
 }
 
 async function main() {
+  if (process.argv[3] === '--provenance-only') {
+    assertNpmInvocationProvenanceAcrossLayouts();
+    console.log(`npm provenance layouts verified on ${process.platform}-${process.arch}`);
+    return;
+  }
   assertMissingPlatformPackageUsesStableCopyOrGivesAnActionableExit();
+  assertNpmInvocationProvenanceAcrossLayouts();
   assertUpdateHandoffKeepsLauncherAlive();
   const invalid = spawnSync(process.execPath, [launcher, '__invalid_subcommand__'], {
     encoding: 'utf8',
@@ -511,6 +796,9 @@ async function main() {
   await assertHardParentDeathClosesNativeChild();
   await assertSignalIsForwarded('SIGINT');
   await assertSignalIsForwarded('SIGTERM');
+  console.log(
+    `launcher lifecycle verified on ${process.platform}-${process.arch}: provenance, handoff, MCP 4/9, EOF, parent death, signals`,
+  );
 }
 
 main().catch((error) => {

@@ -2,15 +2,16 @@
 
 use super::cache::{self, CachedOutcome, CheckStatus};
 use super::model::{
-    CheckFailure, CheckFailureKind, NPMMIRROR_REGISTRY, NpmDiscovery, NpmMode, NpmProvenance,
-    NpmRegistryProbe, NpmVersionAuthority, OFFICIAL_NPM_REGISTRY, StartupUpdate, UpdatePlan,
+    CheckFailure, CheckFailureKind, NPMMIRROR_REGISTRY, NpmDiscovery, NpmDriver, NpmMode,
+    NpmProvenance, NpmRegistryProbe, NpmVersionAuthority, OFFICIAL_NPM_REGISTRY, StartupUpdate,
+    UpdatePlan,
 };
 use crate::control::paths::ControlPaths;
 use crate::control::settings::{self, UpdateSource};
 use semver::Version;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,7 @@ const NPM_MARKER_ENV: &str = "FASTCTX_NPM_LAUNCHER_VERSION";
 const NPM_PACKAGE_ENV: &str = "FASTCTX_NPM_PACKAGE";
 const NPM_MODE_ENV: &str = "FASTCTX_NPM_MODE";
 const NODE_ENV: &str = "FASTCTX_NODE_EXECUTABLE";
+const NPM_DRIVER_ENV: &str = "FASTCTX_NPM_DRIVER";
 const NPM_CLI_ENV: &str = "FASTCTX_NPM_CLI";
 const NPM_LAUNCHER_ENV: &str = "FASTCTX_NPM_LAUNCHER";
 const NPM_LAUNCHER_PID_ENV: &str = "FASTCTX_NPM_LAUNCHER_PID";
@@ -42,6 +44,12 @@ enum InstallChannel {
     Npm(NpmProvenance),
     GithubRelease,
     Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NpmReceiptVersion {
+    V1,
+    V2,
 }
 
 #[derive(Clone, Debug)]
@@ -909,8 +917,8 @@ fn detect_install_channel(
     get_env: &dyn Fn(&str) -> Option<OsString>,
     is_github_release_build: bool,
 ) -> Result<InstallChannel, String> {
-    if get_env(NPM_MARKER_ENV).as_deref() == Some(OsStr::new("1")) {
-        return npm_provenance(paths, get_env).map(InstallChannel::Npm);
+    if let Some(receipt_version) = npm_receipt_version(get_env)? {
+        return npm_provenance(paths, get_env, receipt_version).map(InstallChannel::Npm);
     }
     // A regular path is not provenance: custom Cargo roots look identical to downloaded files.
     // Only the release workflow's embedded marker enables direct self-update (2026-07-17).
@@ -939,9 +947,28 @@ fn detect_install_channel(
     Ok(InstallChannel::GithubRelease)
 }
 
+fn npm_receipt_version(
+    get_env: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<Option<NpmReceiptVersion>, String> {
+    let Some(value) = get_env(NPM_MARKER_ENV).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| "the npm launcher reported a non-UTF-8 receipt version".to_string())?;
+    match value.as_str() {
+        "1" => Ok(Some(NpmReceiptVersion::V1)),
+        "2" => Ok(Some(NpmReceiptVersion::V2)),
+        _ => Err(format!(
+            "the npm launcher reported unsupported receipt version {value:?}; reinstall FastCtx with `npm install --global fastctx --registry=https://registry.npmjs.org/`"
+        )),
+    }
+}
+
 fn npm_provenance(
     paths: &ControlPaths,
     get_env: &dyn Fn(&str) -> Option<OsString>,
+    receipt_version: NpmReceiptVersion,
 ) -> Result<NpmProvenance, String> {
     let package = required_utf8_env(get_env, NPM_PACKAGE_ENV)?;
     if !matches!(package.as_str(), "fastctx" | "codex-fastctx") {
@@ -959,7 +986,6 @@ fn npm_provenance(
         }
     };
     let node = required_regular_path(get_env, NODE_ENV)?;
-    let npm_cli = required_regular_path(get_env, NPM_CLI_ENV)?;
     let launcher = required_regular_path(get_env, NPM_LAUNCHER_ENV)?;
     let launcher_pid = required_utf8_env(get_env, NPM_LAUNCHER_PID_ENV)?
         .parse::<u32>()
@@ -978,15 +1004,64 @@ fn npm_provenance(
     if !handoff_file.is_absolute() || handoff_file != expected_handoff {
         return Err("the npm launcher reported an invalid update handoff path".to_string());
     }
+    let driver = match receipt_version {
+        NpmReceiptVersion::V1 => NpmDriver::NodeScript,
+        NpmReceiptVersion::V2 => match required_utf8_env(get_env, NPM_DRIVER_ENV)?.as_str() {
+            "node-script" => NpmDriver::NodeScript,
+            "executable" => NpmDriver::Executable,
+            "unavailable" => {
+                return Err(format!(
+                    "FastCtx was launched from npm, but no usable npm command was found for Node.js at {}. Run `npm --version` in this terminal; if it fails, repair Node.js/npm. Then reinstall FastCtx with `npm install --global {package} --registry=https://registry.npmjs.org/`",
+                    crate::paths::display_path(&node)
+                ));
+            }
+            value => {
+                return Err(format!(
+                    "the npm launcher reported unsupported npm driver {value:?}"
+                ));
+            }
+        },
+    };
+    let npm_cli = required_regular_path(get_env, NPM_CLI_ENV)?;
+    validate_npm_driver_path(driver, &npm_cli)?;
     Ok(NpmProvenance {
         package,
         mode,
         node,
+        driver,
         npm_cli,
         launcher,
         launcher_pid,
         handoff_file,
     })
+}
+
+fn validate_npm_driver_path(driver: NpmDriver, path: &Path) -> Result<(), String> {
+    if driver == NpmDriver::NodeScript
+        && !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "npm-cli.js" | "npm-cli.cjs" | "npm-cli.mjs"
+                )
+            })
+    {
+        return Err("the npm launcher reported a non-npm Node.js entry point".to_string());
+    }
+    if driver == NpmDriver::Executable
+        && cfg!(windows)
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                matches!(extension.to_ascii_lowercase().as_str(), "cmd" | "bat")
+            })
+    {
+        return Err("the npm launcher reported a shell script as an executable driver".to_string());
+    }
+    Ok(())
 }
 
 fn required_utf8_env(
@@ -1059,9 +1134,8 @@ fn same_existing_path(left: &Path, right: &Path) -> bool {
 }
 
 fn effective_npm_registry(provenance: &NpmProvenance) -> Result<String, CheckFailure> {
-    let mut command = crate::process_policy::noninteractive_command(&provenance.node);
+    let mut command = super::npm_invocation::noninteractive_command(provenance);
     command
-        .arg(&provenance.npm_cli)
         .args(["config", "get", "registry"])
         .env("NO_UPDATE_NOTIFIER", "1")
         .env("NPM_CONFIG_UPDATE_NOTIFIER", "false")
@@ -1072,7 +1146,7 @@ fn effective_npm_registry(provenance: &NpmProvenance) -> Result<String, CheckFai
         command.spawn().map_err(|error| {
             transient(format!(
                 "cannot start npm through {}: {error}",
-                crate::paths::display_path(&provenance.node)
+                crate::paths::display_path(super::npm_invocation::program(provenance))
             ))
         })?,
         NPM_QUERY_TIMEOUT,
@@ -1165,9 +1239,8 @@ fn run_npm_view(
     registry: &str,
     cache: &Path,
 ) -> Result<Option<Version>, CheckFailure> {
-    let mut command = crate::process_policy::noninteractive_command(&provenance.node);
+    let mut command = super::npm_invocation::noninteractive_command(provenance);
     command
-        .arg(&provenance.npm_cli)
         .args(npm_view_arguments(package_spec, registry, cache))
         .env("NO_UPDATE_NOTIFIER", "1")
         .env("NPM_CONFIG_UPDATE_NOTIFIER", "false")
@@ -1180,7 +1253,7 @@ fn run_npm_view(
         command.spawn().map_err(|error| {
             transient(format!(
                 "cannot start npm through {}: {error}",
-                crate::paths::display_path(&provenance.node)
+                crate::paths::display_path(super::npm_invocation::program(provenance))
             ))
         })?,
         NPM_QUERY_TIMEOUT,
@@ -1464,20 +1537,22 @@ fn one_line(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CacheResolution, InstallChannel, NODE_ENV, NPM_CLI_ENV, NPM_HANDOFF_ENV, NPM_LAUNCHER_ENV,
-        NPM_LAUNCHER_PID_ENV, NPM_MARKER_ENV, NPM_MODE_ENV, NPM_PACKAGE_ENV, NpmCheckContext,
-        NpmProbeBackend, RegistryCandidate, RegistryLatest, authoritative_npm_target,
-        automatic_check_disabled, build_npm_outcome, detect_install_channel, github_update_plan,
-        normalize_registry_url, npm_view_arguments, parse_latest_redirect, parse_npm_latest,
-        probe_npm_channel_with_backend, registry_candidates, resolve_with_cache,
-        run_update_check_if_enabled, select_ready_candidate, transient,
+        CacheResolution, InstallChannel, NODE_ENV, NPM_CLI_ENV, NPM_DRIVER_ENV, NPM_HANDOFF_ENV,
+        NPM_LAUNCHER_ENV, NPM_LAUNCHER_PID_ENV, NPM_MARKER_ENV, NPM_MODE_ENV, NPM_PACKAGE_ENV,
+        NpmCheckContext, NpmProbeBackend, RegistryCandidate, RegistryLatest,
+        authoritative_npm_target, automatic_check_disabled, build_npm_outcome,
+        detect_install_channel, github_update_plan, normalize_registry_url, npm_view_arguments,
+        parse_latest_redirect, parse_npm_latest, probe_npm_channel_with_backend,
+        registry_candidates, resolve_with_cache, run_update_check_if_enabled,
+        select_ready_candidate, transient,
     };
     use crate::control::paths::ControlPaths;
     use crate::control::settings::UpdateSource;
     use crate::update::cache::{self, CachedOutcome, SUCCESS_TTL};
     use crate::update::model::{
-        CheckFailure, CheckFailureKind, NPMMIRROR_REGISTRY, NpmDiscovery, NpmMode, NpmProvenance,
-        NpmRegistryProbe, NpmVersionAuthority, OFFICIAL_NPM_REGISTRY, StartupUpdate,
+        CheckFailure, CheckFailureKind, NPMMIRROR_REGISTRY, NpmDiscovery, NpmDriver, NpmMode,
+        NpmProvenance, NpmRegistryProbe, NpmVersionAuthority, OFFICIAL_NPM_REGISTRY, StartupUpdate,
+        UpdatePlan,
     };
     use semver::Version;
     use std::collections::BTreeMap;
@@ -1489,6 +1564,7 @@ mod tests {
             package: "fastctx".to_string(),
             mode: NpmMode::Global,
             node: "node".into(),
+            driver: NpmDriver::NodeScript,
             npm_cli: "npm-cli.js".into(),
             launcher: "launcher.js".into(),
             launcher_pid: 42,
@@ -1576,14 +1652,11 @@ mod tests {
             &self,
             registry: &str,
             package: &str,
-            target_version: &str,
+            _target_version: &str,
         ) -> Result<bool, CheckFailure> {
             let Some(state) = self.registries.get(registry) else {
                 return Err(transient(format!("simulated registry outage: {registry}")));
             };
-            if state.latest.as_ref().map(ToString::to_string).as_deref() != Some(target_version) {
-                return Ok(false);
-            }
             if package == "fastctx" {
                 Ok(state.main_package_ready)
             } else if package == self.platform_package {
@@ -1636,6 +1709,7 @@ mod tests {
         };
         assert_eq!(provenance.package, "codex-fastctx");
         assert_eq!(provenance.mode, NpmMode::Exec);
+        assert_eq!(provenance.driver, NpmDriver::NodeScript);
         assert_eq!(provenance.launcher_pid, launcher_pid);
         assert_eq!(provenance.handoff_file, handoff);
     }
@@ -1696,6 +1770,17 @@ mod tests {
             );
         }
 
+        // issue #2: the v0.1.1 launcher shipped marker=1 with an empty FASTCTX_NPM_CLI when it
+        // could not find npm beside Node; the empty receipt must be rejected, never trusted.
+        let mut environment = valid.clone();
+        environment.insert(NPM_CLI_ENV, OsString::new());
+        assert!(
+            detect(&environment)
+                .unwrap_err()
+                .contains("did not provide FASTCTX_NPM_CLI"),
+            "empty FASTCTX_NPM_CLI must be rejected like the original issue #2 receipt"
+        );
+
         let mut environment = valid.clone();
         environment.insert(NPM_PACKAGE_ENV, OsString::from("@other/fastctx"));
         assert!(
@@ -1737,6 +1822,120 @@ mod tests {
             detect(&environment)
                 .unwrap_err()
                 .contains("invalid update handoff path")
+        );
+    }
+
+    #[test]
+    fn npm_launcher_v2_accepts_both_drivers_and_makes_unavailable_actionable() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let current = temp.path().join("target/debug/fastctx");
+        let node = temp.path().join("node");
+        let npm_cli = temp.path().join("npm-cli.js");
+        let npm_executable = temp
+            .path()
+            .join(if cfg!(windows) { "npm.exe" } else { "npm" });
+        let launcher = temp.path().join("launcher.js");
+        let launcher_pid = 4242;
+        let handoff = paths
+            .fastctx_dir
+            .join("update")
+            .join(format!("npm-launcher-{launcher_pid}.handoff"));
+        for path in [&node, &npm_cli, &npm_executable, &launcher] {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+        let mut environment = BTreeMap::from([
+            (NPM_MARKER_ENV, OsString::from("2")),
+            (NPM_PACKAGE_ENV, OsString::from("fastctx")),
+            (NPM_MODE_ENV, OsString::from("global")),
+            (NODE_ENV, node.into_os_string()),
+            (NPM_DRIVER_ENV, OsString::from("node-script")),
+            (NPM_CLI_ENV, npm_cli.into_os_string()),
+            (NPM_LAUNCHER_ENV, launcher.into_os_string()),
+            (
+                NPM_LAUNCHER_PID_ENV,
+                OsString::from(launcher_pid.to_string()),
+            ),
+            (NPM_HANDOFF_ENV, handoff.into_os_string()),
+        ]);
+        let detect = |environment: &BTreeMap<&str, OsString>| {
+            detect_install_channel(
+                &paths,
+                &current,
+                &|name| environment.get(name).cloned(),
+                false,
+            )
+        };
+
+        let InstallChannel::Npm(provenance) = detect(&environment).unwrap() else {
+            panic!("expected npm channel");
+        };
+        assert_eq!(provenance.driver, NpmDriver::NodeScript);
+
+        environment.insert(NPM_DRIVER_ENV, OsString::from("executable"));
+        environment.insert(NPM_CLI_ENV, npm_executable.into_os_string());
+        let InstallChannel::Npm(provenance) = detect(&environment).unwrap() else {
+            panic!("expected npm channel");
+        };
+        assert_eq!(provenance.driver, NpmDriver::Executable);
+
+        environment.insert(NPM_DRIVER_ENV, OsString::from("unavailable"));
+        environment.remove(NPM_CLI_ENV);
+        let error = detect(&environment).unwrap_err();
+        assert!(error.contains("no usable npm command"), "{error}");
+        assert!(error.contains("npm --version"), "{error}");
+        assert!(
+            error.contains("npm install --global fastctx --registry=https://registry.npmjs.org/"),
+            "{error}"
+        );
+        assert!(!error.contains(NPM_CLI_ENV), "{error}");
+    }
+
+    #[test]
+    fn npm_launcher_rejects_unknown_receipt_versions_and_v2_drivers() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let current = temp.path().join("target/debug/fastctx");
+        let unknown_version = BTreeMap::from([(NPM_MARKER_ENV, OsString::from("99"))]);
+        let detect = |environment: &BTreeMap<&str, OsString>| {
+            detect_install_channel(
+                &paths,
+                &current,
+                &|name| environment.get(name).cloned(),
+                false,
+            )
+        };
+        let version_error = detect(&unknown_version).unwrap_err();
+        assert!(version_error.contains("unsupported receipt version"));
+        assert!(version_error.contains("registry.npmjs.org"));
+
+        let node = temp.path().join("node");
+        let launcher = temp.path().join("launcher.js");
+        let launcher_pid = 4242;
+        for path in [&node, &launcher] {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+        let handoff = paths
+            .fastctx_dir
+            .join("update")
+            .join(format!("npm-launcher-{launcher_pid}.handoff"));
+        let invalid_driver = BTreeMap::from([
+            (NPM_MARKER_ENV, OsString::from("2")),
+            (NPM_PACKAGE_ENV, OsString::from("fastctx")),
+            (NPM_MODE_ENV, OsString::from("global")),
+            (NODE_ENV, node.into_os_string()),
+            (NPM_DRIVER_ENV, OsString::from("shell")),
+            (NPM_LAUNCHER_ENV, launcher.into_os_string()),
+            (
+                NPM_LAUNCHER_PID_ENV,
+                OsString::from(launcher_pid.to_string()),
+            ),
+            (NPM_HANDOFF_ENV, handoff.into_os_string()),
+        ]);
+        assert!(
+            detect(&invalid_driver)
+                .unwrap_err()
+                .contains("unsupported npm driver")
         );
     }
 
@@ -1962,6 +2161,197 @@ mod tests {
                 scenario.name
             );
         }
+    }
+
+    #[test]
+    fn every_source_policy_runs_the_shared_probe_cache_and_four_state_pipeline() {
+        #[derive(Clone, Copy, Debug)]
+        enum ExpectedState {
+            Current,
+            Available,
+            Pending,
+            Failed,
+        }
+
+        let configured = "https://registry.example.test/custom/";
+        let policies = [
+            (UpdateSource::Auto, Some(configured), configured),
+            (UpdateSource::NpmConfig, Some(configured), configured),
+            (UpdateSource::Official, None, OFFICIAL_NPM_REGISTRY),
+            (UpdateSource::Npmmirror, None, NPMMIRROR_REGISTRY),
+        ];
+        let states = [
+            ExpectedState::Current,
+            ExpectedState::Available,
+            ExpectedState::Pending,
+            ExpectedState::Failed,
+        ];
+        let temp = tempfile::tempdir().unwrap();
+        let current_version = Version::new(0, 1, 1);
+        let platform_package = super::platform_npm_package().unwrap().to_string();
+
+        for (policy, configured_registry, expected_registry) in policies {
+            for state in states {
+                let target_version = match state {
+                    ExpectedState::Current => Version::new(0, 1, 1),
+                    _ => Version::new(0, 2, 0),
+                };
+                let ready = matches!(state, ExpectedState::Current | ExpectedState::Available);
+                let reachable = !matches!(state, ExpectedState::Failed);
+                let registry_state = |latest: Version| SimulatedRegistry {
+                    latest: reachable.then_some(latest),
+                    main_package_ready: ready,
+                    platform_package_ready: ready,
+                };
+                let backend = SimulatedRegistryBackend {
+                    github_latest: reachable.then_some(target_version.clone()),
+                    platform_package: platform_package.clone(),
+                    registries: BTreeMap::from([
+                        (
+                            configured.to_string(),
+                            registry_state(target_version.clone()),
+                        ),
+                        (
+                            OFFICIAL_NPM_REGISTRY.to_string(),
+                            registry_state(target_version.clone()),
+                        ),
+                        (
+                            NPMMIRROR_REGISTRY.to_string(),
+                            registry_state(Version::new(9, 0, 0)),
+                        ),
+                    ]),
+                };
+                let context = npm_context_fixture(policy, configured_registry);
+                let mut provenance = npm_provenance_fixture();
+                provenance.driver = NpmDriver::Executable;
+                provenance.npm_cli = "npm-driver".into();
+                let channel = InstallChannel::Npm(provenance.clone());
+                let state_name = format!("{state:?}").to_ascii_lowercase();
+                let channel_key = format!("matrix-{}-{state_name}", policy.as_str());
+                let result = resolve_with_cache(
+                    CacheResolution {
+                        channel: &channel,
+                        channel_key: &channel_key,
+                        current_version: "0.1.1",
+                        directory: temp.path(),
+                        force: true,
+                        checked_at: UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+                        npm_context: Some(&context),
+                    },
+                    || {
+                        probe_npm_channel_with_backend(
+                            &provenance,
+                            &current_version,
+                            &context,
+                            &backend,
+                        )
+                    },
+                );
+
+                let discovery = match (state, result) {
+                    (ExpectedState::Current, StartupUpdate::NpmCurrent { discovery }) => discovery,
+                    (ExpectedState::Available, StartupUpdate::Available(plan)) => {
+                        let UpdatePlan::Npm {
+                            provenance,
+                            discovery,
+                            ..
+                        } = *plan
+                        else {
+                            panic!("{} {state_name} returned the wrong plan", policy.as_str());
+                        };
+                        assert_eq!(provenance.driver, NpmDriver::Executable);
+                        discovery
+                    }
+                    (ExpectedState::Pending, StartupUpdate::NpmPending { discovery, .. }) => {
+                        discovery
+                    }
+                    (ExpectedState::Failed, StartupUpdate::Failed(failure)) => {
+                        assert_eq!(failure.kind, CheckFailureKind::Transient);
+                        assert!(
+                            failure
+                                .message
+                                .contains("no npm version authority was reachable")
+                        );
+                        continue;
+                    }
+                    (_, actual) => panic!(
+                        "{} {state_name} produced the wrong startup state: {actual:?}",
+                        policy.as_str()
+                    ),
+                };
+
+                assert_eq!(discovery.source_policy, policy.as_str());
+                assert_eq!(discovery.target_version, target_version.to_string());
+                assert_eq!(discovery.authority, NpmVersionAuthority::Official);
+                assert_eq!(
+                    discovery.selected_registry.as_deref(),
+                    ready.then_some(expected_registry)
+                );
+                let actual_registries = discovery
+                    .probes
+                    .iter()
+                    .map(|probe| probe.registry.as_str())
+                    .collect::<Vec<_>>();
+                let expected_registries = match policy {
+                    UpdateSource::Auto => {
+                        vec![configured, OFFICIAL_NPM_REGISTRY, NPMMIRROR_REGISTRY]
+                    }
+                    UpdateSource::NpmConfig => vec![configured, OFFICIAL_NPM_REGISTRY],
+                    UpdateSource::Official => vec![OFFICIAL_NPM_REGISTRY],
+                    UpdateSource::Npmmirror => {
+                        vec![NPMMIRROR_REGISTRY, OFFICIAL_NPM_REGISTRY]
+                    }
+                };
+                assert_eq!(actual_registries, expected_registries);
+            }
+        }
+
+        let fallback_context = npm_context_fixture(UpdateSource::Npmmirror, None);
+        let fallback_backend = SimulatedRegistryBackend {
+            github_latest: None,
+            platform_package,
+            registries: BTreeMap::from([
+                (
+                    OFFICIAL_NPM_REGISTRY.to_string(),
+                    SimulatedRegistry {
+                        latest: None,
+                        main_package_ready: false,
+                        platform_package_ready: false,
+                    },
+                ),
+                (
+                    NPMMIRROR_REGISTRY.to_string(),
+                    SimulatedRegistry {
+                        latest: Some(Version::new(0, 3, 0)),
+                        main_package_ready: true,
+                        platform_package_ready: true,
+                    },
+                ),
+            ]),
+        };
+        let fallback = probe_npm_channel_with_backend(
+            &npm_provenance_fixture(),
+            &current_version,
+            &fallback_context,
+            &fallback_backend,
+        )
+        .unwrap();
+        let CachedOutcome::NpmAvailable { discovery } = fallback else {
+            panic!("a ready mirror must be usable when both official authorities are unavailable");
+        };
+        assert_eq!(discovery.target_version, "0.3.0");
+        assert_eq!(discovery.authority, NpmVersionAuthority::MirrorFallback);
+        assert_eq!(
+            discovery.selected_registry.as_deref(),
+            Some(NPMMIRROR_REGISTRY)
+        );
+        assert_eq!(
+            super::GITHUB_LATEST_URL,
+            "https://github.com/yc-duan/fastctx/releases/latest"
+        );
+        let forbidden_api_host = ["api", ".github.com"].concat();
+        assert!(!super::GITHUB_LATEST_URL.contains(&forbidden_api_host));
+        assert!(!super::GITHUB_RELEASE_BASE.contains(&forbidden_api_host));
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! Copied updater helper, verified installation, rollback, restart, and finalization.
 
 use super::model::{
-    NPMMIRROR_REGISTRY, NpmMode, NpmProvenance, NpmVersionAuthority, OFFICIAL_NPM_REGISTRY,
-    UpdatePlan, UpdateRequest,
+    NPMMIRROR_REGISTRY, NpmDriver, NpmMode, NpmProvenance, NpmVersionAuthority,
+    OFFICIAL_NPM_REGISTRY, UpdatePlan, UpdateRequest,
 };
 use crate::control::apply::{AppliedBinarySync, synchronize_applied_binary};
 use crate::control::paths::ControlPaths;
@@ -29,7 +29,8 @@ pub(crate) const UPDATE_FAILURE_ENV: &str = "FASTCTX_UPDATE_FAILURE";
 /// Private exit code telling the npm launcher to wait on its handoff marker.
 pub(crate) const NPM_LAUNCHER_WAIT_EXIT_CODE: u8 = 75;
 
-const REQUEST_SCHEMA_VERSION: u32 = 2;
+const REQUEST_SCHEMA_VERSION: u32 = 3;
+const NPM_HANDOFF_SCHEMA_VERSION: u32 = 2;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const MAX_RELEASE_ASSET_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: u64 = 64 * 1024;
@@ -113,7 +114,7 @@ impl Drop for NpmHandoffGuard {
         let _ = write_handoff(
             &self.path,
             &NpmLauncherHandoff {
-                schema_version: REQUEST_SCHEMA_VERSION,
+                schema_version: NPM_HANDOFF_SCHEMA_VERSION,
                 state,
                 helper_pid: std::process::id(),
                 helper_executable: &self.helper_executable,
@@ -189,7 +190,7 @@ pub(crate) fn begin_update(
         && let Err(error) = write_handoff(
             handoff,
             &NpmLauncherHandoff {
-                schema_version: REQUEST_SCHEMA_VERSION,
+                schema_version: NPM_HANDOFF_SCHEMA_VERSION,
                 state: "starting",
                 helper_pid: 0,
                 helper_executable: &helper_executable,
@@ -231,7 +232,7 @@ pub(crate) fn begin_update(
         if let Err(error) = write_handoff(
             handoff,
             &NpmLauncherHandoff {
-                schema_version: REQUEST_SCHEMA_VERSION,
+                schema_version: NPM_HANDOFF_SCHEMA_VERSION,
                 state: "running",
                 helper_pid: helper_child.id(),
                 helper_executable: &helper_executable,
@@ -554,8 +555,7 @@ fn install_npm_version(
     cache: &Path,
 ) -> Result<(), String> {
     let spec = format!("{}@{version}", provenance.package);
-    let status = Command::new(&provenance.node)
-        .arg(&provenance.npm_cli)
+    let status = super::npm_invocation::command(provenance)
         .args(npm_install_arguments(&spec, registry, cache))
         .env("NO_UPDATE_NOTIFIER", "1")
         .env("NPM_CONFIG_UPDATE_NOTIFIER", "false")
@@ -606,8 +606,7 @@ fn spawn_npm_exec(
     request_path: &Path,
 ) -> Result<Child, String> {
     let spec = format!("{}@{version}", provenance.package);
-    Command::new(&provenance.node)
-        .arg(&provenance.npm_cli)
+    super::npm_invocation::command(provenance)
         .args([
             "exec",
             "--yes",
@@ -1210,6 +1209,7 @@ fn validate_plan(plan: &UpdatePlan) -> Result<(), String> {
                     return Err(format!("update plan has a relative {name} path"));
                 }
             }
+            validate_npm_driver(provenance)?;
             if provenance.launcher_pid == 0 {
                 return Err("update plan has an invalid npm launcher process id".to_string());
             }
@@ -1268,6 +1268,42 @@ fn validate_plan(plan: &UpdatePlan) -> Result<(), String> {
                 return Err(
                     "update plan URLs do not match its exact target tag and platform archive"
                         .to_string(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_npm_driver(provenance: &NpmProvenance) -> Result<(), String> {
+    match provenance.driver {
+        NpmDriver::NodeScript => {
+            let is_npm_cli = provenance
+                .npm_cli
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    matches!(
+                        name.to_ascii_lowercase().as_str(),
+                        "npm-cli.js" | "npm-cli.cjs" | "npm-cli.mjs"
+                    )
+                });
+            if !is_npm_cli {
+                return Err("update plan has a non-npm Node.js entry point".to_string());
+            }
+        }
+        NpmDriver::Executable => {
+            if cfg!(windows)
+                && provenance
+                    .npm_cli
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| {
+                        matches!(extension.to_ascii_lowercase().as_str(), "cmd" | "bat")
+                    })
+            {
+                return Err(
+                    "update plan uses a shell script as an executable npm driver".to_string(),
                 );
             }
         }
@@ -1663,12 +1699,13 @@ fn expected_npm_platform_package() -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        NpmLauncherHandoff, REQUEST_SCHEMA_VERSION, extract_release_binary, finish_failed_update,
-        npm_install_arguments, replace_release_with_rollback, run_with_npm_rollback, sha256_hex,
+        NPM_HANDOFF_SCHEMA_VERSION, NpmLauncherHandoff, REQUEST_SCHEMA_VERSION,
+        extract_release_binary, finish_failed_update, npm_install_arguments,
+        replace_release_with_rollback, run_with_npm_rollback, sha256_hex,
         validate_download_response_url, validate_plan, verify_release_archive, write_handoff,
     };
     use crate::update::model::{
-        NpmDiscovery, NpmMode, NpmProvenance, NpmRegistryProbe, NpmVersionAuthority,
+        NpmDiscovery, NpmDriver, NpmMode, NpmProvenance, NpmRegistryProbe, NpmVersionAuthority,
         OFFICIAL_NPM_REGISTRY, UpdatePlan,
     };
     use std::io::{Cursor, Write};
@@ -1887,6 +1924,7 @@ mod tests {
                 package: "fastctx".to_string(),
                 mode: NpmMode::Global,
                 node: temp.path().join("node"),
+                driver: NpmDriver::NodeScript,
                 npm_cli: temp.path().join("npm-cli.js"),
                 launcher: temp.path().join("launcher.js"),
                 launcher_pid: 42,
@@ -1898,10 +1936,41 @@ mod tests {
             discovery: Box::new(discovery),
         };
         validate_plan(&plan).unwrap();
+        assert_eq!(REQUEST_SCHEMA_VERSION, 3);
+        let encoded = serde_json::to_value(&plan).unwrap();
+        assert_eq!(encoded["provenance"]["driver"], "node-script");
+        let decoded: UpdatePlan = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(decoded, plan);
+        let mut invalid_driver = encoded;
+        invalid_driver["provenance"]["driver"] = serde_json::Value::String("shell".to_string());
+        assert!(serde_json::from_value::<UpdatePlan>(invalid_driver).is_err());
 
-        let UpdatePlan::Npm { discovery, .. } = &mut plan else {
+        let UpdatePlan::Npm { provenance, .. } = &mut plan else {
             unreachable!();
         };
+        provenance.driver = NpmDriver::Executable;
+        provenance.npm_cli = temp
+            .path()
+            .join(if cfg!(windows) { "npm.exe" } else { "npm" });
+        validate_plan(&plan).unwrap();
+        let UpdatePlan::Npm { provenance, .. } = &mut plan else {
+            unreachable!();
+        };
+        provenance.driver = NpmDriver::NodeScript;
+        provenance.npm_cli = temp.path().join("not-npm.js");
+        assert_eq!(
+            validate_plan(&plan).unwrap_err(),
+            "update plan has a non-npm Node.js entry point"
+        );
+        let UpdatePlan::Npm {
+            provenance,
+            discovery,
+            ..
+        } = &mut plan
+        else {
+            unreachable!();
+        };
+        provenance.npm_cli = temp.path().join("npm-cli.js");
         discovery.probes[0].platform_package_ready = false;
         assert_eq!(
             validate_plan(&plan).unwrap_err(),
@@ -1996,7 +2065,7 @@ mod tests {
         write_handoff(
             &handoff,
             &NpmLauncherHandoff {
-                schema_version: REQUEST_SCHEMA_VERSION,
+                schema_version: NPM_HANDOFF_SCHEMA_VERSION,
                 state: "starting",
                 helper_pid: 0,
                 helper_executable: &helper,
@@ -2012,7 +2081,7 @@ mod tests {
         write_handoff(
             &handoff,
             &NpmLauncherHandoff {
-                schema_version: REQUEST_SCHEMA_VERSION,
+                schema_version: NPM_HANDOFF_SCHEMA_VERSION,
                 state: "done",
                 helper_pid: 42,
                 helper_executable: &helper,

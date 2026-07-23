@@ -65,9 +65,12 @@ const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY && args[
 const tuiLaunch = interactive && (args.length === 0 || args[0] === 'ui');
 const FORCE_KILL_DELAY_MS = 5000;
 const UPDATE_HANDOFF_EXIT_CODE = 75;
+const UPDATE_HANDOFF_SCHEMA_VERSION = 2;
 const npmPackage = process.env.FASTCTX_NPM_PACKAGE || 'fastctx';
 const npmLauncher = process.env.FASTCTX_NPM_LAUNCHER || __filename;
-const npmMode = process.env.npm_command === 'exec' || npmLauncher.includes(`${path.sep}_npx${path.sep}`)
+const npmMode = process.env.npm_command === 'exec' || npmLauncher
+  .split(/[\\/]+/)
+  .some((segment) => segment.toLowerCase() === '_npx')
   ? 'exec'
   : 'global';
 const npmHandoff = path.join(
@@ -76,18 +79,157 @@ const npmHandoff = path.join(
   'update',
   `npm-launcher-${process.pid}.handoff`,
 );
-const npmCliCandidates = [
-  process.env.npm_execpath,
-  path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-].filter(Boolean);
-const npmCli = npmCliCandidates.find((candidate) => path.isAbsolute(candidate) && fs.existsSync(candidate)) || '';
+
+function canonicalRegularFile(candidate) {
+  if (!candidate || !path.isAbsolute(candidate)) return null;
+  try {
+    const canonical = fs.realpathSync(candidate);
+    return fs.statSync(canonical).isFile() ? canonical : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function isNpmCliScript(candidate) {
+  return /^npm-cli\.(?:js|cjs|mjs)$/i.test(path.basename(candidate));
+}
+
+function nodeScriptInvocation(candidate) {
+  const canonical = canonicalRegularFile(candidate);
+  return canonical && isNpmCliScript(canonical)
+    ? { driver: 'node-script', npmCli: canonical }
+    : null;
+}
+
+function adjacentNpmCliCandidates(command) {
+  const directory = path.dirname(command);
+  return [
+    path.join(directory, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.resolve(directory, '..', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.resolve(directory, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ];
+}
+
+function commandInvocation(candidate) {
+  const canonical = canonicalRegularFile(candidate);
+  if (!canonical) return null;
+  if (isNpmCliScript(canonical)) return { driver: 'node-script', npmCli: canonical };
+  const invocationPath = path.resolve(candidate);
+
+  const extension = path.extname(candidate).toLowerCase();
+  if (process.platform === 'win32') {
+    if (extension === '.cmd' || extension === '.bat') {
+      for (const npmCli of adjacentNpmCliCandidates(candidate)) {
+        const invocation = nodeScriptInvocation(npmCli);
+        if (invocation) return invocation;
+      }
+      return null;
+    }
+    return extension === '.exe' || extension === '.com'
+      ? { driver: 'executable', npmCli: invocationPath }
+      : null;
+  }
+
+  try {
+    fs.accessSync(invocationPath, fs.constants.X_OK);
+    // 2026-07-22: Volta-style shims dispatch by argv[0], so realpath is validation-only here.
+    return { driver: 'executable', npmCli: invocationPath };
+  } catch (_) {
+    return null;
+  }
+}
+
+function launcherInstallCandidates() {
+  const canonicalLauncher = canonicalRegularFile(npmLauncher);
+  if (!canonicalLauncher) return { npmCli: [], commands: [] };
+  const packageRoot = path.dirname(canonicalLauncher);
+  const nodeModules = path.dirname(packageRoot);
+  if (path.basename(nodeModules).toLowerCase() !== 'node_modules') {
+    return { npmCli: [], commands: [] };
+  }
+  const modulesParent = path.dirname(nodeModules);
+  const prefix = path.basename(modulesParent).toLowerCase() === 'lib'
+    ? path.dirname(modulesParent)
+    : modulesParent;
+  return {
+    npmCli: [path.join(nodeModules, 'npm', 'bin', 'npm-cli.js')],
+    commands: process.platform === 'win32'
+      ? [path.join(prefix, 'npm.exe'), path.join(prefix, 'npm.com'), path.join(prefix, 'npm.cmd'), path.join(prefix, 'npm.bat')]
+      : [path.join(prefix, 'bin', 'npm')],
+  };
+}
+
+function nodeLayoutCandidates() {
+  const nodeExecutables = [process.execPath];
+  const canonicalNode = canonicalRegularFile(process.execPath);
+  if (canonicalNode && canonicalNode !== process.execPath) nodeExecutables.push(canonicalNode);
+  return [...new Set(nodeExecutables.flatMap((nodeExecutable) => {
+    const directory = path.dirname(nodeExecutable);
+    return [
+      path.join(directory, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.resolve(directory, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    ];
+  }))];
+}
+
+function environmentValue(name) {
+  const entry = Object.entries(process.env)
+    .find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return entry && entry[1];
+}
+
+function pathCommandCandidates() {
+  const pathValue = environmentValue('PATH');
+  if (!pathValue) return [];
+  const names = process.platform === 'win32'
+    ? ['npm', ...((environmentValue('PATHEXT') || '.COM;.EXE;.BAT;.CMD')
+      .split(';')
+      .map((extension) => extension.trim().toLowerCase())
+      .filter((extension, index, extensions) =>
+        ['.com', '.exe', '.bat', '.cmd'].includes(extension) && extensions.indexOf(extension) === index)
+      .map((extension) => `npm${extension}`))]
+    : ['npm'];
+  return pathValue.split(path.delimiter).flatMap((entry) => {
+    const directory = entry.trim().replace(/^"(.*)"$/, '$1');
+    // Skip empty and relative PATH entries: resolving them against the working
+    // directory would let a planted `npm` drive an update (2026-07-22).
+    if (!directory || !path.isAbsolute(directory)) return [];
+    return names.map((name) => path.join(directory, name));
+  });
+}
+
+function resolveNpmInvocation() {
+  const explicit = commandInvocation(process.env.npm_execpath);
+  if (explicit) return explicit;
+
+  const launcherCandidates = launcherInstallCandidates();
+  for (const candidate of launcherCandidates.npmCli) {
+    const invocation = nodeScriptInvocation(candidate);
+    if (invocation) return invocation;
+  }
+  for (const candidate of launcherCandidates.commands) {
+    const invocation = commandInvocation(candidate);
+    if (invocation) return invocation;
+  }
+  for (const candidate of nodeLayoutCandidates()) {
+    const invocation = nodeScriptInvocation(candidate);
+    if (invocation) return invocation;
+  }
+  for (const candidate of pathCommandCandidates()) {
+    const invocation = commandInvocation(candidate);
+    if (invocation) return invocation;
+  }
+  return { driver: 'unavailable', npmCli: '' };
+}
+
+const npmInvocation = resolveNpmInvocation();
 const childEnvironment = { ...process.env };
 for (const name of [
   'FASTCTX_NPM_LAUNCHER_VERSION',
   'FASTCTX_NPM_PACKAGE',
   'FASTCTX_NPM_MODE',
   'FASTCTX_NODE_EXECUTABLE',
+  'FASTCTX_NPM_DRIVER',
   'FASTCTX_NPM_CLI',
   'FASTCTX_NPM_LAUNCHER',
   'FASTCTX_NPM_LAUNCHER_PID',
@@ -96,16 +238,19 @@ for (const name of [
   delete childEnvironment[name];
 }
 if (tuiLaunch) {
-  Object.assign(childEnvironment, {
-    FASTCTX_NPM_LAUNCHER_VERSION: '1',
+  const receiptVersion = npmInvocation.driver === 'node-script' ? '1' : '2';
+  const receipt = {
+    FASTCTX_NPM_LAUNCHER_VERSION: receiptVersion,
     FASTCTX_NPM_PACKAGE: npmPackage,
     FASTCTX_NPM_MODE: npmMode,
     FASTCTX_NODE_EXECUTABLE: process.execPath,
-    FASTCTX_NPM_CLI: npmCli,
+    FASTCTX_NPM_CLI: npmInvocation.npmCli,
     FASTCTX_NPM_LAUNCHER: npmLauncher,
     FASTCTX_NPM_LAUNCHER_PID: String(process.pid),
     FASTCTX_NPM_HANDOFF: npmHandoff,
-  });
+  };
+  if (receiptVersion === '2') receipt.FASTCTX_NPM_DRIVER = npmInvocation.driver;
+  Object.assign(childEnvironment, receipt);
 }
 const child = spawn(executable, args, {
   stdio: interactive ? 'inherit' : ['pipe', 'pipe', 'pipe'],
@@ -139,8 +284,44 @@ function processIsAlive(pid) {
   }
 }
 
-function readHandoff() {
-  return JSON.parse(fs.readFileSync(npmHandoff, 'utf8'));
+function readHandoff(expectedHelperExecutable, expectedHelperPid) {
+  const payload = JSON.parse(fs.readFileSync(npmHandoff, 'utf8'));
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('the update handoff is not an object');
+  }
+  if (payload.schema_version !== UPDATE_HANDOFF_SCHEMA_VERSION) {
+    throw new Error(`unsupported update handoff schema ${payload.schema_version}`);
+  }
+  if (!['running', 'done', 'failed'].includes(payload.state)) {
+    throw new Error(`unsupported update handoff state ${JSON.stringify(payload.state)}`);
+  }
+  if (!Number.isInteger(payload.helper_pid) || payload.helper_pid <= 0) {
+    throw new Error('the update handoff has an invalid helper PID');
+  }
+  if (typeof payload.helper_executable !== 'string' || !path.isAbsolute(payload.helper_executable)) {
+    throw new Error('the update handoff has an invalid helper path');
+  }
+  const updateDirectory = path.resolve(path.dirname(npmHandoff));
+  const helperExecutable = path.resolve(payload.helper_executable);
+  const relativeHelper = path.relative(updateDirectory, helperExecutable);
+  if (
+    !relativeHelper ||
+    path.isAbsolute(relativeHelper) ||
+    path.dirname(relativeHelper) !== '.' ||
+    !path.basename(relativeHelper).startsWith('helper-')
+  ) {
+    throw new Error('the update handoff helper is outside the private update directory');
+  }
+  if (expectedHelperExecutable && helperExecutable !== expectedHelperExecutable) {
+    throw new Error('the update handoff changed helper paths');
+  }
+  if (expectedHelperPid && payload.helper_pid !== expectedHelperPid) {
+    throw new Error('the update handoff changed helper PIDs');
+  }
+  if (payload.detail !== undefined && typeof payload.detail !== 'string') {
+    throw new Error('the update handoff has an invalid detail');
+  }
+  return { ...payload, helper_executable: helperExecutable };
 }
 
 function finishUpdateHandoff(payload, succeeded, detail) {
@@ -182,9 +363,11 @@ function waitForUpdateHandoff() {
     console.error(`fastctx: cannot read update handoff: ${error.message}`);
     process.exit(1);
   }
+  const expectedHelperExecutable = payload.helper_executable;
+  const expectedHelperPid = payload.helper_pid;
   const poll = setInterval(() => {
     try {
-      payload = readHandoff();
+      payload = readHandoff(expectedHelperExecutable, expectedHelperPid);
     } catch (error) {
       clearInterval(poll);
       console.error(`fastctx: cannot read update handoff: ${error.message}`);
