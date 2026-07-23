@@ -1564,7 +1564,7 @@ mod tests {
         let (temp, mut app) = fixture();
         let config = concat!(
             "# user config\n",
-            "tool_output_token_limit = 10000 # exact\n",
+            "tool_output_token_limit = 16000 # exact\n",
             "\n",
             "[mcp_servers.other]\n",
             "command = 'other'\n",
