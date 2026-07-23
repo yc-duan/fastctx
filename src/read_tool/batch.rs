@@ -277,10 +277,17 @@ fn largest_fitting_prefix(
         candidate_fits(segments, &segment, &proposed, total, budget)
     };
 
-    let mut best = if fits(maximum) { maximum } else { 0 };
-    if maximum <= 1 {
-        return best;
+    // Probing the whole slice first is what makes the search sound: dropping the last line
+    // can also drop this file from the continuation array, so `fits` is only monotonic
+    // below `maximum`. Returning here also keeps the common all-fits entry at one probe
+    // instead of a full binary search that re-tokenizes the whole response each step.
+    if fits(maximum) {
+        return maximum;
     }
+    if maximum <= 1 {
+        return 0;
+    }
+    let mut best = 0;
     let mut low = 1;
     let mut high = maximum - 1;
     while low <= high {
