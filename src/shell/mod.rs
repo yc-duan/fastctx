@@ -14,14 +14,14 @@ use crate::paths::{canonical_existing, display_path, parse_input_path};
 use bash::BashLocator;
 use jobs::JobManager;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_TIMEOUT_MS: u64 = 240_000;
 const DEFAULT_WAIT_MS: u64 = 30_000;
-const MAX_WAIT_MS: u64 = 240_000;
+const MAX_WAIT_MS: u64 = 60_000;
 
 fn default_login_shell() -> bool {
     true
@@ -29,10 +29,6 @@ fn default_login_shell() -> bool {
 
 fn default_wait_ms() -> Option<u64> {
     Some(DEFAULT_WAIT_MS)
-}
-
-fn default_wait_for() -> String {
-    "output".to_string()
 }
 
 /// Parameters for a foreground bash command.
@@ -73,23 +69,19 @@ pub struct RunBackgroundRequest {
     pub encoding: Option<String>,
 }
 
-/// Parameters for incrementally reading a background job.
+/// Parameters for querying a background job.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JobOutputRequest {
     /// The job id returned by run_background.
     pub job_id: String,
-    /// Long-poll up to this many milliseconds.
-    #[schemars(default = "default_wait_ms", range(min = 0, max = 240_000))]
+    /// How long this query may take, in milliseconds. It returns earlier only when the job ends.
+    /// Use 0 for an immediate snapshot.
+    #[schemars(default = "default_wait_ms", range(min = 0, max = 60_000))]
     pub wait_ms: Option<u64>,
-    /// What ends the wait early: "output" returns as soon as new output or the exit arrives;
-    /// "exit" waits through intermediate output and returns only on exit (or when wait_ms
-    /// elapses), delivering everything accumulated.
-    #[serde(default = "default_wait_for")]
-    #[schemars(with = "JobOutputWaitFor", default = "default_wait_for")]
-    pub wait_for: String,
-    /// Return output after this sequence number (from a prior Partial note's after_seq). Omit to
-    /// continue where your last call left off; pass it to re-anchor idempotently if a call was lost.
+    /// Return output after this line number of the job's log. Omit to continue where your last
+    /// call left off; pass it to re-read a stretch you already saw, for example with a different
+    /// encoding.
     #[schemars(range(min = 0))]
     pub after_seq: Option<u64>,
     /// Decode this job's stored output with this source encoding for this call (WHATWG label
@@ -132,18 +124,6 @@ pub enum JobListStatus {
     Finished,
     /// Running jobs followed by retained terminal records.
     All,
-}
-
-/// Event that ends a background-output wait before its timeout.
-#[derive(Clone, Copy, Debug, Default, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-#[schemars(rename_all = "lowercase")]
-pub enum JobOutputWaitFor {
-    /// Return when output or a terminal job state arrives.
-    #[default]
-    Output,
-    /// Wait through intermediate output until a terminal job state arrives.
-    Exit,
 }
 
 /// Stateful shell service shared by all five tools in one MCP server process.
@@ -249,13 +229,9 @@ impl FastShell {
         let wait_ms = request.wait_ms.unwrap_or(DEFAULT_WAIT_MS);
         if wait_ms > MAX_WAIT_MS {
             return ToolResponse::error(format!(
-                "Invalid wait_ms value: {wait_ms}. Expected an integer from 0 to 240000."
+                "Invalid wait_ms value: {wait_ms}. Expected an integer from 0 to 60000."
             ));
         }
-        let wait_for = match parse_job_output_wait_for(&request.wait_for) {
-            Ok(wait_for) => wait_for,
-            Err(error) => return ToolResponse::error(error),
-        };
         let encoding = match request
             .encoding
             .as_deref()
@@ -268,7 +244,6 @@ impl FastShell {
         self.jobs.output_until_cancelled(
             &request.job_id,
             wait_ms,
-            wait_for,
             request.after_seq,
             encoding,
             cancelled,
@@ -313,16 +288,6 @@ fn invalid_timeout(timeout_ms: u64) -> ToolResponse {
     ToolResponse::error(format!(
         "Invalid timeout_ms value: {timeout_ms}. Expected an integer from 1 to 240000."
     ))
-}
-
-fn parse_job_output_wait_for(value: &str) -> Result<JobOutputWaitFor, String> {
-    match value {
-        "output" => Ok(JobOutputWaitFor::Output),
-        "exit" => Ok(JobOutputWaitFor::Exit),
-        _ => Err(format!(
-            "Invalid wait_for value: {value:?}. Use \"output\" or \"exit\"."
-        )),
-    }
 }
 
 fn resolve_cwd(input: Option<&str>) -> Result<PathBuf, String> {
@@ -372,13 +337,12 @@ mod tests {
         assert_eq!(
             shell.job_output(JobOutputRequest {
                 job_id: "missing".to_string(),
-                wait_ms: Some(240_001),
-                wait_for: "output".to_string(),
+                wait_ms: Some(60_001),
                 after_seq: None,
                 encoding: None,
             }),
             crate::ToolResponse::error(
-                "Invalid wait_ms value: 240001. Expected an integer from 0 to 240000."
+                "Invalid wait_ms value: 60001. Expected an integer from 0 to 60000."
             )
         );
     }

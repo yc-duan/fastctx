@@ -2531,16 +2531,13 @@ mod tests {
         assert_eq!(app.settings.tool_budgets.run, ToolBudgetLevel::Percent75);
         assert_eq!(
             app.settings.tool_budgets.job_output,
-            ToolBudgetLevel::Percent75
+            ToolBudgetLevel::Inherit
         );
         let persisted = crate::control::settings::load(&app.paths).unwrap();
         assert_eq!(persisted.tier, Tier::High);
         assert_eq!(persisted.tool_budgets.read, ToolBudgetLevel::Percent75);
         assert_eq!(persisted.tool_budgets.run, ToolBudgetLevel::Percent75);
-        assert_eq!(
-            persisted.tool_budgets.job_output,
-            ToolBudgetLevel::Percent75
-        );
+        assert_eq!(persisted.tool_budgets.job_output, ToolBudgetLevel::Inherit);
     }
 
     #[test]

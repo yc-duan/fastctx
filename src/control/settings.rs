@@ -381,14 +381,14 @@ where
 }
 
 impl Default for ToolBudgets {
-    // Path-only lists are low-density, so a tighter default only affects unusually broad patterns.
+    // Retrievable output needs less context than one-shot command output.
     fn default() -> Self {
         Self {
             read: ToolBudgetLevel::Inherit,
             grep: ToolBudgetLevel::Inherit,
             glob: ToolBudgetLevel::Percent50,
             run: ToolBudgetLevel::Inherit,
-            job_output: ToolBudgetLevel::Inherit,
+            job_output: ToolBudgetLevel::Percent25,
         }
     }
 }
@@ -899,6 +899,25 @@ mod tests {
         assert_eq!(status.job_storage_limit_mib, DEFAULT_JOB_STORAGE_LIMIT_MIB);
         assert_eq!(status.max_running_jobs, DEFAULT_MAX_RUNNING_JOBS);
         assert_eq!(status.job_list_limit, DEFAULT_JOB_LIST_LIMIT);
+    }
+
+    #[test]
+    fn job_output_defaults_to_a_quarter_budget_without_overriding_an_explicit_legacy_choice() {
+        assert_eq!(
+            FastCtxSettings::default().tool_budgets.job_output,
+            ToolBudgetLevel::Percent25
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            b"schema_version = 1\n[tool_budgets]\njob_output = 'inherit'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load_from(&path).unwrap().tool_budgets.job_output,
+            ToolBudgetLevel::Inherit
+        );
     }
 
     #[test]

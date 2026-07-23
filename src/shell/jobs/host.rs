@@ -5,13 +5,13 @@ use super::model::{
     CAPTURE_ERROR_FILE, CaptureErrorRecord, EXIT_FILE, ExitRecord, JOB_SCHEMA_VERSION, JobMeta,
     LaunchSpec, META_FILE, TerminationKind,
 };
-use super::spool::SpoolWriter;
+use super::output_log::OutputLogWriter;
 use super::store::{
     clear_kill_request, kill_requested, read_json, request_kill, unix_nanos_now, utc_now,
     write_atomic_json,
 };
 use crate::paths::display_path;
-use crate::shell::normalize::{NormalizedLine, StreamNormalizer};
+use crate::shell::normalize::{LogNormalizer, NormalizedEvent};
 use crate::shell::process::{exit_code, spawn_bash};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
@@ -21,9 +21,10 @@ use std::time::{Duration, Instant};
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_POLL: Duration = Duration::from_millis(20);
 const READER_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+const OUTPUT_EVENT_QUEUE: usize = 64;
 
 enum OutputEvent {
-    Line(NormalizedLine),
+    Normalized(NormalizedEvent),
     Failed(String),
     Finished,
 }
@@ -218,8 +219,7 @@ pub(crate) fn run_job_host() -> Result<(), String> {
 }
 
 fn supervise(spec: LaunchSpec) -> Result<(), String> {
-    let default_encoding = spec
-        .encoding
+    spec.encoding
         .as_deref()
         .map(crate::shell::encoding::validate_output_encoding)
         .transpose()
@@ -251,6 +251,17 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
         started_at_unix_nanos: unix_nanos_now(),
         isolation_warning: supervisor_isolation_warning(),
     };
+    let output = process.take_output();
+    let mut log = match OutputLogWriter::new(&spec.job_dir) {
+        Ok(log) => Some(log),
+        Err(error) => {
+            let _ = process.terminate_tree();
+            watchdog.disarm();
+            return Err(format!(
+                "Cannot start the background job supervisor: {error}"
+            ));
+        }
+    };
     if let Err(error) = write_atomic_json(&spec.job_dir.join(META_FILE), &meta) {
         let _ = process.terminate_tree();
         watchdog.disarm();
@@ -258,8 +269,6 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
             "Cannot start the background job supervisor: {error}"
         ));
     }
-
-    let output = process.take_output();
     let (events, reader) = spawn_reader(output);
     if let Err(error) = write_ready() {
         match process.terminate_tree() {
@@ -273,7 +282,6 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
         return Err(error);
     }
 
-    let mut spool = Some(SpoolWriter::new(&spec.job_dir, default_encoding));
     let mut total_lines = 0_u64;
     let mut had_loss = false;
     let mut capture_error = None;
@@ -281,18 +289,18 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
         drain_output_events(
             &events,
             &spec.job_dir,
-            &mut spool,
+            &mut log,
             &mut total_lines,
             &mut had_loss,
             &mut capture_error,
         );
-        if let Some(writer) = spool.as_mut()
+        if let Some(writer) = log.as_mut()
             && let Err(error) = writer.flush_if_idle()
         {
             capture_failure(
                 &spec.job_dir,
-                &mut spool,
-                total_lines,
+                &mut log,
+                &mut total_lines,
                 error,
                 &mut had_loss,
                 &mut capture_error,
@@ -313,8 +321,8 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
             Err(error) => {
                 capture_failure(
                     &spec.job_dir,
-                    &mut spool,
-                    total_lines,
+                    &mut log,
+                    &mut total_lines,
                     format!("cannot monitor the command process: {error}"),
                     &mut had_loss,
                     &mut capture_error,
@@ -344,8 +352,8 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
                 Err(error) => {
                     capture_failure(
                         &spec.job_dir,
-                        &mut spool,
-                        total_lines,
+                        &mut log,
+                        &mut total_lines,
                         format!("cannot inspect the command before termination: {error}"),
                         &mut had_loss,
                         &mut capture_error,
@@ -365,7 +373,7 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
         drain_output_events(
             &events,
             &spec.job_dir,
-            &mut spool,
+            &mut log,
             &mut total_lines,
             &mut had_loss,
             &mut capture_error,
@@ -380,8 +388,8 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
     } else {
         capture_failure(
             &spec.job_dir,
-            &mut spool,
-            total_lines,
+            &mut log,
+            &mut total_lines,
             "the output reader did not finish within 2 seconds after the process tree exited"
                 .to_string(),
             &mut had_loss,
@@ -391,23 +399,23 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
     drain_output_events(
         &events,
         &spec.job_dir,
-        &mut spool,
+        &mut log,
         &mut total_lines,
         &mut had_loss,
         &mut capture_error,
     );
-    if let Some(writer) = spool.as_mut() {
-        total_lines = writer.total_lines();
-        had_loss |= writer.had_loss();
+    if let Some(writer) = log.as_mut() {
         if let Err(error) = writer.finish() {
             capture_failure(
                 &spec.job_dir,
-                &mut spool,
-                total_lines,
+                &mut log,
+                &mut total_lines,
                 error,
                 &mut had_loss,
                 &mut capture_error,
             );
+        } else {
+            total_lines = writer.total_lines();
         }
     }
     watchdog.disarm();
@@ -427,14 +435,21 @@ fn supervise(spec: LaunchSpec) -> Result<(), String> {
 fn spawn_reader(
     mut output: impl Read + Send + 'static,
 ) -> (mpsc::Receiver<OutputEvent>, std::thread::JoinHandle<()>) {
-    let (sender, receiver) = mpsc::channel();
+    // Backpressure keeps an arbitrarily chatty command bounded by the pipe and
+    // disk writer instead of accumulating its full output in supervisor memory.
+    let (sender, receiver) = mpsc::sync_channel(OUTPUT_EVENT_QUEUE);
     let reader = std::thread::spawn(move || {
-        let mut normalizer = StreamNormalizer::new();
+        let mut normalizer = LogNormalizer::new();
         let mut buffer = [0_u8; 16 * 1024];
         loop {
             let read = match output.read(&mut buffer) {
                 Ok(read) => read,
                 Err(error) => {
+                    let mut events = Vec::new();
+                    normalizer.finish(&mut events);
+                    if !send_normalized_events(&sender, events) {
+                        return;
+                    }
                     let _ = sender.send(OutputEvent::Failed(format!(
                         "cannot read the merged command output: {error}"
                     )));
@@ -444,47 +459,50 @@ fn spawn_reader(
             if read == 0 {
                 break;
             }
-            let mut lines = Vec::new();
-            normalizer.push(&buffer[..read], &mut lines);
-            for line in lines {
-                if sender.send(OutputEvent::Line(line)).is_err() {
-                    return;
-                }
-            }
-        }
-        let mut lines = Vec::new();
-        normalizer.finish(&mut lines);
-        for line in lines {
-            if sender.send(OutputEvent::Line(line)).is_err() {
+            let mut events = Vec::new();
+            normalizer.push(&buffer[..read], &mut events);
+            if !send_normalized_events(&sender, events) {
                 return;
             }
+        }
+        let mut events = Vec::new();
+        normalizer.finish(&mut events);
+        if !send_normalized_events(&sender, events) {
+            return;
         }
         let _ = sender.send(OutputEvent::Finished);
     });
     (receiver, reader)
 }
 
+fn send_normalized_events(
+    sender: &mpsc::SyncSender<OutputEvent>,
+    events: Vec<NormalizedEvent>,
+) -> bool {
+    events
+        .into_iter()
+        .all(|event| sender.send(OutputEvent::Normalized(event)).is_ok())
+}
+
 fn drain_output_events(
     events: &mpsc::Receiver<OutputEvent>,
     directory: &std::path::Path,
-    spool: &mut Option<SpoolWriter>,
+    log: &mut Option<OutputLogWriter>,
     total_lines: &mut u64,
     had_loss: &mut bool,
     capture_error: &mut Option<CaptureErrorRecord>,
 ) {
     while let Ok(event) = events.try_recv() {
         match event {
-            OutputEvent::Line(line) => {
-                if let Some(writer) = spool.as_mut() {
-                    match writer.append(line) {
-                        Ok(seq) => {
-                            *total_lines = seq;
-                            *had_loss |= writer.had_loss();
-                        }
+            OutputEvent::Normalized(event) => {
+                if let Some(writer) = log.as_mut() {
+                    match writer.append(event) {
+                        Ok(Some(seq)) => *total_lines = seq,
+                        Ok(None) => {}
                         Err(error) => capture_failure(
                             directory,
-                            spool,
-                            *total_lines,
+                            log,
+                            total_lines,
                             error,
                             had_loss,
                             capture_error,
@@ -492,14 +510,9 @@ fn drain_output_events(
                     }
                 }
             }
-            OutputEvent::Failed(error) => capture_failure(
-                directory,
-                spool,
-                *total_lines,
-                error,
-                had_loss,
-                capture_error,
-            ),
+            OutputEvent::Failed(error) => {
+                capture_failure(directory, log, total_lines, error, had_loss, capture_error)
+            }
             OutputEvent::Finished => {}
         }
     }
@@ -507,21 +520,25 @@ fn drain_output_events(
 
 fn capture_failure(
     directory: &std::path::Path,
-    spool: &mut Option<SpoolWriter>,
-    after_seq: u64,
+    log: &mut Option<OutputLogWriter>,
+    total_lines: &mut u64,
     reason: String,
     had_loss: &mut bool,
     capture_error: &mut Option<CaptureErrorRecord>,
 ) {
-    if let Some(writer) = spool.as_mut() {
+    if let Some(writer) = log.as_mut() {
         let _ = writer.finish();
+        *total_lines = writer.preserved_lines();
     }
-    *spool = None;
+    *log = None;
     *had_loss = true;
     if capture_error.is_some() {
         return;
     }
-    let record = CaptureErrorRecord { after_seq, reason };
+    let record = CaptureErrorRecord {
+        after_seq: *total_lines,
+        reason,
+    };
     capture_error.clone_from(&Some(record.clone()));
     let _ = write_atomic_json(&directory.join(CAPTURE_ERROR_FILE), &record);
 }

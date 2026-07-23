@@ -6,7 +6,7 @@ use encoding_rs::{DecoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
 
 const MAX_PRESENTED_LINE_CHARS: usize = 2_000;
 
-/// One stored line borrowed from either the foreground ring or a job spool record.
+/// One stored line borrowed from the foreground ring or a direct/legacy job record.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EncodedLine<'a> {
     pub(crate) bytes: &'a [u8],
@@ -34,6 +34,7 @@ pub(crate) struct DecodedLines {
     pub(crate) lines: Vec<String>,
     pub(crate) invalid_sequences: u64,
     pub(crate) invalid_sequences_per_line: Vec<u64>,
+    pub(crate) truncated_per_line: Vec<bool>,
     pub(crate) transcoding_note: Option<String>,
     pub(crate) had_truncation: bool,
 }
@@ -130,14 +131,6 @@ pub(crate) fn decode_job(
     decode_lines(lines, plan)
 }
 
-/// Computes whether the default job presentation loses any part of this line.
-pub(crate) fn job_line_is_truncated(
-    line: EncodedLine<'_>,
-    job_encoding: Option<OutputEncoding>,
-) -> bool {
-    decode_job(&[line], None, job_encoding).had_truncation
-}
-
 fn automatic_run_plan(lines: &[EncodedLine<'_>]) -> DecodePlan {
     if let Some(plan) = bom_plan(lines) {
         return plan;
@@ -197,6 +190,7 @@ fn decode_lines(lines: &[EncodedLine<'_>], plan: DecodePlan) -> DecodedLines {
         if let Some(text) = line.legacy_text {
             decoded.lines.push(text.to_string());
             decoded.invalid_sequences_per_line.push(0);
+            decoded.truncated_per_line.push(line.known_truncated);
             decoded.had_truncation |= line.known_truncated;
             continue;
         }
@@ -210,6 +204,7 @@ fn decode_lines(lines: &[EncodedLine<'_>], plan: DecodePlan) -> DecodedLines {
             .count() as u64;
         decoded.invalid_sequences = decoded.invalid_sequences.saturating_add(invalid_sequences);
         decoded.invalid_sequences_per_line.push(invalid_sequences);
+        decoded.truncated_per_line.push(truncated);
         decoded.had_truncation |= truncated;
         decoded.lines.push(text);
     }

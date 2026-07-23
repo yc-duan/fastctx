@@ -1157,13 +1157,16 @@ fn start_persistent_job(home: &Path, command: &str) -> String {
             "login_shell": false
         }),
     );
-    let job_id = mcp_text(&started)
+    let body = mcp_text(&started)
         .strip_prefix("(Complete: job ")
-        .and_then(|value| value.strip_suffix(" started.)"))
-        .expect("run_background must return its stable job id")
-        .to_string();
+        .and_then(|value| value.strip_suffix(".)"))
+        .expect("run_background must return its stable start terminal");
+    let (job_id, log_path) = body
+        .split_once(" started; log at ")
+        .expect("run_background must return its stable job id and log path");
+    assert!(Path::new(log_path).is_absolute(), "{log_path}");
     assert!(session.close().success());
-    job_id
+    job_id.to_string()
 }
 
 struct BackgroundJobCleanup {

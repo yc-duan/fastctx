@@ -75,11 +75,15 @@ fn parent_watch_ends_foreground_work_but_preserves_detached_background_jobs() {
         }),
     );
     let started = wait_for_response(&background.response_path, 2, PROCESS_DEADLINE);
-    let job_id = mcp_text(&started)
+    let body = mcp_text(&started)
         .strip_prefix("(Complete: job ")
-        .and_then(|value| value.strip_suffix(" started.)"))
-        .expect("run_background must return its durable job id")
-        .to_string();
+        .and_then(|value| value.strip_suffix(".)"))
+        .expect("run_background must return its durable start terminal");
+    let (job_id, log_path) = body
+        .split_once(" started; log at ")
+        .expect("run_background must return its durable job id and log path");
+    assert!(Path::new(log_path).is_absolute(), "{log_path}");
+    let job_id = job_id.to_string();
     release_parent_and_wait_for_server(&mut background);
 
     let mut command = shell_server_command(&background_root);

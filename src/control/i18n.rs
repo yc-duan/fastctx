@@ -528,7 +528,7 @@ const EN: Messages = messages!(
     "Recommended. Raises the global Codex limit for every tool and gives multi-file reads and batch results the right packing capacity.",
     "Maximum output per tool call; fills the context fastest. Choose only when you truly need it.",
     "Bigger is not better: every tool result permanently occupies the model's context window. The higher the limit, the larger each return and the faster the context fills up. Raise the tier only when a task truly needs to swallow very long content in one go, or you are sure you want the model to read more per tool call.",
-    "Per-tool share of the FastCtx budget. glob defaults to 50% — path lists are low-density output.",
+    "Per-tool share of the FastCtx budget. glob defaults to 50% — path lists are low-density output; job_output defaults to 25% — complete logs can be retrieved from disk.",
     "←→ adjust",
     "Enter save",
     "Esc cancel",
@@ -551,7 +551,7 @@ const EN: Messages = messages!(
     "Regex search across file contents.",
     "Finds files by name pattern.",
     "Runs a foreground bash command (waits for exit).",
-    "Fetches incremental output from background jobs.",
+    "Checks on a background job and shows its newest output.",
     "Tab / Shift-Tab switch group"
 );
 const ZH_CN: Messages = messages!(
@@ -601,7 +601,7 @@ const ZH_CN: Messages = messages!(
     "推荐档。提高的是 Codex 全局上限，影响所有工具，并为多文件读取与批量结果提供合适的装箱容量。",
     "单次工具输出上限最大，上下文填得最快——仅在确有需要时选用。",
     "更大并不更好：每个工具结果都会永久占据模型的上下文窗口。上限越高，单次返回越大，上下文被填满得越快。只有任务确实需要一口气吞下超长内容、或你确定需要模型一次工具调用读入更多内容时才升档。",
-    "单工具占全局预算的比例。glob 默认 50%——路径列表是低密度输出。",
+    "单工具占全局预算的比例。glob 默认 50%——路径列表是低密度输出；job_output 默认 25%——完整日志可从磁盘重新获取。",
     "←→ 调整",
     "Enter 保存",
     "Esc 取消",
@@ -624,7 +624,7 @@ const ZH_CN: Messages = messages!(
     "使用正则表达式搜索文件内容。",
     "按名称模式查找文件。",
     "运行前台 bash 命令（等待退出）。",
-    "获取后台任务的增量输出。",
+    "检查后台任务并显示其最新输出。",
     "Tab / Shift-Tab 切换组"
 );
 const ZH_TW: Messages = messages!(
@@ -674,7 +674,7 @@ const ZH_TW: Messages = messages!(
     "建議使用。提高的是 Codex 全域上限，影響所有工具，並為多檔案讀取與批次結果提供合適的裝箱容量。",
     "單次工具輸出上限最高，上下文填滿得也最快——僅在確有需要時選用。",
     "更大並不更好：每個工具結果都會永久佔據模型的上下文視窗。上限越高，單次回傳越大，上下文被填滿得越快。只有任務確實需要一口氣讀入超長內容、或你確定需要模型一次工具呼叫讀入更多內容時才升檔。",
-    "單一工具佔全域預算的比例。glob 預設 50%——路徑清單是低密度輸出。",
+    "單一工具佔全域預算的比例。glob 預設 50%——路徑清單是低密度輸出；job_output 預設 25%——完整日誌可從磁碟重新取得。",
     "←→ 調整",
     "Enter 儲存",
     "Esc 取消",
@@ -697,7 +697,7 @@ const ZH_TW: Messages = messages!(
     "以正規表示式搜尋檔案內容。",
     "依名稱模式尋找檔案。",
     "執行前景 bash 指令（等待結束）。",
-    "取得背景工作逐步新增的輸出。",
+    "檢查背景工作並顯示其最新輸出。",
     "Tab / Shift-Tab 切換群組"
 );
 const JA: Messages = messages!(
@@ -747,7 +747,7 @@ const JA: Messages = messages!(
     "推奨。Codex 全体の上限をすべてのツールに対して引き上げ、複数ファイル読み取りと一括結果に適切な格納容量を与えます。",
     "1 回のツール呼び出しで返せる量が最大で、コンテキストも最も速く埋まります。本当に必要な場合のみ選択してください。",
     "大きいほど良いわけではありません：ツールの結果はモデルのコンテキストウィンドウを恒久的に占有します。上限が高いほど 1 回の返却が大きくなり、コンテキストが埋まるのも速くなります。非常に長い内容を一度に読み込む必要がある場合、または 1 回のツール呼び出しでより多く読み込ませたいと確信できる場合にのみ上げてください。",
-    "ツールごとの全体予算に対する割合。glob の既定は 50%——パス一覧は情報密度の低い出力です。",
+    "ツールごとの全体予算に対する割合。glob の既定は 50%——パス一覧は情報密度の低い出力です。job_output の既定は 25%——完全なログはディスクから再取得できます。",
     "←→ 調整",
     "Enter 保存",
     "Esc キャンセル",
@@ -770,7 +770,7 @@ const JA: Messages = messages!(
     "正規表現でファイル内容を検索します。",
     "名前パターンでファイルを検索します。",
     "フォアグラウンドの bash コマンドを実行します（終了まで待機）。",
-    "バックグラウンドジョブの増分出力を取得します。",
+    "バックグラウンドジョブを確認し、最新の出力を表示します。",
     "Tab / Shift-Tab グループ切替"
 );
 const KO: Messages = messages!(
@@ -820,7 +820,7 @@ const KO: Messages = messages!(
     "권장. 모든 도구의 Codex 전역 상한을 높이고 다중 파일 읽기와 일괄 결과에 알맞은 패킹 용량을 제공합니다.",
     "한 번의 도구 호출에서 반환되는 양이 가장 많아 컨텍스트가 가장 빠르게 찹니다. 꼭 필요할 때만 선택하세요.",
     "클수록 좋은 것이 아닙니다: 모든 도구 결과는 모델의 컨텍스트 창을 영구히 차지합니다. 상한이 높을수록 반환이 커지고 컨텍스트가 더 빨리 가득 찹니다. 매우 긴 내용을 한 번에 읽어야 하거나, 한 번의 도구 호출로 더 많이 읽게 하려는 확신이 있을 때만 올리세요.",
-    "도구별 전역 예산 비율. glob 기본값은 50% — 경로 목록은 밀도가 낮은 출력입니다.",
+    "도구별 전역 예산 비율. glob 기본값은 50% — 경로 목록은 밀도가 낮은 출력입니다. job_output 기본값은 25% — 전체 로그는 디스크에서 다시 가져올 수 있습니다.",
     "←→ 조정",
     "Enter 저장",
     "Esc 취소",
@@ -843,7 +843,7 @@ const KO: Messages = messages!(
     "파일 내용에서 정규식 검색을 수행합니다.",
     "이름 패턴으로 파일을 찾습니다.",
     "포그라운드 bash 명령을 실행합니다(종료할 때까지 대기).",
-    "백그라운드 작업의 증분 출력을 가져옵니다.",
+    "백그라운드 작업을 확인하고 최신 출력을 표시합니다.",
     "Tab / Shift-Tab 그룹 전환"
 );
 const ES: Messages = messages!(
@@ -893,7 +893,7 @@ const ES: Messages = messages!(
     "Recomendado. Eleva el límite global de Codex para todas las herramientas y da la capacidad adecuada a lecturas múltiples y resultados por lotes.",
     "Máxima salida por llamada de herramienta; llena el contexto más rápido. Elígelo solo cuando realmente lo necesites.",
     "Más grande no es mejor: cada resultado ocupa permanentemente la ventana de contexto del modelo. Cuanto mayor sea el límite, mayor será cada retorno y más rápido se llenará el contexto. Suba el nivel solo si una tarea realmente necesita leer contenido muy largo de una vez, o está seguro de que quiere que el modelo lea más por llamada.",
-    "Proporción del presupuesto por herramienta. glob usa 50% por defecto: las listas de rutas son salida de baja densidad.",
+    "Proporción del presupuesto por herramienta. glob usa 50% por defecto: las listas de rutas son salida de baja densidad; job_output usa 25% por defecto: los registros completos pueden recuperarse del disco.",
     "←→ ajustar",
     "Enter guardar",
     "Esc cancelar",
@@ -916,7 +916,7 @@ const ES: Messages = messages!(
     "Busca con expresiones regulares en el contenido de los archivos.",
     "Busca archivos por patrón de nombre.",
     "Ejecuta un comando bash en primer plano (espera a que termine).",
-    "Obtiene la salida incremental de trabajos en segundo plano.",
+    "Comprueba un trabajo en segundo plano y muestra su salida más reciente.",
     "Tab / Shift-Tab cambiar grupo"
 );
 const FR: Messages = messages!(
@@ -966,7 +966,7 @@ const FR: Messages = messages!(
     "Recommandé. Augmente la limite globale de Codex pour tous les outils et offre la bonne capacité aux lectures multi-fichiers et résultats groupés.",
     "Sortie maximale par appel d’outil ; remplit le contexte le plus vite. À choisir uniquement si vous en avez vraiment besoin.",
     "Plus grand n’est pas meilleur : chaque résultat occupe définitivement la fenêtre de contexte du modèle. Plus la limite est haute, plus chaque retour est volumineux et plus vite le contexte se remplit. N’augmentez le niveau que si une tâche doit vraiment lire un contenu très long d’un coup, ou si vous êtes sûr de vouloir que le modèle lise plus par appel.",
-    "Part du budget par outil. glob est à 50 % par défaut — les listes de chemins sont une sortie peu dense.",
+    "Part du budget par outil. glob est à 50 % par défaut — les listes de chemins sont une sortie peu dense ; job_output est à 25 % par défaut — les journaux complets peuvent être récupérés depuis le disque.",
     "←→ ajuster",
     "Enter enregistrer",
     "Esc annuler",
@@ -989,7 +989,7 @@ const FR: Messages = messages!(
     "Recherche par expression régulière dans le contenu des fichiers.",
     "Trouve les fichiers par motif de nom.",
     "Exécute une commande bash au premier plan (attend sa fin).",
-    "Récupère la sortie incrémentale des tâches en arrière-plan.",
+    "Vérifie une tâche en arrière-plan et affiche sa sortie la plus récente.",
     "Tab / Shift-Tab changer de groupe"
 );
 const DE: Messages = messages!(
@@ -1039,7 +1039,7 @@ const DE: Messages = messages!(
     "Empfohlen. Erhöht das globale Codex-Limit für alle Tools und bietet die richtige Kapazität für Mehrdatei-Lesevorgänge und Stapelergebnisse.",
     "Maximale Ausgabe pro Tool-Aufruf; füllt den Kontext am schnellsten. Nur wählen, wenn Sie es wirklich brauchen.",
     "Größer ist nicht besser: Jedes Tool-Ergebnis belegt dauerhaft das Kontextfenster des Modells. Je höher das Limit, desto größer jede Rückgabe und desto schneller füllt sich der Kontext. Nur erhöhen, wenn eine Aufgabe sehr lange Inhalte wirklich auf einmal lesen muss oder Sie sicher mehr pro Tool-Aufruf lesen lassen wollen.",
-    "Anteil des Budgets pro Tool. glob standardmäßig 50 % — Pfadlisten sind Ausgabe mit geringer Dichte.",
+    "Anteil des Budgets pro Tool. glob standardmäßig 50 % — Pfadlisten sind Ausgabe mit geringer Dichte; job_output standardmäßig 25 % — vollständige Protokolle können von der Festplatte abgerufen werden.",
     "←→ anpassen",
     "Enter speichern",
     "Esc abbrechen",
@@ -1062,7 +1062,7 @@ const DE: Messages = messages!(
     "Durchsucht Dateiinhalte mit regulären Ausdrücken.",
     "Findet Dateien anhand eines Namensmusters.",
     "Führt einen Bash-Befehl im Vordergrund aus (wartet auf das Ende).",
-    "Ruft schrittweise Ausgaben von Hintergrundjobs ab.",
+    "Prüft einen Hintergrundjob und zeigt dessen neueste Ausgabe.",
     "Tab / Shift-Tab Gruppe wechseln"
 );
 const PT_BR: Messages = messages!(
@@ -1112,7 +1112,7 @@ const PT_BR: Messages = messages!(
     "Recomendado. Aumenta o limite global do Codex para todas as ferramentas e dá a capacidade certa para leituras de vários arquivos e resultados em lote.",
     "Máxima saída por chamada de ferramenta; preenche o contexto mais rápido. Escolha apenas quando realmente precisar.",
     "Maior não é melhor: cada resultado ocupa permanentemente a janela de contexto do modelo. Quanto maior o limite, maior cada retorno e mais rápido o contexto enche. Suba o nível apenas se uma tarefa realmente precisar ler conteúdo muito longo de uma vez, ou se você tiver certeza de que quer que o modelo leia mais por chamada.",
-    "Fração do orçamento por ferramenta. glob usa 50% por padrão — listas de caminhos são saída de baixa densidade.",
+    "Fração do orçamento por ferramenta. glob usa 50% por padrão — listas de caminhos são saída de baixa densidade; job_output usa 25% por padrão — logs completos podem ser recuperados do disco.",
     "←→ ajustar",
     "Enter salvar",
     "Esc cancelar",
@@ -1135,7 +1135,7 @@ const PT_BR: Messages = messages!(
     "Pesquisa com regex no conteúdo dos arquivos.",
     "Localiza arquivos por padrão de nome.",
     "Executa um comando bash em primeiro plano (aguarda a saída).",
-    "Obtém a saída incremental de trabalhos em segundo plano.",
+    "Verifica um trabalho em segundo plano e mostra sua saída mais recente.",
     "Tab / Shift-Tab trocar grupo"
 );
 const RU: Messages = messages!(
@@ -1185,7 +1185,7 @@ const RU: Messages = messages!(
     "Рекомендуется. Повышает глобальный лимит Codex для всех инструментов и даёт подходящую ёмкость чтению нескольких файлов и пакетным результатам.",
     "Максимальный объём вывода за один вызов инструмента; контекст заполняется быстрее всего. Выбирайте только при реальной необходимости.",
     "Больше не значит лучше: каждый результат инструмента навсегда занимает контекстное окно модели. Чем выше лимит, тем больше каждый ответ и тем быстрее заполняется контекст. Повышайте уровень, только если задача действительно требует прочитать очень длинное содержимое за раз, или вы уверены, что модели нужно читать больше за один вызов.",
-    "Доля бюджета на инструмент. glob по умолчанию 50 % — списки путей являются выводом низкой плотности.",
+    "Доля бюджета на инструмент. glob по умолчанию 50 % — списки путей являются выводом низкой плотности; job_output по умолчанию 25 % — полные журналы можно получить с диска.",
     "←→ изменить",
     "Enter сохранить",
     "Esc отмена",
@@ -1208,7 +1208,7 @@ const RU: Messages = messages!(
     "Ищет по регулярному выражению в содержимом файлов.",
     "Находит файлы по шаблону имени.",
     "Запускает команду bash на переднем плане (ждёт завершения).",
-    "Получает добавившийся вывод фоновых заданий.",
+    "Проверяет фоновое задание и показывает его последние выходные данные.",
     "Tab / Shift-Tab сменить группу"
 );
 const IT: Messages = messages!(
@@ -1258,7 +1258,7 @@ const IT: Messages = messages!(
     "Consigliato. Alza il limite globale di Codex per tutti gli strumenti e offre la capacità corretta a letture multi-file e risultati in batch.",
     "Output massimo per chiamata dello strumento; riempie il contesto più rapidamente. Sceglilo solo se ne hai davvero bisogno.",
     "Più grande non è meglio: ogni risultato occupa in modo permanente la finestra di contesto del modello. Più alto è il limite, più grande è ogni risposta e più in fretta si riempie il contesto. Alza il livello solo se un'attività deve davvero leggere contenuti molto lunghi in una volta, o sei sicuro di voler far leggere di più al modello per chiamata.",
-    "Quota di budget per strumento. glob è al 50% per impostazione predefinita — gli elenchi di percorsi sono output a bassa densità.",
+    "Quota di budget per strumento. glob è al 50% per impostazione predefinita — gli elenchi di percorsi sono output a bassa densità; job_output è al 25% per impostazione predefinita — i log completi possono essere recuperati dal disco.",
     "←→ regola",
     "Enter salva",
     "Esc annulla",
@@ -1281,7 +1281,7 @@ const IT: Messages = messages!(
     "Cerca con espressioni regolari nel contenuto dei file.",
     "Trova file in base a un modello di nome.",
     "Esegue un comando bash in primo piano (attende l’uscita).",
-    "Recupera l’output incrementale dei job in background.",
+    "Controlla un job in background e mostra l'output più recente.",
     "Tab / Shift-Tab cambia gruppo"
 );
 const TR: Messages = messages!(
@@ -1331,7 +1331,7 @@ const TR: Messages = messages!(
     "Önerilir. Tüm araçlar için Codex genel sınırını yükseltir ve çoklu dosya okumaları ile toplu sonuçlara uygun paketleme kapasitesi sağlar.",
     "Araç çağrısı başına en yüksek çıktı; bağlamı en hızlı doldurur. Yalnızca gerçekten gerektiğinde seçin.",
     "Daha büyük daha iyi değildir: her araç sonucu modelin bağlam penceresini kalıcı olarak doldurur. Sınır ne kadar yüksekse her dönüş o kadar büyük olur ve bağlam o kadar hızlı dolar. Kademeyi yalnızca bir görev gerçekten çok uzun içeriği tek seferde okumayı gerektiriyorsa veya modelin bir araç çağrısında daha fazla okumasını istediğinizden eminseniz yükseltin.",
-    "Araç başına bütçe payı. glob varsayılanı %50 — yol listeleri düşük yoğunluklu çıktıdır.",
+    "Araç başına bütçe payı. glob varsayılanı %50 — yol listeleri düşük yoğunluklu çıktıdır; job_output varsayılanı %25 — tam günlükler diskten yeniden alınabilir.",
     "←→ ayarla",
     "Enter kaydet",
     "Esc iptal",
@@ -1354,7 +1354,7 @@ const TR: Messages = messages!(
     "Dosya içeriklerinde düzenli ifade araması yapar.",
     "Dosyaları ad kalıbına göre bulur.",
     "Ön planda bir bash komutu çalıştırır (çıkmasını bekler).",
-    "Arka plan işlerinden artımlı çıktı alır.",
+    "Arka plan işini denetler ve en yeni çıktısını gösterir.",
     "Tab / Shift-Tab grup değiştir"
 );
 const PL: Messages = messages!(
@@ -1404,7 +1404,7 @@ const PL: Messages = messages!(
     "Zalecany. Podnosi globalny limit Codex dla wszystkich narzędzi i zapewnia właściwą pojemność odczytom wielu plików oraz wynikom wsadowym.",
     "Maksymalny wynik jednego wywołania narzędzia; najszybciej zapełnia kontekst. Wybieraj tylko wtedy, gdy naprawdę tego potrzebujesz.",
     "Większe nie znaczy lepsze: każdy wynik narzędzia trwale zajmuje okno kontekstu modelu. Im wyższy limit, tym większy każdy zwrot i tym szybciej zapełnia się kontekst. Podnoś poziom tylko wtedy, gdy zadanie naprawdę wymaga wczytania bardzo długiej treści naraz lub masz pewność, że model ma czytać więcej na jedno wywołanie.",
-    "Udział budżetu na narzędzie. glob domyślnie 50% — listy ścieżek to wyjście o niskiej gęstości.",
+    "Udział budżetu na narzędzie. glob domyślnie 50% — listy ścieżek to wyjście o niskiej gęstości; job_output domyślnie 25% — pełne logi można pobrać z dysku.",
     "←→ zmień",
     "Enter zapisz",
     "Esc anuluj",
@@ -1427,7 +1427,7 @@ const PL: Messages = messages!(
     "Wyszukuje wyrażeniem regularnym w zawartości plików.",
     "Znajduje pliki według wzorca nazwy.",
     "Uruchamia polecenie bash na pierwszym planie (czeka na zakończenie).",
-    "Pobiera przyrostowe wyjście z zadań w tle.",
+    "Sprawdza zadanie w tle i pokazuje jego najnowsze dane wyjściowe.",
     "Tab / Shift-Tab zmień grupę"
 );
 const NL: Messages = messages!(
@@ -1477,7 +1477,7 @@ const NL: Messages = messages!(
     "Aanbevolen. Verhoogt de globale Codex-limiet voor alle tools en biedt de juiste capaciteit voor meerbestandslezingen en batchresultaten.",
     "Maximale uitvoer per toolaanroep; vult de context het snelst. Kies dit alleen als u het echt nodig hebt.",
     "Groter is niet beter: elk toolresultaat bezet permanent het contextvenster van het model. Hoe hoger de limiet, hoe groter elke respons en hoe sneller de context volloopt. Verhoog het niveau alleen als een taak echt zeer lange inhoud in één keer moet lezen, of als u zeker weet dat het model meer per aanroep moet lezen.",
-    "Budgetaandeel per tool. glob staat standaard op 50% — padlijsten zijn uitvoer met lage dichtheid.",
+    "Budgetaandeel per tool. glob staat standaard op 50% — padlijsten zijn uitvoer met lage dichtheid; job_output staat standaard op 25% — volledige logs kunnen van schijf worden opgehaald.",
     "←→ aanpassen",
     "Enter opslaan",
     "Esc annuleren",
@@ -1500,7 +1500,7 @@ const NL: Messages = messages!(
     "Zoekt met reguliere expressies in bestandsinhoud.",
     "Vindt bestanden op naamspatroon.",
     "Voert een bash-opdracht op de voorgrond uit (wacht tot die stopt).",
-    "Haalt incrementele uitvoer van achtergrondtaken op.",
+    "Controleert een achtergrondtaak en toont de nieuwste uitvoer.",
     "Tab / Shift-Tab groep wisselen"
 );
 const VI: Messages = messages!(
@@ -1550,7 +1550,7 @@ const VI: Messages = messages!(
     "Khuyên dùng. Nâng giới hạn toàn cục Codex cho mọi công cụ và cung cấp dung lượng đóng gói phù hợp cho đọc nhiều tệp và kết quả theo lô.",
     "Lượng đầu ra mỗi lần gọi công cụ lớn nhất, làm đầy ngữ cảnh nhanh nhất. Chỉ chọn khi thực sự cần.",
     "Lớn hơn không có nghĩa là tốt hơn: mỗi kết quả công cụ chiếm vĩnh viễn cửa sổ ngữ cảnh của mô hình. Giới hạn càng cao, mỗi lần trả về càng lớn và ngữ cảnh càng nhanh đầy. Chỉ nâng mức khi tác vụ thực sự cần đọc nội dung rất dài trong một lần, hoặc bạn chắc chắn muốn mô hình đọc nhiều hơn mỗi lần gọi công cụ.",
-    "Tỷ lệ ngân sách cho từng công cụ. glob mặc định 50% — danh sách đường dẫn là đầu ra mật độ thấp.",
+    "Tỷ lệ ngân sách cho từng công cụ. glob mặc định 50% — danh sách đường dẫn là đầu ra mật độ thấp; job_output mặc định 25% — có thể lấy lại toàn bộ nhật ký từ đĩa.",
     "←→ điều chỉnh",
     "Enter lưu",
     "Esc hủy",
@@ -1573,7 +1573,7 @@ const VI: Messages = messages!(
     "Tìm kiếm bằng biểu thức chính quy trong nội dung tệp.",
     "Tìm tệp theo mẫu tên.",
     "Chạy lệnh bash ở nền trước (chờ lệnh thoát).",
-    "Lấy đầu ra tăng dần từ tác vụ nền.",
+    "Kiểm tra một tác vụ nền và hiển thị đầu ra mới nhất.",
     "Tab / Shift-Tab đổi nhóm"
 );
 const ID: Messages = messages!(
@@ -1623,7 +1623,7 @@ const ID: Messages = messages!(
     "Disarankan. Menaikkan batas global Codex untuk semua alat dan memberi kapasitas kemasan yang tepat bagi pembacaan banyak berkas serta hasil batch.",
     "Keluaran maksimum per panggilan alat; paling cepat memenuhi konteks. Pilih hanya jika Anda benar-benar membutuhkannya.",
     "Lebih besar bukan berarti lebih baik: setiap hasil alat menempati jendela konteks model secara permanen. Semakin tinggi batasnya, semakin besar setiap hasil dan semakin cepat konteks terisi. Naikkan tingkat hanya jika tugas benar-benar perlu membaca konten sangat panjang sekaligus, atau Anda yakin ingin model membaca lebih banyak per panggilan alat.",
-    "Porsi anggaran per alat. glob bawaannya 50% — daftar path adalah keluaran berkepadatan rendah.",
+    "Porsi anggaran per alat. glob bawaannya 50% — daftar path adalah keluaran berkepadatan rendah; job_output bawaannya 25% — log lengkap dapat diambil kembali dari disk.",
     "←→ sesuaikan",
     "Enter simpan",
     "Esc batal",
@@ -1646,7 +1646,7 @@ const ID: Messages = messages!(
     "Mencari dengan regex di seluruh isi berkas.",
     "Menemukan berkas berdasarkan pola nama.",
     "Menjalankan perintah bash latar depan (menunggu hingga selesai).",
-    "Mengambil keluaran bertahap dari pekerjaan latar belakang.",
+    "Memeriksa pekerjaan latar belakang dan menampilkan keluaran terbarunya.",
     "Tab / Shift-Tab ganti grup"
 );
 const UK: Messages = messages!(
@@ -1696,7 +1696,7 @@ const UK: Messages = messages!(
     "Рекомендовано. Підвищує глобальний ліміт Codex для всіх інструментів і дає належну місткість читанню кількох файлів та пакетним результатам.",
     "Максимальний обсяг виводу за один виклик інструмента; контекст заповнюється найшвидше. Обирайте лише за справжньої потреби.",
     "Більше не означає краще: кожен результат інструмента назавжди займає контекстне вікно моделі. Що вищий ліміт, то більша кожна відповідь і то швидше заповнюється контекст. Підвищуйте рівень лише якщо завдання справді потребує прочитати дуже довгий вміст за раз, або ви впевнені, що моделі треба читати більше за один виклик.",
-    "Частка бюджету на інструмент. glob типово 50 % — списки шляхів є виводом низької щільності.",
+    "Частка бюджету на інструмент. glob типово 50 % — списки шляхів є виводом низької щільності; job_output типово 25 % — повні журнали можна повторно отримати з диска.",
     "←→ змінити",
     "Enter зберегти",
     "Esc скасувати",
@@ -1719,7 +1719,7 @@ const UK: Messages = messages!(
     "Шукає регулярним виразом у вмісті файлів.",
     "Знаходить файли за шаблоном назви.",
     "Запускає команду bash на передньому плані (чекає завершення).",
-    "Отримує приріст виводу фонових завдань.",
+    "Перевіряє фонове завдання й показує його найновіші вихідні дані.",
     "Tab / Shift-Tab змінити групу"
 );
 
@@ -1814,7 +1814,7 @@ mod tests {
                 "Regex search across file contents.",
                 "Finds files by name pattern.",
                 "Runs a foreground bash command (waits for exit).",
-                "Fetches incremental output from background jobs.",
+                "Checks on a background job and shows its newest output.",
             ]
         );
         for language in ALL_LANGUAGES {

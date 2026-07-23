@@ -38,7 +38,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "run_background",
-        description = "Start a bash command as a background job and return its job_id\nimmediately. Use for builds, tests, servers, or anything that may exceed\ntwo minutes. Jobs run independently of this session: they survive server\nand Codex restarts, and their output and exit code stay retrievable by\njob_id afterwards. Poll with job_output; stop with job_kill; rediscover\npast jobs with job_list. There is no timeout — a job runs until it exits\nor is killed.",
+        description = "Start a bash command as a background job and return its job_id\nimmediately. Use for builds, tests, servers, or anything that may exceed\ntwo minutes. Jobs run independently of this session: they survive server\nand Codex restarts, and their output and exit code stay retrievable by\njob_id afterwards. Check on it with job_output; stop with job_kill;\nrediscover past jobs with job_list. There is no timeout — a job runs\nuntil it exits or is killed. Everything the job prints is also kept in a\nplain log file whose path is returned here: read or grep it with the read\ntool for anything job_output does not show.",
         annotations(
             title = "Start background bash job",
             read_only_hint = false,
@@ -59,7 +59,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "job_output",
-        description = "Return a background job's new output since the last call, plus its status\n(running, exited with its code, or interrupted). wait_ms long-polls up to\n240000 ms: with wait_for=\"output\" (default) it returns as soon as new\noutput or the exit arrives; with wait_for=\"exit\" it keeps waiting through\nintermediate output and returns only on exit or when the wait elapses —\nuse it for builds and tests where only the end matters. Either way the\naccumulated output is delivered. A Partial note gives an after_seq cursor\n— pass it back to resume idempotently if a call was lost. Works for jobs\nstarted in earlier sessions. If output looks garbled (U+FFFD), call again\nwith encoding set to the source encoding (e.g. \"gbk\") — stored bytes are\nre-decoded losslessly. Keep calling until the last line says Complete.",
+        description = "Query a background job: its status (running, exited with its code, or\ninterrupted) plus the newest output you have not been shown yet. wait_ms\nis how long this query may take (0-60000, default 30000): it returns as\nsoon as the job reaches a terminal state, and otherwise waits the window\nout — intermediate output does not end the wait, so one call is worth one\nturn. Pass wait_ms=0 for an immediate snapshot. Long output is windowed:\nyou get the newest lines that fit, plus the start of the log on the first\ncall, and a note naming the exact lines that were skipped. Nothing is\nlost — the job's whole output is a plain log file on disk, and its line\nnumbers are the seq numbers used here, so read or grep that path for\nanything not shown. Works for jobs started in earlier sessions. If output\nlooks garbled (U+FFFD), call again with encoding set to the source\nencoding (e.g. \"gbk\") — stored bytes are re-decoded losslessly. Keep\ncalling until the last line says Complete.",
         annotations(
             title = "Read background job output",
             read_only_hint = true,

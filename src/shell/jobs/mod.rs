@@ -4,21 +4,22 @@ pub(crate) mod admission;
 mod host;
 mod identity;
 mod model;
-mod spool;
+mod output_log;
 mod store;
 
 use crate::budget::{TokenBudget, estimate_tokens};
 use crate::control::paths::ControlPaths;
 use crate::model::ToolResponse;
+use crate::paths::display_path;
+use crate::shell::JobListStatus;
 use crate::shell::encoding::{
     OutputEncoding, decode_job, job_garble_note, validate_output_encoding,
 };
 use crate::shell::output::{
-    budget_too_small_message, compose_response, compose_response_with_tail, dropped_note,
-    global_token_budget, job_output_token_budget, plural, terminal_response,
+    budget_too_small_message, compose_response_with_tail, global_token_budget,
+    job_output_token_budget, plural, terminal_response,
 };
-use crate::shell::{JobListStatus, JobOutputWaitFor};
-use model::{JobRecord, JobStatus, LaunchSpec, SpoolLine, TerminationKind};
+use model::{JobRecord, JobStatus, LaunchSpec, StoredLine, TerminationKind};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
@@ -39,19 +40,23 @@ pub(crate) struct JobManager {
 #[derive(Clone, Debug)]
 struct OutputSnapshot {
     status: JobStatus,
-    lines: Vec<SpoolLine>,
-    dropped: u64,
+    head: Vec<StoredLine>,
+    tail: Vec<StoredLine>,
+    unread_first: u64,
+    unread_last: u64,
+    all_unread_loaded: bool,
     total_lines: u64,
-    had_loss: bool,
+    legacy_loss: bool,
     capture_error: Option<model::CaptureErrorRecord>,
     default_encoding: Option<OutputEncoding>,
     anchor: u64,
+    direct_log: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
 struct FormattedPage {
     response: String,
-    last_seq: Option<u64>,
+    cursor_seq: Option<u64>,
 }
 
 /// Stable control-plane view of one persistent job record.
@@ -75,7 +80,7 @@ pub(crate) struct JobSourceSummary {
     pub(crate) server_cwd: String,
 }
 
-/// Public three-state lifecycle used by CLI and TUI without exposing spool internals.
+/// Public three-state lifecycle used by CLI and TUI without exposing storage internals.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum JobSummaryStatus {
     Running,
@@ -142,6 +147,7 @@ pub(crate) struct JobTail {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct TailCursor {
     offsets: BTreeMap<PathBuf, u64>,
+    direct_byte_offset: u64,
     last_seq: u64,
 }
 
@@ -230,7 +236,11 @@ impl JobManager {
                 return ToolResponse::error(error);
             }
         };
-        let terminal = format!("(Complete: job {job_id} started.)");
+        let log_path = job_dir.join(model::OUTPUT_LOG_FILE);
+        let terminal = format!(
+            "(Complete: job {job_id} started; log at {}.)",
+            display_path(&log_path)
+        );
         if estimate_tokens(&terminal) > budget.value {
             store::remove_reserved_job(&job_dir);
             return ToolResponse::error(budget_too_small_message(budget));
@@ -268,7 +278,6 @@ impl JobManager {
         &self,
         job_id: &str,
         wait_ms: u64,
-        wait_for: JobOutputWaitFor,
         after_seq: Option<u64>,
         encoding: Option<OutputEncoding>,
         cancelled: impl Fn() -> bool,
@@ -291,7 +300,7 @@ impl JobManager {
                 .copied()
                 .unwrap_or(0)
         });
-        let (record, spool) = loop {
+        let record = loop {
             if cancelled() {
                 return ToolResponse::error(
                     "The job output wait was cancelled because the MCP request or server session ended."
@@ -303,28 +312,16 @@ impl JobManager {
                 Ok(None) => return missing_job(job_id),
                 Err(error) => return ToolResponse::error(error),
             };
-            let spool = match store::read_spool(&record) {
-                Ok(spool) => spool,
+            let capture_failed = match store::capture_error(&record) {
+                Ok(capture_error) => capture_error.is_some(),
                 Err(error) => return ToolResponse::error(error),
             };
-            let has_output = spool.lines.iter().any(|line| line.seq > anchor);
-            if wait_event_arrived(
-                wait_for,
-                has_output,
-                record.status.is_running(),
-                spool.capture_error.is_some(),
-            ) || started.elapsed() >= wait
-            {
-                break (record, spool);
+            if !record.status.is_running() || capture_failed || started.elapsed() >= wait {
+                break record;
             }
             let remaining = wait.saturating_sub(started.elapsed());
             std::thread::sleep(remaining.min(REGISTRY_POLL));
         };
-        let lines = spool
-            .lines
-            .into_iter()
-            .filter(|line| line.seq > anchor)
-            .collect::<Vec<_>>();
         let default_encoding = match record
             .meta
             .encoding
@@ -339,24 +336,18 @@ impl JobManager {
                 ));
             }
         };
-        let snapshot = OutputSnapshot {
-            status: record.status,
-            lines,
-            dropped: spool.oldest_seq.saturating_sub(anchor.saturating_add(1)),
-            total_lines: spool.total_lines,
-            had_loss: spool.had_loss,
-            capture_error: spool.capture_error,
-            default_encoding,
-            anchor,
+        let snapshot = match load_output_snapshot(&record, anchor, default_encoding, budget) {
+            Ok(snapshot) => snapshot,
+            Err(error) => return ToolResponse::error(error),
         };
         let page = match format_snapshot(job_id, wait_ms, &snapshot, encoding, budget) {
             Ok(page) => page,
             Err(error) => return ToolResponse::error(error),
         };
-        if let Some(last_seq) = page.last_seq {
+        if let Some(cursor_seq) = page.cursor_seq {
             let mut cursors = self.cursors.lock().unwrap();
             let cursor = cursors.entry(job_id.to_string()).or_insert(0);
-            *cursor = (*cursor).max(last_seq);
+            *cursor = (*cursor).max(cursor_seq);
         }
         ToolResponse::text(page.response)
     }
@@ -415,15 +406,6 @@ impl JobManager {
     }
 }
 
-fn wait_event_arrived(
-    wait_for: JobOutputWaitFor,
-    has_output: bool,
-    is_running: bool,
-    capture_failed: bool,
-) -> bool {
-    !is_running || capture_failed || (wait_for == JobOutputWaitFor::Output && has_output)
-}
-
 fn terminate(paths: &ControlPaths, job_id: &str) -> Result<KillState, String> {
     let record =
         store::find_record(&paths.jobs_dir, job_id)?.ok_or_else(|| missing_job_text(job_id))?;
@@ -467,71 +449,115 @@ fn format_snapshot(
     call_encoding: Option<OutputEncoding>,
     budget: TokenBudget,
 ) -> Result<FormattedPage, String> {
-    let mut fixed_notes = Vec::new();
-    if let Some(note) = dropped_note(snapshot.dropped) {
-        fixed_notes.push(note);
-    }
-    if let Some(error) = &snapshot.capture_error {
-        fixed_notes.push(format!(
-            "(Note: output capture failed after seq {}: {}. This does not kill the process; its exit status remains available, but redirect the command to a file for a full log.)",
-            error.after_seq, error.reason
-        ));
-    }
-    if snapshot.lines.is_empty() {
-        let terminal = match &snapshot.status {
-            JobStatus::Running => format!(
-                "(Partial: job {job_id} is running; no new output within {wait_ms} ms. Call job_output again with a larger wait_ms (up to 240000) or wait_for=\"exit\", or do other work first and check back.)"
-            ),
-            status => complete_terminal(job_id, status, snapshot.total_lines, snapshot.had_loss),
-        };
-        let leading = (!fixed_notes.is_empty()).then(|| fixed_notes.join("\n\n"));
-        let response = compose_response(leading.as_deref(), &[], &terminal);
-        if estimate_tokens(&response) > budget.value {
+    if snapshot.head.is_empty() && snapshot.tail.is_empty() {
+        let candidate = render_candidate(job_id, wait_ms, snapshot, call_encoding, 0, 0);
+        if estimate_tokens(&candidate.response) > budget.value {
             return Err(budget_too_small_message(budget));
         }
         return Ok(FormattedPage {
-            response,
-            last_seq: None,
+            response: candidate.response,
+            cursor_seq: (snapshot.unread_last > snapshot.anchor).then_some(snapshot.unread_last),
         });
     }
 
-    let mut low = 1;
-    let mut high = snapshot.lines.len();
+    if snapshot.all_unread_loaded {
+        let candidate = render_candidate(
+            job_id,
+            wait_ms,
+            snapshot,
+            call_encoding,
+            snapshot.head.len(),
+            0,
+        );
+        if estimate_tokens(&candidate.response) <= budget.value {
+            return Ok(FormattedPage {
+                response: candidate.response,
+                cursor_seq: snapshot
+                    .direct_log
+                    .as_ref()
+                    .map(|_| snapshot.unread_last)
+                    .or(candidate.last_seq),
+            });
+        }
+    }
+
+    if snapshot.direct_log.is_none() {
+        return format_legacy_page(job_id, wait_ms, snapshot, call_encoding, budget);
+    }
+
+    format_direct_window(job_id, wait_ms, snapshot, call_encoding, budget)
+}
+
+#[derive(Debug)]
+struct RenderedCandidate {
+    response: String,
+    last_seq: Option<u64>,
+}
+
+fn load_output_snapshot(
+    record: &JobRecord,
+    anchor: u64,
+    default_encoding: Option<OutputEncoding>,
+    budget: TokenBudget,
+) -> Result<OutputSnapshot, String> {
+    let mut log = store::open_log(record)?;
+    let direct_log = log.direct_path().map(Path::to_path_buf);
+    let total_lines = log.total_lines();
+    let requested_first = anchor.saturating_add(1);
+    let unread_first = requested_first.max(log.oldest_seq());
+    let max_lines = budget.value.saturating_mul(4).saturating_add(64);
+    let max_bytes = budget.value.saturating_mul(16).saturating_add(64 * 1024);
+    let mut head = Vec::new();
+    let mut tail = Vec::new();
+    let mut all_unread_loaded = true;
+    if unread_first <= total_lines {
+        let prefix = log.read_prefix_bounded(unread_first, total_lines, max_lines, max_bytes)?;
+        all_unread_loaded = prefix.complete;
+        head = prefix.lines;
+        if !all_unread_loaded && direct_log.is_some() {
+            if anchor != 0 {
+                head.clear();
+            }
+            let suffix =
+                log.read_suffix_bounded(unread_first, total_lines, max_lines, max_bytes)?;
+            tail = suffix.lines;
+            if let Some(last_head) = head.last().map(|line| line.seq) {
+                tail.retain(|line| line.seq > last_head);
+            }
+        }
+    }
+    let legacy_loss = log.had_irretrievable_loss() || unread_first > requested_first;
+    Ok(OutputSnapshot {
+        status: record.status.clone(),
+        head,
+        tail,
+        unread_first,
+        unread_last: total_lines,
+        all_unread_loaded,
+        total_lines,
+        legacy_loss,
+        capture_error: log.capture_error.clone(),
+        default_encoding,
+        anchor,
+        direct_log,
+    })
+}
+
+fn format_legacy_page(
+    job_id: &str,
+    wait_ms: u64,
+    snapshot: &OutputSnapshot,
+    call_encoding: Option<OutputEncoding>,
+    budget: TokenBudget,
+) -> Result<FormattedPage, String> {
+    let mut low = 1_usize;
+    let mut high = snapshot.head.len();
     let mut best = None;
     while low <= high {
         let shown = low + (high - low) / 2;
-        let selected = &snapshot.lines[..shown];
-        let last_seq = selected.last().expect("selected output is non-empty").seq;
-        let encoded = selected
-            .iter()
-            .map(SpoolLine::encoded_line)
-            .collect::<Vec<_>>();
-        let decoded = decode_job(&encoded, call_encoding, snapshot.default_encoding);
-        let terminal = page_terminal(
-            job_id,
-            &snapshot.status,
-            shown,
-            snapshot.lines.len(),
-            snapshot.total_lines,
-            snapshot.had_loss || decoded.had_truncation,
-            last_seq,
-        );
-        let mut notes = fixed_notes.clone();
-        if let Some(note) = job_garble_note(decoded.invalid_sequences, snapshot.anchor) {
-            notes.push(note);
-        }
-        let leading = (!notes.is_empty()).then(|| notes.join("\n\n"));
-        let response = compose_response_with_tail(
-            leading.as_deref(),
-            &decoded.lines,
-            decoded.transcoding_note.as_deref(),
-            &terminal,
-        );
-        if estimate_tokens(&response) <= budget.value {
-            best = Some(FormattedPage {
-                response,
-                last_seq: Some(last_seq),
-            });
+        let candidate = render_candidate(job_id, wait_ms, snapshot, call_encoding, shown, 0);
+        if estimate_tokens(&candidate.response) <= budget.value {
+            best = Some(candidate);
             low = shown.saturating_add(1);
         } else if shown == 1 {
             break;
@@ -539,51 +565,334 @@ fn format_snapshot(
             high = shown - 1;
         }
     }
-    best.ok_or_else(|| budget_too_small_message(budget))
+    let candidate = best.ok_or_else(|| budget_too_small_message(budget))?;
+    Ok(FormattedPage {
+        response: candidate.response,
+        cursor_seq: candidate.last_seq,
+    })
 }
 
-fn page_terminal(
+fn format_direct_window(
     job_id: &str,
-    status: &JobStatus,
-    shown: usize,
+    wait_ms: u64,
+    snapshot: &OutputSnapshot,
+    call_encoding: Option<OutputEncoding>,
+    budget: TokenBudget,
+) -> Result<FormattedPage, String> {
+    let tail_available = if snapshot.all_unread_loaded {
+        snapshot.head.len()
+    } else {
+        snapshot.tail.len()
+    };
+    if tail_available == 0 {
+        return Err(budget_too_small_message(budget));
+    }
+    let head_available = if snapshot.anchor == 0 {
+        if snapshot.all_unread_loaded {
+            snapshot.head.len().saturating_sub(1)
+        } else {
+            snapshot.head.len()
+        }
+    } else {
+        0
+    };
+    let preferred_head = preferred_head_count(
+        snapshot,
+        call_encoding,
+        head_available,
+        budget.value.saturating_div(10).max(1),
+    );
+    let mut low = 0_usize;
+    let mut high = preferred_head;
+    let mut head_that_fits = None;
+    while low <= high {
+        let head = low + (high - low) / 2;
+        let candidate = render_candidate(job_id, wait_ms, snapshot, call_encoding, head, 1);
+        if estimate_tokens(&candidate.response) <= budget.value {
+            head_that_fits = Some(head);
+            low = head.saturating_add(1);
+        } else if head == 0 {
+            break;
+        } else {
+            high = head - 1;
+        }
+    }
+    let head = head_that_fits.ok_or_else(|| budget_too_small_message(budget))?;
+    let tail_limit = if snapshot.all_unread_loaded {
+        tail_available.saturating_sub(head)
+    } else {
+        tail_available
+    };
+    let mut low = 1_usize;
+    let mut high = tail_limit;
+    let mut best = None;
+    while low <= high {
+        let tail = low + (high - low) / 2;
+        let candidate = render_candidate(job_id, wait_ms, snapshot, call_encoding, head, tail);
+        if estimate_tokens(&candidate.response) <= budget.value {
+            best = Some(candidate);
+            low = tail.saturating_add(1);
+        } else if tail == 1 {
+            break;
+        } else {
+            high = tail - 1;
+        }
+    }
+    let candidate = best.ok_or_else(|| budget_too_small_message(budget))?;
+    Ok(FormattedPage {
+        response: candidate.response,
+        cursor_seq: Some(snapshot.unread_last),
+    })
+}
+
+fn preferred_head_count(
+    snapshot: &OutputSnapshot,
+    call_encoding: Option<OutputEncoding>,
     available: usize,
-    total_lines: u64,
-    had_loss: bool,
-    next: u64,
-) -> String {
-    match status {
-        JobStatus::Running => format!(
-            "(Partial: job {job_id} is running; {shown} new {} shown. Call job_output again with after_seq={next} for more.)",
-            plural(shown as u64, "line", "lines")
+    token_target: usize,
+) -> usize {
+    let mut low = 0_usize;
+    let mut high = available;
+    let mut best = 0_usize;
+    while low <= high {
+        let count = low + (high - low) / 2;
+        let selected = select_lines(snapshot, count, 0);
+        let encoded = selected
+            .iter()
+            .map(|line| line.encoded_line())
+            .collect::<Vec<_>>();
+        let decoded = decode_job(&encoded, call_encoding, snapshot.default_encoding);
+        if estimate_tokens(&decoded.lines.join("\n")) <= token_target {
+            best = count;
+            low = count.saturating_add(1);
+        } else if count == 0 {
+            break;
+        } else {
+            high = count - 1;
+        }
+    }
+    best
+}
+
+fn render_candidate(
+    job_id: &str,
+    wait_ms: u64,
+    snapshot: &OutputSnapshot,
+    call_encoding: Option<OutputEncoding>,
+    head_count: usize,
+    tail_count: usize,
+) -> RenderedCandidate {
+    let selected = select_lines(snapshot, head_count, tail_count);
+    let encoded = selected
+        .iter()
+        .map(|line| line.encoded_line())
+        .collect::<Vec<_>>();
+    let decoded = decode_job(&encoded, call_encoding, snapshot.default_encoding);
+    let mut notes = Vec::new();
+    if let Some(path) = snapshot.direct_log.as_ref() {
+        for (first, last) in omitted_ranges(snapshot, &selected) {
+            notes.push(omission_note(first, last, path));
+        }
+    } else if snapshot.legacy_loss {
+        notes.push(legacy_loss_note(snapshot));
+    }
+    if let Some(error) = &snapshot.capture_error {
+        notes.push(capture_failure_note(error, snapshot.direct_log.as_deref()));
+    }
+    if let Some(note) = job_garble_note(decoded.invalid_sequences, snapshot.anchor) {
+        notes.push(note);
+    }
+    if let Some(path) = snapshot.direct_log.as_ref() {
+        for (line, truncated) in selected.iter().zip(&decoded.truncated_per_line) {
+            if *truncated {
+                notes.push(format!(
+                    "(Note: line {} was truncated at 2000 chars in this response; read the complete line at {} with offset={}, or inspect a fragment with grep or the read tool's hex view.)",
+                    line.seq,
+                    display_path(path),
+                    line.seq
+                ));
+            }
+        }
+    }
+    let leading = (!notes.is_empty()).then(|| notes.join("\n\n"));
+    let last_seq = selected.last().map(|line| line.seq);
+    let terminal = output_terminal(job_id, wait_ms, snapshot, selected.len(), last_seq);
+    RenderedCandidate {
+        response: compose_response_with_tail(
+            leading.as_deref(),
+            &decoded.lines,
+            decoded.transcoding_note.as_deref(),
+            &terminal,
         ),
-        JobStatus::Exited(exit) if shown < available => format!(
-            "(Partial: job {job_id} exited {}; more output buffered. Call job_output again with after_seq={next}.)",
-            exit.exit_code
-        ),
-        JobStatus::Interrupted if shown < available => format!(
-            "(Partial: job {job_id} was interrupted; more output buffered. Call job_output again with after_seq={next}.)"
-        ),
-        status => complete_terminal(job_id, status, total_lines, had_loss),
+        last_seq,
     }
 }
 
-fn complete_terminal(job_id: &str, status: &JobStatus, total: u64, had_loss: bool) -> String {
-    let loss = if had_loss {
-        ", but some output was dropped or truncated — redirect the command to a file (command > file 2>&1) for the full log"
+fn select_lines(
+    snapshot: &OutputSnapshot,
+    head_count: usize,
+    tail_count: usize,
+) -> Vec<&StoredLine> {
+    let mut selected = Vec::new();
+    if snapshot.all_unread_loaded {
+        let head = head_count.min(snapshot.head.len());
+        selected.extend(snapshot.head.iter().take(head));
+        let tail = tail_count.min(snapshot.head.len().saturating_sub(head));
+        if tail > 0 {
+            selected.extend(snapshot.head[snapshot.head.len() - tail..].iter());
+        }
+        return selected;
+    }
+    selected.extend(snapshot.head.iter().take(head_count));
+    let tail = tail_count.min(snapshot.tail.len());
+    if tail > 0 {
+        let last_head = selected.last().map(|line| line.seq).unwrap_or(0);
+        selected.extend(
+            snapshot.tail[snapshot.tail.len() - tail..]
+                .iter()
+                .filter(|line| line.seq > last_head),
+        );
+    }
+    selected
+}
+
+fn omitted_ranges(snapshot: &OutputSnapshot, selected: &[&StoredLine]) -> Vec<(u64, u64)> {
+    if snapshot.unread_first > snapshot.unread_last {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    let mut next = snapshot.unread_first;
+    for line in selected {
+        if line.seq > next {
+            ranges.push((next, line.seq - 1));
+        }
+        next = line.seq.saturating_add(1);
+    }
+    if next <= snapshot.unread_last {
+        ranges.push((next, snapshot.unread_last));
+    }
+    ranges
+}
+
+fn omission_note(first: u64, last: u64, path: &Path) -> String {
+    if first == last {
+        format!(
+            "(Note: line {first} was omitted from this response; read it at {} with offset={first}.)",
+            display_path(path)
+        )
+    } else {
+        format!(
+            "(Note: lines {first}-{last} were omitted from this response; read them at {} with offset={first}.)",
+            display_path(path)
+        )
+    }
+}
+
+fn legacy_loss_note(snapshot: &OutputSnapshot) -> String {
+    let expected = snapshot.anchor.saturating_add(1);
+    let missing = snapshot.unread_first.saturating_sub(expected);
+    if missing > 0 {
+        format!(
+            "(Note: {missing} earlier {} {} dropped from this legacy job record and cannot be retrieved.)",
+            plural(missing, "line", "lines"),
+            if missing == 1 { "was" } else { "were" }
+        )
+    } else {
+        "(Note: this legacy job record lost or truncated output that cannot be retrieved.)"
+            .to_string()
+    }
+}
+
+fn capture_failure_note(error: &model::CaptureErrorRecord, direct_log: Option<&Path>) -> String {
+    match direct_log {
+        Some(path) => format!(
+            "(Note: output capture failed after seq {}: {}. This does not kill the process; its exit status remains available, but the log at {} stops here.)",
+            error.after_seq,
+            error.reason,
+            display_path(path)
+        ),
+        None => format!(
+            "(Note: output capture failed after seq {}: {}. This did not kill the process; its exit status remains available, but this legacy record stops here.)",
+            error.after_seq, error.reason
+        ),
+    }
+}
+
+fn output_terminal(
+    job_id: &str,
+    wait_ms: u64,
+    snapshot: &OutputSnapshot,
+    shown: usize,
+    last_seq: Option<u64>,
+) -> String {
+    if let JobStatus::Running = snapshot.status {
+        if shown > 0 {
+            return format!(
+                "(Partial: job {job_id} is running; {shown} new {} shown. Call job_output again for more, or do other work first and check back.)",
+                plural(shown as u64, "line", "lines")
+            );
+        }
+        if wait_ms < 60_000 {
+            return format!(
+                "(Partial: job {job_id} is running; no new output within {wait_ms} ms. Call job_output again with a larger wait_ms (up to 60000), or do other work first and check back.)"
+            );
+        }
+        return format!(
+            "(Partial: job {job_id} is running; no new output within {wait_ms} ms. It may stay quiet for a long time, or never exit — do other work first and check back.)"
+        );
+    }
+    if let Some(path) = snapshot.direct_log.as_ref() {
+        return match &snapshot.status {
+            JobStatus::Exited(exit) => format!(
+                "(Complete: job {job_id} exited {}; {} {} total. Full log: {})",
+                exit.exit_code,
+                snapshot.total_lines,
+                plural(snapshot.total_lines, "line", "lines"),
+                display_path(path)
+            ),
+            JobStatus::Interrupted => format!(
+                "(Complete: job {job_id} was interrupted: its process ended without an exit record (machine restart or external kill); {} {} preserved. Full log: {})",
+                snapshot.total_lines,
+                plural(snapshot.total_lines, "line", "lines"),
+                display_path(path)
+            ),
+            JobStatus::Running => unreachable!(),
+        };
+    }
+    let next = last_seq.unwrap_or(snapshot.anchor);
+    let more = next < snapshot.unread_last
+        && (!snapshot.all_unread_loaded
+            || snapshot.head.last().is_some_and(|line| line.seq > next));
+    if more {
+        return match &snapshot.status {
+            JobStatus::Exited(exit) => format!(
+                "(Partial: job {job_id} exited {}; more legacy output remains. Call job_output again with after_seq={next}.)",
+                exit.exit_code
+            ),
+            JobStatus::Interrupted => format!(
+                "(Partial: job {job_id} was interrupted; more legacy output remains. Call job_output again with after_seq={next}.)"
+            ),
+            JobStatus::Running => unreachable!(),
+        };
+    }
+    let loss = if snapshot.legacy_loss {
+        ", but this legacy record lost or truncated output that cannot be retrieved"
     } else {
         ""
     };
-    match status {
-        JobStatus::Running => unreachable!("running jobs never have a complete terminal"),
+    match &snapshot.status {
         JobStatus::Exited(exit) => format!(
-            "(Complete: job {job_id} exited {}; {total} {} total{loss}.)",
+            "(Complete: job {job_id} exited {}; {} {} total{loss}.)",
             exit.exit_code,
-            plural(total, "line", "lines")
+            snapshot.total_lines,
+            plural(snapshot.total_lines, "line", "lines")
         ),
         JobStatus::Interrupted => format!(
-            "(Complete: job {job_id} was interrupted: its process ended without an exit record (machine restart or external kill); {total} {} preserved{loss}.)",
-            plural(total, "line", "lines")
+            "(Complete: job {job_id} was interrupted: its process ended without an exit record (machine restart or external kill); {} {} preserved{loss}.)",
+            snapshot.total_lines,
+            plural(snapshot.total_lines, "line", "lines")
         ),
+        JobStatus::Running => unreachable!(),
     }
 }
 
@@ -878,8 +1187,8 @@ pub(crate) fn refresh_tail(
 ) -> Result<usize, String> {
     let record =
         store::find_record(&paths.jobs_dir, job_id)?.ok_or_else(|| missing_job_text(job_id))?;
-    let delta = store::read_spool_delta(&record, &mut tail.cursor)?;
-    let appended = delta.lines.len();
+    let delta = store::read_log_delta(&record, &mut tail.cursor, max_lines)?;
+    let appended = usize::try_from(delta.observed_lines).unwrap_or(usize::MAX);
     let default_encoding = record
         .meta
         .encoding
@@ -892,7 +1201,7 @@ pub(crate) fn refresh_tail(
     let encoded = delta
         .lines
         .iter()
-        .map(SpoolLine::encoded_line)
+        .map(StoredLine::encoded_line)
         .collect::<Vec<_>>();
     tail.lines
         .extend(decode_job(&encoded, None, default_encoding).lines);
@@ -985,16 +1294,16 @@ pub(crate) fn run_watchdog_entry(pid: u32, started: String) -> Result<(), String
 mod tests {
     use super::{
         JobManager, JobRegistryError, OutputSnapshot, format_job_list, format_job_list_with_budget,
-        format_snapshot, source_tag, summaries, truncate_command, wait_event_arrived,
+        format_snapshot, source_tag, summaries, truncate_command,
     };
     use crate::budget::TokenBudget;
     use crate::control::paths::ControlPaths;
     use crate::model::{ToolContent, ToolResponse};
+    use crate::shell::JobListStatus;
     use crate::shell::jobs::model::{
-        ExitRecord, JOB_SCHEMA_VERSION, JobMeta, JobRecord, JobStatus, META_FILE, OriginSnapshot,
-        ProcessIdentity, TerminationKind,
+        CaptureErrorRecord, ExitRecord, JOB_SCHEMA_VERSION, JobMeta, JobRecord, JobStatus,
+        META_FILE, OriginSnapshot, ProcessIdentity, StoredLine, TerminationKind,
     };
-    use crate::shell::{JobListStatus, JobOutputWaitFor};
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -1360,28 +1669,7 @@ mod tests {
     }
 
     #[test]
-    fn wait_modes_share_terminal_and_capture_failure_events_but_not_output_events() {
-        for wait_for in [JobOutputWaitFor::Output, JobOutputWaitFor::Exit] {
-            assert!(wait_event_arrived(wait_for, false, false, false));
-            assert!(wait_event_arrived(wait_for, false, true, true));
-            assert!(!wait_event_arrived(wait_for, false, true, false));
-        }
-        assert!(wait_event_arrived(
-            JobOutputWaitFor::Output,
-            true,
-            true,
-            false
-        ));
-        assert!(!wait_event_arrived(
-            JobOutputWaitFor::Exit,
-            true,
-            true,
-            false
-        ));
-    }
-
-    #[test]
-    fn interrupted_and_capture_loss_terminals_are_honest_and_final() {
+    fn direct_and_legacy_terminals_keep_their_capability_promises_separate() {
         let budget = TokenBudget {
             value: 8_500,
             variable: "FASTCTX_TOKEN_BUDGET",
@@ -1391,46 +1679,95 @@ mod tests {
             0,
             &OutputSnapshot {
                 status: JobStatus::Interrupted,
-                lines: Vec::new(),
-                dropped: 0,
+                head: Vec::new(),
+                tail: Vec::new(),
+                unread_first: 4,
+                unread_last: 3,
+                all_unread_loaded: true,
                 total_lines: 3,
-                had_loss: false,
+                legacy_loss: false,
                 capture_error: None,
                 default_encoding: None,
-                anchor: 0,
+                anchor: 3,
+                direct_log: Some(PathBuf::from("/jobs/j-000001/output.log")),
             },
             None,
             budget,
         )
         .unwrap();
-        assert_eq!(
-            interrupted.response,
-            "(Complete: job j-000001 was interrupted: its process ended without an exit record (machine restart or external kill); 3 lines preserved.)"
-        );
+        assert!(interrupted.response.contains("Full log:"));
+        assert!(interrupted.response.contains("output.log"));
 
         let capture = format_snapshot(
             "j-000002",
             0,
             &OutputSnapshot {
                 status: exited(17, 1),
-                lines: Vec::new(),
-                dropped: 0,
+                head: vec![StoredLine {
+                    seq: 1,
+                    bytes: b"kept".to_vec(),
+                    total_bytes: 4,
+                    stream_encoding: None,
+                    legacy_text: None,
+                    known_truncated: false,
+                }],
+                tail: Vec::new(),
+                unread_first: 1,
+                unread_last: 1,
+                all_unread_loaded: true,
                 total_lines: 2,
-                had_loss: true,
-                capture_error: Some(crate::shell::jobs::model::CaptureErrorRecord {
+                legacy_loss: true,
+                capture_error: Some(CaptureErrorRecord {
                     after_seq: 1,
                     reason: "disk unavailable".to_string(),
                 }),
                 default_encoding: None,
                 anchor: 0,
+                direct_log: None,
             },
             None,
             budget,
         )
         .unwrap();
-        assert_eq!(
-            capture.response,
-            "(Note: output capture failed after seq 1: disk unavailable. This does not kill the process; its exit status remains available, but redirect the command to a file for a full log.)\n\n(Complete: job j-000002 exited 17; 2 lines total, but some output was dropped or truncated — redirect the command to a file (command > file 2>&1) for the full log.)"
+        assert!(capture.response.contains("this legacy record stops here"));
+        assert!(capture.response.contains("cannot be retrieved"));
+        assert!(!capture.response.contains("Full log:"));
+        assert!(!capture.response.contains("offset="));
+    }
+
+    #[test]
+    fn running_no_output_terminal_stops_recommending_wait_growth_at_the_maximum() {
+        let budget = TokenBudget {
+            value: 8_500,
+            variable: "FASTCTX_TOKEN_BUDGET",
+        };
+        let snapshot = OutputSnapshot {
+            status: JobStatus::Running,
+            head: Vec::new(),
+            tail: Vec::new(),
+            unread_first: 1,
+            unread_last: 0,
+            all_unread_loaded: true,
+            total_lines: 0,
+            legacy_loss: false,
+            capture_error: None,
+            default_encoding: None,
+            anchor: 0,
+            direct_log: Some(PathBuf::from("/jobs/j-000001/output.log")),
+        };
+
+        let immediate = format_snapshot("j-000001", 0, &snapshot, None, budget).unwrap();
+        assert!(
+            immediate
+                .response
+                .contains("with a larger wait_ms (up to 60000)")
         );
+        let maximum = format_snapshot("j-000001", 60_000, &snapshot, None, budget).unwrap();
+        assert!(
+            maximum
+                .response
+                .contains("It may stay quiet for a long time, or never exit")
+        );
+        assert!(!maximum.response.contains("larger wait_ms"));
     }
 }

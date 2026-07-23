@@ -3952,7 +3952,7 @@ mod tests {
                 );
             }
 
-            app.jobs_state = JobsState::Error("spool unavailable".to_string());
+            app.jobs_state = JobsState::Error("job storage unavailable".to_string());
             let error = render_once(&mut app);
             let error_note_prefix = app
                 .job_messages()
@@ -3961,7 +3961,7 @@ mod tests {
                 .take(32)
                 .collect::<String>();
             for expected in [
-                "spool unavailable",
+                "job storage unavailable",
                 app.job_messages().error_title,
                 error_note_prefix.as_str(),
             ] {

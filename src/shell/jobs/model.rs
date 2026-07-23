@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-pub(super) const JOB_SCHEMA_VERSION: u32 = 2;
+pub(super) const JOB_SCHEMA_VERSION: u32 = 3;
 pub(super) const META_FILE: &str = "meta.json";
 pub(super) const EXIT_FILE: &str = "exit.json";
 pub(super) const CAPTURE_ERROR_FILE: &str = "capture-error.json";
 pub(super) const KILL_REQUEST_FILE: &str = "kill.request";
+pub(super) const OUTPUT_LOG_FILE: &str = "output.log";
+pub(super) const OUTPUT_INDEX_FILE: &str = "output.idx";
 
 /// Best-effort provenance captured by the server that requested a background job.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -82,7 +84,10 @@ pub(crate) struct CaptureErrorRecord {
     pub(crate) reason: String,
 }
 
-/// One normalized display line in an append-only spool segment.
+/// One normalized display line from a schema-v1/v2 JSONL segment.
+///
+/// Schema-v3 writers never create this envelope; the type remains solely for
+/// the required N-1 read compatibility path.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct SpoolLine {
     pub(crate) seq: u64,
@@ -119,23 +124,39 @@ pub(crate) struct LaunchSpec {
     pub(crate) origin: OriginSnapshot,
 }
 
-impl SpoolLine {
+/// One logical line exposed by the unified new/legacy log reader.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StoredLine {
+    pub(crate) seq: u64,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) total_bytes: u64,
+    pub(crate) stream_encoding: Option<crate::shell::normalize::StreamEncoding>,
+    pub(crate) legacy_text: Option<String>,
+    pub(crate) known_truncated: bool,
+}
+
+impl StoredLine {
     pub(crate) fn encoded_line(&self) -> crate::shell::encoding::EncodedLine<'_> {
-        match self.raw_bytes.as_deref() {
-            Some(bytes) => crate::shell::encoding::EncodedLine {
-                bytes,
-                total_bytes: self.total_bytes.max(bytes.len() as u64),
-                stream_encoding: self.stream_encoding,
-                legacy_text: None,
-                known_truncated: self.truncated,
-            },
-            None => crate::shell::encoding::EncodedLine {
-                bytes: &[],
-                total_bytes: self.total_bytes.max(self.text.len() as u64),
-                stream_encoding: None,
-                legacy_text: Some(&self.text),
-                known_truncated: self.truncated,
-            },
+        crate::shell::encoding::EncodedLine {
+            bytes: &self.bytes,
+            total_bytes: self.total_bytes.max(self.bytes.len() as u64),
+            stream_encoding: self.stream_encoding,
+            legacy_text: self.legacy_text.as_deref(),
+            known_truncated: self.known_truncated,
+        }
+    }
+}
+
+impl From<SpoolLine> for StoredLine {
+    fn from(line: SpoolLine) -> Self {
+        let legacy_text = line.raw_bytes.is_none().then_some(line.text);
+        Self {
+            seq: line.seq,
+            total_bytes: line.total_bytes,
+            stream_encoding: line.stream_encoding,
+            known_truncated: line.truncated,
+            bytes: line.raw_bytes.unwrap_or_default(),
+            legacy_text,
         }
     }
 }

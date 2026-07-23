@@ -277,9 +277,11 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
             "immediately. Use for builds, tests, servers, or anything that may exceed\n",
             "two minutes. Jobs run independently of this session: they survive server\n",
             "and Codex restarts, and their output and exit code stay retrievable by\n",
-            "job_id afterwards. Poll with job_output; stop with job_kill; rediscover\n",
-            "past jobs with job_list. There is no timeout — a job runs until it exits\n",
-            "or is killed."
+            "job_id afterwards. Check on it with job_output; stop with job_kill;\n",
+            "rediscover past jobs with job_list. There is no timeout — a job runs\n",
+            "until it exits or is killed. Everything the job prints is also kept in a\n",
+            "plain log file whose path is returned here: read or grep it with the read\n",
+            "tool for anything job_output does not show."
         ))
     );
     assert_eq!(
@@ -304,17 +306,20 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
     assert_eq!(
         output.description.as_deref(),
         Some(concat!(
-            "Return a background job's new output since the last call, plus its status\n",
-            "(running, exited with its code, or interrupted). wait_ms long-polls up to\n",
-            "240000 ms: with wait_for=\"output\" (default) it returns as soon as new\n",
-            "output or the exit arrives; with wait_for=\"exit\" it keeps waiting through\n",
-            "intermediate output and returns only on exit or when the wait elapses —\n",
-            "use it for builds and tests where only the end matters. Either way the\n",
-            "accumulated output is delivered. A Partial note gives an after_seq cursor\n",
-            "— pass it back to resume idempotently if a call was lost. Works for jobs\n",
-            "started in earlier sessions. If output looks garbled (U+FFFD), call again\n",
-            "with encoding set to the source encoding (e.g. \"gbk\") — stored bytes are\n",
-            "re-decoded losslessly. Keep calling until the last line says Complete."
+            "Query a background job: its status (running, exited with its code, or\n",
+            "interrupted) plus the newest output you have not been shown yet. wait_ms\n",
+            "is how long this query may take (0-60000, default 30000): it returns as\n",
+            "soon as the job reaches a terminal state, and otherwise waits the window\n",
+            "out — intermediate output does not end the wait, so one call is worth one\n",
+            "turn. Pass wait_ms=0 for an immediate snapshot. Long output is windowed:\n",
+            "you get the newest lines that fit, plus the start of the log on the first\n",
+            "call, and a note naming the exact lines that were skipped. Nothing is\n",
+            "lost — the job's whole output is a plain log file on disk, and its line\n",
+            "numbers are the seq numbers used here, so read or grep that path for\n",
+            "anything not shown. Works for jobs started in earlier sessions. If output\n",
+            "looks garbled (U+FFFD), call again with encoding set to the source\n",
+            "encoding (e.g. \"gbk\") — stored bytes are re-decoded losslessly. Keep\n",
+            "calling until the last line says Complete."
         ))
     );
     assert_eq!(
@@ -324,29 +329,13 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
     assert_eq!(output.input_schema["properties"]["wait_ms"]["minimum"], 0);
     assert_eq!(
         output.input_schema["properties"]["wait_ms"]["maximum"],
-        240_000
+        60_000
     );
     assert_eq!(
         output.input_schema["properties"]["wait_ms"]["default"],
         30_000
     );
-    assert_eq!(
-        output.input_schema["properties"]["wait_for"]["$ref"],
-        "#/$defs/JobOutputWaitFor"
-    );
-    assert_eq!(
-        output.input_schema["properties"]["wait_for"]["default"],
-        "output"
-    );
-    assert_eq!(
-        output.input_schema["$defs"]["JobOutputWaitFor"]["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|option| option["const"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        ["output", "exit"]
-    );
+    assert!(output.input_schema["properties"].get("wait_for").is_none());
     assert_eq!(output.input_schema["properties"]["after_seq"]["minimum"], 0);
     assert!(output.input_schema["properties"].get("encoding").is_some());
     let list = shell.iter().find(|tool| tool.name == "job_list").unwrap();

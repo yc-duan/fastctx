@@ -1,11 +1,12 @@
-//! Directory-backed job registry, atomic records, spool reads, and terminal-record reaping.
+//! Directory-backed job registry, direct/legacy log reads, atomic records, and terminal reaping.
 
 use super::JobRegistryError;
 use super::identity::{identity_is_alive, process_identity};
 use super::model::{
     CAPTURE_ERROR_FILE, CaptureErrorRecord, EXIT_FILE, ExitRecord, JOB_SCHEMA_VERSION, JobMeta,
-    JobRecord, JobStatus, KILL_REQUEST_FILE, META_FILE, OriginSnapshot, SpoolLine,
+    JobRecord, JobStatus, KILL_REQUEST_FILE, META_FILE, OriginSnapshot, SpoolLine, StoredLine,
 };
+use super::output_log::{BoundedLines, OutputLogReader};
 use crate::control::paths::ControlPaths;
 use crate::control::settings::{DEFAULT_JOB_STORAGE_LIMIT_MIB, DEFAULT_MAX_RUNNING_JOBS};
 use crate::edit::private_storage::ensure_private_directory;
@@ -47,18 +48,143 @@ pub(crate) struct RegistrySnapshot {
     pub(crate) pending_reservations: u64,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct SpoolSnapshot {
-    pub(crate) lines: Vec<SpoolLine>,
-    pub(crate) oldest_seq: u64,
-    pub(crate) total_lines: u64,
-    pub(crate) had_loss: bool,
+#[derive(Debug)]
+enum LogSource {
+    Direct(OutputLogReader),
+    Legacy {
+        lines: Vec<StoredLine>,
+        oldest_seq: u64,
+        total_lines: u64,
+        had_loss: bool,
+    },
+}
+
+/// Unified view returned above the one schema-based format dispatch point.
+/// `direct_path` is the sole capability bit needed by delivery and TUI layers.
+#[derive(Debug)]
+pub(crate) struct LogView {
+    source: LogSource,
     pub(crate) capture_error: Option<CaptureErrorRecord>,
 }
 
+#[derive(Debug)]
+pub(crate) struct LogLines {
+    pub(crate) lines: Vec<StoredLine>,
+    pub(crate) complete: bool,
+}
+
+impl LogView {
+    pub(crate) fn direct_path(&self) -> Option<&Path> {
+        match &self.source {
+            LogSource::Direct(reader) => Some(reader.path()),
+            LogSource::Legacy { .. } => None,
+        }
+    }
+
+    pub(crate) fn total_lines(&self) -> u64 {
+        match &self.source {
+            LogSource::Direct(reader) => reader.total_lines(),
+            LogSource::Legacy { total_lines, .. } => *total_lines,
+        }
+    }
+
+    pub(crate) fn oldest_seq(&self) -> u64 {
+        match &self.source {
+            LogSource::Direct(_) => 1,
+            LogSource::Legacy { oldest_seq, .. } => *oldest_seq,
+        }
+    }
+
+    pub(crate) fn had_irretrievable_loss(&self) -> bool {
+        match &self.source {
+            LogSource::Direct(_) => false,
+            LogSource::Legacy { had_loss, .. } => *had_loss,
+        }
+    }
+
+    pub(crate) fn read_prefix_bounded(
+        &mut self,
+        first: u64,
+        last: u64,
+        max_lines: usize,
+        max_bytes: usize,
+    ) -> Result<LogLines, String> {
+        match &mut self.source {
+            LogSource::Direct(reader) => {
+                let BoundedLines { lines, complete } =
+                    reader.read_prefix_bounded(first, last, max_lines, max_bytes)?;
+                Ok(LogLines { lines, complete })
+            }
+            LogSource::Legacy { lines, .. } => {
+                let mut selected = Vec::new();
+                let mut stored_bytes = 0_usize;
+                let mut exhausted = true;
+                for line in lines
+                    .iter()
+                    .filter(|line| (first..=last).contains(&line.seq))
+                {
+                    let would_exceed = !selected.is_empty()
+                        && stored_bytes.saturating_add(line.bytes.len()) > max_bytes;
+                    if selected.len() >= max_lines || would_exceed {
+                        exhausted = false;
+                        break;
+                    }
+                    stored_bytes = stored_bytes.saturating_add(line.bytes.len());
+                    selected.push(line.clone());
+                }
+                Ok(LogLines {
+                    lines: selected,
+                    complete: exhausted,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn read_suffix_bounded(
+        &mut self,
+        first: u64,
+        last: u64,
+        max_lines: usize,
+        max_bytes: usize,
+    ) -> Result<LogLines, String> {
+        match &mut self.source {
+            LogSource::Direct(reader) => {
+                let BoundedLines { lines, complete } =
+                    reader.read_suffix_bounded(first, last, max_lines, max_bytes)?;
+                Ok(LogLines { lines, complete })
+            }
+            LogSource::Legacy { lines, .. } => {
+                let mut selected = Vec::new();
+                let mut stored_bytes = 0_usize;
+                let mut exhausted = true;
+                for line in lines
+                    .iter()
+                    .rev()
+                    .filter(|line| (first..=last).contains(&line.seq))
+                {
+                    let would_exceed = !selected.is_empty()
+                        && stored_bytes.saturating_add(line.bytes.len()) > max_bytes;
+                    if selected.len() >= max_lines || would_exceed {
+                        exhausted = false;
+                        break;
+                    }
+                    stored_bytes = stored_bytes.saturating_add(line.bytes.len());
+                    selected.push(line.clone());
+                }
+                selected.reverse();
+                Ok(LogLines {
+                    lines: selected,
+                    complete: exhausted,
+                })
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
-pub(super) struct SpoolDelta {
-    pub(super) lines: Vec<SpoolLine>,
+pub(super) struct LogDelta {
+    pub(super) lines: Vec<StoredLine>,
+    pub(super) observed_lines: u64,
     pub(super) capture_error: Option<CaptureErrorRecord>,
 }
 
@@ -426,12 +552,7 @@ pub(crate) fn scan_registry(root: &Path) -> Result<RegistrySnapshot, JobRegistry
             }
             continue;
         };
-        if !(1..=JOB_SCHEMA_VERSION).contains(&meta.schema_version) {
-            return Err(JobRegistryError::data(format!(
-                "Cannot read job {id}: metadata schema {} is unsupported by this FastCtx (expected 1 through {}). Upgrade FastCtx or remove the finished record.",
-                meta.schema_version, JOB_SCHEMA_VERSION
-            )));
-        }
+        validate_schema(&id, meta.schema_version)?;
         let exit = read_json::<ExitRecord>(&directory.join(EXIT_FILE), "job exit record")?;
         let status = if let Some(exit) = exit {
             JobStatus::Exited(exit)
@@ -479,16 +600,102 @@ pub(crate) fn find_record(root: &Path, job_id: &str) -> Result<Option<JobRecord>
     if !valid_job_id(job_id) {
         return Ok(None);
     }
-    Ok(scan_registry(root)?
-        .records
-        .into_iter()
-        .find(|record| record.id == job_id))
+    let directory = root.join(job_id);
+    let metadata = match fs::symlink_metadata(&directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(JobRegistryError::from_io(
+                format!(
+                    "Cannot inspect background job {job_id} at {}",
+                    display_path(&directory)
+                ),
+                error,
+            )
+            .into());
+        }
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "Cannot use background job path {} because it is not a private directory. Remove it and retry.",
+            display_path(&directory)
+        ));
+    }
+    let Some(meta) = read_json::<JobMeta>(&directory.join(META_FILE), "job metadata")? else {
+        return Ok(None);
+    };
+    validate_schema(job_id, meta.schema_version)?;
+    let exit = read_json::<ExitRecord>(&directory.join(EXIT_FILE), "job exit record")?;
+    let status = if let Some(exit) = exit {
+        JobStatus::Exited(exit)
+    } else if identity_is_alive(&meta.supervisor) {
+        JobStatus::Running
+    } else {
+        JobStatus::Interrupted
+    };
+    let ended_sort_key = terminal_sort_key(&directory, &status);
+    if !directory.exists() {
+        return Ok(None);
+    }
+    Ok(Some(JobRecord {
+        id: job_id.to_string(),
+        directory,
+        meta,
+        status,
+        ended_sort_key,
+    }))
 }
 
-pub(crate) fn read_spool(record: &JobRecord) -> Result<SpoolSnapshot, String> {
+fn validate_schema(job_id: &str, schema_version: u32) -> Result<(), JobRegistryError> {
+    if (1..=JOB_SCHEMA_VERSION).contains(&schema_version) {
+        Ok(())
+    } else {
+        Err(JobRegistryError::data(format!(
+            "Cannot read job {job_id}: metadata schema {schema_version} is unsupported by this FastCtx (expected 1 through {JOB_SCHEMA_VERSION}). Upgrade FastCtx or remove the finished record."
+        )))
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct LegacySnapshot {
+    lines: Vec<StoredLine>,
+    oldest_seq: u64,
+    total_lines: u64,
+    had_loss: bool,
+}
+
+/// Opens one job's output through the only schema-version dispatch in the
+/// read path. Callers receive capabilities, never format versions.
+pub(crate) fn open_log(record: &JobRecord) -> Result<LogView, String> {
+    let capture_error = capture_error(record)?;
+    if record.meta.schema_version >= 3 {
+        let include_unindexed_tail = !record.status.is_running() || capture_error.is_some();
+        return Ok(LogView {
+            source: LogSource::Direct(OutputLogReader::open(
+                &record.directory,
+                include_unindexed_tail,
+            )?),
+            capture_error,
+        });
+    }
+    let legacy = read_legacy_spool(record)?;
+    Ok(LogView {
+        source: LogSource::Legacy {
+            lines: legacy.lines,
+            oldest_seq: legacy.oldest_seq,
+            total_lines: legacy.total_lines,
+            had_loss: legacy.had_loss,
+        },
+        capture_error,
+    })
+}
+
+fn read_legacy_spool(record: &JobRecord) -> Result<LegacySnapshot, String> {
     let mut segments = segment_paths(&record.directory)?;
     segments.sort();
-    let mut snapshot = SpoolSnapshot::default();
+    let mut lines = Vec::new();
+    let mut total_lines = 0_u64;
+    let mut had_loss = false;
     for path in segments {
         let file = match File::open(&path) {
             Ok(file) => file,
@@ -517,7 +724,7 @@ pub(crate) fn read_spool(record: &JobRecord) -> Result<SpoolSnapshot, String> {
             }
             if !source.ends_with(b"\n") {
                 if !record.status.is_running() {
-                    snapshot.had_loss = true;
+                    had_loss = true;
                 }
                 break;
             }
@@ -531,50 +738,109 @@ pub(crate) fn read_spool(record: &JobRecord) -> Result<SpoolSnapshot, String> {
                     ));
                 }
             };
-            snapshot.total_lines = snapshot.total_lines.max(line.seq);
-            snapshot.had_loss |= line.had_loss || line.truncated;
-            snapshot.lines.push(line);
+            total_lines = total_lines.max(line.seq);
+            had_loss |= line.had_loss || line.truncated;
+            lines.push(StoredLine::from(line));
         }
     }
-    snapshot.lines.sort_by_key(|line| line.seq);
-    snapshot.lines.dedup_by_key(|line| line.seq);
-    snapshot.oldest_seq = snapshot
-        .lines
+    lines.sort_by_key(|line| line.seq);
+    lines.dedup_by_key(|line| line.seq);
+    let oldest_seq = lines
         .first()
         .map(|line| line.seq)
         .unwrap_or_else(|| match &record.status {
             JobStatus::Exited(exit) => exit.total_lines.saturating_add(1),
-            _ => snapshot.total_lines.saturating_add(1),
+            _ => total_lines.saturating_add(1),
         });
-    if snapshot.oldest_seq > 1 {
-        snapshot.had_loss = true;
+    if oldest_seq > 1 {
+        had_loss = true;
     }
     if let JobStatus::Exited(exit) = &record.status {
-        snapshot.total_lines = snapshot.total_lines.max(exit.total_lines);
-        snapshot.had_loss |= exit.had_loss;
+        total_lines = total_lines.max(exit.total_lines);
+        had_loss |= exit.had_loss;
     }
-    snapshot.capture_error = read_json(
+    Ok(LegacySnapshot {
+        lines,
+        oldest_seq,
+        total_lines,
+        had_loss,
+    })
+}
+
+pub(crate) fn capture_error(record: &JobRecord) -> Result<Option<CaptureErrorRecord>, String> {
+    let mut capture_error = read_json(
         &record.directory.join(CAPTURE_ERROR_FILE),
         "job capture-error record",
     )?;
-    if snapshot.capture_error.is_none()
+    if capture_error.is_none()
         && let JobStatus::Exited(exit) = &record.status
     {
-        snapshot.capture_error.clone_from(&exit.capture_error);
+        capture_error.clone_from(&exit.capture_error);
     }
-    Ok(snapshot)
+    Ok(capture_error)
 }
 
-pub(super) fn read_spool_delta(
+pub(super) fn read_log_delta(
     record: &JobRecord,
     cursor: &mut super::TailCursor,
-) -> Result<SpoolDelta, String> {
+    max_lines: usize,
+) -> Result<LogDelta, String> {
+    if record.meta.schema_version >= 3 {
+        let capture_error = capture_error(record)?;
+        let include_unindexed_tail = !record.status.is_running() || capture_error.is_some();
+        let mut reader = OutputLogReader::open(&record.directory, include_unindexed_tail)?;
+        let total = reader.total_lines();
+        let cursor_is_stale =
+            if cursor.last_seq > total || cursor.direct_byte_offset > reader.log_len() {
+                true
+            } else if cursor.last_seq == 0 {
+                cursor.direct_byte_offset != 0
+            } else {
+                reader.record_end(cursor.last_seq)? != cursor.direct_byte_offset
+            };
+        if cursor_is_stale {
+            cursor.last_seq = 0;
+            cursor.direct_byte_offset = 0;
+        }
+        let observed_lines = total.saturating_sub(cursor.last_seq);
+        let wanted = u64::try_from(max_lines).unwrap_or(u64::MAX);
+        let first = cursor
+            .last_seq
+            .saturating_add(1)
+            .max(total.saturating_sub(wanted).saturating_add(1));
+        let lines = if first <= total {
+            reader.read_range(first, total)?
+        } else {
+            Vec::new()
+        };
+        cursor.last_seq = total;
+        cursor.direct_byte_offset = if total == 0 {
+            // A visible but unterminated tail is not committed output yet. Keep
+            // the byte cursor before it so the completed line is delivered once.
+            0
+        } else {
+            reader.record_end(total)?
+        };
+        cursor.offsets.clear();
+        return Ok(LogDelta {
+            lines,
+            observed_lines,
+            capture_error,
+        });
+    }
+    read_legacy_spool_delta(record, cursor)
+}
+
+fn read_legacy_spool_delta(
+    record: &JobRecord,
+    cursor: &mut super::TailCursor,
+) -> Result<LogDelta, String> {
     let mut segments = segment_paths(&record.directory)?;
     segments.sort();
     let present = segments.iter().cloned().collect::<BTreeSet<_>>();
     let mut next = cursor.clone();
     next.offsets.retain(|path, _| present.contains(path));
-    let mut delta = SpoolDelta::default();
+    let mut delta = LogDelta::default();
 
     for path in segments {
         let length = match fs::metadata(&path) {
@@ -655,7 +921,7 @@ pub(super) fn read_spool_delta(
                 },
             )?;
             if line.seq > cursor.last_seq {
-                delta.lines.push(line.clone());
+                delta.lines.push(StoredLine::from(line.clone()));
             }
             next.last_seq = next.last_seq.max(line.seq);
             committed = reader.stream_position().map_err(|error| {
@@ -671,15 +937,8 @@ pub(super) fn read_spool_delta(
 
     delta.lines.sort_by_key(|line| line.seq);
     delta.lines.dedup_by_key(|line| line.seq);
-    delta.capture_error = read_json(
-        &record.directory.join(CAPTURE_ERROR_FILE),
-        "job capture-error record",
-    )?;
-    if delta.capture_error.is_none()
-        && let JobStatus::Exited(exit) = &record.status
-    {
-        delta.capture_error.clone_from(&exit.capture_error);
-    }
+    delta.observed_lines = next.last_seq.saturating_sub(cursor.last_seq);
+    delta.capture_error = capture_error(record)?;
     *cursor = next;
     Ok(delta)
 }
@@ -854,9 +1113,7 @@ fn base36(mut value: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        read_spool, read_spool_delta, reap, scan_registry, valid_job_id, write_atomic_json,
-    };
+    use super::{open_log, read_log_delta, reap, scan_registry, valid_job_id, write_atomic_json};
     use crate::control::paths::ControlPaths;
     use crate::control::settings::{FastCtxSettings, save};
     use crate::shell::jobs::TailCursor;
@@ -865,6 +1122,7 @@ mod tests {
         CaptureErrorRecord, EXIT_FILE, ExitRecord, JOB_SCHEMA_VERSION, JobMeta, META_FILE,
         OriginSnapshot, ProcessIdentity, SpoolLine, TerminationKind,
     };
+    use crate::shell::normalize::NormalizedEvent;
     use filetime::{FileTime, set_file_mtime};
     use std::path::{Path, PathBuf};
 
@@ -895,10 +1153,28 @@ mod tests {
         ended_at_unix_nanos: u64,
         payload_bytes: usize,
     ) -> PathBuf {
+        terminal_job_with_schema(
+            root,
+            id,
+            ended_at_unix_nanos,
+            payload_bytes,
+            JOB_SCHEMA_VERSION,
+        )
+    }
+
+    fn terminal_job_with_schema(
+        root: &Path,
+        id: &str,
+        ended_at_unix_nanos: u64,
+        payload_bytes: usize,
+        schema_version: u32,
+    ) -> PathBuf {
         let directory = root.join(id);
         std::fs::create_dir_all(&directory).unwrap();
         let supervisor = process_identity(std::process::id()).unwrap();
-        write_atomic_json(&directory.join(META_FILE), &metadata(supervisor, 1)).unwrap();
+        let mut meta = metadata(supervisor, 1);
+        meta.schema_version = schema_version;
+        write_atomic_json(&directory.join(META_FILE), &meta).unwrap();
         let exit = ExitRecord {
             exit_code: 0,
             total_lines: 0,
@@ -1045,7 +1321,7 @@ mod tests {
     fn partial_tail_records_are_ignored_and_exit_fallback_preserves_capture_failure() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("jobs");
-        let directory = terminal_job(&root, "j-000001", 1, 0);
+        let directory = terminal_job_with_schema(&root, "j-000001", 1, 0, 2);
         std::fs::remove_file(directory.join(EXIT_FILE)).unwrap();
         let capture_error = CaptureErrorRecord {
             after_seq: 1,
@@ -1088,25 +1364,29 @@ mod tests {
         .unwrap();
 
         let record = scan_registry(&root).unwrap().records.remove(0);
-        let spool = read_spool(&record).unwrap();
+        let mut log = open_log(&record).unwrap();
+        let lines = log
+            .read_prefix_bounded(1, log.total_lines(), usize::MAX, usize::MAX)
+            .unwrap()
+            .lines;
         assert_eq!(
-            spool
-                .lines
+            lines
                 .iter()
-                .map(|line| line.text.as_str())
+                .map(|line| line.legacy_text.as_deref().unwrap())
                 .collect::<Vec<_>>(),
             ["kept"]
         );
-        assert_eq!(spool.total_lines, 2);
-        assert_eq!(spool.capture_error, Some(capture_error));
-        assert!(spool.had_loss);
+        assert_eq!(log.total_lines(), 2);
+        assert_eq!(log.capture_error, Some(capture_error));
+        assert!(log.had_irretrievable_loss());
+        assert!(log.direct_path().is_none());
     }
 
     #[test]
     fn incomplete_terminal_spool_record_is_reported_as_output_loss() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("jobs");
-        let directory = terminal_job(&root, "j-000001", 1, 0);
+        let directory = terminal_job_with_schema(&root, "j-000001", 1, 0, 2);
         std::fs::remove_file(directory.join(EXIT_FILE)).unwrap();
         write_atomic_json(
             &directory.join(EXIT_FILE),
@@ -1140,25 +1420,28 @@ mod tests {
         .unwrap();
 
         let record = scan_registry(&root).unwrap().records.remove(0);
-        let spool = read_spool(&record).unwrap();
+        let mut log = open_log(&record).unwrap();
+        let lines = log
+            .read_prefix_bounded(1, log.total_lines(), usize::MAX, usize::MAX)
+            .unwrap()
+            .lines;
 
         assert_eq!(
-            spool
-                .lines
+            lines
                 .iter()
-                .map(|line| (line.seq, line.text.as_str()))
+                .map(|line| (line.seq, line.legacy_text.as_deref().unwrap()))
                 .collect::<Vec<_>>(),
             [(1, "kept")]
         );
-        assert_eq!(spool.total_lines, 2);
-        assert!(spool.had_loss);
+        assert_eq!(log.total_lines(), 2);
+        assert!(log.had_irretrievable_loss());
     }
 
     #[test]
     fn incremental_tail_reads_only_complete_records_appended_after_its_cursor() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("jobs");
-        let directory = terminal_job(&root, "j-000001", 1, 0);
+        let directory = terminal_job_with_schema(&root, "j-000001", 1, 0, 2);
         let segment = directory.join("segment-00000000000000000001.jsonl");
         let encoded = |seq: u64, text: &str| {
             serde_json::to_string(&SpoolLine {
@@ -1180,18 +1463,18 @@ mod tests {
         let record = scan_registry(&root).unwrap().records.remove(0);
         let mut cursor = TailCursor::default();
 
-        let first = read_spool_delta(&record, &mut cursor).unwrap();
+        let first = read_log_delta(&record, &mut cursor, usize::MAX).unwrap();
         assert_eq!(
             first
                 .lines
                 .iter()
-                .map(|line| (line.seq, line.text.as_str()))
+                .map(|line| (line.seq, line.legacy_text.as_deref().unwrap()))
                 .collect::<Vec<_>>(),
             [(1, "first")]
         );
         assert_eq!(cursor.last_seq, 1);
         assert!(
-            read_spool_delta(&record, &mut cursor)
+            read_log_delta(&record, &mut cursor, usize::MAX)
                 .unwrap()
                 .lines
                 .is_empty()
@@ -1204,18 +1487,18 @@ mod tests {
             .unwrap();
         file.write_all(b"\n").unwrap();
         drop(file);
-        let completed = read_spool_delta(&record, &mut cursor).unwrap();
+        let completed = read_log_delta(&record, &mut cursor, usize::MAX).unwrap();
         assert_eq!(
             completed
                 .lines
                 .iter()
-                .map(|line| (line.seq, line.text.as_str()))
+                .map(|line| (line.seq, line.legacy_text.as_deref().unwrap()))
                 .collect::<Vec<_>>(),
             [(2, "partial")]
         );
         assert_eq!(cursor.last_seq, 2);
         assert!(
-            read_spool_delta(&record, &mut cursor)
+            read_log_delta(&record, &mut cursor, usize::MAX)
                 .unwrap()
                 .lines
                 .is_empty()
@@ -1224,18 +1507,143 @@ mod tests {
         std::fs::remove_file(&segment).unwrap();
         let next_segment = directory.join("segment-00000000000000000003.jsonl");
         std::fs::write(&next_segment, format!("{}\n", encoded(3, "rotated"))).unwrap();
-        let rotated = read_spool_delta(&record, &mut cursor).unwrap();
+        let rotated = read_log_delta(&record, &mut cursor, usize::MAX).unwrap();
         assert_eq!(
             rotated
                 .lines
                 .iter()
-                .map(|line| (line.seq, line.text.as_str()))
+                .map(|line| (line.seq, line.legacy_text.as_deref().unwrap()))
                 .collect::<Vec<_>>(),
             [(3, "rotated")]
         );
         assert_eq!(cursor.last_seq, 3);
         assert_eq!(cursor.offsets.len(), 1);
         assert!(cursor.offsets.contains_key(&next_segment));
+    }
+
+    #[test]
+    fn direct_tail_advances_the_output_log_byte_cursor_without_rereading_old_lines() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("jobs");
+        let directory = root.join("j-000001");
+        std::fs::create_dir_all(&directory).unwrap();
+        write_atomic_json(
+            &directory.join(META_FILE),
+            &metadata(process_identity(std::process::id()).unwrap(), 1),
+        )
+        .unwrap();
+        let mut writer = crate::shell::jobs::output_log::OutputLogWriter::new(&directory).unwrap();
+        writer.append(NormalizedEvent::Start(None)).unwrap();
+        writer
+            .append(NormalizedEvent::Bytes(b"first".to_vec()))
+            .unwrap();
+        writer
+            .append(NormalizedEvent::LineEnd { terminated: true })
+            .unwrap();
+        writer.finish().unwrap();
+        let record = scan_registry(&root).unwrap().records.remove(0);
+        let mut cursor = TailCursor::default();
+
+        let first = read_log_delta(&record, &mut cursor, 100).unwrap();
+        assert_eq!(
+            first
+                .lines
+                .iter()
+                .map(|line| (line.seq, line.bytes.as_slice()))
+                .collect::<Vec<_>>(),
+            [(1, b"first".as_slice())]
+        );
+        assert_eq!(
+            cursor.direct_byte_offset,
+            std::fs::metadata(directory.join("output.log"))
+                .unwrap()
+                .len()
+        );
+        assert!(cursor.offsets.is_empty());
+
+        writer
+            .append(NormalizedEvent::Bytes(b"second".to_vec()))
+            .unwrap();
+        writer
+            .append(NormalizedEvent::LineEnd { terminated: true })
+            .unwrap();
+        writer.finish().unwrap();
+        let second = read_log_delta(&record, &mut cursor, 100).unwrap();
+        assert_eq!(
+            second
+                .lines
+                .iter()
+                .map(|line| (line.seq, line.bytes.as_slice()))
+                .collect::<Vec<_>>(),
+            [(2, b"second".as_slice())]
+        );
+        assert_eq!(cursor.last_seq, 2);
+        assert_eq!(
+            cursor.direct_byte_offset,
+            std::fs::metadata(directory.join("output.log"))
+                .unwrap()
+                .len()
+        );
+        assert!(
+            read_log_delta(&record, &mut cursor, 100)
+                .unwrap()
+                .lines
+                .is_empty()
+        );
+
+        cursor.direct_byte_offset -= 1;
+        let reanchored = read_log_delta(&record, &mut cursor, 100).unwrap();
+        assert_eq!(
+            reanchored
+                .lines
+                .iter()
+                .map(|line| line.seq)
+                .collect::<Vec<_>>(),
+            [1, 2],
+            "a stale byte cursor must re-anchor instead of silently skipping output"
+        );
+    }
+
+    #[test]
+    fn direct_tail_keeps_its_byte_cursor_before_an_unterminated_visible_line() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("jobs");
+        let directory = root.join("j-000001");
+        std::fs::create_dir_all(&directory).unwrap();
+        write_atomic_json(
+            &directory.join(META_FILE),
+            &metadata(process_identity(std::process::id()).unwrap(), 1),
+        )
+        .unwrap();
+        let mut writer = crate::shell::jobs::output_log::OutputLogWriter::new(&directory).unwrap();
+        writer.append(NormalizedEvent::Start(None)).unwrap();
+        let payload = vec![b'x'; 70 * 1024];
+        writer
+            .append(NormalizedEvent::Bytes(payload.clone()))
+            .unwrap();
+
+        let record = scan_registry(&root).unwrap().records.remove(0);
+        let mut cursor = TailCursor::default();
+        let partial = read_log_delta(&record, &mut cursor, 100).unwrap();
+        assert!(partial.lines.is_empty());
+        assert_eq!(cursor.last_seq, 0);
+        assert_eq!(cursor.direct_byte_offset, 0);
+
+        writer
+            .append(NormalizedEvent::LineEnd { terminated: true })
+            .unwrap();
+        writer.finish().unwrap();
+        let completed = read_log_delta(&record, &mut cursor, 100).unwrap();
+        assert_eq!(completed.lines.len(), 1);
+        assert_eq!(completed.lines[0].seq, 1);
+        assert_eq!(completed.lines[0].total_bytes, payload.len() as u64);
+        assert_eq!(cursor.last_seq, 1);
+        assert_eq!(
+            cursor.direct_byte_offset,
+            std::fs::metadata(directory.join("output.log"))
+                .unwrap()
+                .len()
+        );
     }
 
     #[test]
