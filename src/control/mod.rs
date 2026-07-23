@@ -3,6 +3,7 @@
 pub mod agents;
 pub mod apply;
 pub mod codex_config;
+pub(crate) mod config_i18n;
 pub mod doctor;
 pub mod i18n;
 pub(crate) mod job_i18n;

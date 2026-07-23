@@ -4,6 +4,7 @@ use crate::control::agents::InsertedSeparator;
 use crate::control::i18n::ALL_LANGUAGES;
 use crate::control::paths::ControlPaths;
 use crate::control::transaction;
+use crate::search_parallelism::{self, SearchParallelism};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -46,6 +47,32 @@ pub struct UpdateSettingsStatus {
     pub source: UpdateSource,
     /// Whether a present persisted source value was invalid and fell back to `auto`.
     pub source_fell_back: bool,
+}
+
+/// Effective search parallelism plus a diagnosable invalid persisted limit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SearchParallelismStatus {
+    /// Engine-visible upper bound derived from `available_parallelism` and the hard cap.
+    pub available: usize,
+    /// Raw explicit user value, or `None` for automatic parallelism.
+    pub configured: Option<i64>,
+    /// Effective `P`; absent when the explicit value is outside `1..=available`.
+    pub effective: Option<usize>,
+}
+
+/// Current-user grep/glob CPU settings, read directly by each newly started server.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct SearchSettings {
+    /// Maximum CPU lanes including the request-local base lane; omission keeps automatic mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_cpu_cores: Option<i64>,
+}
+
+impl SearchSettings {
+    fn is_default(&self) -> bool {
+        self.max_cpu_cores.is_none()
+    }
 }
 
 /// npm download-source policy for source-aware updates.
@@ -455,6 +482,9 @@ pub struct FastCtxSettings {
     pub fastshell: FastShellSettings,
     /// Machine-level update preferences, effective immediately when saved.
     pub update: UpdateSettings,
+    /// Current-user grep/glob CPU limit, effective for newly started server processes.
+    #[serde(skip_serializing_if = "SearchSettings::is_default")]
+    pub search: SearchSettings,
     /// Legacy config key accepted but omitted from every newly written settings file.
     #[serde(default, skip_serializing)]
     pub fastedit: FeatureToggle,
@@ -472,6 +502,7 @@ impl Default for FastCtxSettings {
             tool_budgets: ToolBudgets::default(),
             fastshell: FastShellSettings::default(),
             update: UpdateSettings::default(),
+            search: SearchSettings::default(),
             fastedit: FeatureToggle::default(),
             applied: None,
         }
@@ -563,6 +594,90 @@ pub fn update_settings_status(paths: &ControlPaths) -> Result<UpdateSettingsStat
     })
 }
 
+/// Resolves the persisted search CPU limit without hiding an out-of-range value.
+pub fn search_parallelism_status(paths: &ControlPaths) -> Result<SearchParallelismStatus, String> {
+    let settings = load(paths)?;
+    let configured = settings.search.max_cpu_cores;
+    let available = search_parallelism::detected_available();
+    let effective = search_parallelism::resolve(configured)
+        .ok()
+        .map(|resolved| resolved.effective);
+    Ok(SearchParallelismStatus {
+        available,
+        configured,
+        effective,
+    })
+}
+
+impl FastCtxSettings {
+    /// Resolves the effective search parallelism or rejects an invalid explicit limit.
+    pub(crate) fn search_parallelism(&self) -> Result<SearchParallelism, String> {
+        search_parallelism::resolve(self.search.max_cpu_cores)
+            .map_err(|error| format!("search.max_cpu_cores {error}"))
+    }
+}
+
+/// Restores every user preference while retaining the Apply ownership receipt.
+pub(crate) fn reset_user_preferences(settings: &FastCtxSettings) -> FastCtxSettings {
+    FastCtxSettings {
+        applied: settings.applied.clone(),
+        ..FastCtxSettings::default()
+    }
+}
+
+fn search_parallelism_repair_hint() -> String {
+    format!(
+        "For search.max_cpu_cores, use a whole number from 1..={} or remove the key for automatic mode. ",
+        search_parallelism::detected_available()
+    )
+}
+
+fn source_mentions_search_parallelism(source: &str) -> bool {
+    let mut in_search_table = false;
+    for line in source.lines() {
+        let line = line.split('#').next().unwrap_or_default().trim();
+        if line.starts_with('[') {
+            in_search_table = line == "[search]";
+            continue;
+        }
+        let Some((key, _value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key == "search.max_cpu_cores" || (in_search_table && key == "max_cpu_cores") {
+            return true;
+        }
+    }
+    false
+}
+
+fn validate_search_parallelism_type(
+    document: &toml_edit::DocumentMut,
+    path: &Path,
+) -> Result<(), String> {
+    let Some(search) = document.get("search") else {
+        return Ok(());
+    };
+    let Some(table) = search.as_table_like() else {
+        return Err(format!(
+            "Cannot parse fastctx settings {}: search must be a table. {}Repair the file and retry.",
+            crate::paths::display_path(path),
+            search_parallelism_repair_hint()
+        ));
+    };
+    if table
+        .get("max_cpu_cores")
+        .is_some_and(|value| value.as_integer().is_none())
+    {
+        return Err(format!(
+            "Cannot parse fastctx settings {}: search.max_cpu_cores must be an integer. {}Repair the file and retry.",
+            crate::paths::display_path(path),
+            search_parallelism_repair_hint()
+        ));
+    }
+    Ok(())
+}
+
 /// Loads configuration from a supplied path for tests and migrations.
 pub fn load_from(path: &Path) -> Result<FastCtxSettings, String> {
     let source = match fs::read_to_string(path) {
@@ -578,8 +693,13 @@ pub fn load_from(path: &Path) -> Result<FastCtxSettings, String> {
         }
     };
     let document = source.parse::<toml_edit::DocumentMut>().map_err(|error| {
+        let hint = if source_mentions_search_parallelism(&source) {
+            search_parallelism_repair_hint()
+        } else {
+            String::new()
+        };
         format!(
-            "Cannot parse fastctx settings {}: {error}. Repair or remove the file and retry.",
+            "Cannot parse fastctx settings {}: {error}. {hint}Repair or remove the file and retry.",
             crate::paths::display_path(path)
         )
     })?;
@@ -615,6 +735,7 @@ pub fn load_from(path: &Path) -> Result<FastCtxSettings, String> {
             crate::paths::display_path(path)
         ));
     }
+    validate_search_parallelism_type(&document, path)?;
     let mut settings: FastCtxSettings = toml_edit::de::from_str(&source).map_err(|error| {
         format!(
             "Cannot parse fastctx settings {}: {error}. Repair or remove the file and retry.",
@@ -650,6 +771,9 @@ pub fn encode(settings: &FastCtxSettings) -> Result<Vec<u8>, String> {
             settings.schema_version
         ));
     }
+    settings
+        .search_parallelism()
+        .map_err(|error| format!("Cannot encode fastctx settings: {error}."))?;
     let mut source = toml_edit::ser::to_string_pretty(settings)
         .map_err(|error| format!("Cannot encode fastctx settings: {error}"))?;
     if !source.ends_with('\n') {
@@ -686,9 +810,11 @@ pub fn save(paths: &ControlPaths, settings: &FastCtxSettings) -> Result<bool, St
 #[cfg(test)]
 mod tests {
     use super::{
-        CURRENT_SCHEMA_VERSION, DEFAULT_JOB_LIST_LIMIT, DEFAULT_JOB_STORAGE_LIMIT_MIB,
-        DEFAULT_MAX_RUNNING_JOBS, MAX_JOB_LIST_LIMIT, ManagedFileRecord, Tier, UpdateSource,
-        encode, job_limit_status, load_from, update_settings_status,
+        AppliedRecord, CURRENT_SCHEMA_VERSION, DEFAULT_JOB_LIST_LIMIT,
+        DEFAULT_JOB_STORAGE_LIMIT_MIB, DEFAULT_MAX_RUNNING_JOBS, FastCtxSettings,
+        MAX_JOB_LIST_LIMIT, ManagedFileRecord, Tier, ToolBudgetLevel, UpdateSource, encode,
+        job_limit_status, load_from, reset_user_preferences, save, search_parallelism_status,
+        update_settings_status,
     };
     use crate::control::paths::ControlPaths;
 
@@ -768,6 +894,136 @@ mod tests {
         assert_eq!(status.job_storage_limit_mib, DEFAULT_JOB_STORAGE_LIMIT_MIB);
         assert_eq!(status.max_running_jobs, DEFAULT_MAX_RUNNING_JOBS);
         assert_eq!(status.job_list_limit, DEFAULT_JOB_LIST_LIMIT);
+    }
+
+    #[test]
+    fn search_cpu_limit_is_omitted_by_default_and_valid_boundaries_round_trip() {
+        let default = String::from_utf8(encode(&FastCtxSettings::default()).unwrap()).unwrap();
+        assert!(!default.contains("[search]"), "{default}");
+
+        let maximum = crate::search_parallelism::detected_available();
+        let middle = (maximum / 2).max(1);
+        for configured in [1, middle, maximum] {
+            let temp = tempfile::tempdir().unwrap();
+            let paths = ControlPaths::for_home(temp.path());
+            std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+            std::fs::write(
+                &paths.fastctx_config,
+                format!("schema_version = 1\n\n[search]\nmax_cpu_cores = {configured}\n"),
+            )
+            .unwrap();
+
+            let settings = load_from(&paths.fastctx_config).unwrap();
+            assert_eq!(settings.search.max_cpu_cores, Some(configured as i64));
+            let status = search_parallelism_status(&paths).unwrap();
+            assert_eq!(status.available, maximum);
+            assert_eq!(status.configured, Some(configured as i64));
+            assert_eq!(status.effective, Some(configured));
+            let encoded = String::from_utf8(encode(&settings).unwrap()).unwrap();
+            assert!(
+                encoded.contains(&format!("[search]\nmax_cpu_cores = {configured}")),
+                "{encoded}"
+            );
+        }
+    }
+
+    #[test]
+    fn search_cpu_limit_rejects_range_type_and_empty_errors_without_rewriting_source() {
+        let maximum = crate::search_parallelism::detected_available();
+        for configured in [-1_i64, 0, maximum as i64 + 1] {
+            let temp = tempfile::tempdir().unwrap();
+            let paths = ControlPaths::for_home(temp.path());
+            std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+            let source = format!("schema_version = 1\n\n[search]\nmax_cpu_cores = {configured}\n");
+            std::fs::write(&paths.fastctx_config, source.as_bytes()).unwrap();
+
+            let mut settings = load_from(&paths.fastctx_config).unwrap();
+            let status = search_parallelism_status(&paths).unwrap();
+            assert_eq!(status.configured, Some(configured));
+            assert_eq!(status.effective, None);
+            settings.tier = Tier::High;
+            let error = save(&paths, &settings).unwrap_err();
+            assert!(error.contains(&format!("1..={maximum}")), "{error}");
+            assert_eq!(
+                std::fs::read(&paths.fastctx_config).unwrap(),
+                source.as_bytes()
+            );
+        }
+
+        for raw in ["\"four\"", "1.5", "true", ""] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("config.toml");
+            let source = format!("schema_version = 1\n[search]\nmax_cpu_cores = {raw}\n");
+            std::fs::write(&path, source.as_bytes()).unwrap();
+            let error = load_from(&path).unwrap_err();
+            for expected in [
+                "Cannot parse fastctx settings".to_string(),
+                "search.max_cpu_cores".to_string(),
+                "whole number".to_string(),
+                format!("1..={maximum}"),
+                "automatic mode".to_string(),
+            ] {
+                assert!(error.contains(&expected), "missing {expected:?}: {error}");
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), source.as_bytes());
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        let unrelated = b"schema_version = 1\n[other]\nmax_cpu_cores =\n";
+        std::fs::write(&path, unrelated).unwrap();
+        let error = load_from(&path).unwrap_err();
+        assert!(!error.contains("search.max_cpu_cores"), "{error}");
+        assert!(!error.contains("automatic mode"), "{error}");
+    }
+
+    #[test]
+    fn reset_restores_every_user_preference_and_preserves_the_apply_receipt() {
+        let managed = |path: &str| ManagedFileRecord {
+            path: path.to_string(),
+            original_existed: true,
+            applied_sha256: "managed-hash".to_string(),
+        };
+        let receipt = AppliedRecord {
+            applied_at_utc: "2026-07-21T00:00:00Z".to_string(),
+            version: "0.1.1".to_string(),
+            command: "fastctx".to_string(),
+            tier: Tier::High,
+            tool_output_token_limit: 16_000,
+            previous_token_limit_present: true,
+            previous_token_limit: Some(10_000),
+            fastctx_token_budget: 13_600,
+            tool_budgets: super::ToolBudgets::default(),
+            fastshell_enabled: true,
+            fastedit_enabled: false,
+            codex_dir_created: true,
+            codex_config: managed("config.toml"),
+            codex_agents: managed("AGENTS.md"),
+            codex_agents_inserted_separator: None,
+            binary_sha256: "binary-hash".to_string(),
+        };
+        let mut settings = FastCtxSettings {
+            language: Some("zh-CN".to_string()),
+            tier: Tier::ExtraHigh,
+            applied: Some(receipt.clone()),
+            ..FastCtxSettings::default()
+        };
+        settings.tool_budgets.grep = ToolBudgetLevel::Percent25;
+        settings.fastshell.enabled = true;
+        settings.fastshell.job_storage_limit_mib = 4_096;
+        settings.update.auto_check = false;
+        settings.update.source = UpdateSource::Npmmirror;
+        settings.search.max_cpu_cores = Some(1);
+
+        let reset = reset_user_preferences(&settings);
+        assert_eq!(reset.applied, Some(receipt));
+        assert_eq!(
+            FastCtxSettings {
+                applied: None,
+                ..reset.clone()
+            },
+            FastCtxSettings::default()
+        );
     }
 
     #[test]

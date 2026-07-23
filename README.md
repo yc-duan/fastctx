@@ -49,11 +49,12 @@ fastctx
 The first launch opens the full-screen control terminal. The interface supports 17 languages and provides these main actions:
 
 1. Adjust the output tier;
-2. Enable **Bash terminal** when needed;
-3. Set current-user background-job storage, concurrency, and AI list page limits;
-4. Inspect every currently running job across FastCtx sessions, follow its output, and stop it on the **Jobs** screen;
-5. Review every configuration change on the Apply screen;
-6. Apply the changes and restart the ChatGPT / Codex session.
+2. Keep grep/glob on automatic CPU parallelism or set an explicit core limit;
+3. Enable **Bash terminal** when needed;
+4. Set current-user background-job storage, concurrency, and AI list page limits;
+5. Inspect every currently running job across FastCtx sessions, follow its output, and stop it on the **Jobs** screen;
+6. Reset all user preferences to factory defaults through a confirmation screen;
+7. Review every host configuration change on the Apply screen, apply it, and restart the ChatGPT / Codex session.
 
 Apply copies the current binary to `~/.fastctx/bin/` and points the host configuration at that stable path. The applied setup keeps working after npm cache cleanup or upgrades.
 
@@ -108,7 +109,22 @@ fastctx unapply --yes
 - `unapply`: remove the content managed by FastCtx;
 - `lang <code>`: set the control terminal language.
 
-`status` uses three states: `[PASS]`, `[INFO]`, and `[FAIL]`. A `[FAIL]` result returns a non-zero exit code.
+`status` uses three states: `[PASS]`, `[INFO]`, and `[FAIL]`. It also reports the detected search CPU ceiling and the configured/effective parallelism. A `[FAIL]` result returns a non-zero exit code.
+
+### Search CPU limit and settings reset
+
+grep/glob uses automatic parallelism by default: the operating system's available parallelism, capped at 16. In **Config → Search**, choose a preset with ←/→ or press Enter and type `auto` or any integer in the displayed `1..=maximum` range. The setting is read directly by each newly started MCP server, takes effect after restarting the server, and does not require Apply.
+
+The same setting can be written manually in `~/.fastctx/config.toml`:
+
+```toml
+[search]
+max_cpu_cores = 4
+```
+
+Omitting the key keeps the previous automatic behavior. Invalid types, empty values, zero, negative numbers, and values above the engine's displayed ceiling prevent `serve` from starting and produce a diagnostic without rewriting the file. The limit sets the effective search parallelism for one request: its base lane plus shared extra workers is at most N. Concurrent requests retain independent base lanes, so this is not CPU affinity or a strict process-wide/system-wide governor.
+
+**Config → Reset → Reset all settings** opens with **No** selected. Confirming restores every user preference, including language, output budgets, Bash/job limits, search CPU limit, and update settings. It preserves the Apply ownership receipt, installed binary, host configuration, and running jobs. Restoring the default 1024 MiB job-history quota may immediately evict the oldest finished records above that quota.
 
 ### Other distribution channels
 

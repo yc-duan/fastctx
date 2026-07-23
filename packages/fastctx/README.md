@@ -25,6 +25,16 @@ effect immediately when saved.
 Job commands, working directories, rolling output, and exit status stay in the
 current user's private local directory and are never uploaded by FastCtx.
 
+grep/glob keeps its existing automatic CPU parallelism by default. The TUI can
+set an explicit `search.max_cpu_cores` value from 1 through the engine-visible
+ceiling (available parallelism capped at 16); each newly started server reads it
+directly, without Apply or a copied environment key. Invalid values fail with a
+repairable diagnostic instead of being clamped or replaced. The Config screen
+also provides a default-No confirmation that resets every user preference while
+preserving the Apply ownership receipt, installed binary, host integration, and
+running jobs. Restoring the default history quota can evict excess finished
+records through the normal retention policy.
+
 ```console
 npm install --global fastctx
 fastctx
@@ -54,9 +64,9 @@ A failed update restores and reopens the previous version with a warning.
 `fastctx serve` and MCP tool calls do not perform update traffic; commands run
 through the optional bash tools keep their normal network access.
 
-Run `fastctx` in a terminal for the full-screen control UI (preview, Apply,
-Jobs, doctor, Unapply), `fastctx jobs` for scriptable running-job management,
-or `fastctx serve` for the stdio MCP server. For MCP pipes
+Run `fastctx` in a terminal for the full-screen control UI (configuration,
+reset, preview, Apply, Jobs, doctor, Unapply), `fastctx jobs` for scriptable
+running-job management, or `fastctx serve` for the stdio MCP server. For MCP pipes
 the launcher proxies stdio, forwards termination signals and the native exit
 code, and closes the Rust server cleanly if the Node parent is killed.
 

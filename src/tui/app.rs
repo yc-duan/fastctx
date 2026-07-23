@@ -1,17 +1,19 @@
 //! Pure TUI state transitions and controlled I/O effects.
 
-use super::config::{ConfigCursor, ConfigDraft, ConfigViewport};
+use super::config::{ConfigCursor, ConfigDraft, ConfigItemId, ConfigViewport};
 use super::jobs::{JobsDetail, JobsState, JobsViewport, visible_job_count, visible_jobs};
 use super::update::{self as update_copy, UpdateMessages};
 use crate::control::apply::{
     ApplyOptions, ApplyPlan, OperationReceipt, UnapplyOptions, UnapplyPlan, commit_apply,
     commit_unapply, plan_apply, plan_unapply,
 };
+use crate::control::config_i18n::{self, ConfigMessages};
 use crate::control::doctor::{self, DoctorReport};
 use crate::control::i18n::{ALL_LANGUAGES, Language, Messages};
 use crate::control::job_i18n::{self, JobMessages};
 use crate::control::paths::ControlPaths;
 use crate::control::settings::{self, FastCtxSettings};
+use crate::search_parallelism::{self, SearchParallelismInputError};
 use crate::shell::jobs::{self, JobSummary};
 use crate::update::{CheckFailure, CheckFailureKind, StartupUpdate, UpdatePlan};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -41,6 +43,9 @@ pub(crate) enum Screen {
     UnapplyConfirm,
     UnapplyRunning,
     Config,
+    ConfigCpuEdit,
+    ConfigResetConfirm,
+    ConfigResetting,
     Jobs,
     JobsKillConfirm,
     JobsKilling,
@@ -131,6 +136,7 @@ enum Effect {
     RetryUpdate,
     SaveLanguage { first_run: bool },
     SaveConfig,
+    ResetConfig,
     PlanApply,
     CommitApply,
     PlanUnapply,
@@ -140,6 +146,13 @@ enum Effect {
     LoadJobTail { job_id: String },
     RefreshJobCount,
     KillJob { job_id: String },
+}
+
+/// Editable search CPU limit plus the last validation failure.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CpuLimitEditor {
+    pub(crate) input: String,
+    pub(crate) error: Option<SearchParallelismInputError>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,6 +170,7 @@ pub(crate) struct App {
     pub config_draft: ConfigDraft,
     pub config_cursor: ConfigCursor,
     pub config_viewport: ConfigViewport,
+    pub(crate) cpu_limit_editor: CpuLimitEditor,
     pub jobs_state: JobsState,
     pub jobs_detail: JobsDetail,
     pub jobs_selected: usize,
@@ -289,6 +303,7 @@ impl App {
             config_draft: ConfigDraft::from_settings(&settings),
             config_cursor: ConfigCursor::default(),
             config_viewport: ConfigViewport::default(),
+            cpu_limit_editor: CpuLimitEditor::default(),
             jobs_state: JobsState::Loading,
             jobs_detail: JobsDetail::default(),
             jobs_selected: 0,
@@ -352,6 +367,15 @@ impl App {
             self.language
         };
         job_i18n::messages(language)
+    }
+
+    pub(crate) fn config_messages(&self) -> &'static ConfigMessages {
+        let language = if self.settings.language.is_none() {
+            Language::En
+        } else {
+            self.language
+        };
+        config_i18n::messages(language)
     }
 
     pub(crate) fn update_messages(&self) -> &'static UpdateMessages {
@@ -447,6 +471,8 @@ impl App {
             Screen::UnapplyPreview => self.handle_unapply_preview(key.code),
             Screen::UnapplyConfirm => self.handle_unapply_confirm(key.code),
             Screen::Config => self.handle_config(key),
+            Screen::ConfigCpuEdit => self.handle_cpu_limit_editor(key),
+            Screen::ConfigResetConfirm => self.handle_config_reset_confirm(key.code),
             Screen::Jobs => self.handle_jobs(key.code),
             Screen::JobsKillConfirm => self.handle_jobs_kill_confirm(key.code),
             Screen::JobsKillFailed => self.handle_jobs_kill_failed(key.code),
@@ -459,6 +485,7 @@ impl App {
             | Screen::ApplyRunning
             | Screen::UnapplyLoading
             | Screen::UnapplyRunning
+            | Screen::ConfigResetting
             | Screen::JobsKilling => {}
         }
     }
@@ -485,7 +512,7 @@ impl App {
             Effect::SaveLanguage { first_run: _ } => {
                 let mut updated = self.settings.clone();
                 updated.language = Some(self.language.code().to_string());
-                settings::save(&self.paths, &updated).map(|_| {
+                self.save_settings(&updated).map(|_| {
                     self.settings = updated;
                     self.screen = Screen::Main;
                     self.selected = 0;
@@ -501,7 +528,9 @@ impl App {
                     || updated.fastshell.max_running_jobs
                         != self.settings.fastshell.max_running_jobs
                     || updated.fastshell.job_list_limit != self.settings.fastshell.job_list_limit;
-                settings::save(&self.paths, &updated).map(|_| {
+                let search_changed =
+                    updated.search.max_cpu_cores != self.settings.search.max_cpu_cores;
+                self.save_settings(&updated).map(|_| {
                     self.settings = updated;
                     self.back_to_main();
                     let mut message = vec![self.messages().settings_saved];
@@ -511,8 +540,31 @@ impl App {
                     if limits_changed {
                         message.push(self.job_messages().user_limit_note);
                     }
+                    if search_changed {
+                        message.push(self.config_messages().cpu_limit_note);
+                    }
                     self.toast = Some(Toast {
                         message: message.join("\n"),
+                        warning: false,
+                    });
+                })
+            }
+            Effect::ResetConfig => {
+                let updated = settings::reset_user_preferences(&self.settings);
+                let success = config_i18n::messages(Language::En)
+                    .reset_success
+                    .to_string();
+                self.save_settings(&updated).map(|_| {
+                    self.settings = updated;
+                    self.config_draft = ConfigDraft::from_settings(&self.settings);
+                    self.config_cursor = ConfigCursor::default();
+                    self.config_viewport = ConfigViewport::default();
+                    self.cpu_limit_editor = CpuLimitEditor::default();
+                    self.pending_job = None;
+                    self.screen = Screen::Language { first_run: true };
+                    self.selected = language_index(self.language);
+                    self.toast = Some(Toast {
+                        message: success,
                         warning: false,
                     });
                 })
@@ -636,6 +688,23 @@ impl App {
                 self.screen = Screen::OperationFailed;
             }
             self.selected = 0;
+        }
+    }
+
+    fn save_settings(&mut self, updated: &FastCtxSettings) -> Result<bool, String> {
+        match settings::save(&self.paths, updated) {
+            Ok(changed) => Ok(changed),
+            Err(error) => {
+                // The config replacement precedes terminal-job reaping. If only cleanup failed,
+                // keep the in-memory model aligned with the already committed settings.
+                if self.paths.fastctx_config.is_file()
+                    && settings::load(&self.paths).is_ok_and(|persisted| persisted == *updated)
+                {
+                    self.settings = updated.clone();
+                    self.config_draft = ConfigDraft::from_settings(&self.settings);
+                }
+                Err(error)
+            }
         }
     }
 
@@ -939,8 +1008,84 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') => self
                 .config_draft
                 .adjust(self.config_cursor.entry().item, true),
-            KeyCode::Enter => self.pending = Some(Effect::SaveConfig),
+            KeyCode::Enter => match self.config_cursor.entry().item {
+                ConfigItemId::SearchCpuLimit => {
+                    self.cpu_limit_editor = CpuLimitEditor {
+                        input: self
+                            .config_draft
+                            .search_max_cpu_cores
+                            .map_or_else(|| "auto".to_string(), |value| value.to_string()),
+                        error: None,
+                    };
+                    self.screen = Screen::ConfigCpuEdit;
+                }
+                ConfigItemId::ResetAll => {
+                    self.selected = 0;
+                    self.screen = Screen::ConfigResetConfirm;
+                }
+                _ => self.pending = Some(Effect::SaveConfig),
+            },
             KeyCode::Esc => self.back_to_main(),
+            _ => {}
+        }
+    }
+
+    fn handle_cpu_limit_editor(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.cpu_limit_editor.error = None;
+                self.screen = Screen::Config;
+            }
+            KeyCode::Enter => {
+                let maximum = search_parallelism::detected_available();
+                match search_parallelism::parse_input(&self.cpu_limit_editor.input, maximum) {
+                    Ok(configured) => {
+                        self.config_draft.set_search_cpu_limit(configured);
+                        self.cpu_limit_editor.error = None;
+                        self.screen = Screen::Config;
+                        self.pending = Some(Effect::SaveConfig);
+                    }
+                    Err(error) => self.cpu_limit_editor.error = Some(error),
+                }
+            }
+            KeyCode::Backspace => {
+                self.cpu_limit_editor.input.pop();
+                self.cpu_limit_editor.error = None;
+            }
+            KeyCode::Delete => {
+                self.cpu_limit_editor.input.clear();
+                self.cpu_limit_editor.error = None;
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cpu_limit_editor.input.clear();
+                self.cpu_limit_editor.error = None;
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    && self.cpu_limit_editor.input.chars().count() < 32 =>
+            {
+                self.cpu_limit_editor.input.push(character);
+                self.cpu_limit_editor.error = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_config_reset_confirm(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
+                self.selected = 1 - self.selected.min(1);
+            }
+            KeyCode::Enter if self.selected == 1 => {
+                self.screen = Screen::ConfigResetting;
+                self.pending = Some(Effect::ResetConfig);
+            }
+            KeyCode::Enter | KeyCode::Esc => {
+                self.selected = 0;
+                self.screen = Screen::Config;
+            }
             _ => {}
         }
     }
@@ -1085,6 +1230,7 @@ impl App {
                         Screen::Status
                     }
                     Effect::SaveConfig => Screen::Config,
+                    Effect::ResetConfig => Screen::ConfigResetting,
                     Effect::SaveLanguage { first_run } => Screen::Language { first_run },
                     Effect::LoadJobs | Effect::LoadJobTail { .. } | Effect::RefreshJobCount => {
                         Screen::Jobs
@@ -1254,8 +1400,12 @@ fn language_index(language: Language) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{App, Effect, Screen};
+    use crate::control::i18n::Language;
     use crate::control::paths::ControlPaths;
-    use crate::control::settings::{Tier, ToolBudgetLevel, UpdateSource};
+    use crate::control::settings::{
+        AppliedRecord, FastCtxSettings, ManagedFileRecord, Tier, ToolBudgetLevel, UpdateSource,
+    };
+    use crate::search_parallelism::SearchParallelismInputError;
     use crate::shell::jobs::{JobSourceSummary, JobSummary, JobSummaryStatus};
     use crate::tui::config::{ConfigCursor, ConfigItemId, ConfigValue};
     use crate::tui::jobs::{JobsDetail, JobsState};
@@ -1267,6 +1417,39 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn type_text(app: &mut App, value: &str) {
+        app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        for character in value.chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+    }
+
+    fn receipt() -> AppliedRecord {
+        let managed = |path: &str| ManagedFileRecord {
+            path: path.to_string(),
+            original_existed: true,
+            applied_sha256: "managed-hash".to_string(),
+        };
+        AppliedRecord {
+            applied_at_utc: "2026-07-21T00:00:00Z".to_string(),
+            version: "0.1.1".to_string(),
+            command: "fastctx".to_string(),
+            tier: Tier::High,
+            tool_output_token_limit: 16_000,
+            previous_token_limit_present: true,
+            previous_token_limit: Some(10_000),
+            fastctx_token_budget: 13_600,
+            tool_budgets: crate::control::settings::ToolBudgets::default(),
+            fastshell_enabled: true,
+            fastedit_enabled: false,
+            codex_dir_created: true,
+            codex_config: managed("config.toml"),
+            codex_agents: managed("AGENTS.md"),
+            codex_agents_inserted_separator: None,
+            binary_sha256: "binary-hash".to_string(),
+        }
     }
 
     fn fixture() -> (tempfile::TempDir, App) {
@@ -1504,15 +1687,17 @@ mod tests {
             ConfigItemId::JobStorageLimit,
             ConfigItemId::MaxRunningJobs,
             ConfigItemId::JobListLimit,
+            ConfigItemId::SearchCpuLimit,
             ConfigItemId::UpdateAutoCheck,
             ConfigItemId::UpdateSource,
+            ConfigItemId::ResetAll,
         ] {
             assert_eq!(app.config_cursor.entry().item, expected);
             app.handle_key(key(KeyCode::Down));
         }
         assert_eq!(app.config_cursor, ConfigCursor::default());
         app.handle_key(key(KeyCode::Up));
-        assert_eq!(app.config_cursor.entry().item, ConfigItemId::UpdateSource);
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::ResetAll);
     }
 
     #[test]
@@ -1525,17 +1710,25 @@ mod tests {
         app.handle_key(key(KeyCode::Tab));
         assert_eq!(app.config_cursor.entry().item, ConfigItemId::FastShell);
         app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::SearchCpuLimit);
+        app.handle_key(key(KeyCode::Tab));
         assert_eq!(
             app.config_cursor.entry().item,
             ConfigItemId::UpdateAutoCheck
         );
         app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::ResetAll);
+        app.handle_key(key(KeyCode::Tab));
         assert_eq!(app.config_cursor.entry().item, ConfigItemId::OutputTier);
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT));
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::ResetAll);
+        app.handle_key(key(KeyCode::BackTab));
         assert_eq!(
             app.config_cursor.entry().item,
             ConfigItemId::UpdateAutoCheck
         );
+        app.handle_key(key(KeyCode::BackTab));
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::SearchCpuLimit);
         app.handle_key(key(KeyCode::BackTab));
         assert_eq!(app.config_cursor.entry().item, ConfigItemId::FastShell);
     }
@@ -1607,7 +1800,10 @@ mod tests {
         let (_temp, mut app) = fixture();
         app.settings.language = Some("en".to_string());
         app.screen = Screen::Config;
-        app.config_cursor = ConfigCursor::default().next_group().next_group();
+        app.config_cursor = ConfigCursor::default()
+            .next_group()
+            .next_group()
+            .next_group();
         assert_eq!(
             app.config_cursor.entry().item,
             ConfigItemId::UpdateAutoCheck
@@ -1628,6 +1824,231 @@ mod tests {
         assert!(!persisted.update.auto_check);
         assert_eq!(persisted.update.source, UpdateSource::NpmConfig);
         assert!(persisted.applied.is_none());
+    }
+
+    #[test]
+    fn search_cpu_editor_rejects_every_invalid_shape_and_persists_auto_and_boundaries() {
+        let (_temp, mut app) = fixture();
+        app.settings.language = Some("en".to_string());
+        app.screen = Screen::Config;
+        app.config_cursor = ConfigCursor::default().next_group().next_group();
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::SearchCpuLimit);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::ConfigCpuEdit);
+        assert_eq!(app.cpu_limit_editor.input, "auto");
+
+        type_text(&mut app, "");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.cpu_limit_editor.error,
+            Some(SearchParallelismInputError::Empty {
+                maximum: crate::search_parallelism::detected_available()
+            })
+        );
+        for value in ["four", "1.5", "true"] {
+            type_text(&mut app, value);
+            app.handle_key(key(KeyCode::Enter));
+            assert!(matches!(
+                app.cpu_limit_editor.error,
+                Some(SearchParallelismInputError::NotInteger { .. })
+            ));
+            assert_eq!(app.cpu_limit_editor.input, value);
+        }
+        let maximum = crate::search_parallelism::detected_available();
+        for value in ["-1".to_string(), "0".to_string(), (maximum + 1).to_string()] {
+            type_text(&mut app, &value);
+            app.handle_key(key(KeyCode::Enter));
+            assert!(matches!(
+                app.cpu_limit_editor.error,
+                Some(SearchParallelismInputError::OutOfRange { .. })
+            ));
+            assert_eq!(app.cpu_limit_editor.input, value);
+        }
+
+        type_text(&mut app, &maximum.to_string());
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::Config);
+        assert!(app.has_pending_effect());
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::Main);
+        assert_eq!(app.settings.search.max_cpu_cores, Some(maximum as i64));
+        assert!(
+            app.toast.as_ref().is_some_and(|toast| {
+                toast.message.contains(app.config_messages().cpu_limit_note)
+            })
+        );
+        assert_eq!(
+            crate::control::settings::load(&app.paths)
+                .unwrap()
+                .search
+                .max_cpu_cores,
+            Some(maximum as i64)
+        );
+
+        app.screen = Screen::Config;
+        app.config_cursor = ConfigCursor::default().next_group().next_group();
+        app.handle_key(key(KeyCode::Enter));
+        type_text(&mut app, "auto");
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+        assert_eq!(app.settings.search.max_cpu_cores, None);
+        assert_eq!(
+            crate::control::settings::load(&app.paths)
+                .unwrap()
+                .search
+                .max_cpu_cores,
+            None
+        );
+    }
+
+    #[test]
+    fn reset_all_defaults_to_no_preserves_receipt_and_jobs_and_resets_every_preference() {
+        let (_temp, mut app) = fixture();
+        let receipt = receipt();
+        app.settings.language = Some("zh-CN".to_string());
+        app.language = Language::ZhCn;
+        app.settings.tier = Tier::ExtraHigh;
+        app.settings.tool_budgets.grep = ToolBudgetLevel::Percent25;
+        app.settings.fastshell.enabled = true;
+        app.settings.fastshell.job_storage_limit_mib = 4_096;
+        app.settings.update.auto_check = false;
+        app.settings.update.source = UpdateSource::Npmmirror;
+        app.settings.search.max_cpu_cores = Some(1);
+        app.settings.applied = Some(receipt.clone());
+        crate::control::settings::save(&app.paths, &app.settings).unwrap();
+        app.config_draft = crate::tui::config::ConfigDraft::from_settings(&app.settings);
+        let reset_success = crate::control::config_i18n::messages(Language::En).reset_success;
+        let job_sentinel = app
+            .paths
+            .jobs_dir
+            .join("running-sentinel")
+            .join("payload.bin");
+        std::fs::create_dir_all(job_sentinel.parent().unwrap()).unwrap();
+        std::fs::write(&job_sentinel, b"running job state").unwrap();
+
+        app.screen = Screen::Config;
+        app.config_cursor = ConfigCursor::default().previous();
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::ResetAll);
+        let before_cancel = file_tree(&app.paths.fastctx_dir);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::ConfigResetConfirm);
+        assert_eq!(app.selected, 0);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::Config);
+        assert!(!app.has_pending_effect());
+        assert_eq!(file_tree(&app.paths.fastctx_dir), before_cancel);
+
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::ConfigResetting);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::Language { first_run: true });
+        assert_eq!(app.settings.applied, Some(receipt.clone()));
+        assert_eq!(
+            FastCtxSettings {
+                applied: None,
+                ..app.settings.clone()
+            },
+            FastCtxSettings::default()
+        );
+        let persisted = crate::control::settings::load(&app.paths).unwrap();
+        assert_eq!(persisted.applied, Some(receipt));
+        assert_eq!(
+            FastCtxSettings {
+                applied: None,
+                ..persisted
+            },
+            FastCtxSettings::default()
+        );
+        assert_eq!(std::fs::read(job_sentinel).unwrap(), b"running job state");
+        assert_eq!(
+            app.toast.as_ref().map(|toast| toast.message.as_str()),
+            Some(reset_success)
+        );
+    }
+
+    #[test]
+    fn reset_save_failure_keeps_context_and_retries_without_false_success() {
+        let (_temp, mut app) = fixture();
+        app.settings.language = Some("en".to_string());
+        app.settings.tier = Tier::High;
+        app.settings.search.max_cpu_cores = Some(1);
+        app.config_draft = crate::tui::config::ConfigDraft::from_settings(&app.settings);
+        let reset_success = crate::control::config_i18n::messages(Language::En).reset_success;
+        std::fs::write(&app.paths.fastctx_dir, b"blocks directory creation").unwrap();
+        app.screen = Screen::Config;
+        app.config_cursor = ConfigCursor::default().previous();
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+
+        assert_eq!(app.screen, Screen::OperationFailed);
+        assert_eq!(app.settings.tier, Tier::High);
+        assert_eq!(app.config_draft.output.tier, Tier::High);
+        assert!(app.toast.is_none());
+        assert!(matches!(app.retry_effect, Some(Effect::ResetConfig)));
+
+        std::fs::remove_file(&app.paths.fastctx_dir).unwrap();
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::ConfigResetting);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::Language { first_run: true });
+        assert_eq!(app.settings, FastCtxSettings::default());
+        assert_eq!(
+            app.toast.as_ref().map(|toast| toast.message.as_str()),
+            Some(reset_success)
+        );
+    }
+
+    #[test]
+    fn reset_cleanup_failure_keeps_memory_aligned_with_the_committed_defaults() {
+        let (_temp, mut app) = fixture();
+        app.settings.language = Some("zh-CN".to_string());
+        app.language = Language::ZhCn;
+        app.settings.tier = Tier::High;
+        app.settings.search.max_cpu_cores = Some(1);
+        crate::control::settings::save(&app.paths, &app.settings).unwrap();
+        app.config_draft = crate::tui::config::ConfigDraft::from_settings(&app.settings);
+        std::fs::write(&app.paths.jobs_dir, b"not a registry directory").unwrap();
+
+        app.screen = Screen::Config;
+        app.config_cursor = ConfigCursor::default().previous();
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+
+        assert_eq!(app.screen, Screen::OperationFailed);
+        assert!(
+            app.error
+                .as_deref()
+                .is_some_and(|error| error.contains("Settings were saved, but")),
+            "{:?}",
+            app.error
+        );
+        assert_eq!(app.settings, FastCtxSettings::default());
+        assert_eq!(
+            app.config_draft,
+            crate::tui::config::ConfigDraft::from_settings(&FastCtxSettings::default())
+        );
+        assert_eq!(
+            crate::control::settings::load(&app.paths).unwrap(),
+            FastCtxSettings::default()
+        );
+        assert!(app.toast.is_none());
+        assert!(matches!(app.retry_effect, Some(Effect::ResetConfig)));
+
+        std::fs::remove_file(&app.paths.jobs_dir).unwrap();
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::ConfigResetting);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::Language { first_run: true });
+        assert_eq!(
+            app.toast.as_ref().map(|toast| toast.message.as_str()),
+            Some(crate::control::config_i18n::messages(Language::En).reset_success)
+        );
     }
 
     #[test]

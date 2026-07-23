@@ -1,5 +1,6 @@
 //! Process-wide, try-only extra CPU capacity for grep and glob.
 
+use crate::search_parallelism::{self, MAX_SEARCH_PARALLELISM};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -10,8 +11,6 @@ use std::sync::{Arc, OnceLock};
 use std::collections::BTreeSet;
 #[cfg(test)]
 use std::sync::{Condvar, Mutex};
-
-const MAX_FILE_PARALLELISM: usize = 16;
 
 /// The bounded subsystem currently borrowing one extra CPU credit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -286,15 +285,12 @@ impl GrepGlobExecutor {
 
     /// Uses the machine's capped file parallelism without initializing a pool.
     pub(crate) fn new() -> Self {
-        let parallelism = std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(1)
-            .clamp(1, MAX_FILE_PARALLELISM);
-        Self::with_parallelism(parallelism)
+        Self::with_parallelism(search_parallelism::detected_available())
     }
 
-    fn with_parallelism(parallelism: usize) -> Self {
-        let parallelism = parallelism.clamp(1, MAX_FILE_PARALLELISM);
+    /// Builds an executor for an already validated `P`, including the request-local base lane.
+    pub(crate) fn with_parallelism(parallelism: usize) -> Self {
+        let parallelism = parallelism.clamp(1, MAX_SEARCH_PARALLELISM);
         let extra_threads = parallelism - 1;
         Self {
             parallelism,
@@ -684,7 +680,7 @@ impl ExecutorProbe {
 
 #[cfg(test)]
 mod tests {
-    use super::{BurstUse, GrepGlobExecutor, LedgerSnapshot};
+    use super::{BurstUse, GrepGlobExecutor, LedgerSnapshot, MAX_SEARCH_PARALLELISM};
     use std::collections::BTreeSet;
     use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -783,6 +779,57 @@ mod tests {
         assert_eq!(executor.leaf_tasks.available(), 3);
         assert_eq!(executor.burst.state.ledger.snapshot(), released(4));
         assert_eq!(executor.leaf_tasks.state.ledger.snapshot(), released(4));
+    }
+
+    #[test]
+    fn configured_p_bounds_real_workers_credits_and_one_request_base_lane() {
+        let middle = (MAX_SEARCH_PARALLELISM / 2).max(1);
+        for parallelism in [1, middle, MAX_SEARCH_PARALLELISM] {
+            let extras = parallelism - 1;
+            let executor = executor(parallelism);
+            let release = OpenGateOnDrop::new();
+            let permits = executor.try_bursts(parallelism + 7, BurstUse::SearchSpeculation);
+            let tickets = executor.try_runner_tickets(parallelism + 7);
+
+            assert_eq!(executor.parallelism(), parallelism);
+            assert_eq!(executor.extra_capacity(), extras);
+            assert_eq!(permits.len(), extras);
+            assert_eq!(tickets.len(), extras);
+            assert!(executor.try_burst(BurstUse::TraversalExtra).is_none());
+            assert!(executor.try_runner_ticket().is_none());
+
+            for (ticket, permit) in tickets.into_iter().zip(permits) {
+                let gate = release.clone_gate();
+                assert!(
+                    executor
+                        .try_spawn(ticket, move || {
+                            let _permit = permit;
+                            wait_for_open_gate(&gate);
+                        })
+                        .is_ok()
+                );
+            }
+
+            if parallelism == 1 {
+                assert!(executor.extra_pool.get().is_none());
+                assert_eq!(executor.probe.snapshot().pool_build_attempts, 0);
+            } else {
+                let held = executor.probe.wait_for(|state| {
+                    state.workers_started == extras && state.active_leaves == extras
+                });
+                assert_eq!(held.pool_build_attempts, 1);
+                assert_eq!(held.workers_started, extras);
+                assert_eq!(held.peak_active_leaves, extras);
+                assert_eq!(1 + held.active_leaves, parallelism);
+                assert_eq!(executor.test_ticket_ledger().live, extras);
+                assert_eq!(executor.test_burst_ledger().live, extras);
+            }
+
+            drop(release);
+            executor.wait_for_test_quiescence();
+            assert_eq!(executor.test_ticket_ledger(), released(extras));
+            assert_eq!(executor.test_burst_ledger(), released(extras));
+        }
     }
 
     #[test]

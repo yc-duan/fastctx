@@ -10,6 +10,7 @@ use crate::control::apply::{PreviewAction, PreviewItem, PreviewTarget};
 use crate::control::doctor::DoctorCheckStatus;
 use crate::control::i18n::ALL_LANGUAGES;
 use crate::control::settings::{Tier, ToolBudgetLevel};
+use crate::search_parallelism::{self, SearchParallelismInputError};
 use crate::shell::jobs::{JobSourceSummary, JobSummary};
 use crate::update::{NpmDiscovery, NpmVersionAuthority, StartupUpdate};
 use ratatui::Frame;
@@ -70,7 +71,12 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut App) {
 
 fn uses_narrow_layout(area: Rect, screen: Screen) -> bool {
     match screen {
-        Screen::Config | Screen::Jobs | Screen::Update | Screen::UpdateConfirm => false,
+        Screen::Config
+        | Screen::ConfigCpuEdit
+        | Screen::ConfigResetConfirm
+        | Screen::Jobs
+        | Screen::Update
+        | Screen::UpdateConfirm => false,
         Screen::ApplyPreview
         | Screen::UnapplyPreview
         | Screen::Status
@@ -165,6 +171,18 @@ fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             theme::danger(),
         ),
         Screen::Config => render_config(frame, app, area),
+        Screen::ConfigCpuEdit => render_cpu_limit_editor(frame, app, area),
+        Screen::ConfigResetConfirm => {
+            let prompt = format!(
+                "{}\n{}",
+                app.config_messages().reset_confirm,
+                app.config_messages().reset_all_note
+            );
+            render_confirmation(frame, app, area, &prompt, theme::danger());
+        }
+        Screen::ConfigResetting => {
+            render_loading(frame, app, area, app.config_messages().reset_all_label)
+        }
         Screen::Jobs => render_jobs(frame, app, area),
         Screen::JobsKillConfirm => render_job_kill_confirmation(frame, app, area),
         Screen::JobsKilling => render_loading(frame, app, area, app.job_messages().loading),
@@ -915,7 +933,13 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         match *row {
             ConfigListRow::Group(group) => table_rows.push(Row::new(vec![
                 Cell::from(Line::styled(
-                    config::group_title(group, messages, app.update_messages()).to_string(),
+                    config::group_title(
+                        group,
+                        messages,
+                        app.config_messages(),
+                        app.update_messages(),
+                    )
+                    .to_string(),
                     Style::default()
                         .fg(theme::fg())
                         .add_modifier(Modifier::BOLD),
@@ -981,6 +1005,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                     config::item_label(
                         config::group_spec(entry.group).parent(),
                         messages,
+                        app.config_messages(),
                         app.job_messages(),
                         app.update_messages(),
                     ),
@@ -991,6 +1016,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                     config::item_label(
                         entry.item,
                         messages,
+                        app.config_messages(),
                         app.job_messages(),
                         app.update_messages(),
                     ),
@@ -1038,6 +1064,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         config::item_label(
                             entry.item,
                             messages,
+                            app.config_messages(),
                             app.job_messages(),
                             app.update_messages(),
                         ),
@@ -1082,6 +1109,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         config::item_label(
                             entry.item,
                             messages,
+                            app.config_messages(),
                             app.job_messages(),
                             app.update_messages(),
                         ),
@@ -1091,7 +1119,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                     ),
                     Span::styled("  ·  ", Style::default().fg(theme::border())),
                     Span::styled(
-                        config_value_label(messages, entry.item, ConfigValue::Number(value)),
+                        config_value_label(app, entry.item, ConfigValue::Number(value)),
                         Style::default()
                             .fg(theme::fg())
                             .add_modifier(Modifier::BOLD),
@@ -1128,12 +1156,66 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 Style::default().fg(theme::fg()),
             ),
         ],
+        ConfigValue::CpuLimit(configured) => {
+            let resolution = search_parallelism::resolve(configured);
+            let mut lines = vec![Line::from(vec![
+                Span::styled(
+                    app.config_messages().cpu_limit_label,
+                    Style::default()
+                        .fg(theme::accent())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ·  ", Style::default().fg(theme::border())),
+                Span::styled(
+                    config_value_label(app, entry.item, ConfigValue::CpuLimit(configured)),
+                    Style::default()
+                        .fg(config_value_color(ConfigValue::CpuLimit(configured)))
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])];
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                app.config_messages().cpu_limit_note,
+                Style::default().fg(theme::fg()),
+            ));
+            lines.push(Line::raw(""));
+            match resolution {
+                Ok(resolved) => lines.push(Line::styled(
+                    format!(
+                        "search.max_cpu_cores · 1..={} · effective P={}",
+                        resolved.available, resolved.effective
+                    ),
+                    Style::default().fg(theme::muted()),
+                )),
+                Err(error) => lines.push(Line::styled(
+                    app.config_messages()
+                        .cpu_error_range
+                        .replace("{maximum}", &error.maximum.to_string()),
+                    Style::default().fg(theme::danger()),
+                )),
+            }
+            lines
+        }
+        ConfigValue::Action => vec![
+            Line::styled(
+                app.config_messages().reset_all_label,
+                Style::default()
+                    .fg(theme::danger())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::raw(""),
+            Line::styled(
+                app.config_messages().reset_all_note,
+                Style::default().fg(theme::fg()),
+            ),
+        ],
     };
     let mut detail = Paragraph::new(detail).wrap(Wrap { trim: false });
     if !compact {
         detail = detail.block(panel(config::group_title(
             entry.group,
             messages,
+            app.config_messages(),
             app.update_messages(),
         )));
     }
@@ -1149,6 +1231,86 @@ fn budget_tool_note(messages: &crate::control::i18n::Messages, item: ConfigItemI
         ConfigItemId::JobOutputBudget => messages.job_output_tool_note,
         _ => messages.budgets_note,
     }
+}
+
+fn render_cpu_limit_editor(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let messages = app.config_messages();
+    let maximum = search_parallelism::detected_available();
+    let prompt = messages
+        .cpu_edit_prompt
+        .replace("{maximum}", &maximum.to_string());
+    let error = app.cpu_limit_editor.error.map(|error| match error {
+        SearchParallelismInputError::Empty { .. } => messages.cpu_error_empty.to_string(),
+        SearchParallelismInputError::NotInteger { .. } => {
+            messages.cpu_error_not_integer.to_string()
+        }
+        SearchParallelismInputError::OutOfRange { .. } => messages
+            .cpu_error_range
+            .replace("{maximum}", &error.maximum().to_string()),
+    });
+    let color = if error.is_some() {
+        theme::danger()
+    } else {
+        theme::accent()
+    };
+    if area.width < 72 || area.height < 12 {
+        let guidance = error.unwrap_or(prompt);
+        let mut lines = vec![
+            Line::styled(
+                messages.cpu_edit_title,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Line::from(vec![
+                Span::styled(
+                    app.cpu_limit_editor.input.clone(),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("▌", Style::default().fg(color)),
+            ]),
+            Line::styled(guidance, Style::default().fg(color)),
+        ];
+        if area.height >= 7 {
+            lines.push(Line::styled(
+                messages.cpu_limit_note,
+                Style::default().fg(theme::muted()),
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            inner(area, 1, 0),
+        );
+        return;
+    }
+    let popup = centered_rect(72, 54, area);
+    frame.render_widget(Clear, popup);
+    let mut lines = vec![
+        Line::styled(prompt, Style::default().fg(theme::fg())),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled(
+                app.cpu_limit_editor.input.clone(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("▌", Style::default().fg(color)),
+        ])
+        .alignment(Alignment::Center),
+    ];
+    if let Some(error) = error {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(error, Style::default().fg(theme::danger())));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        messages.cpu_limit_note,
+        Style::default().fg(theme::muted()),
+    ));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .block(panel(messages.cpu_edit_title).border_style(Style::default().fg(color)))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
 }
 
 fn render_jobs(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
@@ -1777,6 +1939,7 @@ fn config_item_row(
                 config::item_label(
                     item,
                     app.messages(),
+                    app.config_messages(),
                     app.job_messages(),
                     app.update_messages(),
                 )
@@ -1790,30 +1953,39 @@ fn config_item_row(
                 },
             ),
         ])),
-        Cell::from(Line::from(vec![
-            Span::styled(
-                "‹ ",
-                Style::default().fg(if selected {
-                    theme::accent()
-                } else {
-                    theme::border()
-                }),
-            ),
-            Span::styled(
-                config_value_label(app.messages(), item, value),
+        Cell::from(if value == ConfigValue::Action {
+            Line::styled(
+                format!("Enter · {}", app.config_messages().reset_all_label),
                 Style::default()
-                    .fg(config_value_color(value))
+                    .fg(theme::danger())
                     .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                " ›",
-                Style::default().fg(if selected {
-                    theme::accent()
-                } else {
-                    theme::border()
-                }),
-            ),
-        ])),
+            )
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    "‹ ",
+                    Style::default().fg(if selected {
+                        theme::accent()
+                    } else {
+                        theme::border()
+                    }),
+                ),
+                Span::styled(
+                    config_value_label(app, item, value),
+                    Style::default()
+                        .fg(config_value_color(value))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " ›",
+                    Style::default().fg(if selected {
+                        theme::accent()
+                    } else {
+                        theme::border()
+                    }),
+                ),
+            ])
+        }),
     ])
     .style(base)
 }
@@ -1964,8 +2136,7 @@ fn render_error(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect, prompt: &str, color: Color) {
-    let popup = centered_rect(66, 38, area);
-    frame.render_widget(Clear, popup);
+    let panel_title = prompt.lines().next().unwrap_or(prompt);
     let no_style = if app.selected == 0 {
         Style::default()
             .fg(theme::bg())
@@ -1982,6 +2153,33 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect, prompt: &st
     } else {
         Style::default().fg(color)
     };
+    let actions = Line::from(vec![
+        Span::styled("  ✕  ", no_style),
+        Span::raw("     "),
+        Span::styled("  ✓  ", yes_style),
+    ])
+    .alignment(Alignment::Center);
+    if area.width < 72 || area.height < 14 {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner(area, 1, 0));
+        frame.render_widget(
+            Paragraph::new(prompt)
+                .alignment(Alignment::Center)
+                .style(
+                    Style::default()
+                        .fg(theme::fg())
+                        .add_modifier(Modifier::BOLD),
+                )
+                .wrap(Wrap { trim: false }),
+            rows[0],
+        );
+        frame.render_widget(Paragraph::new(actions), rows[1]);
+        return;
+    }
+    let popup = centered_rect(66, 38, area);
+    frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -1991,15 +2189,10 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect, prompt: &st
                     .add_modifier(Modifier::BOLD),
             ),
             Line::raw(""),
-            Line::from(vec![
-                Span::styled("  ✕  ", no_style),
-                Span::raw("     "),
-                Span::styled("  ✓  ", yes_style),
-            ])
-            .alignment(Alignment::Center),
+            actions,
         ])
         .alignment(Alignment::Center)
-        .block(panel(prompt).border_style(Style::default().fg(color)))
+        .block(panel(panel_title).border_style(Style::default().fg(color)))
         .wrap(Wrap { trim: false }),
         popup,
     );
@@ -2405,6 +2598,12 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             [messages.action_apply, messages.action_unapply][app.selected].to_string()
         }
         Screen::Config => config_narrow_summary(app),
+        Screen::ConfigCpuEdit => format!(
+            "{} · {}",
+            app.config_messages().cpu_edit_title,
+            app.cpu_limit_editor.input
+        ),
+        Screen::ConfigResetConfirm => app.config_messages().reset_confirm.to_string(),
         Screen::Jobs => app
             .focused_job()
             .map(|job| {
@@ -2423,6 +2622,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         | Screen::ApplyRunning
         | Screen::UnapplyLoading
         | Screen::UnapplyRunning
+        | Screen::ConfigResetting
         | Screen::JobsKilling => messages.loading.to_string(),
         Screen::ApplyPreview
         | Screen::UnapplyPreview
@@ -2488,6 +2688,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Screen::ApplyConflict
             | Screen::ApplyConfirm
             | Screen::UnapplyConfirm
+            | Screen::ConfigResetConfirm
             | Screen::JobsKillConfirm
     ) {
         lines.push(Line::from(vec![
@@ -2568,13 +2769,35 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
             messages.footer_back,
         ],
         Screen::JobsKilling => vec![messages.loading],
-        Screen::Config => vec![
+        Screen::ConfigResetting => vec![messages.loading],
+        Screen::ConfigCpuEdit => vec![app.config_messages().footer_accept, messages.footer_cancel],
+        Screen::ConfigResetConfirm => vec![
             messages.footer_move,
-            messages.footer_switch_group,
-            messages.footer_adjust,
-            messages.footer_save,
-            messages.footer_cancel,
+            messages.footer_select,
+            messages.footer_back,
         ],
+        Screen::Config => match app.config_cursor.entry().item {
+            ConfigItemId::SearchCpuLimit => vec![
+                messages.footer_move,
+                messages.footer_switch_group,
+                messages.footer_adjust,
+                app.config_messages().footer_edit,
+                messages.footer_cancel,
+            ],
+            ConfigItemId::ResetAll => vec![
+                messages.footer_move,
+                messages.footer_switch_group,
+                messages.footer_select,
+                messages.footer_cancel,
+            ],
+            _ => vec![
+                messages.footer_move,
+                messages.footer_switch_group,
+                messages.footer_adjust,
+                messages.footer_save,
+                messages.footer_cancel,
+            ],
+        },
         _ => vec![
             messages.footer_move,
             messages.footer_select,
@@ -2739,6 +2962,7 @@ fn localized_check_name<'a>(app: &'a App, name: &'a str) -> &'a str {
         "Installed binary" => "FastCtx",
         "MCP handshake" => "MCP",
         "AGENTS guidance" => "AGENTS.md",
+        "Search CPU limit" => app.config_messages().cpu_limit_label,
         "fastshell" => app.messages().fastshell_label,
         "fastshell MCP handshake" => "fastshell MCP",
         _ => name,
@@ -2749,14 +2973,20 @@ fn config_narrow_summary(app: &App) -> String {
     let messages = app.messages();
     let entry = app.config_cursor.entry();
     let group = config::group_spec(entry.group);
-    let value = config_value_label(messages, entry.item, app.config_draft.value(entry.item));
+    let value = config_value_label(app, entry.item, app.config_draft.value(entry.item));
     match entry.role {
         ConfigItemRole::Parent => format!(
             "{} › {} · {}",
-            config::group_title(entry.group, messages, app.update_messages()),
+            config::group_title(
+                entry.group,
+                messages,
+                app.config_messages(),
+                app.update_messages(),
+            ),
             config::item_label(
                 entry.item,
                 messages,
+                app.config_messages(),
                 app.job_messages(),
                 app.update_messages(),
             ),
@@ -2764,16 +2994,23 @@ fn config_narrow_summary(app: &App) -> String {
         ),
         ConfigItemRole::Child { .. } => format!(
             "{} › {} › {} · {}",
-            config::group_title(entry.group, messages, app.update_messages()),
+            config::group_title(
+                entry.group,
+                messages,
+                app.config_messages(),
+                app.update_messages(),
+            ),
             config::item_label(
                 group.parent(),
                 messages,
+                app.config_messages(),
                 app.job_messages(),
                 app.update_messages(),
             ),
             config::item_label(
                 entry.item,
                 messages,
+                app.config_messages(),
                 app.job_messages(),
                 app.update_messages(),
             ),
@@ -2782,15 +3019,11 @@ fn config_narrow_summary(app: &App) -> String {
     }
 }
 
-fn config_value_label(
-    messages: &crate::control::i18n::Messages,
-    item: ConfigItemId,
-    value: ConfigValue,
-) -> String {
+fn config_value_label(app: &App, item: ConfigItemId, value: ConfigValue) -> String {
     match value {
         ConfigValue::Tier(tier) => tier.display_name().to_string(),
         ConfigValue::Budget(level) => budget_label(level).to_string(),
-        ConfigValue::Toggle(enabled) => toggle_label(messages, enabled).to_string(),
+        ConfigValue::Toggle(enabled) => toggle_label(app.messages(), enabled).to_string(),
         ConfigValue::Number(value) if item == ConfigItemId::JobStorageLimit => {
             if value >= 1_024 && value % 1_024 == 0 {
                 format!("{} GiB", value / 1_024)
@@ -2799,7 +3032,10 @@ fn config_value_label(
             }
         }
         ConfigValue::Number(value) => value.to_string(),
+        ConfigValue::CpuLimit(None) => app.config_messages().cpu_automatic.to_string(),
+        ConfigValue::CpuLimit(Some(value)) => value.to_string(),
         ConfigValue::Source(source) => source.as_str().to_string(),
+        ConfigValue::Action => app.config_messages().reset_all_label.to_string(),
     }
 }
 
@@ -2810,7 +3046,16 @@ fn config_value_color(value: ConfigValue) -> Color {
         ConfigValue::Toggle(true) => theme::success(),
         ConfigValue::Toggle(false) => theme::muted(),
         ConfigValue::Number(_) => theme::fg(),
+        ConfigValue::CpuLimit(None) => theme::muted(),
+        ConfigValue::CpuLimit(Some(value)) => {
+            if search_parallelism::resolve(Some(value)).is_ok() {
+                theme::accent()
+            } else {
+                theme::danger()
+            }
+        }
         ConfigValue::Source(_) => theme::accent(),
+        ConfigValue::Action => theme::danger(),
     }
 }
 
@@ -2841,13 +3086,15 @@ mod tests {
     use crate::control::doctor::{DoctorCheck, DoctorCheckStatus, DoctorReport};
     use crate::control::i18n::{ALL_LANGUAGES, Language};
     use crate::control::paths::ControlPaths;
+    use crate::search_parallelism::SearchParallelismInputError;
     use crate::shell::jobs::{JobSourceSummary, JobSummary, JobSummaryStatus};
-    use crate::tui::app::{App, Screen};
+    use crate::tui::app::{App, CpuLimitEditor, Screen};
     use crate::tui::config::{ConfigCursor, ConfigItemId};
     use crate::tui::jobs::{JobsDetail, JobsState};
     use crate::tui::theme::{self, ColorMode, Theme};
     use crate::update::{
-        NpmDiscovery, NpmRegistryProbe, NpmVersionAuthority, StartupUpdate, UpdatePlan,
+        CheckFailure, CheckFailureKind, NpmDiscovery, NpmRegistryProbe, NpmVersionAuthority,
+        StartupUpdate, UpdatePlan,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
@@ -2889,6 +3136,45 @@ mod tests {
             .filter(|character| !character.is_whitespace())
             .collect::<String>();
         buffer.contains(&expected)
+    }
+
+    fn npm_discovery_fixture() -> Box<NpmDiscovery> {
+        let registry = "https://registry.npmmirror.com/";
+        Box::new(NpmDiscovery {
+            source_policy: "auto".to_string(),
+            configured_registry: Some(registry.to_string()),
+            target_version: env!("CARGO_PKG_VERSION").to_string(),
+            authority: NpmVersionAuthority::Official,
+            github_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            official_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            platform_package: "@fastctx/win32-x64".to_string(),
+            probes: vec![
+                NpmRegistryProbe {
+                    source_name: "npm config".to_string(),
+                    registry: registry.to_string(),
+                    reachable: true,
+                    latest_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                    main_package_ready: true,
+                    platform_package_ready: true,
+                    error: None,
+                    error_kind: None,
+                },
+                NpmRegistryProbe {
+                    source_name: "official npm".to_string(),
+                    registry: "https://registry.npmjs.org/".to_string(),
+                    reachable: true,
+                    latest_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                    main_package_ready: true,
+                    platform_package_ready: true,
+                    error: None,
+                    error_kind: None,
+                },
+            ],
+            selected_registry: Some(registry.to_string()),
+            selected_source: Some("npm config".to_string()),
+            selection_reason: "auto selected the first reachable complete source: npm config"
+                .to_string(),
+        })
     }
 
     #[test]
@@ -3053,43 +3339,8 @@ mod tests {
         app.settings.language = Some("en".to_string());
         app.language = Language::En;
         app.screen = Screen::Update;
-        let registry = "https://registry.npmmirror.com/";
         app.update_state = StartupUpdate::NpmCurrent {
-            discovery: Box::new(NpmDiscovery {
-                source_policy: "auto".to_string(),
-                configured_registry: Some(registry.to_string()),
-                target_version: env!("CARGO_PKG_VERSION").to_string(),
-                authority: NpmVersionAuthority::Official,
-                github_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                official_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                platform_package: "@fastctx/win32-x64".to_string(),
-                probes: vec![
-                    NpmRegistryProbe {
-                        source_name: "npm config".to_string(),
-                        registry: registry.to_string(),
-                        reachable: true,
-                        latest_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                        main_package_ready: true,
-                        platform_package_ready: true,
-                        error: None,
-                        error_kind: None,
-                    },
-                    NpmRegistryProbe {
-                        source_name: "official npm".to_string(),
-                        registry: "https://registry.npmjs.org/".to_string(),
-                        reachable: true,
-                        latest_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                        main_package_ready: true,
-                        platform_package_ready: true,
-                        error: None,
-                        error_kind: None,
-                    },
-                ],
-                selected_registry: Some(registry.to_string()),
-                selected_source: Some("npm config".to_string()),
-                selection_reason: "auto selected the first reachable complete source: npm config"
-                    .to_string(),
-            }),
+            discovery: npm_discovery_fixture(),
         };
 
         let backend = TestBackend::new(40, 10);
@@ -3112,6 +3363,73 @@ mod tests {
             contains_visible_text(&text, "auto selected the first"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn update_check_loading_and_all_terminal_states_remain_visible_and_actionable() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.settings.language = Some("en".to_string());
+        app.language = Language::En;
+
+        app.screen = Screen::UpdateChecking;
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(
+            contains_visible_text(&text, app.update_messages().checking),
+            "loading state was not rendered:\n{text}"
+        );
+
+        let terminal_states = [
+            (
+                StartupUpdate::NpmCurrent {
+                    discovery: npm_discovery_fixture(),
+                },
+                app.update_messages().up_to_date.to_string(),
+            ),
+            (
+                StartupUpdate::NpmPending {
+                    target_version: "0.2.0".to_string(),
+                    discovery: npm_discovery_fixture(),
+                },
+                app.update_messages().pending_title.to_string(),
+            ),
+            (
+                StartupUpdate::Failed(CheckFailure {
+                    kind: CheckFailureKind::Transient,
+                    message: "fixture network failure".to_string(),
+                }),
+                "fixture network failure".to_string(),
+            ),
+            (
+                StartupUpdate::None,
+                app.update_messages().up_to_date.to_string(),
+            ),
+        ];
+
+        app.screen = Screen::Update;
+        for (state, expected_body) in terminal_states {
+            app.update_state = state;
+            app.detail_viewport = Default::default();
+            terminal.draw(|frame| render(frame, &mut app)).unwrap();
+            let text = buffer_text(&terminal);
+            assert!(
+                contains_visible_text(&text, &expected_body),
+                "state missing {expected_body:?}:\n{text}"
+            );
+            assert!(
+                contains_visible_text(&text, app.update_messages().action_check),
+                "state did not offer a retry/check action:\n{text}"
+            );
+            assert!(
+                contains_visible_text(&text, app.update_messages().action_continue),
+                "state did not offer a safe continue action:\n{text}"
+            );
+        }
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -3899,6 +4217,157 @@ mod tests {
     }
 
     #[test]
+    fn search_and_reset_config_groups_render_in_all_languages_and_supported_widths() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+
+        for language in ALL_LANGUAGES {
+            let mut app = App::for_test(paths.clone(), executable.clone());
+            app.settings.language = Some(language.code().to_string());
+            app.language = language;
+            app.screen = Screen::Config;
+            for (cursor, expected_group, expected_item, expected_value) in [
+                (
+                    ConfigCursor::default().next_group().next_group(),
+                    app.config_messages().search_group_title,
+                    app.config_messages().cpu_limit_label,
+                    Some(app.config_messages().cpu_automatic),
+                ),
+                (
+                    ConfigCursor::default().previous(),
+                    app.config_messages().reset_group_title,
+                    app.config_messages().reset_all_label,
+                    None,
+                ),
+            ] {
+                app.config_cursor = cursor;
+                for (width, height) in [(100, 30), (52, 18), (40, 10)] {
+                    let backend = TestBackend::new(width, height);
+                    let mut terminal = Terminal::new(backend).unwrap();
+                    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+                    let text = buffer_text(&terminal);
+                    let expected = if width >= 52 {
+                        vec![expected_group, expected_item]
+                    } else {
+                        vec![expected_item]
+                    };
+                    for expected in expected {
+                        assert!(
+                            contains_visible_text(&text, expected),
+                            "{} missing {expected} at {width}x{height}\n{text}",
+                            language.code()
+                        );
+                    }
+                    if width >= 52
+                        && let Some(expected_value) = expected_value
+                    {
+                        assert!(
+                            contains_visible_text(&text, expected_value),
+                            "{} missing default value {expected_value} at {width}x{height}\n{text}",
+                            language.code()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cpu_editor_validation_states_are_visible_without_color_in_all_languages_and_widths() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let maximum = crate::search_parallelism::detected_available();
+
+        for language in ALL_LANGUAGES {
+            let mut app = App::for_test(paths.clone(), executable.clone());
+            app.settings.language = Some(language.code().to_string());
+            app.language = language;
+            app.screen = Screen::ConfigCpuEdit;
+            let messages = app.config_messages();
+            let prompt = messages
+                .cpu_edit_prompt
+                .replace("{maximum}", &maximum.to_string());
+            let range_error = messages
+                .cpu_error_range
+                .replace("{maximum}", &maximum.to_string());
+            for (input, error, expected) in [
+                ("auto", None, prompt.as_str()),
+                (
+                    "",
+                    Some(SearchParallelismInputError::Empty { maximum }),
+                    messages.cpu_error_empty,
+                ),
+                (
+                    "four",
+                    Some(SearchParallelismInputError::NotInteger { maximum }),
+                    messages.cpu_error_not_integer,
+                ),
+                (
+                    "0",
+                    Some(SearchParallelismInputError::OutOfRange { maximum }),
+                    range_error.as_str(),
+                ),
+            ] {
+                app.cpu_limit_editor = CpuLimitEditor {
+                    input: input.to_string(),
+                    error,
+                };
+                for (width, height) in [(100, 30), (52, 18), (40, 10)] {
+                    let backend = TestBackend::new(width, height);
+                    let mut terminal = Terminal::new(backend).unwrap();
+                    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+                    let text = buffer_text(&terminal);
+                    for visible in [messages.cpu_edit_title, expected] {
+                        assert!(
+                            contains_visible_text(&text, visible),
+                            "{} missing {visible} for {input:?} at {width}x{height}\n{text}",
+                            language.code()
+                        );
+                    }
+                    if !input.is_empty() {
+                        assert!(contains_visible_text(&text, input), "{text}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reset_confirmation_keeps_default_no_and_recovery_text_visible_in_all_languages() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+
+        for language in ALL_LANGUAGES {
+            let mut app = App::for_test(paths.clone(), executable.clone());
+            app.settings.language = Some(language.code().to_string());
+            app.language = language;
+            app.screen = Screen::ConfigResetConfirm;
+            app.selected = 0;
+            let messages = app.config_messages();
+            for (width, height) in [(100, 30), (52, 18), (40, 10)] {
+                let backend = TestBackend::new(width, height);
+                let mut terminal = Terminal::new(backend).unwrap();
+                terminal.draw(|frame| render(frame, &mut app)).unwrap();
+                let text = buffer_text(&terminal);
+                for expected in [messages.reset_confirm, "Apply", "jobs", "✕", "✓"] {
+                    assert!(
+                        contains_visible_text(&text, expected),
+                        "{} missing {expected} at {width}x{height}\n{text}",
+                        language.code()
+                    );
+                }
+                assert_eq!(app.selected, 0);
+            }
+        }
+    }
+
+    #[test]
     fn config_viewport_follows_focus_and_keeps_detail_below_the_list() {
         let temp = tempfile::tempdir().unwrap();
         let paths = ControlPaths::for_home(temp.path());
@@ -4019,6 +4488,45 @@ mod tests {
         assert_eq!(symbol_color(&terminal, "✓"), palette.success);
         assert_eq!(symbol_color(&terminal, "○"), palette.muted);
         assert_eq!(symbol_color(&terminal, "×"), palette.danger);
+    }
+
+    #[test]
+    fn status_localizes_the_search_cpu_check_in_all_languages() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+
+        for language in ALL_LANGUAGES {
+            let mut app = App::for_test(paths.clone(), executable.clone());
+            app.settings.language = Some(language.code().to_string());
+            app.language = language;
+            app.screen = Screen::Status;
+            let label = app.config_messages().cpu_limit_label.to_string();
+            app.status = crate::tui::app::StatusState::Ready(DoctorReport {
+                checks: vec![DoctorCheck {
+                    name: "Search CPU limit",
+                    status: DoctorCheckStatus::Pass,
+                    detail: "Automatic; available ceiling 8; effective P=8.".to_string(),
+                    remedy: None,
+                }],
+            });
+            let backend = TestBackend::new(100, 16);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|frame| render(frame, &mut app)).unwrap();
+            let text = buffer_text(&terminal);
+
+            assert!(
+                contains_visible_text(&text, &label),
+                "{} missing localized CPU label {label:?}:\n{text}",
+                language.code()
+            );
+            assert!(
+                contains_visible_text(&text, "effective P=8"),
+                "{} missing effective parallelism detail:\n{text}",
+                language.code()
+            );
+        }
     }
 
     #[test]

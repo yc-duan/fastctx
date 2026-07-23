@@ -271,6 +271,156 @@ fn explicit_serve_performs_a_real_initialize_and_tools_list() {
 }
 
 #[test]
+fn serve_rejects_an_invalid_search_cpu_limit_before_stdio_and_preserves_source_bytes() {
+    let temp = profile_test_home();
+    let settings_dir = temp.path().join(".fastctx");
+    let settings_path = settings_dir.join("config.toml");
+    std::fs::create_dir_all(&settings_dir).unwrap();
+    let original = b"schema_version = 1\n\n[search]\nmax_cpu_cores = 0\n";
+    std::fs::write(&settings_path, original).unwrap();
+
+    let output = isolated_command(temp.path()).arg("serve").output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8(output.stderr).unwrap();
+    let maximum = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .clamp(1, 16);
+    for expected in [
+        normalized(&settings_path),
+        "search.max_cpu_cores".to_string(),
+        format!("1..={maximum}"),
+        "Repair the value and retry.".to_string(),
+    ] {
+        assert!(error.contains(&expected), "missing {expected:?}:\n{error}");
+    }
+    assert_eq!(std::fs::read(settings_path).unwrap(), original);
+}
+
+#[test]
+fn apply_preserves_search_cpu_settings_without_copying_them_into_codex_env() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings_dir = temp.path().join(".fastctx");
+    std::fs::create_dir_all(&settings_dir).unwrap();
+    std::fs::write(
+        settings_dir.join("config.toml"),
+        b"schema_version = 1\n\n[search]\nmax_cpu_cores = 1\n",
+    )
+    .unwrap();
+
+    let output = isolated_command(temp.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+
+    let settings =
+        fastctx::control::settings::load_from(&settings_dir.join("config.toml")).unwrap();
+    assert_eq!(settings.search.max_cpu_cores, Some(1));
+    let codex_source = std::fs::read_to_string(temp.path().join(".codex/config.toml")).unwrap();
+    assert!(!codex_source.contains("max_cpu_cores"), "{codex_source}");
+    assert!(!codex_source.contains("SEARCH_CPU"), "{codex_source}");
+    let document = codex_source.parse::<toml_edit::DocumentMut>().unwrap();
+    let env = document["mcp_servers"]["fastctx"]["env"]
+        .as_table_like()
+        .unwrap();
+    assert!(!env.is_empty());
+    assert!(
+        env.iter()
+            .all(|(key, _)| key.starts_with("FASTCTX_") && key.ends_with("_TOKEN_BUDGET")),
+        "{codex_source}"
+    );
+}
+
+#[test]
+fn configured_search_parallelism_keeps_grep_and_glob_bytes_equal_at_one_middle_and_maximum() {
+    let temp = profile_test_home();
+    let workspace = temp.path().join("search-fixture");
+    let nested = workspace.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    let first = workspace.join("a.txt");
+    let second = nested.join("b.txt");
+    std::fs::write(&first, b"before\nneedle one\nafter\n").unwrap();
+    std::fs::write(&second, b"no match here\n").unwrap();
+    std::fs::write(workspace.join("ignored.log"), b"ordinary log\n").unwrap();
+    for index in 0..32 {
+        std::fs::write(
+            workspace.join(format!("candidate-{index:02}.dat")),
+            b"ordinary candidate\n",
+        )
+        .unwrap();
+    }
+    let expected_grep_files = format!("{}\n\n(Complete: all 1 file shown.)", normalized(&first));
+    let expected_glob = format!(
+        "{}\n{}\n\n(Complete: all 2 files shown.)",
+        normalized(&first),
+        normalized(&second)
+    );
+    let expected_content = format!(
+        "{}\n2:needle one\n\n(Complete: all 1 result shown.)",
+        normalized(&first)
+    );
+    let maximum = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .clamp(1, 16);
+    let parallelism = std::collections::BTreeSet::from([1, (maximum / 2).max(1), maximum]);
+
+    for configured in parallelism {
+        let settings_dir = temp.path().join(".fastctx");
+        std::fs::create_dir_all(&settings_dir).unwrap();
+        std::fs::write(
+            settings_dir.join("config.toml"),
+            format!("schema_version = 1\n\n[search]\nmax_cpu_cores = {configured}\n"),
+        )
+        .unwrap();
+        let mut server = isolated_command(temp.path());
+        server.arg("serve");
+        let mut session = McpSession::start(server);
+        let grep_files = session.call(
+            "grep",
+            serde_json::json!({
+                "pattern": "needle",
+                "path": normalized(&workspace),
+                "glob": "**/*",
+                "output_mode": "files_with_matches",
+                "head_limit": 100,
+                "offset": 0
+            }),
+        );
+        assert_eq!(mcp_text(&grep_files), expected_grep_files, "P={configured}");
+        let grep_content = session.call(
+            "grep",
+            serde_json::json!({
+                "pattern": "needle",
+                "path": normalized(&workspace),
+                "glob": "**/*",
+                "output_mode": "content",
+                "line_numbers": true,
+                "head_limit": 100,
+                "offset": 0
+            }),
+        );
+        assert_eq!(mcp_text(&grep_content), expected_content, "P={configured}");
+        let glob = session.call(
+            "glob",
+            serde_json::json!({
+                "pattern": "**/*.txt",
+                "path": normalized(&workspace),
+                "filter_mode": "all",
+                "sort": "path",
+                "limit": 100,
+                "offset": 0
+            }),
+        );
+        assert_eq!(mcp_text(&glob), expected_glob, "P={configured}");
+        assert!(session.close().success(), "P={configured}");
+    }
+}
+
+#[test]
 fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
     let temp = tempfile::tempdir().unwrap();
     let codex = temp.path().join(".codex");
@@ -979,9 +1129,13 @@ fn isolated_command(home: &Path) -> Command {
 }
 
 fn profile_test_home() -> tempfile::TempDir {
+    // Canonicalize the base so the temp path's Windows drive-letter case is stable regardless
+    // of the shell cwd: the binary echoes back the path it receives while normalized()
+    // canonicalizes for comparison, so both sides must agree on drive case (2026-07-22).
+    let base = dunce::canonicalize(std::env::current_dir().unwrap()).unwrap();
     tempfile::Builder::new()
         .prefix("fastctx-codex-home-")
-        .tempdir_in(std::env::current_dir().unwrap())
+        .tempdir_in(base)
         .unwrap()
 }
 

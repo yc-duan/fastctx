@@ -180,6 +180,7 @@ pub fn run(paths: &ControlPaths) -> DoctorReport {
     if settings.is_ok() {
         checks.push(check_job_limits(paths));
     }
+    checks.push(check_search_parallelism(paths));
     checks.push(DoctorCheck::info(
         "Last update check",
         crate::update::last_check_status(paths).detail,
@@ -249,6 +250,41 @@ fn check_job_limits(paths: &ControlPaths) -> DoctorCheck {
         }
         Err(error) => DoctorCheck::fail(
             "Job limits",
+            error,
+            "Repair ~/.fastctx/config.toml, then run fastctx status again.",
+        ),
+    }
+}
+
+fn check_search_parallelism(paths: &ControlPaths) -> DoctorCheck {
+    match settings::search_parallelism_status(paths) {
+        Ok(status) => match (status.configured, status.effective) {
+            (None, Some(effective)) => DoctorCheck::pass(
+                "Search CPU limit",
+                format!(
+                    "Automatic grep/glob parallelism: engine-visible upper bound {0}; effective P={effective}. No user CPU limit is configured.",
+                    status.available
+                ),
+            ),
+            (Some(configured), Some(effective)) => DoctorCheck::pass(
+                "Search CPU limit",
+                format!(
+                    "Configured search.max_cpu_cores={configured}; engine-visible upper bound {}; effective P={effective}. Newly started server processes use this limit.",
+                    status.available
+                ),
+            ),
+            (Some(configured), None) => DoctorCheck::fail(
+                "Search CPU limit",
+                format!(
+                    "search.max_cpu_cores={configured} is invalid on this machine; the legal range is 1..={}.",
+                    status.available
+                ),
+                "Set search.max_cpu_cores to a legal integer or remove the key for automatic parallelism, then restart active FastCtx sessions.",
+            ),
+            (None, None) => unreachable!("automatic parallelism always resolves"),
+        },
+        Err(error) => DoctorCheck::fail(
+            "Search CPU limit",
             error,
             "Repair ~/.fastctx/config.toml, then run fastctx status again.",
         ),
@@ -1101,10 +1137,18 @@ mod tests {
             report
                 .checks
                 .iter()
-                .filter(|check| check.name != "Job limits")
+                .filter(|check| !matches!(check.name, "Job limits" | "Search CPU limit"))
                 .all(|check| check.status == DoctorCheckStatus::Info),
             "{report:?}"
         );
+        let search = report
+            .checks
+            .iter()
+            .find(|check| check.name == "Search CPU limit")
+            .expect("fresh profiles expose automatic search parallelism");
+        assert_eq!(search.status, DoctorCheckStatus::Pass);
+        assert!(search.detail.contains("Automatic grep/glob parallelism"));
+        assert!(search.detail.contains("effective P="));
         assert!(
             report
                 .checks
@@ -1155,6 +1199,43 @@ mod tests {
             "{job_limits:?}"
         );
         assert!(report.passed(), "{report:?}");
+    }
+
+    #[test]
+    fn invalid_search_cpu_limit_is_an_actionable_status_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        let maximum = crate::search_parallelism::detected_available();
+        std::fs::write(
+            &paths.fastctx_config,
+            format!(
+                "schema_version = 1\n\n[search]\nmax_cpu_cores = {}\n",
+                maximum + 1
+            ),
+        )
+        .unwrap();
+
+        let report = run(&paths);
+        let search = report
+            .checks
+            .iter()
+            .find(|check| check.name == "Search CPU limit")
+            .unwrap();
+        assert_eq!(search.status, DoctorCheckStatus::Fail);
+        assert!(search.detail.contains("search.max_cpu_cores"), "{search:?}");
+        assert!(
+            search.detail.contains(&format!("1..={maximum}")),
+            "{search:?}"
+        );
+        assert!(
+            search
+                .remedy
+                .as_deref()
+                .is_some_and(|remedy| remedy.contains("remove the key")),
+            "{search:?}"
+        );
+        assert!(!report.passed());
     }
 
     #[test]

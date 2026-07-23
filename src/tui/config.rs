@@ -1,8 +1,10 @@
 //! Group hierarchy, focus navigation, and draft-value model for the configuration screen.
 
+use crate::control::config_i18n::ConfigMessages;
 use crate::control::i18n::Messages;
 use crate::control::job_i18n::JobMessages;
 use crate::control::settings::{FastCtxSettings, Tier, ToolBudgetLevel, ToolBudgets, UpdateSource};
+use crate::search_parallelism;
 use crate::tui::update::UpdateMessages;
 
 /// Stable configuration-group identifier; new groups add descriptors without changing navigation or rendering algorithms.
@@ -10,7 +12,9 @@ use crate::tui::update::UpdateMessages;
 pub(crate) enum ConfigGroupId {
     Output,
     Extensions,
+    Search,
     Update,
+    Reset,
 }
 
 /// Stable identifier for an adjustable item within a configuration group.
@@ -26,8 +30,10 @@ pub(crate) enum ConfigItemId {
     JobStorageLimit,
     MaxRunningJobs,
     JobListLimit,
+    SearchCpuLimit,
     UpdateAutoCheck,
     UpdateSource,
+    ResetAll,
 }
 
 /// Parent or child role of a configuration item within its group.
@@ -96,7 +102,7 @@ const EXTENSION_CHILDREN: [ConfigItemId; 3] = [
 
 const UPDATE_CHILDREN: [ConfigItemId; 1] = [ConfigItemId::UpdateSource];
 
-const CONFIG_GROUPS: [ConfigGroupSpec; 3] = [
+const CONFIG_GROUPS: [ConfigGroupSpec; 5] = [
     ConfigGroupSpec {
         id: ConfigGroupId::Output,
         parent: ConfigItemId::OutputTier,
@@ -110,9 +116,21 @@ const CONFIG_GROUPS: [ConfigGroupSpec; 3] = [
         standalone_items: true,
     },
     ConfigGroupSpec {
+        id: ConfigGroupId::Search,
+        parent: ConfigItemId::SearchCpuLimit,
+        children: &[],
+        standalone_items: true,
+    },
+    ConfigGroupSpec {
         id: ConfigGroupId::Update,
         parent: ConfigItemId::UpdateAutoCheck,
         children: &UPDATE_CHILDREN,
+        standalone_items: true,
+    },
+    ConfigGroupSpec {
+        id: ConfigGroupId::Reset,
+        parent: ConfigItemId::ResetAll,
+        children: &[],
         standalone_items: true,
     },
 ];
@@ -135,12 +153,15 @@ pub(crate) fn group_spec(group: ConfigGroupId) -> ConfigGroupSpec {
 pub(crate) fn group_title(
     group: ConfigGroupId,
     messages: &Messages,
+    config_messages: &ConfigMessages,
     updates: &UpdateMessages,
 ) -> &'static str {
     match group {
         ConfigGroupId::Output => messages.config_title,
         ConfigGroupId::Extensions => messages.extensions_title,
+        ConfigGroupId::Search => config_messages.search_group_title,
         ConfigGroupId::Update => updates.page_title,
+        ConfigGroupId::Reset => config_messages.reset_group_title,
     }
 }
 
@@ -148,6 +169,7 @@ pub(crate) fn group_title(
 pub(crate) fn item_label(
     item: ConfigItemId,
     messages: &Messages,
+    config_messages: &ConfigMessages,
     jobs: &JobMessages,
     updates: &UpdateMessages,
 ) -> &'static str {
@@ -162,8 +184,10 @@ pub(crate) fn item_label(
         ConfigItemId::JobStorageLimit => jobs.storage_label,
         ConfigItemId::MaxRunningJobs => jobs.running_limit_label,
         ConfigItemId::JobListLimit => jobs.job_list_limit_label,
+        ConfigItemId::SearchCpuLimit => config_messages.cpu_limit_label,
         ConfigItemId::UpdateAutoCheck => updates.auto_check_label,
         ConfigItemId::UpdateSource => updates.source_label,
+        ConfigItemId::ResetAll => config_messages.reset_all_label,
     }
 }
 
@@ -395,7 +419,9 @@ pub(crate) enum ConfigValue {
     Budget(ToolBudgetLevel),
     Toggle(bool),
     Number(u64),
+    CpuLimit(Option<i64>),
     Source(UpdateSource),
+    Action,
 }
 
 /// Output-group draft with the tier as parent and five long-output tool budgets as children.
@@ -413,6 +439,7 @@ pub(crate) struct ConfigDraft {
     pub(crate) job_storage_limit_mib: u64,
     pub(crate) max_running_jobs: u64,
     pub(crate) job_list_limit: u64,
+    pub(crate) search_max_cpu_cores: Option<i64>,
     pub(crate) update_auto_check: bool,
     pub(crate) update_source: UpdateSource,
 }
@@ -429,6 +456,7 @@ impl ConfigDraft {
             job_storage_limit_mib: settings.fastshell.job_storage_limit_mib,
             max_running_jobs: settings.fastshell.max_running_jobs,
             job_list_limit: settings.fastshell.job_list_limit,
+            search_max_cpu_cores: settings.search.max_cpu_cores,
             update_auto_check: settings.update.auto_check,
             update_source: settings.update.source,
         }
@@ -442,6 +470,7 @@ impl ConfigDraft {
         settings.fastshell.job_storage_limit_mib = self.job_storage_limit_mib;
         settings.fastshell.max_running_jobs = self.max_running_jobs;
         settings.fastshell.job_list_limit = self.job_list_limit;
+        settings.search.max_cpu_cores = self.search_max_cpu_cores;
         settings.update.auto_check = self.update_auto_check;
         settings.update.source = self.update_source;
         settings.fastedit.enabled = false;
@@ -460,8 +489,10 @@ impl ConfigDraft {
             ConfigItemId::JobStorageLimit => ConfigValue::Number(self.job_storage_limit_mib),
             ConfigItemId::MaxRunningJobs => ConfigValue::Number(self.max_running_jobs),
             ConfigItemId::JobListLimit => ConfigValue::Number(self.job_list_limit),
+            ConfigItemId::SearchCpuLimit => ConfigValue::CpuLimit(self.search_max_cpu_cores),
             ConfigItemId::UpdateAutoCheck => ConfigValue::Toggle(self.update_auto_check),
             ConfigItemId::UpdateSource => ConfigValue::Source(self.update_source),
+            ConfigItemId::ResetAll => ConfigValue::Action,
         }
     }
 
@@ -496,6 +527,11 @@ impl ConfigDraft {
             ConfigItemId::JobListLimit => {
                 cycle_preset(&mut self.job_list_limit, &[10, 20, 50, 100], forward);
             }
+            ConfigItemId::SearchCpuLimit => cycle_cpu_limit(
+                &mut self.search_max_cpu_cores,
+                search_parallelism::detected_available(),
+                forward,
+            ),
             ConfigItemId::UpdateAutoCheck => self.update_auto_check = !self.update_auto_check,
             ConfigItemId::UpdateSource => {
                 self.update_source = if forward {
@@ -504,7 +540,13 @@ impl ConfigDraft {
                     self.update_source.previous()
                 };
             }
+            ConfigItemId::ResetAll => {}
         }
+    }
+
+    /// Accepts a validated editor result without touching other unsaved settings.
+    pub(crate) fn set_search_cpu_limit(&mut self, configured: Option<i64>) {
+        self.search_max_cpu_cores = configured;
     }
 }
 
@@ -538,6 +580,25 @@ fn cycle_preset(value: &mut u64, presets: &[u64], forward: bool) {
             .unwrap_or(*presets.last().expect("job presets are non-empty"))
     };
     *value = next;
+}
+
+fn cycle_cpu_limit(value: &mut Option<i64>, maximum: usize, forward: bool) {
+    let middle = (maximum / 2).max(1) as i64;
+    let maximum = maximum as i64;
+    let mut presets = vec![None, Some(1)];
+    if middle > 1 && middle < maximum {
+        presets.push(Some(middle));
+    }
+    if maximum > 1 {
+        presets.push(Some(maximum));
+    }
+    let current = presets.iter().position(|preset| preset == value);
+    *value = match (current, forward) {
+        (Some(index), true) => presets[(index + 1) % presets.len()],
+        (Some(index), false) => presets[(index + presets.len() - 1) % presets.len()],
+        (None, true) => Some(1),
+        (None, false) => None,
+    };
 }
 
 #[cfg(test)]
@@ -577,8 +638,10 @@ mod tests {
             (ConfigItemId::JobStorageLimit, ConfigItemRole::Parent),
             (ConfigItemId::MaxRunningJobs, ConfigItemRole::Parent),
             (ConfigItemId::JobListLimit, ConfigItemRole::Parent),
+            (ConfigItemId::SearchCpuLimit, ConfigItemRole::Parent),
             (ConfigItemId::UpdateAutoCheck, ConfigItemRole::Parent),
             (ConfigItemId::UpdateSource, ConfigItemRole::Parent),
+            (ConfigItemId::ResetAll, ConfigItemRole::Parent),
         ];
 
         for (item, role) in expected {
@@ -591,11 +654,15 @@ mod tests {
                     | ConfigItemId::JobListLimit
             ) {
                 ConfigGroupId::Extensions
+            } else if item == ConfigItemId::SearchCpuLimit {
+                ConfigGroupId::Search
             } else if matches!(
                 item,
                 ConfigItemId::UpdateAutoCheck | ConfigItemId::UpdateSource
             ) {
                 ConfigGroupId::Update
+            } else if item == ConfigItemId::ResetAll {
+                ConfigGroupId::Reset
             } else {
                 ConfigGroupId::Output
             };
@@ -604,7 +671,7 @@ mod tests {
             cursor = cursor.next();
         }
         assert_eq!(cursor, ConfigCursor::default());
-        assert_eq!(cursor.previous().entry().item, ConfigItemId::UpdateSource);
+        assert_eq!(cursor.previous().entry().item, ConfigItemId::ResetAll);
     }
 
     #[test]
@@ -654,13 +721,19 @@ mod tests {
     fn tab_navigation_always_lands_on_a_group_parent() {
         let output = ConfigCursor::default();
         let extensions = output.next_group();
-        let update = extensions.next_group();
+        let search = extensions.next_group();
+        let update = search.next_group();
+        let reset = update.next_group();
         assert_eq!(extensions.entry().item, ConfigItemId::FastShell);
+        assert_eq!(search.entry().item, ConfigItemId::SearchCpuLimit);
         assert_eq!(update.entry().item, ConfigItemId::UpdateAutoCheck);
-        assert_eq!(update.next_group(), output);
-        assert_eq!(output.previous_group(), update);
+        assert_eq!(reset.entry().item, ConfigItemId::ResetAll);
+        assert_eq!(reset.next_group(), output);
+        assert_eq!(output.previous_group(), reset);
         assert_eq!(extensions.previous_group(), output);
-        assert_eq!(update.previous_group(), extensions);
+        assert_eq!(search.previous_group(), extensions);
+        assert_eq!(update.previous_group(), search);
+        assert_eq!(reset.previous_group(), update);
     }
 
     #[test]
@@ -687,9 +760,36 @@ mod tests {
     }
 
     #[test]
+    fn search_cpu_limit_cycles_auto_boundaries_and_middle_without_exceeding_engine_ceiling() {
+        let settings = FastCtxSettings::default();
+        let maximum = crate::search_parallelism::detected_available();
+        let middle = (maximum / 2).max(1) as i64;
+        let mut expected = vec![Some(1)];
+        if middle > 1 && middle < maximum as i64 {
+            expected.push(Some(middle));
+        }
+        if maximum > 1 {
+            expected.push(Some(maximum as i64));
+        }
+        expected.push(None);
+
+        let mut draft = ConfigDraft::from_settings(&settings);
+        for value in expected {
+            draft.adjust(ConfigItemId::SearchCpuLimit, true);
+            assert_eq!(draft.search_max_cpu_cores, value);
+        }
+        draft.search_max_cpu_cores = Some(maximum as i64 + 1);
+        draft.adjust(ConfigItemId::SearchCpuLimit, true);
+        assert_eq!(draft.search_max_cpu_cores, Some(1));
+        draft.search_max_cpu_cores = Some(maximum as i64 + 1);
+        draft.adjust(ConfigItemId::SearchCpuLimit, false);
+        assert_eq!(draft.search_max_cpu_cores, None);
+    }
+
+    #[test]
     fn viewport_keeps_focus_visible_and_reports_both_hidden_edges() {
         let rows = list_rows();
-        assert_eq!(rows.len(), 15);
+        assert_eq!(rows.len(), 19);
         let mut viewport = ConfigViewport::default();
         let top = viewport.window(ConfigCursor::default(), rows.len(), 5);
         assert_eq!((top.start, top.end), (0, 4));
@@ -706,7 +806,7 @@ mod tests {
         assert!(middle.show_above);
         assert!(middle.show_below);
 
-        while cursor.entry().item != ConfigItemId::UpdateSource {
+        while cursor.entry().item != ConfigItemId::ResetAll {
             cursor = cursor.next();
         }
         let bottom = viewport.window(cursor, rows.len(), 5);

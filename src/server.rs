@@ -56,6 +56,14 @@ impl FastCtxServer {
 
     /// Creates one server whose visible tools are selected by startup flags.
     pub fn with_options(options: ServerOptions) -> Self {
+        Self::with_options_and_executor(options, GrepGlobExecutor::shared())
+    }
+
+    /// Creates a server with the process-startup search executor selected by current-user config.
+    pub(crate) fn with_options_and_executor(
+        options: ServerOptions,
+        grep_glob_executor: Arc<GrepGlobExecutor>,
+    ) -> Self {
         let mut tool_router = Self::file_tool_router();
         tool_router.merge(Self::shell_tool_router());
         tool_router.merge(Self::edit_tool_router());
@@ -73,7 +81,7 @@ impl FastCtxServer {
             shell: FastShell::new(),
             replace: ReplaceService::new(),
             file_permits: Arc::new(Semaphore::new(MAX_FILE_OPERATIONS)),
-            grep_glob_executor: GrepGlobExecutor::shared(),
+            grep_glob_executor,
             shell_permits: Arc::new(Semaphore::new(MAX_SHELL_OPERATIONS)),
             replace_permits: Arc::new(Semaphore::new(MAX_REPLACE_OPERATIONS)),
         }
@@ -184,5 +192,28 @@ impl ServerHandler for FastCtxServer {
             } else {
                 "Use read, grep, and glob for inspection, and replace for mechanical file edits."
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FastCtxServer, ServerOptions};
+    use crate::file_executor::GrepGlobExecutor;
+    use crate::search_parallelism::MAX_SEARCH_PARALLELISM;
+    use std::sync::Arc;
+
+    #[test]
+    fn configured_executor_is_the_server_search_source_for_serial_mid_and_maximum_p() {
+        let middle = (MAX_SEARCH_PARALLELISM / 2).max(1);
+        for parallelism in [1, middle, MAX_SEARCH_PARALLELISM] {
+            let executor = Arc::new(GrepGlobExecutor::with_test_parallelism(parallelism));
+            let server = FastCtxServer::with_options_and_executor(
+                ServerOptions::default(),
+                Arc::clone(&executor),
+            );
+            assert!(Arc::ptr_eq(&server.grep_glob_executor, &executor));
+            assert_eq!(server.grep_glob_executor.parallelism(), parallelism);
+            assert_eq!(server.grep_glob_executor.extra_capacity(), parallelism - 1);
+        }
     }
 }

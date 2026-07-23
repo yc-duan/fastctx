@@ -17,6 +17,15 @@ and concurrent jobs. `job_list` defaults to running jobs, with explicit
 finished/all views, and `fastshell.job_list_limit` controls its default page
 size (20, valid range 1–100). All three settings take effect immediately.
 
+grep/glob retains automatic CPU parallelism by default. The TUI can set the
+machine-level `search.max_cpu_cores` to any integer from 1 through the detected
+engine ceiling (available parallelism capped at 16); newly started servers read
+it directly without Apply. Invalid values are rejected with the legal range.
+The same Config screen offers a default-No confirmation to reset all user
+preferences while preserving the Apply receipt, installed binary, host
+integration, and running jobs. Normal retention may evict excess finished
+records when the history quota returns to its default.
+
 FastCtx-owned non-interactive children never allocate a Windows console window.
 The TUI Jobs dashboard aggregates only currently running jobs across FastCtx
 instances, groups them by source-session metadata, and shows aligned ids,

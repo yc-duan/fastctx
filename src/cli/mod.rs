@@ -7,6 +7,7 @@ use crate::control::doctor;
 use crate::control::i18n::{ALL_LANGUAGES, Language};
 use crate::control::paths::ControlPaths;
 use crate::control::settings::{self, Tier};
+use crate::file_executor::GrepGlobExecutor;
 use crate::server::{FastCtxServer, ServerOptions};
 use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
@@ -289,11 +290,27 @@ pub async fn run_server() -> Result<ExitCode, String> {
 
 /// Starts the single server with the requested optional tool groups.
 pub async fn run_server_with_options(options: ServerOptions) -> Result<ExitCode, String> {
+    let paths = ControlPaths::discover()?;
+    let executor = load_search_executor(&paths)?;
     let parent = crate::process_identity::parent_identity_from_environment()?;
     let stdin = crate::stdio_transport::DetachedStdin::start()?;
-    run_server_with_io(options, parent, stdin, tokio::io::stdout()).await
+    run_server_with_io_and_executor(options, parent, stdin, tokio::io::stdout(), executor).await
 }
 
+fn load_search_executor(paths: &ControlPaths) -> Result<Arc<GrepGlobExecutor>, String> {
+    let settings = settings::load(paths)?;
+    let parallelism = settings.search_parallelism().map_err(|error| {
+        format!(
+            "Cannot start the MCP server with settings from {}: {error}. Repair the value and retry.",
+            crate::paths::display_path(&paths.fastctx_config)
+        )
+    })?;
+    Ok(Arc::new(GrepGlobExecutor::with_parallelism(
+        parallelism.effective,
+    )))
+}
+
+#[cfg(test)]
 async fn run_server_with_io<W>(
     options: ServerOptions,
     parent: Option<Option<crate::process_identity::ProcessIdentity>>,
@@ -303,11 +320,25 @@ async fn run_server_with_io<W>(
 where
     W: tokio::io::AsyncWrite + Send + Unpin + 'static,
 {
+    run_server_with_io_and_executor(options, parent, stdin, stdout, GrepGlobExecutor::shared())
+        .await
+}
+
+async fn run_server_with_io_and_executor<W>(
+    options: ServerOptions,
+    parent: Option<Option<crate::process_identity::ProcessIdentity>>,
+    stdin: crate::stdio_transport::DetachedStdin,
+    stdout: W,
+    executor: Arc<GrepGlobExecutor>,
+) -> Result<ExitCode, String>
+where
+    W: tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
     let stdin_eof = stdin.eof_token();
     let stdin_read_error = stdin.read_error_receiver();
     let stdin_read_error_wait = wait_for_stdin_read_error(stdin_read_error.clone());
     tokio::pin!(stdin_read_error_wait);
-    let service = match FastCtxServer::with_options(options)
+    let service = match FastCtxServer::with_options_and_executor(options, executor)
         .serve((stdin, stdout))
         .await
     {
@@ -657,10 +688,48 @@ fn print_receipt(receipt: &crate::control::apply::OperationReceipt) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ServerOptions, run_server_with_io};
+    use super::{ServerOptions, load_search_executor, run_server_with_io};
+    use crate::control::paths::ControlPaths;
     use crate::stdio_transport::DetachedStdin;
     use std::io::{Cursor, Read};
     use std::time::Duration;
+
+    #[test]
+    fn persisted_search_parallelism_builds_the_production_executor_for_auto_and_boundaries() {
+        let maximum = crate::search_parallelism::detected_available();
+        let configured = std::collections::BTreeSet::from([
+            None,
+            Some(1),
+            Some((maximum / 2).max(1)),
+            Some(maximum),
+        ]);
+
+        for configured in configured {
+            let temp = tempfile::tempdir().unwrap();
+            let paths = ControlPaths::for_home(temp.path());
+            if let Some(configured) = configured {
+                std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+                std::fs::write(
+                    &paths.fastctx_config,
+                    format!("schema_version = 1\n\n[search]\nmax_cpu_cores = {configured}\n"),
+                )
+                .unwrap();
+            }
+
+            let executor = load_search_executor(&paths).unwrap();
+            let expected = configured.unwrap_or(maximum);
+            assert_eq!(
+                executor.parallelism(),
+                expected,
+                "configured={configured:?}"
+            );
+            assert_eq!(
+                executor.extra_capacity(),
+                expected - 1,
+                "configured={configured:?}"
+            );
+        }
+    }
 
     struct BytesThenError {
         bytes: Cursor<Vec<u8>>,
