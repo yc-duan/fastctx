@@ -6,7 +6,11 @@ for coding agents, Codex first. It contains no binary or install script; its
 tiny command shim forwards directly to the `fastctx` dependency, installing
 the same `fastctx` command. The shim also identifies this compatibility package
 so the TUI checks and updates `codex-fastctx` itself rather than changing the
-user's installation channel.
+user’s installation channel.
+
+The forwarded `read` tool can pack 1–32 known text files into one ordered call
+with exact per-file continuation parameters. Images, PDFs, and hex view remain
+single-file reads.
 
 The forwarded binary includes FastCtx's optional five-tool Bash terminal.
 Background jobs survive MCP server and Codex restarts, and can be rediscovered
@@ -16,6 +20,8 @@ with `job_list` or managed from `fastctx jobs`. Current-user
 and concurrent jobs. `job_list` defaults to running jobs, with explicit
 finished/all views, and `fastshell.job_list_limit` controls its default page
 size (20, valid range 1–100). All three settings take effect immediately.
+For builds and tests, `job_output` supports `wait_for="exit"` so intermediate
+lines accumulate without ending the long poll early.
 
 grep/glob retains automatic CPU parallelism by default. The TUI can set the
 machine-level `search.max_cpu_cores` to any integer from 1 through the detected

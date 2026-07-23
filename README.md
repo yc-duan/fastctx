@@ -140,7 +140,7 @@ FastCtx provides nine MCP tools:
 
 | Tool | Purpose |
 |---|---|
-| `read` | Read text, images, PDFs, and raw bytes from any file |
+| `read` | Read one file in any supported format, or batch 1–32 text files |
 | `grep` | Search contents in a file or repository tree |
 | `glob` | Find files by path pattern |
 | `replace` | Apply mechanical batch replacements to files or a repository tree |
@@ -173,6 +173,20 @@ FastCtx provides nine MCP tools:
 ```
 
 The continuation parameters in the final status line can be used directly in the next call. In this example, pass `offset=160` to read the next section.
+
+When several known text files are relevant, batch them into one call instead of paying one agent round trip per file:
+
+```json
+{
+  "files": [
+    {"path": "V:/repo/src/main.rs", "offset": 120, "limit": 40},
+    {"path": "V:/repo/src/config.rs"},
+    {"path": "V:/repo/docs/legacy.txt", "encoding": "gbk"}
+  ]
+}
+```
+
+The `files` form accepts 1–32 text files, preserves request order, and packs them into one shared read budget. A missing, empty, binary, or undecodable member is reported inside its own segment while the remaining files continue. If the budget fills, the final `Partial` line contains the exact compact `files=[...]` array for the next call, including per-file offsets, remaining limits, and encodings. Images, PDFs, and hex view remain single-file calls.
 
 `read` also supports:
 
@@ -314,7 +328,7 @@ Output and exit status are stored under `~/.fastctx/jobs/`, so another FastCtx s
 
 ### `job_output`
 
-`job_output` reads new output from a background job, including jobs started in earlier sessions, and reports `running`, `exited`, or `interrupted`. `wait_ms` enables long polling. `after_seq` re-anchors the read position and keeps paging stable when a call is retried.
+`job_output` reads new output from a background job, including jobs started in earlier sessions, and reports `running`, `exited`, or `interrupted`. `wait_ms` long-polls for up to 240000 ms and defaults to 30000 ms. `wait_for="output"` is the default and returns as soon as new output or the exit arrives. For builds and tests where only completion matters, use `wait_for="exit"`; intermediate lines accumulate without ending the wait, then return with the terminal state or when `wait_ms` elapses. `after_seq` re-anchors the read position and keeps paging stable when a call is retried.
 
 Keep calling it until the final line says `Complete`. When the ring buffer evicts output, the response reports the number of lost lines and recommends redirecting command output to a file for a complete log.
 
@@ -365,13 +379,13 @@ Codex code mode places regular MCP tools inside an execution container. Aggregat
 direct_only_tool_namespaces = ["mcp__fastctx"]
 ```
 
-Apply maintains this setting automatically and writes a guidance block with explicit markers to `~/.codex/AGENTS.md` so the model prefers the FastCtx tools.
+Apply maintains this setting automatically and writes a guidance block with explicit markers to `~/.codex/AGENTS.md`. The guidance scopes FastCtx to local-file reading, searching, and finding, tells the model to read only what the task needs, and directs several known files into one `files=[...]` read call.
 
-FastCtx uses an internal output budget of 8,500 tokens by default, around 85% of Codex's default tool output limit. The control terminal provides three tiers:
+The control terminal provides three output tiers. Each keeps FastCtx's internal budget at 85% of the host limit so responses close before Codex can truncate their terminal status:
 
-- `Standard`: the default tier;
-- `High`: raises the global Codex tool output limit;
-- `Extra High`: provides the largest per-call output space.
+- `Compact`: host limit 10,000; FastCtx budget 8,500;
+- `Standard`: the default, with host limit 16,000 and FastCtx budget 13,600;
+- `High`: host limit 25,000; FastCtx budget 21,250.
 
 Higher output tiers allow larger results per call and consume context faster. Choose a tier according to the task.
 
@@ -383,6 +397,7 @@ Higher output tiers allow larger results per call and consume context faster. Ch
 command = "C:/absolute/path/to/fastctx.exe"
 args = ["serve"]
 startup_timeout_sec = 120
+tool_timeout_sec = 300
 
 [features.code_mode]
 direct_only_tool_namespaces = ["mcp__fastctx"]
@@ -405,7 +420,7 @@ FastCtx uses or manages these paths and settings:
 - `~/.fastctx/bin/fastctx(.exe)`: the stable self-installed binary;
 - `~/.fastctx/config.toml`: control terminal settings and the Apply receipt;
 - `~/.fastctx/jobs/`: persistent background-job records and rolling output, created on demand by `run_background`;
-- `[mcp_servers.fastctx]` in `~/.codex/config.toml`;
+- `[mcp_servers.fastctx]` in `~/.codex/config.toml`, including `tool_timeout_sec = 300`;
 - the `mcp__fastctx` entry in `direct_only_tool_namespaces`;
 - the marker-delimited FastCtx block in `~/.codex/AGENTS.md`;
 - the selected `tool_output_token_limit` value after user confirmation.

@@ -4,12 +4,16 @@
 
 FastCtx gives coding agents structured repository tools — `read`, `grep`,
 `glob`, `replace`, and an optional bash terminal — served by one local Rust
-binary over MCP.
+binary over MCP. `read` can pack 1–32 known text files into one request-ordered
+call with exact per-file continuation parameters, while images, PDFs, and hex
+view remain single-file reads.
 
 The optional terminal publishes `run`, `run_background`, `job_output`,
 `job_kill`, and `job_list`. Background jobs have no automatic timeout and
 survive MCP server and Codex restarts; their rolling output and exit status
 remain addressable by job id under `~/.fastctx/jobs/`.
+`job_output` defaults to returning on new output, and `wait_for="exit"` can wait
+through intermediate lines for builds and tests where only completion matters.
 
 On Windows, all FastCtx-owned non-interactive children run without allocating
 a console window; no caller flag is required. Commands that explicitly launch
