@@ -10,7 +10,6 @@ mod store;
 use crate::budget::{TokenBudget, estimate_tokens};
 use crate::control::paths::ControlPaths;
 use crate::model::ToolResponse;
-use crate::shell::JobListStatus;
 use crate::shell::encoding::{
     OutputEncoding, decode_job, job_garble_note, validate_output_encoding,
 };
@@ -18,6 +17,7 @@ use crate::shell::output::{
     budget_too_small_message, compose_response, compose_response_with_tail, dropped_note,
     global_token_budget, job_output_token_budget, plural, terminal_response,
 };
+use crate::shell::{JobListStatus, JobOutputWaitFor};
 use model::{JobRecord, JobStatus, LaunchSpec, SpoolLine, TerminationKind};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
@@ -268,6 +268,7 @@ impl JobManager {
         &self,
         job_id: &str,
         wait_ms: u64,
+        wait_for: JobOutputWaitFor,
         after_seq: Option<u64>,
         encoding: Option<OutputEncoding>,
         cancelled: impl Fn() -> bool,
@@ -307,10 +308,12 @@ impl JobManager {
                 Err(error) => return ToolResponse::error(error),
             };
             let has_output = spool.lines.iter().any(|line| line.seq > anchor);
-            if has_output
-                || !record.status.is_running()
-                || spool.capture_error.is_some()
-                || started.elapsed() >= wait
+            if wait_event_arrived(
+                wait_for,
+                has_output,
+                record.status.is_running(),
+                spool.capture_error.is_some(),
+            ) || started.elapsed() >= wait
             {
                 break (record, spool);
             }
@@ -412,6 +415,15 @@ impl JobManager {
     }
 }
 
+fn wait_event_arrived(
+    wait_for: JobOutputWaitFor,
+    has_output: bool,
+    is_running: bool,
+    capture_failed: bool,
+) -> bool {
+    !is_running || capture_failed || (wait_for == JobOutputWaitFor::Output && has_output)
+}
+
 fn terminate(paths: &ControlPaths, job_id: &str) -> Result<KillState, String> {
     let record =
         store::find_record(&paths.jobs_dir, job_id)?.ok_or_else(|| missing_job_text(job_id))?;
@@ -468,7 +480,7 @@ fn format_snapshot(
     if snapshot.lines.is_empty() {
         let terminal = match &snapshot.status {
             JobStatus::Running => format!(
-                "(Partial: job {job_id} is running; no new output within {wait_ms} ms. Call job_output again.)"
+                "(Partial: job {job_id} is running; no new output within {wait_ms} ms. Call job_output again with a larger wait_ms (up to 240000) or wait_for=\"exit\", or do other work first and check back.)"
             ),
             status => complete_terminal(job_id, status, snapshot.total_lines, snapshot.had_loss),
         };
@@ -973,16 +985,16 @@ pub(crate) fn run_watchdog_entry(pid: u32, started: String) -> Result<(), String
 mod tests {
     use super::{
         JobManager, JobRegistryError, OutputSnapshot, format_job_list, format_job_list_with_budget,
-        format_snapshot, source_tag, summaries, truncate_command,
+        format_snapshot, source_tag, summaries, truncate_command, wait_event_arrived,
     };
     use crate::budget::TokenBudget;
     use crate::control::paths::ControlPaths;
     use crate::model::{ToolContent, ToolResponse};
-    use crate::shell::JobListStatus;
     use crate::shell::jobs::model::{
         ExitRecord, JOB_SCHEMA_VERSION, JobMeta, JobRecord, JobStatus, META_FILE, OriginSnapshot,
         ProcessIdentity, TerminationKind,
     };
+    use crate::shell::{JobListStatus, JobOutputWaitFor};
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -1345,6 +1357,27 @@ mod tests {
             ToolContent::Image { .. } => panic!("job errors return text"),
         }
         assert!(!paths.jobs_dir.exists());
+    }
+
+    #[test]
+    fn wait_modes_share_terminal_and_capture_failure_events_but_not_output_events() {
+        for wait_for in [JobOutputWaitFor::Output, JobOutputWaitFor::Exit] {
+            assert!(wait_event_arrived(wait_for, false, false, false));
+            assert!(wait_event_arrived(wait_for, false, true, true));
+            assert!(!wait_event_arrived(wait_for, false, true, false));
+        }
+        assert!(wait_event_arrived(
+            JobOutputWaitFor::Output,
+            true,
+            true,
+            false
+        ));
+        assert!(!wait_event_arrived(
+            JobOutputWaitFor::Exit,
+            true,
+            true,
+            false
+        ));
     }
 
     #[test]

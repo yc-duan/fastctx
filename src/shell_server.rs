@@ -59,7 +59,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "job_output",
-        description = "Return a background job's new output since the last call, plus its status\n(running, exited with its code, or interrupted). wait_ms long-polls: it\nreturns as soon as new output or the exit arrives, otherwise when the wait\nelapses. A Partial note gives an after_seq cursor — pass it back to resume\nidempotently if a call was lost. Works for jobs started in earlier\nsessions. If output looks garbled (U+FFFD), call again with encoding set\nto the source encoding (e.g. \"gbk\") — stored bytes are re-decoded\nlosslessly. Keep calling until the last line says Complete.",
+        description = "Return a background job's new output since the last call, plus its status\n(running, exited with its code, or interrupted). wait_ms long-polls up to\n240000 ms: with wait_for=\"output\" (default) it returns as soon as new\noutput or the exit arrives; with wait_for=\"exit\" it keeps waiting through\nintermediate output and returns only on exit or when the wait elapses —\nuse it for builds and tests where only the end matters. Either way the\naccumulated output is delivered. A Partial note gives an after_seq cursor\n— pass it back to resume idempotently if a call was lost. Works for jobs\nstarted in earlier sessions. If output looks garbled (U+FFFD), call again\nwith encoding set to the source encoding (e.g. \"gbk\") — stored bytes are\nre-decoded losslessly. Keep calling until the last line says Complete.",
         annotations(
             title = "Read background job output",
             read_only_hint = true,

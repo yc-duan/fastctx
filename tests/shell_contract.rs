@@ -354,6 +354,112 @@ fn job_output_budget_is_independent_and_inherits_the_global_ceiling() {
 }
 
 #[test]
+fn job_output_wait_mode_matches_output_and_exit_intent() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let release_output = temp.path().join("release-output");
+    let release_exit = temp.path().join("release-exit");
+    let command = format!(
+        "printf 'first\\n'; while [ ! -f {} ]; do sleep 0.02; done; printf 'second\\n'; while [ ! -f {} ]; do sleep 0.02; done; exit 9",
+        bash_quote(&release_output),
+        bash_quote(&release_exit)
+    );
+    let mut session = shell_session(temp.path(), None);
+    let started = session.call(
+        "run_background",
+        serde_json::json!({"command": command, "login_shell": false}),
+    );
+    let job_id = started_job_id(mcp_text(&started));
+
+    let first = session.call(
+        "job_output",
+        serde_json::json!({
+            "job_id": job_id,
+            "wait_ms": 2_000,
+            "wait_for": "output",
+            "after_seq": 0
+        }),
+    );
+    assert_eq!(job_body_lines(mcp_text(&first)), ["first"]);
+    assert!(
+        mcp_text(&first).ends_with(&format!(
+            "(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)"
+        )),
+        "{}",
+        mcp_text(&first)
+    );
+
+    let output_path = release_output.clone();
+    let exit_path = release_exit.clone();
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::write(output_path, b"go").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        std::fs::write(exit_path, b"go").unwrap();
+    });
+    let waiting_started = Instant::now();
+    let exited = session.call(
+        "job_output",
+        serde_json::json!({
+            "job_id": job_id,
+            "wait_ms": 2_000,
+            "wait_for": "exit",
+            "after_seq": 1
+        }),
+    );
+    releaser.join().unwrap();
+    assert!(
+        waiting_started.elapsed() >= Duration::from_millis(450),
+        "wait_for=exit returned on intermediate output"
+    );
+    assert_eq!(
+        mcp_text(&exited),
+        format!("second\n\n(Complete: job {job_id} exited 9; 2 lines total.)")
+    );
+    assert!(session.close().success());
+}
+
+#[test]
+fn job_output_exit_wait_timeout_delivers_accumulated_output() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut session = shell_session(temp.path(), None);
+    let started = session.call(
+        "run_background",
+        serde_json::json!({
+            "command": "printf 'first\\n'; sleep 0.05; printf 'second\\n'; sleep 10",
+            "login_shell": false
+        }),
+    );
+    let job_id = started_job_id(mcp_text(&started));
+    let waiting_started = Instant::now();
+    let output = session.call(
+        "job_output",
+        serde_json::json!({
+            "job_id": job_id,
+            "wait_ms": 400,
+            "wait_for": "exit",
+            "after_seq": 0
+        }),
+    );
+    assert!(waiting_started.elapsed() >= Duration::from_millis(350));
+    assert_eq!(job_body_lines(mcp_text(&output)), ["first", "second"]);
+    assert!(
+        mcp_text(&output).ends_with(&format!(
+            "(Partial: job {job_id} is running; 2 new lines shown. Call job_output again with after_seq=2 for more.)"
+        )),
+        "{}",
+        mcp_text(&output)
+    );
+    let killed = session.call("job_kill", serde_json::json!({"job_id": job_id}));
+    assert_eq!(
+        mcp_text(&killed),
+        format!("(Complete: job {job_id} killed.)")
+    );
+    assert!(session.close().success());
+}
+
+#[test]
 fn background_default_cursor_and_explicit_after_seq_are_lossless_and_idempotent() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
@@ -662,7 +768,7 @@ fn global_background_limit_and_job_ids_survive_across_server_instances() {
         );
         assert!(
             mcp_text(&output).ends_with(&format!(
-                "(Partial: job {id} is running; no new output within 0 ms. Call job_output again.)"
+                "(Partial: job {id} is running; no new output within 0 ms. Call job_output again with a larger wait_ms (up to 240000) or wait_for=\"exit\", or do other work first and check back.)"
             )),
             "{}",
             mcp_text(&output)
@@ -1000,7 +1106,7 @@ fn shell_error_catalog_uses_fastctx_names_and_rejects_invalid_inputs() {
     assert!(old_name_session.close().success());
 
     let mut session = shell_session(temp.path(), None);
-    let cases: [(&str, Value, &str); 11] = [
+    let cases: [(&str, Value, &str); 12] = [
         (
             "run",
             serde_json::json!({"command": ""}),
@@ -1028,8 +1134,13 @@ fn shell_error_catalog_uses_fastctx_names_and_rejects_invalid_inputs() {
         ),
         (
             "job_output",
-            serde_json::json!({"job_id": "missing", "wait_ms": 120001}),
-            "Invalid wait_ms value: 120001. Expected an integer from 0 to 120000.",
+            serde_json::json!({"job_id": "missing", "wait_ms": 240001}),
+            "Invalid wait_ms value: 240001. Expected an integer from 0 to 240000.",
+        ),
+        (
+            "job_output",
+            serde_json::json!({"job_id": "missing", "wait_for": "finished"}),
+            "Invalid wait_for value: \"finished\". Use \"output\" or \"exit\".",
         ),
         (
             "job_output",

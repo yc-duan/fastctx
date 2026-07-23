@@ -280,13 +280,16 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
         output.description.as_deref(),
         Some(concat!(
             "Return a background job's new output since the last call, plus its status\n",
-            "(running, exited with its code, or interrupted). wait_ms long-polls: it\n",
-            "returns as soon as new output or the exit arrives, otherwise when the wait\n",
-            "elapses. A Partial note gives an after_seq cursor — pass it back to resume\n",
-            "idempotently if a call was lost. Works for jobs started in earlier\n",
-            "sessions. If output looks garbled (U+FFFD), call again with encoding set\n",
-            "to the source encoding (e.g. \"gbk\") — stored bytes are re-decoded\n",
-            "losslessly. Keep calling until the last line says Complete."
+            "(running, exited with its code, or interrupted). wait_ms long-polls up to\n",
+            "240000 ms: with wait_for=\"output\" (default) it returns as soon as new\n",
+            "output or the exit arrives; with wait_for=\"exit\" it keeps waiting through\n",
+            "intermediate output and returns only on exit or when the wait elapses —\n",
+            "use it for builds and tests where only the end matters. Either way the\n",
+            "accumulated output is delivered. A Partial note gives an after_seq cursor\n",
+            "— pass it back to resume idempotently if a call was lost. Works for jobs\n",
+            "started in earlier sessions. If output looks garbled (U+FFFD), call again\n",
+            "with encoding set to the source encoding (e.g. \"gbk\") — stored bytes are\n",
+            "re-decoded losslessly. Keep calling until the last line says Complete."
         ))
     );
     assert_eq!(
@@ -296,7 +299,28 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
     assert_eq!(output.input_schema["properties"]["wait_ms"]["minimum"], 0);
     assert_eq!(
         output.input_schema["properties"]["wait_ms"]["maximum"],
-        120_000
+        240_000
+    );
+    assert_eq!(
+        output.input_schema["properties"]["wait_ms"]["default"],
+        30_000
+    );
+    assert_eq!(
+        output.input_schema["properties"]["wait_for"]["$ref"],
+        "#/$defs/JobOutputWaitFor"
+    );
+    assert_eq!(
+        output.input_schema["properties"]["wait_for"]["default"],
+        "output"
+    );
+    assert_eq!(
+        output.input_schema["$defs"]["JobOutputWaitFor"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["const"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["output", "exit"]
     );
     assert_eq!(output.input_schema["properties"]["after_seq"]["minimum"], 0);
     assert!(output.input_schema["properties"].get("encoding").is_some());
