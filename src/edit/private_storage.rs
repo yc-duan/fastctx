@@ -1,7 +1,12 @@
-//! User-private runtime storage for cross-process replacement locks.
+//! User-private storage for edit locks and other process-shared runtime state.
 
 use std::fs::{self, File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+#[cfg(unix)]
+mod unix;
+#[cfg(windows)]
+mod windows;
 
 pub(crate) fn edit_lock_directory() -> PathBuf {
     runtime_component("edit-locks")
@@ -16,25 +21,43 @@ pub(crate) fn update_check_directory() -> PathBuf {
 }
 
 pub(crate) fn ensure_private_directory(path: &Path, label: &str) -> Result<(), String> {
+    validate_private_directory_path(path, label)?;
+    #[cfg(unix)]
+    {
+        unix::ensure_private_directory(path, label)
+    }
+    #[cfg(windows)]
+    {
+        windows::ensure_private_directory(path, label)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        ensure_private_directory_portable(path, label)
+    }
+}
+
+fn validate_private_directory_path(path: &Path, label: &str) -> Result<(), String> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err(format!(
+            "Cannot use the {label} directory {} because its path is not an absolute, normalized path.",
+            crate::paths::display_path(path)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn ensure_private_directory_portable(path: &Path, label: &str) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| {
         format!(
             "Cannot create the {label} directory {}: {error}",
             crate::paths::display_path(path)
         )
     })?;
-    verify_directory(path, label)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
-            format!(
-                "Cannot secure the {label} directory {}: {error}",
-                crate::paths::display_path(path)
-            )
-        })?;
-    }
-    #[cfg(windows)]
-    secure_windows_managed_chain(path, label)?;
     verify_directory(path, label)
 }
 
@@ -76,28 +99,11 @@ pub(crate) fn open_lock_file(path: &Path, label: &str) -> Result<File, String> {
 fn runtime_component(component: &str) -> PathBuf {
     #[cfg(unix)]
     {
-        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
-            let runtime = PathBuf::from(runtime);
-            if runtime.is_absolute() {
-                return runtime.join(format!("fastctx-{component}"));
-            }
-        }
-        let uid = unsafe { libc::geteuid() };
-        std::env::temp_dir().join(format!("fastctx-{component}-{uid}"))
+        unix::runtime_component(component)
     }
     #[cfg(windows)]
     {
-        let base = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| {
-                std::env::var_os("USERPROFILE")
-                    .map(PathBuf::from)
-                    .filter(|path| path.is_absolute())
-                    .map(|path| path.join("AppData").join("Local"))
-            })
-            .unwrap_or_else(std::env::temp_dir);
-        base.join("fastctx").join("runtime").join(component)
+        windows::runtime_component(component)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -105,14 +111,22 @@ fn runtime_component(component: &str) -> PathBuf {
     }
 }
 
-fn verify_directory(path: &Path, label: &str) -> Result<(), String> {
+pub(super) fn verify_directory(path: &Path, label: &str) -> Result<(), String> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         format!(
             "Cannot inspect the {label} directory {}: {error}",
             crate::paths::display_path(path)
         )
     })?;
-    if is_reparse_or_symlink(&metadata) || !metadata.is_dir() {
+    validate_directory_metadata(path, label, &metadata)
+}
+
+pub(super) fn validate_directory_metadata(
+    path: &Path,
+    label: &str,
+    metadata: &fs::Metadata,
+) -> Result<(), String> {
+    if is_reparse_or_symlink(metadata) || !metadata.is_dir() {
         return Err(format!(
             "Cannot use the {label} path {} because it is not a private directory. Remove it and retry.",
             crate::paths::display_path(path)
@@ -139,15 +153,12 @@ fn verify_open_file(file: &File, path: &Path, label: &str) -> Result<(), String>
 
 #[cfg(unix)]
 fn configure_no_follow(options: &mut OpenOptions) {
-    use std::os::unix::fs::OpenOptionsExt;
-    options.custom_flags(libc::O_NOFOLLOW);
+    unix::configure_no_follow(options);
 }
 
 #[cfg(windows)]
 fn configure_no_follow(options: &mut OpenOptions) {
-    use std::os::windows::fs::OpenOptionsExt;
-    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
-    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    windows::configure_no_follow(options);
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -155,96 +166,23 @@ fn configure_no_follow(_options: &mut OpenOptions) {}
 
 #[cfg(windows)]
 fn is_reparse_or_symlink(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    windows::is_reparse_or_symlink(metadata)
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn is_reparse_or_symlink(metadata: &fs::Metadata) -> bool {
+    unix::is_reparse_or_symlink(metadata)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn is_reparse_or_symlink(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
-}
-
-#[cfg(windows)]
-fn secure_windows_managed_chain(path: &Path, label: &str) -> Result<(), String> {
-    let mut ancestors = path.ancestors().map(Path::to_path_buf).collect::<Vec<_>>();
-    ancestors.reverse();
-    let start = ancestors
-        .iter()
-        .position(|ancestor| {
-            ancestor
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("fastctx"))
-        })
-        .unwrap_or_else(|| ancestors.len().saturating_sub(1));
-    for directory in &ancestors[start..] {
-        verify_directory(directory, label)?;
-        secure_windows_directory(directory, label)?;
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn secure_windows_directory(path: &Path, label: &str) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::Security::Authorization::{
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-    };
-    use windows_sys::Win32::Security::{
-        DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-        SetFileSecurityW,
-    };
-
-    let descriptor_text = std::ffi::OsStr::new("D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)")
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-    let converted = unsafe {
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            descriptor_text.as_ptr(),
-            SDDL_REVISION_1,
-            &mut descriptor,
-            std::ptr::null_mut(),
-        )
-    };
-    if converted == 0 {
-        return Err(format!(
-            "Cannot build the private ACL for the {label} directory {}: {}",
-            crate::paths::display_path(path),
-            std::io::Error::last_os_error()
-        ));
-    }
-    let wide = path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let secured = unsafe {
-        SetFileSecurityW(
-            wide.as_ptr(),
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            descriptor,
-        )
-    };
-    let error = (secured == 0).then(std::io::Error::last_os_error);
-    unsafe {
-        LocalFree(descriptor);
-    }
-    if let Some(error) = error {
-        Err(format!(
-            "Cannot secure the {label} directory {}: {error}",
-            crate::paths::display_path(path)
-        ))
-    } else {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ensure_private_directory, open_lock_file};
+    use std::path::Path;
 
     #[test]
     fn private_directories_and_lock_files_are_regular_and_usable() {
@@ -254,6 +192,19 @@ mod tests {
         let lock = directory.join("test.lock");
         let file = open_lock_file(&lock, "edit lock").unwrap();
         assert!(file.metadata().unwrap().is_file());
+    }
+
+    #[test]
+    fn relative_or_lexically_escaping_private_directory_paths_are_rejected() {
+        let relative =
+            ensure_private_directory(Path::new("relative/edit-locks"), "edit-lock").unwrap_err();
+        assert!(relative.contains("absolute, normalized path"), "{relative}");
+
+        let temp = tempfile::tempdir().unwrap();
+        let escaping = temp.path().join("inside/../outside");
+        let error = ensure_private_directory(&escaping, "edit-lock").unwrap_err();
+        assert!(error.contains("absolute, normalized path"), "{error}");
+        assert!(!temp.path().join("outside").exists());
     }
 
     #[cfg(unix)]
