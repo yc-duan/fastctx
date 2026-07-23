@@ -1,6 +1,8 @@
 //! Strict incremental decoding, line collection, and budget closure for text reads.
 
-use super::{DEFAULT_LINE_LIMIT, MAX_LINE_CHARS, TOTAL_COUNT_SIZE_LIMIT, binary_error};
+use super::{
+    DEFAULT_LINE_LIMIT, MAX_LINE_CHARS, TOTAL_COUNT_SIZE_LIMIT, binary_error, binary_error_message,
+};
 use crate::budget::{LineTokenCounter, TokenBudget, assemble_text, estimate_tokens};
 use crate::encoding::{EncodingDecision, StreamDecodeFailure, validate_file_encoding};
 use crate::model::ToolResponse;
@@ -57,6 +59,78 @@ pub(super) fn read_text_file(
         collector.finish_eof();
     }
     collector.into_response(transcoding_note, budget)
+}
+
+pub(super) struct BatchTextContent {
+    pub(super) first: usize,
+    pub(super) lines: Vec<String>,
+    pub(super) total_lines: usize,
+    pub(super) total_is_known: bool,
+    pub(super) transcoding_note: Option<String>,
+    pub(super) slice_complete: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn read_batch_text_file(
+    path: &Path,
+    path_display: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    explicit_encoding: Option<&str>,
+    binary_type: Option<&str>,
+    collection_budget: usize,
+) -> Result<BatchTextContent, String> {
+    let offset = offset.unwrap_or(1);
+    let limit = limit.unwrap_or(DEFAULT_LINE_LIMIT);
+    let file_size = fs::metadata(path)
+        .map_err(|error| io_error_message(path, &error))?
+        .len();
+    let validated = match validate_file_encoding(path, explicit_encoding) {
+        Ok(EncodingDecision::Text(validated)) => validated,
+        Ok(EncodingDecision::Binary) => {
+            return Err(binary_error_message(path_display, binary_type));
+        }
+        Ok(EncodingDecision::Rejected(rejection)) => {
+            return Err(rejection.message(path_display));
+        }
+        Err(error) => return Err(io_error_message(path, &error)),
+    };
+    if validated.total_lines == 0 {
+        return Err("Warning: the file exists but is empty.".to_string());
+    }
+    if validated.total_lines < offset {
+        let noun = if validated.total_lines == 1 {
+            "line"
+        } else {
+            "lines"
+        };
+        return Err(format!(
+            "Warning: the file has only {} {noun}, but offset={offset} was requested.",
+            validated.total_lines
+        ));
+    }
+    let total_lines = validated.total_lines;
+    let total_is_known = file_size <= TOTAL_COUNT_SIZE_LIMIT;
+    let transcoding_note = validated.transcoding_note();
+    let mut collector = LineCollector::new(offset, limit, collection_budget, total_is_known);
+    let exhausted = match validated.stream_text(path, |chunk| collector.push(chunk)) {
+        Ok(exhausted) => exhausted,
+        Err(StreamDecodeFailure::Io(error)) => return Err(io_error_message(path, &error)),
+        Err(StreamDecodeFailure::Malformed) => {
+            return Err(validated.malformed_rejection().message(path_display));
+        }
+    };
+    if exhausted {
+        collector.finish_eof();
+    }
+    Ok(BatchTextContent {
+        first: offset,
+        lines: collector.rendered,
+        total_lines,
+        total_is_known,
+        transcoding_note,
+        slice_complete: !collector.storage_saturated,
+    })
 }
 
 struct LineCollector {

@@ -2,12 +2,15 @@ mod common;
 
 use common::{cwd, error_text, normalized, text, write};
 use fastctx::ToolContent;
-use fastctx::read_tool::{ReadRequest, read_file};
+use fastctx::read_tool::{BatchReadEntry, ReadRequest, read_file};
 use std::fs;
+
+type RequestMutator = fn(&mut ReadRequest);
 
 fn request(path: &std::path::Path) -> ReadRequest {
     ReadRequest {
-        file_path: normalized(path),
+        file_path: Some(normalized(path)),
+        files: None,
         offset: None,
         limit: None,
         pages: None,
@@ -15,6 +18,299 @@ fn request(path: &std::path::Path) -> ReadRequest {
         encoding: None,
         view: None,
     }
+}
+
+fn batch_request(files: Vec<BatchReadEntry>) -> ReadRequest {
+    ReadRequest {
+        file_path: None,
+        files: Some(files),
+        offset: None,
+        limit: None,
+        pages: None,
+        pdf_mode: None,
+        encoding: None,
+        view: None,
+    }
+}
+
+fn batch_entry(path: &std::path::Path) -> BatchReadEntry {
+    BatchReadEntry {
+        path: normalized(path),
+        offset: None,
+        limit: None,
+        encoding: None,
+    }
+}
+
+#[test]
+fn batch_read_preserves_request_order_and_scopes_transcoding_notes() {
+    let temp = tempfile::tempdir().unwrap();
+    let second = temp.path().join("second.txt");
+    let first = temp.path().join("first-utf16.txt");
+    write(&second, b"zeta\nend");
+    let mut utf16 = vec![0xFF, 0xFE];
+    for unit in "alpha\n中文".encode_utf16() {
+        utf16.extend(unit.to_le_bytes());
+    }
+    write(&first, utf16);
+
+    assert_eq!(
+        text(read_file(batch_request(vec![
+            batch_entry(&second),
+            batch_entry(&first),
+        ]))),
+        format!(
+            "=== {} (lines 1-2 of 2) ===\n1\tzeta\n2\tend\n\n=== {} (lines 1-2 of 2) ===\n(Note: decoded from UTF-16LE; output is UTF-8.)\n1\talpha\n2\t中文\n\n(Complete: 2 files processed.)",
+            normalized(&second),
+            normalized(&first)
+        )
+    );
+}
+
+#[test]
+fn batch_read_continues_after_an_explicit_page_and_returns_an_exact_cursor() {
+    let temp = tempfile::tempdir().unwrap();
+    let paged = temp.path().join("paged.txt");
+    let tail = temp.path().join("tail.txt");
+    write(&paged, b"one\ntwo\nthree");
+    write(&tail, b"tail");
+    let mut first = batch_entry(&paged);
+    first.limit = Some(2);
+
+    assert_eq!(
+        text(read_file(batch_request(vec![first, batch_entry(&tail)]))),
+        format!(
+            "=== {} (lines 1-2 of 3) ===\n1\tone\n2\ttwo\n\n=== {} (lines 1-1 of 1) ===\n1\ttail\n\n(Partial: 1 of 2 files processed. Continue with files=[{{\"path\":\"{}\",\"offset\":3}}].)",
+            normalized(&paged),
+            normalized(&tail),
+            normalized(&paged)
+        )
+    );
+
+    let mut continuation = batch_entry(&paged);
+    continuation.offset = Some(3);
+    assert_eq!(
+        text(read_file(batch_request(vec![continuation]))),
+        format!(
+            "=== {} (lines 3-3 of 3) ===\n3\tthree\n\n(Complete: 1 file processed.)",
+            normalized(&paged)
+        )
+    );
+}
+
+#[test]
+fn batch_read_reports_file_failures_inline_without_discarding_neighbors() {
+    let temp = tempfile::tempdir().unwrap();
+    let valid = temp.path().join("valid.txt");
+    let missing = temp.path().join("absent-9f81e043.txt");
+    let directory = temp.path().join("directory");
+    let binary = temp.path().join("binary.dat");
+    let ambiguous = temp.path().join("ambiguous.dat");
+    let mixed = temp.path().join("mixed.dat");
+    let empty = temp.path().join("empty.txt");
+    let short = temp.path().join("short.txt");
+    let pdf = temp.path().join("document.pdf");
+    let image = temp.path().join("image.bin");
+    write(&valid, b"valid");
+    fs::create_dir(&directory).unwrap();
+    write(&binary, b"prefix\0payload");
+    write(&ambiguous, [0xA1, 0xA1]);
+    let utf8_prefix = "UTF-8 前缀内容足够清晰，包含多字节字符。\n";
+    let mut mixed_bytes = utf8_prefix.as_bytes().to_vec();
+    mixed_bytes.extend(
+        hex::decode("d6d0cec4cbd1cbf7b1e0c2ebd1e9d6a4cec4b1bed7e3b9bbb3a40ab5dab6fed0d0bcccd0f8b0fcbaacb8fcb6e0d6d0cec4d7d6b7fb")
+            .unwrap(),
+    );
+    write(&mixed, mixed_bytes);
+    write(&empty, []);
+    write(&short, b"only");
+    write(&pdf, b"%PDF-1.7\n");
+    write(&image, b"\x89PNG\r\n\x1A\n");
+    let mut beyond = batch_entry(&short);
+    beyond.offset = Some(2);
+
+    let response = read_file(batch_request(vec![
+        batch_entry(&valid),
+        batch_entry(&missing),
+        batch_entry(&directory),
+        batch_entry(&binary),
+        batch_entry(&ambiguous),
+        batch_entry(&mixed),
+        batch_entry(&empty),
+        beyond,
+        batch_entry(&pdf),
+        batch_entry(&image),
+    ]));
+    assert!(!response.is_error);
+    assert_eq!(
+        text(response),
+        format!(
+            "=== {valid} (lines 1-1 of 1) ===\n1\tvalid\n\n=== {missing} ===\nFile does not exist: {missing}\nNote: the session working directory is {cwd}.\n\n=== {directory} ===\n{directory} is a directory, not a file. Use the glob tool to list its contents.\n\n=== {binary} ===\nCannot read binary file as text: {binary}. Use view=\"hex\" to inspect its raw bytes.\n\n=== {ambiguous} ===\nCannot determine the text encoding of {ambiguous} with confidence: the bytes decode cleanly as windows-1252, gbk, shift_jis, big5, euc-kr. Retry with encoding=\"...\" if the context tells you which one, or use view=\"hex\".\n\n=== {mixed} ===\nCannot decode {mixed} as text: it appears to contain mixed or inconsistent encodings — no single encoding explains the whole file. The first conflicting bytes are at hex-view offset {conflict_offset}. Use view=\"hex\" to inspect the raw bytes, or split/normalize the file to a single encoding externally.\n\n=== {empty} ===\nWarning: the file exists but is empty.\n\n=== {short} ===\nWarning: the file has only 1 line, but offset=2 was requested.\n\n=== {pdf} ===\nPDF files cannot be included in files. Read this file separately with file_path and optional pages/pdf_mode.\n\n=== {image} ===\nImage files cannot be included in files. Read this file separately with file_path.\n\n(Complete: 10 files processed.)",
+            valid = normalized(&valid),
+            missing = normalized(&missing),
+            cwd = cwd(),
+            directory = normalized(&directory),
+            binary = normalized(&binary),
+            ambiguous = normalized(&ambiguous),
+            mixed = normalized(&mixed),
+            conflict_offset = utf8_prefix.len() / 16 + 1,
+            empty = normalized(&empty),
+            short = normalized(&short),
+            pdf = normalized(&pdf),
+            image = normalized(&image),
+        )
+    );
+}
+
+#[test]
+fn batch_read_rejects_every_request_shape_error_before_file_processing() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("valid.txt");
+    write(&path, b"valid");
+
+    let mut both = request(&path);
+    both.files = Some(vec![batch_entry(&path)]);
+    assert_eq!(
+        error_text(read_file(both)),
+        "Provide exactly one of file_path or files."
+    );
+    let mut neither = batch_request(vec![batch_entry(&path)]);
+    neither.files = None;
+    assert_eq!(
+        error_text(read_file(neither)),
+        "Provide exactly one of file_path or files."
+    );
+    assert_eq!(
+        error_text(read_file(batch_request(Vec::new()))),
+        "Invalid files value: expected 1 to 32 entries, got 0."
+    );
+    assert_eq!(
+        error_text(read_file(batch_request(
+            (0..33).map(|_| batch_entry(&path)).collect()
+        ))),
+        "Invalid files value: expected 1 to 32 entries, got 33."
+    );
+
+    let single_file_parameter_cases: [(&str, RequestMutator, &str); 3] = [
+        (
+            "offset",
+            |request: &mut ReadRequest| request.offset = Some(1),
+            "The top-level offset parameter cannot be combined with files; set it inside the files entries instead.",
+        ),
+        (
+            "limit",
+            |request: &mut ReadRequest| request.limit = Some(1),
+            "The top-level limit parameter cannot be combined with files; set it inside the files entries instead.",
+        ),
+        (
+            "encoding",
+            |request: &mut ReadRequest| request.encoding = Some("utf-8".to_string()),
+            "The top-level encoding parameter cannot be combined with files; set it inside the files entries instead.",
+        ),
+    ];
+    for (parameter, mutate, expected) in single_file_parameter_cases {
+        let mut invalid = batch_request(vec![batch_entry(&path)]);
+        mutate(&mut invalid);
+        assert_eq!(error_text(read_file(invalid)), expected, "{parameter}");
+    }
+    let channel_parameter_cases: [(&str, RequestMutator); 3] = [
+        ("pages", |request: &mut ReadRequest| {
+            request.pages = Some("1".to_string())
+        }),
+        ("pdf_mode", |request: &mut ReadRequest| {
+            request.pdf_mode = Some("text".to_string())
+        }),
+        ("view", |request: &mut ReadRequest| {
+            request.view = Some("auto".to_string())
+        }),
+    ];
+    for (parameter, mutate) in channel_parameter_cases {
+        let mut invalid = batch_request(vec![batch_entry(&path)]);
+        mutate(&mut invalid);
+        assert_eq!(
+            error_text(read_file(invalid)),
+            format!(
+                "The {parameter} parameter cannot be combined with files; PDFs, images, and hex view are single-file reads."
+            )
+        );
+    }
+
+    let mut zero_offset = batch_entry(&path);
+    zero_offset.offset = Some(0);
+    assert_eq!(
+        error_text(read_file(batch_request(vec![zero_offset]))),
+        "Invalid offset value: 0. Expected an integer >= 1."
+    );
+    let mut zero_limit = batch_entry(&path);
+    zero_limit.limit = Some(0);
+    assert_eq!(
+        error_text(read_file(batch_request(vec![zero_limit]))),
+        "Invalid limit value: 0. Expected an integer >= 1."
+    );
+    let mut invalid_encoding = batch_entry(&path);
+    invalid_encoding.encoding = Some("not-an-encoding".to_string());
+    assert_eq!(
+        error_text(read_file(batch_request(vec![invalid_encoding]))),
+        "Invalid encoding value \"not-an-encoding\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", \"windows-1252\", \"utf-16le\", or \"utf-32le\"."
+    );
+
+    let duplicate = BatchReadEntry {
+        path: normalized(&path).replace('/', "\\"),
+        ..batch_entry(&path)
+    };
+    assert_eq!(
+        error_text(read_file(batch_request(vec![
+            batch_entry(&path),
+            duplicate
+        ]))),
+        format!(
+            "Duplicate path in files: {}. List each file once.",
+            normalized(&path)
+        )
+    );
+}
+
+#[test]
+fn batch_read_accepts_the_full_thirty_two_entry_boundary() {
+    let temp = tempfile::tempdir().unwrap();
+    let entries = (0..32)
+        .map(|index| {
+            let path = temp.path().join(format!("file-{index:02}.txt"));
+            write(&path, format!("value-{index:02}").as_bytes());
+            batch_entry(&path)
+        })
+        .collect::<Vec<_>>();
+    let output = text(read_file(batch_request(entries)));
+    assert_eq!(
+        output
+            .lines()
+            .filter(|line| line.starts_with("=== "))
+            .count(),
+        32
+    );
+    assert!(output.ends_with("(Complete: 32 files processed.)"));
+}
+
+#[cfg(windows)]
+#[test]
+fn batch_read_duplicate_detection_normalizes_windows_drive_case() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("drive-case.txt");
+    write(&path, b"value");
+    let canonical = normalized(&path);
+    let mut lower_drive = canonical.clone();
+    lower_drive.replace_range(0..1, &canonical[..1].to_ascii_lowercase());
+    let duplicate = BatchReadEntry {
+        path: lower_drive.clone(),
+        ..batch_entry(&path)
+    };
+    assert_eq!(
+        error_text(read_file(batch_request(vec![
+            batch_entry(&path),
+            duplicate
+        ]))),
+        format!("Duplicate path in files: {lower_drive}. List each file once.")
+    );
 }
 
 #[test]
@@ -48,7 +344,8 @@ fn read_offset_limit_has_exact_continuation_note() {
     let path = temp.path().join("sample.txt");
     write(&path, b"one\ntwo\nthree");
     let response = read_file(ReadRequest {
-        file_path: normalized(&path),
+        file_path: Some(normalized(&path)),
+        files: None,
         offset: Some(2),
         limit: Some(1),
         pages: None,
@@ -70,7 +367,8 @@ fn read_offset_page_that_reaches_eof_uses_a_complete_terminal_note() {
     write(&path, b"one\ntwo\nthree");
     assert_eq!(
         text(read_file(ReadRequest {
-            file_path: normalized(&path),
+            file_path: Some(normalized(&path)),
+            files: None,
             offset: Some(2),
             limit: Some(10),
             pages: None,
@@ -132,7 +430,8 @@ fn read_empty_offset_and_directory_paths_use_contract_messages() {
     write(&short, b"only");
     assert_eq!(
         text(read_file(ReadRequest {
-            file_path: normalized(&short),
+            file_path: Some(normalized(&short)),
+            files: None,
             offset: Some(2),
             limit: None,
             pages: None,
@@ -147,7 +446,8 @@ fn read_empty_offset_and_directory_paths_use_contract_messages() {
     write(&two_lines, b"one\ntwo");
     assert_eq!(
         text(read_file(ReadRequest {
-            file_path: normalized(&two_lines),
+            file_path: Some(normalized(&two_lines)),
+            files: None,
             offset: Some(3),
             limit: None,
             pages: None,
@@ -184,7 +484,8 @@ fn read_rejects_binary_and_non_pdf_pages() {
     write(&text_path, b"text");
     assert_eq!(
         error_text(read_file(ReadRequest {
-            file_path: normalized(&text_path),
+            file_path: Some(normalized(&text_path)),
+            files: None,
             offset: None,
             limit: None,
             pages: Some("1".to_string()),
@@ -196,7 +497,8 @@ fn read_rejects_binary_and_non_pdf_pages() {
     );
     assert_eq!(
         error_text(read_file(ReadRequest {
-            file_path: normalized(&text_path),
+            file_path: Some(normalized(&text_path)),
+            files: None,
             offset: None,
             limit: None,
             pages: None,
@@ -627,7 +929,8 @@ fn read_orders_transcoding_before_the_exact_continuation_note() {
     );
     assert_eq!(
         text(read_file(ReadRequest {
-            file_path: normalized(&path),
+            file_path: Some(normalized(&path)),
+            files: None,
             offset: Some(1),
             limit: Some(1),
             pages: None,
@@ -689,7 +992,8 @@ fn image_magic_bytes_override_extension_and_size_limit_is_explicit() {
 #[test]
 fn relative_existing_path_still_requests_the_absolute_path() {
     let response = read_file(ReadRequest {
-        file_path: "README.md".to_string(),
+        file_path: Some("README.md".to_string()),
+        files: None,
         offset: None,
         limit: None,
         pages: None,
@@ -892,7 +1196,8 @@ fn read_large_file_uses_tail_note_without_total_count() {
     drop(file);
     // Sparse extension creates NUL bytes after the first 8 KiB, which the explicit 8 KiB probe ignores.
     let output = text(read_file(ReadRequest {
-        file_path: normalized(&path),
+        file_path: Some(normalized(&path)),
+        files: None,
         offset: Some(1),
         limit: Some(1),
         pages: None,
@@ -903,6 +1208,16 @@ fn read_large_file_uses_tail_note_without_total_count() {
     assert_eq!(
         output,
         "1\tfirst\n\n(Partial: line 1 shown. Continue with offset=2.)"
+    );
+    let mut entry = batch_entry(&path);
+    entry.limit = Some(1);
+    assert_eq!(
+        text(read_file(batch_request(vec![entry]))),
+        format!(
+            "=== {} (lines 1-1) ===\n1\tfirst\n\n(Partial: 0 of 1 files processed. Continue with files=[{{\"path\":\"{}\",\"offset\":2}}].)",
+            normalized(&path),
+            normalized(&path)
+        )
     );
 }
 
@@ -924,7 +1239,8 @@ fn read_large_sparse_file_at_true_eof_restores_the_total_line_count() {
 
     assert_eq!(
         text(read_file(ReadRequest {
-            file_path: normalized(&path),
+            file_path: Some(normalized(&path)),
+            files: None,
             offset: Some(4),
             limit: Some(10),
             pages: None,

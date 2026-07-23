@@ -1,5 +1,6 @@
 //! Text, image, PDF, and raw-byte dispatch for the read tool.
 
+mod batch;
 mod hex_file;
 mod image_file;
 #[cfg(feature = "pdf")]
@@ -39,9 +40,16 @@ enum ViewMode {
 
 /// Parameters for the read tool; offset is a one-based line number.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReadRequest {
-    /// The absolute path to the file to read. Both / and \ are accepted.
-    pub file_path: String,
+    /// The absolute path to the file to read. Both / and \ are accepted. Mutually exclusive with files.
+    pub file_path: Option<String>,
+    /// Batch form: an array of {"path", "offset"?, "limit"?, "encoding"?} objects for
+    /// reading 1-32 text files in one call. Each entry behaves like a single-file text read;
+    /// results are packed in request order. Mutually exclusive with file_path and with the
+    /// top-level offset/limit/encoding/pages/pdf_mode/view parameters.
+    #[schemars(length(min = 1, max = 32))]
+    pub files: Option<Vec<BatchReadEntry>>,
     /// The 1-based line number to start reading from. Use for paging through large files.
     #[schemars(range(min = 1))]
     pub offset: Option<usize>,
@@ -60,16 +68,43 @@ pub struct ReadRequest {
     pub view: Option<String>,
 }
 
+/// One text file in a batch read request.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BatchReadEntry {
+    /// Absolute path of the text file. Both / and \ are accepted.
+    pub path: String,
+    /// The 1-based line number to start reading from.
+    #[schemars(range(min = 1))]
+    pub offset: Option<usize>,
+    /// Maximum lines to read from this file in this call (default 2000).
+    #[schemars(range(min = 1))]
+    pub limit: Option<usize>,
+    /// Known source encoding for this file, using the same labels as single-file read.
+    pub encoding: Option<String>,
+}
+
 /// Reads text, images, PDFs, or raw bytes and surfaces every expected failure explicitly.
 pub fn read_file(request: ReadRequest) -> ToolResponse {
-    let parsed = parse_input_path(&request.file_path);
+    match (request.file_path.as_deref(), request.files.as_ref()) {
+        (Some(_), Some(_)) | (None, None) => {
+            return ToolResponse::error("Provide exactly one of file_path or files.");
+        }
+        (None, Some(_)) => return batch::read_text_files(request),
+        (Some(_), None) => {}
+    }
+    let file_path = request
+        .file_path
+        .as_deref()
+        .expect("single-file shape was validated");
+    let parsed = parse_input_path(file_path);
     if !parsed.is_absolute() {
-        return ToolResponse::error(missing_read_file_message(&request.file_path));
+        return ToolResponse::error(missing_read_file_message(file_path));
     }
     let metadata = match fs::metadata(&parsed) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return ToolResponse::error(missing_read_file_message(&request.file_path));
+            return ToolResponse::error(missing_read_file_message(file_path));
         }
         Err(error) => return ToolResponse::error(io_error_message(&parsed, &error)),
     };
@@ -171,8 +206,12 @@ fn parse_view(value: Option<&str>) -> Result<ViewMode, String> {
 }
 
 fn binary_error(path_display: &str, binary_type: Option<&str>) -> ToolResponse {
+    ToolResponse::error(binary_error_message(path_display, binary_type))
+}
+
+fn binary_error_message(path_display: &str, binary_type: Option<&str>) -> String {
     let kind = binary_type.map_or_else(String::new, |kind| format!(" (looks like {kind})"));
-    ToolResponse::error(format!(
+    format!(
         "Cannot read binary file as text: {path_display}{kind}. Use view=\"hex\" to inspect its raw bytes."
-    ))
+    )
 }

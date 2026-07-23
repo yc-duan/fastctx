@@ -36,25 +36,50 @@ fn default_tool_definitions_publish_replace_with_explicit_permissions() {
     assert_eq!(
         read.description.as_deref(),
         Some(concat!(
-            "Read a file (text, image, or PDF) from the local filesystem. Text returns\n",
-            "1-based `N<tab>content` lines, 2000 per page; page with offset/limit. Images\n",
-            "(PNG/JPG/GIF/WebP/BMP) are shown to you visually. PDFs return the selected\n",
-            "pages' text layer (pdf_mode=\"text\", default) or each page rendered as an\n",
-            "image (pdf_mode=\"image\"). Text mode requires `pages` over 10 pages; image\n",
-            "mode defaults to 4 pages. Max 20 pages per call. view=\"hex\" dumps any file's\n",
-            "raw bytes. Text output is always UTF-8; omit encoding for conservative\n",
-            "auto-detection (BOM and valid UTF-8 are trusted, legacy text only after\n",
-            "consistency checks) — if uncertain it returns an error listing candidate\n",
-            "encodings instead of guessed text, so pass encoding (e.g. \"gbk\") only when\n",
-            "you know the source encoding or a prior read reported ambiguity. file_path must\n",
-            "be absolute. Text, PDF, and hex responses end with a Complete or Partial status\n",
-            "— continue only with the exact parameters a Partial note provides. Plain\n",
-            "images, warnings, and errors are self-contained."
+            "Read one file (text, image, or PDF) or a batch of text files from the local\n",
+            "filesystem. Text returns 1-based `N<tab>content` lines, 2000 per page; page\n",
+            "with offset/limit. To read several text files in one call, pass\n",
+            "files=[{\"path\": ...}, ...] (1-32 entries, each with optional offset, limit,\n",
+            "and encoding) instead of file_path: contents are delivered in request order\n",
+            "within one token budget, per-file problems are reported inline without\n",
+            "failing the batch, and a Partial note returns the exact files array for the\n",
+            "next call. Images (PNG/JPG/GIF/WebP/BMP) are shown to you visually. PDFs\n",
+            "return the selected pages' text layer (pdf_mode=\"text\", default) or each\n",
+            "page rendered as an image (pdf_mode=\"image\"). Text mode requires `pages`\n",
+            "over 10 pages; image mode defaults to 4 pages. Max 20 pages per call.\n",
+            "view=\"hex\" dumps any file's raw bytes. PDFs, images, and hex view are\n",
+            "single-file only. Text output is always UTF-8; omit encoding for\n",
+            "conservative auto-detection (BOM and valid UTF-8 are trusted, legacy text\n",
+            "only after consistency checks) — if uncertain it returns an error listing\n",
+            "candidate encodings instead of guessed text, so pass encoding (e.g. \"gbk\")\n",
+            "only when you know the source encoding or a prior read reported ambiguity.\n",
+            "Paths must be absolute. Text, PDF, and hex responses end with a Complete or\n",
+            "Partial status — continue only with the exact parameters a Partial note\n",
+            "provides. Plain images, warnings, and errors are self-contained."
         ))
     );
+    assert!(
+        read.input_schema
+            .get("required")
+            .is_none_or(|required| required.as_array().is_some_and(Vec::is_empty))
+    );
+    assert_eq!(read.input_schema["properties"]["files"]["minItems"], 1);
+    assert_eq!(read.input_schema["properties"]["files"]["maxItems"], 32);
     assert_eq!(
-        read.input_schema["required"],
-        serde_json::json!(["file_path"])
+        read.input_schema["properties"]["files"]["items"]["$ref"],
+        "#/$defs/BatchReadEntry"
+    );
+    assert_eq!(
+        read.input_schema["$defs"]["BatchReadEntry"]["required"],
+        serde_json::json!(["path"])
+    );
+    assert_eq!(
+        read.input_schema["$defs"]["BatchReadEntry"]["properties"]["offset"]["minimum"],
+        1
+    );
+    assert_eq!(
+        read.input_schema["$defs"]["BatchReadEntry"]["properties"]["limit"]["minimum"],
+        1
     );
     assert_eq!(read.input_schema["properties"]["offset"]["minimum"], 1);
     assert_eq!(read.input_schema["properties"]["limit"]["minimum"], 1);
@@ -752,6 +777,27 @@ fn stdio_invalid_token_budget_is_an_exact_tool_error() {
     assert_eq!(
         response["result"]["content"][0]["text"],
         "Invalid FASTCTX_TOKEN_BUDGET value \"0\": expected a positive integer."
+    );
+}
+
+#[test]
+fn stdio_batch_read_requires_room_for_one_line_and_its_exact_continuation() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("plain.txt");
+    write(&file, b"plain\nmore");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_fastctx"));
+    command
+        .env("FASTCTX_TOKEN_BUDGET", "10")
+        .env("FASTCTX_READ_TOKEN_BUDGET", "1");
+    let response = call_tool(
+        command,
+        "read",
+        serde_json::json!({"files": [{"path": normalized(&file)}]}),
+    );
+    assert_eq!(response["result"]["isError"], true);
+    assert_eq!(
+        response["result"]["content"][0]["text"],
+        "FASTCTX_READ_TOKEN_BUDGET=1 is too small to return the required continuation note. Increase it and retry."
     );
 }
 
