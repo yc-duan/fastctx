@@ -10,10 +10,13 @@ view remain single-file reads.
 
 The optional terminal publishes `run`, `run_background`, `job_output`,
 `job_kill`, and `job_list`. Background jobs have no automatic timeout and
-survive MCP server and Codex restarts; their rolling output and exit status
-remain addressable by job id under `~/.fastctx/jobs/`.
-`job_output` defaults to returning on new output, and `wait_for="exit"` can wait
-through intermediate lines for builds and tests where only completion matters.
+survive MCP server and Codex restarts. Current-format jobs keep their complete
+output log and exit status addressable by job id under `~/.fastctx/jobs/`.
+`job_output` is a query with a caller-chosen delay: it returns when the job
+ends or when `wait_ms` elapses, showing the newest output not yet seen, and
+names the log path and exact line numbers for anything it leaves out. Records
+from the preceding segmented format remain readable but do not claim direct
+log coordinates or recover output their original rolling window evicted.
 
 On Windows, all FastCtx-owned non-interactive children run without allocating
 a console window; no caller flag is required. Commands that explicitly launch
@@ -26,7 +29,7 @@ for that user (default 128). `job_list` shows running jobs by default; explicit
 `status="finished"` exposes retained history, while `fastshell.job_list_limit`
 sets the default page size (20, valid range 1–100). All three settings take
 effect immediately when saved.
-Job commands, working directories, rolling output, and exit status stay in the
+Job commands, working directories, output logs, and exit status stay in the
 current user's private local directory and are never uploaded by FastCtx.
 
 grep/glob keeps its existing automatic CPU parallelism by default. The TUI can
@@ -58,11 +61,14 @@ npm install --global fastctx --registry=https://registry.npmjs.org/
 This package is the launcher: it selects the matching scoped platform package
 (`@fastctx/win32-x64`, `@fastctx/linux-x64`, or the corresponding macOS
 package) locally and starts the complete binary. There is no postinstall script
-and no telemetry. The interactive TUI opens immediately while FastCtx checks
-this exact npm package in the background; successful results are cached for 24
-hours in machine-private storage. Transient failures stay quiet and remain
-available under Status. If GitHub is newer while npm is still propagating, the
-UI says so and offers retry. Updates require confirmation, install an exact
+and no telemetry. The interactive TUI checks this exact
+npm package for updates before the main menu opens; the wait is strictly
+bounded, and a failed or timed-out check enters silently. When a newer version
+is installable, the update screen opens directly and asks whether to update or
+continue. Successful results are cached for 24 hours in machine-private
+storage. Transient failures stay quiet and remain available under Status. If
+GitHub is newer while npm is still propagating, the Update screen says so and
+offers retry. Updates require confirmation, install an exact
 version with lifecycle scripts disabled, and restart through a copied helper.
 A failed update restores and reopens the previous version with a warning.
 `fastctx serve` and MCP tool calls do not perform update traffic; commands run

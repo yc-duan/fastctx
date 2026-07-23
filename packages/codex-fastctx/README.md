@@ -20,8 +20,11 @@ with `job_list` or managed from `fastctx jobs`. Current-user
 and concurrent jobs. `job_list` defaults to running jobs, with explicit
 finished/all views, and `fastshell.job_list_limit` controls its default page
 size (20, valid range 1–100). All three settings take effect immediately.
-For builds and tests, `job_output` supports `wait_for="exit"` so intermediate
-lines accumulate without ending the long poll early.
+`job_output` is a query with a caller-chosen delay: intermediate lines never
+end the wait, and every current-format job keeps a plain log file that `read`
+and `grep` can open for anything a response leaves out. Records from the
+preceding segmented format remain readable without pretending to have direct
+log coordinates or output that their original rolling window already evicted.
 
 grep/glob retains automatic CPU parallelism by default. The TUI can set the
 machine-level `search.max_cpu_cores` to any integer from 1 through the detected

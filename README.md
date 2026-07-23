@@ -58,7 +58,7 @@ The first launch opens the full-screen control terminal. The interface supports 
 
 Apply copies the current binary to `~/.fastctx/bin/` and points the host configuration at that stable path. The applied setup keeps working after npm cache cleanup or upgrades.
 
-The full-screen terminal opens immediately while FastCtx checks its launch channel in a background thread. Successful results are cached for 24 hours in machine-private storage outside `~/.fastctx`. npm launches query the exact launcher package through a fresh isolated cache with `--prefer-online`; direct GitHub Release executables read the stable tag from GitHub's `releases/latest` web redirect. Available updates remain visible from the main menu and open a dedicated screen with **Update & restart** and **Continue**.
+On launch, FastCtx checks its launch channel for updates before the main menu opens. A brief checking screen appears and the wait is strictly bounded: if the check cannot finish — offline, timeout, rate limiting — FastCtx enters silently, and the dedicated **Update** screen still offers a manual check at any time. When a newer version is installable, the update screen opens directly and asks whether to **Update & restart** or **Continue** into the current version. Successful results are cached for 24 hours in machine-private storage outside `~/.fastctx`, so most launches skip the network entirely. npm launches query the exact launcher package through a fresh isolated cache with `--prefer-online`; direct GitHub Release executables read the stable tag from GitHub's `releases/latest` web redirect.
 
 If GitHub has published a release but npm has not exposed the matching version yet, FastCtx shows a propagation screen instead of trusting stale metadata. **Retry** always uses another isolated cache; it never clears or mutates the user's normal npm cache. Transient network or rate-limit failures stay quiet and are recorded under **Status**; malformed publication metadata produces one warning. Status also offers a manual check that bypasses the 24-hour TTL. An accepted npm update installs the exact version with lifecycle scripts disabled. A GitHub Release update downloads this repository's platform archive and aggregate `SHA256SUMS`, verifies the archive before safely extracting the binary, probes the downloaded version, replaces the executable atomically, and rolls back when restart health fails. A failed npm update restores the exact previous package version; every failed update reopens the previous TUI with a warning. After a successful restart, an owned `~/.fastctx/bin/` Apply copy is synchronized; externally changed copies are left untouched.
 
@@ -146,7 +146,7 @@ FastCtx provides nine MCP tools:
 | `replace` | Apply mechanical batch replacements to files or a repository tree |
 | `run` | Run a Bash command in the foreground |
 | `run_background` | Start a background Bash job |
-| `job_output` | Read new output from a background job |
+| `job_output` | Query a background job and show its newest unseen output |
 | `job_kill` | Stop the full process tree of a background job |
 | `job_list` | Rediscover running and retained finished jobs |
 
@@ -324,13 +324,13 @@ Output uses bounded memory. When output exceeds the response capacity, the final
 
 Each job is owned by a detached supervisor rather than by the MCP server. It keeps running across server exits, ChatGPT / Codex restarts, and session changes until the command exits or `job_kill` stops it. There is no background timeout parameter.
 
-Output and exit status are stored under `~/.fastctx/jobs/`, so another FastCtx server can resume the same job by id. Each job keeps an 8 MiB rolling output window; redirect the command to a file when a complete log is required.
+Output and exit status are stored under `~/.fastctx/jobs/`, so another FastCtx server can resume the same job by id. For jobs started by the current format, everything printed is appended to a plain log file there — nothing is rotated away — and its path is returned when the job starts, so `read` and `grep` work on it directly.
 
 ### `job_output`
 
-`job_output` reads new output from a background job, including jobs started in earlier sessions, and reports `running`, `exited`, or `interrupted`. `wait_ms` long-polls for up to 240000 ms and defaults to 30000 ms. `wait_for="output"` is the default and returns as soon as new output or the exit arrives. For builds and tests where only completion matters, use `wait_for="exit"`; intermediate lines accumulate without ending the wait, then return with the terminal state or when `wait_ms` elapses. `after_seq` re-anchors the read position and keeps paging stable when a call is retried.
+`job_output` queries a background job, including jobs started in earlier sessions, and reports `running`, `exited`, or `interrupted` together with the newest output the caller has not been shown. `wait_ms` (0–60000, default 30000) is how long the query may take: it returns as soon as the job ends, and otherwise waits the window out, because returning on every intermediate line would spend a whole turn to report that a build is still compiling. Pass `wait_ms=0` for an immediate snapshot. Long current-format output is windowed — the newest lines that fit, plus the start of the log on the first call — and a note names the exact lines that were skipped and the log path to read them from. Line numbers in that log are the same `seq` numbers `after_seq` takes, so moving between the two tools needs no translation. Records written by the preceding segmented format remain readable, including while an older supervisor is still appending, but they do not advertise direct log coordinates and cannot recover bytes that their original rolling window already evicted.
 
-Keep calling it until the final line says `Complete`. When the ring buffer evicts output, the response reports the number of lost lines and recommends redirecting command output to a file for a complete log.
+Keep calling it until the final line says `Complete`. For current-format jobs, the background log keeps every line, so anything a response leaves out is still one `read` or `grep` away; the compatibility limitation above applies only to records created by the preceding format.
 
 ### `job_kill`
 
@@ -356,7 +356,7 @@ The FastCtx MCP server inherits the local permissions of the host process.
 | TUI update check | Enabled for npm and GitHub Release launches | Version metadata from `registry.npmjs.org` and GitHub's `releases/latest` web redirect; downloads require explicit confirmation |
 | MCP runtime network requests | None | `serve` and tool calls perform no telemetry or update traffic |
 
-The startup check sends the FastCtx version, normal HTTPS request metadata, and npm's standard registry request; it never sends repository paths, job data, or file contents. Background jobs persist their command, working directory, rolling stdout/stderr, and exit status only in the current user's private `~/.fastctx/jobs/` directory. FastCtx does not upload this data. Bash commands can access the network according to the command itself. Prebuilt binaries include the PDF engine.
+The startup check sends the FastCtx version, normal HTTPS request metadata, and npm's standard registry request; it never sends repository paths, job data, or file contents. Background jobs persist their command, working directory, output, and exit status only in the current user's private `~/.fastctx/jobs/` directory; current-format jobs use a complete plain log. FastCtx does not upload this data. Bash commands can access the network according to the command itself. Prebuilt binaries include the PDF engine.
 
 The MCP server runs outside the host filesystem sandbox. Use an approval mode when every write and command execution should be reviewed:
 
@@ -419,7 +419,7 @@ FastCtx uses or manages these paths and settings:
 
 - `~/.fastctx/bin/fastctx(.exe)`: the stable self-installed binary;
 - `~/.fastctx/config.toml`: control terminal settings and the Apply receipt;
-- `~/.fastctx/jobs/`: persistent background-job records and rolling output, created on demand by `run_background`;
+- `~/.fastctx/jobs/`: persistent background-job records and current-format full output logs, created on demand by `run_background`;
 - `[mcp_servers.fastctx]` in `~/.codex/config.toml`, including `tool_timeout_sec = 300`;
 - the `mcp__fastctx` entry in `direct_only_tool_namespaces`;
 - the marker-delimited FastCtx block in `~/.codex/AGENTS.md`;
