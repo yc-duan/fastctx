@@ -49,6 +49,37 @@ fn foreground_run_preserves_order_normalizes_output_and_marks_long_line_loss() {
         )
     );
 
+    let patch = session.call(
+        "run",
+        serde_json::json!({
+            "command": "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: sample.txt\n+content\n*** End Patch\nPATCH"
+        }),
+    );
+    // The host resolves apply_patch on its own shell channel, so it only ever reaches a real bash
+    // when routed through a tool the host does not inspect. Left with a bare "command not found",
+    // the model's usual next move is a heredoc rewrite that bypasses every encoding and
+    // line-ending guarantee this server makes, so the way out has to be spelled out here.
+    let patch_text = mcp_text(&patch);
+    assert!(
+        patch_text.contains("(Note: apply_patch is not a program and no shell can run it"),
+        "{patch_text}"
+    );
+    assert!(
+        patch_text
+            .lines()
+            .next_back()
+            .is_some_and(|line| line.starts_with("(Complete: exited 127;")),
+        "{patch_text}"
+    );
+
+    // A user who owns a working apply_patch of their own is never second-guessed.
+    let owned = session.call(
+        "run",
+        serde_json::json!({"command": "apply_patch() { echo patched; }; apply_patch"}),
+    );
+    let owned_text = mcp_text(&owned);
+    assert_eq!(owned_text, "patched\n\n(Complete: exited 0; 1 line.)");
+
     let long = session.call(
         "run",
         serde_json::json!({"command": "printf '%0400000d' 0"}),

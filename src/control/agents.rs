@@ -43,15 +43,21 @@ const SHELL_GUIDANCE: &str = concat!(
     "\n",
     "Prefer `mcp__fastctx__run` over the built-in shell for terminal work: it\n",
     "executes with bash (Git Bash on Windows), so always write POSIX bash —\n",
-    "never PowerShell syntax. Commands must be non-interactive (no TTY): use\n",
-    "flags like -y or --no-edit, and expect editors/pagers to be disabled. For\n",
-    "anything that may run longer than two minutes, use\n",
-    "`mcp__fastctx__run_background`, poll `mcp__fastctx__job_output`, and\n",
-    "stop it with `mcp__fastctx__job_kill`. Background jobs run independently\n",
-    "of this session and survive restarts; rediscover an earlier job with\n",
-    "`mcp__fastctx__job_list` and resume polling it by job_id. A non-zero exit\n",
-    "code is a normal result. The last line of every result says `Complete` or\n",
-    "`Partial`.\n"
+    "never PowerShell syntax.\n",
+    "\n",
+    "Never pass `apply_patch` to `mcp__fastctx__run`: it is not a program and\n",
+    "no shell can run it. Reach it through Codex itself — as its own tool\n",
+    "call, or in Codex's built-in shell — never through the FastCtx tools.\n",
+    "\n",
+    "Commands must be non-interactive (no TTY): use flags like -y\n",
+    "or --no-edit, and expect editors/pagers to be disabled. For anything\n",
+    "that may run longer than two minutes, use `mcp__fastctx__run_background`,\n",
+    "poll `mcp__fastctx__job_output`, and stop it with\n",
+    "`mcp__fastctx__job_kill`. Background jobs run independently of this\n",
+    "session and survive restarts; rediscover an earlier job with\n",
+    "`mcp__fastctx__job_list` and resume polling it by job_id. A non-zero\n",
+    "exit code is a normal result. The last line of every result says\n",
+    "`Complete` or `Partial`.\n"
 );
 /// Separator bytes inserted and therefore owned by Apply between user content and the private section.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -417,15 +423,19 @@ mod tests {
             "\n### Shell commands\n\n",
             "Prefer `mcp__fastctx__run` over the built-in shell for terminal work: it\n",
             "executes with bash (Git Bash on Windows), so always write POSIX bash —\n",
-            "never PowerShell syntax. Commands must be non-interactive (no TTY): use\n",
-            "flags like -y or --no-edit, and expect editors/pagers to be disabled. For\n",
-            "anything that may run longer than two minutes, use\n",
-            "`mcp__fastctx__run_background`, poll `mcp__fastctx__job_output`, and\n",
-            "stop it with `mcp__fastctx__job_kill`. Background jobs run independently\n",
-            "of this session and survive restarts; rediscover an earlier job with\n",
-            "`mcp__fastctx__job_list` and resume polling it by job_id. A non-zero exit\n",
-            "code is a normal result. The last line of every result says `Complete` or\n",
-            "`Partial`.\n",
+            "never PowerShell syntax.\n\n",
+            "Never pass `apply_patch` to `mcp__fastctx__run`: it is not a program and\n",
+            "no shell can run it. Reach it through Codex itself — as its own tool\n",
+            "call, or in Codex's built-in shell — never through the FastCtx tools.\n\n",
+            "Commands must be non-interactive (no TTY): use flags like -y\n",
+            "or --no-edit, and expect editors/pagers to be disabled. For anything\n",
+            "that may run longer than two minutes, use `mcp__fastctx__run_background`,\n",
+            "poll `mcp__fastctx__job_output`, and stop it with\n",
+            "`mcp__fastctx__job_kill`. Background jobs run independently of this\n",
+            "session and survive restarts; rediscover an earlier job with\n",
+            "`mcp__fastctx__job_list` and resume polling it by job_id. A non-zero\n",
+            "exit code is a normal result. The last line of every result says\n",
+            "`Complete` or `Partial`.\n",
         );
         let end = "<!-- fastctx:end -->";
         for (fastshell, expected) in [
@@ -453,6 +463,33 @@ mod tests {
         }
     }
 
+    /// Steering the model away from the built-in shell also steers it away from the
+    /// host's `apply_patch`, which is intercepted on that channel only and is not a
+    /// program the shell tool could ever resolve. The carve-out below is what keeps
+    /// the model from piping patches into `run` and getting `command not found`
+    /// (reported 2026-07-24); it is scoped to the shell section because without the
+    /// shell tools there is no wrong channel to warn about.
+    #[test]
+    fn shell_guidance_carves_apply_patch_out_of_the_run_tool() {
+        let with_shell = section(true).replace('\n', " ");
+        assert!(
+            with_shell.contains("Never pass `apply_patch` to `mcp__fastctx__run`"),
+            "{with_shell}"
+        );
+        assert!(
+            with_shell.contains("it is not a program and no shell can run it"),
+            "{with_shell}"
+        );
+        // Naming both host shapes is the point: the model must not have to work out which one
+        // it holds, and pinning only one of them would misdirect every session running the other.
+        assert!(
+            with_shell.contains(
+                "Reach it through Codex itself — as its own tool call, or in Codex's built-in shell"
+            ),
+            "{with_shell}"
+        );
+        assert!(!section(false).contains("Never pass `apply_patch`"));
+    }
     #[test]
     fn reapply_replaces_owned_clipboard_guidance_with_the_current_block() {
         let original = b"before\n\n<!-- fastctx:begin -->\n### Bulk edits and moving code\nUse mcp__fastctx__copy then mcp__fastctx__paste.\n<!-- fastctx:end -->\nafter\n";

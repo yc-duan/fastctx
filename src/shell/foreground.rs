@@ -94,6 +94,7 @@ pub(crate) fn run(
     };
     format_foreground(
         &captured,
+        command,
         exit_code(status),
         timed_out.then_some(timeout_ms),
         encoding,

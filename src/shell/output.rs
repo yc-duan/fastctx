@@ -5,6 +5,7 @@ use crate::budget::{
     tool_token_budget,
 };
 use crate::model::ToolResponse;
+use crate::shell::apply_patch_hint;
 use crate::shell::buffer::{BufferedLine, LineRing};
 use crate::shell::encoding::{EncodedLine, OutputEncoding, decode_run, run_garble_note};
 use crate::shell::normalize::StreamNormalizer;
@@ -145,6 +146,7 @@ pub(crate) fn terminal_response(terminal: String, budget: TokenBudget) -> ToolRe
 /// Formats a normal or timed-out foreground result without writing any shell artifacts.
 pub(crate) fn format_foreground(
     output: &CapturedOutput,
+    command: &str,
     exit_code: i32,
     timeout_ms: Option<u64>,
     encoding: Option<OutputEncoding>,
@@ -153,11 +155,12 @@ pub(crate) fn format_foreground(
         Ok(budget) => budget,
         Err(error) => return ToolResponse::error(error),
     };
-    format_foreground_with_budget(output, exit_code, timeout_ms, encoding, budget)
+    format_foreground_with_budget(output, command, exit_code, timeout_ms, encoding, budget)
 }
 
 fn format_foreground_with_budget(
     output: &CapturedOutput,
+    command: &str,
     exit_code: i32,
     timeout_ms: Option<u64>,
     encoding: Option<OutputEncoding>,
@@ -178,16 +181,16 @@ fn format_foreground_with_budget(
     let lines = decoded.lines;
     let total = output.total_lines();
     let dropped = output.dropped_lines();
+    let trailing = join_notes(
+        decoded.transcoding_note.as_deref(),
+        apply_patch_hint::misuse_note(command, exit_code, timeout_ms).as_deref(),
+    );
 
     if dropped == 0 {
         let terminal = full_terminal(exit_code, timeout_ms, total, decoded.had_truncation);
         let leading = run_garble_note(decoded.invalid_sequences);
-        let response = compose_response_with_tail(
-            leading.as_deref(),
-            &lines,
-            decoded.transcoding_note.as_deref(),
-            &terminal,
-        );
+        let response =
+            compose_response_with_tail(leading.as_deref(), &lines, trailing.as_deref(), &terminal);
         if estimate_tokens(&response) <= budget.value {
             return ToolResponse::text(response);
         }
@@ -196,7 +199,7 @@ fn format_foreground_with_budget(
     let window = ForegroundWindow {
         lines: &lines,
         invalid_per_line: &decoded.invalid_sequences_per_line,
-        transcoding_note: decoded.transcoding_note.as_deref(),
+        trailing_notes: trailing.as_deref(),
         total,
         dropped,
         exit_code,
@@ -254,7 +257,8 @@ fn window_terminal(
 struct ForegroundWindow<'a> {
     lines: &'a [String],
     invalid_per_line: &'a [u64],
-    transcoding_note: Option<&'a str>,
+    /// Already-joined notes that sit between the output and the terminal note.
+    trailing_notes: Option<&'a str>,
     total: u64,
     dropped: u64,
     exit_code: i32,
@@ -353,12 +357,16 @@ fn window_candidate(window: &ForegroundWindow<'_>, bounds: WindowBounds) -> Stri
         last,
         window.total,
     );
-    compose_response_with_tail(
-        leading.as_deref(),
-        &body,
-        window.transcoding_note,
-        &terminal,
-    )
+    compose_response_with_tail(leading.as_deref(), &body, window.trailing_notes, &terminal)
+}
+
+/// Joins two optional notes with the same separator `compose_response_with_tail` uses between them.
+fn join_notes(first: Option<&str>, second: Option<&str>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first}\n{second}")),
+        (Some(only), None) | (None, Some(only)) => Some(only.to_string()),
+        (None, None) => None,
+    }
 }
 
 pub(crate) fn dropped_note(dropped: u64) -> Option<String> {
@@ -433,12 +441,19 @@ mod tests {
     #[test]
     fn complete_timeout_and_long_line_status_notes_match_the_contract() {
         assert_eq!(
-            format_foreground_with_budget(&CapturedOutput::default(), 0, None, None, budget(8_500),),
+            format_foreground_with_budget(
+                &CapturedOutput::default(),
+                "true",
+                0,
+                None,
+                None,
+                budget(8_500),
+            ),
             crate::ToolResponse::text("(Complete: exited 0; no output.)")
         );
         let one = CapturedOutput::from_lines(&[("one", false)], usize::MAX);
         assert_eq!(
-            format_foreground_with_budget(&one, 42, None, None, budget(8_500)),
+            format_foreground_with_budget(&one, "true", 42, None, None, budget(8_500)),
             crate::ToolResponse::text("one\n\n(Complete: exited 42; 1 line.)")
         );
         let long = capture_foreground(std::io::Cursor::new(vec![b'x'; 3_000])).unwrap();
@@ -447,7 +462,7 @@ mod tests {
             "x".repeat(2_000)
         );
         assert_eq!(
-            format_foreground_with_budget(&long, 0, None, None, budget(8_500)),
+            format_foreground_with_budget(&long, "true", 0, None, None, budget(8_500)),
             crate::ToolResponse::text(format!(
                 "{long_line}\n\n(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)"
             ))
@@ -455,6 +470,7 @@ mod tests {
         assert_eq!(
             format_foreground_with_budget(
                 &CapturedOutput::default(),
+                "true",
                 137,
                 Some(1),
                 None,
@@ -476,7 +492,7 @@ mod tests {
             .map(|(line, truncated)| (line.as_str(), *truncated))
             .collect::<Vec<_>>();
         let output = CapturedOutput::from_lines(&borrowed, usize::MAX);
-        let response = format_foreground_with_budget(&output, 0, None, None, budget(160));
+        let response = format_foreground_with_budget(&output, "true", 0, None, None, budget(160));
         let text = match &response.content[0] {
             crate::ToolContent::Text(text) => text,
             crate::ToolContent::Image { .. } => panic!("expected text"),
@@ -494,7 +510,7 @@ mod tests {
     fn ring_loss_is_reported_at_the_page_front_and_in_the_partial_terminal() {
         let per_line = std::mem::size_of::<crate::shell::buffer::BufferedLine>() + 4;
         let output = CapturedOutput::from_lines(&[("one", false), ("two", false)], per_line);
-        let response = format_foreground_with_budget(&output, 0, None, None, budget(8_500));
+        let response = format_foreground_with_budget(&output, "true", 0, None, None, budget(8_500));
         let text = match &response.content[0] {
             crate::ToolContent::Text(text) => text,
             crate::ToolContent::Image { .. } => panic!("expected text"),

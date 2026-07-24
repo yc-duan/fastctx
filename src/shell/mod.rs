@@ -1,5 +1,6 @@
 //! fastshell core: bash-backed foreground commands and bounded background jobs.
 
+mod apply_patch_hint;
 pub(crate) mod bash;
 mod buffer;
 mod encoding;
