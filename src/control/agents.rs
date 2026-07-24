@@ -24,12 +24,16 @@ const FILE_GUIDANCE: &str = concat!(
     "For reading, searching, and finding local files, prefer the FastCtx MCP\n",
     "tools — `mcp__fastctx__read`, `mcp__fastctx__grep`, `mcp__fastctx__glob` —\n",
     "over `cat`/`Get-Content`, `rg`/`findstr`/`Select-String`, and `dir`/`ls -R`.\n",
-    "They exist to make each call cheap and reliable, not to make you read more:\n",
-    "read only what the task needs. When you need several files, pass them to\n",
+    "Read only what the task needs. When you need several files, pass them to\n",
     "one read call as files=[{\"path\": ...}, ...] instead of one call per file.\n",
     "Pass absolute paths. The last line of every result says `Complete` or\n",
     "`Partial` — continue only with the exact parameters a `Partial` note\n",
     "provides.\n",
+    "\n",
+    "Never point `read_mcp_resource`, `list_mcp_resources`, or\n",
+    "`list_mcp_resource_templates` at the `fastctx` server: FastCtx publishes\n",
+    "tools, not MCP resources, so those calls always fail. Read a local file\n",
+    "with `mcp__fastctx__read` and an absolute path — never a `file://` URI.\n",
     "\n",
     "### Batch replacement\n",
     "\n",
@@ -95,12 +99,15 @@ pub const AGENTS_SECTION: &str = concat!(
     "For reading, searching, and finding local files, prefer the FastCtx MCP\n",
     "tools — `mcp__fastctx__read`, `mcp__fastctx__grep`, `mcp__fastctx__glob` —\n",
     "over `cat`/`Get-Content`, `rg`/`findstr`/`Select-String`, and `dir`/`ls -R`.\n",
-    "They exist to make each call cheap and reliable, not to make you read more:\n",
-    "read only what the task needs. When you need several files, pass them to\n",
+    "Read only what the task needs. When you need several files, pass them to\n",
     "one read call as files=[{\"path\": ...}, ...] instead of one call per file.\n",
     "Pass absolute paths. The last line of every result says `Complete` or\n",
     "`Partial` — continue only with the exact parameters a `Partial` note\n",
     "provides.\n\n",
+    "Never point `read_mcp_resource`, `list_mcp_resources`, or\n",
+    "`list_mcp_resource_templates` at the `fastctx` server: FastCtx publishes\n",
+    "tools, not MCP resources, so those calls always fail. Read a local file\n",
+    "with `mcp__fastctx__read` and an absolute path — never a `file://` URI.\n\n",
     "### Batch replacement\n\n",
     "Use `mcp__fastctx__replace` for mechanical find-and-replace across files.\n",
     "It preserves each file's encoding and line endings, supports dry-run previews,\n",
@@ -407,12 +414,15 @@ mod tests {
             "For reading, searching, and finding local files, prefer the FastCtx MCP\n",
             "tools — `mcp__fastctx__read`, `mcp__fastctx__grep`, `mcp__fastctx__glob` —\n",
             "over `cat`/`Get-Content`, `rg`/`findstr`/`Select-String`, and `dir`/`ls -R`.\n",
-            "They exist to make each call cheap and reliable, not to make you read more:\n",
-            "read only what the task needs. When you need several files, pass them to\n",
+            "Read only what the task needs. When you need several files, pass them to\n",
             "one read call as files=[{\"path\": ...}, ...] instead of one call per file.\n",
             "Pass absolute paths. The last line of every result says `Complete` or\n",
             "`Partial` — continue only with the exact parameters a `Partial` note\n",
             "provides.\n\n",
+            "Never point `read_mcp_resource`, `list_mcp_resources`, or\n",
+            "`list_mcp_resource_templates` at the `fastctx` server: FastCtx publishes\n",
+            "tools, not MCP resources, so those calls always fail. Read a local file\n",
+            "with `mcp__fastctx__read` and an absolute path — never a `file://` URI.\n\n",
             "### Batch replacement\n\n",
             "Use `mcp__fastctx__replace` for mechanical find-and-replace across files.\n",
             "It preserves each file's encoding and line endings, supports dry-run previews,\n",
@@ -490,6 +500,29 @@ mod tests {
         );
         assert!(!section(false).contains("Never pass `apply_patch`"));
     }
+
+    #[test]
+    fn file_guidance_bans_resource_routing_in_every_tool_combination() {
+        // Hosts publish their generic resource tools whenever any MCP server is configured, so
+        // unlike the apply_patch ban this one has no optional-group scope: it must hold with and
+        // without the shell tools. It lives here rather than in the MCP instructions because
+        // hosts may keep only the first line and first 250 characters of those (2026-07-24).
+        for fastshell in [false, true] {
+            let guidance = section(fastshell).replace('\n', " ");
+            assert!(
+                guidance.contains(
+                    "Never point `read_mcp_resource`, `list_mcp_resources`, or `list_mcp_resource_templates` at the `fastctx` server"
+                ),
+                "{guidance}"
+            );
+            assert!(
+                guidance.contains("FastCtx publishes tools, not MCP resources"),
+                "{guidance}"
+            );
+            assert!(guidance.contains("never a `file://` URI"), "{guidance}");
+        }
+    }
+
     #[test]
     fn reapply_replaces_owned_clipboard_guidance_with_the_current_block() {
         let original = b"before\n\n<!-- fastctx:begin -->\n### Bulk edits and moving code\nUse mcp__fastctx__copy then mcp__fastctx__paste.\n<!-- fastctx:end -->\nafter\n";

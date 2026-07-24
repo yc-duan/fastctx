@@ -1207,7 +1207,10 @@ fn output_encoding_errors_are_exact_and_precede_process_side_effects() {
                 "command": format!("printf touched > {}", bash_quote(&foreground_marker)),
                 "encoding": "wat"
             }),
-            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", \"windows-1252\", \"utf-16le\", or \"utf-32le\".",
+            // The suggested labels must all be ones this parameter accepts: UTF-16/UTF-32 are
+            // rejected on the next case down, so listing them here would hand the caller a
+            // second failure (2026-07-24).
+            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", or \"windows-1252\".",
         ),
         (
             "run",
@@ -1234,7 +1237,10 @@ fn output_encoding_errors_are_exact_and_precede_process_side_effects() {
                 "job_id": "missing",
                 "encoding": "wat"
             }),
-            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", \"windows-1252\", \"utf-16le\", or \"utf-32le\".",
+            // The suggested labels must all be ones this parameter accepts: UTF-16/UTF-32 are
+            // rejected on the next case down, so listing them here would hand the caller a
+            // second failure (2026-07-24).
+            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", or \"windows-1252\".",
         ),
     ];
     for (tool, arguments, expected) in cases {

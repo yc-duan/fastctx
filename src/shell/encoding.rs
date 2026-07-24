@@ -81,7 +81,10 @@ pub(crate) fn validate_output_encoding(value: &str) -> Result<OutputEncoding, St
     }
     let Some(encoding) = Encoding::for_label_no_replacement(label.as_bytes()) else {
         return Err(format!(
-            "Invalid encoding value \"{value}\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", \"windows-1252\", \"utf-16le\", or \"utf-32le\"."
+            // The examples must stay inside what this function accepts: UTF-16/UTF-32 labels are
+            // rejected below, so offering them here would send the caller straight back into a
+            // second rejection (2026-07-24).
+            "Invalid encoding value \"{value}\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", or \"windows-1252\"."
         ));
     };
     if encoding == UTF_16LE || encoding == UTF_16BE {

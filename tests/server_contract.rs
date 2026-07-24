@@ -49,13 +49,12 @@ fn default_tool_definitions_publish_replace_with_explicit_permissions() {
             "over 10 pages; image mode defaults to 4 pages. Max 20 pages per call.\n",
             "view=\"hex\" dumps any file's raw bytes. PDFs, images, and hex view are\n",
             "single-file only. Text output is always UTF-8; omit encoding for\n",
-            "conservative auto-detection (BOM and valid UTF-8 are trusted, legacy text\n",
-            "only after consistency checks) — if uncertain it returns an error listing\n",
+            "conservative auto-detection — if uncertain it returns an error listing\n",
             "candidate encodings instead of guessed text, so pass encoding (e.g. \"gbk\")\n",
             "only when you know the source encoding or a prior read reported ambiguity.\n",
             "Paths must be absolute. Text, PDF, and hex responses end with a Complete or\n",
             "Partial status — continue only with the exact parameters a Partial note\n",
-            "provides. Plain images, warnings, and errors are self-contained."
+            "provides."
         ))
     );
     assert!(
@@ -104,7 +103,7 @@ fn default_tool_definitions_publish_replace_with_explicit_permissions() {
             "matching-line count), \"summary\" (global totals only).\n",
             "Respects .gitignore; searches hidden files; skips .git and binaries. Files are\n",
             "decoded to UTF-8 before searching; files whose encoding can't be determined, or\n",
-            "that change during a directory search, are skipped and listed (never silently) —\n",
+            "that change during a directory search, are skipped and listed —\n",
             "pass fallback_encoding (directory) or encoding (single file) to resolve encoding;\n",
             "a changing single-file target returns an error. Matching is line-by-line: `^` and\n",
             "`$` anchor line boundaries and are CRLF-aware. Set multiline=true for patterns\n",
@@ -180,6 +179,26 @@ fn server_instructions_follow_the_optional_shell_group() {
             "{instructions}"
         );
         assert!(instructions.contains("replace"), "{instructions}");
+        assert!(
+            instructions.contains("publishes tools, not MCP resources"),
+            "{instructions}"
+        );
+        // Hosts render these instructions as the tool namespace's one-line blurb and may keep
+        // only the first line and first 250 characters, so anything past that budget is
+        // silently dropped. Behavioural rules live in the guidance file instead (2026-07-24).
+        assert_eq!(instructions.lines().count(), 1, "{instructions}");
+        assert!(
+            instructions.chars().count() <= 250,
+            "instructions must fit the host namespace-description budget, got {}: {instructions}",
+            instructions.chars().count()
+        );
+        for banned_tool in [
+            "list_mcp_resources",
+            "list_mcp_resource_templates",
+            "read_mcp_resource",
+        ] {
+            assert!(!instructions.contains(banned_tool), "{instructions}");
+        }
         for removed in ["named clips", "copy", "cut", "paste"] {
             assert!(!instructions.contains(removed), "{instructions}");
         }
@@ -310,17 +329,29 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
             "interrupted) plus the newest output you have not been shown yet. wait_ms\n",
             "is how long this query may take (0-60000, default 30000): it returns as\n",
             "soon as the job reaches a terminal state, and otherwise waits the window\n",
-            "out — intermediate output does not end the wait, so one call is worth one\n",
-            "turn. Pass wait_ms=0 for an immediate snapshot. Long output is windowed:\n",
-            "you get the newest lines that fit, plus the start of the log on the first\n",
-            "call, and a note naming the exact lines that were skipped. Nothing is\n",
-            "lost — the job's whole output is a plain log file on disk, and its line\n",
-            "numbers are the seq numbers used here, so read or grep that path for\n",
-            "anything not shown. Works for jobs started in earlier sessions. If output\n",
-            "looks garbled (U+FFFD), call again with encoding set to the source\n",
-            "encoding (e.g. \"gbk\") — stored bytes are re-decoded losslessly. Keep\n",
-            "calling until the last line says Complete."
+            "out — intermediate output does not end the wait. Pass wait_ms=0 for an\n",
+            "immediate snapshot. Long output is windowed: you get the newest lines that\n",
+            "fit, plus the start of the log on the first call, and a note naming the\n",
+            "exact lines that were skipped. Nothing is lost — the job's whole output is\n",
+            "a plain log file on disk, and its line numbers are the seq numbers used\n",
+            "here, so read or grep that path for anything not shown. Works for jobs\n",
+            "started in earlier sessions. If output looks garbled (U+FFFD), call again\n",
+            "with encoding set to the source encoding (e.g. \"gbk\") — stored bytes are\n",
+            "re-decoded losslessly. Complete appears only once the job ends; a job that\n",
+            "never exits never reports it, so take what you need and do other work\n",
+            "instead of polling."
         ))
+    );
+    // A running job is always Partial, and a dev server or watch never reaches a terminal
+    // state — telling the caller to poll until Complete would prescribe an endless loop
+    // (2026-07-24).
+    assert!(
+        !output
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .contains("until the last line says Complete"),
+        "job_output must not prescribe polling to a terminal state"
     );
     assert_eq!(
         output.input_schema["required"],
@@ -610,7 +641,7 @@ fn stdio_pdf_call_extracts_one_hashed_engine_and_preserves_image_meta() {
 }
 
 #[test]
-fn stdio_mcp_lists_tools_and_never_returns_structured_content() {
+fn stdio_mcp_is_tool_only_lists_tools_and_never_returns_structured_content() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_fastctx"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -636,6 +667,19 @@ fn stdio_mcp_lists_tools_and_never_returns_structured_content() {
     );
     let initialized = read_response(&mut stdout);
     assert_eq!(initialized["id"], 1);
+    assert!(initialized["result"]["capabilities"]["tools"].is_object());
+    assert!(
+        initialized["result"]["capabilities"]
+            .get("resources")
+            .is_none(),
+        "{initialized}"
+    );
+    let instructions = initialized["result"]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.contains("publishes tools, not MCP resources"),
+        "{instructions}"
+    );
+    assert!(instructions.chars().count() <= 250, "{instructions}");
     send(
         &mut stdin,
         serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
@@ -660,6 +704,33 @@ fn stdio_mcp_lists_tools_and_never_returns_structured_content() {
     assert_eq!(called["result"]["isError"], true);
     assert!(called["result"].get("structuredContent").is_none());
     assert_eq!(called["result"]["content"][0]["type"], "text");
+
+    // All three resource methods must answer alike. An empty list from the SDK default would
+    // read as "this server does resources and has none", which is the step upstream hosts turn
+    // into a follow-up read of an invented URI (2026-07-24).
+    for (id, method, params) in [
+        (
+            4,
+            "resources/read",
+            serde_json::json!({"uri":"file:///Z:/definitely/missing.txt"}),
+        ),
+        (5, "resources/list", serde_json::json!({})),
+        (6, "resources/templates/list", serde_json::json!({})),
+    ] {
+        send(
+            &mut stdin,
+            serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}),
+        );
+        let rejected = read_response(&mut stdout);
+        assert_eq!(rejected["id"], id, "{method}");
+        assert_eq!(rejected["error"]["code"], -32601, "{method}");
+        assert_eq!(
+            rejected["error"]["message"],
+            "Use mcp__fastctx__read with an absolute file path (not a file:// URI) to read local files, and mcp__fastctx__glob to list paths. FastCtx publishes tools, not MCP resources.",
+            "{method}"
+        );
+        assert!(rejected.get("result").is_none(), "{method}");
+    }
 
     drop(stdin);
     let status = child.wait().unwrap();
