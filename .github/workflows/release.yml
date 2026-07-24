@@ -285,10 +285,16 @@ jobs:
         run: |
           notes="$RUNNER_TEMP/fastctx-release-notes.md"
           cat > "$notes" <<'EOF'
-          FastCtx v0.2.1 repairs in-app updates from v0.1.1.
+          FastCtx v0.2.2 spends fewer turns per task.
 
-          - Fixes the in-app update from v0.1.1 failing with "updated FastCtx exited before finalization" and rolling back: the updated binary now reads update requests written by v0.1.1, so the update page upgrades straight to v0.2.1. If your update to v0.2.0 failed, just run the update again.
-          - Includes everything in v0.2.0: the rebuilt grep/glob engine (cancellable searches, bounded in-process parallelism, exact o200k budgeting, byte-for-byte v0.1.1 output), the opt-in `search.max_cpu_cores` cap, the settings-reset action, `CODEX_HOME` support with a `--codex-home` flag, the stdin-EOF shutdown fix, the Windows elevated-install edit-lock fix, and the decoupled Node/npm layout fix for update checks.
+          - `read` now takes a `files` array, so one call can deliver several whole files packed into the output budget instead of one round trip each.
+          - Background jobs keep a complete plain-text log on disk. `job_output` returns the newest window plus exact `read` coordinates for whatever it elided, so nothing is lost to a ring buffer any more.
+          - Startup asks about an available update on a dedicated page instead of a toast you could miss; no update, a network failure, or a slow check all pass straight through to the menu.
+          - Output budgets are recentered: Standard now writes `tool_output_token_limit = 20000` and High `30000`, and the per-tool defaults are read 100%, grep 50%, glob/run/job_output 25%. Existing installs get a one-time notice on the next launch and pick up the new defaults after one re-apply.
+          - Fixes update checks failing under npm 12, which changed `npm view --json` to always return an array.
+          - Fixes an active background job briefly reporting a damaged output index while being tailed.
+          - Fixes `apply_patch` being routed into `run`, where no shell can execute it. The guidance now carves it out, and a failed command that looks like that mistake says where to reach it instead.
+          - Fixes rows of failing `Read MCP resource` calls attributed to FastCtx. Codex offers its generic resource tools for every MCP server regardless of what that server supports; FastCtx now rejects all three with a message naming the tool and path form to use, and the guidance tells the model not to route them here.
           EOF
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release delete "${GITHUB_REF_NAME}" --yes
