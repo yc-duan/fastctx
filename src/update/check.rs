@@ -1351,10 +1351,30 @@ fn run_npm_view(
     parse_npm_latest(&output.stdout).map(Some)
 }
 
+/// Accepts both `npm view <spec> version --json` output shapes: the bare JSON
+/// string emitted through npm 11 and the array npm 12+ always emits
+/// (npm/cli 12.0.0 changelog). Empty or multi-version arrays stay rejected.
 fn parse_npm_latest(bytes: &[u8]) -> Result<Version, CheckFailure> {
-    let value: String = serde_json::from_slice(bytes).map_err(|error| {
-        structural(format!("npm returned invalid latest-version JSON: {error}"))
-    })?;
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum NpmViewVersion {
+        Single(String),
+        List(Vec<String>),
+    }
+    let value = match serde_json::from_slice(bytes)
+        .map_err(|error| structural(format!("npm returned invalid latest-version JSON: {error}")))?
+    {
+        NpmViewVersion::Single(value) => value,
+        NpmViewVersion::List(values) => match <[String; 1]>::try_from(values) {
+            Ok([value]) => value,
+            Err(values) => {
+                return Err(structural(format!(
+                    "npm returned {} latest-version entries, expected exactly one",
+                    values.len()
+                )));
+            }
+        },
+    };
     let version = Version::parse(value.trim()).map_err(|error| {
         structural(format!(
             "npm returned invalid FastCtx version {value:?}: {error}"
@@ -2082,6 +2102,38 @@ mod tests {
         );
         assert!(
             parse_npm_latest(br#""0.2.0-beta.1""#)
+                .unwrap_err()
+                .message
+                .contains("prerelease")
+        );
+    }
+
+    #[test]
+    fn npm_latest_accepts_both_view_json_shapes_across_npm_majors() {
+        // Golden shapes captured from real `npm view fastctx version --json`:
+        // npm 11 emits a bare string, npm 12+ always emits an array (issue #12).
+        assert_eq!(
+            parse_npm_latest(br#""0.2.1""#).unwrap(),
+            Version::new(0, 2, 1)
+        );
+        assert_eq!(
+            parse_npm_latest(b"[\n  \"0.2.1\"\n]").unwrap(),
+            Version::new(0, 2, 1)
+        );
+        let empty = parse_npm_latest(br"[]").unwrap_err();
+        assert_eq!(empty.kind, CheckFailureKind::Structural);
+        assert!(empty.message.contains("0 latest-version entries"));
+        let ambiguous = parse_npm_latest(br#"["0.2.0", "0.2.1"]"#).unwrap_err();
+        assert_eq!(ambiguous.kind, CheckFailureKind::Structural);
+        assert!(ambiguous.message.contains("2 latest-version entries"));
+        assert!(
+            parse_npm_latest(br#"[["0.2.1"]]"#)
+                .unwrap_err()
+                .message
+                .contains("invalid latest-version JSON")
+        );
+        assert!(
+            parse_npm_latest(br#"["0.2.1-beta.1"]"#)
                 .unwrap_err()
                 .message
                 .contains("prerelease")
