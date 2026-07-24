@@ -375,10 +375,36 @@ fn check_drift(
         items.dedup();
         Ok(items)
     }) {
-        Ok(items) if items.is_empty() => DoctorCheck::pass(
-            "Applied state",
-            "Managed Codex settings match the Apply receipt.",
-        ),
+        Ok(items) if items.is_empty() => {
+            let mut pending = Vec::new();
+            if record.tool_output_token_limit != record.tier.host_limit()
+                || record.fastctx_token_budget != record.tier.fastctx_budget()
+            {
+                pending.push("the current tier limits");
+            }
+            if let Some(settings) = settings {
+                if settings.tier != record.tier {
+                    pending.push("the selected tier");
+                }
+                if settings.tool_budgets != record.tool_budgets {
+                    pending.push("the per-tool output budgets");
+                }
+            }
+            if pending.is_empty() {
+                DoctorCheck::pass(
+                    "Applied state",
+                    "Managed Codex settings match the Apply receipt.",
+                )
+            } else {
+                DoctorCheck::info(
+                    "Applied state",
+                    format!(
+                        "Managed Codex settings still match the previous Apply receipt, but Apply is pending for {}. Run fastctx apply to preview and write the current output settings into Codex.",
+                        pending.join(" and ")
+                    ),
+                )
+            }
+        }
         Ok(items) => DoctorCheck::fail(
             "Applied state",
             format!("Drift detected: {}", items.join(", ")),
@@ -974,7 +1000,7 @@ mod tests {
     use crate::control::codex_config::{self, ExpectedConfig};
     use crate::control::paths::ControlPaths;
     use crate::control::settings::{
-        AppliedRecord, FastCtxSettings, ManagedFileRecord, Tier, ToolBudgets,
+        AppliedRecord, FastCtxSettings, ManagedFileRecord, Tier, ToolBudgetLevel, ToolBudgets,
     };
 
     #[test]
@@ -1081,6 +1107,7 @@ mod tests {
             binary_sha256: super::sha256(binary),
         };
         let settings = FastCtxSettings {
+            tier: Tier::Compact,
             applied: Some(record),
             ..FastCtxSettings::default()
         };
@@ -1096,6 +1123,18 @@ mod tests {
             Some(&host_rewritten),
         );
         assert_eq!(status.status, DoctorCheckStatus::Pass, "{status:?}");
+
+        let mut pending_settings = settings.clone();
+        pending_settings.tier = Tier::High;
+        let status = check_drift(
+            &paths,
+            Some(&pending_settings),
+            pending_settings.applied.as_ref(),
+            Some(&host_rewritten),
+        );
+        assert_eq!(status.status, DoctorCheckStatus::Info, "{status:?}");
+        assert!(status.detail.contains("selected tier"), "{status:?}");
+        assert!(status.detail.contains("Run fastctx apply"), "{status:?}");
 
         let managed_drift_source = String::from_utf8(host_rewritten).unwrap();
         assert!(
@@ -1121,6 +1160,90 @@ mod tests {
                 .contains("mcp_servers.fastctx.env.FASTCTX_TOKEN_BUDGET"),
             "{status:?}"
         );
+    }
+
+    #[test]
+    fn applied_state_prompts_reapply_when_a_receipt_uses_a_retired_tier_mapping() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.codex_dir).unwrap();
+        std::fs::create_dir_all(&paths.fastctx_bin_dir).unwrap();
+        let binary = b"binary";
+        let agents = b"agents";
+        std::fs::write(&paths.installed_binary, binary).unwrap();
+        std::fs::write(&paths.codex_agents, agents).unwrap();
+        let legacy_budgets = ToolBudgets {
+            read: ToolBudgetLevel::Inherit,
+            grep: ToolBudgetLevel::Inherit,
+            glob: ToolBudgetLevel::Percent50,
+            run: ToolBudgetLevel::Inherit,
+            job_output: ToolBudgetLevel::Percent25,
+        };
+        let expected = ExpectedConfig {
+            command: crate::paths::display_path(&paths.installed_binary),
+            tier: Tier::Standard,
+            tool_budgets: legacy_budgets,
+            fastshell_enabled: false,
+        };
+        let legacy_config = format!(
+            concat!(
+                "tool_output_token_limit = 16000\n",
+                "[mcp_servers.fastctx]\n",
+                "command = \"{}\"\n",
+                "args = [\"serve\"]\n",
+                "startup_timeout_sec = 120\n",
+                "tool_timeout_sec = 300\n",
+                "[mcp_servers.fastctx.env]\n",
+                "FASTCTX_TOKEN_BUDGET = \"13600\"\n",
+                "FASTCTX_GLOB_TOKEN_BUDGET = \"6800\"\n",
+                "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET = \"3400\"\n",
+                "[features.code_mode]\n",
+                "direct_only_tool_namespaces = [\"mcp__fastctx\"]\n",
+            ),
+            expected.command
+        )
+        .into_bytes();
+        let managed = |path: &std::path::Path, bytes: &[u8]| ManagedFileRecord {
+            path: crate::paths::display_path(path),
+            original_existed: true,
+            applied_sha256: super::sha256(bytes),
+        };
+        let record = AppliedRecord {
+            applied_at_utc: "2026-07-23T00:00:00Z".to_string(),
+            version: "0.2.1".to_string(),
+            command: expected.command,
+            tier: Tier::Standard,
+            tool_output_token_limit: 16_000,
+            tool_timeout_sec: Some(codex_config::TOOL_TIMEOUT_SECONDS),
+            previous_token_limit_present: false,
+            previous_token_limit: None,
+            fastctx_token_budget: 13_600,
+            tool_budgets: legacy_budgets,
+            fastshell_enabled: false,
+            fastedit_enabled: false,
+            codex_dir_created: false,
+            codex_config: managed(&paths.codex_config, &legacy_config),
+            codex_agents: managed(&paths.codex_agents, agents),
+            codex_agents_inserted_separator: None,
+            binary_sha256: super::sha256(binary),
+        };
+        let settings = FastCtxSettings {
+            tier: Tier::Standard,
+            tool_budgets: legacy_budgets,
+            applied: Some(record),
+            ..FastCtxSettings::default()
+        };
+
+        let status = check_drift(
+            &paths,
+            Some(&settings),
+            settings.applied.as_ref(),
+            Some(&legacy_config),
+        );
+
+        assert_eq!(status.status, DoctorCheckStatus::Info, "{status:?}");
+        assert!(status.detail.contains("current tier limits"), "{status:?}");
+        assert!(status.detail.contains("Run fastctx apply"), "{status:?}");
     }
 
     #[test]

@@ -460,7 +460,7 @@ fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
     assert!(applied.contains("mcp__fastctx"), "{applied}");
     assert!(applied.contains("tool_timeout_sec = 300"), "{applied}");
     assert!(
-        applied.contains("tool_output_token_limit = 16000 # user value"),
+        applied.contains("tool_output_token_limit = 20000 # user value"),
         "{applied}"
     );
     let managed_paths = [
@@ -573,7 +573,7 @@ fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
     std::fs::write(codex.join("AGENTS.md"), applied_agents).unwrap();
 
     let drifted = String::from_utf8(host_rewritten).unwrap().replace(
-        "tool_output_token_limit = 16000",
+        "tool_output_token_limit = 20000",
         "tool_output_token_limit = 15000",
     );
     std::fs::write(codex.join("config.toml"), drifted).unwrap();
@@ -639,9 +639,31 @@ fn noninteractive_apply_bootstraps_a_fresh_home_without_codex_cli_or_profile() {
     assert!(codex.join("AGENTS.md").is_file());
     let config = std::fs::read_to_string(codex.join("config.toml")).unwrap();
     assert!(config.contains("[mcp_servers.fastctx]"), "{config}");
-    assert!(config.contains("tool_output_token_limit = 16000"));
+    assert!(config.contains("tool_output_token_limit = 20000"));
     assert!(config.contains("tool_timeout_sec = 300"));
-    assert!(config.contains("FASTCTX_TOKEN_BUDGET = \"13600\""));
+    assert!(config.contains("FASTCTX_TOKEN_BUDGET = \"17000\""));
+    let fastctx_settings =
+        std::fs::read_to_string(temp.path().join(".fastctx/config.toml")).unwrap();
+    assert!(
+        fastctx_settings.contains(&format!(
+            "last_seen_version = \"{}\"",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{fastctx_settings}"
+    );
+
+    let second_apply = isolated_command(temp.path())
+        .args(["apply", "--tier", "standard", "--yes"])
+        .env("PATH", &empty_path)
+        .output()
+        .unwrap();
+    assert_success(&second_apply);
+    assert!(
+        !String::from_utf8_lossy(&second_apply.stdout)
+            .contains("updated the recommended per-tool output budgets"),
+        "{}",
+        String::from_utf8_lossy(&second_apply.stdout)
+    );
 
     let mut status = isolated_command(temp.path());
     status.arg("status").env("PATH", &empty_path);
@@ -657,6 +679,75 @@ fn noninteractive_apply_bootstraps_a_fresh_home_without_codex_cli_or_profile() {
     assert_success(&removed);
     assert!(!codex.exists());
     assert!(!temp.path().join(".fastctx").exists());
+}
+
+#[test]
+fn noninteractive_apply_migrates_an_unstamped_cli_only_home_once_before_applying() {
+    let temp = tempfile::tempdir().unwrap();
+    let fastctx = temp.path().join(".fastctx");
+    std::fs::create_dir_all(&fastctx).unwrap();
+    std::fs::write(
+        fastctx.join("config.toml"),
+        concat!(
+            "schema_version = 1\n",
+            "language = \"en\"\n",
+            "tier = \"standard\"\n",
+            "\n[tool_budgets]\n",
+            "read = \"percent25\"\n",
+            "grep = \"percent75\"\n",
+            "glob = \"inherit\"\n",
+            "run = \"percent75\"\n",
+            "job_output = \"inherit\"\n",
+        ),
+    )
+    .unwrap();
+
+    let first = isolated_command(temp.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&first);
+    let first_stdout = String::from_utf8(first.stdout).unwrap();
+    assert!(
+        first_stdout.contains("updated the recommended per-tool output budgets"),
+        "{first_stdout}"
+    );
+    assert!(
+        first_stdout.contains("This Apply will write them into Codex"),
+        "{first_stdout}"
+    );
+    let migrated = std::fs::read_to_string(fastctx.join("config.toml")).unwrap();
+    assert!(
+        migrated.contains(&format!(
+            "last_seen_version = \"{}\"",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{migrated}"
+    );
+    assert!(!migrated.contains("[tool_budgets]"), "{migrated}");
+    let codex = std::fs::read_to_string(temp.path().join(".codex/config.toml")).unwrap();
+    for expected in [
+        "tool_output_token_limit = 20000",
+        "FASTCTX_TOKEN_BUDGET = \"17000\"",
+        "FASTCTX_GREP_TOKEN_BUDGET = \"8500\"",
+        "FASTCTX_GLOB_TOKEN_BUDGET = \"4300\"",
+        "FASTCTX_RUN_TOKEN_BUDGET = \"4300\"",
+        "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET = \"4300\"",
+    ] {
+        assert!(codex.contains(expected), "missing {expected:?}:\n{codex}");
+    }
+
+    let second = isolated_command(temp.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&second);
+    assert!(
+        !String::from_utf8_lossy(&second.stdout)
+            .contains("updated the recommended per-tool output budgets"),
+        "{}",
+        String::from_utf8_lossy(&second.stdout)
+    );
 }
 
 #[test]
@@ -1113,7 +1204,7 @@ fn a_non_tty_apply_without_yes_refuses_a_shared_limit_conflict_without_writes() 
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("Re-run with --yes"), "{error}");
     let preview = String::from_utf8_lossy(&output.stdout);
-    assert!(preview.contains("25000"), "{preview}");
+    assert!(preview.contains("30000"), "{preview}");
     assert_eq!(std::fs::read(codex.join("config.toml")).unwrap(), config);
     assert!(!temp.path().join(".fastctx").exists());
 }

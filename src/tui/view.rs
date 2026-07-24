@@ -71,7 +71,8 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut App) {
 
 fn uses_narrow_layout(area: Rect, screen: Screen) -> bool {
     match screen {
-        Screen::Config
+        Screen::MigrationNotice
+        | Screen::Config
         | Screen::ConfigCpuEdit
         | Screen::ConfigResetConfirm
         | Screen::Jobs
@@ -135,6 +136,7 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     match app.screen {
+        Screen::MigrationNotice => render_migration_notice(frame, app, area),
         Screen::Update => render_update(frame, app, area),
         Screen::UpdateChecking => render_loading(frame, app, area, app.update_messages().checking),
         Screen::UpdateConfirm => render_update_confirmation(frame, app, area),
@@ -2201,6 +2203,66 @@ fn render_loading(frame: &mut Frame<'_>, app: &App, area: Rect, message: &str) {
     );
 }
 
+fn render_migration_notice(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let messages = app.migration_messages();
+    let body = messages
+        .body
+        .replace("{version}", env!("CARGO_PKG_VERSION"));
+    let horizontal_margin = if area.width >= 64 { 4 } else { 0 };
+    let vertical_margin = if area.height >= 10 { 1 } else { 0 };
+    let panel_area = inner(area, horizontal_margin, vertical_margin);
+    let content_area = inner(panel_area, 2, 1);
+    let content = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(content_area);
+    let body_area = Rect {
+        height: if content[0].height <= 2 {
+            1
+        } else {
+            content[0].height
+        },
+        ..content[0]
+    };
+    let wrap_width = body_area
+        .width
+        .saturating_sub(if body_area.width < 50 { 10 } else { 2 });
+    let body_lines = wrap_detail_lines(vec![Line::from(body)], wrap_width);
+    app.detail_viewport
+        .update(body_lines.len(), usize::from(body_area.height));
+    let scroll_indicator = match (
+        app.detail_viewport.can_move_up(),
+        app.detail_viewport.can_move_down(),
+    ) {
+        (true, true) => " ↑↓",
+        (true, false) => " ↑",
+        (false, true) => " ↓",
+        (false, false) => "",
+    };
+    let title = format!("{}{scroll_indicator}", messages.title);
+    frame.render_widget(
+        panel(&title).border_style(Style::default().fg(theme::accent())),
+        panel_area,
+    );
+    frame.render_widget(
+        Paragraph::new(
+            body_lines
+                .into_iter()
+                .skip(app.detail_viewport.offset())
+                .take(usize::from(body_area.height))
+                .collect::<Vec<_>>(),
+        )
+        .style(Style::default().fg(theme::fg())),
+        body_area,
+    );
+    frame.render_widget(
+        Paragraph::new(format!("✓ {}", messages.action_confirm))
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(theme::success())),
+        content[1],
+    );
+}
+
 fn render_message_panel(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -2565,6 +2627,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let messages = app.messages();
     let mut lines = Vec::new();
     let selected = match app.screen {
+        Screen::MigrationNotice => app.migration_messages().title.to_string(),
         Screen::Update => update_state_summary(app),
         Screen::UpdateChecking => app.update_messages().checking.to_string(),
         Screen::UpdateConfirm => app.update_messages().available_title.to_string(),
@@ -2721,6 +2784,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         return;
     }
     let hints = match app.screen {
+        Screen::MigrationNotice => vec![app.migration_messages().footer_confirm],
         Screen::Update => vec![
             messages.footer_move,
             messages.footer_select,
@@ -3257,6 +3321,101 @@ mod tests {
                 assert!(
                     contains_visible_text(&text, expected),
                     "{width}x{height} missing {expected}\n{text}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migration_notice_renders_the_complete_localized_message_and_only_confirmation_action() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.screen = Screen::MigrationNotice;
+
+        for language in ALL_LANGUAGES {
+            app.language = language;
+            app.settings.language = Some(language.code().to_string());
+            let messages = app.migration_messages();
+            let body = messages
+                .body
+                .replace("{version}", env!("CARGO_PKG_VERSION"));
+            let body_start = body.chars().take(12).collect::<String>();
+            let wide_rows = wrap_detail_lines(vec![Line::from(body.clone())], 86);
+            let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+            terminal.draw(|frame| render(frame, &mut app)).unwrap();
+            let text = buffer_text(&terminal);
+            for expected in [
+                messages.title,
+                messages.action_confirm,
+                messages.footer_confirm,
+            ] {
+                assert!(
+                    contains_visible_text(&text, expected),
+                    "{} missing {expected:?}\n{text}",
+                    language.code()
+                );
+            }
+            for row in wide_rows {
+                let expected = row
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>();
+                assert!(
+                    contains_visible_text(&text, &expected),
+                    "{} missing body row {expected:?}\n{text}",
+                    language.code()
+                );
+            }
+
+            let mut narrow = Terminal::new(TestBackend::new(52, 12)).unwrap();
+            narrow.draw(|frame| render(frame, &mut app)).unwrap();
+            let narrow_text = buffer_text(&narrow);
+            for expected in [
+                messages.title,
+                body_start.as_str(),
+                messages.action_confirm,
+                messages.footer_confirm,
+            ] {
+                assert!(
+                    contains_visible_text(&narrow_text, expected),
+                    "{} missing {expected:?} at 52x12\n{narrow_text}",
+                    language.code()
+                );
+            }
+
+            let expected_rows = wrap_detail_lines(vec![Line::from(body.clone())], 26);
+            let mut pages = String::new();
+            loop {
+                let mut minimum = Terminal::new(TestBackend::new(40, 9)).unwrap();
+                minimum.draw(|frame| render(frame, &mut app)).unwrap();
+                pages.push_str(&buffer_text(&minimum));
+                pages.push('\n');
+                if !app.detail_viewport.can_move_down() {
+                    break;
+                }
+                app.handle_key(key(KeyCode::Down));
+            }
+            for row in expected_rows {
+                let expected = row
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>();
+                assert!(
+                    contains_visible_text(&pages, &expected),
+                    "{} cannot reach body row {expected:?} at 40x9\n{pages}",
+                    language.code()
+                );
+            }
+            for expected in [messages.action_confirm, messages.footer_confirm] {
+                assert!(
+                    contains_visible_text(&pages, expected),
+                    "{} missing {expected:?} at 40x9\n{pages}",
+                    language.code()
                 );
             }
         }

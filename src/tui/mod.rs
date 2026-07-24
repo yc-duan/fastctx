@@ -3,6 +3,7 @@
 mod app;
 mod config;
 mod jobs;
+mod migration;
 mod theme;
 mod update;
 mod view;

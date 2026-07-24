@@ -2,6 +2,7 @@
 
 use super::config::{ConfigCursor, ConfigDraft, ConfigItemId, ConfigViewport};
 use super::jobs::{JobsDetail, JobsState, JobsViewport, visible_job_count, visible_jobs};
+use super::migration::{self as migration_copy, MigrationMessages};
 use super::update::{self as update_copy, UpdateMessages};
 use crate::control::apply::{
     ApplyOptions, ApplyPlan, OperationReceipt, UnapplyOptions, UnapplyPlan, commit_apply,
@@ -28,6 +29,7 @@ const STARTUP_UPDATE_GATE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Screen {
+    MigrationNotice,
     Update,
     UpdateChecking,
     UpdateConfirm,
@@ -199,6 +201,7 @@ pub(crate) struct App {
     retry_effect: Option<Effect>,
     last_jobs_refresh: Option<Instant>,
     last_tail_refresh: Option<Instant>,
+    migration_notice_pending: bool,
     startup_update_check_requested: bool,
     update_check: Option<ActiveUpdateCheck>,
 }
@@ -214,7 +217,9 @@ impl App {
         startup_update: StartupUpdate,
         startup_notice: Option<crate::update::FinalizeNotice>,
     ) -> Result<Self, String> {
-        let settings = settings::load(&paths)?;
+        let startup_settings = settings::load_for_startup(&paths)?;
+        let migration_notice_pending = startup_settings.migration_notice;
+        let settings = startup_settings.settings;
         let running_job_count = jobs::running_summaries(&paths)
             .ok()
             .map(|running| running.len());
@@ -223,10 +228,12 @@ impl App {
             .as_deref()
             .and_then(Language::parse)
             .unwrap_or_else(Language::detect);
-        let home_screen = if settings.language.is_some() {
-            Screen::Main
-        } else {
+        let home_screen = if settings.language.is_none() {
             Screen::Language { first_run: true }
+        } else if migration_notice_pending {
+            Screen::MigrationNotice
+        } else {
+            Screen::Main
         };
         let screen = home_screen;
         let selected = if matches!(screen, Screen::Language { .. }) {
@@ -329,6 +336,7 @@ impl App {
             retry_effect: None,
             last_jobs_refresh: Some(Instant::now()),
             last_tail_refresh: None,
+            migration_notice_pending,
             startup_update_check_requested: false,
             update_check: None,
         })
@@ -386,6 +394,15 @@ impl App {
         update_copy::messages(language)
     }
 
+    pub(crate) fn migration_messages(&self) -> &'static MigrationMessages {
+        let language = if self.settings.language.is_none() {
+            Language::En
+        } else {
+            self.language
+        };
+        migration_copy::messages(language)
+    }
+
     pub(crate) fn take_update_plan(&mut self) -> Option<UpdatePlan> {
         self.exit_update.take()
     }
@@ -396,7 +413,7 @@ impl App {
             receiver,
             startup_deadline: None,
         });
-        if self.settings.language.is_some() {
+        if self.settings.language.is_some() && !self.migration_notice_pending {
             self.enter_startup_update_gate();
         }
     }
@@ -510,6 +527,7 @@ impl App {
             return;
         }
         match self.screen {
+            Screen::MigrationNotice => self.handle_migration_notice(key.code),
             Screen::Update => self.handle_update(key.code),
             Screen::UpdateConfirm => self.handle_update_confirm(key.code),
             Screen::Language { first_run } => self.handle_language(key.code, first_run),
@@ -569,6 +587,10 @@ impl App {
                     self.settings = updated;
                     if first_run {
                         self.start_requested_startup_update_check();
+                        if self.migration_notice_pending {
+                            self.set_screen(Screen::MigrationNotice);
+                            return;
+                        }
                         if self
                             .update_check
                             .as_ref()
@@ -797,6 +819,25 @@ impl App {
             KeyCode::Char('r') | KeyCode::Char('R') => self.start_update_check(),
             KeyCode::Enter | KeyCode::Esc => self.back_to_main(),
             _ => {}
+        }
+    }
+
+    fn handle_migration_notice(&mut self, key: KeyCode) {
+        if self.detail_viewport.handle_key(key) {
+            return;
+        }
+        if !matches!(key, KeyCode::Enter | KeyCode::Esc) {
+            return;
+        }
+        self.migration_notice_pending = false;
+        if self
+            .update_check
+            .as_ref()
+            .is_some_and(|check| check.purpose == UpdateCheckPurpose::Startup)
+        {
+            self.enter_startup_update_gate();
+        } else {
+            self.back_to_main();
         }
     }
 
@@ -1489,6 +1530,13 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    fn default_with_current_watermark() -> FastCtxSettings {
+        FastCtxSettings {
+            last_seen_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            ..FastCtxSettings::default()
+        }
+    }
+
     fn type_text(app: &mut App, value: &str) {
         app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
         for character in value.chars() {
@@ -1507,11 +1555,11 @@ mod tests {
             version: "0.1.1".to_string(),
             command: "fastctx".to_string(),
             tier: Tier::High,
-            tool_output_token_limit: 16_000,
+            tool_output_token_limit: 30_000,
             tool_timeout_sec: None,
             previous_token_limit_present: true,
             previous_token_limit: Some(10_000),
-            fastctx_token_budget: 13_600,
+            fastctx_token_budget: 25_500,
             tool_budgets: crate::control::settings::ToolBudgets::default(),
             fastshell_enabled: true,
             fastedit_enabled: false,
@@ -1595,6 +1643,81 @@ mod tests {
     }
 
     #[test]
+    fn migrated_user_confirms_notice_before_the_startup_update_gate() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        std::fs::write(
+            &paths.fastctx_config,
+            concat!(
+                "schema_version = 1\n",
+                "language = \"en\"\n",
+                "\n[tool_budgets]\n",
+                "grep = \"percent75\"\n",
+            ),
+        )
+        .unwrap();
+
+        let mut app = App::load_with_startup(paths, StartupUpdate::None, None).unwrap();
+        assert_eq!(app.screen, Screen::MigrationNotice);
+        assert_eq!(
+            app.settings.tool_budgets,
+            crate::control::settings::ToolBudgets::default()
+        );
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.set_startup_update_check(receiver);
+        let plan = UpdatePlan::GithubRelease {
+            target_version: "99.88.77".to_string(),
+            archive_name: "fixture.zip".to_string(),
+            archive_url:
+                "https://github.com/yc-duan/fastctx/releases/download/v99.88.77/fixture.zip"
+                    .to_string(),
+            checksums_url:
+                "https://github.com/yc-duan/fastctx/releases/download/v99.88.77/SHA256SUMS"
+                    .to_string(),
+        };
+        sender
+            .send(StartupUpdate::Available(Box::new(plan.clone())))
+            .unwrap();
+        app.poll_update_check();
+        assert_eq!(app.screen, Screen::MigrationNotice);
+        assert_eq!(app.update_state, StartupUpdate::None);
+
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.screen, Screen::MigrationNotice);
+        assert!(app.migration_notice_pending);
+
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::UpdateChecking);
+        app.poll_update_check();
+        assert_eq!(app.screen, Screen::Update);
+        assert_eq!(app.update_state, StartupUpdate::Available(Box::new(plan)));
+    }
+
+    #[test]
+    fn migration_notice_follows_first_run_language_and_is_persisted_exactly_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        std::fs::write(&paths.fastctx_config, b"schema_version = 1\n").unwrap();
+
+        let mut app = App::load_with_startup(paths.clone(), StartupUpdate::None, None).unwrap();
+        assert_eq!(app.screen, Screen::Language { first_run: true });
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::MigrationNotice);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::Main);
+
+        let reloaded = App::load_with_startup(paths, StartupUpdate::None, None).unwrap();
+        assert_eq!(reloaded.screen, Screen::Main);
+        assert_eq!(
+            reloaded.settings.last_seen_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
     fn apply_flow_reaches_preview_and_receipt_from_one_frozen_plan() {
         let (_temp, mut app) = fixture();
         app.settings.language = Some("en".to_string());
@@ -1634,7 +1757,7 @@ mod tests {
         let (temp, mut app) = fixture();
         let config = concat!(
             "# user config\n",
-            "tool_output_token_limit = 16000 # exact\n",
+            "tool_output_token_limit = 20000 # exact\n",
             "\n",
             "[mcp_servers.other]\n",
             "command = 'other'\n",
@@ -2021,7 +2144,7 @@ mod tests {
                 applied: None,
                 ..app.settings.clone()
             },
-            FastCtxSettings::default()
+            default_with_current_watermark()
         );
         let persisted = crate::control::settings::load(&app.paths).unwrap();
         assert_eq!(persisted.applied, Some(receipt));
@@ -2030,7 +2153,7 @@ mod tests {
                 applied: None,
                 ..persisted
             },
-            FastCtxSettings::default()
+            default_with_current_watermark()
         );
         assert_eq!(std::fs::read(job_sentinel).unwrap(), b"running job state");
         assert_eq!(
@@ -2066,7 +2189,7 @@ mod tests {
         assert_eq!(app.screen, Screen::ConfigResetting);
         app.execute_pending();
         assert_eq!(app.screen, Screen::Language { first_run: true });
-        assert_eq!(app.settings, FastCtxSettings::default());
+        assert_eq!(app.settings, default_with_current_watermark());
         assert_eq!(
             app.toast.as_ref().map(|toast| toast.message.as_str()),
             Some(reset_success)
@@ -2099,14 +2222,14 @@ mod tests {
             "{:?}",
             app.error
         );
-        assert_eq!(app.settings, FastCtxSettings::default());
+        assert_eq!(app.settings, default_with_current_watermark());
         assert_eq!(
             app.config_draft,
-            crate::tui::config::ConfigDraft::from_settings(&FastCtxSettings::default())
+            crate::tui::config::ConfigDraft::from_settings(&default_with_current_watermark())
         );
         assert_eq!(
             crate::control::settings::load(&app.paths).unwrap(),
-            FastCtxSettings::default()
+            default_with_current_watermark()
         );
         assert!(app.toast.is_none());
         assert!(matches!(app.retry_effect, Some(Effect::ResetConfig)));
@@ -2419,6 +2542,7 @@ mod tests {
                 .to_string(),
         };
         let mut settings = FastCtxSettings {
+            last_seen_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             language: Some("en".to_string()),
             ..FastCtxSettings::default()
         };
@@ -2491,6 +2615,17 @@ mod tests {
     fn config_nested_adjustments_save_on_enter_and_discard_on_escape() {
         let (_temp, mut app) = fixture();
         app.settings.language = Some("en".to_string());
+        // Pin the starting levels instead of inheriting the shipped defaults: this test owns the
+        // draft/commit semantics and the cycle order, not the product's chosen default values.
+        app.settings.tier = Tier::Standard;
+        app.settings.tool_budgets = crate::control::settings::ToolBudgets {
+            read: ToolBudgetLevel::Inherit,
+            grep: ToolBudgetLevel::Inherit,
+            glob: ToolBudgetLevel::Inherit,
+            run: ToolBudgetLevel::Percent75,
+            job_output: ToolBudgetLevel::Percent50,
+        };
+        app.config_draft = crate::tui::config::ConfigDraft::from_settings(&app.settings);
         app.screen = Screen::Config;
         app.config_cursor = ConfigCursor::default();
         app.handle_key(key(KeyCode::Right));
@@ -2527,17 +2662,22 @@ mod tests {
         app.execute_pending();
         assert_eq!(app.screen, Screen::Main);
         assert_eq!(app.settings.tier, Tier::High);
+        // Three children advanced one step each from three distinct starting levels, so a cursor
+        // that collapsed onto a single item cannot satisfy all three.
         assert_eq!(app.settings.tool_budgets.read, ToolBudgetLevel::Percent75);
-        assert_eq!(app.settings.tool_budgets.run, ToolBudgetLevel::Percent75);
+        assert_eq!(app.settings.tool_budgets.run, ToolBudgetLevel::Percent50);
         assert_eq!(
             app.settings.tool_budgets.job_output,
-            ToolBudgetLevel::Inherit
+            ToolBudgetLevel::Percent25
         );
         let persisted = crate::control::settings::load(&app.paths).unwrap();
         assert_eq!(persisted.tier, Tier::High);
         assert_eq!(persisted.tool_budgets.read, ToolBudgetLevel::Percent75);
-        assert_eq!(persisted.tool_budgets.run, ToolBudgetLevel::Percent75);
-        assert_eq!(persisted.tool_budgets.job_output, ToolBudgetLevel::Inherit);
+        assert_eq!(persisted.tool_budgets.run, ToolBudgetLevel::Percent50);
+        assert_eq!(
+            persisted.tool_budgets.job_output,
+            ToolBudgetLevel::Percent25
+        );
     }
 
     #[test]

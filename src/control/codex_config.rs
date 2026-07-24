@@ -805,7 +805,7 @@ mod tests {
         let omega = output.find("omega").unwrap();
         let fastctx = output.find("mcp__fastctx").unwrap();
         assert!(alpha < omega && omega < fastctx, "{output}");
-        assert!(output.contains("tool_output_token_limit = 16000 # keep this comment"));
+        assert!(output.contains("tool_output_token_limit = 20000 # keep this comment"));
         assert!(output.contains("tool_timeout_sec = 300"));
         assert_eq!(edit.conflict.unwrap().current, 10_000);
         assert!(drift(&edit.bytes, &expected()).unwrap().is_empty());
@@ -835,7 +835,7 @@ mod tests {
         let output = std::str::from_utf8(&removed).unwrap();
         assert!(!output.contains("mcp__fastctx"));
         assert!(output.contains("other"));
-        assert!(output.contains("tool_output_token_limit = 16000"));
+        assert!(output.contains("tool_output_token_limit = 20000"));
         assert!(!output.contains("[mcp_servers.fastctx]"));
     }
 

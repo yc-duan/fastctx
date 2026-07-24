@@ -303,6 +303,11 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
 
     let settings_original = transaction::read_snapshot(&paths.fastctx_config)?;
     let mut current_settings = settings::load(paths)?;
+    if settings_original.is_none() {
+        // Apply is a fresh install's first natural settings write, so prepare the software-version
+        // watermark without treating the absent file as an upgrade migration.
+        current_settings.last_seen_version = Some(env!("CARGO_PKG_VERSION").to_string());
+    }
     if let Some(record) = current_settings
         .applied
         .as_ref()
@@ -1835,7 +1840,7 @@ mod tests {
         std::fs::write(&paths.codex_config, b"tool_output_token_limit = 9000\n").unwrap();
         let plan = plan_apply(&paths, options(executable)).unwrap();
         let conflict = plan.token_limit_conflict().unwrap();
-        assert_eq!((conflict.current, conflict.requested), (9_000, 16_000));
+        assert_eq!((conflict.current, conflict.requested), (9_000, 20_000));
         let error = commit_apply(plan, false).unwrap_err();
         assert!(error.contains("Re-run with --yes"));
         assert_eq!(
@@ -1923,11 +1928,11 @@ mod tests {
             document
                 .get("tool_output_token_limit")
                 .and_then(toml_edit::Item::as_integer),
-            Some(16_000)
+            Some(20_000)
         );
         assert!(source.contains("[mcp_servers.fastctx]"), "{source}");
         assert!(source.contains("mcp__fastctx"), "{source}");
-        assert!(source.contains("FASTCTX_TOKEN_BUDGET = \"13600\""));
+        assert!(source.contains("FASTCTX_TOKEN_BUDGET = \"17000\""));
     }
 
     #[test]
@@ -1982,9 +1987,9 @@ mod tests {
         )
         .unwrap();
         let applied = std::fs::read_to_string(&paths.codex_config).unwrap();
-        assert!(applied.contains("tool_output_token_limit = 16000"));
+        assert!(applied.contains("tool_output_token_limit = 20000"));
         let edited = applied.replace(
-            "tool_output_token_limit = 16000",
+            "tool_output_token_limit = 20000",
             "tool_output_token_limit = 40000",
         );
         std::fs::write(&paths.codex_config, &edited).unwrap();

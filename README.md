@@ -384,8 +384,8 @@ Apply maintains this setting automatically and writes a guidance block with expl
 The control terminal provides three output tiers. Each keeps FastCtx's internal budget at 85% of the host limit so responses close before Codex can truncate their terminal status:
 
 - `Compact`: host limit 10,000; FastCtx budget 8,500;
-- `Standard`: the default, with host limit 16,000 and FastCtx budget 13,600;
-- `High`: host limit 25,000; FastCtx budget 21,250.
+- `Standard`: the default, with host limit 20,000 and FastCtx budget 17,000;
+- `High`: host limit 30,000; FastCtx budget 25,500.
 
 Higher output tiers allow larger results per call and consume context faster. Choose a tier according to the task.
 

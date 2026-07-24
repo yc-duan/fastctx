@@ -488,7 +488,11 @@ fn run_apply(
     yes: bool,
 ) -> Result<ExitCode, String> {
     let paths = ControlPaths::discover_with_codex_home(codex_home)?;
-    let saved = settings::load(&paths)?;
+    let startup = settings::load_for_startup(&paths)?;
+    if startup.migration_notice {
+        print_cli_migration_notice("This Apply will write them into Codex.");
+    }
+    let saved = startup.settings;
     let plan = plan_apply(
         &paths,
         ApplyOptions {
@@ -619,7 +623,11 @@ fn run_lang(code: &str) -> Result<ExitCode, String> {
         )
     })?;
     let paths = ControlPaths::discover()?;
-    let mut saved = settings::load(&paths)?;
+    let startup = settings::load_for_startup(&paths)?;
+    if startup.migration_notice {
+        print_cli_migration_notice("Run fastctx apply to write them into Codex.");
+    }
+    let mut saved = startup.settings;
     saved.language = Some(language.code().to_string());
     settings::save(&paths, &saved)?;
     println!(
@@ -628,6 +636,13 @@ fn run_lang(code: &str) -> Result<ExitCode, String> {
         language.code()
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn print_cli_migration_notice(next_step: &str) {
+    println!(
+        "FastCtx v{} updated the recommended per-tool output budgets in your settings. {next_step}",
+        env!("CARGO_PKG_VERSION"),
+    );
 }
 
 fn require_tty() -> Result<(), String> {

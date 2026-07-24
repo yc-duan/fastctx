@@ -168,10 +168,10 @@ impl Default for UpdateSettings {
 pub enum Tier {
     /// Codex factory default of 10k with an 8.5k FastCtx budget.
     Compact,
-    /// Recommended 16k host limit with a 13.6k FastCtx budget.
+    /// Recommended 20k host limit with a 17k FastCtx budget.
     #[default]
     Standard,
-    /// Codex 25k with a 21.25k FastCtx budget.
+    /// Codex 30k with a 25.5k FastCtx budget.
     #[serde(alias = "extra-high")]
     #[value(alias = "extra-high")]
     High,
@@ -182,8 +182,8 @@ impl Tier {
     pub const fn host_limit(self) -> i64 {
         match self {
             Self::Compact => 10_000,
-            Self::Standard => 16_000,
-            Self::High => 25_000,
+            Self::Standard => 20_000,
+            Self::High => 30_000,
         }
     }
 
@@ -191,8 +191,8 @@ impl Tier {
     pub const fn fastctx_budget(self) -> usize {
         match self {
             Self::Compact => 8_500,
-            Self::Standard => 13_600,
-            Self::High => 21_250,
+            Self::Standard => 17_000,
+            Self::High => 25_500,
         }
     }
 
@@ -381,15 +381,20 @@ where
 }
 
 impl Default for ToolBudgets {
-    // Retrievable output needs less context than one-shot command output.
     fn default() -> Self {
         Self {
             read: ToolBudgetLevel::Inherit,
-            grep: ToolBudgetLevel::Inherit,
-            glob: ToolBudgetLevel::Percent50,
-            run: ToolBudgetLevel::Inherit,
+            grep: ToolBudgetLevel::Percent50,
+            glob: ToolBudgetLevel::Percent25,
+            run: ToolBudgetLevel::Percent25,
             job_output: ToolBudgetLevel::Percent25,
         }
+    }
+}
+
+impl ToolBudgets {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
     }
 }
 
@@ -476,12 +481,16 @@ fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {
 pub struct FastCtxSettings {
     /// Configuration format version.
     pub schema_version: u32,
+    /// Software-version watermark maintained by startup normalization and fresh-install writes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen_version: Option<String>,
     /// TUI language; absence means first-run selection is incomplete.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     /// Host tier used by the next Apply.
     pub tier: Tier,
     /// Advanced per-tool tiers used by the next Apply.
+    #[serde(skip_serializing_if = "ToolBudgets::is_default")]
     pub tool_budgets: ToolBudgets,
     /// Optional fastshell server, disabled by default.
     pub fastshell: FastShellSettings,
@@ -498,10 +507,20 @@ pub struct FastCtxSettings {
     pub applied: Option<AppliedRecord>,
 }
 
+/// Settings prepared for a user-facing control-plane startup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StartupSettings {
+    /// Loaded settings, with a fresh install's version watermark prepared in memory.
+    pub(crate) settings: FastCtxSettings,
+    /// Whether this startup migrated a pre-watermark configuration and must notify the user.
+    pub(crate) migration_notice: bool,
+}
+
 impl Default for FastCtxSettings {
     fn default() -> Self {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
+            last_seen_version: None,
             language: None,
             tier: Tier::Standard,
             tool_budgets: ToolBudgets::default(),
@@ -517,6 +536,73 @@ impl Default for FastCtxSettings {
 /// Loads FastCtx configuration, returning defaults when the file does not exist.
 pub fn load(paths: &ControlPaths) -> Result<FastCtxSettings, String> {
     load_from(&paths.fastctx_config)
+}
+
+/// Normalizes settings for TUI and write-capable CLI startup.
+///
+/// An existing file without a software-version watermark is migrated atomically. A missing file
+/// is not created here; its in-memory defaults are stamped so the first natural save cannot be
+/// mistaken for an upgrade on the next launch.
+pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, String> {
+    const MAX_COMMIT_ATTEMPTS: usize = 3;
+
+    for attempt in 0..MAX_COMMIT_ATTEMPTS {
+        let original = transaction::read_snapshot(&paths.fastctx_config)?;
+        let Some(original) = original else {
+            let settings = FastCtxSettings {
+                last_seen_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                ..FastCtxSettings::default()
+            };
+            return Ok(StartupSettings {
+                settings,
+                migration_notice: false,
+            });
+        };
+        let source = std::str::from_utf8(&original).map_err(|error| {
+            format!(
+                "Cannot read fastctx settings {}: the file is not valid UTF-8 ({error})",
+                crate::paths::display_path(&paths.fastctx_config)
+            )
+        })?;
+        let mut settings = decode_source(&paths.fastctx_config, source)?;
+        let migration_notice = settings.last_seen_version.is_none();
+        if migration_notice {
+            // This one-time migration intentionally replaces customized values as well as old
+            // defaults; the user-visible notice makes that product decision explicit.
+            settings.tool_budgets = ToolBudgets::default();
+        }
+        let current_version = env!("CARGO_PKG_VERSION");
+        let watermark_changed = settings.last_seen_version.as_deref() != Some(current_version);
+        if !migration_notice && !watermark_changed {
+            return Ok(StartupSettings {
+                settings,
+                migration_notice: false,
+            });
+        }
+        settings.last_seen_version = Some(current_version.to_string());
+        let bytes = encode_startup_normalization(&paths.fastctx_config, source, migration_notice)?;
+        let change = transaction::FileChange {
+            target: paths.fastctx_config.clone(),
+            original: Some(original),
+            action: transaction::FileAction::Write(bytes),
+            unix_mode: transaction::existing_unix_mode(&paths.fastctx_config).or(Some(0o600)),
+            locked_binary_fallback: false,
+        };
+        match transaction::commit(&[change]) {
+            Ok(()) => {
+                return Ok(StartupSettings {
+                    settings,
+                    migration_notice,
+                });
+            }
+            Err(_) if attempt + 1 < MAX_COMMIT_ATTEMPTS => {
+                // Another control process may have normalized the same file. Re-read the exact
+                // current snapshot; deterministic permission or shape failures surface below.
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the bounded startup-normalization loop always returns")
 }
 
 /// Inspects raw limit values so Status can report fallback rather than silently hiding it.
@@ -625,6 +711,7 @@ impl FastCtxSettings {
 /// Restores every user preference while retaining the Apply ownership receipt.
 pub(crate) fn reset_user_preferences(settings: &FastCtxSettings) -> FastCtxSettings {
     FastCtxSettings {
+        last_seen_version: settings.last_seen_version.clone(),
         applied: settings.applied.clone(),
         ..FastCtxSettings::default()
     }
@@ -697,8 +784,12 @@ pub fn load_from(path: &Path) -> Result<FastCtxSettings, String> {
             ));
         }
     };
+    decode_source(path, &source)
+}
+
+fn decode_source(path: &Path, source: &str) -> Result<FastCtxSettings, String> {
     let document = source.parse::<toml_edit::DocumentMut>().map_err(|error| {
-        let hint = if source_mentions_search_parallelism(&source) {
+        let hint = if source_mentions_search_parallelism(source) {
             search_parallelism_repair_hint()
         } else {
             String::new()
@@ -741,7 +832,7 @@ pub fn load_from(path: &Path) -> Result<FastCtxSettings, String> {
         ));
     }
     validate_search_parallelism_type(&document, path)?;
-    let mut settings: FastCtxSettings = toml_edit::de::from_str(&source).map_err(|error| {
+    let mut settings: FastCtxSettings = toml_edit::de::from_str(source).map_err(|error| {
         format!(
             "Cannot parse fastctx settings {}: {error}. Repair or remove the file and retry.",
             crate::paths::display_path(path)
@@ -766,6 +857,29 @@ pub fn load_from(path: &Path) -> Result<FastCtxSettings, String> {
         ));
     }
     Ok(settings)
+}
+
+fn encode_startup_normalization(
+    path: &Path,
+    source: &str,
+    reset_tool_budgets: bool,
+) -> Result<Vec<u8>, String> {
+    let mut document = source.parse::<toml_edit::DocumentMut>().map_err(|error| {
+        format!(
+            "Cannot normalize fastctx settings {}: {error}. No settings were changed.",
+            crate::paths::display_path(path)
+        )
+    })?;
+    document["schema_version"] = toml_edit::value(i64::from(CURRENT_SCHEMA_VERSION));
+    document["last_seen_version"] = toml_edit::value(env!("CARGO_PKG_VERSION"));
+    if reset_tool_budgets {
+        document.remove("tool_budgets");
+    }
+    let mut normalized = document.to_string();
+    if !normalized.ends_with('\n') {
+        normalized.push('\n');
+    }
+    Ok(normalized.into_bytes())
 }
 
 /// Encodes configuration as stable UTF-8 TOML.
@@ -818,8 +932,8 @@ mod tests {
         AppliedRecord, CURRENT_SCHEMA_VERSION, DEFAULT_JOB_LIST_LIMIT,
         DEFAULT_JOB_STORAGE_LIMIT_MIB, DEFAULT_MAX_RUNNING_JOBS, FastCtxSettings,
         MAX_JOB_LIST_LIMIT, ManagedFileRecord, Tier, ToolBudgetLevel, UpdateSource, encode,
-        job_limit_status, load_from, reset_user_preferences, save, search_parallelism_status,
-        update_settings_status,
+        job_limit_status, load_for_startup, load_from, reset_user_preferences, save,
+        search_parallelism_status, update_settings_status,
     };
     use crate::control::paths::ControlPaths;
 
@@ -827,14 +941,313 @@ mod tests {
     fn tier_budget_mapping_preserves_fifteen_percent_host_headroom() {
         let expected = [
             (Tier::Compact, 10_000, 8_500),
-            (Tier::Standard, 16_000, 13_600),
-            (Tier::High, 25_000, 21_250),
+            (Tier::Standard, 20_000, 17_000),
+            (Tier::High, 30_000, 25_500),
         ];
 
         for (tier, host_limit, fastctx_budget) in expected {
             assert_eq!(tier.host_limit(), host_limit);
             assert_eq!(tier.fastctx_budget(), fastctx_budget);
         }
+    }
+
+    #[test]
+    fn tool_budget_defaults_match_the_recentered_output_contract() {
+        let defaults = super::ToolBudgets::default();
+        assert_eq!(defaults.read, ToolBudgetLevel::Inherit);
+        assert_eq!(defaults.grep, ToolBudgetLevel::Percent50);
+        assert_eq!(defaults.glob, ToolBudgetLevel::Percent25);
+        assert_eq!(defaults.run, ToolBudgetLevel::Percent25);
+        assert_eq!(defaults.job_output, ToolBudgetLevel::Percent25);
+    }
+
+    #[test]
+    fn percentage_budgets_use_the_frozen_nearest_hundred_resolution() {
+        let cases = [
+            (8_500, [6_400, 4_300, 2_100]),
+            (17_000, [12_800, 8_500, 4_300]),
+            (25_500, [19_100, 12_800, 6_400]),
+        ];
+        for (global, expected) in cases {
+            let actual = [
+                ToolBudgetLevel::Percent75.resolve(global).unwrap(),
+                ToolBudgetLevel::Percent50.resolve(global).unwrap(),
+                ToolBudgetLevel::Percent25.resolve(global).unwrap(),
+            ];
+            assert_eq!(actual, expected, "global budget {global}");
+            assert!(actual.into_iter().all(|budget| budget <= global));
+        }
+    }
+
+    #[test]
+    fn default_tool_budgets_are_omitted_but_explicit_choices_round_trip() {
+        let defaults = FastCtxSettings::default();
+        let encoded = String::from_utf8(encode(&defaults).unwrap()).unwrap();
+        assert!(!encoded.contains("[tool_budgets]"), "{encoded}");
+
+        let mut customized = defaults;
+        customized.tool_budgets.grep = ToolBudgetLevel::Percent75;
+        let encoded = encode(&customized).unwrap();
+        let source = String::from_utf8(encoded.clone()).unwrap();
+        assert!(
+            source.contains("[tool_budgets]\nread = \"inherit\"\ngrep = \"percent75\""),
+            "{source}"
+        );
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, encoded).unwrap();
+        assert_eq!(
+            load_from(&path).unwrap().tool_budgets,
+            customized.tool_budgets
+        );
+    }
+
+    #[test]
+    fn startup_migrates_an_existing_unstamped_config_and_overwrites_custom_budgets_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        std::fs::write(
+            &paths.fastctx_config,
+            concat!(
+                "schema_version = 1\n",
+                "language = \"en\"\n",
+                "tier = \"high\"\n",
+                "\n[tool_budgets]\n",
+                "read = \"percent25\"\n",
+                "grep = \"percent75\"\n",
+                "glob = \"inherit\"\n",
+                "run = \"percent75\"\n",
+                "job_output = \"inherit\"\n",
+            ),
+        )
+        .unwrap();
+
+        let startup = load_for_startup(&paths).unwrap();
+        assert!(startup.migration_notice);
+        assert_eq!(startup.settings.tool_budgets, super::ToolBudgets::default());
+        assert_eq!(startup.settings.tier, Tier::High);
+        assert_eq!(
+            startup.settings.last_seen_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        let persisted = std::fs::read_to_string(&paths.fastctx_config).unwrap();
+        assert!(
+            persisted.contains(&format!(
+                "last_seen_version = \"{}\"",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{persisted}"
+        );
+        assert!(!persisted.contains("[tool_budgets]"), "{persisted}");
+
+        let after_first = std::fs::read(&paths.fastctx_config).unwrap();
+        let second = load_for_startup(&paths).unwrap();
+        assert!(!second.migration_notice);
+        assert_eq!(second.settings, startup.settings);
+        assert_eq!(std::fs::read(&paths.fastctx_config).unwrap(), after_first);
+    }
+
+    #[test]
+    fn startup_leaves_an_already_stamped_config_and_its_explicit_budgets_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        let original = format!(
+            concat!(
+                "schema_version = 1\n",
+                "last_seen_version = \"{}\"\n",
+                "language = \"en\"\n",
+                "\n[tool_budgets]\n",
+                "grep = \"percent75\"\n",
+            ),
+            env!("CARGO_PKG_VERSION")
+        );
+        std::fs::write(&paths.fastctx_config, original.as_bytes()).unwrap();
+
+        let startup = load_for_startup(&paths).unwrap();
+        assert!(!startup.migration_notice);
+        assert_eq!(
+            startup.settings.tool_budgets.grep,
+            ToolBudgetLevel::Percent75
+        );
+        assert_eq!(
+            std::fs::read(&paths.fastctx_config).unwrap(),
+            original.as_bytes()
+        );
+    }
+
+    #[test]
+    fn startup_advances_an_existing_watermark_without_reapplying_the_budget_migration() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        // A watermark that can never equal the crate version, so this test always exercises the
+        // advance path instead of the unchanged-watermark early return. (2026-07-24)
+        let original = concat!(
+            "schema_version = 1\n",
+            "last_seen_version = \"0.0.1\"\n",
+            "language = \"en\"\n",
+            "\n[tool_budgets]\n",
+            "grep = \"percent75\"\n",
+        );
+        std::fs::write(&paths.fastctx_config, original).unwrap();
+
+        let startup = load_for_startup(&paths).unwrap();
+        assert!(!startup.migration_notice);
+        assert_eq!(
+            startup.settings.tool_budgets.grep,
+            ToolBudgetLevel::Percent75
+        );
+        assert_eq!(
+            startup.settings.last_seen_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        let persisted = std::fs::read_to_string(&paths.fastctx_config).unwrap();
+        assert!(persisted.contains("grep = \"percent75\""), "{persisted}");
+        assert!(
+            persisted.contains(&format!(
+                "last_seen_version = \"{}\"",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{persisted}"
+        );
+    }
+
+    #[test]
+    fn startup_migration_preserves_an_invalid_search_limit_for_the_repair_ui() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        let source = concat!(
+            "schema_version = 1\n",
+            "language = \"en\"\n",
+            "\n[tool_budgets]\n",
+            "grep = \"percent75\"\n",
+            "\n[search]\n",
+            "max_cpu_cores = 0\n",
+        );
+        std::fs::write(&paths.fastctx_config, source).unwrap();
+
+        let startup = load_for_startup(&paths).unwrap();
+        assert!(startup.migration_notice);
+        assert_eq!(startup.settings.search.max_cpu_cores, Some(0));
+        assert_eq!(startup.settings.tool_budgets, super::ToolBudgets::default());
+        let persisted = std::fs::read_to_string(&paths.fastctx_config).unwrap();
+        assert!(persisted.contains("max_cpu_cores = 0"), "{persisted}");
+        assert!(!persisted.contains("[tool_budgets]"), "{persisted}");
+        assert!(persisted.contains("last_seen_version"), "{persisted}");
+    }
+
+    #[test]
+    fn startup_normalization_keeps_the_watermark_a_top_level_key_after_trailing_tables() {
+        // Normalization inserts a brand-new top-level key into a document that already opened
+        // tables. Rendering it after a table header would silently reparent it (update.
+        // last_seen_version), leaving the top level unstamped and re-migrating on every launch.
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        std::fs::write(
+            &paths.fastctx_config,
+            concat!(
+                "schema_version = 1\n",
+                "language = \"en\"\n",
+                "\n[tool_budgets]\n",
+                "grep = \"percent75\"\n",
+                "\n[update]\n",
+                "auto_check = false\n",
+                "\n[search]\n",
+                "max_cpu_cores = 2\n",
+            ),
+        )
+        .unwrap();
+
+        assert!(load_for_startup(&paths).unwrap().migration_notice);
+
+        let second = load_for_startup(&paths).unwrap();
+        assert!(!second.migration_notice);
+        assert_eq!(
+            second.settings.last_seen_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(!second.settings.update.auto_check);
+        assert_eq!(second.settings.search.max_cpu_cores, Some(2));
+    }
+
+    #[test]
+    fn failed_startup_migration_leaves_the_original_config_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+        let original = b"schema_version = 1\nlanguage = \"en\"\n";
+        std::fs::write(&paths.fastctx_config, original).unwrap();
+        let original_permissions = std::fs::metadata(&paths.fastctx_config)
+            .unwrap()
+            .permissions();
+        let mut read_only = original_permissions.clone();
+        read_only.set_readonly(true);
+        std::fs::set_permissions(&paths.fastctx_config, read_only).unwrap();
+
+        let result = load_for_startup(&paths);
+
+        std::fs::set_permissions(&paths.fastctx_config, original_permissions).unwrap();
+        let error = result.unwrap_err();
+        assert!(error.contains("read-only file"), "{error}");
+        assert_eq!(std::fs::read(&paths.fastctx_config).unwrap(), original);
+    }
+
+    #[test]
+    fn startup_normalization_never_overwrites_malformed_or_future_schema_files() {
+        let cases = [
+            b"schema_version = 999\nlanguage = \"en\"\n".as_slice(),
+            b"schema_version = 1\n[broken".as_slice(),
+        ];
+        for original in cases {
+            let temp = tempfile::tempdir().unwrap();
+            let paths = ControlPaths::for_home(temp.path());
+            std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
+            std::fs::write(&paths.fastctx_config, original).unwrap();
+
+            assert!(load_for_startup(&paths).is_err());
+            assert_eq!(std::fs::read(&paths.fastctx_config).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn fresh_startup_stamps_only_the_first_natural_save_and_never_misfires_as_an_upgrade() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+
+        let mut startup = load_for_startup(&paths).unwrap();
+        assert!(!startup.migration_notice);
+        assert!(!paths.fastctx_config.exists());
+        assert_eq!(
+            startup.settings.last_seen_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        startup.settings.language = Some("en".to_string());
+        save(&paths, &startup.settings).unwrap();
+
+        let persisted = std::fs::read_to_string(&paths.fastctx_config).unwrap();
+        assert!(persisted.contains("last_seen_version"), "{persisted}");
+        assert!(!load_for_startup(&paths).unwrap().migration_notice);
+    }
+
+    #[test]
+    fn ordinary_save_preserves_a_missing_watermark_instead_of_consuming_migration() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let settings = FastCtxSettings {
+            language: Some("en".to_string()),
+            last_seen_version: None,
+            ..FastCtxSettings::default()
+        };
+
+        save(&paths, &settings).unwrap();
+        let persisted = std::fs::read_to_string(&paths.fastctx_config).unwrap();
+        assert!(!persisted.contains("last_seen_version"), "{persisted}");
+        assert!(load_for_startup(&paths).unwrap().migration_notice);
     }
 
     #[test]
@@ -1013,11 +1426,11 @@ mod tests {
             version: "0.1.1".to_string(),
             command: "fastctx".to_string(),
             tier: Tier::High,
-            tool_output_token_limit: 25_000,
+            tool_output_token_limit: 30_000,
             tool_timeout_sec: Some(300),
             previous_token_limit_present: true,
             previous_token_limit: Some(10_000),
-            fastctx_token_budget: 21_250,
+            fastctx_token_budget: 25_500,
             tool_budgets: super::ToolBudgets::default(),
             fastshell_enabled: true,
             fastedit_enabled: false,
