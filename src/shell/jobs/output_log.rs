@@ -282,6 +282,27 @@ impl OutputLogReader {
                 display_path(&log_path)
             )
         })?;
+        let mut index = File::open(&index_path).map_err(|error| {
+            format!(
+                "Cannot read background output index {}: {error}. The full log remains readable at {}.",
+                display_path(&index_path),
+                display_path(&log_path)
+            )
+        })?;
+        // Sample the index length BEFORE the log length (2026-07-23). The live
+        // writer flushes log bytes before their index entries, so this order
+        // guarantees record_end <= log_len for every sampled entry. Sampling
+        // the log first races with an in-between writer flush and misreports a
+        // healthy index as damaged.
+        let index_len = index
+            .metadata()
+            .map_err(|error| {
+                format!(
+                    "Cannot inspect background output index {}: {error}",
+                    display_path(&index_path)
+                )
+            })?
+            .len();
         let log_len = log
             .metadata()
             .map_err(|error| {
@@ -292,23 +313,6 @@ impl OutputLogReader {
             })?
             .len();
         let (stream_encoding, bom_len) = detect_log_encoding(&mut log, log_len)?;
-
-        let mut index = File::open(&index_path).map_err(|error| {
-            format!(
-                "Cannot read background output index {}: {error}. The full log remains readable at {}.",
-                display_path(&index_path),
-                display_path(&log_path)
-            )
-        })?;
-        let index_len = index
-            .metadata()
-            .map_err(|error| {
-                format!(
-                    "Cannot inspect background output index {}: {error}",
-                    display_path(&index_path)
-                )
-            })?
-            .len();
         if index_len < INDEX_HEADER.len() as u64 {
             return Err(damaged_index(&index_path, &log_path));
         }
