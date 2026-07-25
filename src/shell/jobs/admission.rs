@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-/// Exclusive admission guard. It does not serialize spool readers or writers.
+/// Exclusive admission guard. It does not serialize job-record readers or log writers.
 pub(crate) struct AdmissionGuard {
     file: File,
     generation_path: PathBuf,

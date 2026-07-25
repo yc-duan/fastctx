@@ -58,7 +58,7 @@ fastctx
 
 Apply 会把当前二进制复制到 `~/.fastctx/bin/`，并让宿主配置指向这个稳定路径。清理或升级 npm 缓存后，已经应用的配置仍然有效。
 
-全屏终端会立即打开，同时 FastCtx 在后台线程中按本次启动来源检查更新。成功结果会在 `~/.fastctx` 之外的机器级私有存储中缓存 24 小时。npm 启动会针对实际 launcher 包，使用全新的独立缓存和 `--prefer-online` 查询；直接下载的 GitHub Release 程序会从 GitHub 的 `releases/latest` 网页重定向读取稳定 tag。发现新版本后，主菜单会持续显示入口，可进入独立界面选择 **更新并重启** 或 **继续使用**。
+启动时，FastCtx 会先按本次启动来源检查更新，然后才进入主菜单。检查期间显示一个简短的检查画面，等待时间有严格上限：若检查无法完成——离线、超时、限流——FastCtx 会静默进入，独立的 **更新** 界面随时提供手动检查。检测到可安装的新版本时，会直接打开更新界面询问：**更新并重启**，或 **继续使用** 当前版本。成功结果会在 `~/.fastctx` 之外的机器级私有存储中缓存 24 小时，因此多数启动完全不触网。npm 启动会针对实际 launcher 包，使用全新的独立缓存和 `--prefer-online` 查询；直接下载的 GitHub Release 程序会从 GitHub 的 `releases/latest` 网页重定向读取稳定 tag。
 
 如果 GitHub 已发布新版本、但 npm 暂时还没有显示对应版本，FastCtx 会明确进入“等待 npm 同步”界面，而不是相信陈旧结果。每次 **重试** 都会再建一个独立缓存，不清理、也不修改用户原有 npm 缓存。网络、限流等瞬态失败保持安静，并记录在 **状态** 页面；发布元数据结构异常只警告一次。状态页面也提供绕过 24 小时缓存的手动检查。确认 npm 更新后只安装精确版本，并禁用生命周期脚本。GitHub Release 更新会下载本仓库对应平台的归档与汇总 `SHA256SUMS`，先校验归档，再安全解出二进制、执行版本探测并原子替换；重启健康检查失败会回滚。npm 更新失败会精确恢复先前包版本；任何更新事务失败都会重新打开旧版 TUI 并显示警告。更新成功后，由 FastCtx 拥有的 `~/.fastctx/bin/` Apply 副本会同步更新，外部改写过的副本保持不动。
 
@@ -140,13 +140,13 @@ FastCtx 提供九个同级 MCP 工具：
 
 | 工具 | 用途 |
 |---|---|
-| `read` | 读取文本、图片、PDF 和任意文件的原始字节 |
+| `read` | 读取任意受支持的单文件，或批量读取 1–32 个文本文件 |
 | `grep` | 搜索单个文件或项目树中的内容 |
 | `glob` | 按路径模式查找文件 |
 | `replace` | 对文件或项目树执行机械批量替换 |
 | `run` | 前台执行 Bash 命令 |
 | `run_background` | 启动后台 Bash 任务 |
-| `job_output` | 增量读取后台任务输出 |
+| `job_output` | 查询后台任务并显示最新的未见输出 |
 | `job_kill` | 终止后台任务的整个进程树 |
 | `job_list` | 找回运行中及已留存的终态任务 |
 
@@ -173,6 +173,20 @@ FastCtx 提供九个同级 MCP 工具：
 ```
 
 终态中的续读参数可以直接用于下一次调用。上例继续传入 `offset=160` 即可读取后续内容。
+
+已经知道多个相关文本文件时，应一次批量传入，避免为每个文件额外消耗一轮智能体往返：
+
+```json
+{
+  "files": [
+    {"path": "V:/repo/src/main.rs", "offset": 120, "limit": 40},
+    {"path": "V:/repo/src/config.rs"},
+    {"path": "V:/repo/docs/legacy.txt", "encoding": "gbk"}
+  ]
+}
+```
+
+`files` 形态接受 1–32 个文本文件，严格保持请求顺序，并在同一份 read 预算内装箱。某个成员不存在、为空、属于二进制或编码无法判定时，问题会留在该文件自己的段内，其余文件继续处理。预算装满后，末行 `Partial` 会给出下一次调用可原样使用的紧凑 `files=[...]` 数组，包含逐文件 offset、剩余 limit 与 encoding。图片、PDF 和 hex 视图仍使用单文件调用。
 
 `read` 还支持：
 
@@ -306,13 +320,15 @@ V:/repo/Cargo.toml
 
 每个任务由独立监督进程管理，不归 MCP server 所有。server 退出、ChatGPT / Codex 重启或切换会话时，任务仍会继续运行，直到命令自然结束或被 `job_kill` 终止。后台任务不提供超时参数。
 
-输出与退出状态保存在 `~/.fastctx/jobs/`，因此新的 FastCtx server 可以凭同一 job id 继续读取。每个任务保留 8 MiB 滚动输出窗口；需要完整日志时，应把命令输出重定向到文件。
+输出与退出状态保存在 `~/.fastctx/jobs/`，因此新的 FastCtx server 可以凭同一 job id 继续读取。对于按当前格式启动的任务，打印的一切都会追加进那里的一个纯文本日志文件——不做轮转、不丢弃——任务启动时会返回它的路径，`read` 与 `grep` 可以直接作用于它。
+
+只要一个 FastCtx server 仍在追踪它启动或查询过的任务，该 server 的每个成功文本结果都会附带一行后台读数，列出各任务当前状态与已运行时间。读数只会在下一次工具调用时刷新；它不是通知，调用方停下来时不会收到任何推送。终态条目会一直保留，直到该 server 用 `job_output` 或 `job_kill` 处理对应任务。
 
 ### `job_output`
 
-`job_output` 增量读取后台任务的新输出，也能读取此前会话启动的任务，并返回 `running`、`exited` 或 `interrupted` 状态。`wait_ms` 支持长轮询；`after_seq` 可以重新锚定读取位置，在调用重试时保持分页稳定。
+`job_output` 查询一个后台任务（也能查询此前会话启动的任务），返回 `running`、`exited` 或 `interrupted` 状态，以及调用方尚未看到的最新输出。`wait_ms`（0–240000，默认 30000）是这次查询最多可以花多久：任务结束即返回，否则等满这个窗口，中间新行不会让调用提前返回。需要立刻拍快照就传 `wait_ms=0`；只有手上没有其他事可做时才应调大它，因为这次调用会一直阻塞。当前格式的输出过长时按窗口交付——装得下的最新若干行，加上首次调用时日志开头的一段——并由一条注给出被跳过的确切行号区间和可供读取的日志路径。该日志的行号与 `after_seq` 使用的 `seq` 是同一套编号，因此在两个工具之间移动无需换算。上一版分段格式写出的记录仍可读取，也兼容旧监督进程继续追加；但它不会假装拥有直接日志坐标，旧环形窗口已经淘汰的字节也无法恢复。
 
-持续调用，直到结果末行显示 `Complete`。缓冲区发生淘汰时，响应会报告已经丢失的行数，并提示将命令输出重定向到文件以保留完整日志。
+只有任务结束后才会出现 `Complete`；开发服务器或 watcher 可能永远不会到达该状态。当前格式后台任务的日志会保留每一行，所以响应里没展示的内容，一次 `read` 或 `grep` 就能取回；只有上一版格式创建的存量记录受前述兼容边界限制。
 
 ### `job_kill`
 
@@ -338,7 +354,7 @@ FastCtx MCP server 继承宿主进程的本地权限。
 | TUI 更新检查 | npm 与 GitHub Release 启动时开启 | 从 `registry.npmjs.org` 与 GitHub 的 `releases/latest` 网页重定向获取版本元数据；下载必须由用户确认 |
 | MCP runtime 网络请求 | 无 | `serve` 与工具调用不产生遥测或更新流量 |
 
-启动检查只会发送 FastCtx 版本、常规 HTTPS 请求元数据，以及 npm 的标准仓库请求；不会发送仓库路径、任务数据或文件内容。后台任务的命令、工作目录、滚动 stdout/stderr 与退出状态只保存在当前用户的私有目录 `~/.fastctx/jobs/` 中，FastCtx 不会上传这些数据。Bash 命令仍可按照命令本身访问网络。预构建版本已经内嵌 PDF 引擎。
+启动检查只会发送 FastCtx 版本、常规 HTTPS 请求元数据，以及 npm 的标准仓库请求；不会发送仓库路径、任务数据或文件内容。后台任务的命令、工作目录、输出与退出状态只保存在当前用户的私有目录 `~/.fastctx/jobs/` 中；当前格式任务使用完整纯文本日志。FastCtx 不会上传这些数据。Bash 命令仍可按照命令本身访问网络。预构建版本已经内嵌 PDF 引擎。
 
 MCP server 位于宿主文件沙箱之外。需要逐次确认写入和命令执行时，可以配置：
 
@@ -361,13 +377,13 @@ Codex code mode 会把普通 MCP 工具放入执行容器，多次调用的聚�
 direct_only_tool_namespaces = ["mcp__fastctx"]
 ```
 
-Apply 会自动维护这一项，并在 `~/.codex/AGENTS.md` 中写入带边界标记的引导段，让模型优先使用 FastCtx 工具。
+Apply 会自动维护这一项，并在 `~/.codex/AGENTS.md` 中写入带边界标记的引导段。该引导把 FastCtx 的使用范围限定为本地文件读取、搜索和查找，要求只读任务真正需要的内容，并让多个已知文件进入一次 `files=[...]` read 调用。
 
-FastCtx 默认使用 8500 token 的内部输出预算，约为 Codex 默认工具输出上限的 85%。控制终端提供三个档位：
+控制终端提供三个输出档位。每档的 FastCtx 内部预算都保持为宿主上限的 85%，让响应在 Codex 截断终态之前主动收口：
 
-- `Standard`：默认档；
-- `High`：提高 Codex 全局工具输出上限；
-- `Extra High`：提供最大的单次工具输出空间。
+- `Compact`：宿主上限 10000，FastCtx 预算 8500；
+- `Standard`：默认档，宿主上限 20000，FastCtx 预算 17000；
+- `High`：宿主上限 30000，FastCtx 预算 25500。
 
 输出档位越高，单次结果越大，上下文消耗也越快。请按任务实际需要调整。
 
@@ -379,6 +395,7 @@ FastCtx 默认使用 8500 token 的内部输出预算，约为 Codex 默认工�
 command = "C:/absolute/path/to/fastctx.exe"
 args = ["serve"]
 startup_timeout_sec = 120
+tool_timeout_sec = 300
 
 [features.code_mode]
 direct_only_tool_namespaces = ["mcp__fastctx"]
@@ -400,8 +417,8 @@ FastCtx 使用或管理以下内容：
 
 - `~/.fastctx/bin/fastctx(.exe)`：稳定的自安装二进制；
 - `~/.fastctx/config.toml`：控制终端配置与 Apply 回执；
-- `~/.fastctx/jobs/`：由 `run_background` 按需创建的持久后台任务记录与滚动输出；
-- `~/.codex/config.toml` 中的 `[mcp_servers.fastctx]`；
+- `~/.fastctx/jobs/`：由 `run_background` 按需创建的持久后台任务记录与当前格式完整输出日志；
+- `~/.codex/config.toml` 中的 `[mcp_servers.fastctx]`，其中包括 `tool_timeout_sec = 300`；
 - `direct_only_tool_namespaces` 中的 `mcp__fastctx` 元素；
 - `~/.codex/AGENTS.md` 中带边界标记的 FastCtx 段；
 - 用户确认后的 `tool_output_token_limit` 档位值。

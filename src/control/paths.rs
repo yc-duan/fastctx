@@ -34,7 +34,7 @@ pub struct ControlPaths {
     pub fastctx_dir: PathBuf,
     /// FastCtx configuration file.
     pub fastctx_config: PathBuf,
-    /// Persistent background-job registry and spool directory.
+    /// Persistent background-job registry and complete output-log directory.
     pub jobs_dir: PathBuf,
     /// Self-installed binary directory.
     pub fastctx_bin_dir: PathBuf,

@@ -2,11 +2,14 @@
 
 use crate::operation::{WorkCheckpoint, WorkStop};
 use crate::{ToolContent, ToolResponse};
+use std::cell::RefCell;
 use std::fmt;
 use std::sync::Arc;
 
 /// Default output budget with 15% headroom below the Codex host's approximate 10k-token limit.
 pub const DEFAULT_TOKEN_BUDGET: usize = 8_500;
+/// Environment variable for the global text budget.
+pub const GLOBAL_TOKEN_BUDGET_ENV: &str = "FASTCTX_TOKEN_BUDGET";
 /// Environment variable for the read-specific budget.
 pub const READ_TOKEN_BUDGET_ENV: &str = "FASTCTX_READ_TOKEN_BUDGET";
 /// Environment variable for the grep-specific budget.
@@ -27,10 +30,151 @@ pub struct TokenBudget {
     pub variable: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReservationLevel {
+    Full,
+    Summary,
+    None,
+}
+
+#[derive(Clone, Debug)]
+struct ResponseReservationState {
+    variable: &'static str,
+    configured_budget: usize,
+    full_line: String,
+    full_tokens: usize,
+    summary_line: String,
+    summary_tokens: usize,
+    level: ReservationLevel,
+}
+
+thread_local! {
+    static RESPONSE_RESERVATION: RefCell<Option<ResponseReservationState>> = const { RefCell::new(None) };
+}
+
+/// One thread-local response-budget reservation installed around a single tool formatter.
+pub(crate) struct ResponseReservation {
+    previous: Option<ResponseReservationState>,
+    active: bool,
+}
+
+/// The status line selected after the formatter has had a chance to request a fallback.
+pub(crate) struct ResponseReservationOutcome {
+    pub(crate) configured_budget: usize,
+    pub(crate) line: Option<String>,
+    pub(crate) summary_line: String,
+}
+
+impl ResponseReservation {
+    /// Reserves the exact rendered status-line cost before the tool reads its budget.
+    pub(crate) fn install(
+        variable: &'static str,
+        full_line: String,
+        summary_line: String,
+    ) -> Option<Self> {
+        let configured_budget = configured_tool_token_budget(variable).ok()?.value;
+        Some(Self::install_with_budget(
+            variable,
+            configured_budget,
+            full_line,
+            summary_line,
+        ))
+    }
+
+    fn install_with_budget(
+        variable: &'static str,
+        configured_budget: usize,
+        full_line: String,
+        summary_line: String,
+    ) -> Self {
+        // A status line is inserted with at most one extra blank-line separator. Counting
+        // the pieces independently is conservative because joining pieces can merge tokens
+        // across the boundary but cannot require more than encoding both pieces separately.
+        let separator_tokens = estimate_tokens("\n\n");
+        let full_tokens = estimate_tokens(&full_line).saturating_add(separator_tokens);
+        let summary_tokens = estimate_tokens(&summary_line).saturating_add(separator_tokens);
+        // A successful text response always has user content, so an exact-fit status would
+        // consume the whole budget and must yield to the next tier.
+        let level = if full_tokens < configured_budget {
+            ReservationLevel::Full
+        } else if summary_tokens < configured_budget {
+            ReservationLevel::Summary
+        } else {
+            ReservationLevel::None
+        };
+        let state = ResponseReservationState {
+            variable,
+            configured_budget,
+            full_line,
+            full_tokens,
+            summary_line,
+            summary_tokens,
+            level,
+        };
+        let previous = RESPONSE_RESERVATION.with(|slot| slot.borrow_mut().replace(state));
+        Self {
+            previous,
+            active: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_for_test(
+        variable: &'static str,
+        configured_budget: usize,
+        full_line: String,
+        summary_line: String,
+    ) -> Self {
+        Self::install_with_budget(variable, configured_budget, full_line, summary_line)
+    }
+
+    /// Relaxes full status to the summary and then to no status.
+    pub(crate) fn downgrade(&self) -> bool {
+        downgrade_response_reservation(None)
+    }
+
+    /// Restores any outer reservation and returns the line selected for this response.
+    pub(crate) fn finish(mut self) -> ResponseReservationOutcome {
+        let state = RESPONSE_RESERVATION.with(|slot| slot.borrow_mut().take());
+        RESPONSE_RESERVATION.with(|slot| *slot.borrow_mut() = self.previous.take());
+        self.active = false;
+        let state = state.expect("an installed response reservation must remain active");
+        let summary_line = state.summary_line.clone();
+        let line = match state.level {
+            ReservationLevel::Full => Some(state.full_line),
+            ReservationLevel::Summary => Some(state.summary_line),
+            ReservationLevel::None => None,
+        };
+        ResponseReservationOutcome {
+            configured_budget: state.configured_budget,
+            line,
+            summary_line,
+        }
+    }
+}
+
+impl Drop for ResponseReservation {
+    fn drop(&mut self) {
+        if self.active {
+            RESPONSE_RESERVATION.with(|slot| {
+                *slot.borrow_mut() = self.previous.take();
+            });
+        }
+    }
+}
+
 /// Reads the global text budget, rejecting invalid configuration instead of silently falling back.
 pub fn token_budget() -> Result<usize, String> {
-    match std::env::var("FASTCTX_TOKEN_BUDGET") {
-        Ok(value) => parse_token_budget("FASTCTX_TOKEN_BUDGET", &value),
+    let configured = configured_token_budget()?;
+    Ok(apply_response_reservation(
+        GLOBAL_TOKEN_BUDGET_ENV,
+        configured,
+    ))
+}
+
+fn configured_token_budget() -> Result<usize, String> {
+    match std::env::var(GLOBAL_TOKEN_BUDGET_ENV) {
+        Ok(value) => parse_token_budget(GLOBAL_TOKEN_BUDGET_ENV, &value),
         Err(std::env::VarError::NotPresent) => Ok(DEFAULT_TOKEN_BUDGET),
         Err(std::env::VarError::NotUnicode(_)) => Err(
             "Invalid FASTCTX_TOKEN_BUDGET value: expected a UTF-8 positive integer.".to_string(),
@@ -40,7 +184,13 @@ pub fn token_budget() -> Result<usize, String> {
 
 /// Reads a tool budget; omission inherits the global value and explicit values may not exceed it.
 pub fn tool_token_budget(variable: &'static str) -> Result<TokenBudget, String> {
-    let global = token_budget()?;
+    let mut budget = configured_tool_token_budget(variable)?;
+    budget.value = apply_response_reservation(variable, budget.value);
+    Ok(budget)
+}
+
+fn configured_tool_token_budget(variable: &'static str) -> Result<TokenBudget, String> {
+    let global = configured_token_budget()?;
     match std::env::var(variable) {
         Ok(value) => {
             let value = parse_token_budget(variable, &value)?;
@@ -64,7 +214,7 @@ pub fn tool_token_budget(variable: &'static str) -> Result<TokenBudget, String> 
 /// Returns a safe ceiling for formatting a budget-configuration error before
 /// the requested tool budget itself can be trusted.
 pub(crate) fn error_budget_hint(variable: &'static str) -> usize {
-    let Ok(global) = token_budget() else {
+    let Ok(global) = configured_token_budget() else {
         return DEFAULT_TOKEN_BUDGET;
     };
     match std::env::var(variable) {
@@ -73,6 +223,65 @@ pub(crate) fn error_budget_hint(variable: &'static str) -> usize {
             .filter(|value| *value <= global)
             .unwrap_or(global),
         Err(_) => global,
+    }
+}
+
+fn apply_response_reservation(variable: &'static str, configured: usize) -> usize {
+    RESPONSE_RESERVATION.with(|slot| {
+        let slot = slot.borrow();
+        let Some(state) = slot.as_ref().filter(|state| state.variable == variable) else {
+            return configured;
+        };
+        let reserved = match state.level {
+            ReservationLevel::Full => state.full_tokens,
+            ReservationLevel::Summary => state.summary_tokens,
+            ReservationLevel::None => 0,
+        };
+        state.configured_budget.saturating_sub(reserved)
+    })
+}
+
+fn downgrade_response_reservation(variable: Option<&'static str>) -> bool {
+    RESPONSE_RESERVATION.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(state) = slot
+            .as_mut()
+            .filter(|state| variable.is_none_or(|variable| state.variable == variable))
+        else {
+            return false;
+        };
+        state.level = match state.level {
+            // Keep at least one token available for the user-facing response body.
+            ReservationLevel::Full if state.summary_tokens < state.configured_budget => {
+                ReservationLevel::Summary
+            }
+            ReservationLevel::Full | ReservationLevel::Summary => ReservationLevel::None,
+            ReservationLevel::None => return false,
+        };
+        true
+    })
+}
+
+/// Relaxes the background status by one tier and returns the newly available tool budget.
+pub(crate) fn relax_tool_token_budget(
+    variable: &'static str,
+) -> Result<Option<TokenBudget>, String> {
+    if !downgrade_response_reservation(Some(variable)) {
+        return Ok(None);
+    }
+    tool_token_budget(variable).map(Some)
+}
+
+/// Makes room for an irreducible response note before an operation with side effects begins.
+pub(crate) fn tool_token_budget_for_required(
+    variable: &'static str,
+    required_tokens: usize,
+) -> Result<TokenBudget, String> {
+    loop {
+        let budget = tool_token_budget(variable)?;
+        if budget.value >= required_tokens || !downgrade_response_reservation(Some(variable)) {
+            return Ok(budget);
+        }
     }
 }
 

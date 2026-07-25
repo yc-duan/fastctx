@@ -285,10 +285,34 @@ jobs:
         run: |
           notes="$RUNNER_TEMP/fastctx-release-notes.md"
           cat > "$notes" <<'EOF'
-          FastCtx v0.2.1 repairs in-app updates from v0.1.1.
+          FastCtx v0.2.2 spends fewer turns per task.
 
-          - Fixes the in-app update from v0.1.1 failing with "updated FastCtx exited before finalization" and rolling back: the updated binary now reads update requests written by v0.1.1, so the update page upgrades straight to v0.2.1. If your update to v0.2.0 failed, just run the update again.
-          - Includes everything in v0.2.0: the rebuilt grep/glob engine (cancellable searches, bounded in-process parallelism, exact o200k budgeting, byte-for-byte v0.1.1 output), the opt-in `search.max_cpu_cores` cap, the settings-reset action, `CODEX_HOME` support with a `--codex-home` flag, the stdin-EOF shutdown fix, the Windows elevated-install edit-lock fix, and the decoupled Node/npm layout fix for update checks.
+          A session loses time to two things: round trips, and output that is gone before anyone reads it. This release works on both, and clears out the places where the tools used to send the model down a dead end.
+
+          ### Reading
+
+          - `read` takes a `files` array. One call delivers several whole files packed into the output budget instead of one round trip each, and a missing or unreadable path is reported in its own segment rather than discarding the rest of the batch.
+          - Output budgets are recentred. Standard now writes `tool_output_token_limit = 20000` and High `30000`, and the per-tool shares are read 100%, grep and `run` 50%, glob and `job_output` 25%. Existing installs get a one-time notice on the next launch and pick up the new defaults after one re-apply.
+          - The nine tool descriptions are about 20% smaller. Each keeps what decides which tool and which mode to reach for; mechanics the JSON schema already states are no longer repeated in prose that every turn pays for.
+
+          ### Background jobs
+
+          - A background job now keeps a complete plain-text log on disk instead of a rolling window, so its output is no longer dropped while nobody is watching. `job_output` returns the newest window plus the exact `read` coordinates of whatever it left out — that log's line numbers are the same numbers both tools take.
+          - While a job runs, every FastCtx result carries a one-line background status naming each job and how long it has run, just above the closing status line, so a job that finishes while the model is busy elsewhere is no longer silently forgotten. It is a readout, not a notification: it refreshes when a tool is called, and nothing arrives if the caller stops.
+          - `job_output` no longer comes back empty the moment there is nothing new. It waits out its window — 30 seconds by default, up to four minutes, the ceiling `run` already had — and returns as soon as the job ends. Applying FastCtx also pins Codex's `tool_timeout_sec` to 300 so the host does not cut those waits short.
+
+          ### Fewer dead ends
+
+          - A truncated `run` result says what was cut without telling the model to run the command again. Output big enough to be truncated usually came from a command that did real work, and re-running it repeated that work. `run` now gets half the output budget instead of a quarter, and the way to keep a full log stays in the tool's description, where it is read before the command runs rather than after it.
+          - `apply_patch` is carved out of `run`. Codex resolves that word on its own shell channel, so a patch routed through `run` reaches real bash and comes back as a missing command; the guidance now names where to reach it, and a failed command that looks like that mistake says the same thing on the spot.
+          - Rows of failing `Read MCP resource` calls attributed to FastCtx are gone. Codex publishes its generic resource tools for every MCP server whatever that server actually supports; FastCtx now turns all three down with a message naming the tool and the path form to use instead.
+          - Several instructions the model acts on were corrected, including one that told it to keep calling `job_output` until a job reports `Complete` — which a development server or a file watcher never does.
+
+          ### Updates and fixes
+
+          - Startup asks about an available update on its own page instead of a toast that could be missed. No update, a network failure, or a slow check all pass straight through to the menu.
+          - Update checks work again under npm 12, which changed `npm view --json` to always return an array.
+          - An active background job no longer reports a damaged output index while it is being tailed.
           EOF
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release delete "${GITHUB_REF_NAME}" --yes

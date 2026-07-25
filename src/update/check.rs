@@ -46,6 +46,13 @@ enum InstallChannel {
     Unsupported,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum StartupCheckPreflight {
+    Skip,
+    Run,
+    Ready(StartupUpdate),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NpmReceiptVersion {
     V1,
@@ -140,19 +147,90 @@ pub(crate) fn spawn_update_check(
     paths: ControlPaths,
     force: bool,
 ) -> mpsc::Receiver<StartupUpdate> {
+    spawn_update_check_with(move || {
+        if force {
+            force_check_for_update(&paths)
+        } else {
+            check_for_update(&paths)
+        }
+    })
+}
+
+fn spawn_update_check_with(
+    check: impl FnOnce() -> StartupUpdate + Send + 'static,
+) -> mpsc::Receiver<StartupUpdate> {
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(|| {
-            if force {
-                force_check_for_update(&paths)
-            } else {
-                check_for_update(&paths)
-            }
-        })
-        .unwrap_or_else(|_| StartupUpdate::Failed(structural("the update-check worker panicked")));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(check)).unwrap_or_else(|_| {
+                StartupUpdate::Failed(structural("the update-check worker panicked"))
+            });
         let _ = sender.send(result);
     });
     receiver
+}
+
+/// Starts the bounded TUI startup gate only when automatic updates are both
+/// enabled and supported by the current installation source. Skipped cases do
+/// not allocate a channel or spawn a worker thread.
+pub(crate) fn spawn_startup_update_check(
+    paths: ControlPaths,
+) -> Option<mpsc::Receiver<StartupUpdate>> {
+    let preflight = if update_check_disabled() {
+        StartupCheckPreflight::Skip
+    } else {
+        match settings::load(&paths) {
+            Ok(settings) if !settings.update.auto_check => StartupCheckPreflight::Skip,
+            Ok(_) => match std::env::current_exe() {
+                Ok(current_executable) => startup_check_preflight(
+                    &paths,
+                    &current_executable,
+                    &|name| std::env::var_os(name),
+                    option_env!("FASTCTX_DISTRIBUTION") == Some(GITHUB_RELEASE_DISTRIBUTION),
+                ),
+                Err(error) => StartupCheckPreflight::Ready(StartupUpdate::Failed(structural(
+                    format!("cannot locate the running FastCtx binary: {error}"),
+                ))),
+            },
+            Err(error) => StartupCheckPreflight::Ready(StartupUpdate::Failed(structural(format!(
+                "cannot read update settings: {error}"
+            )))),
+        }
+    };
+    materialize_startup_check(
+        preflight,
+        || spawn_update_check(paths, false),
+        |result| {
+            let (sender, receiver) = mpsc::channel();
+            let _ = sender.send(result);
+            receiver
+        },
+    )
+}
+
+fn materialize_startup_check<T>(
+    preflight: StartupCheckPreflight,
+    run: impl FnOnce() -> T,
+    ready: impl FnOnce(StartupUpdate) -> T,
+) -> Option<T> {
+    match preflight {
+        StartupCheckPreflight::Skip => None,
+        StartupCheckPreflight::Run => Some(run()),
+        StartupCheckPreflight::Ready(result) => Some(ready(result)),
+    }
+}
+
+fn startup_check_preflight(
+    paths: &ControlPaths,
+    current_executable: &Path,
+    get_env: &dyn Fn(&str) -> Option<OsString>,
+    is_github_release_build: bool,
+) -> StartupCheckPreflight {
+    match detect_install_channel(paths, current_executable, get_env, is_github_release_build) {
+        Ok(InstallChannel::Unsupported) => StartupCheckPreflight::Skip,
+        Ok(InstallChannel::Npm(_) | InstallChannel::GithubRelease) => StartupCheckPreflight::Run,
+        Err(error) => StartupCheckPreflight::Ready(StartupUpdate::Failed(structural(error))),
+    }
 }
 
 /// Reads the last matching update attempt without touching the network or creating storage.
@@ -1273,10 +1351,30 @@ fn run_npm_view(
     parse_npm_latest(&output.stdout).map(Some)
 }
 
+/// Accepts both `npm view <spec> version --json` output shapes: the bare JSON
+/// string emitted through npm 11 and the array npm 12+ always emits
+/// (npm/cli 12.0.0 changelog). Empty or multi-version arrays stay rejected.
 fn parse_npm_latest(bytes: &[u8]) -> Result<Version, CheckFailure> {
-    let value: String = serde_json::from_slice(bytes).map_err(|error| {
-        structural(format!("npm returned invalid latest-version JSON: {error}"))
-    })?;
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum NpmViewVersion {
+        Single(String),
+        List(Vec<String>),
+    }
+    let value = match serde_json::from_slice(bytes)
+        .map_err(|error| structural(format!("npm returned invalid latest-version JSON: {error}")))?
+    {
+        NpmViewVersion::Single(value) => value,
+        NpmViewVersion::List(values) => match <[String; 1]>::try_from(values) {
+            Ok([value]) => value,
+            Err(values) => {
+                return Err(structural(format!(
+                    "npm returned {} latest-version entries, expected exactly one",
+                    values.len()
+                )));
+            }
+        },
+    };
     let version = Version::parse(value.trim()).map_err(|error| {
         structural(format!(
             "npm returned invalid FastCtx version {value:?}: {error}"
@@ -1539,12 +1637,13 @@ mod tests {
     use super::{
         CacheResolution, InstallChannel, NODE_ENV, NPM_CLI_ENV, NPM_DRIVER_ENV, NPM_HANDOFF_ENV,
         NPM_LAUNCHER_ENV, NPM_LAUNCHER_PID_ENV, NPM_MARKER_ENV, NPM_MODE_ENV, NPM_PACKAGE_ENV,
-        NpmCheckContext, NpmProbeBackend, RegistryCandidate, RegistryLatest,
+        NpmCheckContext, NpmProbeBackend, RegistryCandidate, RegistryLatest, StartupCheckPreflight,
         authoritative_npm_target, automatic_check_disabled, build_npm_outcome,
-        detect_install_channel, github_update_plan, normalize_registry_url, npm_view_arguments,
-        parse_latest_redirect, parse_npm_latest, probe_npm_channel_with_backend,
-        registry_candidates, resolve_with_cache, run_update_check_if_enabled,
-        select_ready_candidate, transient,
+        detect_install_channel, github_update_plan, materialize_startup_check,
+        normalize_registry_url, npm_view_arguments, parse_latest_redirect, parse_npm_latest,
+        probe_npm_channel_with_backend, registry_candidates, resolve_with_cache,
+        run_update_check_if_enabled, select_ready_candidate, spawn_update_check_with,
+        startup_check_preflight, transient,
     };
     use crate::control::paths::ControlPaths;
     use crate::control::settings::UpdateSource;
@@ -2003,6 +2102,38 @@ mod tests {
         );
         assert!(
             parse_npm_latest(br#""0.2.0-beta.1""#)
+                .unwrap_err()
+                .message
+                .contains("prerelease")
+        );
+    }
+
+    #[test]
+    fn npm_latest_accepts_both_view_json_shapes_across_npm_majors() {
+        // Golden shapes captured from real `npm view fastctx version --json`:
+        // npm 11 emits a bare string, npm 12+ always emits an array (issue #12).
+        assert_eq!(
+            parse_npm_latest(br#""0.2.1""#).unwrap(),
+            Version::new(0, 2, 1)
+        );
+        assert_eq!(
+            parse_npm_latest(b"[\n  \"0.2.1\"\n]").unwrap(),
+            Version::new(0, 2, 1)
+        );
+        let empty = parse_npm_latest(br"[]").unwrap_err();
+        assert_eq!(empty.kind, CheckFailureKind::Structural);
+        assert!(empty.message.contains("0 latest-version entries"));
+        let ambiguous = parse_npm_latest(br#"["0.2.0", "0.2.1"]"#).unwrap_err();
+        assert_eq!(ambiguous.kind, CheckFailureKind::Structural);
+        assert!(ambiguous.message.contains("2 latest-version entries"));
+        assert!(
+            parse_npm_latest(br#"[["0.2.1"]]"#)
+                .unwrap_err()
+                .message
+                .contains("invalid latest-version JSON")
+        );
+        assert!(
+            parse_npm_latest(br#"["0.2.1-beta.1"]"#)
                 .unwrap_err()
                 .message
                 .contains("prerelease")
@@ -2474,6 +2605,53 @@ mod tests {
     }
 
     #[test]
+    fn skipped_startup_preflight_allocates_no_channel_and_starts_no_worker() {
+        let result = materialize_startup_check::<()>(
+            StartupCheckPreflight::Skip,
+            || panic!("a skipped startup check must not spawn a worker"),
+            |_| panic!("a skipped startup check must not allocate a ready-result channel"),
+        );
+        assert_eq!(result, None);
+
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let direct = temp.path().join(if cfg!(windows) {
+            "downloaded-fastctx.exe"
+        } else {
+            "downloaded-fastctx"
+        });
+        std::fs::write(&direct, b"fixture").unwrap();
+        assert_eq!(
+            startup_check_preflight(&paths, &direct, &|_| None, false),
+            StartupCheckPreflight::Skip
+        );
+    }
+
+    #[test]
+    fn startup_preflight_turns_invalid_supported_provenance_into_one_ready_warning() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join(if cfg!(windows) {
+            "fastctx.exe"
+        } else {
+            "fastctx"
+        });
+        std::fs::write(&executable, b"fixture").unwrap();
+        let environment = BTreeMap::from([(NPM_MARKER_ENV, OsString::from("2"))]);
+        let preflight = startup_check_preflight(
+            &paths,
+            &executable,
+            &|name| environment.get(name).cloned(),
+            false,
+        );
+        let StartupCheckPreflight::Ready(StartupUpdate::Failed(failure)) = preflight else {
+            panic!("invalid npm provenance must be surfaced before a worker is spawned");
+        };
+        assert_eq!(failure.kind, CheckFailureKind::Structural);
+        assert!(failure.message.contains("did not provide"));
+    }
+
+    #[test]
     fn ttl_hit_is_a_zero_probe_oracle_and_force_bypasses_it() {
         let temp = tempfile::tempdir().unwrap();
         let checked_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
@@ -2521,6 +2699,70 @@ mod tests {
         );
         assert_eq!(calls.get(), 1);
         assert_eq!(result, StartupUpdate::None);
+    }
+
+    #[test]
+    fn a_detached_startup_worker_still_commits_its_success_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().to_path_buf();
+        let checked_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let expected_outcome = if super::expected_release_archive_name().is_some() {
+            CachedOutcome::GithubAvailable {
+                target_version: "0.2.0".to_string(),
+            }
+        } else {
+            CachedOutcome::Current
+        };
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let (finished_sender, finished_receiver) = std::sync::mpsc::channel();
+        let receiver = spawn_update_check_with({
+            let directory = directory.clone();
+            let expected_outcome = expected_outcome.clone();
+            move || {
+                release_receiver
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("the slow startup probe was never released");
+                let result = resolve_with_cache(
+                    CacheResolution {
+                        channel: &InstallChannel::GithubRelease,
+                        channel_key: "github-release",
+                        current_version: "0.1.0",
+                        directory: &directory,
+                        force: false,
+                        checked_at,
+                        npm_context: None,
+                    },
+                    || Ok(expected_outcome),
+                );
+                finished_sender.send(result.clone()).unwrap();
+                result
+            }
+        });
+        drop(receiver);
+        release_sender
+            .send(())
+            .expect("the detached startup worker stopped before its probe completed");
+
+        let finished = finished_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("detaching the UI receiver stopped the update worker");
+        if matches!(expected_outcome, CachedOutcome::Current) {
+            assert_eq!(finished, StartupUpdate::None);
+        } else {
+            assert!(
+                matches!(finished, StartupUpdate::Available(_)),
+                "detached worker returned {finished:?}"
+            );
+        }
+        assert_eq!(
+            cache::load_fresh_success(
+                &directory,
+                "github-release",
+                "0.1.0",
+                checked_at + Duration::from_secs(1),
+            ),
+            Some(expected_outcome)
+        );
     }
 
     #[test]

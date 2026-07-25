@@ -1,5 +1,6 @@
 //! Shared MCP server plumbing for bounded blocking work and content conversion.
 
+use crate::background_status::{BackgroundDecorator, BackgroundStatus};
 use crate::budget::{ErrorBudgetAdapter, ErrorClass, error_budget_hint};
 use crate::file_executor::GrepGlobExecutor;
 use crate::model::{ImageDetail, ToolContent, ToolResponse};
@@ -12,10 +13,20 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
+/// Whether an operation is safe to repeat after status reservation starves its required note.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BudgetRetry {
+    Never,
+    Safe,
+}
+
 /// Runs synchronous tool work behind a shared semaphore and converts its response.
 pub(crate) async fn run_blocking(
     permits: Arc<Semaphore>,
-    operation: impl FnOnce() -> ToolResponse + Send + 'static,
+    budget_variable: &'static str,
+    status: impl FnOnce() -> Option<BackgroundStatus> + Send + 'static,
+    retry: BudgetRetry,
+    mut operation: impl FnMut() -> ToolResponse + Send + 'static,
 ) -> CallToolResult {
     let permit = match permits.acquire_owned().await {
         Ok(permit) => permit,
@@ -27,7 +38,14 @@ pub(crate) async fn run_blocking(
     };
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        operation()
+        let decorator = BackgroundDecorator::new(status(), budget_variable);
+        loop {
+            let response = operation();
+            if retry == BudgetRetry::Safe && decorator.retry_after_budget_starvation(&response) {
+                continue;
+            }
+            break decorator.finish(response);
+        }
     })
     .await
     {
@@ -45,7 +63,8 @@ pub(crate) async fn run_blocking_cancellable(
     permits: Arc<Semaphore>,
     executor: Arc<GrepGlobExecutor>,
     budget_variable: &'static str,
-    operation: impl FnOnce(OperationCtx, Arc<GrepGlobExecutor>) -> Result<ToolResponse, OpError>
+    status: impl FnOnce() -> Option<BackgroundStatus> + Send + 'static,
+    operation: impl FnMut(OperationCtx, Arc<GrepGlobExecutor>) -> Result<ToolResponse, OpError>
     + Send
     + 'static,
 ) -> CallToolResult {
@@ -55,9 +74,13 @@ pub(crate) async fn run_blocking_cancellable(
     run_blocking_cancellable_with_context(
         guard,
         operation_context,
-        permits,
-        executor,
-        error_adapter,
+        CancellableBlockingResources {
+            permits,
+            executor,
+            error_adapter,
+            budget_variable,
+        },
+        status,
         operation,
     )
     .await
@@ -71,7 +94,7 @@ async fn run_blocking_cancellable_with_hook(
     executor: Arc<GrepGlobExecutor>,
     budget_variable: &'static str,
     stage_hook: TestStageHook,
-    operation: impl FnOnce(OperationCtx, Arc<GrepGlobExecutor>) -> Result<ToolResponse, OpError>
+    operation: impl FnMut(OperationCtx, Arc<GrepGlobExecutor>) -> Result<ToolResponse, OpError>
     + Send
     + 'static,
 ) -> CallToolResult {
@@ -82,24 +105,40 @@ async fn run_blocking_cancellable_with_hook(
     run_blocking_cancellable_with_context(
         guard,
         operation_context,
-        permits,
-        executor,
-        error_adapter,
+        CancellableBlockingResources {
+            permits,
+            executor,
+            error_adapter,
+            budget_variable,
+        },
+        || None,
         operation,
     )
     .await
 }
 
-async fn run_blocking_cancellable_with_context(
-    mut guard: RequestWorkGuard,
-    operation_context: OperationCtx,
+struct CancellableBlockingResources {
     permits: Arc<Semaphore>,
     executor: Arc<GrepGlobExecutor>,
     error_adapter: ErrorBudgetAdapter<'static>,
-    operation: impl FnOnce(OperationCtx, Arc<GrepGlobExecutor>) -> Result<ToolResponse, OpError>
+    budget_variable: &'static str,
+}
+
+async fn run_blocking_cancellable_with_context(
+    mut guard: RequestWorkGuard,
+    operation_context: OperationCtx,
+    resources: CancellableBlockingResources,
+    status: impl FnOnce() -> Option<BackgroundStatus> + Send + 'static,
+    mut operation: impl FnMut(OperationCtx, Arc<GrepGlobExecutor>) -> Result<ToolResponse, OpError>
     + Send
     + 'static,
 ) -> CallToolResult {
+    let CancellableBlockingResources {
+        permits,
+        executor,
+        error_adapter,
+        budget_variable,
+    } = resources;
     #[cfg(test)]
     operation_context.stage(TestStage::BeforeFilePermit);
     let cancellation = operation_context.cancellation_token().clone();
@@ -130,10 +169,16 @@ async fn run_blocking_cancellable_with_context(
     let completion_context = operation_context.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        operation_context.check()?;
-        let response = operation(operation_context.clone(), executor)?;
-        operation_context.check()?;
-        Ok::<_, OpError>(response)
+        let decorator = BackgroundDecorator::new(status(), budget_variable);
+        loop {
+            operation_context.check()?;
+            let response = operation(operation_context.clone(), Arc::clone(&executor))?;
+            operation_context.check()?;
+            if decorator.retry_after_budget_starvation(&response) {
+                continue;
+            }
+            break Ok::<_, OpError>(decorator.finish(response));
+        }
     })
     .await;
     let completion_error = completion_context.check().err();
@@ -186,9 +231,10 @@ pub(crate) fn into_mcp_result(response: ToolResponse) -> CallToolResult {
 #[cfg(test)]
 mod tests {
     use super::{
-        into_mcp_result, run_blocking, run_blocking_cancellable, run_blocking_cancellable_with_hook,
+        BudgetRetry, into_mcp_result, run_blocking, run_blocking_cancellable,
+        run_blocking_cancellable_with_hook,
     };
-    use crate::budget::GREP_TOKEN_BUDGET_ENV;
+    use crate::budget::{GLOBAL_TOKEN_BUDGET_ENV, GREP_TOKEN_BUDGET_ENV};
     use crate::file_executor::GrepGlobExecutor;
     use crate::operation::{OpError, TestStage};
     use crate::{ImageDetail, ToolContent, ToolResponse};
@@ -234,11 +280,17 @@ mod tests {
         let (release_first_tx, release_first_rx) = mpsc::channel();
         let first_permits = Arc::clone(&permits);
         let first = tokio::spawn(async move {
-            run_blocking(first_permits, move || {
-                first_started_tx.send(()).unwrap();
-                release_first_rx.recv().unwrap();
-                ToolResponse::text("first")
-            })
+            run_blocking(
+                first_permits,
+                GLOBAL_TOKEN_BUDGET_ENV,
+                || None,
+                BudgetRetry::Never,
+                move || {
+                    first_started_tx.send(()).unwrap();
+                    release_first_rx.recv().unwrap();
+                    ToolResponse::text("first")
+                },
+            )
             .await
         });
         first_started_rx.recv().unwrap();
@@ -247,10 +299,16 @@ mod tests {
         let (second_started_tx, second_started_rx) = mpsc::channel();
         let second = tokio::spawn(async move {
             second_waiting_tx.send(()).unwrap();
-            run_blocking(permits, move || {
-                second_started_tx.send(()).unwrap();
-                ToolResponse::text("second")
-            })
+            run_blocking(
+                permits,
+                GLOBAL_TOKEN_BUDGET_ENV,
+                || None,
+                BudgetRetry::Never,
+                move || {
+                    second_started_tx.send(()).unwrap();
+                    ToolResponse::text("second")
+                },
+            )
             .await
         });
         second_waiting_rx.recv().unwrap();
@@ -348,6 +406,7 @@ mod tests {
             Arc::clone(&permits),
             file_executor(),
             GREP_TOKEN_BUDGET_ENV,
+            || None,
             move |operation, _| {
                 started_tx.send(()).unwrap();
                 loop {
@@ -382,6 +441,7 @@ mod tests {
             Arc::clone(&permits),
             file_executor(),
             GREP_TOKEN_BUDGET_ENV,
+            || None,
             move |_, _| -> Result<ToolResponse, OpError> { panic!("injected coordinator panic") },
         )
         .await;

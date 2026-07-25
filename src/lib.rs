@@ -1,5 +1,6 @@
 //! Local MCP toolkit for ChatGPT and Codex: default file tools plus an optional bash group.
 
+pub(crate) mod background_status;
 pub(crate) mod binary;
 pub(crate) mod bounded_sort;
 pub mod budget;

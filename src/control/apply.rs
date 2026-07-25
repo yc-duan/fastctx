@@ -303,6 +303,11 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
 
     let settings_original = transaction::read_snapshot(&paths.fastctx_config)?;
     let mut current_settings = settings::load(paths)?;
+    if settings_original.is_none() {
+        // Apply is a fresh install's first natural settings write, so prepare the software-version
+        // watermark without treating the absent file as an upgrade migration.
+        current_settings.last_seen_version = Some(env!("CARGO_PKG_VERSION").to_string());
+    }
     if let Some(record) = current_settings
         .applied
         .as_ref()
@@ -377,6 +382,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
             command: expected.command.clone(),
             tier: options.tier,
             tool_output_token_limit: options.tier.host_limit(),
+            tool_timeout_sec: Some(codex_config::TOOL_TIMEOUT_SECONDS),
             previous_token_limit_present,
             previous_token_limit,
             fastctx_token_budget: options.tier.fastctx_budget(),
@@ -885,6 +891,7 @@ fn record_matches(record: &AppliedRecord, context: &RecordMatchContext<'_>) -> b
         && record.fastshell_enabled == expected.fastshell_enabled
         && !record.fastedit_enabled
         && record.tool_output_token_limit == expected.tier.host_limit()
+        && record.tool_timeout_sec == Some(codex_config::TOOL_TIMEOUT_SECONDS)
         && record.fastctx_token_budget == expected.tier.fastctx_budget()
         && record.codex_dir_created == *codex_dir_created
         && record.codex_config.path == crate::paths::display_path(&paths.codex_config)
@@ -1061,6 +1068,7 @@ fn preview_apply(
                         server_args_preview(expected)
                     )),
                     PreviewDetail::kept("[mcp_servers.fastctx] startup_timeout_sec = 120"),
+                    PreviewDetail::kept("[mcp_servers.fastctx] tool_timeout_sec = 300"),
                     PreviewDetail::kept("direct_only_tool_namespaces += \"mcp__fastctx\""),
                 ]);
                 match previous_token_limit {
@@ -1410,7 +1418,7 @@ mod tests {
 
     fn options(executable: std::path::PathBuf) -> ApplyOptions {
         ApplyOptions {
-            tier: Tier::High,
+            tier: Tier::Standard,
             tool_budgets: ToolBudgets {
                 read: ToolBudgetLevel::Inherit,
                 grep: ToolBudgetLevel::Percent50,
@@ -1648,7 +1656,7 @@ mod tests {
         )
         .unwrap();
         let mut changed = options(executable.clone());
-        changed.tier = Tier::ExtraHigh;
+        changed.tier = Tier::High;
         commit_apply(plan_apply(&paths, changed).unwrap(), true).unwrap();
 
         let unapply = plan_unapply(
@@ -1805,7 +1813,7 @@ mod tests {
         )
         .unwrap();
         let mut later_fastctx_change = options(executable.clone());
-        later_fastctx_change.tier = Tier::ExtraHigh;
+        later_fastctx_change.tier = Tier::High;
         commit_apply(plan_apply(&paths, later_fastctx_change).unwrap(), true).unwrap();
 
         let unapply = plan_unapply(
@@ -1832,7 +1840,7 @@ mod tests {
         std::fs::write(&paths.codex_config, b"tool_output_token_limit = 9000\n").unwrap();
         let plan = plan_apply(&paths, options(executable)).unwrap();
         let conflict = plan.token_limit_conflict().unwrap();
-        assert_eq!((conflict.current, conflict.requested), (9_000, 16_000));
+        assert_eq!((conflict.current, conflict.requested), (9_000, 20_000));
         let error = commit_apply(plan, false).unwrap_err();
         assert!(error.contains("Re-run with --yes"));
         assert_eq!(
@@ -1920,11 +1928,11 @@ mod tests {
             document
                 .get("tool_output_token_limit")
                 .and_then(toml_edit::Item::as_integer),
-            Some(16_000)
+            Some(20_000)
         );
         assert!(source.contains("[mcp_servers.fastctx]"), "{source}");
         assert!(source.contains("mcp__fastctx"), "{source}");
-        assert!(source.contains("FASTCTX_TOKEN_BUDGET = \"13600\""));
+        assert!(source.contains("FASTCTX_TOKEN_BUDGET = \"17000\""));
     }
 
     #[test]
@@ -1979,9 +1987,9 @@ mod tests {
         )
         .unwrap();
         let applied = std::fs::read_to_string(&paths.codex_config).unwrap();
-        assert!(applied.contains("tool_output_token_limit = 16000"));
+        assert!(applied.contains("tool_output_token_limit = 20000"));
         let edited = applied.replace(
-            "tool_output_token_limit = 16000",
+            "tool_output_token_limit = 20000",
             "tool_output_token_limit = 40000",
         );
         std::fs::write(&paths.codex_config, &edited).unwrap();

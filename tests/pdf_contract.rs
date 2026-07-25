@@ -11,7 +11,8 @@ use fastctx::{ImageDetail, ToolContent};
 
 fn request(path: &std::path::Path, pages: Option<&str>, mode: Option<&str>) -> ReadRequest {
     ReadRequest {
-        file_path: normalized(path),
+        file_path: Some(normalized(path)),
+        files: None,
         offset: None,
         limit: None,
         pages: pages.map(str::to_string),

@@ -6,7 +6,8 @@ use std::io::{Seek, SeekFrom, Write};
 
 fn request(path: &std::path::Path) -> ReadRequest {
     ReadRequest {
-        file_path: normalized(path),
+        file_path: Some(normalized(path)),
+        files: None,
         offset: None,
         limit: None,
         pages: None,

@@ -30,6 +30,118 @@ fn enable_shell_adds_exactly_five_tools_to_the_file_server() {
 }
 
 #[test]
+fn background_status_tracks_only_known_jobs_and_consumes_terminal_entries_explicitly() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let probe = temp.path().join("probe.txt");
+    std::fs::write(&probe, "probe\n").unwrap();
+    let read_arguments = serde_json::json!({"file_path": normalized(&probe)});
+    let mut session = shell_session(temp.path(), None);
+
+    let running_start = session.call(
+        "run_background",
+        serde_json::json!({"command": "sleep 30", "login_shell": false}),
+    );
+    let running = started_job_id(mcp_text(&running_start));
+    assert!(!mcp_text(&running_start).contains("(Background:"));
+
+    let read = session.call("read", read_arguments.clone());
+    let read_text = mcp_text(&read);
+    let read_lines = read_text.lines().collect::<Vec<_>>();
+    assert!(
+        read_lines[read_lines.len() - 2].starts_with(&format!("(Background: {running} running ")),
+        "{read_text}"
+    );
+    assert!(read_lines.last().unwrap().starts_with("(Complete:"));
+
+    let missing = session.call(
+        "read",
+        serde_json::json!({"file_path": normalized(&temp.path().join("missing.txt"))}),
+    );
+    assert_eq!(missing["result"]["isError"], true);
+    assert!(!mcp_text(&missing).contains("(Background:"));
+
+    let mut other = shell_session(temp.path(), None);
+    let isolated = other.call("read", read_arguments.clone());
+    assert!(!mcp_text(&isolated).contains("(Background:"));
+    assert!(other.close().success());
+
+    let finished_start = session.call(
+        "run_background",
+        serde_json::json!({"command": "exit 7", "login_shell": false}),
+    );
+    let finished = started_job_id(mcp_text(&finished_start));
+    let start_status = mcp_text(&finished_start)
+        .lines()
+        .find(|line| line.starts_with("(Background:"))
+        .unwrap();
+    assert!(start_status.contains(&running), "{start_status}");
+    assert!(!start_status.contains(&finished), "{start_status}");
+
+    let exit_record = temp
+        .path()
+        .join(".fastctx")
+        .join("jobs")
+        .join(&finished)
+        .join("exit.json");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !exit_record.exists() {
+        assert!(Instant::now() < deadline, "job {finished} did not exit");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let both = session.call("read", read_arguments.clone());
+    let both_status = mcp_text(&both)
+        .lines()
+        .find(|line| line.starts_with("(Background:"))
+        .unwrap();
+    assert!(both_status.contains(&format!("{running} running ")));
+    assert!(both_status.contains(&format!("{finished} exited 7")));
+
+    let listed = session.call(
+        "job_list",
+        serde_json::json!({"status": "all", "limit": 100}),
+    );
+    let list_status = mcp_text(&listed)
+        .lines()
+        .find(|line| line.starts_with("(Background:"))
+        .unwrap();
+    assert!(list_status.contains(&running));
+    assert!(list_status.contains(&finished));
+    let after_list = session.call("read", read_arguments.clone());
+    let after_list_status = mcp_text(&after_list)
+        .lines()
+        .find(|line| line.starts_with("(Background:"))
+        .unwrap();
+    assert!(after_list_status.contains(&running));
+    assert!(after_list_status.contains(&finished));
+
+    let consumed = session.call(
+        "job_output",
+        serde_json::json!({"job_id": &finished, "wait_ms": 0}),
+    );
+    let consumed_status = mcp_text(&consumed)
+        .lines()
+        .find(|line| line.starts_with("(Background:"))
+        .unwrap();
+    assert!(consumed_status.contains(&running));
+    assert!(!consumed_status.contains(&finished));
+    let after_output = session.call("read", read_arguments.clone());
+    let after_output_status = mcp_text(&after_output)
+        .lines()
+        .find(|line| line.starts_with("(Background:"))
+        .unwrap();
+    assert!(after_output_status.contains(&running));
+    assert!(!after_output_status.contains(&finished));
+
+    let killed = session.call("job_kill", serde_json::json!({"job_id": &running}));
+    assert!(!mcp_text(&killed).contains("(Background:"));
+    let empty = session.call("read", read_arguments);
+    assert!(!mcp_text(&empty).contains("(Background:"));
+    assert!(session.close().success());
+}
+
+#[test]
 fn foreground_run_preserves_order_normalizes_output_and_marks_long_line_loss() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
@@ -49,6 +161,37 @@ fn foreground_run_preserves_order_normalizes_output_and_marks_long_line_loss() {
         )
     );
 
+    let patch = session.call(
+        "run",
+        serde_json::json!({
+            "command": "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: sample.txt\n+content\n*** End Patch\nPATCH"
+        }),
+    );
+    // The host resolves apply_patch on its own shell channel, so it only ever reaches a real bash
+    // when routed through a tool the host does not inspect. Left with a bare "command not found",
+    // the model's usual next move is a heredoc rewrite that bypasses every encoding and
+    // line-ending guarantee this server makes, so the way out has to be spelled out here.
+    let patch_text = mcp_text(&patch);
+    assert!(
+        patch_text.contains("(Note: apply_patch is not a program and no shell can run it"),
+        "{patch_text}"
+    );
+    assert!(
+        patch_text
+            .lines()
+            .next_back()
+            .is_some_and(|line| line.starts_with("(Complete: exited 127;")),
+        "{patch_text}"
+    );
+
+    // A user who owns a working apply_patch of their own is never second-guessed.
+    let owned = session.call(
+        "run",
+        serde_json::json!({"command": "apply_patch() { echo patched; }; apply_patch"}),
+    );
+    let owned_text = mcp_text(&owned);
+    assert_eq!(owned_text, "patched\n\n(Complete: exited 0; 1 line.)");
+
     let long = session.call(
         "run",
         serde_json::json!({"command": "printf '%0400000d' 0"}),
@@ -57,7 +200,7 @@ fn foreground_run_preserves_order_normalizes_output_and_marks_long_line_loss() {
     assert!(text.starts_with(&"0".repeat(2_000)));
     assert!(text.contains("... [line truncated: 400000 bytes total]"));
     assert!(text.ends_with(
-        "(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)"
+        "(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars.)"
     ));
     assert_no_shell_artifacts(temp.path());
     assert!(session.close().success());
@@ -173,7 +316,7 @@ fn foreground_delivery_time_decoding_covers_explicit_auto_bom_and_lossy_paths() 
         "{long_gbk_text}"
     );
     assert!(long_gbk_text.ends_with(
-        "(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)"
+        "(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars.)"
     ));
 
     assert!(session.close().success());
@@ -221,9 +364,8 @@ fn foreground_budget_uses_head_and_tail_without_writing_a_spill_file() {
     assert!(text.contains("line-200"), "{text}");
     assert!(text.contains("... ["), "{text}");
     assert!(text.contains(" of 200 lines; exited 0."), "{text}");
-    assert!(text.ends_with(
-        "Re-run with output redirected to a file (command > file 2>&1) and page it with the read tool.)"
-    ));
+    assert!(text.contains("(Partial: showing the first "), "{text}");
+    assert!(text.ends_with(" of 200 lines; exited 0.)"), "{text}");
     assert_no_shell_artifacts(temp.path());
     assert!(session.close().success());
 }
@@ -257,6 +399,7 @@ fn foreground_output_over_eight_mib_runs_to_natural_exit_and_reports_true_line_c
 fn foreground_timeout_kills_descendants_and_keeps_captured_output() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
+    let spawned = temp.path().join("spawned.txt");
     let marker = temp.path().join("orphan.txt");
     let mut session = shell_session(temp.path(), None);
     let complete = session.call(
@@ -265,30 +408,37 @@ fn foreground_timeout_kills_descendants_and_keeps_captured_output() {
     );
     assert_eq!(mcp_text(&complete), "(Complete: exited 0; no output.)");
 
-    // A non-login shell starts deterministically fast (it never sources
-    // /etc/profile), so `printf started` reliably runs inside the 500 ms window
-    // before the kill. A login shell's startup can exceed 500 ms under heavy
-    // concurrent load, killing the command mid-startup and losing the captured
-    // line — a test-timing artifact, not a product fault. The tree-kill semantics
-    // under test are identical in either mode; the background non-login timeout
-    // test covers the login-independent path too.
+    // Two independent deadlines have to hold: the shell must reach `printf
+    // started` before the kill, and the descendant must still be sleeping when
+    // the kill lands. A login shell is avoided because sourcing /etc/profile can
+    // outlast either window, and the timeout is 2000 ms because a cold Git Bash
+    // on a loaded CI runner has needed more than 500 ms just to start, which lost
+    // the captured line and failed this test for a reason the product had no part
+    // in. The descendant writes `spawned.txt` immediately, so a shell too slow to
+    // fork it cannot pass the tree-kill assertion vacuously. Every gap here is one
+    // second wide; do not shrink them back. (2026-07-25)
     let response = session.call(
         "run",
         serde_json::json!({
             "command": format!(
-                "(sleep 1; printf orphan > {}) & printf started; sleep 5",
+                "(printf spawned > {}; sleep 3; printf orphan > {}) & printf started; sleep 10",
+                bash_quote(&spawned),
                 bash_quote(&marker)
             ),
-            "timeout_ms": 500,
+            "timeout_ms": 2_000,
             "login_shell": false
         }),
     );
     assert_eq!(response["result"]["isError"], false);
     assert_eq!(
         mcp_text(&response),
-        "started\n\n(Partial: timed out after 500 ms and the process tree was killed; 1 line captured. Increase timeout_ms or use run_background.)"
+        "started\n\n(Partial: timed out after 2000 ms and the process tree was killed; 1 line captured. Increase timeout_ms or use run_background.)"
     );
-    std::thread::sleep(Duration::from_millis(1_300));
+    assert!(
+        spawned.exists(),
+        "the descendant never started, so the tree kill would prove nothing"
+    );
+    std::thread::sleep(Duration::from_millis(2_500));
     assert!(
         !marker.exists(),
         "a timed-out descendant survived the tree kill"
@@ -354,6 +504,156 @@ fn job_output_budget_is_independent_and_inherits_the_global_ceiling() {
 }
 
 #[test]
+fn background_log_over_eight_mib_is_complete_and_the_omission_coordinate_reads_back() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut command = shell_command(temp.path(), None);
+    // Keep enough room for the mandatory status/path notes while still forcing a
+    // tiny response window over the 9 MiB fixture.
+    command.env("FASTCTX_JOB_OUTPUT_TOKEN_BUDGET", "1000");
+    let mut session = McpSession::start(command);
+    let started = session.call(
+        "run_background",
+        serde_json::json!({
+            "command": "printf -v payload '%01000d' 0; yes \"$payload\" | head -n 9000",
+            "login_shell": false
+        }),
+    );
+    let start_text = mcp_text(&started);
+    let job_id = started_job_id(start_text);
+    let log_path = started_job_log(start_text);
+    let output =
+        wait_for_complete_from_within(&mut session, &job_id, Some(0), Duration::from_secs(60));
+
+    assert!(
+        output.contains(&format!("Full log: {log_path}")),
+        "{output}"
+    );
+    let omitted = omitted_start(&output);
+    assert!(
+        output.contains(&format!("at {log_path} with offset={omitted}.")),
+        "{output}"
+    );
+    let recovered = session.call(
+        "read",
+        serde_json::json!({
+            "file_path": &log_path,
+            "offset": omitted,
+            "limit": 1
+        }),
+    );
+    assert_eq!(recovered["result"]["isError"], false, "{recovered}");
+    assert!(
+        mcp_text(&recovered).starts_with(&format!("{omitted}\t{}", "0".repeat(1_000))),
+        "{}",
+        mcp_text(&recovered)
+    );
+    assert!(std::fs::metadata(&log_path).unwrap().len() > 8 * 1024 * 1024);
+    let job_dir = Path::new(&log_path).parent().unwrap();
+    assert!(job_dir.join("output.idx").is_file());
+    assert!(
+        std::fs::read_dir(job_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().starts_with("segment-"))
+    );
+    let drained = session.call(
+        "job_output",
+        serde_json::json!({"job_id": job_id, "wait_ms": 0}),
+    );
+    assert!(job_body_lines(mcp_text(&drained)).is_empty());
+    assert!(mcp_text(&drained).contains("9000 lines total. Full log:"));
+    assert!(session.close().success());
+}
+
+#[test]
+fn job_output_waits_through_intermediate_output_until_the_job_ends() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let release_output = temp.path().join("release-output");
+    let release_exit = temp.path().join("release-exit");
+    let command = format!(
+        "printf 'first\\n'; while [ ! -f {} ]; do sleep 0.02; done; printf 'second\\n'; while [ ! -f {} ]; do sleep 0.02; done; exit 9",
+        bash_quote(&release_output),
+        bash_quote(&release_exit)
+    );
+    let mut session = shell_session(temp.path(), None);
+    let started = session.call(
+        "run_background",
+        serde_json::json!({"command": command, "login_shell": false}),
+    );
+    let job_id = started_job_id(mcp_text(&started));
+
+    let output_path = release_output.clone();
+    let exit_path = release_exit.clone();
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::write(output_path, b"go").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        std::fs::write(exit_path, b"go").unwrap();
+    });
+    let waiting_started = Instant::now();
+    let exited = session.call(
+        "job_output",
+        serde_json::json!({
+            "job_id": job_id,
+            "wait_ms": 2_000,
+            "after_seq": 0
+        }),
+    );
+    releaser.join().unwrap();
+    assert!(
+        waiting_started.elapsed() >= Duration::from_millis(450),
+        "intermediate output ended a query that should wait for terminal state"
+    );
+    let text = mcp_text(&exited);
+    assert_eq!(job_body_lines(text), ["first", "second"]);
+    assert!(text.contains(&format!(
+        "(Complete: job {job_id} exited 9; 2 lines total. Full log: "
+    )));
+    assert!(session.close().success());
+}
+
+#[test]
+fn job_output_wait_window_delivers_accumulated_output_without_returning_on_each_line() {
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut session = shell_session(temp.path(), None);
+    let started = session.call(
+        "run_background",
+        serde_json::json!({
+            "command": "printf 'first\\n'; sleep 0.05; printf 'second\\n'; sleep 10",
+            "login_shell": false
+        }),
+    );
+    let job_id = started_job_id(mcp_text(&started));
+    let waiting_started = Instant::now();
+    let output = session.call(
+        "job_output",
+        serde_json::json!({
+            "job_id": job_id,
+            "wait_ms": 5_000,
+            "after_seq": 0
+        }),
+    );
+    assert!(waiting_started.elapsed() >= Duration::from_millis(4_500));
+    assert_eq!(job_body_lines(mcp_text(&output)), ["first", "second"]);
+    assert!(
+        mcp_text(&output).ends_with(&format!(
+            "(Partial: job {job_id} is running; 2 new lines shown. Call job_output again for more, or move on and check back.)"
+        )),
+        "{}",
+        mcp_text(&output)
+    );
+    let killed = session.call("job_kill", serde_json::json!({"job_id": job_id}));
+    assert_eq!(
+        mcp_text(&killed),
+        format!("(Complete: job {job_id} killed.)")
+    );
+    assert!(session.close().success());
+}
+
+#[test]
 fn background_default_cursor_and_explicit_after_seq_are_lossless_and_idempotent() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
@@ -378,10 +678,9 @@ fn background_default_cursor_and_explicit_after_seq_are_lossless_and_idempotent(
         let text = mcp_text(&output);
         delivered.extend(job_body_lines(text));
         if text.lines().last().unwrap().starts_with("(Complete:") {
-            assert_eq!(
-                text.lines().last().unwrap(),
-                format!("(Complete: job {job_id} exited 7; 2 lines total.)")
-            );
+            assert!(text.lines().last().unwrap().starts_with(&format!(
+                "(Complete: job {job_id} exited 7; 2 lines total. Full log: "
+            )));
             break;
         }
     }
@@ -390,10 +689,9 @@ fn background_default_cursor_and_explicit_after_seq_are_lossless_and_idempotent(
         "job_output",
         serde_json::json!({"job_id": job_id, "wait_ms": 0}),
     );
-    assert_eq!(
-        mcp_text(&drained),
-        format!("(Complete: job {job_id} exited 7; 2 lines total.)")
-    );
+    assert!(mcp_text(&drained).starts_with(&format!(
+        "(Complete: job {job_id} exited 7; 2 lines total. Full log: "
+    )));
     let already = session.call("job_kill", serde_json::json!({"job_id": job_id}));
     assert_eq!(
         mcp_text(&already),
@@ -423,7 +721,7 @@ fn background_default_cursor_and_explicit_after_seq_are_lossless_and_idempotent(
             serde_json::json!({"job_id": replay_id, "wait_ms": 2_000, "after_seq": 0}),
         );
         let text = mcp_text(&first).to_string();
-        if text.contains("after_seq=2") {
+        if job_body_lines(&text) == ["alpha", "beta"] {
             break text;
         }
     };
@@ -446,6 +744,92 @@ fn background_default_cursor_and_explicit_after_seq_are_lossless_and_idempotent(
 }
 
 #[test]
+fn legacy_writer_can_keep_appending_while_the_new_reader_preserves_capability_boundaries() {
+    use std::io::Write as _;
+
+    let _serial = shell_contract_guard();
+    let temp = tempfile::tempdir().unwrap();
+    let mut session = shell_session(temp.path(), None);
+    let current = session.call(
+        "run_background",
+        serde_json::json!({"command": "sleep 10", "login_shell": false}),
+    );
+    let current_text = mcp_text(&current);
+    let current_id = started_job_id(current_text);
+    let current_log = started_job_log(current_text);
+    let jobs = temp.path().join(".fastctx").join("jobs");
+    let mut meta: Value =
+        serde_json::from_slice(&std::fs::read(jobs.join(&current_id).join("meta.json")).unwrap())
+            .unwrap();
+    meta["schema_version"] = 2.into();
+    meta["command"] = "legacy writer fixture".into();
+    let legacy_id = "j-old001";
+    let legacy_dir = jobs.join(legacy_id);
+    std::fs::create_dir(&legacy_dir).unwrap();
+    std::fs::write(
+        legacy_dir.join("meta.json"),
+        format!("{}\n", serde_json::to_string(&meta).unwrap()),
+    )
+    .unwrap();
+    let unrelated_bad = jobs.join("j-bad001");
+    std::fs::create_dir(&unrelated_bad).unwrap();
+    std::fs::write(unrelated_bad.join("meta.json"), b"{damaged").unwrap();
+    let segment = legacy_dir.join("segment-00000000000000000001.jsonl");
+    let first_record = serde_json::json!({
+        "seq": 1,
+        "raw_bytes": "bGVnYWN5LW9uZQ==",
+        "total_bytes": 10,
+        "truncated": false,
+        "had_loss": false
+    });
+    let second_record = serde_json::json!({
+        "seq": 2,
+        "raw_bytes": "bGVnYWN5LXR3bw==",
+        "total_bytes": 10,
+        "truncated": false,
+        "had_loss": false
+    });
+    std::fs::write(&segment, format!("{first_record}\n{second_record}")).unwrap();
+
+    let first = session.call(
+        "job_output",
+        serde_json::json!({"job_id": legacy_id, "wait_ms": 0, "after_seq": 0}),
+    );
+    assert_eq!(job_body_lines(mcp_text(&first)), ["legacy-one"]);
+    assert!(!mcp_text(&first).contains("Full log:"));
+    assert!(!mcp_text(&first).contains("offset="));
+
+    let partial = session.call(
+        "job_output",
+        serde_json::json!({"job_id": legacy_id, "wait_ms": 0, "after_seq": 1}),
+    );
+    assert!(job_body_lines(mcp_text(&partial)).is_empty());
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&segment)
+        .unwrap();
+    writer.write_all(b"\n").unwrap();
+    drop(writer);
+    let appended = session.call(
+        "job_output",
+        serde_json::json!({"job_id": legacy_id, "wait_ms": 0, "after_seq": 1}),
+    );
+    assert_eq!(job_body_lines(mcp_text(&appended)), ["legacy-two"]);
+    assert!(!mcp_text(&appended).contains("Full log:"));
+    assert!(!mcp_text(&appended).contains("offset="));
+
+    let killed = session.call("job_kill", serde_json::json!({"job_id": current_id}));
+    assert_eq!(killed["result"]["isError"], false, "{killed}");
+    let current_final = session.call(
+        "job_output",
+        serde_json::json!({"job_id": current_id, "wait_ms": 0, "after_seq": 0}),
+    );
+    assert!(mcp_text(&current_final).contains("Full log:"));
+    assert!(mcp_text(&current_final).contains(&current_log));
+    assert!(session.close().success());
+}
+
+#[test]
 fn background_raw_bytes_support_default_decoding_and_same_page_explicit_rereads() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
@@ -462,7 +846,7 @@ fn background_raw_bytes_support_default_decoding_and_same_page_explicit_rereads(
     assert_eq!(
         lossy,
         format!(
-            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)",
+            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again for more, or move on and check back.)",
             expected_job_garble_note(4, 0)
         )
     );
@@ -473,7 +857,7 @@ fn background_raw_bytes_support_default_decoding_and_same_page_explicit_rereads(
     assert_eq!(
         restored,
         format!(
-            "中文\n\n(Note: decoded from GBK as requested; output is UTF-8.)\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)"
+            "中文\n\n(Note: decoded from GBK as requested; output is UTF-8.)\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again for more, or move on and check back.)"
         )
     );
     let killed = second.call("job_kill", serde_json::json!({"job_id": job_id}));
@@ -495,14 +879,14 @@ fn background_raw_bytes_support_default_decoding_and_same_page_explicit_rereads(
     assert_eq!(
         inherited,
         format!(
-            "中文\n\n(Note: decoded from GBK as requested; output is UTF-8.)\n(Partial: job {default_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)"
+            "中文\n\n(Note: decoded from GBK as requested; output is UTF-8.)\n(Partial: job {default_id} is running; 1 new line shown. Call job_output again for more, or move on and check back.)"
         )
     );
     let overridden = wait_for_job_page(&mut second, &default_id, Some("utf-8"), "after_seq=0");
     assert_eq!(
         overridden,
         format!(
-            "{}\n\n����\n\n(Partial: job {default_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)",
+            "{}\n\n����\n\n(Partial: job {default_id} is running; 1 new line shown. Call job_output again for more, or move on and check back.)",
             expected_job_garble_note(4, 0)
         )
     );
@@ -532,7 +916,7 @@ fn background_default_utf8_decoding_stays_fixed_across_pages() {
     assert_eq!(
         first,
         format!(
-            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=1 for more.)",
+            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again for more, or move on and check back.)",
             expected_job_garble_note(4, 0)
         )
     );
@@ -540,7 +924,7 @@ fn background_default_utf8_decoding_stays_fixed_across_pages() {
     assert_eq!(
         second,
         format!(
-            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again with after_seq=2 for more.)",
+            "{}\n\n����\n\n(Partial: job {job_id} is running; 1 new line shown. Call job_output again for more, or move on and check back.)",
             expected_job_garble_note(4, 1)
         )
     );
@@ -565,18 +949,24 @@ fn background_long_line_preserves_byte_count_and_marks_terminal_loss() {
             "login_shell": false
         }),
     );
-    let job_id = started_job_id(mcp_text(&started));
+    let start_text = mcp_text(&started);
+    let job_id = started_job_id(start_text);
+    let log_path = started_job_log(start_text);
     let output = wait_for_complete_from(&mut session, &job_id, Some(0));
     assert!(
-        output.starts_with(&format!(
+        output.contains(&format!(
             "{}... [line truncated: 400000 bytes total]",
             "0".repeat(2_000)
         )),
         "{output}"
     );
-    assert!(output.ends_with(&format!(
-        "(Complete: job {job_id} exited 0; 1 line total, but some output was dropped or truncated — redirect the command to a file (command > file 2>&1) for the full log.)"
+    assert!(output.contains(&format!(
+        "(Note: line 1 was truncated at 2000 chars in this response; read the complete line at {log_path} with offset=1"
     )));
+    assert!(output.ends_with(&format!(
+        "(Complete: job {job_id} exited 0; 1 line total. Full log: {log_path})"
+    )));
+    assert_eq!(std::fs::metadata(&log_path).unwrap().len(), 400_000);
     assert!(session.close().success());
 }
 
@@ -632,7 +1022,7 @@ fn global_background_limit_and_job_ids_survive_across_server_instances() {
     for _ in 0..2 {
         let response = session.call(
             "run_background",
-            serde_json::json!({"command": "sleep 10", "login_shell": false}),
+            serde_json::json!({"command": "sleep 60", "login_shell": false}),
         );
         ids.push(started_job_id(mcp_text(&response)));
     }
@@ -662,7 +1052,7 @@ fn global_background_limit_and_job_ids_survive_across_server_instances() {
         );
         assert!(
             mcp_text(&output).ends_with(&format!(
-                "(Partial: job {id} is running; no new output within 0 ms. Call job_output again.)"
+                "(Partial: job {id} is running; no new output within 0 ms. Move on and check back, or raise wait_ms if you have nothing else to do.)"
             )),
             "{}",
             mcp_text(&output)
@@ -689,15 +1079,19 @@ fn job_list_defaults_to_running_uses_the_saved_page_size_and_requires_explicit_h
         .map(|_| {
             started_job_id(mcp_text(&session.call(
                 "run_background",
-                serde_json::json!({"command": "sleep 10", "login_shell": false}),
+                serde_json::json!({"command": "sleep 60", "login_shell": false}),
             )))
         })
         .collect::<Vec<_>>();
 
     let default_page = mcp_text(&session.call("job_list", serde_json::json!({}))).to_string();
-    assert!(default_page.contains(&running[1]), "{default_page}");
-    assert!(!default_page.contains(&running[0]), "{default_page}");
-    assert!(!default_page.contains(&finished), "{default_page}");
+    let default_page_body = default_page
+        .split("\n\n(Background:")
+        .next()
+        .expect("job list response has a body");
+    assert!(default_page_body.contains(&running[1]), "{default_page}");
+    assert!(!default_page_body.contains(&running[0]), "{default_page}");
+    assert!(!default_page_body.contains(&finished), "{default_page}");
     assert!(
         default_page.ends_with("Call job_list again with status=\"running\", limit=1, offset=1.)"),
         "{default_page}"
@@ -705,8 +1099,12 @@ fn job_list_defaults_to_running_uses_the_saved_page_size_and_requires_explicit_h
 
     let finished_page =
         mcp_text(&session.call("job_list", serde_json::json!({"status": "finished"}))).to_string();
-    assert!(finished_page.contains(&finished), "{finished_page}");
-    assert!(!finished_page.contains(&running[0]), "{finished_page}");
+    let finished_page_body = finished_page
+        .split("\n\n(Background:")
+        .next()
+        .expect("job list response has a body");
+    assert!(finished_page_body.contains(&finished), "{finished_page}");
+    assert!(!finished_page_body.contains(&running[0]), "{finished_page}");
 
     let all = mcp_text(&session.call(
         "job_list",
@@ -808,10 +1206,9 @@ fn detached_job_reaches_complete_after_its_starting_server_exits() {
     let mut second = shell_session(temp.path(), None);
     let final_text = wait_for_complete_from(&mut second, &job_id, Some(0));
     assert_eq!(job_body_lines(&final_text), ["one", "two"]);
-    assert_eq!(
-        final_text.lines().last().unwrap(),
-        format!("(Complete: job {job_id} exited 9; 2 lines total.)")
-    );
+    assert!(final_text.lines().last().unwrap().starts_with(&format!(
+        "(Complete: job {job_id} exited 9; 2 lines total. Full log: "
+    )));
     assert!(marker.exists());
     assert!(second.close().success());
 }
@@ -834,7 +1231,7 @@ fn killing_the_supervisor_reports_interrupted_and_leaves_no_command_descendant()
     );
     let job_id = started_job_id(mcp_text(&started));
     let initial = wait_for_job_text(&mut first, &job_id, "started");
-    assert!(initial.contains("after_seq=1"), "{initial}");
+    assert!(initial.contains("1 new line shown"), "{initial}");
     let meta: Value = serde_json::from_slice(
         &std::fs::read(
             temp.path()
@@ -857,12 +1254,9 @@ fn killing_the_supervisor_reports_interrupted_and_leaves_no_command_descendant()
     let mut second = shell_session(temp.path(), None);
     let interrupted = wait_for_complete_from(&mut second, &job_id, Some(0));
     assert!(interrupted.contains("started"), "{interrupted}");
-    assert_eq!(
-        interrupted.lines().last().unwrap(),
-        format!(
-            "(Complete: job {job_id} was interrupted: its process ended without an exit record (machine restart or external kill); 1 line preserved.)"
-        )
-    );
+    assert!(interrupted.lines().last().unwrap().starts_with(&format!(
+        "(Complete: job {job_id} was interrupted: its process ended without an exit record (machine restart or external kill); 1 line preserved. Full log: "
+    )));
     let already = second.call("job_kill", serde_json::json!({"job_id": job_id}));
     assert_eq!(
         mcp_text(&already),
@@ -871,6 +1265,14 @@ fn killing_the_supervisor_reports_interrupted_and_leaves_no_command_descendant()
     assert!(second.close().success());
 }
 
+// Provoking a capture failure means making a write fail on a handle the supervisor
+// already holds, because the log is opened before `run_background` answers. Windows
+// mandatory locking does that from the outside; POSIX offers no equivalent, since
+// renaming or unlinking the job directory is invisible to an open descriptor, which
+// keeps writing to the same inode. The note itself, and its fallback to the exit
+// record, are locked on every platform by the `format_snapshot` unit tests in
+// `src/shell/jobs/mod.rs` (2026-07-24).
+#[cfg(windows)]
 #[test]
 fn capture_failure_keeps_the_command_running_and_falls_back_to_the_exit_record() {
     let _serial = shell_contract_guard();
@@ -890,10 +1292,9 @@ fn capture_failure_keeps_the_command_running_and_falls_back_to_the_exit_record()
     let job_id = started_job_id(mcp_text(&started));
     let jobs = temp.path().join(".fastctx").join("jobs");
     let original = jobs.join(&job_id);
-    let displaced = jobs.join(format!("{job_id}.displaced"));
-    std::fs::rename(&original, &displaced).unwrap();
+    let capture_block = lock_output_log(&original.join("output.log"));
     wait_until(Duration::from_secs(5), || continued.exists());
-    std::fs::rename(&displaced, &original).unwrap();
+    drop(capture_block);
 
     let final_text = wait_for_complete_from(&mut session, &job_id, Some(0));
     assert!(continued.exists());
@@ -906,8 +1307,12 @@ fn capture_failure_keeps_the_command_running_and_falls_back_to_the_exit_record()
         "{final_text}"
     );
     assert!(
-        final_text.ends_with(&format!(
-            "(Complete: job {job_id} exited 17; 0 lines total, but some output was dropped or truncated — redirect the command to a file (command > file 2>&1) for the full log.)"
+        final_text.contains("but the log at ") && final_text.contains(" stops here.)"),
+        "{final_text}"
+    );
+    assert!(
+        final_text.lines().last().unwrap().starts_with(&format!(
+            "(Complete: job {job_id} exited 17; 0 lines total. Full log: "
         )),
         "{final_text}"
     );
@@ -929,7 +1334,10 @@ fn output_encoding_errors_are_exact_and_precede_process_side_effects() {
                 "command": format!("printf touched > {}", bash_quote(&foreground_marker)),
                 "encoding": "wat"
             }),
-            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", \"windows-1252\", \"utf-16le\", or \"utf-32le\".",
+            // The suggested labels must all be ones this parameter accepts: UTF-16/UTF-32 are
+            // rejected on the next case down, so listing them here would hand the caller a
+            // second failure (2026-07-24).
+            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", or \"windows-1252\".",
         ),
         (
             "run",
@@ -956,7 +1364,10 @@ fn output_encoding_errors_are_exact_and_precede_process_side_effects() {
                 "job_id": "missing",
                 "encoding": "wat"
             }),
-            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", \"windows-1252\", \"utf-16le\", or \"utf-32le\".",
+            // The suggested labels must all be ones this parameter accepts: UTF-16/UTF-32 are
+            // rejected on the next case down, so listing them here would hand the caller a
+            // second failure (2026-07-24).
+            "Invalid encoding value \"wat\". Use a WHATWG encoding label such as \"gbk\", \"shift_jis\", \"big5\", \"euc-kr\", or \"windows-1252\".",
         ),
     ];
     for (tool, arguments, expected) in cases {
@@ -1028,8 +1439,8 @@ fn shell_error_catalog_uses_fastctx_names_and_rejects_invalid_inputs() {
         ),
         (
             "job_output",
-            serde_json::json!({"job_id": "missing", "wait_ms": 120001}),
-            "Invalid wait_ms value: 120001. Expected an integer from 0 to 120000.",
+            serde_json::json!({"job_id": "missing", "wait_ms": 240001}),
+            "Invalid wait_ms value: 240001. Expected an integer from 0 to 240000.",
         ),
         (
             "job_output",
@@ -1062,6 +1473,15 @@ fn shell_error_catalog_uses_fastctx_names_and_rejects_invalid_inputs() {
         assert_eq!(response["result"]["isError"], true, "{response}");
         assert_eq!(mcp_text(&response), expected);
     }
+    let removed_wait_for = session.call(
+        "job_output",
+        serde_json::json!({"job_id": "missing", "wait_for": "output"}),
+    );
+    let serialized = serde_json::to_string(&removed_wait_for).unwrap();
+    assert!(
+        serialized.contains("wait_for") && serialized.contains("unknown field"),
+        "{serialized}"
+    );
     assert!(session.close().success());
 
     let missing = temp.path().join("missing-cwd");
@@ -1213,14 +1633,31 @@ fn bash_quote(path: &Path) -> String {
 }
 
 fn started_job_id(text: &str) -> String {
-    let id = text
+    let terminal = text.lines().last().unwrap_or(text);
+    let body = terminal
         .strip_prefix("(Complete: job ")
-        .and_then(|value| value.strip_suffix(" started.)"))
+        .and_then(|value| value.strip_suffix(".)"))
         .unwrap_or_else(|| {
             panic!("run_background must return the frozen start terminal; got {text:?}")
         });
+    let (id, log) = body
+        .split_once(" started; log at ")
+        .unwrap_or_else(|| panic!("run_background must return the log path; got {text:?}"));
     assert!(valid_job_id(id), "{id}");
+    assert!(Path::new(log).is_absolute(), "{log}");
     id.to_string()
+}
+
+fn started_job_log(text: &str) -> String {
+    let terminal = text.lines().last().unwrap_or(text);
+    let body = terminal
+        .strip_prefix("(Complete: job ")
+        .and_then(|value| value.strip_suffix(".)"))
+        .unwrap_or_else(|| panic!("invalid run_background terminal: {text:?}"));
+    let (_, log) = body
+        .split_once(" started; log at ")
+        .unwrap_or_else(|| panic!("missing run_background log path: {text:?}"));
+    log.to_string()
 }
 
 fn valid_job_id(id: &str) -> bool {
@@ -1229,6 +1666,17 @@ fn valid_job_id(id: &str) -> bool {
         && id[2..]
             .bytes()
             .all(|byte| byte.is_ascii_digit() || byte.is_ascii_lowercase())
+}
+
+fn omitted_start(text: &str) -> u64 {
+    let note = text
+        .lines()
+        .find(|line| line.starts_with("(Note: lines "))
+        .unwrap_or_else(|| panic!("job_output did not report an omitted range: {text}"));
+    note.strip_prefix("(Note: lines ")
+        .and_then(|range| range.split_once('-'))
+        .and_then(|(first, _)| first.parse::<u64>().ok())
+        .unwrap_or_else(|| panic!("invalid omission note: {note}"))
 }
 
 fn job_body_lines(text: &str) -> Vec<String> {
@@ -1267,7 +1715,16 @@ fn wait_for_complete_from(
     job_id: &str,
     after_seq: Option<u64>,
 ) -> String {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    wait_for_complete_from_within(session, job_id, after_seq, Duration::from_secs(15))
+}
+
+fn wait_for_complete_from_within(
+    session: &mut McpSession,
+    job_id: &str,
+    after_seq: Option<u64>,
+    timeout: Duration,
+) -> String {
+    let deadline = Instant::now() + timeout;
     loop {
         assert!(Instant::now() < deadline, "job {job_id} never completed");
         let mut arguments = serde_json::json!({
@@ -1298,12 +1755,13 @@ fn wait_for_job_text(session: &mut McpSession, job_id: &str, needle: &str) -> St
         );
         let output = session.call(
             "job_output",
-            serde_json::json!({"job_id": job_id, "wait_ms": 2_000, "after_seq": 0}),
+            serde_json::json!({"job_id": job_id, "wait_ms": 0, "after_seq": 0}),
         );
         let text = mcp_text(&output).to_string();
         if text.contains(needle) {
             return text;
         }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -1331,7 +1789,7 @@ fn wait_for_job_page_after(
         );
         let mut arguments = serde_json::json!({
             "job_id": job_id,
-            "wait_ms": 2_000,
+            "wait_ms": 0,
             "after_seq": after_seq
         });
         if let Some(encoding) = encoding {
@@ -1342,6 +1800,7 @@ fn wait_for_job_page_after(
         if text.contains(needle) {
             return text;
         }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -1407,6 +1866,7 @@ fn expected_legacy_code_page_label() -> Option<&'static str> {
     None
 }
 
+#[cfg(windows)]
 fn wait_until(mut timeout: Duration, mut predicate: impl FnMut() -> bool) {
     let step = Duration::from_millis(20);
     while !predicate() {
@@ -1458,6 +1918,69 @@ fn terminate_process(pid: u32) {
             std::io::Error::last_os_error()
         );
     }
+}
+
+#[cfg(windows)]
+struct OutputLogLock {
+    file: std::fs::File,
+    overlapped: Box<windows_sys::Win32::System::IO::OVERLAPPED>,
+}
+
+#[cfg(windows)]
+impl Drop for OutputLogLock {
+    fn drop(&mut self) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+
+        // SAFETY: the file and OVERLAPPED storage outlive this call and describe
+        // the same byte range locked by `lock_output_log`.
+        unsafe {
+            UnlockFileEx(
+                self.file.as_raw_handle(),
+                0,
+                u32::MAX,
+                u32::MAX,
+                self.overlapped.as_mut(),
+            );
+        }
+    }
+}
+
+#[cfg(windows)]
+fn lock_output_log(path: &Path) -> OutputLogLock {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
+    };
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    // SAFETY: zero is the documented synchronous-file offset representation.
+    let mut overlapped = Box::new(unsafe { std::mem::zeroed::<OVERLAPPED>() });
+    // SAFETY: the handle is valid and both the file and OVERLAPPED storage stay
+    // alive in the returned guard until the range is unlocked.
+    let locked = unsafe {
+        LockFileEx(
+            file.as_raw_handle(),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            u32::MAX,
+            u32::MAX,
+            overlapped.as_mut(),
+        )
+    };
+    assert_ne!(
+        locked,
+        0,
+        "failed to lock {}: {}",
+        normalized(path),
+        std::io::Error::last_os_error()
+    );
+    OutputLogLock { file, overlapped }
 }
 
 fn assert_no_shell_artifacts(root: &Path) {

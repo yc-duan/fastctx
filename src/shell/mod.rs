@@ -1,5 +1,6 @@
 //! fastshell core: bash-backed foreground commands and bounded background jobs.
 
+mod apply_patch_hint;
 pub(crate) mod bash;
 mod buffer;
 mod encoding;
@@ -17,14 +18,18 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
-const MAX_TIMEOUT_MS: u64 = 240_000;
-const DEFAULT_WAIT_MS: u64 = 10_000;
-const MAX_WAIT_MS: u64 = 120_000;
+pub(crate) const MAX_BLOCKING_CALL_MS: u64 = 240_000;
+const DEFAULT_WAIT_MS: u64 = 30_000;
 
 fn default_login_shell() -> bool {
     true
+}
+
+fn default_wait_ms() -> Option<u64> {
+    Some(DEFAULT_WAIT_MS)
 }
 
 /// Parameters for a foreground bash command.
@@ -65,17 +70,19 @@ pub struct RunBackgroundRequest {
     pub encoding: Option<String>,
 }
 
-/// Parameters for incrementally reading a background job.
+/// Parameters for querying a background job.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JobOutputRequest {
     /// The job id returned by run_background.
     pub job_id: String,
-    /// Long-poll up to this many milliseconds for new output or exit.
-    #[schemars(range(min = 0, max = 120_000))]
+    /// How long this query may take, in milliseconds. It returns earlier only when the job ends.
+    /// Use 0 for an immediate snapshot.
+    #[schemars(default = "default_wait_ms", range(min = 0, max = 240_000))]
     pub wait_ms: Option<u64>,
-    /// Return output after this sequence number (from a prior Partial note's after_seq). Omit to
-    /// continue where your last call left off; pass it to re-anchor idempotently if a call was lost.
+    /// Return output after this line number of the job's log. Omit to continue where your last
+    /// call left off; pass it to re-read a stretch you already saw, for example with a different
+    /// encoding.
     #[schemars(range(min = 0))]
     pub after_seq: Option<u64>,
     /// Decode this job's stored output with this source encoding for this call (WHATWG label
@@ -150,7 +157,7 @@ impl FastShell {
             return ToolResponse::error("Invalid command: it must be a non-empty string.");
         }
         let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-        if !(1..=MAX_TIMEOUT_MS).contains(&timeout_ms) {
+        if !(1..=MAX_BLOCKING_CALL_MS).contains(&timeout_ms) {
             return invalid_timeout(timeout_ms);
         }
         if let Err(error) = output::validate_run_budget(timeout_ms) {
@@ -221,9 +228,9 @@ impl FastShell {
         cancelled: impl Fn() -> bool,
     ) -> ToolResponse {
         let wait_ms = request.wait_ms.unwrap_or(DEFAULT_WAIT_MS);
-        if wait_ms > MAX_WAIT_MS {
+        if wait_ms > MAX_BLOCKING_CALL_MS {
             return ToolResponse::error(format!(
-                "Invalid wait_ms value: {wait_ms}. Expected an integer from 0 to 120000."
+                "Invalid wait_ms value: {wait_ms}. Expected an integer from 0 to 240000."
             ));
         }
         let encoding = match request
@@ -269,6 +276,13 @@ impl FastShell {
             offset as u64,
             request.limit.map(|limit| limit as u64),
         )
+    }
+
+    pub(crate) fn background_status(
+        &self,
+        exclude: Option<&str>,
+    ) -> Option<crate::background_status::BackgroundStatus> {
+        self.jobs.background_status_at(exclude, SystemTime::now())
     }
 }
 
@@ -331,12 +345,12 @@ mod tests {
         assert_eq!(
             shell.job_output(JobOutputRequest {
                 job_id: "missing".to_string(),
-                wait_ms: Some(120_001),
+                wait_ms: Some(240_001),
                 after_seq: None,
                 encoding: None,
             }),
             crate::ToolResponse::error(
-                "Invalid wait_ms value: 120001. Expected an integer from 0 to 120000."
+                "Invalid wait_ms value: 240001. Expected an integer from 0 to 240000."
             )
         );
     }

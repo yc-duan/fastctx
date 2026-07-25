@@ -2,9 +2,10 @@
 
 use crate::budget::{
     JOB_OUTPUT_TOKEN_BUDGET_ENV, RUN_TOKEN_BUDGET_ENV, TokenBudget, estimate_tokens, token_budget,
-    tool_token_budget,
+    tool_token_budget, tool_token_budget_for_required,
 };
 use crate::model::ToolResponse;
+use crate::shell::apply_patch_hint;
 use crate::shell::buffer::{BufferedLine, LineRing};
 use crate::shell::encoding::{EncodedLine, OutputEncoding, decode_run, run_garble_note};
 use crate::shell::normalize::StreamNormalizer;
@@ -71,7 +72,6 @@ pub(crate) fn capture_foreground(mut reader: impl Read) -> std::io::Result<Captu
 
 /// Rejects an unusably small run budget before a command can cause side effects.
 pub(crate) fn validate_run_budget(timeout_ms: u64) -> Result<TokenBudget, String> {
-    let budget = run_token_budget()?;
     let maximum = u64::MAX;
     let drop_note = dropped_note(maximum).expect("a positive count always creates a note");
     let ring_loss_terminal = window_terminal(i32::MIN, None, 0, 0, maximum);
@@ -84,11 +84,11 @@ pub(crate) fn validate_run_budget(timeout_ms: u64) -> Result<TokenBudget, String
         format!("(Complete: exited {}; no output.)", i32::MIN),
         format!("(Complete: exited {}; {maximum} lines.)", i32::MIN),
         format!(
-            "(Partial: exited {}; {maximum} lines shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)",
+            "(Partial: exited {}; {maximum} lines shown, but one or more long lines were truncated at 2000 chars.)",
             i32::MIN
         ),
         format!(
-            "(Partial: showing the first 0 and last 0 of {maximum} lines; exited {}. Re-run with output redirected to a file (command > file 2>&1) and page it with the read tool.)",
+            "(Partial: showing the first 0 and last 0 of {maximum} lines; exited {}.)",
             i32::MIN
         ),
         format!(
@@ -102,10 +102,13 @@ pub(crate) fn validate_run_budget(timeout_ms: u64) -> Result<TokenBudget, String
         ),
         ring_loss,
     ];
-    if candidates
+    let required = candidates
         .iter()
-        .all(|candidate| estimate_tokens(candidate) <= budget.value)
-    {
+        .map(|candidate| estimate_tokens(candidate))
+        .max()
+        .unwrap_or(0);
+    let budget = tool_token_budget_for_required(RUN_TOKEN_BUDGET_ENV, required)?;
+    if required <= budget.value {
         Ok(budget)
     } else {
         Err(budget_too_small_message(budget))
@@ -135,7 +138,9 @@ pub(crate) fn budget_too_small_message(budget: TokenBudget) -> String {
 }
 
 pub(crate) fn terminal_response(terminal: String, budget: TokenBudget) -> ToolResponse {
-    if estimate_tokens(&terminal) <= budget.value {
+    let required = estimate_tokens(&terminal);
+    let budget = tool_token_budget_for_required(budget.variable, required).unwrap_or(budget);
+    if required <= budget.value {
         ToolResponse::text(terminal)
     } else {
         ToolResponse::error(budget_too_small_message(budget))
@@ -145,6 +150,7 @@ pub(crate) fn terminal_response(terminal: String, budget: TokenBudget) -> ToolRe
 /// Formats a normal or timed-out foreground result without writing any shell artifacts.
 pub(crate) fn format_foreground(
     output: &CapturedOutput,
+    command: &str,
     exit_code: i32,
     timeout_ms: Option<u64>,
     encoding: Option<OutputEncoding>,
@@ -153,11 +159,12 @@ pub(crate) fn format_foreground(
         Ok(budget) => budget,
         Err(error) => return ToolResponse::error(error),
     };
-    format_foreground_with_budget(output, exit_code, timeout_ms, encoding, budget)
+    format_foreground_with_budget(output, command, exit_code, timeout_ms, encoding, budget)
 }
 
 fn format_foreground_with_budget(
     output: &CapturedOutput,
+    command: &str,
     exit_code: i32,
     timeout_ms: Option<u64>,
     encoding: Option<OutputEncoding>,
@@ -178,16 +185,16 @@ fn format_foreground_with_budget(
     let lines = decoded.lines;
     let total = output.total_lines();
     let dropped = output.dropped_lines();
+    let trailing = join_notes(
+        decoded.transcoding_note.as_deref(),
+        apply_patch_hint::misuse_note(command, exit_code, timeout_ms).as_deref(),
+    );
 
     if dropped == 0 {
         let terminal = full_terminal(exit_code, timeout_ms, total, decoded.had_truncation);
         let leading = run_garble_note(decoded.invalid_sequences);
-        let response = compose_response_with_tail(
-            leading.as_deref(),
-            &lines,
-            decoded.transcoding_note.as_deref(),
-            &terminal,
-        );
+        let response =
+            compose_response_with_tail(leading.as_deref(), &lines, trailing.as_deref(), &terminal);
         if estimate_tokens(&response) <= budget.value {
             return ToolResponse::text(response);
         }
@@ -196,7 +203,7 @@ fn format_foreground_with_budget(
     let window = ForegroundWindow {
         lines: &lines,
         invalid_per_line: &decoded.invalid_sequences_per_line,
-        transcoding_note: decoded.transcoding_note.as_deref(),
+        trailing_notes: trailing.as_deref(),
         total,
         dropped,
         exit_code,
@@ -224,7 +231,7 @@ fn full_terminal(
         ),
         None if total == 0 => format!("(Complete: exited {exit_code}; no output.)"),
         None if had_truncation => format!(
-            "(Partial: exited {exit_code}; {total} {} shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)",
+            "(Partial: exited {exit_code}; {total} {} shown, but one or more long lines were truncated at 2000 chars.)",
             plural(total, "line", "lines")
         ),
         None => format!(
@@ -243,7 +250,7 @@ fn window_terminal(
 ) -> String {
     match timeout_ms {
         None => format!(
-            "(Partial: showing the first {first} and last {last} of {total} lines; exited {exit_code}. Re-run with output redirected to a file (command > file 2>&1) and page it with the read tool.)"
+            "(Partial: showing the first {first} and last {last} of {total} lines; exited {exit_code}.)"
         ),
         Some(timeout) => format!(
             "(Partial: timed out after {timeout} ms and the process tree was killed; showing the first {first} and last {last} of {total} captured lines. Increase timeout_ms or use run_background.)"
@@ -254,7 +261,8 @@ fn window_terminal(
 struct ForegroundWindow<'a> {
     lines: &'a [String],
     invalid_per_line: &'a [u64],
-    transcoding_note: Option<&'a str>,
+    /// Already-joined notes that sit between the output and the terminal note.
+    trailing_notes: Option<&'a str>,
     total: u64,
     dropped: u64,
     exit_code: i32,
@@ -353,18 +361,25 @@ fn window_candidate(window: &ForegroundWindow<'_>, bounds: WindowBounds) -> Stri
         last,
         window.total,
     );
-    compose_response_with_tail(
-        leading.as_deref(),
-        &body,
-        window.transcoding_note,
-        &terminal,
-    )
+    compose_response_with_tail(leading.as_deref(), &body, window.trailing_notes, &terminal)
 }
 
+/// Joins two optional notes with the same separator `compose_response_with_tail` uses between them.
+fn join_notes(first: Option<&str>, second: Option<&str>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first}\n{second}")),
+        (Some(only), None) | (None, Some(only)) => Some(only.to_string()),
+        (None, None) => None,
+    }
+}
+
+/// Reports ring-buffer loss as a bare fact: what to do about it is the caller's
+/// call, and the only remedy would be re-running a command whose sheer output
+/// volume makes heavy side effects likely (2026-07-25).
 pub(crate) fn dropped_note(dropped: u64) -> Option<String> {
     (dropped > 0).then(|| {
         format!(
-            "(Note: {dropped} earlier {} {} dropped from the buffer and cannot be retrieved; redirect the command to a file for the full log.)",
+            "(Note: {dropped} earlier {} {} dropped from the buffer and cannot be retrieved.)",
             plural(dropped, "line", "lines"),
             if dropped == 1 { "was" } else { "were" }
         )
@@ -433,12 +448,19 @@ mod tests {
     #[test]
     fn complete_timeout_and_long_line_status_notes_match_the_contract() {
         assert_eq!(
-            format_foreground_with_budget(&CapturedOutput::default(), 0, None, None, budget(8_500),),
+            format_foreground_with_budget(
+                &CapturedOutput::default(),
+                "true",
+                0,
+                None,
+                None,
+                budget(8_500),
+            ),
             crate::ToolResponse::text("(Complete: exited 0; no output.)")
         );
         let one = CapturedOutput::from_lines(&[("one", false)], usize::MAX);
         assert_eq!(
-            format_foreground_with_budget(&one, 42, None, None, budget(8_500)),
+            format_foreground_with_budget(&one, "true", 42, None, None, budget(8_500)),
             crate::ToolResponse::text("one\n\n(Complete: exited 42; 1 line.)")
         );
         let long = capture_foreground(std::io::Cursor::new(vec![b'x'; 3_000])).unwrap();
@@ -447,14 +469,15 @@ mod tests {
             "x".repeat(2_000)
         );
         assert_eq!(
-            format_foreground_with_budget(&long, 0, None, None, budget(8_500)),
+            format_foreground_with_budget(&long, "true", 0, None, None, budget(8_500)),
             crate::ToolResponse::text(format!(
-                "{long_line}\n\n(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars. Redirect to a file (command > file 2>&1) and inspect the long line with the read tool's hex view or grep.)"
+                "{long_line}\n\n(Partial: exited 0; 1 line shown, but one or more long lines were truncated at 2000 chars.)"
             ))
         );
         assert_eq!(
             format_foreground_with_budget(
                 &CapturedOutput::default(),
+                "true",
                 137,
                 Some(1),
                 None,
@@ -476,7 +499,7 @@ mod tests {
             .map(|(line, truncated)| (line.as_str(), *truncated))
             .collect::<Vec<_>>();
         let output = CapturedOutput::from_lines(&borrowed, usize::MAX);
-        let response = format_foreground_with_budget(&output, 0, None, None, budget(160));
+        let response = format_foreground_with_budget(&output, "true", 0, None, None, budget(160));
         let text = match &response.content[0] {
             crate::ToolContent::Text(text) => text,
             crate::ToolContent::Image { .. } => panic!("expected text"),
@@ -484,9 +507,8 @@ mod tests {
         assert!(text.contains("line-001"), "{text}");
         assert!(text.contains("line-200"), "{text}");
         assert!(text.contains("... ["), "{text}");
-        assert!(text.ends_with(
-            "Re-run with output redirected to a file (command > file 2>&1) and page it with the read tool.)"
-        ));
+        assert!(text.contains("(Partial: showing the first "), "{text}");
+        assert!(text.ends_with("of 200 lines; exited 0.)"), "{text}");
         assert!(crate::budget::estimate_tokens(text) <= 160);
     }
 
@@ -494,13 +516,13 @@ mod tests {
     fn ring_loss_is_reported_at_the_page_front_and_in_the_partial_terminal() {
         let per_line = std::mem::size_of::<crate::shell::buffer::BufferedLine>() + 4;
         let output = CapturedOutput::from_lines(&[("one", false), ("two", false)], per_line);
-        let response = format_foreground_with_budget(&output, 0, None, None, budget(8_500));
+        let response = format_foreground_with_budget(&output, "true", 0, None, None, budget(8_500));
         let text = match &response.content[0] {
             crate::ToolContent::Text(text) => text,
             crate::ToolContent::Image { .. } => panic!("expected text"),
         };
         assert!(text.starts_with(
-            "(Note: 1 earlier line was dropped from the buffer and cannot be retrieved; redirect the command to a file for the full log.)"
+            "(Note: 1 earlier line was dropped from the buffer and cannot be retrieved.)"
         ));
         assert!(text.contains("of 2 lines; exited 0."));
     }
@@ -510,7 +532,7 @@ mod tests {
         assert_eq!(compose_lines(&[String::new()], "(status)"), "\n\n(status)");
         assert_eq!(
             dropped_note(2).unwrap(),
-            "(Note: 2 earlier lines were dropped from the buffer and cannot be retrieved; redirect the command to a file for the full log.)"
+            "(Note: 2 earlier lines were dropped from the buffer and cannot be retrieved.)"
         );
     }
 
@@ -522,7 +544,7 @@ mod tests {
         );
         assert_eq!(
             window_terminal(42, None, 2, 9, 20),
-            "(Partial: showing the first 2 and last 9 of 20 lines; exited 42. Re-run with output redirected to a file (command > file 2>&1) and page it with the read tool.)"
+            "(Partial: showing the first 2 and last 9 of 20 lines; exited 42.)"
         );
         assert_eq!(
             window_terminal(137, Some(500), 1, 8, 20),

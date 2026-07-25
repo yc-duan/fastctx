@@ -9,20 +9,31 @@
 
 ## 项目信息
 
-- 社区版本：[Windows ARM64 v1](https://github.com/Simplepine/fastctx/releases/tag/v1)
+- 已发布社区版本（基于上游 v0.2.1）：[Windows ARM64 v1](https://github.com/Simplepine/fastctx/releases/tag/v1)
 - 社区仓库：[Simplepine/fastctx](https://github.com/Simplepine/fastctx)
 - 原项目：[yc-duan/fastctx](https://github.com/yc-duan/fastctx)
 - 原作者：[yc-duan](https://github.com/yc-duan)
-- 上游版本：`v0.2.1`
-- ARM64 验证提交：[`1db4537`](https://github.com/Simplepine/fastctx/commit/1db453750097add2971cc4d1a919fd5bae6ecfad)
+- 当前分支上游基线：`v0.2.2`
+- ARM64 基础适配提交：[`1db4537`](https://github.com/Simplepine/fastctx/commit/1db453750097add2971cc4d1a919fd5bae6ecfad)
 - 架构：`aarch64-pc-windows-msvc`
 - 许可证：MIT OR Apache-2.0
 
-GitHub 标签 `v1` 是本社区构建的发布编号。程序内部仍会如实显示：
+当前分支构建的程序会如实显示：
 
 ```text
-fastctx 0.2.1
+fastctx 0.2.2
 ```
+
+GitHub 标签 `v1` 仍是基于上游 v0.2.1 的历史发布；下方快速开始中的
+v1 下载链接也仍指向该版本，直到 v0.2.2 社区资产正式发布。
+
+## 当前 v0.2.2 同步状态
+
+- 已合入上游 v0.2.2 的批量读取、持久完整后台日志、状态行和更新检查改进
+- 保留 Scoop Git Bash 发现、中文路径覆盖和 Windows ARM64 无 npm 平台包兼容
+- Windows ARM64 后台监督进程使用 30 秒启动窗口，其他平台保持上游 10 秒
+- `--no-default-features` 原生 ARM64 release 构建通过，PDF 仍关闭
+- 651 项测试通过，4 项按上游设计忽略，0 项失败
 
 ## FastCtx 是什么
 

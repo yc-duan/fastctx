@@ -11,6 +11,7 @@ const LOCAL_ARCHIVE_ENV: &str = "FASTCTX_PDFIUM_ARCHIVE";
 const DISTRIBUTION_ENV: &str = "FASTCTX_DISTRIBUTION";
 const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LIBRARY_BYTES: u64 = 64 * 1024 * 1024;
+const DOWNLOAD_ATTEMPTS: u32 = 4;
 
 struct Artifact {
     asset: &'static str,
@@ -113,19 +114,45 @@ fn load_archive(artifact: &Artifact, target_env: &str) -> Vec<u8> {
         "https://github.com/bblanchon/pdfium-binaries/releases/download/{RELEASE_TAG}/{}",
         artifact.asset
     );
-    let response = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(150))
-        .call()
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to download pinned Pdfium archive from {url}: {error}. For an offline build, set {LOCAL_ARCHIVE_ENV} to the matching archive path"
-            )
-        });
     read_limited(
-        response.into_reader(),
+        download(&url).into_reader(),
         MAX_ARCHIVE_BYTES,
         "downloaded Pdfium archive",
     )
+}
+
+/// Fetches the pinned release asset, retrying only the failures a later attempt can
+/// clear. Retrying cannot widen what the build accepts: the bytes are still checked
+/// against the pinned digest afterwards.
+fn download(url: &str) -> ureq::Response {
+    let mut attempt = 1;
+    loop {
+        let error = match ureq::get(url)
+            .timeout(std::time::Duration::from_secs(150))
+            .call()
+        {
+            Ok(response) => return response,
+            Err(error) => error,
+        };
+        if attempt >= DOWNLOAD_ATTEMPTS || !is_retryable(&error) {
+            panic!(
+                "failed to download pinned Pdfium archive from {url}: {error}. For an offline build, set {LOCAL_ARCHIVE_ENV} to the matching archive path"
+            );
+        }
+        println!("cargo:warning=attempt {attempt} to download {url} failed ({error}); retrying");
+        std::thread::sleep(std::time::Duration::from_secs(2u64.pow(attempt)));
+        attempt += 1;
+    }
+}
+
+/// An absent or forbidden asset means the pinned release tag is wrong, which fails
+/// identically however often it is asked; only transport faults and server-side
+/// failures are worth repeating.
+fn is_retryable(error: &ureq::Error) -> bool {
+    match error {
+        ureq::Error::Status(code, _) => *code == 408 || *code == 429 || *code >= 500,
+        ureq::Error::Transport(_) => true,
+    }
 }
 
 fn read_limited(mut reader: impl Read, limit: u64, label: &str) -> Vec<u8> {

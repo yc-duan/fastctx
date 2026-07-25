@@ -1,6 +1,6 @@
 {
   "name": "codex-fastctx",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Compatibility alias for FastCtx",
   "author": "yc-duan <dy2958830371@gmail.com>",
   "license": "MIT OR Apache-2.0",
@@ -11,7 +11,7 @@
     "fastctx": "launcher.js"
   },
   "dependencies": {
-    "fastctx": "0.2.1"
+    "fastctx": "0.2.2"
   },
   "files": ["launcher.js", "README.md", "licenses/**"],
   "publishConfig": {"access": "public"}

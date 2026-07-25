@@ -1,17 +1,21 @@
 //! Unified rmcp registration, feature gating, and shared tool state.
 
-use crate::budget::{GLOB_TOKEN_BUDGET_ENV, GREP_TOKEN_BUDGET_ENV};
+use crate::budget::{GLOB_TOKEN_BUDGET_ENV, GREP_TOKEN_BUDGET_ENV, READ_TOKEN_BUDGET_ENV};
 use crate::edit::ReplaceService;
 use crate::file_executor::GrepGlobExecutor;
 use crate::glob_tool::{GlobRequest, glob_files_cancellable};
 use crate::grep_tool::{GrepRequest, grep_files_cancellable};
 use crate::read_tool::{ReadRequest, read_file};
 use crate::server_manifest::{ToolContract, ToolManifest};
-use crate::server_support::{run_blocking, run_blocking_cancellable};
+use crate::server_support::{BudgetRetry, run_blocking, run_blocking_cancellable};
 use crate::shell::FastShell;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    CallToolResult, ErrorCode, ErrorData, Implementation, ListResourceTemplatesResult,
+    ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult,
+    ServerCapabilities, ServerInfo,
+};
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use std::sync::Arc;
@@ -114,7 +118,7 @@ impl Default for FastCtxServer {
 impl FastCtxServer {
     #[tool(
         name = "read",
-        description = "Read a file (text, image, or PDF) from the local filesystem. Text returns\n1-based `N<tab>content` lines, 2000 per page; page with offset/limit. Images\n(PNG/JPG/GIF/WebP/BMP) are shown to you visually. PDFs return the selected\npages' text layer (pdf_mode=\"text\", default) or each page rendered as an\nimage (pdf_mode=\"image\"). Text mode requires `pages` over 10 pages; image\nmode defaults to 4 pages. Max 20 pages per call. view=\"hex\" dumps any file's\nraw bytes. Text output is always UTF-8; omit encoding for conservative\nauto-detection (BOM and valid UTF-8 are trusted, legacy text only after\nconsistency checks) — if uncertain it returns an error listing candidate\nencodings instead of guessed text, so pass encoding (e.g. \"gbk\") only when\nyou know the source encoding or a prior read reported ambiguity. file_path must\nbe absolute. Text, PDF, and hex responses end with a Complete or Partial status\n— continue only with the exact parameters a Partial note provides. Plain\nimages, warnings, and errors are self-contained.",
+        description = "Read one file (text, image, or PDF) or a batch of text files from the local\nfilesystem. Paths must be absolute. Text returns 1-based `N<tab>content`\nlines, 2000 per page; page with offset/limit. For several text files in one\ncall, pass files=[{\"path\": ...}, ...] instead of file_path: one token\nbudget, per-file problems reported inline without failing the batch, and a\nPartial note returns the exact files array for the next call. Images\n(PNG/JPG/GIF/WebP/BMP) are shown to you visually. PDFs return the selected\npages' text layer or those pages rendered as images; image mode defaults to\n4 pages. view=\"hex\" dumps any file's raw bytes. PDFs, images, and hex view\nare single-file only. Text output is always UTF-8; when auto-detection is\nnot confident it returns an error listing candidate encodings instead of\nguessed text, so pass encoding only then. Text, PDF, and hex responses end\nwith a Complete or Partial status — continue only with the exact parameters\na Partial note provides.",
         annotations(
             title = "Read local file",
             read_only_hint = true,
@@ -123,12 +127,20 @@ impl FastCtxServer {
         )
     )]
     async fn read(&self, Parameters(request): Parameters<ReadRequest>) -> CallToolResult {
-        run_blocking(Arc::clone(&self.file_permits), move || read_file(request)).await
+        let status_shell = self.shell.clone();
+        run_blocking(
+            Arc::clone(&self.file_permits),
+            READ_TOKEN_BUDGET_ENV,
+            move || status_shell.background_status(None),
+            BudgetRetry::Safe,
+            move || read_file(request.clone()),
+        )
+        .await
     }
 
     #[tool(
         name = "grep",
-        description = "Fast regex content search (ripgrep engine; Rust regex, no lookaround). Output\nmodes: \"files_with_matches\" (default, paths only), \"content\" (matching lines,\noptional context), \"count\" (per-file occurrence counts — total matches, not\nmatching-line count), \"summary\" (global totals only).\nRespects .gitignore; searches hidden files; skips .git and binaries. Files are\ndecoded to UTF-8 before searching; files whose encoding can't be determined, or\nthat change during a directory search, are skipped and listed (never silently) —\npass fallback_encoding (directory) or encoding (single file) to resolve encoding;\na changing single-file target returns an error. Matching is line-by-line: `^` and\n`$` anchor line boundaries and are CRLF-aware. Set multiline=true for patterns\nspanning lines (`.` matches newlines; `\\n` also matches `\\r\\n`). A path component\nof the form ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows\nUTF-16) is a filename escape; copy that whole component verbatim in later calls\nand do not decode or rewrite it. The last line of every successful result states\nComplete or Partial — continue only with the exact offset a Partial note provides;\nerrors are self-contained.",
+        description = "Fast regex content search (ripgrep engine; Rust regex, no lookaround). Output\nmodes: \"files_with_matches\" (default, paths only), \"content\", \"count\" (total\nmatches, not matching lines), \"summary\" (global totals). Respects .gitignore;\nsearches hidden files; skips .git and binaries. Files are decoded to UTF-8\nbefore searching; files whose encoding can't be determined, or that change\nduring a directory search, are skipped and listed; a changing single-file\ntarget returns an error. Matching is line-by-line: `^` and `$` anchor line\nboundaries and are CRLF-aware. A path component of the form ~fastctx~b...~\n(reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16) is a filename\nescape; copy that whole component verbatim in later calls and do not decode\nor rewrite it. The last line of every successful result states Complete or\nPartial — continue only with the exact offset a Partial note provides; errors\nare self-contained.",
         annotations(
             title = "Search file contents",
             read_only_hint = true,
@@ -147,14 +159,18 @@ impl FastCtxServer {
             Arc::clone(&self.file_permits),
             Arc::clone(&self.grep_glob_executor),
             GREP_TOKEN_BUDGET_ENV,
-            move |operation, executor| grep_files_cancellable(operation, executor, request),
+            {
+                let shell = self.shell.clone();
+                move || shell.background_status(None)
+            },
+            move |operation, executor| grep_files_cancellable(operation, executor, request.clone()),
         )
         .await
     }
 
     #[tool(
         name = "glob",
-        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Returns absolute\npaths sorted by path (or newest first with sort=\"modified\"), 100 per page.\nfilter_mode \"project\" (default) respects .gitignore and skips .git;\nfilter_mode \"all\" lists everything. Omit `path` to search the session working\ndirectory — omit the field entirely, never pass \"null\" or \"undefined\". A path\ncomponent of the form ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~\n(Windows UTF-16) is a filename escape; copy that whole component verbatim in\nlater calls and do not decode or rewrite it. The last line of every successful\nresult states Complete or Partial — continue only with the exact offset a Partial\nnote provides; errors are self-contained.",
+        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Returns absolute\npaths sorted by path (or newest first with sort=\"modified\"), 100 per page by\ndefault. filter_mode defaults to \"project\" (respects .gitignore, skips .git);\n\"all\" lists everything. Omit `path` entirely for the session working directory\n— never pass \"null\" or \"undefined\". A path component of the form ~fastctx~b...~\n(reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16) is a filename\nescape; copy that whole component verbatim in later calls and do not decode or\nrewrite it. The last line of every successful result states Complete or Partial\n— continue only with the exact offset a Partial note provides; errors are\nself-contained.",
         annotations(
             title = "Match file paths",
             read_only_hint = true,
@@ -173,7 +189,11 @@ impl FastCtxServer {
             Arc::clone(&self.file_permits),
             Arc::clone(&self.grep_glob_executor),
             GLOB_TOKEN_BUDGET_ENV,
-            move |operation, executor| glob_files_cancellable(operation, executor, request),
+            {
+                let shell = self.shell.clone();
+                move || shell.background_status(None)
+            },
+            move |operation, executor| glob_files_cancellable(operation, executor, request.clone()),
         )
         .await
     }
@@ -187,12 +207,57 @@ impl ServerHandler for FastCtxServer {
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION"),
             ))
+            // 2026-07-24: hosts render these instructions as the tool namespace's one-line
+            // blurb and may keep only its first line and first 250 characters, so this text
+            // has to introduce the toolset within that budget. Behavioural rules belong in
+            // the host guidance file, which has no such limit.
             .with_instructions(if self.options.enable_shell {
-                "Use read, grep, and glob for inspection, replace for mechanical file edits, and the POSIX-bash shell tools for terminal work."
+                "Local-file tools: read (one file or a batch), grep (content search), glob (find paths), replace (mechanical find-and-replace), plus POSIX-bash shell tools. Pass absolute paths, never file:// URIs. FastCtx publishes tools, not MCP resources."
             } else {
-                "Use read, grep, and glob for inspection, and replace for mechanical file edits."
+                "Local-file tools: read (one file or a batch), grep (content search), glob (find paths), and replace (mechanical find-and-replace). Pass absolute paths, never file:// URIs. FastCtx publishes tools, not MCP resources."
             })
     }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Err(not_a_resource_server())
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        Err(not_a_resource_server())
+    }
+
+    async fn read_resource(
+        &self,
+        _request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        Err(not_a_resource_server())
+    }
+}
+
+/// Rejection shared by every `resources/*` method, naming the tool that actually does the job.
+///
+/// 2026-07-24: hosts publish generic resource tools for every configured MCP server without
+/// checking whether the server declared the `resources` capability, so these methods are reachable
+/// even though FastCtx never advertises them. The SDK default would answer the two list methods
+/// with an empty array, which reads as "this server does resources and happens to have none" and
+/// invites a follow-up read of an invented URI; one rejection for all three cuts that off at the
+/// first step. Callers arrive holding a `file://` URL, so the recovery names the parameter shape
+/// as well as the tool.
+fn not_a_resource_server() -> ErrorData {
+    ErrorData::new(
+        ErrorCode::METHOD_NOT_FOUND,
+        "Use mcp__fastctx__read with an absolute file path (not a file:// URI) to read local files, and mcp__fastctx__glob to list paths. FastCtx publishes tools, not MCP resources.",
+        None,
+    )
 }
 
 #[cfg(test)]

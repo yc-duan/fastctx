@@ -21,12 +21,19 @@ const LEGACY_FASTREAD_SECTION: &str = concat!(
 const FILE_GUIDANCE: &str = concat!(
     "## Local file inspection\n",
     "\n",
-    "The FastCtx MCP tools are the first-class way to read, search, and find\n",
-    "local files: `mcp__fastctx__read`, `mcp__fastctx__grep`,\n",
-    "`mcp__fastctx__glob` — prefer them over `cat`/`Get-Content`,\n",
-    "`rg`/`findstr`/`Select-String`, and `dir`/`ls -R`. Pass absolute paths. The\n",
-    "last line of every result says `Complete` or `Partial` — continue only with\n",
-    "the exact parameters a `Partial` note provides.\n",
+    "For reading, searching, and finding local files, prefer the FastCtx MCP\n",
+    "tools — `mcp__fastctx__read`, `mcp__fastctx__grep`, `mcp__fastctx__glob` —\n",
+    "over `cat`/`Get-Content`, `rg`/`findstr`/`Select-String`, and `dir`/`ls -R`.\n",
+    "Read only what the task needs. When you need several files, pass them to\n",
+    "one read call as files=[{\"path\": ...}, ...] instead of one call per file.\n",
+    "Pass absolute paths. The last line of every result says `Complete` or\n",
+    "`Partial` — continue only with the exact parameters a `Partial` note\n",
+    "provides.\n",
+    "\n",
+    "Never point `read_mcp_resource`, `list_mcp_resources`, or\n",
+    "`list_mcp_resource_templates` at the `fastctx` server: FastCtx publishes\n",
+    "tools, not MCP resources, so those calls always fail. Read a local file\n",
+    "with `mcp__fastctx__read` and an absolute path — never a `file://` URI.\n",
     "\n",
     "### Batch replacement\n",
     "\n",
@@ -40,15 +47,21 @@ const SHELL_GUIDANCE: &str = concat!(
     "\n",
     "Prefer `mcp__fastctx__run` over the built-in shell for terminal work: it\n",
     "executes with bash (Git Bash on Windows), so always write POSIX bash —\n",
-    "never PowerShell syntax. Commands must be non-interactive (no TTY): use\n",
-    "flags like -y or --no-edit, and expect editors/pagers to be disabled. For\n",
-    "anything that may run longer than two minutes, use\n",
-    "`mcp__fastctx__run_background`, poll `mcp__fastctx__job_output`, and\n",
-    "stop it with `mcp__fastctx__job_kill`. Background jobs run independently\n",
-    "of this session and survive restarts; rediscover an earlier job with\n",
-    "`mcp__fastctx__job_list` and resume polling it by job_id. A non-zero exit\n",
-    "code is a normal result. The last line of every result says `Complete` or\n",
-    "`Partial`.\n"
+    "never PowerShell syntax.\n",
+    "\n",
+    "Never pass `apply_patch` to `mcp__fastctx__run`: it is not a program and\n",
+    "no shell can run it. Reach it through Codex itself — as its own tool\n",
+    "call, or in Codex's built-in shell — never through the FastCtx tools.\n",
+    "\n",
+    "Commands must be non-interactive (no TTY): use flags like -y\n",
+    "or --no-edit, and expect editors/pagers to be disabled. For anything\n",
+    "that may outlast run's four-minute maximum, use\n",
+    "`mcp__fastctx__run_background`, check on it with\n",
+    "`mcp__fastctx__job_output`, and stop it with `mcp__fastctx__job_kill`.\n",
+    "Background jobs run independently of this session and survive restarts;\n",
+    "rediscover an earlier job with `mcp__fastctx__job_list` and read its\n",
+    "output by job_id. A non-zero exit code is a normal result. The last line\n",
+    "of every result says `Complete` or `Partial`.\n"
 );
 /// Separator bytes inserted and therefore owned by Apply between user content and the private section.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -83,12 +96,18 @@ pub const AGENTS_SECTION: &str = concat!(
     "<!-- fastctx:begin -->\n",
     "## Local file inspection\n",
     "\n",
-    "The FastCtx MCP tools are the first-class way to read, search, and find\n",
-    "local files: `mcp__fastctx__read`, `mcp__fastctx__grep`,\n",
-    "`mcp__fastctx__glob` — prefer them over `cat`/`Get-Content`,\n",
-    "`rg`/`findstr`/`Select-String`, and `dir`/`ls -R`. Pass absolute paths. The\n",
-    "last line of every result says `Complete` or `Partial` — continue only with\n",
-    "the exact parameters a `Partial` note provides.\n\n",
+    "For reading, searching, and finding local files, prefer the FastCtx MCP\n",
+    "tools — `mcp__fastctx__read`, `mcp__fastctx__grep`, `mcp__fastctx__glob` —\n",
+    "over `cat`/`Get-Content`, `rg`/`findstr`/`Select-String`, and `dir`/`ls -R`.\n",
+    "Read only what the task needs. When you need several files, pass them to\n",
+    "one read call as files=[{\"path\": ...}, ...] instead of one call per file.\n",
+    "Pass absolute paths. The last line of every result says `Complete` or\n",
+    "`Partial` — continue only with the exact parameters a `Partial` note\n",
+    "provides.\n\n",
+    "Never point `read_mcp_resource`, `list_mcp_resources`, or\n",
+    "`list_mcp_resource_templates` at the `fastctx` server: FastCtx publishes\n",
+    "tools, not MCP resources, so those calls always fail. Read a local file\n",
+    "with `mcp__fastctx__read` and an absolute path — never a `file://` URI.\n\n",
     "### Batch replacement\n\n",
     "Use `mcp__fastctx__replace` for mechanical find-and-replace across files.\n",
     "It preserves each file's encoding and line endings, supports dry-run previews,\n",
@@ -392,12 +411,18 @@ mod tests {
         let file = concat!(
             "<!-- fastctx:begin -->\n",
             "## Local file inspection\n\n",
-            "The FastCtx MCP tools are the first-class way to read, search, and find\n",
-            "local files: `mcp__fastctx__read`, `mcp__fastctx__grep`,\n",
-            "`mcp__fastctx__glob` — prefer them over `cat`/`Get-Content`,\n",
-            "`rg`/`findstr`/`Select-String`, and `dir`/`ls -R`. Pass absolute paths. The\n",
-            "last line of every result says `Complete` or `Partial` — continue only with\n",
-            "the exact parameters a `Partial` note provides.\n\n",
+            "For reading, searching, and finding local files, prefer the FastCtx MCP\n",
+            "tools — `mcp__fastctx__read`, `mcp__fastctx__grep`, `mcp__fastctx__glob` —\n",
+            "over `cat`/`Get-Content`, `rg`/`findstr`/`Select-String`, and `dir`/`ls -R`.\n",
+            "Read only what the task needs. When you need several files, pass them to\n",
+            "one read call as files=[{\"path\": ...}, ...] instead of one call per file.\n",
+            "Pass absolute paths. The last line of every result says `Complete` or\n",
+            "`Partial` — continue only with the exact parameters a `Partial` note\n",
+            "provides.\n\n",
+            "Never point `read_mcp_resource`, `list_mcp_resources`, or\n",
+            "`list_mcp_resource_templates` at the `fastctx` server: FastCtx publishes\n",
+            "tools, not MCP resources, so those calls always fail. Read a local file\n",
+            "with `mcp__fastctx__read` and an absolute path — never a `file://` URI.\n\n",
             "### Batch replacement\n\n",
             "Use `mcp__fastctx__replace` for mechanical find-and-replace across files.\n",
             "It preserves each file's encoding and line endings, supports dry-run previews,\n",
@@ -408,15 +433,19 @@ mod tests {
             "\n### Shell commands\n\n",
             "Prefer `mcp__fastctx__run` over the built-in shell for terminal work: it\n",
             "executes with bash (Git Bash on Windows), so always write POSIX bash —\n",
-            "never PowerShell syntax. Commands must be non-interactive (no TTY): use\n",
-            "flags like -y or --no-edit, and expect editors/pagers to be disabled. For\n",
-            "anything that may run longer than two minutes, use\n",
-            "`mcp__fastctx__run_background`, poll `mcp__fastctx__job_output`, and\n",
-            "stop it with `mcp__fastctx__job_kill`. Background jobs run independently\n",
-            "of this session and survive restarts; rediscover an earlier job with\n",
-            "`mcp__fastctx__job_list` and resume polling it by job_id. A non-zero exit\n",
-            "code is a normal result. The last line of every result says `Complete` or\n",
-            "`Partial`.\n",
+            "never PowerShell syntax.\n\n",
+            "Never pass `apply_patch` to `mcp__fastctx__run`: it is not a program and\n",
+            "no shell can run it. Reach it through Codex itself — as its own tool\n",
+            "call, or in Codex's built-in shell — never through the FastCtx tools.\n\n",
+            "Commands must be non-interactive (no TTY): use flags like -y\n",
+            "or --no-edit, and expect editors/pagers to be disabled. For anything\n",
+            "that may outlast run's four-minute maximum, use\n",
+            "`mcp__fastctx__run_background`, check on it with\n",
+            "`mcp__fastctx__job_output`, and stop it with `mcp__fastctx__job_kill`.\n",
+            "Background jobs run independently of this session and survive restarts;\n",
+            "rediscover an earlier job with `mcp__fastctx__job_list` and read its\n",
+            "output by job_id. A non-zero exit code is a normal result. The last line\n",
+            "of every result says `Complete` or `Partial`.\n",
         );
         let end = "<!-- fastctx:end -->";
         for (fastshell, expected) in [
@@ -438,9 +467,66 @@ mod tests {
                 .collect::<BTreeSet<_>>();
             assert_eq!(referenced, published);
             assert!(actual.contains("mcp__fastctx__replace"));
+            for forbidden in [
+                "will be told",
+                "will be notified",
+                "wait for it to tell you",
+            ] {
+                assert!(!actual.to_ascii_lowercase().contains(forbidden));
+            }
             for removed in ["copy", "cut", "paste", "clips", "drop"] {
                 assert!(!actual.contains(&format!("mcp__fastctx__{removed}")));
             }
+        }
+    }
+
+    /// Steering the model away from the built-in shell also steers it away from the
+    /// host's `apply_patch`, which is intercepted on that channel only and is not a
+    /// program the shell tool could ever resolve. The carve-out below is what keeps
+    /// the model from piping patches into `run` and getting `command not found`
+    /// (reported 2026-07-24); it is scoped to the shell section because without the
+    /// shell tools there is no wrong channel to warn about.
+    #[test]
+    fn shell_guidance_carves_apply_patch_out_of_the_run_tool() {
+        let with_shell = section(true).replace('\n', " ");
+        assert!(
+            with_shell.contains("Never pass `apply_patch` to `mcp__fastctx__run`"),
+            "{with_shell}"
+        );
+        assert!(
+            with_shell.contains("it is not a program and no shell can run it"),
+            "{with_shell}"
+        );
+        // Naming both host shapes is the point: the model must not have to work out which one
+        // it holds, and pinning only one of them would misdirect every session running the other.
+        assert!(
+            with_shell.contains(
+                "Reach it through Codex itself — as its own tool call, or in Codex's built-in shell"
+            ),
+            "{with_shell}"
+        );
+        assert!(!section(false).contains("Never pass `apply_patch`"));
+    }
+
+    #[test]
+    fn file_guidance_bans_resource_routing_in_every_tool_combination() {
+        // Hosts publish their generic resource tools whenever any MCP server is configured, so
+        // unlike the apply_patch ban this one has no optional-group scope: it must hold with and
+        // without the shell tools. It lives here rather than in the MCP instructions because
+        // hosts may keep only the first line and first 250 characters of those (2026-07-24).
+        for fastshell in [false, true] {
+            let guidance = section(fastshell).replace('\n', " ");
+            assert!(
+                guidance.contains(
+                    "Never point `read_mcp_resource`, `list_mcp_resources`, or `list_mcp_resource_templates` at the `fastctx` server"
+                ),
+                "{guidance}"
+            );
+            assert!(
+                guidance.contains("FastCtx publishes tools, not MCP resources"),
+                "{guidance}"
+            );
+            assert!(guidance.contains("never a `file://` URI"), "{guidance}");
         }
     }
 

@@ -1,6 +1,6 @@
 {
   "name": "@fastctx/win32-x64",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "FastCtx binary for Windows x64",
   "author": "yc-duan <dy2958830371@gmail.com>",
   "license": "MIT OR Apache-2.0",

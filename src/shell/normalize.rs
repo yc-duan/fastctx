@@ -74,6 +74,18 @@ enum StreamMode {
     Wide(StreamEncoding),
 }
 
+/// Streaming events used by the background-log writer. Byte events are not
+/// line-bounded, so an arbitrarily long line never has to live in memory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum NormalizedEvent {
+    /// Announces the stream encoding after the BOM probe is settled.
+    Start(Option<StreamEncoding>),
+    /// Normalized content bytes with ANSI sequences and line endings removed.
+    Bytes(Vec<u8>),
+    /// Commits one logical line; an unterminated line is emitted only at stream end.
+    LineEnd { terminated: bool },
+}
+
 #[derive(Debug, Default)]
 struct LineAccumulator {
     prefix: Vec<u8>,
@@ -88,10 +100,6 @@ impl LineAccumulator {
             .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
     }
 
-    fn has_content(&self) -> bool {
-        self.total_bytes > 0
-    }
-
     fn finish(self, terminated: bool, stream_encoding: Option<StreamEncoding>) -> NormalizedLine {
         NormalizedLine {
             raw_truncated: self.total_bytes > self.prefix.len() as u64,
@@ -103,31 +111,33 @@ impl LineAccumulator {
     }
 }
 
-/// Incrementally removes ANSI CSI/OSC sequences and normalizes all CR forms to LF lines.
+/// Stateful byte processor shared by bounded foreground capture and the complete
+/// background log. It never owns a whole logical line.
 #[derive(Debug)]
-pub(crate) struct StreamNormalizer {
+struct NormalizerCore {
     mode: Option<StreamMode>,
     bom_probe: Vec<u8>,
     wide_pending: Vec<u8>,
     escape: EscapeState,
     pending_cr: bool,
-    line: LineAccumulator,
+    emitted: Vec<u8>,
+    line_has_content: bool,
 }
 
-impl StreamNormalizer {
-    pub(crate) fn new() -> Self {
+impl NormalizerCore {
+    fn new() -> Self {
         Self {
             mode: None,
             bom_probe: Vec::with_capacity(4),
             wide_pending: Vec::with_capacity(4),
             escape: EscapeState::Text,
             pending_cr: false,
-            line: LineAccumulator::default(),
+            emitted: Vec::with_capacity(16 * 1024),
+            line_has_content: false,
         }
     }
 
-    /// Consumes an arbitrary byte chunk without decoding or corrupting split code units.
-    pub(crate) fn push(&mut self, bytes: &[u8], output: &mut Vec<NormalizedLine>) {
+    fn push(&mut self, bytes: &[u8], output: &mut Vec<NormalizedEvent>) {
         if self.mode.is_none() {
             self.bom_probe.extend_from_slice(bytes);
             self.select_mode(false, output);
@@ -136,8 +146,7 @@ impl StreamNormalizer {
         self.process(bytes, output);
     }
 
-    /// Flushes a final unterminated line and any pending isolated carriage return.
-    pub(crate) fn finish(mut self, output: &mut Vec<NormalizedLine>) {
+    fn finish(&mut self, output: &mut Vec<NormalizedEvent>) {
         if self.mode.is_none() {
             self.select_mode(true, output);
         }
@@ -148,21 +157,26 @@ impl StreamNormalizer {
         if self.pending_cr {
             self.emit_line(true, output);
             self.pending_cr = false;
-        } else if self.line.has_content() {
+        } else if self.line_has_content {
             self.emit_line(false, output);
         }
+        self.flush_bytes(output);
     }
 
-    fn select_mode(&mut self, final_chunk: bool, output: &mut Vec<NormalizedLine>) {
+    fn select_mode(&mut self, final_chunk: bool, output: &mut Vec<NormalizedEvent>) {
         let Some((mode, bom_len)) = detect_stream_mode(&self.bom_probe, final_chunk) else {
             return;
         };
         self.mode = Some(mode);
+        output.push(NormalizedEvent::Start(match mode {
+            StreamMode::Bytes => None,
+            StreamMode::Wide(encoding) => Some(encoding),
+        }));
         let buffered = std::mem::take(&mut self.bom_probe);
         self.process(&buffered[bom_len.min(buffered.len())..], output);
     }
 
-    fn process(&mut self, bytes: &[u8], output: &mut Vec<NormalizedLine>) {
+    fn process(&mut self, bytes: &[u8], output: &mut Vec<NormalizedEvent>) {
         match self
             .mode
             .expect("stream mode is selected before processing")
@@ -183,9 +197,10 @@ impl StreamNormalizer {
                 }
             }
         }
+        self.flush_bytes(output);
     }
 
-    fn process_unit(&mut self, raw: &[u8], ascii: Option<u8>, output: &mut Vec<NormalizedLine>) {
+    fn process_unit(&mut self, raw: &[u8], ascii: Option<u8>, output: &mut Vec<NormalizedEvent>) {
         match self.escape {
             EscapeState::Text => {
                 if ascii == Some(0x1b) {
@@ -221,7 +236,7 @@ impl StreamNormalizer {
         }
     }
 
-    fn push_text_unit(&mut self, raw: &[u8], ascii: Option<u8>, output: &mut Vec<NormalizedLine>) {
+    fn push_text_unit(&mut self, raw: &[u8], ascii: Option<u8>, output: &mut Vec<NormalizedEvent>) {
         if self.pending_cr {
             self.emit_line(true, output);
             self.pending_cr = false;
@@ -232,17 +247,93 @@ impl StreamNormalizer {
         match ascii {
             Some(b'\r') => self.pending_cr = true,
             Some(b'\n') => self.emit_line(true, output),
-            _ => self.line.push(raw),
+            _ => {
+                self.emitted.extend_from_slice(raw);
+                self.line_has_content = true;
+            }
         }
     }
 
-    fn emit_line(&mut self, terminated: bool, output: &mut Vec<NormalizedLine>) {
-        let stream_encoding = match self.mode {
-            Some(StreamMode::Wide(encoding)) => Some(encoding),
-            _ => None,
-        };
-        let line = std::mem::take(&mut self.line).finish(terminated, stream_encoding);
-        output.push(line);
+    fn emit_line(&mut self, terminated: bool, output: &mut Vec<NormalizedEvent>) {
+        self.flush_bytes(output);
+        output.push(NormalizedEvent::LineEnd { terminated });
+        self.line_has_content = false;
+    }
+
+    fn flush_bytes(&mut self, output: &mut Vec<NormalizedEvent>) {
+        if !self.emitted.is_empty() {
+            output.push(NormalizedEvent::Bytes(std::mem::take(&mut self.emitted)));
+        }
+    }
+}
+
+/// Incrementally removes ANSI CSI/OSC sequences and returns bounded lines for
+/// foreground presentation.
+#[derive(Debug)]
+pub(crate) struct StreamNormalizer {
+    core: NormalizerCore,
+    line: LineAccumulator,
+    stream_encoding: Option<StreamEncoding>,
+}
+
+impl StreamNormalizer {
+    pub(crate) fn new() -> Self {
+        Self {
+            core: NormalizerCore::new(),
+            line: LineAccumulator::default(),
+            stream_encoding: None,
+        }
+    }
+
+    /// Consumes an arbitrary byte chunk without decoding or corrupting split code units.
+    pub(crate) fn push(&mut self, bytes: &[u8], output: &mut Vec<NormalizedLine>) {
+        let mut events = Vec::new();
+        self.core.push(bytes, &mut events);
+        self.consume(events, output);
+    }
+
+    /// Flushes a final unterminated line and any pending isolated carriage return.
+    pub(crate) fn finish(mut self, output: &mut Vec<NormalizedLine>) {
+        let mut events = Vec::new();
+        self.core.finish(&mut events);
+        self.consume(events, output);
+    }
+
+    fn consume(&mut self, events: Vec<NormalizedEvent>, output: &mut Vec<NormalizedLine>) {
+        for event in events {
+            match event {
+                NormalizedEvent::Start(encoding) => self.stream_encoding = encoding,
+                NormalizedEvent::Bytes(bytes) => self.line.push(&bytes),
+                NormalizedEvent::LineEnd { terminated } => {
+                    output.push(
+                        std::mem::take(&mut self.line).finish(terminated, self.stream_encoding),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Streaming normalizer for the append-only background log. Callers receive
+/// bounded chunks and explicit line boundaries, never a whole-line allocation.
+#[derive(Debug)]
+pub(crate) struct LogNormalizer {
+    core: NormalizerCore,
+}
+
+impl LogNormalizer {
+    pub(crate) fn new() -> Self {
+        Self {
+            core: NormalizerCore::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, bytes: &[u8], output: &mut Vec<NormalizedEvent>) {
+        self.core.push(bytes, output);
+    }
+
+    pub(crate) fn finish(mut self, output: &mut Vec<NormalizedEvent>) {
+        self.core.finish(output);
     }
 }
 
