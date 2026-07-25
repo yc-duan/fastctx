@@ -1,6 +1,6 @@
 //! Lossless search-path identity, display encoding, and root resolution.
 
-use crate::paths::canonical_existing;
+use crate::paths::{ReadScope, absolute_path_required_message, canonical_existing};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::{self, Metadata};
@@ -141,6 +141,7 @@ pub(crate) struct ResolvedRoot {
     pub(crate) display: Arc<str>,
     pub(crate) metadata: Metadata,
     pub(crate) kind: RootKind,
+    pub(crate) scope: ReadScope,
 }
 
 impl ResolvedRoot {
@@ -152,6 +153,7 @@ impl ResolvedRoot {
             native,
             metadata,
             kind,
+            scope: ReadScope::unrestricted(),
         })
     }
 
@@ -252,9 +254,18 @@ pub(crate) fn io_error_message(path: &Path, error: &io::Error) -> String {
 }
 
 /// Resolves a grep/glob root with one explicit metadata call and no existence preflight.
+#[cfg(test)]
 pub(crate) fn resolve_search_root(
     input: Option<&str>,
     requirement: RootRequirement,
+) -> Result<ResolvedRoot, String> {
+    resolve_search_root_with_scope(input, requirement, &ReadScope::unrestricted())
+}
+
+pub(crate) fn resolve_search_root_with_scope(
+    input: Option<&str>,
+    requirement: RootRequirement,
+    scope: &ReadScope,
 ) -> Result<ResolvedRoot, String> {
     let parsed = match input {
         Some(input) => parse_input_path(input).map_err(|error| error.to_string())?,
@@ -262,32 +273,39 @@ pub(crate) fn resolve_search_root(
             .map_err(|error| format!("Cannot access the session working directory: {error}"))?,
     };
 
-    if input.is_some() && !parsed.is_absolute() {
+    if let Some(input) = input
+        && !parsed.is_absolute()
+    {
+        if scope.is_restricted() {
+            return Err(absolute_path_required_message(input));
+        }
         return Err(missing_relative_search_path_message(&parsed));
     }
 
-    let metadata = root_metadata(&parsed).map_err(|error| {
+    let authorized = scope.authorize_with_formatter(&parsed, display_path)?;
+    let metadata = root_metadata(&authorized).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            missing_absolute_search_path_message(&parsed)
+            missing_absolute_search_path_message(&authorized)
         } else {
-            io_error_message(&parsed, &error)
+            io_error_message(&authorized, &error)
         }
     })?;
-    let kind = metadata_kind(&parsed, &metadata)?;
+    let kind = metadata_kind(&authorized, &metadata)?;
     if requirement == RootRequirement::Directory && kind != RootKind::Directory {
         return Err(format!(
             "Path is not a directory: {}",
-            display_path(&parsed)
+            display_path(&authorized)
         ));
     }
 
     let canonical =
-        canonical_existing(&parsed).map_err(|error| io_error_message(&parsed, &error))?;
+        canonical_existing(&authorized).map_err(|error| io_error_message(&authorized, &error))?;
     Ok(ResolvedRoot {
         display: Arc::from(display_path(&canonical)),
         native: canonical,
         metadata,
         kind,
+        scope: scope.clone(),
     })
 }
 

@@ -9,6 +9,7 @@ use crate::path_codec::{
     PathRecord, ResolvedRoot, RootKind, display_path as search_display_path,
     io_error_message as search_io_error_message,
 };
+use crate::paths::ReadScope;
 use globset::GlobSet;
 use ignore::types::TypesBuilder;
 use ignore::{DirEntry, WalkBuilder, WalkState};
@@ -186,7 +187,7 @@ fn collect_directory_candidates(
         if !matches_record(&preliminary, glob, None) {
             return Ok(None);
         }
-        candidate_from_entry(entry, &root.native)
+        candidate_from_entry(entry, &root.native, &root.scope)
     })
 }
 
@@ -530,11 +531,15 @@ fn candidate_from_path(
 fn candidate_from_entry(
     entry: &ignore::DirEntry,
     match_root: &Path,
+    scope: &ReadScope,
 ) -> Result<Option<PathRecord>, TraversalFailure> {
     if entry
         .file_type()
         .is_some_and(|file_type| file_type.is_symlink())
     {
+        if let Err(message) = scope.authorize_with_formatter(entry.path(), search_display_path) {
+            return Err(TraversalFailure::from_other(entry.path(), message));
+        }
         return candidate_from_path(entry.path(), match_root);
     }
     match entry.metadata() {

@@ -7,7 +7,10 @@ use crate::budget::{
 use crate::file_executor::GrepGlobExecutor;
 use crate::model::ToolResponse;
 use crate::operation::{OpError, OperationCtx, RequestWorkGuard};
-use crate::path_codec::{PathRecord, ResolvedRoot, RootRequirement, resolve_search_root};
+use crate::path_codec::{
+    PathRecord, ResolvedRoot, RootRequirement, resolve_search_root_with_scope,
+};
+use crate::paths::ReadScope;
 use crate::render_plan::{LineRenderGraph, RenderPlanError};
 use crate::traversal::{TraversalFailure, TraversalLimit, collect_walk_batched};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
@@ -83,19 +86,29 @@ struct GlobCollectionProbe {
 /// rendering, and token verification. A cancelled operation returns an error
 /// response and never exposes a partial success body.
 pub fn glob_files(request: GlobRequest, cancellation: CancellationToken) -> ToolResponse {
+    glob_files_with_scope(request, cancellation, &ReadScope::unrestricted())
+}
+
+pub(crate) fn glob_files_with_scope(
+    request: GlobRequest,
+    cancellation: CancellationToken,
+    scope: &ReadScope,
+) -> ToolResponse {
     let (mut guard, operation) = RequestWorkGuard::new(
         rmcp::model::RequestId::String(Arc::from("direct-glob")),
         cancellation,
     );
-    let response = glob_files_with_execution(request, operation, GrepGlobExecutor::shared());
+    let response =
+        glob_files_with_execution_scoped(request, operation, GrepGlobExecutor::shared(), scope);
     guard.disarm();
     response
 }
 
-fn glob_files_with_execution(
+fn glob_files_with_execution_scoped(
     request: GlobRequest,
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: &ReadScope,
 ) -> ToolResponse {
     let adapter = ErrorBudgetAdapter::new(
         error_budget_hint(GLOB_TOKEN_BUDGET_ENV),
@@ -113,6 +126,7 @@ fn glob_files_with_execution(
         &executor,
         #[cfg(test)]
         None,
+        scope,
     ))
 }
 
@@ -123,11 +137,16 @@ fn glob_files_with_execution_unadapted(
     operation: &OperationCtx,
     executor: &Arc<GrepGlobExecutor>,
     #[cfg(test)] collection_probe: Option<&GlobCollectionProbe>,
+    scope: &ReadScope,
 ) -> ToolResponse {
     if operation.check().is_err() {
         return ToolResponse::error("Request cancelled.");
     }
-    let root = match resolve_search_root(request.path.as_deref(), RootRequirement::Directory) {
+    let root = match resolve_search_root_with_scope(
+        request.path.as_deref(),
+        RootRequirement::Directory,
+        scope,
+    ) {
         Ok(root) => root,
         Err(message) => return ToolResponse::error(message),
     };
@@ -180,11 +199,12 @@ fn glob_files_with_execution_unadapted(
 pub(crate) fn glob_files_cancellable(
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: ReadScope,
     request: GlobRequest,
 ) -> Result<ToolResponse, OpError> {
     let work = operation.inline_work();
     work.check_inline()?;
-    let response = glob_files_with_execution(request, operation.clone(), executor);
+    let response = glob_files_with_execution_scoped(request, operation.clone(), executor, &scope);
     work.check_inline()?;
     Ok(response)
 }
@@ -311,6 +331,12 @@ fn evaluate_match(
         .file_type()
         .is_some_and(|file_type| file_type.is_symlink())
     {
+        if let Err(message) = root
+            .scope
+            .authorize_with_formatter(path, crate::path_codec::display_path)
+        {
+            return Err(TraversalFailure::from_other(path, message));
+        }
         // Symlinks keep the follow-and-check semantics (broken links skip).
         #[cfg(test)]
         record_metadata_lookup(collection_probe);
@@ -534,11 +560,13 @@ mod tests {
     use super::{
         FilterMode, GlobCollectionProbe, GlobRequest, MatchEntry, SortMode, build_matcher,
         collect_matches, ensure_result_capacity, format_matches,
-        glob_files_with_execution_unadapted,
+        glob_files_with_execution_unadapted, glob_files_with_scope,
     };
     use crate::file_executor::{GrepGlobExecutor, LedgerSnapshot};
     use crate::operation::RequestWorkGuard;
+    use crate::path_codec::display_path as search_display_path;
     use crate::path_codec::{PathRecord, RootRequirement, resolve_search_root};
+    use crate::paths::ReadScope;
     use crate::render_plan::RenderPlanMetrics;
     use crate::{ToolContent, ToolResponse};
     use rmcp::model::RequestId;
@@ -571,6 +599,7 @@ mod tests {
             &operation,
             &executor,
             None,
+            &ReadScope::unrestricted(),
         );
         guard.disarm();
         executor.wait_for_test_quiescence();
@@ -818,5 +847,145 @@ mod tests {
             assert_released_once(burst);
             assert_released_once(tickets);
         }
+    }
+
+    #[test]
+    fn scoped_glob_denies_explicit_outside_root() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("work");
+        let outside = fixture.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::File::create(outside.join("outside.txt")).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let response = glob_files_with_scope(
+            GlobRequest {
+                pattern: "**/*".to_string(),
+                path: Some(outside.to_string_lossy().into_owned()),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        );
+        assert!(response.is_error, "{response:?}");
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.starts_with("Permission denied: "), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_glob_denies_recursive_file_symlink_without_returning_target_path() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        fs::create_dir(&root).unwrap();
+        fs::File::create(&outside).unwrap();
+        let link = root.join("outside-link.txt");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let response = glob_files_with_scope(
+            GlobRequest {
+                pattern: "**/*".to_string(),
+                path: Some(root.to_string_lossy().into_owned()),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        );
+        assert!(response.is_error, "{response:?}");
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.starts_with("Permission denied: "), "{text}");
+        assert!(
+            !text.contains(&outside.to_string_lossy().to_string()),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn restricted_relative_glob_request_has_no_cwd_diagnostics() {
+        let fixture = tempfile::tempdir().unwrap();
+        let scope = ReadScope::from_allow_roots(&[fixture.path().to_path_buf()]).unwrap();
+        let response = glob_files_with_scope(
+            GlobRequest {
+                pattern: "*".to_string(),
+                path: Some("relative".to_string()),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        );
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert_eq!(text, "Path must be absolute: relative");
+    }
+
+    #[test]
+    fn scoped_glob_denial_uses_line_safe_encoded_path_display() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside\nsecret.txt");
+        fs::create_dir(&root).unwrap();
+        fs::File::create(&outside).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let response = glob_files_with_scope(
+            GlobRequest {
+                pattern: "*".to_string(),
+                path: Some(search_display_path(&outside)),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        );
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.contains("~fastctx~b"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
+        assert!(!text.contains("outside\nsecret"), "{text:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_glob_symlink_resolution_errors_use_line_safe_encoded_paths() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        fs::create_dir(&root).unwrap();
+        let link = root.join("loop\nname");
+        std::os::unix::fs::symlink("loop\nname", &link).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let response = glob_files_with_scope(
+            GlobRequest {
+                pattern: "**/*".to_string(),
+                path: Some(root.to_string_lossy().into_owned()),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        );
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.contains("~fastctx~b"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
     }
 }

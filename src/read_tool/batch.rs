@@ -6,7 +6,8 @@ use crate::budget::{READ_TOKEN_BUDGET_ENV, TokenBudget, estimate_tokens, tool_to
 use crate::encoding::canonical_encoding_label;
 use crate::model::ToolResponse;
 use crate::paths::{
-    canonical_existing, display_path, io_error_message, missing_read_file_message, parse_input_path,
+    ReadScope, absolute_path_required_message, canonical_existing, display_path, io_error_message,
+    missing_read_file_message, parse_input_path,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -36,7 +37,7 @@ enum PreparedOutcome {
     Message(String),
 }
 
-pub(super) fn read_text_files(mut request: ReadRequest) -> ToolResponse {
+pub(super) fn read_text_files(mut request: ReadRequest, scope: &ReadScope) -> ToolResponse {
     let entries = request
         .files
         .take()
@@ -69,17 +70,17 @@ pub(super) fn read_text_files(mut request: ReadRequest) -> ToolResponse {
             ));
         }
     }
-    if let Err(error) = validate_entries(&entries) {
+    if let Err(error) = validate_entries(&entries, scope) {
         return ToolResponse::error(error);
     }
     let budget = match tool_token_budget(READ_TOKEN_BUDGET_ENV) {
         Ok(budget) => budget,
         Err(error) => return ToolResponse::error(error),
     };
-    pack_entries(entries, budget)
+    pack_entries(entries, budget, scope)
 }
 
-fn validate_entries(entries: &[BatchReadEntry]) -> Result<(), String> {
+fn validate_entries(entries: &[BatchReadEntry], scope: &ReadScope) -> Result<(), String> {
     let mut seen = HashSet::with_capacity(entries.len());
     for entry in entries {
         if entry.offset == Some(0) {
@@ -94,13 +95,17 @@ fn validate_entries(entries: &[BatchReadEntry]) -> Result<(), String> {
         {
             return Err(rejection.message(""));
         }
-        // A relative entry is an existence problem, not a request-shape one, so it is
-        // reported in its own segment and never discards its neighbors. Keeping it out
-        // of canonicalization also stops it from resolving into a false duplicate.
-        let key_path = if parsed.is_absolute() {
-            canonical_existing(&parsed).unwrap_or(parsed)
-        } else {
+        // Relative restricted entries and denied absolute entries remain inline outcomes;
+        // never canonicalize them during duplicate validation.
+        let key_path = if !parsed.is_absolute() {
             parsed
+        } else if scope.is_restricted() {
+            match scope.authorize(&parsed) {
+                Ok(authorized) => canonical_existing(&authorized).unwrap_or(authorized),
+                Err(_) => parsed,
+            }
+        } else {
+            canonical_existing(&parsed).unwrap_or(parsed)
         };
         let key = display_path(&key_path);
         #[cfg(windows)]
@@ -115,7 +120,11 @@ fn validate_entries(entries: &[BatchReadEntry]) -> Result<(), String> {
     Ok(())
 }
 
-fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolResponse {
+fn pack_entries(
+    entries: Vec<BatchReadEntry>,
+    budget: TokenBudget,
+    scope: &ReadScope,
+) -> ToolResponse {
     let total = entries.len();
     let mut progress = entries
         .iter()
@@ -125,7 +134,7 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
     let mut segments = Vec::new();
 
     for (index, entry) in entries.iter().enumerate() {
-        let prepared = prepare_entry(entry, budget.value);
+        let prepared = prepare_entry(entry, budget.value, scope);
         match prepared.outcome {
             PreparedOutcome::Message(message) => {
                 let segment = format!("=== {} ===\n{message}", prepared.path);
@@ -171,16 +180,33 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
     ToolResponse::text(render_response(&segments, &progress, total))
 }
 
-fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEntry {
+fn prepare_entry(
+    entry: &BatchReadEntry,
+    collection_budget: usize,
+    scope: &ReadScope,
+) -> PreparedEntry {
     let parsed = parse_input_path(&entry.path);
     let input_display = display_path(&parsed);
     if !parsed.is_absolute() {
         return PreparedEntry {
             path: input_display,
-            outcome: PreparedOutcome::Message(missing_read_file_message(&entry.path)),
+            outcome: PreparedOutcome::Message(if scope.is_restricted() {
+                absolute_path_required_message(&entry.path)
+            } else {
+                missing_read_file_message(&entry.path)
+            }),
         };
     }
-    let metadata = match fs::metadata(&parsed) {
+    let authorized = match scope.authorize(&parsed) {
+        Ok(path) => path,
+        Err(message) => {
+            return PreparedEntry {
+                path: input_display,
+                outcome: PreparedOutcome::Message(message),
+            };
+        }
+    };
+    let metadata = match fs::metadata(&authorized) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return PreparedEntry {
@@ -191,11 +217,11 @@ fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEn
         Err(error) => {
             return PreparedEntry {
                 path: input_display,
-                outcome: PreparedOutcome::Message(io_error_message(&parsed, &error)),
+                outcome: PreparedOutcome::Message(io_error_message(&authorized, &error)),
             };
         }
     };
-    let path = canonical_existing(&parsed).unwrap_or(parsed);
+    let path = canonical_existing(&authorized).unwrap_or(authorized);
     let path_display = display_path(&path);
     if metadata.is_dir() {
         return PreparedEntry {

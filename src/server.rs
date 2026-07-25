@@ -5,7 +5,8 @@ use crate::edit::ReplaceService;
 use crate::file_executor::GrepGlobExecutor;
 use crate::glob_tool::{GlobRequest, glob_files_cancellable};
 use crate::grep_tool::{GrepRequest, grep_files_cancellable};
-use crate::read_tool::{ReadRequest, read_file};
+use crate::paths::ReadScope;
+use crate::read_tool::{ReadRequest, read_file_with_scope};
 use crate::server_manifest::{ToolContract, ToolManifest};
 use crate::server_support::{BudgetRetry, run_blocking, run_blocking_cancellable};
 use crate::shell::FastShell;
@@ -48,6 +49,7 @@ pub struct FastCtxServer {
     pub(crate) replace: ReplaceService,
     pub(crate) file_permits: Arc<Semaphore>,
     pub(crate) grep_glob_executor: Arc<GrepGlobExecutor>,
+    pub(crate) read_scope: ReadScope,
     pub(crate) shell_permits: Arc<Semaphore>,
     pub(crate) replace_permits: Arc<Semaphore>,
 }
@@ -68,6 +70,18 @@ impl FastCtxServer {
         options: ServerOptions,
         grep_glob_executor: Arc<GrepGlobExecutor>,
     ) -> Self {
+        Self::with_options_and_executor_and_scope(
+            options,
+            grep_glob_executor,
+            ReadScope::unrestricted(),
+        )
+    }
+
+    pub(crate) fn with_options_and_executor_and_scope(
+        options: ServerOptions,
+        grep_glob_executor: Arc<GrepGlobExecutor>,
+        read_scope: ReadScope,
+    ) -> Self {
         let mut tool_router = Self::file_tool_router();
         tool_router.merge(Self::shell_tool_router());
         tool_router.merge(Self::edit_tool_router());
@@ -86,6 +100,7 @@ impl FastCtxServer {
             replace: ReplaceService::new(),
             file_permits: Arc::new(Semaphore::new(MAX_FILE_OPERATIONS)),
             grep_glob_executor,
+            read_scope,
             shell_permits: Arc::new(Semaphore::new(MAX_SHELL_OPERATIONS)),
             replace_permits: Arc::new(Semaphore::new(MAX_REPLACE_OPERATIONS)),
         }
@@ -141,12 +156,13 @@ with the exact parameters a Partial note provides.",
     )]
     async fn read(&self, Parameters(request): Parameters<ReadRequest>) -> CallToolResult {
         let status_shell = self.shell.clone();
+        let scope = self.read_scope.clone();
         run_blocking(
             Arc::clone(&self.file_permits),
             READ_TOKEN_BUDGET_ENV,
             move || status_shell.background_status(None),
             BudgetRetry::Safe,
-            move || read_file(request.clone()),
+            move || read_file_with_scope(request.clone(), &scope),
         )
         .await
     }
@@ -166,6 +182,7 @@ with the exact parameters a Partial note provides.",
         Parameters(request): Parameters<GrepRequest>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
+        let scope = self.read_scope.clone();
         run_blocking_cancellable(
             context.id,
             context.ct,
@@ -176,7 +193,9 @@ with the exact parameters a Partial note provides.",
                 let shell = self.shell.clone();
                 move || shell.background_status(None)
             },
-            move |operation, executor| grep_files_cancellable(operation, executor, request.clone()),
+            move |operation, executor| {
+                grep_files_cancellable(operation, executor, scope.clone(), request.clone())
+            },
         )
         .await
     }
@@ -196,6 +215,7 @@ with the exact parameters a Partial note provides.",
         Parameters(request): Parameters<GlobRequest>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
+        let scope = self.read_scope.clone();
         run_blocking_cancellable(
             context.id,
             context.ct,
@@ -206,7 +226,9 @@ with the exact parameters a Partial note provides.",
                 let shell = self.shell.clone();
                 move || shell.background_status(None)
             },
-            move |operation, executor| glob_files_cancellable(operation, executor, request.clone()),
+            move |operation, executor| {
+                glob_files_cancellable(operation, executor, scope.clone(), request.clone())
+            },
         )
         .await
     }
@@ -277,6 +299,7 @@ fn not_a_resource_server() -> ErrorData {
 mod tests {
     use super::{FastCtxServer, ServerOptions};
     use crate::file_executor::GrepGlobExecutor;
+    use crate::paths::ReadScope;
     use crate::search_parallelism::MAX_SEARCH_PARALLELISM;
     use std::sync::Arc;
 
@@ -293,5 +316,28 @@ mod tests {
             assert_eq!(server.grep_glob_executor.parallelism(), parallelism);
             assert_eq!(server.grep_glob_executor.extra_capacity(), parallelism - 1);
         }
+    }
+
+    #[test]
+    fn scoped_constructor_retains_the_immutable_read_policy() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("inside.txt"), b"inside").unwrap();
+        std::fs::write(&outside, b"outside").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let server = FastCtxServer::with_options_and_executor_and_scope(
+            ServerOptions::default(),
+            Arc::new(GrepGlobExecutor::with_test_parallelism(1)),
+            scope,
+        );
+        assert!(
+            server
+                .read_scope
+                .authorize(&root.join("inside.txt"))
+                .is_ok()
+        );
+        assert!(server.read_scope.authorize(&outside).is_err());
     }
 }

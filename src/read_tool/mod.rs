@@ -16,7 +16,8 @@ use crate::binary::detect_binary_type;
 use crate::budget::{READ_TOKEN_BUDGET_ENV, tool_token_budget};
 use crate::model::ToolResponse;
 use crate::paths::{
-    canonical_existing, display_path, io_error_message, missing_read_file_message, parse_input_path,
+    ReadScope, absolute_path_required_message, canonical_existing, display_path, io_error_message,
+    missing_read_file_message, parse_input_path,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -100,11 +101,15 @@ pub struct BatchReadEntry {
 
 /// Reads text, images, PDFs, or raw bytes and surfaces every expected failure explicitly.
 pub fn read_file(request: ReadRequest) -> ToolResponse {
+    read_file_with_scope(request, &ReadScope::unrestricted())
+}
+
+pub(crate) fn read_file_with_scope(request: ReadRequest, scope: &ReadScope) -> ToolResponse {
     match (request.file_path.as_deref(), request.files.as_ref()) {
         (Some(_), Some(_)) | (None, None) => {
             return ToolResponse::error("Provide exactly one of file_path or files.");
         }
-        (None, Some(_)) => return batch::read_text_files(request),
+        (None, Some(_)) => return batch::read_text_files(request, scope),
         (Some(_), None) => {}
     }
     let file_path = request
@@ -113,16 +118,23 @@ pub fn read_file(request: ReadRequest) -> ToolResponse {
         .expect("single-file shape was validated");
     let parsed = parse_input_path(file_path);
     if !parsed.is_absolute() {
+        if scope.is_restricted() {
+            return ToolResponse::error(absolute_path_required_message(file_path));
+        }
         return ToolResponse::error(missing_read_file_message(file_path));
     }
-    let metadata = match fs::metadata(&parsed) {
+    let authorized = match scope.authorize(&parsed) {
+        Ok(path) => path,
+        Err(message) => return ToolResponse::error(message),
+    };
+    let metadata = match fs::metadata(&authorized) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return ToolResponse::error(missing_read_file_message(file_path));
         }
-        Err(error) => return ToolResponse::error(io_error_message(&parsed, &error)),
+        Err(error) => return ToolResponse::error(io_error_message(&authorized, &error)),
     };
-    let path = canonical_existing(&parsed).unwrap_or(parsed);
+    let path = canonical_existing(&authorized).unwrap_or(authorized);
     let path_display = display_path(&path);
     if metadata.is_dir() {
         return ToolResponse::error(format!(
@@ -228,4 +240,206 @@ fn binary_error_message(path_display: &str, binary_type: Option<&str>) -> String
     format!(
         "Cannot read binary file as text: {path_display}{kind}. Use view=\"hex\" to inspect its raw bytes."
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BatchReadEntry, ReadRequest, read_file_with_scope};
+    use crate::ToolContent;
+    use crate::paths::{ReadScope, display_path};
+    use std::fs;
+
+    fn single(path: &std::path::Path) -> ReadRequest {
+        ReadRequest {
+            file_path: Some(display_path(path)),
+            files: None,
+            offset: None,
+            limit: None,
+            pages: None,
+            pdf_mode: None,
+            encoding: None,
+            view: None,
+        }
+    }
+
+    fn response_text(response: crate::ToolResponse) -> String {
+        let [ToolContent::Text(text)] = response.content.as_slice() else {
+            panic!("expected one text response: {response:?}");
+        };
+        text.clone()
+    }
+
+    #[test]
+    fn scoped_read_allows_direct_files_and_denies_outside_and_lexical_prefixes() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("work");
+        let sibling = fixture.path().join("work-secret");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&sibling).unwrap();
+        let inside = root.join("inside.txt");
+        let outside = sibling.join("outside.txt");
+        fs::write(&inside, b"allowed-content").unwrap();
+        fs::write(&outside, b"denied-content").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+
+        let allowed = read_file_with_scope(single(&inside), &scope);
+        assert!(!allowed.is_error, "{allowed:?}");
+        assert!(response_text(allowed).contains("allowed-content"));
+
+        for denied_path in [&outside, &sibling.join("outside.txt")] {
+            let response = read_file_with_scope(single(denied_path), &scope);
+            assert!(response.is_error, "{response:?}");
+            let text = response_text(response);
+            assert!(text.starts_with("Permission denied: "), "{text}");
+            assert!(!text.contains("denied-content"), "{text}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_read_denies_static_file_symlink_without_opening_target() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&outside, b"secret-target-content").unwrap();
+        let link = root.join("outside-link.txt");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+
+        let response = read_file_with_scope(single(&link), &scope);
+        assert!(response.is_error, "{response:?}");
+        let text = response_text(response);
+        assert!(text.starts_with("Permission denied: "), "{text}");
+        assert!(!text.contains("secret-target-content"), "{text}");
+    }
+
+    #[test]
+    fn scoped_batch_keeps_allowed_entries_and_reports_denied_entries_inline() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        fs::create_dir(&root).unwrap();
+        let inside = root.join("inside.txt");
+        fs::write(&inside, b"allowed-batch-content").unwrap();
+        fs::write(&outside, b"denied-batch-content").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let request = ReadRequest {
+            file_path: None,
+            files: Some(vec![
+                BatchReadEntry {
+                    path: display_path(&inside),
+                    offset: None,
+                    limit: None,
+                    encoding: None,
+                },
+                BatchReadEntry {
+                    path: display_path(&outside),
+                    offset: None,
+                    limit: None,
+                    encoding: None,
+                },
+            ]),
+            offset: None,
+            limit: None,
+            pages: None,
+            pdf_mode: None,
+            encoding: None,
+            view: None,
+        };
+        let response = read_file_with_scope(request, &scope);
+        assert!(!response.is_error, "{response:?}");
+        let text = response_text(response);
+        assert!(text.contains("allowed-batch-content"), "{text}");
+        assert!(text.contains("Permission denied: "), "{text}");
+        assert!(!text.contains("denied-batch-content"), "{text}");
+    }
+
+    #[test]
+    fn restricted_relative_single_and_batch_requests_use_stable_absolute_errors() {
+        let fixture = tempfile::tempdir().unwrap();
+        let scope = ReadScope::from_allow_roots(&[fixture.path().to_path_buf()]).unwrap();
+        let single_response = read_file_with_scope(
+            ReadRequest {
+                file_path: Some("relative.txt".to_string()),
+                files: None,
+                offset: None,
+                limit: None,
+                pages: None,
+                pdf_mode: None,
+                encoding: None,
+                view: None,
+            },
+            &scope,
+        );
+        assert_eq!(
+            response_text(single_response),
+            "Path must be absolute: relative.txt"
+        );
+
+        let batch_response = read_file_with_scope(
+            ReadRequest {
+                file_path: None,
+                files: Some(vec![BatchReadEntry {
+                    path: "relative.txt".to_string(),
+                    offset: None,
+                    limit: None,
+                    encoding: None,
+                }]),
+                offset: None,
+                limit: None,
+                pages: None,
+                pdf_mode: None,
+                encoding: None,
+                view: None,
+            },
+            &scope,
+        );
+        let text = response_text(batch_response);
+        assert!(
+            text.contains("Path must be absolute: relative.txt"),
+            "{text}"
+        );
+        assert!(!text.contains("session working directory"), "{text}");
+    }
+
+    #[test]
+    fn restricted_batch_denied_aliases_remain_inline_instead_of_duplicate_errors() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&outside, b"must-not-leak").unwrap();
+        let alias = root.join("..").join("outside.txt");
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let request = ReadRequest {
+            file_path: None,
+            files: Some(vec![
+                BatchReadEntry {
+                    path: display_path(&outside),
+                    offset: None,
+                    limit: None,
+                    encoding: None,
+                },
+                BatchReadEntry {
+                    path: display_path(&alias),
+                    offset: None,
+                    limit: None,
+                    encoding: None,
+                },
+            ]),
+            offset: None,
+            limit: None,
+            pages: None,
+            pdf_mode: None,
+            encoding: None,
+            view: None,
+        };
+        let response = read_file_with_scope(request, &scope);
+        assert!(!response.is_error, "{response:?}");
+        let text = response_text(response);
+        assert_eq!(text.matches("Permission denied: ").count(), 2, "{text}");
+        assert!(!text.contains("must-not-leak"), "{text}");
+        assert!(!text.contains("Duplicate path"), "{text}");
+    }
 }

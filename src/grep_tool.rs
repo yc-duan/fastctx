@@ -20,8 +20,9 @@ use crate::operation::{
 };
 use crate::ordered_window::{OrderedError, for_each_ordered};
 use crate::path_codec::{
-    PathRecord as Candidate, RootRequirement, io_error_message, resolve_search_root,
+    PathRecord as Candidate, RootRequirement, io_error_message, resolve_search_root_with_scope,
 };
+use crate::paths::ReadScope;
 use crate::render_plan::{
     DetailRenderGraph, LineRenderGraph, LineRenderView, RenderPlanError, SharedLineRenderGraph,
 };
@@ -235,6 +236,14 @@ struct SearchEncoding {
 /// matching, sorting, rendering, and token verification. A cancelled operation
 /// returns an error response and never exposes a partial success body.
 pub fn grep_files(request: GrepRequest, cancellation: CancellationToken) -> ToolResponse {
+    grep_files_with_scope(request, cancellation, &ReadScope::unrestricted())
+}
+
+pub(crate) fn grep_files_with_scope(
+    request: GrepRequest,
+    cancellation: CancellationToken,
+    scope: &ReadScope,
+) -> ToolResponse {
     let budget = match tool_token_budget(GREP_TOKEN_BUDGET_ENV) {
         Ok(budget) => budget,
         Err(message) => {
@@ -249,7 +258,7 @@ pub fn grep_files(request: GrepRequest, cancellation: CancellationToken) -> Tool
         rmcp::model::RequestId::String(Arc::from("direct-grep")),
         cancellation,
     );
-    let response = grep_files_with_budget_source_and_execution(
+    let response = grep_files_with_budget_source_and_execution_scoped(
         request,
         budget.value,
         budget.variable,
@@ -258,6 +267,7 @@ pub fn grep_files(request: GrepRequest, cancellation: CancellationToken) -> Tool
         None,
         operation,
         GrepGlobExecutor::shared(),
+        scope,
     );
     guard.disarm();
     response
@@ -267,6 +277,7 @@ pub fn grep_files(request: GrepRequest, cancellation: CancellationToken) -> Tool
 pub(crate) fn grep_files_cancellable(
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: ReadScope,
     request: GrepRequest,
 ) -> Result<ToolResponse, OpError> {
     let work = operation.inline_work();
@@ -281,7 +292,7 @@ pub(crate) fn grep_files_cancellable(
             .error(ErrorClass::Budget, message));
         }
     };
-    let response = grep_files_with_budget_source_and_execution(
+    let response = grep_files_with_budget_source_and_execution_scoped(
         request,
         budget.value,
         budget.variable,
@@ -290,6 +301,7 @@ pub(crate) fn grep_files_cancellable(
         None,
         operation.clone(),
         executor,
+        &scope,
     );
     work.check_inline()?;
     Ok(response)
@@ -411,6 +423,7 @@ fn grep_files_with_parallelism_and_capture_limit(
     )
 }
 
+#[cfg(test)]
 fn grep_files_with_budget_source_and_execution(
     request: GrepRequest,
     budget: usize,
@@ -419,6 +432,30 @@ fn grep_files_with_budget_source_and_execution(
     #[cfg(test)] execution_probe: Option<Arc<GrepExecutionProbe>>,
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+) -> ToolResponse {
+    grep_files_with_budget_source_and_execution_scoped(
+        request,
+        budget,
+        budget_variable,
+        capture_heap_limit_bytes,
+        #[cfg(test)]
+        execution_probe,
+        operation,
+        executor,
+        &ReadScope::unrestricted(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grep_files_with_budget_source_and_execution_scoped(
+    request: GrepRequest,
+    budget: usize,
+    budget_variable: &str,
+    capture_heap_limit_bytes: usize,
+    #[cfg(test)] execution_probe: Option<Arc<GrepExecutionProbe>>,
+    operation: OperationCtx,
+    executor: Arc<GrepGlobExecutor>,
+    scope: &ReadScope,
 ) -> ToolResponse {
     let adapter = ErrorBudgetAdapter::new(budget, budget_variable);
     adapter.adapt(grep_files_with_budget_source_and_execution_unadapted(
@@ -430,9 +467,11 @@ fn grep_files_with_budget_source_and_execution(
         execution_probe,
         operation,
         executor,
+        scope,
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grep_files_with_budget_source_and_execution_unadapted(
     request: GrepRequest,
     budget: usize,
@@ -441,9 +480,14 @@ fn grep_files_with_budget_source_and_execution_unadapted(
     #[cfg(test)] execution_probe: Option<Arc<GrepExecutionProbe>>,
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: &ReadScope,
 ) -> ToolResponse {
     let root_input = request.path.clone();
-    let root = match resolve_search_root(root_input.as_deref(), RootRequirement::FileOrDirectory) {
+    let root = match resolve_search_root_with_scope(
+        root_input.as_deref(),
+        RootRequirement::FileOrDirectory,
+        scope,
+    ) {
         Ok(root) => root,
         Err(message) => return ToolResponse::error(message),
     };
@@ -2569,10 +2613,12 @@ mod tests {
         build_matcher, capture_limit_error, finish_grep_graph, format_content_mode,
         format_files_mode, grep_files_with_budget, grep_files_with_budget_and_parallelism,
         grep_files_with_budget_source_and_operation, grep_files_with_parallelism_and_capture_limit,
-        normalize_multiline_pattern, replay_compat_binary_probes, search_candidate,
-        search_error_message, snapshot_error_message,
+        grep_files_with_scope, normalize_multiline_pattern, replay_compat_binary_probes,
+        search_candidate, search_error_message, snapshot_error_message,
     };
     use crate::operation::{RequestWorkGuard, TestStage};
+    use crate::path_codec::display_path as search_display_path;
+    use crate::paths::{ReadScope, display_path};
     use crate::{ToolContent, ToolResponse};
     use filetime::{FileTime, set_file_mtime};
     use rmcp::model::RequestId;
@@ -3534,5 +3580,149 @@ mod tests {
             snapshot_error_message(&candidate, &io::Error::other("disk full")),
             "Cannot create a stable search snapshot for /large.txt: disk full. Free temporary-disk space or retry after the file stops changing."
         );
+    }
+
+    #[test]
+    fn scoped_grep_denies_explicit_outside_root_and_lexical_prefixes() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("work");
+        let sibling = fixture.path().join("work-secret");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&sibling).unwrap();
+        let outside = sibling.join("outside.txt");
+        std::fs::write(&outside, b"secret-grep-content").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let request = GrepRequest {
+            pattern: "secret-grep-content".to_string(),
+            path: Some(display_path(&outside)),
+            glob: None,
+            file_type: None,
+            output_mode: Some(OutputMode::Content),
+            case_insensitive: None,
+            line_numbers: None,
+            only_matching: None,
+            before_context: None,
+            after_context: None,
+            context: None,
+            multiline: None,
+            head_limit: None,
+            offset: None,
+            encoding: None,
+            fallback_encoding: None,
+        };
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        assert!(response.is_error, "{response:?}");
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.starts_with("Permission denied: "), "{text}");
+        assert!(!text.contains("secret-grep-content"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_grep_denies_recursive_file_symlink_without_returning_target_content() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(&outside, b"secret-symlink-grep-content").unwrap();
+        let link = root.join("outside-link.txt");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let mut request = GrepRequest {
+            pattern: "secret-symlink-grep-content".to_string(),
+            path: Some(display_path(&root)),
+            glob: None,
+            file_type: None,
+            output_mode: Some(OutputMode::Content),
+            case_insensitive: None,
+            line_numbers: None,
+            only_matching: None,
+            before_context: None,
+            after_context: None,
+            context: None,
+            multiline: None,
+            head_limit: None,
+            offset: None,
+            encoding: None,
+            fallback_encoding: None,
+        };
+        request.glob = Some("**/*".to_string());
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        assert!(response.is_error, "{response:?}");
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.starts_with("Permission denied: "), "{text}");
+        assert!(!text.contains("secret-symlink-grep-content"), "{text}");
+    }
+
+    #[test]
+    fn restricted_relative_grep_request_has_no_cwd_diagnostics() {
+        let fixture = tempfile::tempdir().unwrap();
+        let scope = ReadScope::from_allow_roots(&[fixture.path().to_path_buf()]).unwrap();
+        let mut request = grep_request(Path::new("relative.txt"), OutputMode::Content);
+        request.path = Some("relative.txt".to_string());
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert_eq!(text, "Path must be absolute: relative.txt");
+    }
+
+    #[test]
+    fn scoped_grep_denial_uses_line_safe_encoded_path_display() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside\nsecret.txt");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(&outside, b"must-not-leak").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let request = GrepRequest {
+            pattern: "must-not-leak".to_string(),
+            path: Some(search_display_path(&outside)),
+            glob: None,
+            file_type: None,
+            output_mode: Some(OutputMode::Content),
+            case_insensitive: None,
+            line_numbers: None,
+            only_matching: None,
+            before_context: None,
+            after_context: None,
+            context: None,
+            multiline: None,
+            head_limit: None,
+            offset: None,
+            encoding: None,
+            fallback_encoding: None,
+        };
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.contains("~fastctx~b"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
+        assert!(!text.contains("must-not-leak"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_grep_symlink_resolution_errors_use_line_safe_encoded_paths() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        std::fs::create_dir(&root).unwrap();
+        let link = root.join("loop\nname");
+        std::os::unix::fs::symlink("loop\nname", &link).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let mut request = grep_request(&root, OutputMode::FilesWithMatches);
+        request.pattern = "anything".to_string();
+        request.glob = Some("**/*".to_string());
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.contains("~fastctx~b"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
     }
 }
