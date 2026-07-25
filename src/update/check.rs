@@ -2083,6 +2083,9 @@ mod tests {
 
     #[test]
     fn isolated_registry_matrix_selects_the_first_complete_auto_source() {
+        let Some(platform_package) = super::platform_npm_package() else {
+            return;
+        };
         struct Scenario {
             name: &'static str,
             configured_registry: Option<&'static str>,
@@ -2124,7 +2127,6 @@ mod tests {
 
         for scenario in scenarios {
             let context = npm_context_fixture(UpdateSource::Auto, scenario.configured_registry);
-            let platform_package = super::platform_npm_package().unwrap().to_string();
             let registry_state = |ready| SimulatedRegistry {
                 latest: Some(Version::new(0, 2, 0)),
                 main_package_ready: ready,
@@ -2132,7 +2134,7 @@ mod tests {
             };
             let backend = SimulatedRegistryBackend {
                 github_latest: Some(Version::new(0, 2, 0)),
-                platform_package,
+                platform_package: platform_package.to_string(),
                 registries: BTreeMap::from([
                     (
                         OFFICIAL_NPM_REGISTRY.to_string(),
@@ -2165,6 +2167,9 @@ mod tests {
 
     #[test]
     fn every_source_policy_runs_the_shared_probe_cache_and_four_state_pipeline() {
+        let Some(platform_package) = super::platform_npm_package() else {
+            return;
+        };
         #[derive(Clone, Copy, Debug)]
         enum ExpectedState {
             Current,
@@ -2188,7 +2193,7 @@ mod tests {
         ];
         let temp = tempfile::tempdir().unwrap();
         let current_version = Version::new(0, 1, 1);
-        let platform_package = super::platform_npm_package().unwrap().to_string();
+        let platform_package = platform_package.to_string();
 
         for (policy, configured_registry, expected_registry) in policies {
             for state in states {

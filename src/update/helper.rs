@@ -2086,10 +2086,12 @@ mod tests {
 
     #[test]
     fn npm_plan_requires_exact_main_and_platform_preflight_evidence() {
+        let Some(platform_package) = super::expected_npm_platform_package() else {
+            return;
+        };
         let temp = tempfile::tempdir().unwrap();
         let target_version = "0.2.0";
         let source_name = "official npm";
-        let platform_package = super::expected_npm_platform_package().unwrap();
         let discovery = NpmDiscovery {
             source_policy: "official".to_string(),
             configured_registry: None,

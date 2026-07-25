@@ -100,6 +100,17 @@ fn automatic_candidates() -> Vec<PathBuf> {
             candidates.push(PathBuf::from(root).join("Git/usr/bin/bash.exe"));
         }
     }
+    if let Some(root) = std::env::var_os("SCOOP") {
+        candidates.push(
+            PathBuf::from(root)
+                .join("apps")
+                .join("git")
+                .join("current/usr/bin/bash.exe"),
+        );
+    }
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        candidates.push(PathBuf::from(profile).join("scoop/apps/git/current/usr/bin/bash.exe"));
+    }
     if let Some(root) = std::env::var_os("LocalAppData") {
         candidates.push(PathBuf::from(root).join("Programs/Git/usr/bin/bash.exe"));
     }

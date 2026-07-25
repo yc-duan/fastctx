@@ -176,3 +176,35 @@ fn binary_error(path_display: &str, binary_type: Option<&str>) -> ToolResponse {
         "Cannot read binary file as text: {path_display}{kind}. Use view=\"hex\" to inspect its raw bytes."
     ))
 }
+
+#[cfg(test)]
+mod unicode_path_tests {
+    use super::{ReadRequest, read_file};
+    use crate::ToolContent;
+
+    #[test]
+    fn read_accepts_a_unicode_absolute_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("中文路径");
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("示例.txt");
+        std::fs::write(&path, "alpha\r\nneedle 中文\r\nomega\r\n").unwrap();
+
+        let response = read_file(ReadRequest {
+            file_path: path.to_string_lossy().into_owned(),
+            offset: None,
+            limit: None,
+            pages: None,
+            pdf_mode: None,
+            encoding: None,
+            view: None,
+        });
+
+        assert!(!response.is_error);
+        let ToolContent::Text(output) = &response.content[0] else {
+            panic!("expected text output");
+        };
+        assert!(output.contains("2\tneedle 中文"));
+        assert!(output.contains("(Complete: reached end of file;"));
+    }
+}
