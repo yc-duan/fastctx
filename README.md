@@ -1,425 +1,552 @@
-# FastCtx
+# FastCtx Windows ARM64 社区版
 
-**English** | [简体中文](./README.zh-CN.md)
+面向 Codex、ChatGPT 和其他 MCP 客户端的本地仓库工具运行时。
 
-### Fast, context-efficient repository tools for AI agents.
+> [!IMPORTANT]
+> 这是一个非官方 Windows ARM64 社区构建。FastCtx 的项目设计、主体代码和
+> 长期维护均来自原作者 [yc-duan](https://github.com/yc-duan)。请关注并支持
+> [原项目 yc-duan/fastctx](https://github.com/yc-duan/fastctx)。
 
-FastCtx is a local Rust tool runtime. It provides file reading, content search, file discovery, batch replacement, and Bash command execution through MCP.
+## 项目信息
 
-Repository operations run in a persistent process with stable input schemas and output formats. The model can gather the context it needs in fewer steps and spend more attention on understanding code, planning changes, and verifying results.
+- 社区版本：[Windows ARM64 v1](https://github.com/Simplepine/fastctx/releases/tag/v1)
+- 社区仓库：[Simplepine/fastctx](https://github.com/Simplepine/fastctx)
+- 原项目：[yc-duan/fastctx](https://github.com/yc-duan/fastctx)
+- 原作者：[yc-duan](https://github.com/yc-duan)
+- 上游版本：`v0.2.1`
+- ARM64 验证提交：[`1db4537`](https://github.com/Simplepine/fastctx/commit/1db453750097add2971cc4d1a919fd5bae6ecfad)
+- 架构：`aarch64-pc-windows-msvc`
+- 许可证：MIT OR Apache-2.0
 
-```console
-npm install --global fastctx
-fastctx
-```
-
-The `fastctx` command opens the control terminal. Review the proposed changes, select **Apply**, then start a new ChatGPT / Codex session.
-
-FastCtx currently provides first-class setup for ChatGPT App and Codex CLI. Any MCP client can also register `fastctx serve` directly.
-
-## What FastCtx solves
-
-Coding agents often assemble shell commands on the fly when they access a repository. They have to handle quotes, escaping, paths, and platform differences, then extract the useful information from terminal output. A simple file read or symbol search can take several tool calls just to confirm that the command is correct and the result is complete.
-
-This work consumes context and reasoning. The model tracks the code problem and the tool mechanics at the same time: whether the PowerShell syntax is correct, whether a path was escaped correctly, whether the encoding produced mojibake, and whether the host truncated a long result. More tool overhead leaves less room for the repository itself.
-
-FastCtx turns common repository operations into structured input and output. The model provides parameters such as a path, pattern, range, and mode. The Rust runtime handles command construction, directory traversal, encoding, pagination, and output boundaries.
-
-The tools cover the main parts of a coding task:
-
-- `read` reads text, images, PDFs, and raw bytes;
-- `grep` searches file contents;
-- `glob` finds files;
-- `replace` performs mechanical batch replacement;
-- `run`, `run_background`, `job_output`, `job_kill`, and `job_list` execute Bash commands and manage persistent long-running jobs.
-
-This greatly reduces the attention the model spends on tool mechanics, such as checking whether a PowerShell command is correct. It improves context efficiency and helps tasks finish faster with better results.
-
-## Installation
-
-### Install with npm
-
-Requires Node.js 18 or later:
-
-```console
-npm install --global fastctx
-fastctx
-```
-
-The first launch opens the full-screen control terminal. The interface supports 17 languages and provides these main actions:
-
-1. Adjust the output tier;
-2. Keep grep/glob on automatic CPU parallelism or set an explicit core limit;
-3. Enable **Bash terminal** when needed;
-4. Set current-user background-job storage, concurrency, and AI list page limits;
-5. Inspect every currently running job across FastCtx sessions, follow its output, and stop it on the **Jobs** screen;
-6. Reset all user preferences to factory defaults through a confirmation screen;
-7. Review every host configuration change on the Apply screen, apply it, and restart the ChatGPT / Codex session.
-
-Apply copies the current binary to `~/.fastctx/bin/` and points the host configuration at that stable path. The applied setup keeps working after npm cache cleanup or upgrades.
-
-The full-screen terminal opens immediately while FastCtx checks its launch channel in a background thread. Successful results are cached for 24 hours in machine-private storage outside `~/.fastctx`. npm launches query the exact launcher package through a fresh isolated cache with `--prefer-online`; direct GitHub Release executables read the stable tag from GitHub's `releases/latest` web redirect. Available updates remain visible from the main menu and open a dedicated screen with **Update & restart** and **Continue**.
-
-If GitHub has published a release but npm has not exposed the matching version yet, FastCtx shows a propagation screen instead of trusting stale metadata. **Retry** always uses another isolated cache; it never clears or mutates the user's normal npm cache. Transient network or rate-limit failures stay quiet and are recorded under **Status**; malformed publication metadata produces one warning. Status also offers a manual check that bypasses the 24-hour TTL. An accepted npm update installs the exact version with lifecycle scripts disabled. A GitHub Release update downloads this repository's platform archive and aggregate `SHA256SUMS`, verifies the archive before safely extracting the binary, probes the downloaded version, replaces the executable atomically, and rolls back when restart health fails. A failed npm update restores the exact previous package version; every failed update reopens the previous TUI with a warning. After a successful restart, an owned `~/.fastctx/bin/` Apply copy is synchronized; externally changed copies are left untouched.
-
-`cargo install` builds and the internal `~/.fastctx/bin/` runtime are not self-updated. Set `FASTCTX_DISABLE_UPDATE_CHECK=1` to disable the TUI startup check.
-
-**Unapply** stops FastCtx process images running from the managed bin directory, removes the configuration managed by FastCtx, and deletes its managed data. Shared settings changed by the user after Apply are preserved.
-
-### If the install returns 404
-
-Mirror registries copy new releases from the official registry on a delay. Right after a release, an install through a mirror can fail with `404 Not Found` — most often on the platform package, which npm installs as an optional dependency and skips silently, leaving `fastctx` installed but unable to start.
-
-Install once from the official registry:
-
-```console
-npm install --global fastctx --registry=https://registry.npmjs.org/
-```
-
-The flag applies to this command only and leaves the npm configuration unchanged. To use the official registry permanently:
-
-```console
-npm config set registry https://registry.npmjs.org/ --location=user
-```
-
-After installation, the **Update** screen probes the npm registry configured on this machine, the official registry, and registry.npmmirror.com, then installs from the first source that carries both the launcher and the matching platform package. Version numbers always come from the official registry and GitHub, so a mirror can never announce a version the official source has not published.
-
-### One-off run
-
-```console
-npx fastctx
-```
-
-`npx` opens the same control terminal without a global installation. Apply still copies the binary to `~/.fastctx/bin/`, so the applied setup keeps working after the npx cache is cleaned; only the `fastctx` command itself requires the global installation.
-
-### Non-interactive use
-
-```console
-fastctx apply --tier standard --yes
-fastctx status
-fastctx jobs
-fastctx jobs kill j-a1b2c3
-fastctx unapply --yes
-```
-
-- `apply`: install FastCtx and write the configuration;
-- `status`: check the configuration, binary, and MCP handshake;
-- `jobs`: list running background jobs;
-- `jobs kill <job_id>`: stop one background job and its full process tree;
-- `unapply`: remove the content managed by FastCtx;
-- `lang <code>`: set the control terminal language.
-
-`status` uses three states: `[PASS]`, `[INFO]`, and `[FAIL]`. It also reports the detected search CPU ceiling and the configured/effective parallelism. A `[FAIL]` result returns a non-zero exit code.
-
-### Search CPU limit and settings reset
-
-grep/glob uses automatic parallelism by default: the operating system's available parallelism, capped at 16. In **Config → Search**, choose a preset with ←/→ or press Enter and type `auto` or any integer in the displayed `1..=maximum` range. The setting is read directly by each newly started MCP server, takes effect after restarting the server, and does not require Apply.
-
-The same setting can be written manually in `~/.fastctx/config.toml`:
-
-```toml
-[search]
-max_cpu_cores = 4
-```
-
-Omitting the key keeps the previous automatic behavior. Invalid types, empty values, zero, negative numbers, and values above the engine's displayed ceiling prevent `serve` from starting and produce a diagnostic without rewriting the file. The limit sets the effective search parallelism for one request: its base lane plus shared extra workers is at most N. Concurrent requests retain independent base lanes, so this is not CPU affinity or a strict process-wide/system-wide governor.
-
-**Config → Reset → Reset all settings** opens with **No** selected. Confirming restores every user preference, including language, output budgets, Bash/job limits, search CPU limit, and update settings. It preserves the Apply ownership receipt, installed binary, host configuration, and running jobs. Restoring the default 1024 MiB job-history quota may immediately evict the oldest finished records above that quota.
-
-### Other distribution channels
-
-```console
-cargo install fastctx --locked
-```
-
-GitHub Releases provides a zip archive for Windows x64 and executable-preserving tar.gz archives for Linux x64, macOS x64, and macOS arm64. Every archive includes the binary and license notices; verify it with the release's aggregate `SHA256SUMS`.
-
-## Tools
-
-FastCtx provides nine MCP tools:
-
-| Tool | Purpose |
-|---|---|
-| `read` | Read text, images, PDFs, and raw bytes from any file |
-| `grep` | Search contents in a file or repository tree |
-| `glob` | Find files by path pattern |
-| `replace` | Apply mechanical batch replacements to files or a repository tree |
-| `run` | Run a Bash command in the foreground |
-| `run_background` | Start a background Bash job |
-| `job_output` | Read new output from a background job |
-| `job_kill` | Stop the full process tree of a background job |
-| `job_list` | Rediscover running and retained finished jobs |
-
-`read`, `grep`, `glob`, and `replace` are published by default. The other five tools are enabled with the **Bash terminal** setting in the control terminal. Once enabled, they share the same `mcp__fastctx__*` namespace as the file tools.
-
-### `read`
-
-`read` returns 1-based line numbers for text and supports paging:
-
-```json
-{
-  "file_path": "V:/repo/src/main.rs",
-  "offset": 120,
-  "limit": 40
-}
-```
+GitHub 标签 `v1` 是本社区构建的发布编号。程序内部仍会如实显示：
 
 ```text
-120	fn main() {
-121	    ...
-159	}
-
-(Partial: lines 120-159 of 512 shown. Continue with offset=160.)
+fastctx 0.2.1
 ```
 
-The continuation parameters in the final status line can be used directly in the next call. In this example, pass `offset=160` to read the next section.
+## FastCtx 是什么
 
-`read` also supports:
+FastCtx 是一个使用 Rust 编写的纯本地 MCP 工具运行时，为 AI 编程智能体提供：
 
-- PNG, JPG, GIF, WebP, and BMP images;
-- PDF text layers and rendered page images;
-- a paged hex view for any file;
-- UTF-8, BOM-based encodings, and common legacy encodings.
+- 文件读取
+- 内容搜索
+- 文件查找
+- 安全批量替换
+- Bash 命令执行
+- 持久后台任务管理
 
-Automatic encoding detection accepts results with sufficient evidence. When the encoding is ambiguous, the error lists candidates and retry options. Pass `encoding` to select one explicitly:
+Codex 不再需要为常见仓库操作反复拼接 PowerShell、Bash、grep 或 find 命令。
+FastCtx 统一处理路径、编码、目录遍历、并行搜索、分页和输出边界，让模型把更多
+上下文用于理解代码和完成任务。
 
-```json
-{
-  "file_path": "V:/repo/docs/legacy.txt",
-  "encoding": "gbk"
-}
+## Windows ARM64 v1 特性
+
+- 原生 Windows ARM64 PE，可执行文件机器类型为 `AA64`
+- 支持中文文件名和中文目录
+- 支持 UTF-8、GBK、UTF-16、Shift-JIS、Big5 等文本编码
+- 支持 PNG、JPEG、GIF、WebP 和 BMP 图片
+- 支持任意文件的十六进制读取
+- 支持 Scoop 安装的 Git Bash
+- 579 项测试通过
+- 4 项上游正常忽略
+- 0 项测试失败
+- 提供 ZIP、构建信息、验证记录和 SHA-256 校验
+
+当前 ARM64 构建未启用 PDF 功能。
+
+## 快速开始
+
+### 1. 下载
+
+打开：
+
+[FastCtx Windows ARM64 v1 Release](https://github.com/Simplepine/fastctx/releases/tag/v1)
+
+下载以下两个文件：
+
+- `fastctx-v0.2.1-windows-arm64-no-pdf-verified.zip`
+- `fastctx-v0.2.1-windows-arm64-no-pdf-verified.zip.sha256`
+
+也可以直接下载：
+
+- [下载 verified ZIP](https://github.com/Simplepine/fastctx/releases/download/v1/fastctx-v0.2.1-windows-arm64-no-pdf-verified.zip)
+- [下载 SHA-256 校验文件](https://github.com/Simplepine/fastctx/releases/download/v1/fastctx-v0.2.1-windows-arm64-no-pdf-verified.zip.sha256)
+
+### 2. 校验文件
+
+在下载目录打开 PowerShell：
+
+```powershell
+Get-FileHash `
+  -Algorithm SHA256 `
+  -LiteralPath .\fastctx-v0.2.1-windows-arm64-no-pdf-verified.zip
+
+Get-Content `
+  -LiteralPath .\fastctx-v0.2.1-windows-arm64-no-pdf-verified.zip.sha256
 ```
 
-Use the hex view for binary files:
-
-```json
-{
-  "file_path": "V:/repo/data/cache.bin",
-  "view": "hex"
-}
-```
-
-### `grep`
-
-`grep` uses the Rust regex engine from the ripgrep family:
-
-```json
-{
-  "pattern": "fn \\w+_lock",
-  "path": "V:/repo/src",
-  "output_mode": "content",
-  "context": 1
-}
-```
+两处哈希值必须一致：
 
 ```text
-V:/repo/src/edit/locks.rs
-62-/// Cross-process lock keyed by file identity.
-63:pub fn acquire_path_lock(identity: &PathIdentity) -> LockGuard {
-64-    ...
-
-(Complete: all 1 result shown.)
+7ABD2C7BA6286DAA19EFEBDF9E920BB063FC5015BDCD5A70CE8BFF4C9E55CC02
 ```
 
-`output_mode` has four values:
+### 3. 解压
 
-- `files_with_matches`: return matching files;
-- `content`: show matches grouped by file;
-- `count`: return the occurrence count for each file;
-- `summary`: scan the full target and return global totals.
-
-Searches respect `.gitignore` and `.ignore` by default, include hidden files, and exclude `.git` and binary files. Common filters include `glob`, `type`, `case_insensitive`, `multiline`, and `context`. Page through results with `head_limit` and `offset`.
-
-Files with uncertain encodings appear in a skip report with their path, reason, and resolution parameters. Use `encoding` for a single file and `fallback_encoding` for a directory search.
-
-If a file changes during a directory search, `grep` reports that file as skipped and continues; a changing single-file target returns an error so partial matches never masquerade as complete results.
-
-### `glob`
-
-`glob` finds files with a pattern relative to the search root:
-
-```json
-{
-  "pattern": "**/*.toml",
-  "path": "V:/repo",
-  "sort": "modified"
-}
+```powershell
+Expand-Archive `
+  -LiteralPath .\fastctx-v0.2.1-windows-arm64-no-pdf-verified.zip `
+  -DestinationPath C:\Tools\FastCtx
 ```
+
+最终程序路径为：
 
 ```text
-V:/repo/crates/core/Cargo.toml
-V:/repo/Cargo.toml
-
-(Complete: all 2 files shown.)
+C:\Tools\FastCtx\fastctx-v0.2.1-windows-arm64-no-pdf-verified\fastctx.exe
 ```
 
-Main parameters:
+### 4. 检查版本
 
-- `filter_mode: "project"`: apply ignore rules, exclude `.git`, and keep hidden files visible;
-- `filter_mode: "all"`: list every file;
-- `sort: "path"`: use a stable path order;
-- `sort: "modified"`: order files from newest to oldest;
-- `offset` / `limit`: page through the result set.
-
-`grep` and `glob` render filename components that are unsafe to place directly in a line as reversible `~fastctx~b...~` or `~fastctx~w...~` escapes. Copy the whole component exactly into a later grep/glob call; do not decode or edit it.
-
-### `replace`
-
-`replace` handles mechanical, deterministic batch changes such as symbol renames, import rewrites, configuration key migrations, and fixed-pattern deletion. Generated code changes and per-location semantic edits are handled by the host's `apply_patch` tool.
-
-```json
-{
-  "pattern": "old_name\\(",
-  "replacement": "new_name(",
-  "path": "V:/repo/src",
-  "glob": "**/*.rs",
-  "dry_run": true
-}
+```powershell
+& 'C:\Tools\FastCtx\fastctx-v0.2.1-windows-arm64-no-pdf-verified\fastctx.exe' --version
 ```
+
+预期输出：
 
 ```text
-...
-
-(Complete: dry run — 12 matches in 3 files; nothing written.)
+fastctx 0.2.1
 ```
 
-`replace` freezes the candidate set and counts every match before the first write. Use `dry_run` for preview and `max_replacements` to cap the change scope.
+如果 Windows 提示缺少 `VCRUNTIME140.dll`，请安装最新版 Microsoft Visual C++
+Redistributable ARM64。
 
-Each file is checked again before commit. Writes use atomic replacement in the same directory and preserve the original encoding, BOM, line endings, trailing newline, Unix mode, and untouched bytes. Concurrent changes move the affected file into the failure report while the remaining files continue.
+## 接入 Codex
 
-### `run`
+### 方式一：使用 FastCtx 控制终端
 
-`run` executes a Bash command in the foreground and returns merged stdout, stderr, and the exit code. It uses Git Bash on Windows and the system Bash on macOS and Linux.
+运行：
 
-```json
-{
-  "command": "cargo test --quiet 2>&1 | tail -n 40",
-  "timeout_ms": 180000
-}
+```powershell
+& 'C:\Tools\FastCtx\fastctx-v0.2.1-windows-arm64-no-pdf-verified\fastctx.exe'
 ```
 
-Commands run in a non-interactive environment. Installation, confirmation, and editor commands need flags such as `-y` and `--no-edit`. Non-zero exit codes are returned as execution results.
+进入全屏控制终端后：
 
-On Windows, every FastCtx-owned non-interactive child process is created without allocating a console window, including Bash discovery, foreground/background Bash, detached supervisors, and doctor probes. There is no hidden-window parameter to remember. A command that explicitly launches a GUI or a new terminal still has that visible effect.
+1. 检查输出档位和工具设置。
+2. 根据需要启用 Bash terminal。
+3. 打开 Apply 页面。
+4. 确认配置变更。
+5. 选择 **Apply**。
+6. 完全重启 Codex。
 
-Output uses bounded memory. When output exceeds the response capacity, the final status line reports the truncated range and gives a path to the complete result: redirect the command output to a file, then page through it with `read`.
+Apply 会把二进制复制到稳定目录：
 
-### `run_background`
+```text
+~/.fastctx/bin/fastctx.exe
+```
 
-`run_background` starts a background Bash job and returns a job id immediately. It is useful for builds, tests, development servers, and other long-running commands.
+完成后，即使删除最初解压的下载目录，Codex 中的 FastCtx 仍可继续使用。
 
-Each job is owned by a detached supervisor rather than by the MCP server. It keeps running across server exits, ChatGPT / Codex restarts, and session changes until the command exits or `job_kill` stops it. There is no background timeout parameter.
+### 方式二：手动配置
 
-Output and exit status are stored under `~/.fastctx/jobs/`, so another FastCtx server can resume the same job by id. Each job keeps an 8 MiB rolling output window; redirect the command to a file when a complete log is required.
+编辑：
 
-### `job_output`
+```text
+%USERPROFILE%\.codex\config.toml
+```
 
-`job_output` reads new output from a background job, including jobs started in earlier sessions, and reports `running`, `exited`, or `interrupted`. `wait_ms` enables long polling. `after_seq` re-anchors the read position and keeps paging stable when a call is retried.
-
-Keep calling it until the final line says `Complete`. When the ring buffer evicts output, the response reports the number of lost lines and recommends redirecting command output to a file for a complete log.
-
-### `job_kill`
-
-`job_kill` stops the selected background job and its full process tree. If the job has already exited, the call returns the existing exit status.
-
-### `job_list`
-
-`job_list` defaults to `status="running"`. Use `status="finished"` to inspect retained exited or interrupted records, and `status="all"` only when both lifecycles are needed. Results are newest first within each lifecycle. `offset` continues a page; `limit` overrides the saved page size for one call.
-
-Finished records have no time-to-live. FastCtx retains them until the current user's `fastshell.job_storage_limit_mib` limit requires eviction of the oldest finished records. The default is 1024 MiB. Running jobs and their records are never evicted; `fastshell.max_running_jobs` limits concurrent jobs across all FastCtx sessions for that user and defaults to 128. `fastshell.job_list_limit` is the default page size (20, valid range 1–100). All three settings take effect immediately when saved and do not require Apply; the TUI presets for page size are 10 / 20 / 50 / 100.
-
-The TUI **Jobs** dashboard scans this same current-user registry but shows only jobs that are currently running, aggregated from every FastCtx server and TUI instance. A finished job disappears with a short notice that its retained output remains available to the agent through `job_output`. Jobs are grouped by an honest source-session tag with workspace, server PID, and parent-process context. Fixed list columns keep relative age and job ids aligned, while long ASCII or CJK commands end with an ellipsis at one shared edge. The detail panel shows the exact UTC start time to the second and a live `HH:MM:SS` elapsed time. Horizontal and vertical output navigation remains available; one width-aware footer row keeps the essential keys visible and adds `←/→ output`, `PgUp/PgDn scroll`, and `F follow` when space permits. ChatGPT / Codex does not expose conversation titles or ids to the MCP server, so FastCtx does not invent one.
-
-## Security and privacy
-
-The FastCtx MCP server inherits the local permissions of the host process.
-
-| Capability | Default state | Access scope |
-|---|---|---|
-| `read` / `grep` / `glob` | Enabled | Local files readable by the host process |
-| `replace` | Enabled | Local file writes with dry-run, CAS, and atomic replacement safeguards |
-| Bash tools | Disabled | Bash command execution after the user enables them |
-| TUI update check | Enabled for npm and GitHub Release launches | Version metadata from `registry.npmjs.org` and GitHub's `releases/latest` web redirect; downloads require explicit confirmation |
-| MCP runtime network requests | None | `serve` and tool calls perform no telemetry or update traffic |
-
-The startup check sends the FastCtx version, normal HTTPS request metadata, and npm's standard registry request; it never sends repository paths, job data, or file contents. Background jobs persist their command, working directory, rolling stdout/stderr, and exit status only in the current user's private `~/.fastctx/jobs/` directory. FastCtx does not upload this data. Bash commands can access the network according to the command itself. Prebuilt binaries include the PDF engine.
-
-The MCP server runs outside the host filesystem sandbox. Use an approval mode when every write and command execution should be reviewed:
+添加：
 
 ```toml
 [mcp_servers.fastctx]
-default_tools_approval_mode = "writes"
-```
-
-- `writes`: review `replace` and shell execution tools;
-- `prompt`: review every tool call.
-
-`replace` is published with the default file tools. The host's read-only mode covers the host's own tools. MCP writes still run with the server process permissions. Set `writes` or `prompt` when the workflow depends on a read-only boundary.
-
-## Codex configuration
-
-Codex code mode places regular MCP tools inside an execution container. Aggregated results from multiple calls can be truncated in the middle by the host. This setting keeps FastCtx as a direct top-level namespace:
-
-```toml
-[features.code_mode]
-direct_only_tool_namespaces = ["mcp__fastctx"]
-```
-
-Apply maintains this setting automatically and writes a guidance block with explicit markers to `~/.codex/AGENTS.md` so the model prefers the FastCtx tools.
-
-FastCtx uses an internal output budget of 8,500 tokens by default, around 85% of Codex's default tool output limit. The control terminal provides three tiers:
-
-- `Standard`: the default tier;
-- `High`: raises the global Codex tool output limit;
-- `Extra High`: provides the largest per-call output space.
-
-Higher output tiers allow larger results per call and consume context faster. Choose a tier according to the task.
-
-<details>
-<summary>Manual MCP registration</summary>
-
-```toml
-[mcp_servers.fastctx]
-command = "C:/absolute/path/to/fastctx.exe"
+command = "C:/Tools/FastCtx/fastctx-v0.2.1-windows-arm64-no-pdf-verified/fastctx.exe"
 args = ["serve"]
 startup_timeout_sec = 120
+default_tools_approval_mode = "writes"
 
 [features.code_mode]
 direct_only_tool_namespaces = ["mcp__fastctx"]
 ```
 
-Enable the Bash tools with:
+保存后完全重启 Codex。
+
+默认会出现四个工具：
+
+```text
+read
+grep
+glob
+replace
+```
+
+`default_tools_approval_mode = "writes"` 表示读取和搜索可以直接执行，文件替换及
+命令执行需要确认。
+
+## 如何使用
+
+FastCtx 接入后不需要手工编写 MCP JSON。直接用自然语言告诉 Codex 要做什么。
+
+### 读取文件
+
+```text
+读取 C:/work/my-project/src/main.rs 的前 200 行。
+```
+
+```text
+读取 C:/资料/中文项目/说明.txt。
+```
+
+```text
+用 GBK 编码读取 C:/旧项目/配置.txt。
+```
+
+### 搜索内容
+
+```text
+在 C:/work/my-project 中搜索所有 TODO，返回匹配内容和前后一行。
+```
+
+```text
+在 src 目录中搜索所有调用 old_api 的 Rust 文件。
+```
+
+### 查找文件
+
+```text
+查找 C:/work/my-project 下所有 **/*.toml 文件。
+```
+
+```text
+列出最近修改的 20 个 TypeScript 文件。
+```
+
+### 安全替换
+
+```text
+预览把 src 目录中的 old_name 替换成 new_name，不要真正写入。
+```
+
+确认预览无误后：
+
+```text
+执行刚才的替换，最多允许修改 30 处。
+```
+
+### 运行命令
+
+启用 Bash 工具后：
+
+```text
+在 C:/work/my-project 运行 cargo test。
+```
+
+```text
+后台启动 npm run dev，然后持续查看输出。
+```
+
+FastCtx 的读取和搜索结果会明确标记：
+
+- `Complete`：结果完整
+- `Partial`：结果分页，需要按提示继续
+
+出现 `Partial` 时，应使用结果末尾给出的精确参数继续读取。
+
+## 工具说明
+
+FastCtx 最多提供九个同级 MCP 工具。
+
+| 工具 | 默认状态 | 用途 |
+|---|---:|---|
+| `read` | 开启 | 读取文本、图片和十六进制原始数据 |
+| `grep` | 开启 | 使用 Rust 正则表达式搜索文件内容 |
+| `glob` | 开启 | 按路径模式查找文件 |
+| `replace` | 开启 | 预览或执行机械批量替换 |
+| `run` | 关闭 | 前台执行 Bash 命令 |
+| `run_background` | 关闭 | 启动持久后台任务 |
+| `job_output` | 关闭 | 增量读取后台任务输出 |
+| `job_kill` | 关闭 | 终止任务及其完整进程树 |
+| `job_list` | 关闭 | 列出运行中或已保存的任务 |
+
+## `read`
+
+`read` 支持：
+
+- 带 1 基行号的文本输出
+- `offset` 和 `limit` 分页
+- UTF-8 和 BOM
+- GBK、Shift-JIS、Big5、UTF-16 等编码
+- PNG、JPEG、GIF、WebP 和 BMP
+- 任意文件的分页 hex 视图
+
+编码存在歧义时，FastCtx 会返回候选编码和重试方式，不会直接输出乱码。
+
+本 ARM64 构建不支持 PDF。
+
+## `grep`
+
+`grep` 使用 ripgrep 同源的 Rust 搜索组件，支持：
+
+- 单文件和目录树搜索
+- `.gitignore` 和 `.ignore`
+- 隐藏文件
+- glob 和文件类型筛选
+- 大小写控制
+- 多行正则表达式
+- 匹配上下文
+- 并行搜索
+- 请求取消
+- 稳定分页
+
+无法可靠识别编码或在搜索期间发生变化的文件会被明确列入跳过报告。
+
+## `glob`
+
+`glob` 用于按路径模式查找文件，例如：
+
+```text
+**/*.rs
+src/**/*.ts
+**/*.{toml,json}
+```
+
+支持按路径排序、按修改时间排序、分页以及项目忽略规则。
+
+## `replace`
+
+`replace` 适合确定性的机械修改，例如：
+
+- 符号重命名
+- import 改写
+- 配置键迁移
+- 固定模式删除
+
+安全机制包括：
+
+- `dry_run` 预览
+- `max_replacements` 限制影响范围
+- 写入前冻结候选集
+- 并发修改检查
+- 同目录原子替换
+- 保留原编码和 BOM
+- 保留 CRLF 或 LF
+- 保留未修改字节
+
+需要理解代码语义的编辑仍应由 Codex 的 `apply_patch` 完成。
+
+## 启用 Bash 工具
+
+Windows 需要 Git Bash。可以安装 Git for Windows，也可以使用 Scoop：
+
+```powershell
+scoop install git
+```
+
+本社区版支持探测：
+
+```text
+%USERPROFILE%\scoop\apps\git\current\usr\bin\bash.exe
+```
+
+手动配置时，将参数改为：
 
 ```toml
 args = ["serve", "--enable-shell"]
 ```
 
-When the binary is on PATH, `command` can be set to `fastctx`. The compatibility npm package `codex-fastctx` installs the same `fastctx` command.
+保存后重启 Codex。
 
-</details>
+Bash 工具拥有执行本地命令的能力，因此默认关闭。
 
-## What FastCtx changes
+## 后台任务
 
-FastCtx uses or manages these paths and settings:
+`run_background` 创建的任务由独立监督进程管理：
 
-- `~/.fastctx/bin/fastctx(.exe)`: the stable self-installed binary;
-- `~/.fastctx/config.toml`: control terminal settings and the Apply receipt;
-- `~/.fastctx/jobs/`: persistent background-job records and rolling output, created on demand by `run_background`;
-- `[mcp_servers.fastctx]` in `~/.codex/config.toml`;
-- the `mcp__fastctx` entry in `direct_only_tool_namespaces`;
-- the marker-delimited FastCtx block in `~/.codex/AGENTS.md`;
-- the selected `tool_output_token_limit` value after user confirmation.
+- Codex 会话关闭后仍可继续运行
+- MCP Server 重启后可以重新找回
+- 输出和状态保存在 `~/.fastctx/jobs/`
+- 可以增量读取输出
+- 可以终止整个进程树
+- 已完成记录按存储配额回收
 
-FastCtx edits existing TOML with `toml_edit`, preserving comments, formatting, and unrelated configuration. Unapply removes entries according to write ownership and preserves later user changes. It stops running background jobs before removing `~/.fastctx/`.
+适合构建、测试、开发服务器和其他长时间任务。
 
-## License
+## 安全与隐私
 
-FastCtx is dual-licensed under MIT OR Apache-2.0. Redistributions must retain the [`NOTICE`](./NOTICE) file. Third-party notices for the bundled Pdfium build are listed in [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md).
+FastCtx 是纯本地工具：
 
-## Contact
+- MCP 工具调用本身不发送遥测
+- 文件内容不会上传给 FastCtx 服务
+- 后台任务记录只保存在当前用户目录
+- FastCtx Server 继承启动它的 Windows 用户权限
+- Bash 默认关闭
+- `replace` 支持预览和原子写入
 
-FastCtx is created and maintained by [yc-duan](https://github.com/yc-duan). For integration, redistribution, partnership, or anything else, feel free to reach out: dy2958830371@gmail.com.
+FastCtx MCP Server 位于 Codex 自身工具沙箱之外。它能访问的文件范围由 FastCtx
+进程的 Windows 用户权限决定。
 
-## Acknowledgements
+如果希望所有工具都逐次确认，可以使用：
 
-Thanks to the [linuxdo](https://linux.do/) community for discussion, sharing, and feedback.
+```toml
+[mcp_servers.fastctx]
+default_tools_approval_mode = "prompt"
+```
+
+## 控制终端
+
+直接运行 `fastctx.exe` 会打开全屏控制终端，可管理：
+
+- MCP 配置
+- 输出 token 档位
+- 搜索 CPU 上限
+- Bash 工具
+- 后台任务并发
+- 任务存储配额
+- Jobs dashboard
+- Apply 和 Unapply
+- 更新检查
+- 17 种界面语言
+
+## 卸载
+
+### 使用 Apply 安装
+
+运行：
+
+```powershell
+& 'C:\Tools\FastCtx\fastctx-v0.2.1-windows-arm64-no-pdf-verified\fastctx.exe' unapply --yes
+```
+
+然后重启 Codex。
+
+### 手动配置
+
+从 `%USERPROFILE%\.codex\config.toml` 中删除：
+
+- `[mcp_servers.fastctx]`
+- `direct_only_tool_namespaces` 中的 `mcp__fastctx`
+
+重启 Codex 后删除解压目录。
+
+## 当前限制
+
+- PDF 功能未启用。
+- 可执行文件没有 Authenticode 签名。
+- Windows ARM64 npm 包尚不存在。
+- npm 自动安装和 npm 自动替换暂不支持 ARM64。
+- 社区版可能落后于上游版本。
+- 上游尚未正式把 Windows ARM64 加入发布矩阵。
+- GitHub `v1` 是社区发布编号，不代表上游 FastCtx 1.0。
+
+## 从源码构建
+
+需要：
+
+- Windows ARM64
+- Visual Studio Build Tools
+- HostARM64/ARM64 MSVC
+- Windows SDK
+- Rust `aarch64-pc-windows-msvc`
+
+在 ARM64 Developer Command Prompt 中：
+
+```powershell
+rustup toolchain install stable-aarch64-pc-windows-msvc
+rustup default stable-aarch64-pc-windows-msvc
+
+cargo +stable build `
+  --locked `
+  --release `
+  --no-default-features `
+  --target aarch64-pc-windows-msvc
+```
+
+生成文件：
+
+```text
+target\aarch64-pc-windows-msvc\release\fastctx.exe
+```
+
+完整编译检查：
+
+```powershell
+cargo +stable check `
+  --locked `
+  --no-default-features `
+  --all-targets `
+  --target aarch64-pc-windows-msvc
+```
+
+## 技术结构
+
+项目使用 Rust 2024 Edition，主要模块包括：
+
+| 模块 | 作用 |
+|---|---|
+| `src/read_tool/` | 文本、图片、PDF 和 hex 读取 |
+| `src/grep_tool.rs` | 内容搜索 |
+| `src/glob_tool.rs` | 文件遍历与 glob |
+| `src/edit/` | 替换、文件锁和原子写入 |
+| `src/shell/` | Bash 与持久后台任务 |
+| `src/tui/` | 全屏控制终端 |
+| `src/update/` | 更新检查、下载与回滚 |
+| `src/control/` | Apply、Unapply 和配置所有权 |
+| `src/encoding/` | 编码检测与转换 |
+| `src/server.rs` | MCP 工具注册 |
+| `src/stdio_transport.rs` | stdio MCP 传输 |
+
+主要依赖包括 Tokio、rmcp、Rayon、ripgrep 搜索组件、encoding_rs、Ratatui 和
+Windows Job Objects。
+
+## 验证结果
+
+Windows ARM64 `v1` 已完成：
+
+- Rust 格式检查
+- 锁定依赖的全目标编译检查
+- Release 全测试目标编译
+- 579 项测试通过
+- 4 项正常忽略
+- 0 项失败
+- MCP 初始化与工具列表验证
+- 中文路径 UTF-8 文本读取
+- 中文路径 PNG 读取
+- 中文路径 GBK 读取
+- grep 和 glob 中文目录遍历
+- replace dry-run 不修改源文件
+- PE `AA64` 验证
+- ZIP 下载后 SHA-256 复验
+
+## 许可证
+
+FastCtx 使用双许可证：
+
+```text
+MIT OR Apache-2.0
+```
+
+再分发时请保留：
+
+- `LICENSE-MIT`
+- `LICENSE-APACHE`
+- `NOTICE`
+- `THIRD_PARTY_LICENSES.md`
+
+## 致谢
+
+FastCtx 由 [yc-duan](https://github.com/yc-duan) 创建和维护。
+
+本 fork 只提供：
+
+- Windows ARM64 构建验证
+- Scoop Git Bash 兼容
+- 中文路径回归测试
+- 社区二进制分发
+
+通用功能、架构和绝大部分代码均属于原项目成果。欢迎关注、Star 和支持：
+
+[https://github.com/yc-duan/fastctx](https://github.com/yc-duan/fastctx)
+
+## 上游文档
+
+- [上游中文文档](./README.zh-CN.md)
+- [上游英文文档](https://github.com/yc-duan/fastctx/blob/main/README.md)
