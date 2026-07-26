@@ -1,6 +1,7 @@
 //! Pure TUI state transitions and controlled I/O effects.
 
-use super::config::{ConfigCursor, ConfigDraft, ConfigItemId, ConfigViewport};
+use super::budget_editor::{self, BudgetEditor};
+use super::config::{ConfigCursor, ConfigDraft, ConfigItemId, ConfigValue, ConfigViewport};
 use super::jobs::{JobsDetail, JobsState, JobsViewport, visible_job_count, visible_jobs};
 use super::migration::{self as migration_copy, MigrationMessages};
 use super::update::{self as update_copy, UpdateMessages};
@@ -47,6 +48,7 @@ pub(crate) enum Screen {
     UnapplyRunning,
     Config,
     ConfigCpuEdit,
+    ConfigBudgetEdit(ConfigItemId),
     ConfigResetConfirm,
     ConfigResetting,
     Jobs,
@@ -180,6 +182,7 @@ pub(crate) struct App {
     pub config_cursor: ConfigCursor,
     pub config_viewport: ConfigViewport,
     pub(crate) cpu_limit_editor: CpuLimitEditor,
+    pub(crate) budget_editor: BudgetEditor,
     pub jobs_state: JobsState,
     pub jobs_detail: JobsDetail,
     pub jobs_selected: usize,
@@ -309,6 +312,7 @@ impl App {
             config_cursor: ConfigCursor::default(),
             config_viewport: ConfigViewport::default(),
             cpu_limit_editor: CpuLimitEditor::default(),
+            budget_editor: BudgetEditor::default(),
             jobs_state: JobsState::Loading,
             jobs_detail: JobsDetail::default(),
             jobs_selected: 0,
@@ -542,6 +546,7 @@ impl App {
             Screen::UnapplyConfirm => self.handle_unapply_confirm(key.code),
             Screen::Config => self.handle_config(key),
             Screen::ConfigCpuEdit => self.handle_cpu_limit_editor(key),
+            Screen::ConfigBudgetEdit(item) => self.handle_budget_editor(item, key),
             Screen::ConfigResetConfirm => self.handle_config_reset_confirm(key.code),
             Screen::Jobs => self.handle_jobs(key.code),
             Screen::JobsKillConfirm => self.handle_jobs_kill_confirm(key.code),
@@ -648,6 +653,7 @@ impl App {
                     self.config_cursor = ConfigCursor::default();
                     self.config_viewport = ConfigViewport::default();
                     self.cpu_limit_editor = CpuLimitEditor::default();
+                    self.budget_editor = BudgetEditor::default();
                     self.pending_job = None;
                     self.screen = Screen::Language { first_run: true };
                     self.selected = language_index(self.language);
@@ -1129,6 +1135,26 @@ impl App {
                     };
                     self.screen = Screen::ConfigCpuEdit;
                 }
+                item @ (ConfigItemId::ReadBudget
+                | ConfigItemId::GrepBudget
+                | ConfigItemId::GlobBudget
+                | ConfigItemId::RunBudget
+                | ConfigItemId::JobOutputBudget) => {
+                    let ConfigValue::Budget(budget) = self.config_draft.value(item) else {
+                        return;
+                    };
+                    self.budget_editor = BudgetEditor {
+                        // A share that is only following the tier opens as "auto" so the editor
+                        // shows the state it is in, not a number nobody chose.
+                        input: if budget.explicit {
+                            budget.level.percent().to_string()
+                        } else {
+                            "auto".to_string()
+                        },
+                        error: None,
+                    };
+                    self.screen = Screen::ConfigBudgetEdit(item);
+                }
                 ConfigItemId::ResetAll => {
                     self.selected = 0;
                     self.screen = Screen::ConfigResetConfirm;
@@ -1178,6 +1204,46 @@ impl App {
             {
                 self.cpu_limit_editor.input.push(character);
                 self.cpu_limit_editor.error = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_budget_editor(&mut self, item: ConfigItemId, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.budget_editor.error = None;
+                self.screen = Screen::Config;
+            }
+            KeyCode::Enter => match budget_editor::parse_input(&self.budget_editor.input) {
+                Ok(level) => {
+                    self.config_draft.set_tool_budget(item, level);
+                    self.budget_editor.error = None;
+                    self.screen = Screen::Config;
+                    self.pending = Some(Effect::SaveConfig);
+                }
+                Err(error) => self.budget_editor.error = Some(error),
+            },
+            KeyCode::Backspace => {
+                self.budget_editor.input.pop();
+                self.budget_editor.error = None;
+            }
+            KeyCode::Delete => {
+                self.budget_editor.input.clear();
+                self.budget_editor.error = None;
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.budget_editor.input.clear();
+                self.budget_editor.error = None;
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    && self.budget_editor.input.chars().count() < 32 =>
+            {
+                self.budget_editor.input.push(character);
+                self.budget_editor.error = None;
             }
             _ => {}
         }
@@ -1530,9 +1596,13 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    /// Defaults as they look once this build has stamped them: both the software watermark and
+    /// the budget-defaults epoch are bookkeeping rather than preferences, so a settings file this
+    /// build has touched always carries them.
     fn default_with_current_watermark() -> FastCtxSettings {
         FastCtxSettings {
             last_seen_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            tool_budget_epoch: Some(crate::control::settings::TOOL_BUDGET_EPOCH),
             ..FastCtxSettings::default()
         }
     }
@@ -1662,7 +1732,7 @@ mod tests {
         assert_eq!(app.screen, Screen::MigrationNotice);
         assert_eq!(
             app.settings.tool_budgets,
-            crate::control::settings::ToolBudgets::default()
+            crate::control::settings::ToolBudgetPreferences::default()
         );
         let (sender, receiver) = std::sync::mpsc::channel();
         app.set_startup_update_check(receiver);
@@ -1755,15 +1825,20 @@ mod tests {
     #[test]
     fn tui_unapply_cancel_is_zero_write_then_confirm_restores_user_bytes() {
         let (temp, mut app) = fixture();
-        let config = concat!(
-            "# user config\n",
-            "tool_output_token_limit = 20000 # exact\n",
-            "\n",
-            "[mcp_servers.other]\n",
-            "command = 'other'\n",
+        // The shared limit already holds exactly what the default tier asks for, so Apply has no
+        // conflict to confirm and Unapply has to hand these bytes back untouched.
+        let config = format!(
+            concat!(
+                "# user config\n",
+                "tool_output_token_limit = {} # exact\n",
+                "\n",
+                "[mcp_servers.other]\n",
+                "command = 'other'\n",
+            ),
+            Tier::Standard.host_limit()
         );
         let agents = "# User rules\n\nKeep this exact.\n";
-        std::fs::write(&app.paths.codex_config, config).unwrap();
+        std::fs::write(&app.paths.codex_config, &config).unwrap();
         std::fs::write(&app.paths.codex_agents, agents).unwrap();
 
         app.screen = Screen::ApplyHome;
@@ -2102,7 +2177,7 @@ mod tests {
         app.settings.language = Some("zh-CN".to_string());
         app.language = Language::ZhCn;
         app.settings.tier = Tier::High;
-        app.settings.tool_budgets.grep = ToolBudgetLevel::Percent25;
+        app.settings.tool_budgets.grep = Some(ToolBudgetLevel::Percent(25));
         app.settings.fastshell.enabled = true;
         app.settings.fastshell.job_storage_limit_mib = 4_096;
         app.settings.update.auto_check = false;
@@ -2543,6 +2618,9 @@ mod tests {
         };
         let mut settings = FastCtxSettings {
             last_seen_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            // Already reconciled with this generation's budget defaults, so startup lands on the
+            // update screen instead of the one-time migration notice.
+            tool_budget_epoch: Some(crate::control::settings::TOOL_BUDGET_EPOCH),
             language: Some("en".to_string()),
             ..FastCtxSettings::default()
         };
@@ -2618,29 +2696,32 @@ mod tests {
         // Pin the starting levels instead of inheriting the shipped defaults: this test owns the
         // draft/commit semantics and the cycle order, not the product's chosen default values.
         app.settings.tier = Tier::Standard;
-        app.settings.tool_budgets = crate::control::settings::ToolBudgets {
-            read: ToolBudgetLevel::Inherit,
-            grep: ToolBudgetLevel::Inherit,
-            glob: ToolBudgetLevel::Inherit,
-            run: ToolBudgetLevel::Percent75,
-            job_output: ToolBudgetLevel::Percent50,
+        app.settings.tool_budgets = crate::control::settings::ToolBudgetPreferences {
+            read: Some(ToolBudgetLevel::Inherit),
+            grep: None,
+            glob: None,
+            run: Some(ToolBudgetLevel::Percent(75)),
+            job_output: Some(ToolBudgetLevel::Percent(50)),
         };
         app.config_draft = crate::tui::config::ConfigDraft::from_settings(&app.settings);
         app.screen = Screen::Config;
         app.config_cursor = ConfigCursor::default();
         app.handle_key(key(KeyCode::Right));
         app.handle_key(key(KeyCode::Down));
-        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Left));
         assert_eq!(
             app.config_draft.value(ConfigItemId::OutputTier),
             ConfigValue::Tier(Tier::High)
         );
         assert_eq!(
-            app.config_draft.value(ConfigItemId::ReadBudget),
-            ConfigValue::Budget(ToolBudgetLevel::Percent75)
+            budget_level(&app, ConfigItemId::ReadBudget),
+            ToolBudgetLevel::Percent(99)
         );
         assert_eq!(app.settings.tier, Tier::Standard);
-        assert_eq!(app.settings.tool_budgets.read, ToolBudgetLevel::Inherit);
+        assert_eq!(
+            app.settings.tool_budgets.read,
+            Some(ToolBudgetLevel::Inherit)
+        );
         app.handle_key(key(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Main);
         assert_eq!(app.settings.tier, Tier::Standard);
@@ -2651,32 +2732,126 @@ mod tests {
         assert_eq!(app.screen, Screen::Config);
         app.handle_key(key(KeyCode::Right));
         app.handle_key(key(KeyCode::Down));
-        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Left));
         for _ in 0..3 {
             app.handle_key(key(KeyCode::Down));
         }
         app.handle_key(key(KeyCode::Right));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Right));
+        // Enter on a budget row opens its share editor, the same way it does on the CPU limit row,
+        // so step back to a plain row to exercise save-on-Enter.
+        app.config_cursor = ConfigCursor::default();
         app.handle_key(key(KeyCode::Enter));
         app.execute_pending();
         assert_eq!(app.screen, Screen::Main);
         assert_eq!(app.settings.tier, Tier::High);
-        // Three children advanced one step each from three distinct starting levels, so a cursor
+        // Three children moved one point each from three distinct starting shares, so a cursor
         // that collapsed onto a single item cannot satisfy all three.
-        assert_eq!(app.settings.tool_budgets.read, ToolBudgetLevel::Percent75);
-        assert_eq!(app.settings.tool_budgets.run, ToolBudgetLevel::Percent50);
+        assert_eq!(
+            app.settings.tool_budgets.read,
+            Some(ToolBudgetLevel::Percent(99))
+        );
+        assert_eq!(
+            app.settings.tool_budgets.run,
+            Some(ToolBudgetLevel::Percent(76))
+        );
         assert_eq!(
             app.settings.tool_budgets.job_output,
-            ToolBudgetLevel::Percent25
+            Some(ToolBudgetLevel::Percent(51))
         );
+        // The two untouched tools stay unset, so they keep tracking the tier the user just raised
+        // rather than being frozen at whatever Standard happened to recommend.
+        assert_eq!(app.settings.tool_budgets.grep, None);
+        assert_eq!(app.settings.tool_budgets.glob, None);
         let persisted = crate::control::settings::load(&app.paths).unwrap();
         assert_eq!(persisted.tier, Tier::High);
-        assert_eq!(persisted.tool_budgets.read, ToolBudgetLevel::Percent75);
-        assert_eq!(persisted.tool_budgets.run, ToolBudgetLevel::Percent50);
+        assert_eq!(
+            persisted.tool_budgets.read,
+            Some(ToolBudgetLevel::Percent(99))
+        );
+        assert_eq!(
+            persisted.tool_budgets.run,
+            Some(ToolBudgetLevel::Percent(76))
+        );
         assert_eq!(
             persisted.tool_budgets.job_output,
-            ToolBudgetLevel::Percent25
+            Some(ToolBudgetLevel::Percent(51))
+        );
+        assert_eq!(persisted.tool_budgets.grep, None);
+    }
+
+    fn budget_level(app: &App, item: ConfigItemId) -> ToolBudgetLevel {
+        match app.config_draft.value(item) {
+            ConfigValue::Budget(budget) => budget.level,
+            other => panic!("{item:?} is not a budget item: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_budget_editor_accepts_a_share_and_hands_it_back_to_the_tier() {
+        let (_temp, mut app) = fixture();
+        app.settings.language = Some("en".to_string());
+        app.settings.tier = Tier::Standard;
+        app.config_draft = crate::tui::config::ConfigDraft::from_settings(&app.settings);
+        app.screen = Screen::Config;
+        app.config_cursor = ConfigCursor::default();
+        // Move onto grep, which ships unset so the editor must open showing "auto".
+        for _ in 0..2 {
+            app.handle_key(key(KeyCode::Down));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.screen,
+            Screen::ConfigBudgetEdit(ConfigItemId::GrepBudget)
+        );
+        assert_eq!(app.budget_editor.input, "auto");
+
+        type_text(&mut app, "37");
+        app.handle_key(key(KeyCode::Enter));
+        // Committing the editor commits the whole draft and leaves the config screen, the same way
+        // the CPU limit editor does.
+        assert_eq!(app.screen, Screen::Config);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::Main);
+        assert_eq!(
+            app.settings.tool_budgets.grep,
+            Some(ToolBudgetLevel::Percent(37))
+        );
+
+        // `auto` is the only way back to tier tracking once a share is explicit; without it an
+        // edit would be one-way and the tier default unreachable.
+        open_grep_budget_editor(&mut app);
+        assert_eq!(app.budget_editor.input, "37");
+        type_text(&mut app, "auto");
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+        assert_eq!(app.settings.tool_budgets.grep, None);
+
+        // A rejected value stays on the editor with the reason recorded and changes nothing.
+        open_grep_budget_editor(&mut app);
+        type_text(&mut app, "150");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.screen,
+            Screen::ConfigBudgetEdit(ConfigItemId::GrepBudget)
+        );
+        assert!(app.budget_editor.error.is_some());
+        assert!(!app.has_pending_effect());
+        assert_eq!(app.settings.tool_budgets.grep, None);
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Config);
+    }
+
+    /// Reopens the grep share editor from wherever the previous commit left the app.
+    fn open_grep_budget_editor(app: &mut App) {
+        app.screen = Screen::Config;
+        app.config_cursor = ConfigCursor::default().next().next();
+        assert_eq!(app.config_cursor.entry().item, ConfigItemId::GrepBudget);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.screen,
+            Screen::ConfigBudgetEdit(ConfigItemId::GrepBudget)
         );
     }
 

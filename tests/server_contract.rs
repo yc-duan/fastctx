@@ -38,18 +38,18 @@ fn default_tool_definitions_publish_replace_with_explicit_permissions() {
         Some(concat!(
             "Read one file (text, image, or PDF) or a batch of text files from the local\n",
             "filesystem. Paths must be absolute. Text returns 1-based `N<tab>content`\n",
-            "lines, 2000 per page; page with offset/limit. For several text files in one\n",
-            "call, pass files=[{\"path\": ...}, ...] instead of file_path: one token\n",
-            "budget, per-file problems reported inline without failing the batch, and a\n",
-            "Partial note returns the exact files array for the next call. Images\n",
-            "(PNG/JPG/GIF/WebP/BMP) are shown to you visually. PDFs return the selected\n",
-            "pages' text layer or those pages rendered as images; image mode defaults to\n",
-            "4 pages. view=\"hex\" dumps any file's raw bytes. PDFs, images, and hex view\n",
-            "are single-file only. Text output is always UTF-8; when auto-detection is\n",
-            "not confident it returns an error listing candidate encodings instead of\n",
-            "guessed text, so pass encoding only then. Text, PDF, and hex responses end\n",
-            "with a Complete or Partial status — continue only with the exact parameters\n",
-            "a Partial note provides."
+            "lines, as much of the file as the output budget holds. For several text\n",
+            "files in one call, pass files=[{\"path\": ...}, ...] instead of file_path:\n",
+            "one token budget, per-file problems reported inline without failing the\n",
+            "batch, and a Partial note returns the exact files array for the next call.\n",
+            "Images (PNG/JPG/GIF/WebP/BMP) are shown to you visually. PDFs return the\n",
+            "selected pages' text layer or those pages rendered as images; image mode\n",
+            "defaults to 4 pages. view=\"hex\" dumps any file's raw bytes. PDFs, images,\n",
+            "and hex view are single-file only. Text output is always UTF-8; when\n",
+            "auto-detection is not confident it returns an error listing candidate\n",
+            "encodings instead of guessed text, so pass encoding only then. Text, PDF,\n",
+            "and hex responses end with a Complete or Partial status — continue only\n",
+            "with the exact parameters a Partial note provides."
         ))
     );
     assert!(

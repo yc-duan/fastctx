@@ -408,33 +408,69 @@ fn read_offset_page_that_reaches_eof_uses_a_complete_terminal_note() {
 }
 
 #[test]
-fn read_default_line_limit_distinguishes_two_thousand_from_two_thousand_one() {
+fn default_text_read_is_bounded_only_by_the_token_budget() {
+    // Replaces the former 2000-line default window (2026-07-25). That window capped every read
+    // that omitted `limit`, so a wider token budget bought nothing on any file past 2000 lines:
+    // the model paid a continuation round for content the budget could have delivered whole.
+    // A file that clears the old window but fits the budget must now come back complete.
     let temp = tempfile::tempdir().unwrap();
-    let exact = temp.path().join("exact.txt");
-    write(&exact, "\n".repeat(1_999));
-    let exact_output = text(read_file(request(&exact)));
+    let long = temp.path().join("long.txt");
+    write(&long, "\n".repeat(2_099));
+    let output = text(read_file(request(&long)));
     assert_eq!(
-        exact_output
-            .lines()
-            .filter(|line| line.contains('\t'))
-            .count(),
-        2_000
-    );
-    assert!(exact_output.ends_with("(Complete: reached end of file; lines 1-2000 of 2000 shown.)"));
-
-    let over = temp.path().join("over.txt");
-    write(&over, "\n".repeat(2_000));
-    let over_output = text(read_file(request(&over)));
-    assert_eq!(
-        over_output
-            .lines()
-            .filter(|line| line.contains('\t'))
-            .count(),
-        2_000
+        output.lines().filter(|line| line.contains('\t')).count(),
+        2_100,
+        "a default read stopped short of a file the budget can hold: {}",
+        tail(&output)
     );
     assert!(
-        over_output.ends_with("(Partial: lines 1-2000 of 2001 shown. Continue with offset=2001.)")
+        output.ends_with("(Complete: reached end of file; lines 1-2100 of 2100 shown.)"),
+        "{}",
+        tail(&output)
     );
+
+    // Paging is still available on request: the fixed window is gone as a default, not as a
+    // capability, and an explicit `limit` must still collect exactly that many lines.
+    let paged = text(read_file({
+        let mut request = request(&long);
+        request.limit = Some(10);
+        request
+    }));
+    assert!(
+        paged.ends_with("(Partial: lines 1-10 of 2100 shown. Continue with offset=11.)"),
+        "{}",
+        tail(&paged)
+    );
+}
+
+#[test]
+fn a_text_read_too_large_for_the_budget_still_stops_at_a_line_boundary() {
+    // The other half of removing the line window: the token ceiling has to be a real ceiling,
+    // otherwise "unbounded by lines" would mean unbounded, and host truncation would come back.
+    let temp = tempfile::tempdir().unwrap();
+    let huge = temp.path().join("huge.txt");
+    let line = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor\n";
+    write(&huge, line.repeat(20_000));
+    let output = text(read_file(request(&huge)));
+    let shown = output.lines().filter(|line| line.contains('\t')).count();
+    assert!(
+        shown > 0 && shown < 20_000,
+        "expected a truncated window, got {shown} lines"
+    );
+    assert!(
+        output.contains(&format!(
+            "(Partial: lines 1-{shown} of 20001 shown. Continue with offset={}.)",
+            shown + 1
+        )),
+        "{}",
+        tail(&output)
+    );
+}
+
+fn tail(output: &str) -> String {
+    let mut characters: Vec<char> = output.chars().rev().take(160).collect();
+    characters.reverse();
+    characters.into_iter().collect()
 }
 
 #[test]

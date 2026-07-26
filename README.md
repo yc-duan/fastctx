@@ -13,7 +13,7 @@
 - 社区仓库：[Simplepine/fastctx](https://github.com/Simplepine/fastctx)
 - 原项目：[yc-duan/fastctx](https://github.com/yc-duan/fastctx)
 - 原作者：[yc-duan](https://github.com/yc-duan)
-- 当前分支上游基线：`v0.2.2`
+- 当前分支上游基线：`v0.2.3`
 - ARM64 基础适配提交：[`1db4537`](https://github.com/Simplepine/fastctx/commit/1db453750097add2971cc4d1a919fd5bae6ecfad)
 - 架构：`aarch64-pc-windows-msvc`
 - 许可证：MIT OR Apache-2.0
@@ -21,19 +21,20 @@
 当前分支构建的程序会如实显示：
 
 ```text
-fastctx 0.2.2
+fastctx 0.2.3
 ```
 
 GitHub 标签 `v1` 仍是基于上游 v0.2.1 的历史发布；下方快速开始中的
-v1 下载链接也仍指向该版本，直到 v0.2.2 社区资产正式发布。
+v1 下载链接也仍指向该版本，直到 v0.2.3 社区资产正式发布。
 
-## 当前 v0.2.2 同步状态
+## 当前 v0.2.3 同步状态
 
-- 已合入上游 v0.2.2 的批量读取、持久完整后台日志、状态行和更新检查改进
+- 已合入上游 v0.2.3：默认文本读取由 token 预算独立限定，输出档位拥有独立份额
+- 同步冷启动后台输出等待窗口和 Git Bash CI 稳定性修订
 - 保留 Scoop Git Bash 发现、中文路径覆盖和 Windows ARM64 无 npm 平台包兼容
 - Windows ARM64 后台监督进程使用 30 秒启动窗口，其他平台保持上游 10 秒
 - `--no-default-features` 原生 ARM64 release 构建通过，PDF 仍关闭
-- 651 项测试通过，4 项按上游设计忽略，0 项失败
+- 663 项测试通过，4 项按上游设计忽略，0 项失败
 
 ## FastCtx 是什么
 
@@ -192,6 +193,14 @@ replace
 
 `default_tools_approval_mode = "writes"` 表示读取和搜索可以直接执行，文件替换及
 命令执行需要确认。
+
+Codex code mode 会把普通 MCP 工具放进执行容器；`direct_only_tool_namespaces`
+设置可让 FastCtx 保持为顶层工具命名空间，避免多次聚合调用的结果在中间被宿主截断。
+Apply 会自动维护该设置，并在 `~/.codex/AGENTS.md` 中写入带明确标记的使用指引。
+
+控制终端提供 `Compact`、`Standard` 和 `High` 三档输出预算。FastCtx 内部预算为
+宿主限制的 90%；v0.2.3 起主要由 `read` 随档位扩展，其余长输出工具使用各自独立
+份额。每项份额可在控制终端中设置为任意整数百分比，未单独修改时跟随当前档位。
 
 ## 如何使用
 

@@ -23,7 +23,21 @@ use serde::Deserialize;
 use std::fs;
 use std::io::Read;
 
-const DEFAULT_LINE_LIMIT: usize = 2_000;
+/// Line window for a text read that omits `limit`: unbounded, so the token budget is the only
+/// ceiling on how much one call returns.
+///
+/// A second fixed window would silently cap every default read far below the configured budget,
+/// forcing continuation calls the budget was raised to avoid. Do not reintroduce a numeric default
+/// here; page explicitly with `limit` instead. Locked by
+/// `read_contract::default_text_read_is_bounded_only_by_the_token_budget`. (2026-07-25)
+const UNBOUNDED_LINE_LIMIT: usize = usize::MAX;
+/// Line window for a hex read that omits `limit`.
+///
+/// Hex keeps a fixed default where text does not: a dump exists to inspect a byte range rather
+/// than to deliver a whole binary, and its candidate window is estimated from the budget with a
+/// deliberately loose factor, so an unbounded default would buffer hundreds of thousands of
+/// rendered lines before the budget trimmed them back. (2026-07-25)
+const DEFAULT_HEX_LINE_LIMIT: usize = 2_000;
 const MAX_LINE_CHARS: usize = 2_000;
 const TOTAL_COUNT_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
 
@@ -53,7 +67,7 @@ pub struct ReadRequest {
     /// The 1-based line number to start reading from. Use for paging through large files.
     #[schemars(range(min = 1))]
     pub offset: Option<usize>,
-    /// The number of lines to read (default 2000).
+    /// The number of lines to read. Omit to read as much as the output budget holds.
     #[schemars(range(min = 1))]
     pub limit: Option<usize>,
     /// Page range for PDF files, e.g. "1-5", "3", "10-20". Max 20 pages per call. Required in text mode for PDFs with more than 10 pages.
@@ -77,7 +91,7 @@ pub struct BatchReadEntry {
     /// The 1-based line number to start reading from.
     #[schemars(range(min = 1))]
     pub offset: Option<usize>,
-    /// Maximum lines to read from this file in this call (default 2000).
+    /// Maximum lines to read from this file in this call. Omit to let the shared budget decide.
     #[schemars(range(min = 1))]
     pub limit: Option<usize>,
     /// Known source encoding for this file, using the same labels as single-file read.

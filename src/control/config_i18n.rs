@@ -1,8 +1,8 @@
-//! Localized strings for search parallelism and destructive settings reset.
+//! Localized strings for the numeric setting editors and the destructive settings reset.
 
 use super::i18n::Language;
 
-/// Complete CPU-limit editor and reset string set for one language.
+/// Complete editor and reset string set for one language.
 #[derive(Debug)]
 pub(crate) struct ConfigMessages {
     pub(crate) search_group_title: &'static str,
@@ -11,9 +11,12 @@ pub(crate) struct ConfigMessages {
     pub(crate) cpu_limit_note: &'static str,
     pub(crate) cpu_edit_title: &'static str,
     pub(crate) cpu_edit_prompt: &'static str,
-    pub(crate) cpu_error_empty: &'static str,
-    pub(crate) cpu_error_not_integer: &'static str,
-    pub(crate) cpu_error_range: &'static str,
+    /// Shared by every numeric editor: the wording carries no CPU- or budget-specific detail.
+    pub(crate) input_error_empty: &'static str,
+    /// Shared by every numeric editor; see `input_error_empty`.
+    pub(crate) input_error_not_integer: &'static str,
+    /// Shared by every numeric editor; `{maximum}` is filled in by the caller.
+    pub(crate) input_error_range: &'static str,
     pub(crate) reset_group_title: &'static str,
     pub(crate) reset_all_label: &'static str,
     pub(crate) reset_all_note: &'static str,
@@ -21,11 +24,17 @@ pub(crate) struct ConfigMessages {
     pub(crate) reset_success: &'static str,
     pub(crate) footer_edit: &'static str,
     pub(crate) footer_accept: &'static str,
+    pub(crate) budget_edit_title: &'static str,
+    /// `{tool}` is replaced with the name of the tool whose share is being edited.
+    pub(crate) budget_edit_prompt: &'static str,
+    pub(crate) budget_edit_note: &'static str,
+    pub(crate) budget_explicit_note: &'static str,
+    pub(crate) budget_follows_tier_note: &'static str,
 }
 
 impl ConfigMessages {
     #[cfg(test)]
-    fn values(&self) -> [&'static str; 16] {
+    fn values(&self) -> [&'static str; 21] {
         [
             self.search_group_title,
             self.cpu_limit_label,
@@ -33,9 +42,9 @@ impl ConfigMessages {
             self.cpu_limit_note,
             self.cpu_edit_title,
             self.cpu_edit_prompt,
-            self.cpu_error_empty,
-            self.cpu_error_not_integer,
-            self.cpu_error_range,
+            self.input_error_empty,
+            self.input_error_not_integer,
+            self.input_error_range,
             self.reset_group_title,
             self.reset_all_label,
             self.reset_all_note,
@@ -43,6 +52,11 @@ impl ConfigMessages {
             self.reset_success,
             self.footer_edit,
             self.footer_accept,
+            self.budget_edit_title,
+            self.budget_edit_prompt,
+            self.budget_edit_note,
+            self.budget_explicit_note,
+            self.budget_follows_tier_note,
         ]
     }
 }
@@ -74,9 +88,11 @@ macro_rules! config_messages {
     (
         $search_group_title:expr, $cpu_limit_label:expr, $cpu_automatic:expr,
         $cpu_limit_note:expr, $cpu_edit_title:expr, $cpu_edit_prompt:expr,
-        $cpu_error_empty:expr, $cpu_error_not_integer:expr, $cpu_error_range:expr,
+        $input_error_empty:expr, $input_error_not_integer:expr, $input_error_range:expr,
         $reset_group_title:expr, $reset_all_label:expr, $reset_all_note:expr,
-        $reset_confirm:expr, $reset_success:expr, $footer_edit:expr, $footer_accept:expr
+        $reset_confirm:expr, $reset_success:expr, $footer_edit:expr, $footer_accept:expr,
+        $budget_edit_title:expr, $budget_edit_prompt:expr, $budget_edit_note:expr,
+        $budget_explicit_note:expr, $budget_follows_tier_note:expr
     ) => {
         ConfigMessages {
             search_group_title: $search_group_title,
@@ -85,9 +101,9 @@ macro_rules! config_messages {
             cpu_limit_note: $cpu_limit_note,
             cpu_edit_title: $cpu_edit_title,
             cpu_edit_prompt: $cpu_edit_prompt,
-            cpu_error_empty: $cpu_error_empty,
-            cpu_error_not_integer: $cpu_error_not_integer,
-            cpu_error_range: $cpu_error_range,
+            input_error_empty: $input_error_empty,
+            input_error_not_integer: $input_error_not_integer,
+            input_error_range: $input_error_range,
             reset_group_title: $reset_group_title,
             reset_all_label: $reset_all_label,
             reset_all_note: $reset_all_note,
@@ -95,6 +111,11 @@ macro_rules! config_messages {
             reset_success: $reset_success,
             footer_edit: $footer_edit,
             footer_accept: $footer_accept,
+            budget_edit_title: $budget_edit_title,
+            budget_edit_prompt: $budget_edit_prompt,
+            budget_edit_note: $budget_edit_note,
+            budget_explicit_note: $budget_explicit_note,
+            budget_follows_tier_note: $budget_follows_tier_note,
         }
     };
 }
@@ -115,7 +136,12 @@ const EN: ConfigMessages = config_messages!(
     "Reset all settings?",
     "All settings reset.",
     "Edit",
-    "Accept"
+    "Accept",
+    "Edit output budget",
+    "Share for {tool} — enter auto or 1..=100:",
+    "auto returns this tool to the tier's recommended share.",
+    "Explicit; unchanged when the tier changes.",
+    "auto — follows the tier's recommended share."
 );
 
 const ZH_CN: ConfigMessages = config_messages!(
@@ -134,7 +160,12 @@ const ZH_CN: ConfigMessages = config_messages!(
     "要重置所有设置吗？",
     "已重置所有设置。",
     "编辑",
-    "确认"
+    "确认",
+    "编辑输出预算",
+    "{tool} 的比例 —— 输入 auto 或 1..=100：",
+    "输入 auto 可让该工具回到档位的推荐比例。",
+    "已显式设定；切换档位时不变。",
+    "auto：跟随档位的推荐比例。"
 );
 
 const ZH_TW: ConfigMessages = config_messages!(
@@ -153,7 +184,12 @@ const ZH_TW: ConfigMessages = config_messages!(
     "要重設所有設定嗎？",
     "已重設所有設定。",
     "編輯",
-    "確認"
+    "確認",
+    "編輯輸出預算",
+    "{tool} 的比例 —— 輸入 auto 或 1..=100：",
+    "輸入 auto 可讓該工具回到檔位的建議比例。",
+    "已明確設定；切換檔位時不變。",
+    "auto：跟隨檔位的建議比例。"
 );
 
 const JA: ConfigMessages = config_messages!(
@@ -172,7 +208,12 @@ const JA: ConfigMessages = config_messages!(
     "すべての設定をリセットしますか？",
     "すべての設定をリセットしました。",
     "編集",
-    "確定"
+    "確定",
+    "出力予算を編集",
+    "{tool} の割合 — auto または 1..=100 を入力:",
+    "auto を入力すると、このツールは段階の推奨割合に戻ります。",
+    "明示設定。段階を変えても維持。",
+    "auto：段階の推奨割合に追随。"
 );
 
 const KO: ConfigMessages = config_messages!(
@@ -191,7 +232,12 @@ const KO: ConfigMessages = config_messages!(
     "모든 설정을 재설정할까요?",
     "모든 설정을 재설정했습니다.",
     "편집",
-    "확인"
+    "확인",
+    "출력 예산 편집",
+    "{tool} 비율 — auto 또는 1..=100 입력:",
+    "auto를 입력하면 이 도구가 단계의 권장 비율로 돌아갑니다.",
+    "명시 설정. 단계가 바뀌어도 유지.",
+    "auto: 단계의 권장 비율을 따름."
 );
 
 const ES: ConfigMessages = config_messages!(
@@ -210,7 +256,12 @@ const ES: ConfigMessages = config_messages!(
     "¿Restablecer todos los ajustes?",
     "Todos los ajustes se restablecieron.",
     "Editar",
-    "Aceptar"
+    "Aceptar",
+    "Editar presupuesto de salida",
+    "Proporción de {tool}: introduce auto o 1..=100:",
+    "auto devuelve esta herramienta a la proporción recomendada del nivel.",
+    "Explícita; no cambia con el nivel.",
+    "auto — sigue la proporción del nivel."
 );
 
 const FR: ConfigMessages = config_messages!(
@@ -229,7 +280,12 @@ const FR: ConfigMessages = config_messages!(
     "Réinitialiser tous les réglages ?",
     "Tous les réglages ont été réinitialisés.",
     "Modifier",
-    "Valider"
+    "Valider",
+    "Modifier le budget de sortie",
+    "Part de {tool} — saisissez auto ou 1..=100 :",
+    "auto ramène cet outil à la part recommandée du niveau.",
+    "Explicite ; inchangée si le niveau change.",
+    "auto — suit la part du niveau."
 );
 
 const DE: ConfigMessages = config_messages!(
@@ -248,7 +304,12 @@ const DE: ConfigMessages = config_messages!(
     "Alle Einstellungen zurücksetzen?",
     "Alle Einstellungen wurden zurückgesetzt.",
     "Bearbeiten",
-    "Übernehmen"
+    "Übernehmen",
+    "Ausgabebudget bearbeiten",
+    "Anteil für {tool} — auto oder 1..=100 eingeben:",
+    "auto setzt dieses Tool auf den empfohlenen Anteil der Stufe zurück.",
+    "Explizit; bleibt bei Stufenwechsel.",
+    "auto — folgt dem Anteil der Stufe."
 );
 
 const PT_BR: ConfigMessages = config_messages!(
@@ -267,7 +328,12 @@ const PT_BR: ConfigMessages = config_messages!(
     "Redefinir todas as configurações?",
     "Todas as configurações foram redefinidas.",
     "Editar",
-    "Aceitar"
+    "Aceitar",
+    "Editar orçamento de saída",
+    "Fração de {tool} — digite auto ou 1..=100:",
+    "auto devolve esta ferramenta à fração recomendada do nível.",
+    "Explícita; não muda com o nível.",
+    "auto — segue a fração do nível."
 );
 
 const RU: ConfigMessages = config_messages!(
@@ -286,7 +352,12 @@ const RU: ConfigMessages = config_messages!(
     "Сбросить все настройки?",
     "Все настройки сброшены.",
     "Изменить",
-    "Принять"
+    "Принять",
+    "Изменить бюджет вывода",
+    "Доля для {tool} — введите auto или 1..=100:",
+    "auto возвращает инструмент к рекомендуемой доле уровня.",
+    "Задана явно; не меняется с уровнем.",
+    "auto — следует доле уровня."
 );
 
 const IT: ConfigMessages = config_messages!(
@@ -305,7 +376,12 @@ const IT: ConfigMessages = config_messages!(
     "Ripristinare tutte le impostazioni?",
     "Tutte le impostazioni sono state ripristinate.",
     "Modifica",
-    "Accetta"
+    "Accetta",
+    "Modifica budget di output",
+    "Quota per {tool} — inserisci auto o 1..=100:",
+    "auto riporta questo strumento alla quota consigliata del livello.",
+    "Esplicita; invariata al cambio livello.",
+    "auto — segue la quota del livello."
 );
 
 const TR: ConfigMessages = config_messages!(
@@ -324,7 +400,12 @@ const TR: ConfigMessages = config_messages!(
     "Tüm ayarlar sıfırlansın mı?",
     "Tüm ayarlar sıfırlandı.",
     "Düzenle",
-    "Kabul et"
+    "Kabul et",
+    "Çıktı bütçesini düzenle",
+    "{tool} payı — auto veya 1..=100 girin:",
+    "auto, bu aracı kademenin önerilen payına döndürür.",
+    "Açık ayar; kademe değişince korunur.",
+    "auto — kademenin payını izler."
 );
 
 const PL: ConfigMessages = config_messages!(
@@ -343,7 +424,12 @@ const PL: ConfigMessages = config_messages!(
     "Zresetować wszystkie ustawienia?",
     "Zresetowano wszystkie ustawienia.",
     "Edytuj",
-    "Akceptuj"
+    "Akceptuj",
+    "Edytuj budżet wyjścia",
+    "Udział dla {tool} — wpisz auto lub 1..=100:",
+    "auto przywraca to narzędzie do zalecanego udziału poziomu.",
+    "Ustawiony wprost; nie zmienia się.",
+    "auto — podąża za udziałem poziomu."
 );
 
 const NL: ConfigMessages = config_messages!(
@@ -362,7 +448,12 @@ const NL: ConfigMessages = config_messages!(
     "Alle instellingen resetten?",
     "Alle instellingen zijn gereset.",
     "Bewerken",
-    "Accepteren"
+    "Accepteren",
+    "Uitvoerbudget bewerken",
+    "Aandeel voor {tool} — voer auto of 1..=100 in:",
+    "auto zet deze tool terug op het aanbevolen aandeel van het niveau.",
+    "Expliciet; blijft bij niveauwissel.",
+    "auto — volgt het aandeel van het niveau."
 );
 
 const VI: ConfigMessages = config_messages!(
@@ -381,7 +472,12 @@ const VI: ConfigMessages = config_messages!(
     "Đặt lại mọi cài đặt?",
     "Đã đặt lại mọi cài đặt.",
     "Chỉnh sửa",
-    "Chấp nhận"
+    "Chấp nhận",
+    "Chỉnh ngân sách đầu ra",
+    "Tỷ lệ cho {tool} — nhập auto hoặc 1..=100:",
+    "auto đưa công cụ này về tỷ lệ khuyến nghị của mức.",
+    "Đặt thủ công; giữ nguyên khi đổi mức.",
+    "auto — theo tỷ lệ của mức."
 );
 
 const ID: ConfigMessages = config_messages!(
@@ -400,7 +496,12 @@ const ID: ConfigMessages = config_messages!(
     "Atur ulang semua pengaturan?",
     "Semua pengaturan diatur ulang.",
     "Edit",
-    "Terima"
+    "Terima",
+    "Edit anggaran keluaran",
+    "Porsi untuk {tool} — masukkan auto atau 1..=100:",
+    "auto mengembalikan alat ini ke porsi anjuran tingkat.",
+    "Eksplisit; tetap saat tingkat berubah.",
+    "auto — mengikuti porsi tingkat."
 );
 
 const UK: ConfigMessages = config_messages!(
@@ -419,7 +520,12 @@ const UK: ConfigMessages = config_messages!(
     "Скинути всі налаштування?",
     "Усі налаштування скинуто.",
     "Редагувати",
-    "Прийняти"
+    "Прийняти",
+    "Редагувати бюджет виводу",
+    "Частка для {tool} — введіть auto або 1..=100:",
+    "auto повертає цей інструмент до рекомендованої частки рівня.",
+    "Задано явно; не змінюється з рівнем.",
+    "auto — дотримується частки рівня."
 );
 
 #[cfg(test)]
@@ -428,7 +534,7 @@ mod tests {
     use crate::control::i18n::ALL_LANGUAGES;
 
     #[test]
-    fn every_language_has_complete_cpu_reset_strings_and_exact_range_placeholders() {
+    fn every_language_has_complete_editor_strings_and_exact_placeholders() {
         for language in ALL_LANGUAGES {
             let messages = messages(language);
             assert!(
@@ -440,7 +546,15 @@ mod tests {
                 language.code()
             );
             assert_eq!(messages.cpu_edit_prompt.matches("{maximum}").count(), 1);
-            assert_eq!(messages.cpu_error_range.matches("{maximum}").count(), 1);
+            assert_eq!(messages.input_error_range.matches("{maximum}").count(), 1);
+            // A prompt that lost its placeholder would name no tool at all, leaving the editor
+            // ambiguous about which of the five budgets it is about to change.
+            assert_eq!(
+                messages.budget_edit_prompt.matches("{tool}").count(),
+                1,
+                "{} budget prompt must name the tool exactly once",
+                language.code()
+            );
             assert!(messages.cpu_limit_note.contains("grep/glob"));
             assert!(messages.cpu_limit_note.contains("Apply"));
             assert!(messages.reset_all_note.contains("Apply receipt"));
@@ -448,6 +562,13 @@ mod tests {
             assert!(
                 messages.reset_all_note.contains("finished"),
                 "{} reset note must disclose finished-job reclamation",
+                language.code()
+            );
+            // `auto` is the only way back to tier-tracking once a share is explicit, so every
+            // translation has to keep the literal keyword rather than translating it.
+            assert!(
+                messages.budget_edit_note.contains("auto"),
+                "{} budget note must keep the literal auto keyword",
                 language.code()
             );
         }

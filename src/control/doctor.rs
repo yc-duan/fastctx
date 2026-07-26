@@ -386,7 +386,9 @@ fn check_drift(
                 if settings.tier != record.tier {
                     pending.push("the selected tier");
                 }
-                if settings.tool_budgets != record.tool_budgets {
+                // Compare resolved shares, not stored preferences: an unset entry means "follow
+                // the tier", so it only differs from the receipt once the tier's defaults do.
+                if settings.tool_budgets.resolve(settings.tier) != record.tool_budgets {
                     pending.push("the per-tool output budgets");
                 }
             }
@@ -1000,7 +1002,8 @@ mod tests {
     use crate::control::codex_config::{self, ExpectedConfig};
     use crate::control::paths::ControlPaths;
     use crate::control::settings::{
-        AppliedRecord, FastCtxSettings, ManagedFileRecord, Tier, ToolBudgetLevel, ToolBudgets,
+        AppliedRecord, FastCtxSettings, ManagedFileRecord, Tier, ToolBudgetLevel,
+        ToolBudgetPreferences, ToolBudgets,
     };
 
     #[test]
@@ -1073,7 +1076,7 @@ mod tests {
         let expected = ExpectedConfig {
             command: crate::paths::display_path(&paths.installed_binary),
             tier: Tier::Compact,
-            tool_budgets: ToolBudgets::default(),
+            tool_budgets: Tier::Compact.default_budgets(),
             fastshell_enabled: false,
         };
         let applied_config = codex_config::apply(
@@ -1092,12 +1095,15 @@ mod tests {
             version: env!("CARGO_PKG_VERSION").to_string(),
             command: expected.command.clone(),
             tier: Tier::Compact,
-            tool_output_token_limit: 10_000,
+            // Derived from the tier so the receipt stays consistent with the config bytes above;
+            // this test is about drift detection, and the tier numbers themselves are pinned by
+            // their own hardcoded oracle in settings.rs.
+            tool_output_token_limit: Tier::Compact.host_limit(),
             tool_timeout_sec: Some(codex_config::TOOL_TIMEOUT_SECONDS),
             previous_token_limit_present: false,
             previous_token_limit: None,
-            fastctx_token_budget: 8_500,
-            tool_budgets: ToolBudgets::default(),
+            fastctx_token_budget: Tier::Compact.fastctx_budget(),
+            tool_budgets: Tier::Compact.default_budgets(),
             fastshell_enabled: false,
             fastedit_enabled: false,
             codex_dir_created: false,
@@ -1137,15 +1143,16 @@ mod tests {
         assert!(status.detail.contains("Run fastctx apply"), "{status:?}");
 
         let managed_drift_source = String::from_utf8(host_rewritten).unwrap();
+        let applied_budget = format!(
+            "FASTCTX_TOKEN_BUDGET = \"{}\"",
+            Tier::Compact.fastctx_budget()
+        );
         assert!(
-            managed_drift_source.contains("FASTCTX_TOKEN_BUDGET = \"8500\""),
+            managed_drift_source.contains(&applied_budget),
             "{managed_drift_source}"
         );
         let managed_drift = managed_drift_source
-            .replace(
-                "FASTCTX_TOKEN_BUDGET = \"8500\"",
-                "FASTCTX_TOKEN_BUDGET = \"1234\"",
-            )
+            .replace(&applied_budget, "FASTCTX_TOKEN_BUDGET = \"1234\"")
             .into_bytes();
         let status = check_drift(
             &paths,
@@ -1175,9 +1182,9 @@ mod tests {
         let legacy_budgets = ToolBudgets {
             read: ToolBudgetLevel::Inherit,
             grep: ToolBudgetLevel::Inherit,
-            glob: ToolBudgetLevel::Percent50,
+            glob: ToolBudgetLevel::Percent(50),
             run: ToolBudgetLevel::Inherit,
-            job_output: ToolBudgetLevel::Percent25,
+            job_output: ToolBudgetLevel::Percent(25),
         };
         let expected = ExpectedConfig {
             command: crate::paths::display_path(&paths.installed_binary),
@@ -1229,7 +1236,16 @@ mod tests {
         };
         let settings = FastCtxSettings {
             tier: Tier::Standard,
-            tool_budgets: legacy_budgets,
+            // Pinned explicitly so the only difference from the receipt is the tier's own numbers;
+            // leaving these unset would let today's tier defaults add a second drift reason and
+            // mask whether the tier limits alone were detected.
+            tool_budgets: ToolBudgetPreferences {
+                read: Some(legacy_budgets.read),
+                grep: Some(legacy_budgets.grep),
+                glob: Some(legacy_budgets.glob),
+                run: Some(legacy_budgets.run),
+                job_output: Some(legacy_budgets.job_output),
+            },
             applied: Some(record),
             ..FastCtxSettings::default()
         };

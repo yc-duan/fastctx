@@ -1,6 +1,6 @@
 //! Sixteen-byte paged hexadecimal view for any regular file.
 
-use super::DEFAULT_LINE_LIMIT;
+use super::DEFAULT_HEX_LINE_LIMIT;
 use crate::budget::{TokenBudget, assemble_text, estimate_tokens};
 use crate::model::ToolResponse;
 use crate::paths::io_error_message;
@@ -19,7 +19,7 @@ pub(super) fn read_hex_file(
     budget: TokenBudget,
 ) -> ToolResponse {
     let offset = offset.unwrap_or(1);
-    let limit = limit.unwrap_or(DEFAULT_LINE_LIMIT);
+    let limit = limit.unwrap_or(DEFAULT_HEX_LINE_LIMIT);
     if offset == 0 {
         return ToolResponse::error("Invalid offset value: 0. Expected an integer >= 1.");
     }

@@ -1,6 +1,7 @@
 //! Adaptive ratatui views and the shared TUI theme.
 
 use super::app::{App, Screen, StatusState};
+use super::budget_editor::{self, ToolBudgetInputError};
 use super::config::{
     self, ConfigGroupId, ConfigItemId, ConfigItemRole, ConfigListRow, ConfigValue,
 };
@@ -174,6 +175,7 @@ fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ),
         Screen::Config => render_config(frame, app, area),
         Screen::ConfigCpuEdit => render_cpu_limit_editor(frame, app, area),
+        Screen::ConfigBudgetEdit(item) => render_budget_editor(frame, app, area, item),
         Screen::ConfigResetConfirm => {
             let prompt = format!(
                 "{}\n{}",
@@ -668,6 +670,8 @@ fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ListItem::new(format!(" {}", messages.action_unapply)),
     ];
     let mut state = ListState::default().with_selected(Some(app.selected));
+    let saved_budgets = app.settings.tool_budgets.resolve(app.settings.tier);
+    let saved_global = app.settings.tier.fastctx_budget();
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
@@ -717,13 +721,13 @@ fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                     Style::default().fg(theme::muted()),
                 ),
             ]),
-            detail_line("read", budget_label(app.settings.tool_budgets.read)),
-            detail_line("grep", budget_label(app.settings.tool_budgets.grep)),
-            detail_line("glob", budget_label(app.settings.tool_budgets.glob)),
-            detail_line("run", budget_label(app.settings.tool_budgets.run)),
+            detail_line("read", &budget_summary(saved_budgets.read, saved_global)),
+            detail_line("grep", &budget_summary(saved_budgets.grep, saved_global)),
+            detail_line("glob", &budget_summary(saved_budgets.glob, saved_global)),
+            detail_line("run", &budget_summary(saved_budgets.run, saved_global)),
             detail_line(
                 "job_output",
-                budget_label(app.settings.tool_budgets.job_output),
+                &budget_summary(saved_budgets.job_output, saved_global),
             ),
         ])
         .block(panel(messages.config_title)),
@@ -990,7 +994,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             Line::raw(""),
             Line::styled(messages.tier_explainer, Style::default().fg(theme::muted())),
         ],
-        ConfigValue::Budget(level) => {
+        ConfigValue::Budget(budget) => {
             let mut lines = vec![Line::from(vec![
                 Span::styled(
                     config::item_label(
@@ -1016,12 +1020,23 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("  {}", budget_label(level)),
+                    format!(
+                        "  {}",
+                        budget_summary(budget.level, app.config_draft.output.tier.fastctx_budget())
+                    ),
                     Style::default()
                         .fg(theme::fg())
                         .add_modifier(Modifier::BOLD),
                 ),
             ])];
+            lines.push(Line::styled(
+                if budget.explicit {
+                    app.config_messages().budget_explicit_note
+                } else {
+                    app.config_messages().budget_follows_tier_note
+                },
+                Style::default().fg(theme::muted()),
+            ));
             if !compact {
                 lines.push(Line::styled(
                     budget_tool_note(messages, entry.item),
@@ -1180,7 +1195,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 )),
                 Err(error) => lines.push(Line::styled(
                     app.config_messages()
-                        .cpu_error_range
+                        .input_error_range
                         .replace("{maximum}", &error.maximum.to_string()),
                     Style::default().fg(theme::danger()),
                 )),
@@ -1231,12 +1246,12 @@ fn render_cpu_limit_editor(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .cpu_edit_prompt
         .replace("{maximum}", &maximum.to_string());
     let error = app.cpu_limit_editor.error.map(|error| match error {
-        SearchParallelismInputError::Empty { .. } => messages.cpu_error_empty.to_string(),
+        SearchParallelismInputError::Empty { .. } => messages.input_error_empty.to_string(),
         SearchParallelismInputError::NotInteger { .. } => {
-            messages.cpu_error_not_integer.to_string()
+            messages.input_error_not_integer.to_string()
         }
         SearchParallelismInputError::OutOfRange { .. } => messages
-            .cpu_error_range
+            .input_error_range
             .replace("{maximum}", &error.maximum().to_string()),
     });
     let color = if error.is_some() {
@@ -1299,6 +1314,99 @@ fn render_cpu_limit_editor(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Paragraph::new(lines)
             .alignment(Alignment::Center)
             .block(panel(messages.cpu_edit_title).border_style(Style::default().fg(color)))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn render_budget_editor(frame: &mut Frame<'_>, app: &App, area: Rect, item: ConfigItemId) {
+    let messages = app.config_messages();
+    let prompt = messages.budget_edit_prompt.replace(
+        "{tool}",
+        config::item_label(
+            item,
+            app.messages(),
+            messages,
+            app.job_messages(),
+            app.update_messages(),
+        ),
+    );
+    let error = app.budget_editor.error.map(|error| match error {
+        ToolBudgetInputError::Empty => messages.input_error_empty.to_string(),
+        ToolBudgetInputError::NotInteger => messages.input_error_not_integer.to_string(),
+        // The editable range is fixed rather than machine-derived, unlike the CPU limit.
+        ToolBudgetInputError::OutOfRange => messages.input_error_range.replace("{maximum}", "100"),
+    });
+    // Showing what the typed share resolves to is the whole point of accepting free entry: a
+    // percentage on its own says nothing about how much output it buys at the current tier.
+    let preview = budget_editor::parse_input(&app.budget_editor.input)
+        .ok()
+        .map(|level| {
+            let value = app.config_draft.preview_tool_budget(item, level);
+            budget_summary(value.level, app.config_draft.output.tier.fastctx_budget())
+        });
+    let color = if error.is_some() {
+        theme::danger()
+    } else {
+        theme::accent()
+    };
+    let input_line = || {
+        Line::from(vec![
+            Span::styled(
+                app.budget_editor.input.clone(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("▌", Style::default().fg(color)),
+        ])
+    };
+    if area.width < 72 || area.height < 12 {
+        let guidance = error.clone().unwrap_or(prompt);
+        let mut lines = vec![
+            Line::styled(
+                messages.budget_edit_title,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            input_line(),
+            Line::styled(guidance, Style::default().fg(color)),
+        ];
+        if area.height >= 7 {
+            lines.push(Line::styled(
+                preview.unwrap_or_else(|| messages.budget_edit_note.to_string()),
+                Style::default().fg(theme::muted()),
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            inner(area, 1, 0),
+        );
+        return;
+    }
+    let popup = centered_rect(72, 54, area);
+    frame.render_widget(Clear, popup);
+    let mut lines = vec![
+        Line::styled(prompt, Style::default().fg(theme::fg())),
+        Line::raw(""),
+        input_line().alignment(Alignment::Center),
+    ];
+    if let Some(preview) = preview {
+        lines.push(
+            Line::styled(preview, Style::default().fg(theme::accent()))
+                .alignment(Alignment::Center),
+        );
+    }
+    if let Some(error) = error {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(error, Style::default().fg(theme::danger())));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        messages.budget_edit_note,
+        Style::default().fg(theme::muted()),
+    ));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .block(panel(messages.budget_edit_title).border_style(Style::default().fg(color)))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -2655,6 +2763,11 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             app.config_messages().cpu_edit_title,
             app.cpu_limit_editor.input
         ),
+        Screen::ConfigBudgetEdit(_) => format!(
+            "{} · {}",
+            app.config_messages().budget_edit_title,
+            app.budget_editor.input
+        ),
         Screen::ConfigResetConfirm => app.config_messages().reset_confirm.to_string(),
         Screen::Jobs => app
             .focused_job()
@@ -2823,14 +2936,21 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         ],
         Screen::JobsKilling => vec![messages.loading],
         Screen::ConfigResetting => vec![messages.loading],
-        Screen::ConfigCpuEdit => vec![app.config_messages().footer_accept, messages.footer_cancel],
+        Screen::ConfigCpuEdit | Screen::ConfigBudgetEdit(_) => {
+            vec![app.config_messages().footer_accept, messages.footer_cancel]
+        }
         Screen::ConfigResetConfirm => vec![
             messages.footer_move,
             messages.footer_select,
             messages.footer_back,
         ],
         Screen::Config => match app.config_cursor.entry().item {
-            ConfigItemId::SearchCpuLimit => vec![
+            ConfigItemId::SearchCpuLimit
+            | ConfigItemId::ReadBudget
+            | ConfigItemId::GrepBudget
+            | ConfigItemId::GlobBudget
+            | ConfigItemId::RunBudget
+            | ConfigItemId::JobOutputBudget => vec![
                 messages.footer_move,
                 messages.footer_switch_group,
                 messages.footer_adjust,
@@ -3075,7 +3195,9 @@ fn config_narrow_summary(app: &App) -> String {
 fn config_value_label(app: &App, item: ConfigItemId, value: ConfigValue) -> String {
     match value {
         ConfigValue::Tier(tier) => tier.display_name().to_string(),
-        ConfigValue::Budget(level) => budget_label(level).to_string(),
+        ConfigValue::Budget(budget) => {
+            budget_summary(budget.level, app.config_draft.output.tier.fastctx_budget())
+        }
         ConfigValue::Toggle(enabled) => toggle_label(app.messages(), enabled).to_string(),
         ConfigValue::Number(value) if item == ConfigItemId::JobStorageLimit => {
             if value >= 1_024 && value % 1_024 == 0 {
@@ -3095,6 +3217,9 @@ fn config_value_label(app: &App, item: ConfigItemId, value: ConfigValue) -> Stri
 fn config_value_color(value: ConfigValue) -> Color {
     match value {
         ConfigValue::Tier(tier) => tier_color(tier),
+        // An explicit share is highlighted so the rows somebody has overridden stand apart from
+        // the ones that will keep tracking the tier.
+        ConfigValue::Budget(budget) if budget.explicit => theme::accent(),
         ConfigValue::Budget(_) => theme::fg(),
         ConfigValue::Toggle(true) => theme::success(),
         ConfigValue::Toggle(false) => theme::muted(),
@@ -3120,13 +3245,12 @@ fn toggle_label(messages: &crate::control::i18n::Messages, enabled: bool) -> &'s
     }
 }
 
-fn budget_label(level: ToolBudgetLevel) -> &'static str {
-    match level {
-        ToolBudgetLevel::Inherit => "100%",
-        ToolBudgetLevel::Percent75 => "75%",
-        ToolBudgetLevel::Percent50 => "50%",
-        ToolBudgetLevel::Percent25 => "25%",
-    }
+/// Share plus the token ceiling it resolves to.
+///
+/// The ceiling is never omitted: a bare percentage means a different amount of output at every
+/// tier, and the token count is what the reader is actually deciding about.
+fn budget_summary(level: ToolBudgetLevel, global: usize) -> String {
+    format!("{} · {}", level.label(), level.ceiling(global))
 }
 
 #[cfg(test)]
@@ -4465,19 +4589,19 @@ mod tests {
                 .cpu_edit_prompt
                 .replace("{maximum}", &maximum.to_string());
             let range_error = messages
-                .cpu_error_range
+                .input_error_range
                 .replace("{maximum}", &maximum.to_string());
             for (input, error, expected) in [
                 ("auto", None, prompt.as_str()),
                 (
                     "",
                     Some(SearchParallelismInputError::Empty { maximum }),
-                    messages.cpu_error_empty,
+                    messages.input_error_empty,
                 ),
                 (
                     "four",
                     Some(SearchParallelismInputError::NotInteger { maximum }),
-                    messages.cpu_error_not_integer,
+                    messages.input_error_not_integer,
                 ),
                 (
                     "0",
@@ -4582,7 +4706,8 @@ mod tests {
             app.messages().config_more_below
         ));
         let run_row = row_containing(&terminal, "run").unwrap();
-        let detail_row = row_containing(&terminal, "Runs a foreground").unwrap();
+        let detail_row =
+            row_containing(&terminal, "Runs a foreground").unwrap_or_else(|| panic!("{middle}"));
         assert!(run_row < detail_row, "{middle}");
 
         while app.config_cursor.entry().item != ConfigItemId::UpdateSource {
@@ -4603,6 +4728,30 @@ mod tests {
             &bottom,
             app.messages().config_more_below
         ));
+    }
+
+    #[test]
+    fn every_budget_state_note_fits_one_detail_row() {
+        // On a 52-column terminal the config detail panel is three rows: the header, whether the
+        // share is explicit or tracking the tier, and what the tool does. A state note that wraps
+        // takes the tool description's row with it — which is exactly how an earlier, longer
+        // English wording pushed that description off screen. English is covered by the render
+        // above; this keeps the other sixteen translations from silently costing the same row.
+        const DETAIL_WIDTH: usize = 46;
+        for language in ALL_LANGUAGES {
+            let messages = crate::control::config_i18n::messages(language);
+            for note in [
+                messages.budget_explicit_note,
+                messages.budget_follows_tier_note,
+            ] {
+                let width = Line::from(note).width();
+                assert!(
+                    width <= DETAIL_WIDTH,
+                    "{} needs {width} columns for {note:?}",
+                    language.code()
+                );
+            }
+        }
     }
 
     #[test]

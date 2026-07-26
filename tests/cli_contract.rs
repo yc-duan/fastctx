@@ -460,7 +460,7 @@ fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
     assert!(applied.contains("mcp__fastctx"), "{applied}");
     assert!(applied.contains("tool_timeout_sec = 300"), "{applied}");
     assert!(
-        applied.contains("tool_output_token_limit = 20000 # user value"),
+        applied.contains("tool_output_token_limit = 60000 # user value"),
         "{applied}"
     );
     let managed_paths = [
@@ -573,7 +573,7 @@ fn noninteractive_apply_is_idempotent_and_unapply_restores_user_files() {
     std::fs::write(codex.join("AGENTS.md"), applied_agents).unwrap();
 
     let drifted = String::from_utf8(host_rewritten).unwrap().replace(
-        "tool_output_token_limit = 20000",
+        "tool_output_token_limit = 60000",
         "tool_output_token_limit = 15000",
     );
     std::fs::write(codex.join("config.toml"), drifted).unwrap();
@@ -639,9 +639,9 @@ fn noninteractive_apply_bootstraps_a_fresh_home_without_codex_cli_or_profile() {
     assert!(codex.join("AGENTS.md").is_file());
     let config = std::fs::read_to_string(codex.join("config.toml")).unwrap();
     assert!(config.contains("[mcp_servers.fastctx]"), "{config}");
-    assert!(config.contains("tool_output_token_limit = 20000"));
+    assert!(config.contains("tool_output_token_limit = 60000"));
     assert!(config.contains("tool_timeout_sec = 300"));
-    assert!(config.contains("FASTCTX_TOKEN_BUDGET = \"17000\""));
+    assert!(config.contains("FASTCTX_TOKEN_BUDGET = \"54000\""));
     let fastctx_settings =
         std::fs::read_to_string(temp.path().join(".fastctx/config.toml")).unwrap();
     assert!(
@@ -727,12 +727,12 @@ fn noninteractive_apply_migrates_an_unstamped_cli_only_home_once_before_applying
     assert!(!migrated.contains("[tool_budgets]"), "{migrated}");
     let codex = std::fs::read_to_string(temp.path().join(".codex/config.toml")).unwrap();
     for expected in [
-        "tool_output_token_limit = 20000",
-        "FASTCTX_TOKEN_BUDGET = \"17000\"",
-        "FASTCTX_GREP_TOKEN_BUDGET = \"8500\"",
-        "FASTCTX_GLOB_TOKEN_BUDGET = \"4300\"",
-        "FASTCTX_RUN_TOKEN_BUDGET = \"8500\"",
-        "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET = \"4300\"",
+        "tool_output_token_limit = 60000",
+        "FASTCTX_TOKEN_BUDGET = \"54000\"",
+        "FASTCTX_GREP_TOKEN_BUDGET = \"10800\"",
+        "FASTCTX_GLOB_TOKEN_BUDGET = \"5400\"",
+        "FASTCTX_RUN_TOKEN_BUDGET = \"10800\"",
+        "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET = \"5400\"",
     ] {
         assert!(codex.contains(expected), "missing {expected:?}:\n{codex}");
     }
@@ -1204,7 +1204,7 @@ fn a_non_tty_apply_without_yes_refuses_a_shared_limit_conflict_without_writes() 
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("Re-run with --yes"), "{error}");
     let preview = String::from_utf8_lossy(&output.stdout);
-    assert!(preview.contains("30000"), "{preview}");
+    assert!(preview.contains("100000"), "{preview}");
     assert_eq!(std::fs::read(codex.join("config.toml")).unwrap(), config);
     assert!(!temp.path().join(".fastctx").exists());
 }

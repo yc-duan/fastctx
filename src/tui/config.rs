@@ -3,7 +3,9 @@
 use crate::control::config_i18n::ConfigMessages;
 use crate::control::i18n::Messages;
 use crate::control::job_i18n::JobMessages;
-use crate::control::settings::{FastCtxSettings, Tier, ToolBudgetLevel, ToolBudgets, UpdateSource};
+use crate::control::settings::{
+    FastCtxSettings, Tier, ToolBudgetLevel, ToolBudgetPreferences, UpdateSource,
+};
 use crate::search_parallelism;
 use crate::tui::update::UpdateMessages;
 
@@ -412,11 +414,26 @@ impl ConfigViewport {
     }
 }
 
+/// One per-tool budget as the configuration screen needs to present it.
+///
+/// The absolute ceiling travels with the share because a percentage alone is a leaky abstraction:
+/// the same number means a different amount of output at every tier, and the tool budget the user
+/// is actually reasoning about is the token count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BudgetValue {
+    /// Share in effect, whether set explicitly or inherited from the tier.
+    pub(crate) level: ToolBudgetLevel,
+    /// Whether this share was set explicitly rather than following the tier's default.
+    pub(crate) explicit: bool,
+    /// Token ceiling this share resolves to under the drafted tier.
+    pub(crate) tokens: usize,
+}
+
 /// Typed view of a configuration item's current value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigValue {
     Tier(Tier),
-    Budget(ToolBudgetLevel),
+    Budget(BudgetValue),
     Toggle(bool),
     Number(u64),
     CpuLimit(Option<i64>),
@@ -428,7 +445,56 @@ pub(crate) enum ConfigValue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct OutputConfigDraft {
     pub(crate) tier: Tier,
-    pub(crate) budgets: ToolBudgets,
+    pub(crate) budgets: ToolBudgetPreferences,
+}
+
+impl OutputConfigDraft {
+    /// Mutable slot for one tool's override, or `None` for items that are not budgets.
+    fn budget_slot(&mut self, item: ConfigItemId) -> Option<&mut Option<ToolBudgetLevel>> {
+        Some(match item {
+            ConfigItemId::ReadBudget => &mut self.budgets.read,
+            ConfigItemId::GrepBudget => &mut self.budgets.grep,
+            ConfigItemId::GlobBudget => &mut self.budgets.glob,
+            ConfigItemId::RunBudget => &mut self.budgets.run,
+            ConfigItemId::JobOutputBudget => &mut self.budgets.job_output,
+            _ => return None,
+        })
+    }
+
+    /// Stored override for one tool, or `None` when it follows the tier.
+    const fn budget_override(self, item: ConfigItemId) -> Option<ToolBudgetLevel> {
+        match item {
+            ConfigItemId::ReadBudget => self.budgets.read,
+            ConfigItemId::GrepBudget => self.budgets.grep,
+            ConfigItemId::GlobBudget => self.budgets.glob,
+            ConfigItemId::RunBudget => self.budgets.run,
+            ConfigItemId::JobOutputBudget => self.budgets.job_output,
+            _ => None,
+        }
+    }
+
+    /// Tier default for one tool.
+    const fn budget_default(self, item: ConfigItemId) -> ToolBudgetLevel {
+        let defaults = self.tier.default_budgets();
+        match item {
+            ConfigItemId::GrepBudget => defaults.grep,
+            ConfigItemId::GlobBudget => defaults.glob,
+            ConfigItemId::RunBudget => defaults.run,
+            ConfigItemId::JobOutputBudget => defaults.job_output,
+            _ => defaults.read,
+        }
+    }
+
+    /// Share, provenance, and absolute ceiling for one budget item.
+    fn budget_value(self, item: ConfigItemId) -> BudgetValue {
+        let stored = self.budget_override(item);
+        let level = stored.unwrap_or_else(|| self.budget_default(item));
+        BudgetValue {
+            level,
+            explicit: stored.is_some(),
+            tokens: level.ceiling(self.tier.fastctx_budget()),
+        }
+    }
 }
 
 /// Discardable draft spanning every configuration group.
@@ -477,14 +543,14 @@ impl ConfigDraft {
     }
 
     /// Returns the typed current value of one item.
-    pub(crate) const fn value(self, item: ConfigItemId) -> ConfigValue {
+    pub(crate) fn value(self, item: ConfigItemId) -> ConfigValue {
         match item {
             ConfigItemId::OutputTier => ConfigValue::Tier(self.output.tier),
-            ConfigItemId::ReadBudget => ConfigValue::Budget(self.output.budgets.read),
-            ConfigItemId::GrepBudget => ConfigValue::Budget(self.output.budgets.grep),
-            ConfigItemId::GlobBudget => ConfigValue::Budget(self.output.budgets.glob),
-            ConfigItemId::RunBudget => ConfigValue::Budget(self.output.budgets.run),
-            ConfigItemId::JobOutputBudget => ConfigValue::Budget(self.output.budgets.job_output),
+            ConfigItemId::ReadBudget
+            | ConfigItemId::GrepBudget
+            | ConfigItemId::GlobBudget
+            | ConfigItemId::RunBudget
+            | ConfigItemId::JobOutputBudget => ConfigValue::Budget(self.output.budget_value(item)),
             ConfigItemId::FastShell => ConfigValue::Toggle(self.fastshell_enabled),
             ConfigItemId::JobStorageLimit => ConfigValue::Number(self.job_storage_limit_mib),
             ConfigItemId::MaxRunningJobs => ConfigValue::Number(self.max_running_jobs),
@@ -506,13 +572,11 @@ impl ConfigDraft {
                     self.output.tier.previous()
                 };
             }
-            ConfigItemId::ReadBudget => cycle_budget(&mut self.output.budgets.read, forward),
-            ConfigItemId::GrepBudget => cycle_budget(&mut self.output.budgets.grep, forward),
-            ConfigItemId::GlobBudget => cycle_budget(&mut self.output.budgets.glob, forward),
-            ConfigItemId::RunBudget => cycle_budget(&mut self.output.budgets.run, forward),
-            ConfigItemId::JobOutputBudget => {
-                cycle_budget(&mut self.output.budgets.job_output, forward)
-            }
+            ConfigItemId::ReadBudget
+            | ConfigItemId::GrepBudget
+            | ConfigItemId::GlobBudget
+            | ConfigItemId::RunBudget
+            | ConfigItemId::JobOutputBudget => self.step_budget(item, forward),
             ConfigItemId::FastShell => self.fastshell_enabled = !self.fastshell_enabled,
             ConfigItemId::JobStorageLimit => {
                 cycle_preset(
@@ -548,14 +612,32 @@ impl ConfigDraft {
     pub(crate) fn set_search_cpu_limit(&mut self, configured: Option<i64>) {
         self.search_max_cpu_cores = configured;
     }
-}
 
-fn cycle_budget(level: &mut ToolBudgetLevel, forward: bool) {
-    *level = if forward {
-        level.next()
-    } else {
-        level.previous()
-    };
+    /// Accepts a validated budget editor result; `None` returns the tool to its tier default.
+    pub(crate) fn set_tool_budget(&mut self, item: ConfigItemId, level: Option<ToolBudgetLevel>) {
+        if let Some(slot) = self.output.budget_slot(item) {
+            *slot = level;
+        }
+    }
+
+    /// Resolves what a candidate editor entry would become, so the editor can show its effect
+    /// before anything is saved. Routed through the real setter so the preview cannot drift from
+    /// what submitting actually does.
+    pub(crate) fn preview_tool_budget(
+        self,
+        item: ConfigItemId,
+        level: Option<ToolBudgetLevel>,
+    ) -> BudgetValue {
+        let mut draft = self;
+        draft.set_tool_budget(item, level);
+        draft.output.budget_value(item)
+    }
+
+    /// Nudges one budget by a single percentage point, which also makes it an explicit override.
+    fn step_budget(&mut self, item: ConfigItemId, forward: bool) {
+        let stepped = self.output.budget_value(item).level.step(forward);
+        self.set_tool_budget(item, Some(stepped));
+    }
 }
 
 fn cycle_preset(value: &mut u64, presets: &[u64], forward: bool) {

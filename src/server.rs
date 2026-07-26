@@ -118,7 +118,20 @@ impl Default for FastCtxServer {
 impl FastCtxServer {
     #[tool(
         name = "read",
-        description = "Read one file (text, image, or PDF) or a batch of text files from the local\nfilesystem. Paths must be absolute. Text returns 1-based `N<tab>content`\nlines, 2000 per page; page with offset/limit. For several text files in one\ncall, pass files=[{\"path\": ...}, ...] instead of file_path: one token\nbudget, per-file problems reported inline without failing the batch, and a\nPartial note returns the exact files array for the next call. Images\n(PNG/JPG/GIF/WebP/BMP) are shown to you visually. PDFs return the selected\npages' text layer or those pages rendered as images; image mode defaults to\n4 pages. view=\"hex\" dumps any file's raw bytes. PDFs, images, and hex view\nare single-file only. Text output is always UTF-8; when auto-detection is\nnot confident it returns an error listing candidate encodings instead of\nguessed text, so pass encoding only then. Text, PDF, and hex responses end\nwith a Complete or Partial status — continue only with the exact parameters\na Partial note provides.",
+        description = "Read one file (text, image, or PDF) or a batch of text files from the local
+filesystem. Paths must be absolute. Text returns 1-based `N<tab>content`
+lines, as much of the file as the output budget holds. For several text
+files in one call, pass files=[{\"path\": ...}, ...] instead of file_path:
+one token budget, per-file problems reported inline without failing the
+batch, and a Partial note returns the exact files array for the next call.
+Images (PNG/JPG/GIF/WebP/BMP) are shown to you visually. PDFs return the
+selected pages' text layer or those pages rendered as images; image mode
+defaults to 4 pages. view=\"hex\" dumps any file's raw bytes. PDFs, images,
+and hex view are single-file only. Text output is always UTF-8; when
+auto-detection is not confident it returns an error listing candidate
+encodings instead of guessed text, so pass encoding only then. Text, PDF,
+and hex responses end with a Complete or Partial status — continue only
+with the exact parameters a Partial note provides.",
         annotations(
             title = "Read local file",
             read_only_hint = true,

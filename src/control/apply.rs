@@ -4,7 +4,9 @@ use crate::control::agents;
 use crate::control::codex_config::{self, ExpectedConfig, TokenLimitConflict};
 use crate::control::paths::ControlPaths;
 use crate::control::processes::{self, InstalledProcess, TerminationOutcome};
-use crate::control::settings::{self, AppliedRecord, ManagedFileRecord, Tier, ToolBudgets};
+use crate::control::settings::{
+    self, AppliedRecord, ManagedFileRecord, Tier, ToolBudgetPreferences,
+};
 use crate::control::transaction::{self, FileAction, FileChange};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -17,8 +19,8 @@ use time::macros::format_description;
 pub struct ApplyOptions {
     /// Host output tier.
     pub tier: Tier,
-    /// Five long-output tools' advanced budgets.
-    pub tool_budgets: ToolBudgets,
+    /// Five long-output tools' advanced overrides; unset entries follow the tier.
+    pub tool_budgets: ToolBudgetPreferences,
     /// Whether the optional shell tool group should be published.
     pub fastshell_enabled: bool,
     /// Currently running binary to self-install.
@@ -283,7 +285,10 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
     let expected = ExpectedConfig {
         command: crate::paths::display_path(&paths.installed_binary),
         tier: options.tier,
-        tool_budgets: options.tool_budgets,
+        // Tier defaults are resolved here so everything downstream — what gets written, the
+        // receipt, and drift detection — sees one concrete set of shares rather than a preference
+        // whose meaning would move with a future change of the defaults.
+        tool_budgets: options.tool_budgets.resolve(options.tier),
         fastshell_enabled: options.fastshell_enabled,
     };
     let codex_edit = codex_config::apply(codex_source, &expected)?;
@@ -307,6 +312,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         // Apply is a fresh install's first natural settings write, so prepare the software-version
         // watermark without treating the absent file as an upgrade migration.
         current_settings.last_seen_version = Some(env!("CARGO_PKG_VERSION").to_string());
+        current_settings.tool_budget_epoch = Some(settings::TOOL_BUDGET_EPOCH);
     }
     if let Some(record) = current_settings
         .applied
@@ -386,7 +392,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
             previous_token_limit_present,
             previous_token_limit,
             fastctx_token_budget: options.tier.fastctx_budget(),
-            tool_budgets: options.tool_budgets,
+            tool_budgets: expected.tool_budgets,
             fastshell_enabled: options.fastshell_enabled,
             fastedit_enabled: false,
             codex_dir_created,
@@ -1127,11 +1133,11 @@ fn preview_apply(
                     vec![PreviewDetail::kept(format!(
                         "tier = {} · read/grep/glob/run/job_output = {}/{}/{}/{}/{} · fastshell = {}",
                         expected.tier.as_str(),
-                        expected.tool_budgets.read.as_str(),
-                        expected.tool_budgets.grep.as_str(),
-                        expected.tool_budgets.glob.as_str(),
-                        expected.tool_budgets.run.as_str(),
-                        expected.tool_budgets.job_output.as_str(),
+                        expected.tool_budgets.read.label(),
+                        expected.tool_budgets.grep.label(),
+                        expected.tool_budgets.glob.label(),
+                        expected.tool_budgets.run.label(),
+                        expected.tool_budgets.job_output.label(),
                         if expected.fastshell_enabled {
                             "enabled"
                         } else {
@@ -1294,7 +1300,7 @@ mod tests {
     };
     use crate::control::agents::AGENTS_SECTION;
     use crate::control::paths::ControlPaths;
-    use crate::control::settings::{Tier, ToolBudgetLevel, ToolBudgets};
+    use crate::control::settings::{Tier, ToolBudgetLevel, ToolBudgetPreferences};
     use std::path::Path;
 
     fn fixture() -> (tempfile::TempDir, ControlPaths, std::path::PathBuf) {
@@ -1419,12 +1425,12 @@ mod tests {
     fn options(executable: std::path::PathBuf) -> ApplyOptions {
         ApplyOptions {
             tier: Tier::Standard,
-            tool_budgets: ToolBudgets {
-                read: ToolBudgetLevel::Inherit,
-                grep: ToolBudgetLevel::Percent50,
-                glob: ToolBudgetLevel::Percent25,
-                run: ToolBudgetLevel::Inherit,
-                job_output: ToolBudgetLevel::Inherit,
+            tool_budgets: ToolBudgetPreferences {
+                read: Some(ToolBudgetLevel::Inherit),
+                grep: Some(ToolBudgetLevel::Percent(50)),
+                glob: Some(ToolBudgetLevel::Percent(25)),
+                run: Some(ToolBudgetLevel::Inherit),
+                job_output: Some(ToolBudgetLevel::Inherit),
             },
             fastshell_enabled: false,
             current_executable: executable,
@@ -1840,7 +1846,7 @@ mod tests {
         std::fs::write(&paths.codex_config, b"tool_output_token_limit = 9000\n").unwrap();
         let plan = plan_apply(&paths, options(executable)).unwrap();
         let conflict = plan.token_limit_conflict().unwrap();
-        assert_eq!((conflict.current, conflict.requested), (9_000, 20_000));
+        assert_eq!((conflict.current, conflict.requested), (9_000, 60_000));
         let error = commit_apply(plan, false).unwrap_err();
         assert!(error.contains("Re-run with --yes"));
         assert_eq!(
@@ -1928,11 +1934,11 @@ mod tests {
             document
                 .get("tool_output_token_limit")
                 .and_then(toml_edit::Item::as_integer),
-            Some(20_000)
+            Some(60_000)
         );
         assert!(source.contains("[mcp_servers.fastctx]"), "{source}");
         assert!(source.contains("mcp__fastctx"), "{source}");
-        assert!(source.contains("FASTCTX_TOKEN_BUDGET = \"17000\""));
+        assert!(source.contains("FASTCTX_TOKEN_BUDGET = \"54000\""));
     }
 
     #[test]
@@ -1987,9 +1993,9 @@ mod tests {
         )
         .unwrap();
         let applied = std::fs::read_to_string(&paths.codex_config).unwrap();
-        assert!(applied.contains("tool_output_token_limit = 20000"));
+        assert!(applied.contains("tool_output_token_limit = 60000"));
         let edited = applied.replace(
-            "tool_output_token_limit = 20000",
+            "tool_output_token_limit = 60000",
             "tool_output_token_limit = 40000",
         );
         std::fs::write(&paths.codex_config, &edited).unwrap();

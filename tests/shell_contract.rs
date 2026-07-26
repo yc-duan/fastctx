@@ -619,10 +619,18 @@ fn job_output_wait_window_delivers_accumulated_output_without_returning_on_each_
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
     let mut session = shell_session(temp.path(), None);
+    // The window has to outlast a cold Git Bash start. A CI runner can spend
+    // several hundred milliseconds before the command produces its first line,
+    // which a 400ms window swallowed whole: only "first" had arrived when the
+    // wait expired. Three seconds keeps the accumulation claim intact - the
+    // elapsed assertion below still proves the call waited out the full window
+    // instead of returning on the first line - while leaving room for a slow
+    // start. The trailing sleep outlasts the window so the job stays running
+    // and the terminal note stays Partial. (2026-07-25)
     let started = session.call(
         "run_background",
         serde_json::json!({
-            "command": "printf 'first\\n'; sleep 0.05; printf 'second\\n'; sleep 10",
+            "command": "printf 'first\\n'; sleep 0.05; printf 'second\\n'; sleep 30",
             "login_shell": false
         }),
     );

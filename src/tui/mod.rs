@@ -1,6 +1,7 @@
 //! Full-screen ratatui control terminal.
 
 mod app;
+mod budget_editor;
 mod config;
 mod jobs;
 mod migration;

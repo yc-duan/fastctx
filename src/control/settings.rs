@@ -7,11 +7,20 @@ use crate::control::transaction;
 use crate::search_parallelism::{self, SearchParallelism};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 const LEGACY_SCHEMA_VERSION: u32 = 0;
+/// Generation of the recommended per-tool budget defaults.
+///
+/// Bump this whenever the tier limits or the per-tool defaults move. Startup then clears stored
+/// per-tool overrides once and shows the migration notice, because a share is relative: the same
+/// "50%" resolves to a different absolute budget after the global budget changes, so carrying an
+/// override across the change would silently rescale a setting nobody revisited. Configurations
+/// written before this field existed read as generation 0 and migrate on the next launch.
+pub(crate) const TOOL_BUDGET_EPOCH: u32 = 2;
 /// Default current-user disk allowance for retained background-job records.
 pub const DEFAULT_JOB_STORAGE_LIMIT_MIB: u64 = 1_024;
 /// Default current-user number of simultaneously running background jobs.
@@ -166,12 +175,12 @@ impl Default for UpdateSettings {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum Tier {
-    /// Codex factory default of 10k with an 8.5k FastCtx budget.
+    /// Conservative 20k host limit with an 18k FastCtx budget.
     Compact,
-    /// Recommended 20k host limit with a 17k FastCtx budget.
+    /// Recommended 60k host limit with a 54k FastCtx budget.
     #[default]
     Standard,
-    /// Codex 30k with a 25.5k FastCtx budget.
+    /// Widest 100k host limit with a 90k FastCtx budget.
     #[serde(alias = "extra-high")]
     #[value(alias = "extra-high")]
     High,
@@ -181,18 +190,52 @@ impl Tier {
     /// Host token limit written to Codex.
     pub const fn host_limit(self) -> i64 {
         match self {
-            Self::Compact => 10_000,
-            Self::Standard => 20_000,
-            Self::High => 30_000,
+            Self::Compact => 20_000,
+            Self::Standard => 60_000,
+            Self::High => 100_000,
         }
     }
 
-    /// Global token budget written to the FastCtx environment.
+    /// Global token budget written to the FastCtx environment, ten percent below the host limit.
     pub const fn fastctx_budget(self) -> usize {
         match self {
-            Self::Compact => 8_500,
-            Self::Standard => 17_000,
-            Self::High => 25_500,
+            Self::Compact => 18_000,
+            Self::Standard => 54_000,
+            Self::High => 90_000,
+        }
+    }
+
+    /// Recommended per-tool shares for this tier, used wherever the user set no explicit share.
+    ///
+    /// Only `read` scales with the tier: it is the one tool asked to deliver a whole file at once,
+    /// so a wider tier exists precisely to widen it. The other four deliver excerpts, listings,
+    /// summaries, or output that also survives on disk, and their useful size barely moves between
+    /// tiers, so their shares shrink as the global budget grows. Each tool's resolved absolute
+    /// budget still rises monotonically from Compact to High; `tier_defaults_grow_with_the_tier`
+    /// fails if a future edit breaks that.
+    pub const fn default_budgets(self) -> ToolBudgets {
+        match self {
+            Self::Compact => ToolBudgets {
+                read: ToolBudgetLevel::Inherit,
+                grep: ToolBudgetLevel::Percent(50),
+                glob: ToolBudgetLevel::Percent(25),
+                run: ToolBudgetLevel::Percent(50),
+                job_output: ToolBudgetLevel::Percent(25),
+            },
+            Self::Standard => ToolBudgets {
+                read: ToolBudgetLevel::Inherit,
+                grep: ToolBudgetLevel::Percent(20),
+                glob: ToolBudgetLevel::Percent(10),
+                run: ToolBudgetLevel::Percent(20),
+                job_output: ToolBudgetLevel::Percent(10),
+            },
+            Self::High => ToolBudgets {
+                read: ToolBudgetLevel::Inherit,
+                grep: ToolBudgetLevel::Percent(12),
+                glob: ToolBudgetLevel::Percent(6),
+                run: ToolBudgetLevel::Percent(12),
+                job_output: ToolBudgetLevel::Percent(6),
+            },
         }
     }
 
@@ -233,79 +276,222 @@ impl Tier {
     }
 }
 
-/// Per-tool tier relative to the global budget.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+/// One tool's share of the global budget, as a whole percent.
+///
+/// A full share is `Inherit` rather than `Percent(100)`: it omits the per-tool environment
+/// variable entirely so the server falls back to the global budget, which also keeps budget
+/// errors pointing at the global variable instead of an equal per-tool one.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ToolBudgetLevel {
     /// Omit the per-tool environment variable so the server inherits the global value.
     #[default]
     Inherit,
-    /// Seventy-five percent of the global budget.
-    Percent75,
-    /// Fifty percent of the global budget.
-    Percent50,
-    /// Twenty-five percent of the global budget.
-    Percent25,
+    /// Explicit share between 1 and 99 percent of the global budget.
+    Percent(u8),
 }
 
 impl ToolBudgetLevel {
+    /// Builds a share from a whole percent, normalizing a full share to inheritance.
+    ///
+    /// Rejects anything outside `1..=100`; a zero share resolves to a budget the server refuses.
+    pub const fn from_percent(percent: u8) -> Option<Self> {
+        if percent == 0 || percent > 100 {
+            None
+        } else if percent == 100 {
+            Some(Self::Inherit)
+        } else {
+            Some(Self::Percent(percent))
+        }
+    }
+
+    /// Share of the global budget as a whole percent, where inheritance is the full budget.
+    pub const fn percent(self) -> u8 {
+        match self {
+            Self::Inherit => 100,
+            Self::Percent(percent) => percent,
+        }
+    }
+
     /// Returns the concrete budget to write, or `None` for inheritance.
-    pub fn resolve(self, global: usize) -> Option<usize> {
+    pub const fn resolve(self, global: usize) -> Option<usize> {
         let percent = match self {
             Self::Inherit => return None,
-            Self::Percent75 => 75,
-            Self::Percent50 => 50,
-            Self::Percent25 => 25,
+            Self::Percent(percent) => percent as usize,
         };
         let raw = (global * percent + 50) / 100;
-        Some(((raw + 50) / 100) * 100)
+        let rounded = ((raw + 50) / 100) * 100;
+        // Rounding to hundreds reaches zero for a small share of a small budget, and the server
+        // rejects a zero budget outright, so keep the smallest representable step instead.
+        Some(if rounded == 0 { 100 } else { rounded })
     }
 
-    /// Stable English label shown by the UI.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Inherit => "inherit",
-            Self::Percent75 => "75%",
-            Self::Percent50 => "50%",
-            Self::Percent25 => "25%",
+    /// Token ceiling this share resolves to, where inheritance is the whole global budget.
+    pub const fn ceiling(self, global: usize) -> usize {
+        match self.resolve(global) {
+            Some(value) => value,
+            None => global,
         }
     }
 
-    /// Selects the previous tier cyclically.
-    pub const fn previous(self) -> Self {
-        match self {
-            Self::Inherit => Self::Percent25,
-            Self::Percent75 => Self::Inherit,
-            Self::Percent50 => Self::Percent75,
-            Self::Percent25 => Self::Percent50,
+    /// Percentage label shown by the UI and accepted back by the configuration file.
+    pub fn label(self) -> String {
+        format!("{}%", self.percent())
+    }
+
+    /// Adjusts the share by one percentage point, saturating at the ends of the range.
+    pub const fn step(self, forward: bool) -> Self {
+        let percent = self.percent();
+        let adjusted = if forward {
+            if percent >= 100 { 100 } else { percent + 1 }
+        } else if percent <= 1 {
+            1
+        } else {
+            percent - 1
+        };
+        match Self::from_percent(adjusted) {
+            Some(level) => level,
+            None => self,
         }
     }
 
-    /// Selects the next tier cyclically.
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Inherit => Self::Percent75,
-            Self::Percent75 => Self::Percent50,
-            Self::Percent50 => Self::Percent25,
-            Self::Percent25 => Self::Inherit,
+    /// Parses a configuration-file spelling.
+    ///
+    /// The four fixed names are what releases before arbitrary percentages wrote, so they stay
+    /// readable forever; `"17%"` is accepted too because that is how the UI shows a share and
+    /// therefore how someone hand-editing the file will most likely spell it.
+    fn from_config_str(value: &str) -> Option<Self> {
+        match value.trim() {
+            "inherit" => Some(Self::Inherit),
+            "percent75" => Some(Self::Percent(75)),
+            "percent50" => Some(Self::Percent(50)),
+            "percent25" => Some(Self::Percent(25)),
+            other => Self::from_percent(other.strip_suffix('%')?.trim().parse().ok()?),
         }
     }
 }
 
-/// Per-tool budget choices for the five long-output tools.
+impl Serialize for ToolBudgetLevel {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Shares an older release can still parse keep their legacy spelling so a downgrade reads
+        // the file back instead of failing on an unrecognized shape. Only a share that older
+        // releases could never express falls through to the numeric form. (2026-07-25)
+        match self {
+            Self::Inherit => serializer.serialize_str("inherit"),
+            Self::Percent(75) => serializer.serialize_str("percent75"),
+            Self::Percent(50) => serializer.serialize_str("percent50"),
+            Self::Percent(25) => serializer.serialize_str("percent25"),
+            Self::Percent(percent) => serializer.serialize_u8(*percent),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolBudgetLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(ToolBudgetLevelVisitor)
+    }
+}
+
+struct ToolBudgetLevelVisitor;
+
+impl serde::de::Visitor<'_> for ToolBudgetLevelVisitor {
+    type Value = ToolBudgetLevel;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("\"inherit\" or a whole percent between 1 and 100")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        ToolBudgetLevel::from_config_str(value)
+            .ok_or_else(|| E::invalid_value(serde::de::Unexpected::Str(value), &self))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        u8::try_from(value)
+            .ok()
+            .and_then(ToolBudgetLevel::from_percent)
+            .ok_or_else(|| E::invalid_value(serde::de::Unexpected::Unsigned(value), &self))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let unsigned = u64::try_from(value)
+            .map_err(|_| E::invalid_value(serde::de::Unexpected::Signed(value), &self))?;
+        self.visit_u64(unsigned)
+    }
+}
+
+/// The five long-output tools' shares in effect for one Apply.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct ToolBudgets {
-    /// Relative budget for read.
+    /// Share for read.
     pub read: ToolBudgetLevel,
-    /// Relative budget for grep.
+    /// Share for grep.
     pub grep: ToolBudgetLevel,
-    /// Relative budget for glob.
+    /// Share for glob.
     pub glob: ToolBudgetLevel,
-    /// Relative budget for run; effective only when the shell group is enabled.
+    /// Share for run; effective only when the shell group is enabled.
     pub run: ToolBudgetLevel,
-    /// Relative budget for job_output; effective only when the shell group is enabled.
+    /// Share for job_output; effective only when the shell group is enabled.
     pub job_output: ToolBudgetLevel,
+}
+
+/// Per-tool shares the user set explicitly; every unset entry follows the selected tier.
+///
+/// Keeping "unset" distinct from an equal explicit share is what lets a tier change re-target the
+/// budgets nobody touched while preserving the ones somebody did. Collapsing the two would leave
+/// only bad options: either a tier change silently discards explicit shares, or one edit freezes
+/// that tool at a share chosen for a different global budget.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct ToolBudgetPreferences {
+    /// Explicit share for read, or `None` to follow the tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read: Option<ToolBudgetLevel>,
+    /// Explicit share for grep, or `None` to follow the tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grep: Option<ToolBudgetLevel>,
+    /// Explicit share for glob, or `None` to follow the tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glob: Option<ToolBudgetLevel>,
+    /// Explicit share for run, or `None` to follow the tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<ToolBudgetLevel>,
+    /// Explicit share for job_output, or `None` to follow the tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_output: Option<ToolBudgetLevel>,
+}
+
+impl ToolBudgetPreferences {
+    /// Fills every unset entry from the tier's recommended shares.
+    pub fn resolve(self, tier: Tier) -> ToolBudgets {
+        let defaults = tier.default_budgets();
+        ToolBudgets {
+            read: self.read.unwrap_or(defaults.read),
+            grep: self.grep.unwrap_or(defaults.grep),
+            glob: self.glob.unwrap_or(defaults.glob),
+            run: self.run.unwrap_or(defaults.run),
+            job_output: self.job_output.unwrap_or(defaults.job_output),
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// One optional tool-group toggle in `~/.fastctx/config.toml`.
@@ -382,19 +568,7 @@ where
 
 impl Default for ToolBudgets {
     fn default() -> Self {
-        Self {
-            read: ToolBudgetLevel::Inherit,
-            grep: ToolBudgetLevel::Percent50,
-            glob: ToolBudgetLevel::Percent25,
-            run: ToolBudgetLevel::Percent50,
-            job_output: ToolBudgetLevel::Percent25,
-        }
-    }
-}
-
-impl ToolBudgets {
-    fn is_default(&self) -> bool {
-        *self == Self::default()
+        Tier::default().default_budgets()
     }
 }
 
@@ -484,14 +658,17 @@ pub struct FastCtxSettings {
     /// Software-version watermark maintained by startup normalization and fresh-install writes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_seen_version: Option<String>,
+    /// Generation of the per-tool budget defaults this file has been reconciled against.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_budget_epoch: Option<u32>,
     /// TUI language; absence means first-run selection is incomplete.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     /// Host tier used by the next Apply.
     pub tier: Tier,
-    /// Advanced per-tool tiers used by the next Apply.
-    #[serde(skip_serializing_if = "ToolBudgets::is_default")]
-    pub tool_budgets: ToolBudgets,
+    /// Advanced per-tool overrides used by the next Apply; unset entries follow the tier.
+    #[serde(skip_serializing_if = "ToolBudgetPreferences::is_default")]
+    pub tool_budgets: ToolBudgetPreferences,
     /// Optional fastshell server, disabled by default.
     pub fastshell: FastShellSettings,
     /// Machine-level update preferences, effective immediately when saved.
@@ -521,9 +698,10 @@ impl Default for FastCtxSettings {
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
             last_seen_version: None,
+            tool_budget_epoch: None,
             language: None,
             tier: Tier::Standard,
-            tool_budgets: ToolBudgets::default(),
+            tool_budgets: ToolBudgetPreferences::default(),
             fastshell: FastShellSettings::default(),
             update: UpdateSettings::default(),
             search: SearchSettings::default(),
@@ -551,6 +729,7 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
         let Some(original) = original else {
             let settings = FastCtxSettings {
                 last_seen_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                tool_budget_epoch: Some(TOOL_BUDGET_EPOCH),
                 ..FastCtxSettings::default()
             };
             return Ok(StartupSettings {
@@ -565,11 +744,12 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
             )
         })?;
         let mut settings = decode_source(&paths.fastctx_config, source)?;
-        let migration_notice = settings.last_seen_version.is_none();
+        let migration_notice = settings.tool_budget_epoch.unwrap_or(0) < TOOL_BUDGET_EPOCH;
         if migration_notice {
-            // This one-time migration intentionally replaces customized values as well as old
-            // defaults; the user-visible notice makes that product decision explicit.
-            settings.tool_budgets = ToolBudgets::default();
+            // This migration intentionally drops customized shares along with old defaults: a
+            // share is relative, so keeping one across a change of the global budget silently
+            // rescales it. The user-visible notice makes that product decision explicit.
+            settings.tool_budgets = ToolBudgetPreferences::default();
         }
         let current_version = env!("CARGO_PKG_VERSION");
         let watermark_changed = settings.last_seen_version.as_deref() != Some(current_version);
@@ -580,6 +760,7 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
             });
         }
         settings.last_seen_version = Some(current_version.to_string());
+        settings.tool_budget_epoch = Some(TOOL_BUDGET_EPOCH);
         let bytes = encode_startup_normalization(&paths.fastctx_config, source, migration_notice)?;
         let change = transaction::FileChange {
             target: paths.fastctx_config.clone(),
@@ -712,6 +893,9 @@ impl FastCtxSettings {
 pub(crate) fn reset_user_preferences(settings: &FastCtxSettings) -> FastCtxSettings {
     FastCtxSettings {
         last_seen_version: settings.last_seen_version.clone(),
+        // A reset lands exactly on this generation's defaults, so stamp it rather than leaving the
+        // file looking unreconciled and re-showing the migration notice on the next launch.
+        tool_budget_epoch: Some(TOOL_BUDGET_EPOCH),
         applied: settings.applied.clone(),
         ..FastCtxSettings::default()
     }
@@ -872,6 +1056,7 @@ fn encode_startup_normalization(
     })?;
     document["schema_version"] = toml_edit::value(i64::from(CURRENT_SCHEMA_VERSION));
     document["last_seen_version"] = toml_edit::value(env!("CARGO_PKG_VERSION"));
+    document["tool_budget_epoch"] = toml_edit::value(i64::from(TOOL_BUDGET_EPOCH));
     if reset_tool_budgets {
         document.remove("tool_budgets");
     }
@@ -931,68 +1116,133 @@ mod tests {
     use super::{
         AppliedRecord, CURRENT_SCHEMA_VERSION, DEFAULT_JOB_LIST_LIMIT,
         DEFAULT_JOB_STORAGE_LIMIT_MIB, DEFAULT_MAX_RUNNING_JOBS, FastCtxSettings,
-        MAX_JOB_LIST_LIMIT, ManagedFileRecord, Tier, ToolBudgetLevel, UpdateSource, encode,
-        job_limit_status, load_for_startup, load_from, reset_user_preferences, save,
-        search_parallelism_status, update_settings_status,
+        MAX_JOB_LIST_LIMIT, ManagedFileRecord, TOOL_BUDGET_EPOCH, Tier, ToolBudgetLevel,
+        UpdateSource, encode, job_limit_status, load_for_startup, load_from,
+        reset_user_preferences, save, search_parallelism_status, update_settings_status,
     };
     use crate::control::paths::ControlPaths;
 
     #[test]
-    fn tier_budget_mapping_preserves_fifteen_percent_host_headroom() {
+    fn tier_budget_mapping_preserves_ten_percent_host_headroom() {
         let expected = [
-            (Tier::Compact, 10_000, 8_500),
-            (Tier::Standard, 20_000, 17_000),
-            (Tier::High, 30_000, 25_500),
+            (Tier::Compact, 20_000, 18_000),
+            (Tier::Standard, 60_000, 54_000),
+            (Tier::High, 100_000, 90_000),
         ];
 
         for (tier, host_limit, fastctx_budget) in expected {
             assert_eq!(tier.host_limit(), host_limit);
             assert_eq!(tier.fastctx_budget(), fastctx_budget);
+            // The gap between the two numbers is the entire safety margin against host-side
+            // truncation. Editing one without the other would keep both assertions above
+            // plausible while quietly removing the margin.
+            assert_eq!(fastctx_budget * 10, host_limit as usize * 9);
         }
     }
 
     #[test]
-    fn tool_budget_defaults_match_the_recentered_output_contract() {
-        let defaults = super::ToolBudgets::default();
-        assert_eq!(defaults.read, ToolBudgetLevel::Inherit);
-        assert_eq!(defaults.grep, ToolBudgetLevel::Percent50);
-        assert_eq!(defaults.glob, ToolBudgetLevel::Percent25);
-        assert_eq!(defaults.run, ToolBudgetLevel::Percent50);
-        assert_eq!(defaults.job_output, ToolBudgetLevel::Percent25);
+    fn tier_defaults_grow_with_the_tier() {
+        // Only read scales with the tier by intent; the other four merely must never shrink when
+        // the user moves up. Without this, retuning one tier's percentages in isolation can make
+        // a wider tier deliver less than a narrower one for everything except read.
+        let mut previous: Option<[usize; 5]> = None;
+        for tier in [Tier::Compact, Tier::Standard, Tier::High] {
+            let defaults = tier.default_budgets();
+            let global = tier.fastctx_budget();
+            assert_eq!(defaults.read, ToolBudgetLevel::Inherit);
+            let resolved = [
+                defaults.read.ceiling(global),
+                defaults.grep.ceiling(global),
+                defaults.glob.ceiling(global),
+                defaults.run.ceiling(global),
+                defaults.job_output.ceiling(global),
+            ];
+            assert!(
+                resolved.iter().all(|budget| *budget <= global),
+                "{tier:?} resolves a per-tool budget above the global budget"
+            );
+            if let Some(previous) = previous {
+                for (index, (lower, higher)) in previous.iter().zip(resolved.iter()).enumerate() {
+                    assert!(
+                        higher >= lower,
+                        "{tier:?} shrinks per-tool budget {index} from {lower} to {higher}"
+                    );
+                }
+            }
+            previous = Some(resolved);
+        }
+    }
+
+    #[test]
+    fn tier_defaults_resolve_to_the_published_budgets() {
+        // Hard-coded rather than recomputed: these numbers are the published contract, and
+        // deriving them from the same percentages under test would assert nothing.
+        let expected = [
+            (Tier::Compact, [18_000, 9_000, 4_500, 9_000, 4_500]),
+            (Tier::Standard, [54_000, 10_800, 5_400, 10_800, 5_400]),
+            (Tier::High, [90_000, 10_800, 5_400, 10_800, 5_400]),
+        ];
+        for (tier, budgets) in expected {
+            let defaults = tier.default_budgets();
+            let global = tier.fastctx_budget();
+            assert_eq!(
+                [
+                    defaults.read.ceiling(global),
+                    defaults.grep.ceiling(global),
+                    defaults.glob.ceiling(global),
+                    defaults.run.ceiling(global),
+                    defaults.job_output.ceiling(global),
+                ],
+                budgets,
+                "{tier:?}"
+            );
+        }
     }
 
     #[test]
     fn percentage_budgets_use_the_frozen_nearest_hundred_resolution() {
         let cases = [
-            (8_500, [6_400, 4_300, 2_100]),
-            (17_000, [12_800, 8_500, 4_300]),
-            (25_500, [19_100, 12_800, 6_400]),
+            (18_000, [13_500, 9_000, 4_500]),
+            (54_000, [40_500, 27_000, 13_500]),
+            (90_000, [67_500, 45_000, 22_500]),
         ];
         for (global, expected) in cases {
             let actual = [
-                ToolBudgetLevel::Percent75.resolve(global).unwrap(),
-                ToolBudgetLevel::Percent50.resolve(global).unwrap(),
-                ToolBudgetLevel::Percent25.resolve(global).unwrap(),
+                ToolBudgetLevel::Percent(75).resolve(global).unwrap(),
+                ToolBudgetLevel::Percent(50).resolve(global).unwrap(),
+                ToolBudgetLevel::Percent(25).resolve(global).unwrap(),
             ];
             assert_eq!(actual, expected, "global budget {global}");
             assert!(actual.into_iter().all(|budget| budget <= global));
         }
+        // Every tier budget is a round multiple of a thousand, so only an off-grid global proves
+        // the rounding is half-up to the nearest hundred rather than truncation.
+        assert_eq!(ToolBudgetLevel::Percent(25).resolve(17_000), Some(4_300));
+        assert_eq!(ToolBudgetLevel::Percent(1).resolve(18_000), Some(200));
+        // A tiny share of a tiny budget rounds to zero, and the server rejects a zero budget
+        // outright, so the smallest representable step stands in for it.
+        assert_eq!(ToolBudgetLevel::Percent(1).resolve(20), Some(100));
+        assert_eq!(ToolBudgetLevel::Inherit.resolve(54_000), None);
     }
 
     #[test]
-    fn default_tool_budgets_are_omitted_but_explicit_choices_round_trip() {
+    fn unset_tool_budgets_are_omitted_but_explicit_choices_round_trip() {
         let defaults = FastCtxSettings::default();
         let encoded = String::from_utf8(encode(&defaults).unwrap()).unwrap();
         assert!(!encoded.contains("[tool_budgets]"), "{encoded}");
 
         let mut customized = defaults;
-        customized.tool_budgets.grep = ToolBudgetLevel::Percent75;
+        customized.tool_budgets.grep = Some(ToolBudgetLevel::Percent(75));
+        customized.tool_budgets.glob = Some(ToolBudgetLevel::Percent(17));
         let encoded = encode(&customized).unwrap();
         let source = String::from_utf8(encoded.clone()).unwrap();
+        // Only the two touched tools are written; the rest keep following the tier, which is what
+        // lets a later change of the tier defaults reach users who never set them.
         assert!(
-            source.contains("[tool_budgets]\nread = \"inherit\"\ngrep = \"percent75\""),
+            source.contains("[tool_budgets]\ngrep = \"percent75\"\nglob = 17\n"),
             "{source}"
         );
+        assert!(!source.contains("read ="), "{source}");
 
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.toml");
@@ -1001,6 +1251,88 @@ mod tests {
             load_from(&path).unwrap().tool_budgets,
             customized.tool_budgets
         );
+    }
+
+    #[test]
+    fn shares_an_older_release_can_parse_keep_their_legacy_spelling() {
+        // A downgrade re-reads this file with an enum that only knows the four fixed names.
+        // Writing the numeric form for a share that enum can express would strand the user on a
+        // parse error for no gain, so only genuinely new shares get the numeric form.
+        let mut settings = FastCtxSettings::default();
+        settings.tool_budgets.read = Some(ToolBudgetLevel::Inherit);
+        settings.tool_budgets.grep = Some(ToolBudgetLevel::Percent(75));
+        settings.tool_budgets.glob = Some(ToolBudgetLevel::Percent(50));
+        settings.tool_budgets.run = Some(ToolBudgetLevel::Percent(25));
+        settings.tool_budgets.job_output = Some(ToolBudgetLevel::Percent(33));
+        let source = String::from_utf8(encode(&settings).unwrap()).unwrap();
+        assert!(source.contains("read = \"inherit\""), "{source}");
+        assert!(source.contains("grep = \"percent75\""), "{source}");
+        assert!(source.contains("glob = \"percent50\""), "{source}");
+        assert!(source.contains("run = \"percent25\""), "{source}");
+        assert!(source.contains("job_output = 33"), "{source}");
+    }
+
+    #[test]
+    fn every_accepted_spelling_of_a_share_parses_back_to_one_value() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            concat!(
+                "schema_version = 1\n",
+                "\n[tool_budgets]\n",
+                // Legacy names, the UI spelling, and the bare number must not drift apart.
+                "read = \"percent25\"\n",
+                "grep = \"25%\"\n",
+                "glob = 25\n",
+                "run = 100\n",
+                "job_output = \"inherit\"\n",
+            ),
+        )
+        .unwrap();
+        let budgets = load_from(&path).unwrap().tool_budgets;
+        assert_eq!(budgets.read, Some(ToolBudgetLevel::Percent(25)));
+        assert_eq!(budgets.grep, Some(ToolBudgetLevel::Percent(25)));
+        assert_eq!(budgets.glob, Some(ToolBudgetLevel::Percent(25)));
+        // A full share has exactly one representation, so it cannot round-trip into a per-tool
+        // variable that merely equals the global budget.
+        assert_eq!(budgets.run, Some(ToolBudgetLevel::Inherit));
+        assert_eq!(budgets.job_output, Some(ToolBudgetLevel::Inherit));
+    }
+
+    #[test]
+    fn an_unusable_share_is_rejected_rather_than_clamped() {
+        // Silently clamping would hand the user a budget they never chose; the repair path is a
+        // visible parse failure with the file left untouched.
+        for spelling in ["0", "101", "-1", "\"half\"", "\"percent10\""] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("config.toml");
+            std::fs::write(
+                &path,
+                format!("schema_version = 1\n\n[tool_budgets]\ngrep = {spelling}\n"),
+            )
+            .unwrap();
+            assert!(
+                load_from(&path).is_err(),
+                "share {spelling} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn unset_shares_follow_the_tier_while_explicit_ones_stay_put() {
+        // The two halves of the same promise: changing tiers re-targets what nobody chose, and
+        // preserves what somebody did.
+        let preferences = super::ToolBudgetPreferences {
+            grep: Some(ToolBudgetLevel::Percent(40)),
+            ..super::ToolBudgetPreferences::default()
+        };
+        for tier in [Tier::Compact, Tier::Standard, Tier::High] {
+            let resolved = preferences.resolve(tier);
+            assert_eq!(resolved.grep, ToolBudgetLevel::Percent(40));
+            assert_eq!(resolved.glob, tier.default_budgets().glob);
+            assert_eq!(resolved.run, tier.default_budgets().run);
+        }
     }
 
     #[test]
@@ -1026,7 +1358,10 @@ mod tests {
 
         let startup = load_for_startup(&paths).unwrap();
         assert!(startup.migration_notice);
-        assert_eq!(startup.settings.tool_budgets, super::ToolBudgets::default());
+        assert_eq!(
+            startup.settings.tool_budgets,
+            super::ToolBudgetPreferences::default()
+        );
         assert_eq!(startup.settings.tier, Tier::High);
         assert_eq!(
             startup.settings.last_seen_version.as_deref(),
@@ -1058,11 +1393,13 @@ mod tests {
             concat!(
                 "schema_version = 1\n",
                 "last_seen_version = \"{}\"\n",
+                "tool_budget_epoch = {}\n",
                 "language = \"en\"\n",
                 "\n[tool_budgets]\n",
                 "grep = \"percent75\"\n",
             ),
-            env!("CARGO_PKG_VERSION")
+            env!("CARGO_PKG_VERSION"),
+            TOOL_BUDGET_EPOCH
         );
         std::fs::write(&paths.fastctx_config, original.as_bytes()).unwrap();
 
@@ -1070,7 +1407,7 @@ mod tests {
         assert!(!startup.migration_notice);
         assert_eq!(
             startup.settings.tool_budgets.grep,
-            ToolBudgetLevel::Percent75
+            Some(ToolBudgetLevel::Percent(75))
         );
         assert_eq!(
             std::fs::read(&paths.fastctx_config).unwrap(),
@@ -1084,21 +1421,26 @@ mod tests {
         let paths = ControlPaths::for_home(temp.path());
         std::fs::create_dir_all(&paths.fastctx_dir).unwrap();
         // A watermark that can never equal the crate version, so this test always exercises the
-        // advance path instead of the unchanged-watermark early return. (2026-07-24)
-        let original = concat!(
-            "schema_version = 1\n",
-            "last_seen_version = \"0.0.1\"\n",
-            "language = \"en\"\n",
-            "\n[tool_budgets]\n",
-            "grep = \"percent75\"\n",
+        // advance path instead of the unchanged-watermark early return. The epoch is already
+        // current, which is what keeps the budget migration out of this path. (2026-07-24)
+        let original = format!(
+            concat!(
+                "schema_version = 1\n",
+                "last_seen_version = \"0.0.1\"\n",
+                "tool_budget_epoch = {}\n",
+                "language = \"en\"\n",
+                "\n[tool_budgets]\n",
+                "grep = \"percent75\"\n",
+            ),
+            TOOL_BUDGET_EPOCH
         );
-        std::fs::write(&paths.fastctx_config, original).unwrap();
+        std::fs::write(&paths.fastctx_config, &original).unwrap();
 
         let startup = load_for_startup(&paths).unwrap();
         assert!(!startup.migration_notice);
         assert_eq!(
             startup.settings.tool_budgets.grep,
-            ToolBudgetLevel::Percent75
+            Some(ToolBudgetLevel::Percent(75))
         );
         assert_eq!(
             startup.settings.last_seen_version.as_deref(),
@@ -1133,7 +1475,10 @@ mod tests {
         let startup = load_for_startup(&paths).unwrap();
         assert!(startup.migration_notice);
         assert_eq!(startup.settings.search.max_cpu_cores, Some(0));
-        assert_eq!(startup.settings.tool_budgets, super::ToolBudgets::default());
+        assert_eq!(
+            startup.settings.tool_budgets,
+            super::ToolBudgetPreferences::default()
+        );
         let persisted = std::fs::read_to_string(&paths.fastctx_config).unwrap();
         assert!(persisted.contains("max_cpu_cores = 0"), "{persisted}");
         assert!(!persisted.contains("[tool_budgets]"), "{persisted}");
@@ -1315,10 +1660,12 @@ mod tests {
     }
 
     #[test]
-    fn job_output_defaults_to_a_quarter_budget_without_overriding_an_explicit_legacy_choice() {
+    fn job_output_follows_the_tier_by_default_without_overriding_an_explicit_legacy_choice() {
+        // Unset means "follow the tier", which is a different fact from any particular share.
+        assert_eq!(FastCtxSettings::default().tool_budgets.job_output, None);
         assert_eq!(
-            FastCtxSettings::default().tool_budgets.job_output,
-            ToolBudgetLevel::Percent25
+            Tier::Standard.default_budgets().job_output,
+            ToolBudgetLevel::Percent(10)
         );
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.toml");
@@ -1329,7 +1676,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             load_from(&path).unwrap().tool_budgets.job_output,
-            ToolBudgetLevel::Inherit
+            Some(ToolBudgetLevel::Inherit)
         );
     }
 
@@ -1446,7 +1793,7 @@ mod tests {
             applied: Some(receipt.clone()),
             ..FastCtxSettings::default()
         };
-        settings.tool_budgets.grep = ToolBudgetLevel::Percent25;
+        settings.tool_budgets.grep = Some(ToolBudgetLevel::Percent(25));
         settings.fastshell.enabled = true;
         settings.fastshell.job_storage_limit_mib = 4_096;
         settings.update.auto_check = false;
@@ -1460,7 +1807,12 @@ mod tests {
                 applied: None,
                 ..reset.clone()
             },
-            FastCtxSettings::default()
+            // The budget epoch is migration bookkeeping, not a preference: a reset lands on this
+            // generation's defaults, so it must come back stamped rather than pending.
+            FastCtxSettings {
+                tool_budget_epoch: Some(TOOL_BUDGET_EPOCH),
+                ..FastCtxSettings::default()
+            }
         );
     }
 

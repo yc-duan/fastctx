@@ -1,7 +1,8 @@
 //! Strict incremental decoding, line collection, and budget closure for text reads.
 
 use super::{
-    DEFAULT_LINE_LIMIT, MAX_LINE_CHARS, TOTAL_COUNT_SIZE_LIMIT, binary_error, binary_error_message,
+    MAX_LINE_CHARS, TOTAL_COUNT_SIZE_LIMIT, UNBOUNDED_LINE_LIMIT, binary_error,
+    binary_error_message,
 };
 use crate::budget::{LineTokenCounter, TokenBudget, assemble_text, estimate_tokens};
 use crate::encoding::{EncodingDecision, StreamDecodeFailure, validate_file_encoding};
@@ -20,7 +21,7 @@ pub(super) fn read_text_file(
     budget: TokenBudget,
 ) -> ToolResponse {
     let offset = offset.unwrap_or(1);
-    let limit = limit.unwrap_or(DEFAULT_LINE_LIMIT);
+    let limit = limit.unwrap_or(UNBOUNDED_LINE_LIMIT);
     if offset == 0 {
         return ToolResponse::error("Invalid offset value: 0. Expected an integer >= 1.");
     }
@@ -81,7 +82,7 @@ pub(super) fn read_batch_text_file(
     collection_budget: usize,
 ) -> Result<BatchTextContent, String> {
     let offset = offset.unwrap_or(1);
-    let limit = limit.unwrap_or(DEFAULT_LINE_LIMIT);
+    let limit = limit.unwrap_or(UNBOUNDED_LINE_LIMIT);
     let file_size = fs::metadata(path)
         .map_err(|error| io_error_message(path, &error))?
         .len();

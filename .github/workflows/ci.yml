@@ -53,21 +53,84 @@ jobs:
             $cursor = $parent
           }
           if (-not $gitRoot) { throw "Cannot locate the Git for Windows root from $git" }
+          $bash = Join-Path $gitRoot "usr/bin/bash.exe"
+          # Git Bash resolves POSIX /tmp through a runtime "usertemp" mount. That
+          # mount ignores TEMP/TMP/TMPDIR and cannot be redirected from fstab, so
+          # the target is whatever cygpath reports and nothing else. When it is
+          # missing every bash start writes a warning to stderr, that warning is
+          # captured as command output, and byte-exact output assertions fail.
+          # Ask bash for the path instead of guessing it. (2026-07-25)
+          # usr/bin/bash.exe inherits PATH from the caller, and pwsh does not
+          # carry the Git toolset, so /usr/bin has to be put back by hand or
+          # cygpath and mkdir below resolve to nothing.
+          $posixTemp = (& $bash --noprofile --norc -c 'PATH=/usr/bin:/bin:$PATH; cygpath -w /tmp').Trim()
+          if ([string]::IsNullOrWhiteSpace($posixTemp)) {
+            throw "Git Bash did not report a Windows path for POSIX /tmp"
+          }
+          Write-Host "POSIX /tmp resolves to $posixTemp"
           $tempPaths = @(
+            $posixTemp
             (Join-Path $gitRoot "tmp")
             $env:TEMP
             $env:TMP
             [System.IO.Path]::GetTempPath()
             (Join-Path $env:USERPROFILE "AppData/Local/Temp")
+            (Join-Path $env:LOCALAPPDATA "Temp")
           ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique
           foreach ($path in $tempPaths) {
             New-Item -ItemType Directory -Force -Path $path | Out-Null
           }
-          $bash = Join-Path $gitRoot "usr/bin/bash.exe"
-          & $bash --noprofile --norc -c "mkdir -p /tmp && test -d /tmp"
+          # Existence alone is not the bar: bash wants a directory it can write.
+          & $bash --noprofile --norc -c 'PATH=/usr/bin:/bin:$PATH; mkdir -p /tmp && printf probe > /tmp/.fastctx-probe && rm -f /tmp/.fastctx-probe'
           if ($LASTEXITCODE -ne 0) {
-            throw "Git Bash could not create and resolve its POSIX /tmp directory"
+            throw "Git Bash could not create and write inside its POSIX /tmp directory"
           }
+          # Fail here rather than eight minutes later inside the test matrix:
+          # any startup chatter would be captured as command output downstream.
+          $noiseLog = Join-Path ([System.IO.Path]::GetTempPath()) "gitbash-startup-noise.txt"
+          & $bash --noprofile --norc -c "true" 2>$noiseLog
+          $noise = Get-Content -LiteralPath $noiseLog -Raw -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $noiseLog -Force -ErrorAction SilentlyContinue
+          if (-not [string]::IsNullOrWhiteSpace($noise)) {
+            throw "Git Bash still writes startup noise to stderr: $noise"
+          }
+          # Creating the directory once is not enough: it has gone missing partway
+          # through a job, after this step had already verified it. Windows refuses
+          # to remove a directory that holds an open handle, so park one inside it
+          # for the rest of the job and rebuild the directory if it disappears
+          # regardless. Fire and forget - if the keeper fails to start, the job
+          # behaves exactly as it did before. The log is the evidence trail.
+          # Keep the keeper's own files off the directory it is guarding.
+          $runnerTemp = if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { [System.IO.Path]::GetTempPath() } else { $env:RUNNER_TEMP }
+          $keeperLog = Join-Path $runnerTemp "posix-tmp-keeper.log"
+          "watching $posixTemp from $(Get-Date -Format o)" | Set-Content -LiteralPath $keeperLog -Encoding UTF8
+          $keeperBody = @'
+          param([string]$Target, [string]$LogPath)
+          $stream = $null
+          while ($true) {
+            try {
+              if (-not (Test-Path -LiteralPath $Target)) {
+                if ($stream) { $stream.Dispose(); $stream = $null }
+                New-Item -ItemType Directory -Force -Path $Target | Out-Null
+                Add-Content -LiteralPath $LogPath -Value ("recreated " + (Get-Date -Format o))
+              }
+              if (-not $stream) {
+                $anchor = Join-Path $Target ".posix-tmp-keeper"
+                $stream = [System.IO.File]::Open($anchor, "OpenOrCreate", "ReadWrite", "None")
+                Add-Content -LiteralPath $LogPath -Value ("anchored " + (Get-Date -Format o))
+              }
+            } catch {
+              Add-Content -LiteralPath $LogPath -Value ("error " + (Get-Date -Format o) + " " + $_.Exception.Message)
+            }
+            Start-Sleep -Milliseconds 200
+          }
+          '@
+          $keeper = Join-Path $runnerTemp "posix-tmp-keeper.ps1"
+          Set-Content -LiteralPath $keeper -Value $keeperBody -Encoding UTF8
+          Start-Process pwsh -WindowStyle Hidden -ArgumentList @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $keeper,
+            "-Target", $posixTemp, "-LogPath", $keeperLog
+          )
 
       - uses: actions/checkout@v6
 
@@ -99,6 +162,25 @@ jobs:
 
       - name: Test release profile
         run: cargo test --locked --release --target ${{ matrix.target }}
+
+      # Runs even when the matrix above fails: a "recreated" entry here is the
+      # evidence that something removed the directory mid-job, which is what
+      # made byte-exact shell assertions fail before the keeper existed.
+      - name: Report the POSIX /tmp keeper log
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "posix-tmp-keeper.log"
+          if (Test-Path -LiteralPath $log) {
+            Get-Content -LiteralPath $log
+          } else {
+            Write-Host "no keeper log at $log"
+          }
+          $bash = "C:/Program Files/Git/usr/bin/bash.exe"
+          if (Test-Path -LiteralPath $bash) {
+            Write-Host "POSIX /tmp now resolves to $(& $bash --noprofile --norc -c 'PATH=/usr/bin:/bin:$PATH; cygpath -w /tmp')"
+            & $bash --noprofile --norc -c 'test -d /tmp && echo "/tmp exists" || echo "/tmp MISSING"'
+          }
 
       - name: Lint
         run: cargo clippy --locked --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
