@@ -220,7 +220,7 @@ fn prepare_entry(
             };
         }
     };
-    let path_display = routed.display.clone();
+    let path_display = display_path(&routed.canonical);
     if metadata.is_dir() {
         return PreparedEntry {
             path: path_display.clone(),

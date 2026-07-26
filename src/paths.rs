@@ -28,7 +28,6 @@ struct AllowedRoot {
 pub(crate) struct ScopedPath {
     pub(crate) canonical: PathBuf,
     pub(crate) relative: PathBuf,
-    pub(crate) display: String,
     pub(crate) capability: Arc<Dir>,
 }
 
@@ -152,7 +151,6 @@ impl ReadScope {
                             .map(Path::to_path_buf)
                             .unwrap_or_else(|_| PathBuf::from("."));
                         return Ok(ScopedPath {
-                            display: formatter(&canonical),
                             canonical,
                             relative: if relative.as_os_str().is_empty() {
                                 PathBuf::from(".")
@@ -183,7 +181,6 @@ impl ReadScope {
             .strip_prefix(&root.canonical)
             .map(Path::to_path_buf)
             .unwrap_or_else(|_| PathBuf::from("."));
-        let display = formatter(&canonical);
         Ok(ScopedPath {
             canonical,
             relative: if relative.as_os_str().is_empty() {
@@ -191,7 +188,6 @@ impl ReadScope {
             } else {
                 relative
             },
-            display,
             capability: Arc::clone(&root.capability),
         })
     }
@@ -431,7 +427,17 @@ pub fn missing_search_path_message(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ReadScope, file_url_note, missing_file_message, missing_search_path_message};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    fn assert_denied(scope: &ReadScope, path: &Path) {
+        for result in [
+            scope.authorize(path).map(|_| ()),
+            scope.route(path).map(|_| ()),
+        ] {
+            let message = result.unwrap_err();
+            assert!(message.starts_with("Permission denied: "), "{message}");
+        }
+    }
 
     #[test]
     fn file_urls_are_translated_to_the_plain_path() {
@@ -531,8 +537,28 @@ mod tests {
         std::fs::write(&inside, b"inside").unwrap();
         std::fs::write(&outside, b"outside").unwrap();
         let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
-        assert!(scope.authorize(&inside).is_ok());
-        let denied = scope.authorize(&outside).unwrap_err();
-        assert!(denied.starts_with("Permission denied: "), "{denied}");
+        let routed = scope.route(&inside).unwrap();
+        assert_eq!(routed.canonical, dunce::canonicalize(&inside).unwrap());
+        assert_eq!(routed.relative, PathBuf::from("inside.txt"));
+        assert_denied(&scope, &outside);
+        assert_denied(
+            &scope,
+            &root.join("..").join("work-secret").join("outside.txt"),
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allow_root_routing_denies_static_file_symlinks_to_outside_targets() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(&outside, b"secret-target-content").unwrap();
+        let link = root.join("outside-link.txt");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+
+        assert_denied(&scope, &link);
     }
 }

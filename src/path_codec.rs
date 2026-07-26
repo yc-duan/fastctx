@@ -437,11 +437,7 @@ pub(crate) fn resolve_search_root_with_scope(
         ));
     }
 
-    let canonical = if scope.is_restricted() {
-        authorized
-    } else {
-        canonical_existing(&authorized).map_err(|error| io_error_message(&authorized, &error))?
-    };
+    let canonical = authorized;
     Ok(ResolvedRoot {
         display: Arc::from(display_path(&canonical)),
         native: canonical,

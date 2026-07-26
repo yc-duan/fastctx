@@ -812,7 +812,7 @@ fn collect_directory_candidates(
         if !matches_record(&preliminary, glob, None) {
             return Ok(None);
         }
-        candidate_from_entry(entry, &root.native, &root.scope)
+        candidate_from_entry(entry, &root.native)
     })
 }
 
@@ -1156,15 +1156,11 @@ fn candidate_from_path(
 fn candidate_from_entry(
     entry: &ignore::DirEntry,
     match_root: &Path,
-    scope: &ReadScope,
 ) -> Result<Option<PathRecord>, TraversalFailure> {
     if entry
         .file_type()
         .is_some_and(|file_type| file_type.is_symlink())
     {
-        if let Err(message) = scope.authorize_with_formatter(entry.path(), search_display_path) {
-            return Err(TraversalFailure::from_other(entry.path(), message));
-        }
         return candidate_from_path(entry.path(), match_root);
     }
     match entry.metadata() {

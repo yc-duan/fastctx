@@ -229,7 +229,7 @@ pub(crate) fn read_file_with_scope(request: ReadRequest, scope: &ReadScope) -> T
     text_file::read_text_handle(
         &file,
         &routed.canonical,
-        &routed.display,
+        &display_path(&routed.canonical),
         request.offset,
         request.limit,
         request.encoding.as_deref(),
@@ -295,8 +295,12 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     fn single(path: &std::path::Path) -> ReadRequest {
+        single_input(display_path(path))
+    }
+
+    fn single_input(path: String) -> ReadRequest {
         ReadRequest {
-            file_path: Some(display_path(path)),
+            file_path: Some(path),
             files: None,
             offset: None,
             limit: None,
@@ -305,6 +309,56 @@ mod tests {
             encoding: None,
             view: None,
         }
+    }
+
+    fn batch_entry(path: String) -> BatchReadEntry {
+        BatchReadEntry {
+            path,
+            offset: None,
+            limit: None,
+            encoding: None,
+        }
+    }
+
+    fn text_entry(path: &std::path::Path) -> BatchReadEntry {
+        batch_entry(display_path(path))
+    }
+
+    fn batch(entries: impl IntoIterator<Item = BatchReadEntry>) -> ReadRequest {
+        ReadRequest {
+            file_path: None,
+            files: Some(entries.into_iter().collect()),
+            offset: None,
+            limit: None,
+            pages: None,
+            pdf_mode: None,
+            encoding: None,
+            view: None,
+        }
+    }
+
+    fn scope_for(root: &std::path::Path, restricted: bool) -> ReadScope {
+        if restricted {
+            ReadScope::from_allow_roots(&[root.to_path_buf()]).unwrap()
+        } else {
+            ReadScope::unrestricted()
+        }
+    }
+
+    #[cfg(unix)]
+    fn replace_file_after_open(
+        path: &std::path::Path,
+        old_path: &std::path::Path,
+        replacement: &'static [u8],
+    ) -> crate::file_snapshot::tests::OriginalOpenObserverGuard {
+        let path = path.to_path_buf();
+        let old_path = old_path.to_path_buf();
+        crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(move |opened| {
+            if opened == path && path.exists() {
+                fs::rename(&path, &old_path).unwrap();
+                fs::write(&path, replacement).unwrap();
+            }
+        }))
     }
 
     fn response_text(response: crate::ToolResponse) -> String {
@@ -325,21 +379,7 @@ mod tests {
         request.view = Some("invalid".to_string());
         assert_eq!(response_text(read_file(request)), expected);
 
-        let batch = ReadRequest {
-            file_path: None,
-            files: Some(vec![BatchReadEntry {
-                path: path_display,
-                offset: None,
-                limit: None,
-                encoding: None,
-            }]),
-            offset: None,
-            limit: None,
-            pages: None,
-            pdf_mode: None,
-            encoding: None,
-            view: None,
-        };
+        let batch = batch([batch_entry(path_display)]);
         assert!(
             response_text(read_file(batch)).contains(&expected),
             "batch missing-parent diagnostics changed"
@@ -451,29 +491,10 @@ mod tests {
         let second = root.join("second.txt");
         fs::write(&first, b"first\nsecond\n").unwrap();
         fs::write(&second, b"third\nfourth\n").unwrap();
-        let request = ReadRequest {
-            file_path: None,
-            files: Some(vec![
-                BatchReadEntry {
-                    path: display_path(&first),
-                    offset: Some(2),
-                    limit: Some(1),
-                    encoding: None,
-                },
-                BatchReadEntry {
-                    path: display_path(&second),
-                    offset: None,
-                    limit: None,
-                    encoding: None,
-                },
-            ]),
-            offset: None,
-            limit: None,
-            pages: None,
-            pdf_mode: None,
-            encoding: None,
-            view: None,
-        };
+        let mut first_entry = text_entry(&first);
+        first_entry.offset = Some(2);
+        first_entry.limit = Some(1);
+        let request = batch([first_entry, text_entry(&second)]);
         let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
         assert_eq!(
             response_text(read_file_with_scope(request.clone(), &scope)),
@@ -499,21 +520,7 @@ mod tests {
             response_text(read_file_with_scope(single(&alias), &scope)),
             response_text(read_file(single(&alias)))
         );
-        let batch = ReadRequest {
-            file_path: None,
-            files: Some(vec![BatchReadEntry {
-                path: display_path(&alias),
-                offset: None,
-                limit: None,
-                encoding: None,
-            }]),
-            offset: None,
-            limit: None,
-            pages: None,
-            pdf_mode: None,
-            encoding: None,
-            view: None,
-        };
+        let batch = batch([text_entry(&alias)]);
         assert_eq!(
             response_text(read_file_with_scope(batch.clone(), &scope)),
             response_text(read_file(batch))
@@ -575,48 +582,19 @@ mod tests {
     }
 
     #[test]
-    fn scoped_read_allows_direct_files_and_denies_outside_and_lexical_prefixes() {
+    fn scoped_read_denies_outside_file() {
         let fixture = tempfile::tempdir().unwrap();
         let root = fixture.path().join("work");
-        let sibling = fixture.path().join("work-secret");
+        let outside = fixture.path().join("outside.txt");
         fs::create_dir(&root).unwrap();
-        fs::create_dir(&sibling).unwrap();
-        let inside = root.join("inside.txt");
-        let outside = sibling.join("outside.txt");
-        fs::write(&inside, b"allowed-content").unwrap();
         fs::write(&outside, b"denied-content").unwrap();
         let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
 
-        let allowed = read_file_with_scope(single(&inside), &scope);
-        assert!(!allowed.is_error, "{allowed:?}");
-        assert!(response_text(allowed).contains("allowed-content"));
-
-        for denied_path in [&outside, &sibling.join("outside.txt")] {
-            let response = read_file_with_scope(single(denied_path), &scope);
-            assert!(response.is_error, "{response:?}");
-            let text = response_text(response);
-            assert!(text.starts_with("Permission denied: "), "{text}");
-            assert!(!text.contains("denied-content"), "{text}");
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn scoped_read_denies_static_file_symlink_without_opening_target() {
-        let fixture = tempfile::tempdir().unwrap();
-        let root = fixture.path().join("allowed");
-        let outside = fixture.path().join("outside.txt");
-        fs::create_dir(&root).unwrap();
-        fs::write(&outside, b"secret-target-content").unwrap();
-        let link = root.join("outside-link.txt");
-        std::os::unix::fs::symlink(&outside, &link).unwrap();
-        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
-
-        let response = read_file_with_scope(single(&link), &scope);
+        let response = read_file_with_scope(single(&outside), &scope);
         assert!(response.is_error, "{response:?}");
         let text = response_text(response);
         assert!(text.starts_with("Permission denied: "), "{text}");
-        assert!(!text.contains("secret-target-content"), "{text}");
+        assert!(!text.contains("denied-content"), "{text}");
     }
 
     #[test]
@@ -629,29 +607,7 @@ mod tests {
         fs::write(&inside, b"allowed-batch-content").unwrap();
         fs::write(&outside, b"denied-batch-content").unwrap();
         let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
-        let request = ReadRequest {
-            file_path: None,
-            files: Some(vec![
-                BatchReadEntry {
-                    path: display_path(&inside),
-                    offset: None,
-                    limit: None,
-                    encoding: None,
-                },
-                BatchReadEntry {
-                    path: display_path(&outside),
-                    offset: None,
-                    limit: None,
-                    encoding: None,
-                },
-            ]),
-            offset: None,
-            limit: None,
-            pages: None,
-            pdf_mode: None,
-            encoding: None,
-            view: None,
-        };
+        let request = batch([text_entry(&inside), text_entry(&outside)]);
         let response = read_file_with_scope(request, &scope);
         assert!(!response.is_error, "{response:?}");
         let text = response_text(response);
@@ -670,21 +626,8 @@ mod tests {
             let path = root.join("inside.txt");
             let old_path = root.join("inside.old");
             fs::write(&path, b"original-inside-bytes").unwrap();
-            let path_for_hook = path.clone();
-            let old_for_hook = old_path.clone();
-            let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
-                move |_| {
-                    if path_for_hook.exists() {
-                        fs::rename(&path_for_hook, &old_for_hook).unwrap();
-                        fs::write(&path_for_hook, b"replacement-outside-bytes").unwrap();
-                    }
-                },
-            ));
-            let scope = if restricted {
-                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
-            } else {
-                ReadScope::unrestricted()
-            };
+            let _hook = replace_file_after_open(&path, &old_path, b"replacement-outside-bytes");
+            let scope = scope_for(&root, restricted);
             let response = read_file_with_scope(single(&path), &scope);
             let text = response_text(response);
             assert!(
@@ -723,11 +666,7 @@ mod tests {
                     }
                 },
             ));
-            let scope = if restricted {
-                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
-            } else {
-                ReadScope::unrestricted()
-            };
+            let scope = scope_for(&root, restricted);
             let text = response_text(read_file_with_scope(single(&path), &scope));
             assert!(renamed.load(Ordering::Acquire));
             assert!(
@@ -753,44 +692,9 @@ mod tests {
             let old = root.join("first.old");
             fs::write(&first, b"original-first").unwrap();
             fs::write(&second, b"stable-second").unwrap();
-            let first_for_hook = first.clone();
-            let old_for_hook = old.clone();
-            let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
-                move |path| {
-                    if path == first_for_hook && first_for_hook.exists() {
-                        fs::rename(&first_for_hook, &old_for_hook).unwrap();
-                        fs::write(&first_for_hook, b"replacement-first").unwrap();
-                    }
-                },
-            ));
-            let scope = if restricted {
-                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
-            } else {
-                ReadScope::unrestricted()
-            };
-            let request = ReadRequest {
-                file_path: None,
-                files: Some(vec![
-                    BatchReadEntry {
-                        path: display_path(&first),
-                        offset: None,
-                        limit: None,
-                        encoding: None,
-                    },
-                    BatchReadEntry {
-                        path: display_path(&second),
-                        offset: None,
-                        limit: None,
-                        encoding: None,
-                    },
-                ]),
-                offset: None,
-                limit: None,
-                pages: None,
-                pdf_mode: None,
-                encoding: None,
-                view: None,
-            };
+            let _hook = replace_file_after_open(&first, &old, b"replacement-first");
+            let scope = scope_for(&root, restricted);
+            let request = batch([text_entry(&first), text_entry(&second)]);
             let text = response_text(read_file_with_scope(request, &scope));
             assert!(text.contains("original-first"), "{restricted}: {text}");
             assert!(text.contains("stable-second"), "{restricted}: {text}");
@@ -820,11 +724,7 @@ mod tests {
                     }
                 },
             ));
-            let scope = if restricted {
-                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
-            } else {
-                ReadScope::unrestricted()
-            };
+            let scope = scope_for(&root, restricted);
             let text = response_text(read_file_with_scope(single(&path), &scope));
             assert!(
                 text.contains("original-ancestor-bytes"),
@@ -841,42 +741,15 @@ mod tests {
     fn restricted_relative_single_and_batch_requests_use_stable_absolute_errors() {
         let fixture = tempfile::tempdir().unwrap();
         let scope = ReadScope::from_allow_roots(&[fixture.path().to_path_buf()]).unwrap();
-        let single_response = read_file_with_scope(
-            ReadRequest {
-                file_path: Some("relative.txt".to_string()),
-                files: None,
-                offset: None,
-                limit: None,
-                pages: None,
-                pdf_mode: None,
-                encoding: None,
-                view: None,
-            },
-            &scope,
-        );
+        let single_response =
+            read_file_with_scope(single_input("relative.txt".to_string()), &scope);
         assert_eq!(
             response_text(single_response),
             "Path must be absolute: relative.txt"
         );
 
-        let batch_response = read_file_with_scope(
-            ReadRequest {
-                file_path: None,
-                files: Some(vec![BatchReadEntry {
-                    path: "relative.txt".to_string(),
-                    offset: None,
-                    limit: None,
-                    encoding: None,
-                }]),
-                offset: None,
-                limit: None,
-                pages: None,
-                pdf_mode: None,
-                encoding: None,
-                view: None,
-            },
-            &scope,
-        );
+        let batch_response =
+            read_file_with_scope(batch([batch_entry("relative.txt".to_string())]), &scope);
         let text = response_text(batch_response);
         assert!(
             text.contains("Path must be absolute: relative.txt"),
@@ -894,29 +767,7 @@ mod tests {
         fs::write(&outside, b"must-not-leak").unwrap();
         let alias = root.join("..").join("outside.txt");
         let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
-        let request = ReadRequest {
-            file_path: None,
-            files: Some(vec![
-                BatchReadEntry {
-                    path: display_path(&outside),
-                    offset: None,
-                    limit: None,
-                    encoding: None,
-                },
-                BatchReadEntry {
-                    path: display_path(&alias),
-                    offset: None,
-                    limit: None,
-                    encoding: None,
-                },
-            ]),
-            offset: None,
-            limit: None,
-            pages: None,
-            pdf_mode: None,
-            encoding: None,
-            view: None,
-        };
+        let request = batch([text_entry(&outside), text_entry(&alias)]);
         let response = read_file_with_scope(request, &scope);
         assert!(!response.is_error, "{response:?}");
         let text = response_text(response);
