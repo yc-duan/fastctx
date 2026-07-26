@@ -12,7 +12,6 @@ use crate::paths::{
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
-use std::io::Read;
 
 const MAX_BATCH_FILES: usize = 32;
 
@@ -35,12 +34,6 @@ struct PreparedEntry {
 enum PreparedOutcome {
     Content(text_file::BatchTextContent),
     Message(String),
-}
-
-#[derive(Clone, Copy)]
-enum PreparedSource<'a> {
-    File(&'a std::path::Path),
-    Handle(&'a fs::File),
 }
 
 pub(super) fn read_text_files(mut request: ReadRequest, scope: &ReadScope) -> ToolResponse {
@@ -203,78 +196,7 @@ fn prepare_entry(
             }),
         };
     }
-    if scope.is_restricted() {
-        return prepare_restricted_entry(entry, collection_budget, scope, &parsed);
-    }
-    let authorized = match scope.authorize(&parsed) {
-        Ok(path) => path,
-        Err(message) => {
-            return PreparedEntry {
-                path: input_display,
-                outcome: PreparedOutcome::Message(message),
-            };
-        }
-    };
-    let metadata = match fs::metadata(&authorized) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return PreparedEntry {
-                path: input_display,
-                outcome: PreparedOutcome::Message(missing_read_file_message(&entry.path)),
-            };
-        }
-        Err(error) => {
-            return PreparedEntry {
-                path: input_display,
-                outcome: PreparedOutcome::Message(io_error_message(&authorized, &error)),
-            };
-        }
-    };
-    let path = canonical_existing(&authorized).unwrap_or(authorized);
-    let path_display = display_path(&path);
-    if metadata.is_dir() {
-        return PreparedEntry {
-            path: path_display.clone(),
-            outcome: PreparedOutcome::Message(format!(
-                "{path_display} is a directory, not a file. Use the glob tool to list its contents."
-            )),
-        };
-    }
-    if !metadata.is_file() {
-        return PreparedEntry {
-            path: path_display.clone(),
-            outcome: PreparedOutcome::Message(format!(
-                "Cannot read non-regular file: {path_display}. Only regular files are supported."
-            )),
-        };
-    }
-    let mut prefix = Vec::new();
-    if let Err(error) =
-        fs::File::open(&path).and_then(|file| file.take(8 * 1024).read_to_end(&mut prefix))
-    {
-        return PreparedEntry {
-            path: path_display,
-            outcome: PreparedOutcome::Message(io_error_message(&path, &error)),
-        };
-    }
-    prepare_classified_entry(
-        entry,
-        collection_budget,
-        &path,
-        path_display,
-        &prefix,
-        PreparedSource::File(&path),
-    )
-}
-
-fn prepare_restricted_entry(
-    entry: &BatchReadEntry,
-    collection_budget: usize,
-    scope: &ReadScope,
-    parsed: &std::path::Path,
-) -> PreparedEntry {
-    let input_display = display_path(parsed);
-    let routed = match scope.route(parsed) {
+    let routed = match scope.route(&parsed) {
         Ok(routed) => routed,
         Err(message) => {
             return PreparedEntry {
@@ -294,7 +216,7 @@ fn prepare_restricted_entry(
         Err(error) => {
             return PreparedEntry {
                 path: input_display,
-                outcome: PreparedOutcome::Message(io_error_message(parsed, &error)),
+                outcome: PreparedOutcome::Message(io_error_message(&parsed, &error)),
             };
         }
     };
@@ -320,7 +242,7 @@ fn prepare_restricted_entry(
         Err(error) => {
             return PreparedEntry {
                 path: path_display,
-                outcome: PreparedOutcome::Message(io_error_message(parsed, &error)),
+                outcome: PreparedOutcome::Message(io_error_message(&parsed, &error)),
             };
         }
     };
@@ -331,7 +253,7 @@ fn prepare_restricted_entry(
         Err(error) => {
             return PreparedEntry {
                 path: path_display,
-                outcome: PreparedOutcome::Message(io_error_message(parsed, &error)),
+                outcome: PreparedOutcome::Message(io_error_message(&parsed, &error)),
             };
         }
     };
@@ -341,7 +263,7 @@ fn prepare_restricted_entry(
         &routed.canonical,
         path_display,
         &prefix,
-        PreparedSource::Handle(&file),
+        &file,
     )
 }
 
@@ -351,7 +273,7 @@ fn prepare_classified_entry(
     path: &std::path::Path,
     path_display: String,
     prefix: &[u8],
-    source: PreparedSource<'_>,
+    file: &fs::File,
 ) -> PreparedEntry {
     if pdf::is_pdf(path, prefix) {
         return PreparedEntry {
@@ -371,27 +293,16 @@ fn prepare_classified_entry(
             ),
         };
     }
-    let read = match source {
-        PreparedSource::File(path) => text_file::read_batch_text_file(
-            path,
-            &path_display,
-            entry.offset,
-            entry.limit,
-            entry.encoding.as_deref(),
-            detect_binary_type(prefix),
-            collection_budget,
-        ),
-        PreparedSource::Handle(file) => text_file::read_batch_text_handle(
-            file,
-            path,
-            &path_display,
-            entry.offset,
-            entry.limit,
-            entry.encoding.as_deref(),
-            detect_binary_type(prefix),
-            collection_budget,
-        ),
-    };
+    let read = text_file::read_batch_text_handle(
+        file,
+        path,
+        &path_display,
+        entry.offset,
+        entry.limit,
+        entry.encoding.as_deref(),
+        detect_binary_type(prefix),
+        collection_budget,
+    );
     PreparedEntry {
         path: path_display,
         outcome: read.map_or_else(PreparedOutcome::Message, PreparedOutcome::Content),

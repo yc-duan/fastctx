@@ -16,14 +16,13 @@ use crate::binary::detect_binary_type;
 use crate::budget::{READ_TOKEN_BUDGET_ENV, tool_token_budget};
 use crate::model::ToolResponse;
 use crate::paths::{
-    ReadScope, absolute_path_required_message, canonical_existing, display_path, io_error_message,
+    ReadScope, absolute_path_required_message, display_path, io_error_message,
     missing_read_file_message, parse_input_path,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 
 /// Line window for a text read that omits `limit`: unbounded, so the token budget is the only
 /// ceiling on how much one call returns.
@@ -124,140 +123,24 @@ pub(crate) fn read_file_with_scope(request: ReadRequest, scope: &ReadScope) -> T
         }
         return ToolResponse::error(missing_read_file_message(file_path));
     }
-    if scope.is_restricted() {
-        return read_restricted_file(request.clone(), scope, &parsed, file_path);
-    }
-    let authorized = match scope.authorize(&parsed) {
-        Ok(path) => path,
-        Err(message) => return ToolResponse::error(message),
-    };
-    let metadata = match fs::metadata(&authorized) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return ToolResponse::error(missing_read_file_message(file_path));
-        }
-        Err(error) => return ToolResponse::error(io_error_message(&authorized, &error)),
-    };
-    let path = canonical_existing(&authorized).unwrap_or(authorized);
-    let path_display = display_path(&path);
-    if metadata.is_dir() {
-        return ToolResponse::error(format!(
-            "{path_display} is a directory, not a file. Use the glob tool to list its contents."
-        ));
-    }
-    if !metadata.is_file() {
-        return ToolResponse::error(format!(
-            "Cannot read non-regular file: {path_display}. Only regular files are supported."
-        ));
-    }
-    let mut prefix = Vec::new();
-    let prefix_result =
-        fs::File::open(&path).and_then(|file| file.take(8 * 1024).read_to_end(&mut prefix));
-    if let Err(error) = prefix_result {
-        return ToolResponse::error(io_error_message(&path, &error));
-    }
-
-    let view = match parse_view(request.view.as_deref()) {
-        Ok(view) => view,
-        Err(message) => return ToolResponse::error(message),
-    };
-    if view == ViewMode::Hex {
-        for (parameter, present) in [
-            ("pdf_mode", request.pdf_mode.is_some()),
-            ("pages", request.pages.is_some()),
-            ("encoding", request.encoding.is_some()),
-        ] {
-            if present {
-                return ToolResponse::error(format!(
-                    "The {parameter} parameter cannot be combined with view=\"hex\"."
-                ));
-            }
-        }
-        let budget = match tool_token_budget(READ_TOKEN_BUDGET_ENV) {
-            Ok(budget) => budget,
+    let view = if scope.is_restricted() {
+        match validate_view_parameters(&request) {
+            Ok(view) => Some(view),
             Err(message) => return ToolResponse::error(message),
-        };
-        return hex_file::read_hex_file(&path, request.offset, request.limit, budget);
-    }
-
-    if pdf::is_pdf(&path, &prefix) {
-        if request.encoding.is_some() {
-            return ToolResponse::error("The encoding parameter only applies to text files.");
         }
-        let mode = match pdf::parse_pdf_mode(request.pdf_mode.as_deref()) {
-            Ok(mode) => mode,
-            Err(message) => return ToolResponse::error(message),
-        };
-        let budget = if mode == pdf::PdfMode::Text {
-            match tool_token_budget(READ_TOKEN_BUDGET_ENV) {
-                Ok(budget) => Some(budget),
-                Err(message) => return ToolResponse::error(message),
-            }
-        } else {
-            None
-        };
-        return pdf::read_pdf(&path, request.pages.as_deref(), mode, budget);
-    }
-    if request.pages.is_some() {
-        return ToolResponse::error("The pages parameter only applies to PDF files.");
-    }
-    if request.pdf_mode.is_some() {
-        return ToolResponse::error("The pdf_mode parameter only applies to PDF files.");
-    }
-    if image_file::detect_image_mime(&path, &prefix).is_some() {
-        if request.encoding.is_some() {
-            return ToolResponse::error("The encoding parameter only applies to text files.");
-        }
-        return image_file::read_image(&path);
-    }
-    let budget = match tool_token_budget(READ_TOKEN_BUDGET_ENV) {
-        Ok(budget) => budget,
-        Err(message) => return ToolResponse::error(message),
+    } else {
+        None
     };
-    text_file::read_text_file(
-        &path,
-        &path_display,
-        request.offset,
-        request.limit,
-        request.encoding.as_deref(),
-        detect_binary_type(&prefix),
-        budget,
-    )
-}
-
-fn read_restricted_file(
-    request: ReadRequest,
-    scope: &ReadScope,
-    parsed: &Path,
-    original: &str,
-) -> ToolResponse {
-    let view = match parse_view(request.view.as_deref()) {
-        Ok(view) => view,
-        Err(message) => return ToolResponse::error(message),
-    };
-    if view == ViewMode::Hex {
-        for (parameter, present) in [
-            ("pdf_mode", request.pdf_mode.is_some()),
-            ("pages", request.pages.is_some()),
-            ("encoding", request.encoding.is_some()),
-        ] {
-            if present {
-                return ToolResponse::error(format!(
-                    "The {parameter} parameter cannot be combined with view=\"hex\"."
-                ));
-            }
-        }
-    }
-    let routed = match scope.route(parsed) {
+    let routed = match scope.route(&parsed) {
         Ok(routed) => routed,
         Err(message) => return ToolResponse::error(message),
     };
     let metadata = match routed.capability.metadata(&routed.relative) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return ToolResponse::error(missing_read_file_message(original));
+            return ToolResponse::error(missing_read_file_message(file_path));
         }
-        Err(error) => return ToolResponse::error(io_error_message(parsed, &error)),
+        Err(error) => return ToolResponse::error(io_error_message(&parsed, &error)),
     };
     if metadata.is_dir() {
         return ToolResponse::error(format!(
@@ -273,15 +156,22 @@ fn read_restricted_file(
     }
     let mut file = match routed.capability.open(&routed.relative) {
         Ok(file) => file.into_std(),
-        Err(error) => return ToolResponse::error(io_error_message(parsed, &error)),
+        Err(error) => return ToolResponse::error(io_error_message(&parsed, &error)),
     };
     #[cfg(test)]
     crate::file_snapshot::tests::notify_original_open(&routed.canonical);
     let prefix = match read_prefix(&mut file) {
         Ok(prefix) => prefix,
         Err(error) => {
-            return ToolResponse::error(io_error_message(parsed, &error));
+            return ToolResponse::error(io_error_message(&parsed, &error));
         }
+    };
+    let view = match view {
+        Some(view) => view,
+        None => match validate_view_parameters(&request) {
+            Ok(view) => view,
+            Err(message) => return ToolResponse::error(message),
+        },
     };
     if view == ViewMode::Hex {
         let budget = match tool_token_budget(READ_TOKEN_BUDGET_ENV) {
@@ -366,6 +256,24 @@ fn parse_view(value: Option<&str>) -> Result<ViewMode, String> {
     }
 }
 
+fn validate_view_parameters(request: &ReadRequest) -> Result<ViewMode, String> {
+    let view = parse_view(request.view.as_deref())?;
+    if view == ViewMode::Hex {
+        for (parameter, present) in [
+            ("pdf_mode", request.pdf_mode.is_some()),
+            ("pages", request.pages.is_some()),
+            ("encoding", request.encoding.is_some()),
+        ] {
+            if present {
+                return Err(format!(
+                    "The {parameter} parameter cannot be combined with view=\"hex\"."
+                ));
+            }
+        }
+    }
+    Ok(view)
+}
+
 fn binary_error(path_display: &str, binary_type: Option<&str>) -> ToolResponse {
     ToolResponse::error(binary_error_message(path_display, binary_type))
 }
@@ -381,7 +289,7 @@ fn binary_error_message(path_display: &str, binary_type: Option<&str>) -> String
 mod tests {
     use super::{BatchReadEntry, ReadRequest, read_file, read_file_with_scope};
     use crate::ToolContent;
-    use crate::paths::{ReadScope, display_path};
+    use crate::paths::{ReadScope, display_path, missing_read_file_message};
     use std::fs;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -404,6 +312,38 @@ mod tests {
             panic!("expected one text response: {response:?}");
         };
         text.clone()
+    }
+
+    #[test]
+    fn unrestricted_missing_parent_keeps_missing_diagnostics_before_view_validation() {
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().join("missing-parent").join("input.txt");
+        let path_display = display_path(&path);
+        let expected = missing_read_file_message(&path_display);
+
+        let mut request = single(&path);
+        request.view = Some("invalid".to_string());
+        assert_eq!(response_text(read_file(request)), expected);
+
+        let batch = ReadRequest {
+            file_path: None,
+            files: Some(vec![BatchReadEntry {
+                path: path_display,
+                offset: None,
+                limit: None,
+                encoding: None,
+            }]),
+            offset: None,
+            limit: None,
+            pages: None,
+            pdf_mode: None,
+            encoding: None,
+            view: None,
+        };
+        assert!(
+            response_text(read_file(batch)).contains(&expected),
+            "batch missing-parent diagnostics changed"
+        );
     }
 
     #[test]
@@ -722,133 +662,179 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn restricted_direct_read_pins_open_handle_before_final_component_swap() {
-        let fixture = tempfile::tempdir().unwrap();
-        let root = fixture.path().join("allowed");
-        fs::create_dir(&root).unwrap();
-        let path = root.join("inside.txt");
-        let old_path = root.join("inside.old");
-        fs::write(&path, b"original-inside-bytes").unwrap();
-        let path_for_hook = path.clone();
-        let old_for_hook = old_path.clone();
-        let _hook =
-            crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(move |_| {
-                if path_for_hook.exists() {
-                    fs::rename(&path_for_hook, &old_for_hook).unwrap();
-                    fs::write(&path_for_hook, b"replacement-outside-bytes").unwrap();
-                }
-            }));
-        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
-        let response = read_file_with_scope(single(&path), &scope);
-        let text = response_text(response);
-        assert!(text.contains("original-inside-bytes"), "{text}");
-        assert!(!text.contains("replacement-outside-bytes"), "{text}");
+    fn direct_read_pins_open_handle_before_final_component_swap_in_both_modes() {
+        for restricted in [false, true] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("allowed");
+            fs::create_dir(&root).unwrap();
+            let path = root.join("inside.txt");
+            let old_path = root.join("inside.old");
+            fs::write(&path, b"original-inside-bytes").unwrap();
+            let path_for_hook = path.clone();
+            let old_for_hook = old_path.clone();
+            let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
+                move |_| {
+                    if path_for_hook.exists() {
+                        fs::rename(&path_for_hook, &old_for_hook).unwrap();
+                        fs::write(&path_for_hook, b"replacement-outside-bytes").unwrap();
+                    }
+                },
+            ));
+            let scope = if restricted {
+                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
+            } else {
+                ReadScope::unrestricted()
+            };
+            let response = read_file_with_scope(single(&path), &scope);
+            let text = response_text(response);
+            assert!(
+                text.contains("original-inside-bytes"),
+                "{restricted}: {text}"
+            );
+            assert!(
+                !text.contains("replacement-outside-bytes"),
+                "{restricted}: {text}"
+            );
+        }
     }
 
     #[cfg(windows)]
     #[test]
-    fn restricted_direct_read_pins_open_handle_before_windows_rename_swap() {
+    fn direct_read_pins_open_handle_before_windows_rename_swap_in_both_modes() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        let fixture = tempfile::tempdir().unwrap();
-        let root = fixture.path().join("allowed");
-        fs::create_dir(&root).unwrap();
-        let path = root.join("inside.txt");
-        let old_path = root.join("inside.old");
-        fs::write(&path, b"original-windows-bytes").unwrap();
-        let renamed = Arc::new(AtomicBool::new(false));
-        let renamed_for_hook = Arc::clone(&renamed);
-        let path_for_hook = path.clone();
-        let old_for_hook = old_path.clone();
-        let _hook =
-            crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(move |_| {
-                if !renamed_for_hook.swap(true, Ordering::AcqRel) {
-                    fs::rename(&path_for_hook, &old_for_hook)
-                        .expect("capability handle must allow a share-delete rename");
-                    fs::write(&path_for_hook, b"replacement-windows-bytes").unwrap();
-                }
-            }));
-        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
-        let text = response_text(read_file_with_scope(single(&path), &scope));
-        assert!(renamed.load(Ordering::Acquire));
-        assert!(text.contains("original-windows-bytes"), "{text}");
-        assert!(!text.contains("replacement-windows-bytes"), "{text}");
+        for restricted in [false, true] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("allowed");
+            fs::create_dir(&root).unwrap();
+            let path = root.join("inside.txt");
+            let old_path = root.join("inside.old");
+            fs::write(&path, b"original-windows-bytes").unwrap();
+            let renamed = Arc::new(AtomicBool::new(false));
+            let renamed_for_hook = Arc::clone(&renamed);
+            let path_for_hook = path.clone();
+            let old_for_hook = old_path.clone();
+            let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
+                move |_| {
+                    if !renamed_for_hook.swap(true, Ordering::AcqRel) {
+                        fs::rename(&path_for_hook, &old_for_hook)
+                            .expect("capability handle must allow a share-delete rename");
+                        fs::write(&path_for_hook, b"replacement-windows-bytes").unwrap();
+                    }
+                },
+            ));
+            let scope = if restricted {
+                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
+            } else {
+                ReadScope::unrestricted()
+            };
+            let text = response_text(read_file_with_scope(single(&path), &scope));
+            assert!(renamed.load(Ordering::Acquire));
+            assert!(
+                text.contains("original-windows-bytes"),
+                "{restricted}: {text}"
+            );
+            assert!(
+                !text.contains("replacement-windows-bytes"),
+                "{restricted}: {text}"
+            );
+        }
     }
 
     #[cfg(unix)]
     #[test]
-    fn restricted_batch_pins_open_handle_for_swapped_entry_and_keeps_neighbor() {
-        let fixture = tempfile::tempdir().unwrap();
-        let root = fixture.path().join("allowed");
-        fs::create_dir(&root).unwrap();
-        let first = root.join("first.txt");
-        let second = root.join("second.txt");
-        let old = root.join("first.old");
-        fs::write(&first, b"original-first").unwrap();
-        fs::write(&second, b"stable-second").unwrap();
-        let first_for_hook = first.clone();
-        let old_for_hook = old.clone();
-        let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
-            move |path| {
-                if path == first_for_hook && first_for_hook.exists() {
-                    fs::rename(&first_for_hook, &old_for_hook).unwrap();
-                    fs::write(&first_for_hook, b"replacement-first").unwrap();
-                }
-            },
-        ));
-        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
-        let request = ReadRequest {
-            file_path: None,
-            files: Some(vec![
-                BatchReadEntry {
-                    path: display_path(&first),
-                    offset: None,
-                    limit: None,
-                    encoding: None,
+    fn batch_pins_open_handle_for_swapped_entry_in_both_modes_and_keeps_neighbor() {
+        for restricted in [false, true] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("allowed");
+            fs::create_dir(&root).unwrap();
+            let first = root.join("first.txt");
+            let second = root.join("second.txt");
+            let old = root.join("first.old");
+            fs::write(&first, b"original-first").unwrap();
+            fs::write(&second, b"stable-second").unwrap();
+            let first_for_hook = first.clone();
+            let old_for_hook = old.clone();
+            let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
+                move |path| {
+                    if path == first_for_hook && first_for_hook.exists() {
+                        fs::rename(&first_for_hook, &old_for_hook).unwrap();
+                        fs::write(&first_for_hook, b"replacement-first").unwrap();
+                    }
                 },
-                BatchReadEntry {
-                    path: display_path(&second),
-                    offset: None,
-                    limit: None,
-                    encoding: None,
-                },
-            ]),
-            offset: None,
-            limit: None,
-            pages: None,
-            pdf_mode: None,
-            encoding: None,
-            view: None,
-        };
-        let text = response_text(read_file_with_scope(request, &scope));
-        assert!(text.contains("original-first"), "{text}");
-        assert!(text.contains("stable-second"), "{text}");
-        assert!(!text.contains("replacement-first"), "{text}");
+            ));
+            let scope = if restricted {
+                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
+            } else {
+                ReadScope::unrestricted()
+            };
+            let request = ReadRequest {
+                file_path: None,
+                files: Some(vec![
+                    BatchReadEntry {
+                        path: display_path(&first),
+                        offset: None,
+                        limit: None,
+                        encoding: None,
+                    },
+                    BatchReadEntry {
+                        path: display_path(&second),
+                        offset: None,
+                        limit: None,
+                        encoding: None,
+                    },
+                ]),
+                offset: None,
+                limit: None,
+                pages: None,
+                pdf_mode: None,
+                encoding: None,
+                view: None,
+            };
+            let text = response_text(read_file_with_scope(request, &scope));
+            assert!(text.contains("original-first"), "{restricted}: {text}");
+            assert!(text.contains("stable-second"), "{restricted}: {text}");
+            assert!(!text.contains("replacement-first"), "{restricted}: {text}");
+        }
     }
 
     #[cfg(unix)]
     #[test]
-    fn restricted_direct_read_pins_open_handle_before_ancestor_swap() {
-        let fixture = tempfile::tempdir().unwrap();
-        let root = fixture.path().join("allowed");
-        let moved = fixture.path().join("allowed.old");
-        fs::create_dir(&root).unwrap();
-        let path = root.join("inside.txt");
-        fs::write(&path, b"original-ancestor-bytes").unwrap();
-        let root_for_hook = root.clone();
-        let moved_for_hook = moved.clone();
-        let _hook =
-            crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(move |_| {
-                if root_for_hook.exists() {
-                    fs::rename(&root_for_hook, &moved_for_hook).unwrap();
-                    fs::create_dir(&root_for_hook).unwrap();
-                    fs::write(root_for_hook.join("inside.txt"), b"replacement-ancestor").unwrap();
-                }
-            }));
-        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
-        let text = response_text(read_file_with_scope(single(&path), &scope));
-        assert!(text.contains("original-ancestor-bytes"), "{text}");
-        assert!(!text.contains("replacement-ancestor"), "{text}");
+    fn direct_read_pins_open_handle_before_ancestor_swap_in_both_modes() {
+        for restricted in [false, true] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("allowed");
+            let moved = fixture.path().join("allowed.old");
+            fs::create_dir(&root).unwrap();
+            let path = root.join("inside.txt");
+            fs::write(&path, b"original-ancestor-bytes").unwrap();
+            let root_for_hook = root.clone();
+            let moved_for_hook = moved.clone();
+            let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
+                move |_| {
+                    if root_for_hook.exists() {
+                        fs::rename(&root_for_hook, &moved_for_hook).unwrap();
+                        fs::create_dir(&root_for_hook).unwrap();
+                        fs::write(root_for_hook.join("inside.txt"), b"replacement-ancestor")
+                            .unwrap();
+                    }
+                },
+            ));
+            let scope = if restricted {
+                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
+            } else {
+                ReadScope::unrestricted()
+            };
+            let text = response_text(read_file_with_scope(single(&path), &scope));
+            assert!(
+                text.contains("original-ancestor-bytes"),
+                "{restricted}: {text}"
+            );
+            assert!(
+                !text.contains("replacement-ancestor"),
+                "{restricted}: {text}"
+            );
+        }
     }
 
     #[test]

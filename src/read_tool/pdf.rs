@@ -63,26 +63,6 @@ pub(super) fn parse_pdf_mode(value: Option<&str>) -> Result<PdfMode, String> {
     }
 }
 
-pub(super) fn read_pdf(
-    path: &Path,
-    pages_value: Option<&str>,
-    mode: PdfMode,
-    text_budget: Option<TokenBudget>,
-) -> ToolResponse {
-    let path = path.to_path_buf();
-    let path_display = crate::paths::display_path(&path);
-    let pages_value = pages_value.map(str::to_string);
-    match run_pdf_operation(move || {
-        read_pdf_inner(&path, pages_value.as_deref(), mode, text_budget)
-    }) {
-        Ok(response) => response,
-        Err(PdfOperationError::TimedOut) => ToolResponse::error(format!(
-            "PDF operation on {path_display} timed out and was aborted. The file may be malformed; other file types are unaffected."
-        )),
-        Err(PdfOperationError::Unavailable(reason)) => pdf_engine_error(&reason),
-    }
-}
-
 pub(super) fn read_pdf_handle(
     file: File,
     path: &Path,
@@ -101,23 +81,6 @@ pub(super) fn read_pdf_handle(
         )),
         Err(PdfOperationError::Unavailable(reason)) => pdf_engine_error(&reason),
     }
-}
-
-fn read_pdf_inner(
-    path: &Path,
-    pages_value: Option<&str>,
-    mode: PdfMode,
-    text_budget: Option<TokenBudget>,
-) -> ToolResponse {
-    let (_operation, pdfium) = match pdfium_session() {
-        Ok(session) => session,
-        Err(reason) => return pdf_engine_error(&reason),
-    };
-    let document = match pdfium.load_pdf_from_file(path, None) {
-        Ok(document) => document,
-        Err(error) => return pdf_load_error(error),
-    };
-    read_pdf_document(&document, pages_value, mode, text_budget)
 }
 
 fn read_pdf_reader_inner(

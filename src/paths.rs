@@ -135,9 +135,6 @@ impl ReadScope {
         path: &Path,
         formatter: fn(&Path) -> String,
     ) -> Result<ScopedPath, String> {
-        let Some(roots) = &self.roots else {
-            return Err("internal error: unrestricted scope has no capability root".to_string());
-        };
         let canonical = canonical_for_authorization(path).map_err(|error| {
             if error.kind() == io::ErrorKind::PermissionDenied {
                 self.denied_with_formatter(path, formatter)
@@ -145,6 +142,38 @@ impl ReadScope {
                 io_error_message_with_formatter(path, &error, formatter)
             }
         })?;
+        let Some(roots) = &self.roots else {
+            let mut root = canonical.parent().unwrap_or(canonical.as_path());
+            loop {
+                match Dir::open_ambient_dir(root, ambient_authority()) {
+                    Ok(capability) => {
+                        let relative = canonical
+                            .strip_prefix(root)
+                            .map(Path::to_path_buf)
+                            .unwrap_or_else(|_| PathBuf::from("."));
+                        return Ok(ScopedPath {
+                            display: formatter(&canonical),
+                            canonical,
+                            relative: if relative.as_os_str().is_empty() {
+                                PathBuf::from(".")
+                            } else {
+                                relative
+                            },
+                            capability: Arc::new(capability),
+                        });
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        let Some(parent) = root.parent() else {
+                            return Err(io_error_message_with_formatter(path, &error, formatter));
+                        };
+                        root = parent;
+                    }
+                    Err(error) => {
+                        return Err(io_error_message_with_formatter(path, &error, formatter));
+                    }
+                }
+            }
+        };
         let root = roots
             .iter()
             .filter(|root| canonical.starts_with(&root.canonical))

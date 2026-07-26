@@ -369,7 +369,9 @@ parent `.ignore` and `.gitignore` files, repository `.git/info/exclude`,
 gitfile `gitdir`/`commondir` metadata and their exclude file, and global Git
 configuration outside an allowed root. Those filtering-only reads can only omit
 candidates; they never authorize, return, or search candidate content. Without
-`--allow-root`, the historical unrestricted behavior is unchanged.
+`--allow-root`, requested paths remain unrestricted, while each file operation
+uses one capability-opened handle so later pathname replacement cannot redirect
+that operation's content read.
 
 The startup check sends the FastCtx version, normal HTTPS request metadata, and npm's standard registry request; it never sends repository paths, job data, or file contents. Background jobs persist their command, working directory, output, and exit status only in the current user's private `~/.fastctx/jobs/` directory; current-format jobs use a complete plain log. FastCtx does not upload this data. Bash commands can access the network according to the command itself. Prebuilt binaries include the PDF engine.
 

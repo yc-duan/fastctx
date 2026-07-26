@@ -10,39 +10,8 @@ use crate::encoding::{
 };
 use crate::model::ToolResponse;
 use crate::paths::io_error_message;
-use std::fs;
 use std::fs::File;
 use std::path::Path;
-
-pub(super) fn read_text_file(
-    path: &Path,
-    path_display: &str,
-    offset: Option<usize>,
-    limit: Option<usize>,
-    explicit_encoding: Option<&str>,
-    binary_type: Option<&str>,
-    budget: TokenBudget,
-) -> ToolResponse {
-    let (offset, limit) = match read_window(offset, limit) {
-        Ok(window) => window,
-        Err(message) => return ToolResponse::error(message),
-    };
-    let file_size = match fs::metadata(path) {
-        Ok(metadata) => metadata.len(),
-        Err(error) => return ToolResponse::error(io_error_message(path, &error)),
-    };
-    read_text_source(
-        ByteSource::File(path),
-        file_size,
-        path,
-        path_display,
-        offset,
-        limit,
-        explicit_encoding,
-        binary_type,
-        budget,
-    )
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn read_text_handle(
@@ -139,34 +108,6 @@ pub(super) struct BatchTextContent {
     pub(super) total_is_known: bool,
     pub(super) transcoding_note: Option<String>,
     pub(super) slice_complete: bool,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn read_batch_text_file(
-    path: &Path,
-    path_display: &str,
-    offset: Option<usize>,
-    limit: Option<usize>,
-    explicit_encoding: Option<&str>,
-    binary_type: Option<&str>,
-    collection_budget: usize,
-) -> Result<BatchTextContent, String> {
-    let offset = offset.unwrap_or(1);
-    let limit = limit.unwrap_or(UNBOUNDED_LINE_LIMIT);
-    let file_size = fs::metadata(path)
-        .map_err(|error| io_error_message(path, &error))?
-        .len();
-    read_batch_text_source(
-        ByteSource::File(path),
-        file_size,
-        path,
-        path_display,
-        offset,
-        limit,
-        explicit_encoding,
-        binary_type,
-        collection_budget,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -473,7 +414,7 @@ fn line_span(first: usize, last: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::read_text_file;
+    use super::read_text_handle;
     use crate::ToolContent;
     use crate::budget::TokenBudget;
     use std::fs;
@@ -487,7 +428,9 @@ mod tests {
             ["界".repeat(20), "文".repeat(20), "字".repeat(20)].join("\n"),
         )
         .unwrap();
-        let response = read_text_file(
+        let file = fs::File::open(&path).unwrap();
+        let response = read_text_handle(
+            &file,
             &path,
             "budget.txt",
             None,
@@ -518,7 +461,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("tiny-budget.txt");
         fs::write(&path, "content\nmore").unwrap();
-        let response = read_text_file(
+        let file = fs::File::open(&path).unwrap();
+        let response = read_text_handle(
+            &file,
             &path,
             "tiny-budget.txt",
             None,

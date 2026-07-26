@@ -12,32 +12,6 @@ use std::path::Path;
 const BYTES_PER_LINE: u64 = 16;
 const HEX_COLUMN_WIDTH: usize = 48;
 
-pub(super) fn read_hex_file(
-    path: &Path,
-    offset: Option<usize>,
-    limit: Option<usize>,
-    budget: TokenBudget,
-) -> ToolResponse {
-    let offset = offset.unwrap_or(1);
-    let limit = limit.unwrap_or(DEFAULT_HEX_LINE_LIMIT);
-    if offset == 0 {
-        return ToolResponse::error("Invalid offset value: 0. Expected an integer >= 1.");
-    }
-    if limit == 0 {
-        return ToolResponse::error("Invalid limit value: 0. Expected an integer >= 1.");
-    }
-
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) => return ToolResponse::error(io_error_message(path, &error)),
-    };
-    let file_size = match file.metadata() {
-        Ok(metadata) => metadata.len(),
-        Err(error) => return ToolResponse::error(io_error_message(path, &error)),
-    };
-    read_hex_reader(file, file_size, path, offset, limit, budget)
-}
-
 pub(super) fn read_hex_handle(
     file: File,
     path: &Path,
@@ -176,7 +150,7 @@ fn line_span(first: u64, last: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_hex_line, read_hex_file};
+    use super::{format_hex_line, read_hex_handle};
     use crate::ToolContent;
     use crate::budget::TokenBudget;
 
@@ -201,7 +175,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("bytes.bin");
         std::fs::write(&path, b"0123456789ABCDEFmore").unwrap();
-        let response = read_hex_file(
+        let response = read_hex_handle(
+            std::fs::File::open(&path).unwrap(),
             &path,
             None,
             None,

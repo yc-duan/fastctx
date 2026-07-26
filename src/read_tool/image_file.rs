@@ -41,14 +41,6 @@ pub(super) fn detect_image_mime(path: &Path, bytes: &[u8]) -> Option<&'static st
     }
 }
 
-pub(super) fn read_image(path: &Path) -> ToolResponse {
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) => return ToolResponse::error(io_error_message(path, &error)),
-    };
-    read_image_handle(file, path)
-}
-
 pub(super) fn read_image_handle(mut file: File, path: &Path) -> ToolResponse {
     let reported_size = match file.metadata() {
         Ok(metadata) => metadata.len(),
@@ -93,7 +85,7 @@ fn oversized_image(size: u64) -> ToolResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::read_image;
+    use super::read_image_handle;
     use crate::ToolContent;
 
     #[test]
@@ -101,7 +93,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("changed.bin");
         std::fs::write(&path, b"not an image anymore").unwrap();
-        let response = read_image(&path);
+        let response = read_image_handle(std::fs::File::open(&path).unwrap(), &path);
         assert!(response.is_error);
         assert_eq!(
             response.content,

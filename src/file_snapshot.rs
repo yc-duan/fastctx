@@ -9,6 +9,7 @@ use crate::operation::{WorkCheckpoint, WorkStop};
 use crate::path_codec::{FileIdentityHint, PathRecord};
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write};
+#[cfg(test)]
 use std::path::Path;
 use std::sync::Arc;
 
@@ -709,6 +710,11 @@ pub(crate) fn capture_classify_open_file(
     }
     let capture = capture_reader(&mut file, explicit_encoding, fallback_encoding, operation)?;
     checkpoint(operation)?;
+    #[cfg(test)]
+    if let Some(operation) = operation {
+        operation.stage(crate::operation::TestStage::BeforeIdentityPostCheck);
+    }
+    checkpoint(operation)?;
     let (after, is_regular) = identity_from_file(&file)
         .map_err(|error| prefer_stop(operation, CaptureFailure::Io(error)))?;
     if !is_regular || !before.same_state_for_authorized_capture(&after) {
@@ -745,12 +751,12 @@ fn prefer_stop(operation: Option<&dyn WorkCheckpoint>, failure: CaptureFailure) 
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(test, not(windows)))]
 fn open_original(path: &Path) -> io::Result<File> {
     File::open(path)
 }
 
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 fn open_original(path: &Path) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -765,6 +771,7 @@ fn open_original(path: &Path) -> io::Result<File> {
 }
 
 /// Opens the original candidate once, captures its bytes, and verifies stable identity.
+#[cfg(test)]
 pub(crate) fn capture_classify(
     candidate: &PathRecord,
     explicit_encoding: Option<&str>,
@@ -891,7 +898,7 @@ fn identity_from_file(file: &File) -> io::Result<(FileIdentity, bool)> {
     Ok((FileIdentity::from_metadata(&metadata), metadata.is_file()))
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn identity_from_path(path: &Path) -> io::Result<(FileIdentity, bool)> {
     let metadata = std::fs::metadata(path)?;
     Ok((FileIdentity::from_metadata(&metadata), metadata.is_file()))
@@ -1026,7 +1033,7 @@ fn identity_from_file(file: &File) -> io::Result<(FileIdentity, bool)> {
     Ok((FileIdentity::from_file(file)?, metadata.is_file()))
 }
 
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 fn identity_from_path(path: &Path) -> io::Result<(FileIdentity, bool)> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
