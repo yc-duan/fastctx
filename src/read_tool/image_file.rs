@@ -42,42 +42,11 @@ pub(super) fn detect_image_mime(path: &Path, bytes: &[u8]) -> Option<&'static st
 }
 
 pub(super) fn read_image(path: &Path) -> ToolResponse {
-    let mut file = match File::open(path) {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) => return ToolResponse::error(io_error_message(path, &error)),
     };
-    let reported_size = match file.metadata() {
-        Ok(metadata) => metadata.len(),
-        Err(error) => return ToolResponse::error(io_error_message(path, &error)),
-    };
-    if reported_size > MAX_IMAGE_BYTES as u64 {
-        return oversized_image(reported_size);
-    }
-    let mut bytes = Vec::with_capacity(reported_size as usize);
-    if let Err(error) = file
-        .by_ref()
-        .take(MAX_IMAGE_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-    {
-        return ToolResponse::error(io_error_message(path, &error));
-    }
-    if bytes.len() > MAX_IMAGE_BYTES {
-        return oversized_image(bytes.len() as u64);
-    }
-    let Some(mime_type) = detect_image_mime(path, &bytes) else {
-        return ToolResponse::error(format!(
-            "Cannot read image file: {}. Retry after confirming it is a PNG, JPG, GIF, WebP, or BMP file.",
-            crate::paths::display_path(path)
-        ));
-    };
-    ToolResponse {
-        content: vec![ToolContent::Image {
-            data: base64::engine::general_purpose::STANDARD.encode(bytes),
-            mime_type: mime_type.to_string(),
-            detail: None,
-        }],
-        is_error: false,
-    }
+    read_image_handle(file, path)
 }
 
 pub(super) fn read_image_handle(mut file: File, path: &Path) -> ToolResponse {

@@ -117,24 +117,7 @@ fn read_pdf_inner(
         Ok(document) => document,
         Err(error) => return pdf_load_error(error),
     };
-    let total_pages = document.pages().len() as usize;
-    if total_pages == 0 {
-        return corrupted_pdf();
-    }
-    let selected = match parse_pages(pages_value, total_pages, mode) {
-        Ok(selected) => selected,
-        Err(message) => return ToolResponse::error(message),
-    };
-
-    match mode {
-        PdfMode::Text => read_pdf_text(
-            &document,
-            &selected,
-            total_pages,
-            text_budget.expect("text mode always receives a token budget"),
-        ),
-        PdfMode::Image => read_pdf_images(&document, &selected, total_pages),
-    }
+    read_pdf_document(&document, pages_value, mode, text_budget)
 }
 
 fn read_pdf_reader_inner(
@@ -151,6 +134,15 @@ fn read_pdf_reader_inner(
         Ok(document) => document,
         Err(error) => return pdf_load_error(error),
     };
+    read_pdf_document(&document, pages_value, mode, text_budget)
+}
+
+fn read_pdf_document(
+    document: &PdfDocument<'_>,
+    pages_value: Option<&str>,
+    mode: PdfMode,
+    text_budget: Option<TokenBudget>,
+) -> ToolResponse {
     let total_pages = document.pages().len() as usize;
     if total_pages == 0 {
         return corrupted_pdf();
@@ -161,12 +153,12 @@ fn read_pdf_reader_inner(
     };
     match mode {
         PdfMode::Text => read_pdf_text(
-            &document,
+            document,
             &selected,
             total_pages,
             text_budget.expect("text mode always receives a token budget"),
         ),
-        PdfMode::Image => read_pdf_images(&document, &selected, total_pages),
+        PdfMode::Image => read_pdf_images(document, &selected, total_pages),
     }
 }
 

@@ -166,15 +166,6 @@ impl ValidatedFileEncoding {
         decode_bytes(raw, &self.detected).map(|text| std::borrow::Cow::Owned(text.into_bytes()))
     }
 
-    /// Streams UTF-8 text on character boundaries and stops immediately when the callback returns false.
-    pub(crate) fn stream_text(
-        &self,
-        path: &Path,
-        on_text: impl FnMut(&str) -> bool,
-    ) -> Result<bool, StreamDecodeFailure> {
-        self.stream_source(ByteSource::File(path), on_text)
-    }
-
     /// Streams decoded text from the supplied source without choosing a new
     /// pathname.
     pub(crate) fn stream_source(

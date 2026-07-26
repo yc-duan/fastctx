@@ -98,15 +98,6 @@ impl Read for SnapshotReader<'_> {
     }
 }
 
-impl Seek for SnapshotReader<'_> {
-    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
-        match self {
-            Self::Memory(reader) => reader.seek(position),
-            Self::Temp(reader) => reader.seek(position),
-        }
-    }
-}
-
 #[derive(Debug)]
 struct TempSnapshot {
     file: tempfile::NamedTempFile,

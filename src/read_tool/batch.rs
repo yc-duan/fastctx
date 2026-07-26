@@ -37,6 +37,12 @@ enum PreparedOutcome {
     Message(String),
 }
 
+#[derive(Clone, Copy)]
+enum PreparedSource<'a> {
+    File(&'a std::path::Path),
+    Handle(&'a fs::File),
+}
+
 pub(super) fn read_text_files(mut request: ReadRequest, scope: &ReadScope) -> ToolResponse {
     let entries = request
         .files
@@ -251,40 +257,14 @@ fn prepare_entry(
             outcome: PreparedOutcome::Message(io_error_message(&path, &error)),
         };
     }
-    if pdf::is_pdf(&path, &prefix) {
-        return PreparedEntry {
-            path: path_display,
-            outcome: PreparedOutcome::Message(
-                "PDF files cannot be included in files. Read this file separately with file_path and optional pages/pdf_mode."
-                    .to_string(),
-            ),
-        };
-    }
-    if image_file::detect_image_mime(&path, &prefix).is_some() {
-        return PreparedEntry {
-            path: path_display,
-            outcome: PreparedOutcome::Message(
-                "Image files cannot be included in files. Read this file separately with file_path."
-                    .to_string(),
-            ),
-        };
-    }
-    let outcome = match text_file::read_batch_text_file(
-        &path,
-        &path_display,
-        entry.offset,
-        entry.limit,
-        entry.encoding.as_deref(),
-        detect_binary_type(&prefix),
+    prepare_classified_entry(
+        entry,
         collection_budget,
-    ) {
-        Ok(content) => PreparedOutcome::Content(content),
-        Err(message) => PreparedOutcome::Message(message),
-    };
-    PreparedEntry {
-        path: path_display,
-        outcome,
-    }
+        &path,
+        path_display,
+        &prefix,
+        PreparedSource::File(&path),
+    )
 }
 
 fn prepare_restricted_entry(
@@ -355,36 +335,66 @@ fn prepare_restricted_entry(
             };
         }
     };
-    if pdf::is_pdf(&routed.canonical, &prefix) {
-        return PreparedEntry {
-            path: path_display,
-            outcome: PreparedOutcome::Message(
-                "PDF files cannot be included in files. Read this file separately with file_path and optional pages/pdf_mode.".to_string(),
-            ),
-        };
-    }
-    if image_file::detect_image_mime(&routed.canonical, &prefix).is_some() {
-        return PreparedEntry {
-            path: path_display,
-            outcome: PreparedOutcome::Message(
-                "Image files cannot be included in files. Read this file separately with file_path.".to_string(),
-            ),
-        };
-    }
-    let outcome = text_file::read_batch_text_handle(
-        &file,
-        &routed.canonical,
-        &path_display,
-        entry.offset,
-        entry.limit,
-        entry.encoding.as_deref(),
-        detect_binary_type(&prefix),
+    prepare_classified_entry(
+        entry,
         collection_budget,
+        &routed.canonical,
+        path_display,
+        &prefix,
+        PreparedSource::Handle(&file),
     )
-    .map_or_else(PreparedOutcome::Message, PreparedOutcome::Content);
+}
+
+fn prepare_classified_entry(
+    entry: &BatchReadEntry,
+    collection_budget: usize,
+    path: &std::path::Path,
+    path_display: String,
+    prefix: &[u8],
+    source: PreparedSource<'_>,
+) -> PreparedEntry {
+    if pdf::is_pdf(path, prefix) {
+        return PreparedEntry {
+            path: path_display,
+            outcome: PreparedOutcome::Message(
+                "PDF files cannot be included in files. Read this file separately with file_path and optional pages/pdf_mode."
+                    .to_string(),
+            ),
+        };
+    }
+    if image_file::detect_image_mime(path, prefix).is_some() {
+        return PreparedEntry {
+            path: path_display,
+            outcome: PreparedOutcome::Message(
+                "Image files cannot be included in files. Read this file separately with file_path."
+                    .to_string(),
+            ),
+        };
+    }
+    let read = match source {
+        PreparedSource::File(path) => text_file::read_batch_text_file(
+            path,
+            &path_display,
+            entry.offset,
+            entry.limit,
+            entry.encoding.as_deref(),
+            detect_binary_type(prefix),
+            collection_budget,
+        ),
+        PreparedSource::Handle(file) => text_file::read_batch_text_handle(
+            file,
+            path,
+            &path_display,
+            entry.offset,
+            entry.limit,
+            entry.encoding.as_deref(),
+            detect_binary_type(prefix),
+            collection_budget,
+        ),
+    };
     PreparedEntry {
         path: path_display,
-        outcome,
+        outcome: read.map_or_else(PreparedOutcome::Message, PreparedOutcome::Content),
     }
 }
 
