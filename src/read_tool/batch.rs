@@ -1,6 +1,6 @@
 //! Request-ordered text batching with one shared token budget and exact continuations.
 
-use super::{BatchReadEntry, ReadRequest, image_file, pdf, text_file};
+use super::{BatchReadEntry, ReadRequest, image_file, pdf, read_prefix, text_file};
 use crate::binary::detect_binary_type;
 use crate::budget::{READ_TOKEN_BUDGET_ENV, TokenBudget, estimate_tokens, tool_token_budget};
 use crate::encoding::canonical_encoding_label;
@@ -197,6 +197,9 @@ fn prepare_entry(
             }),
         };
     }
+    if scope.is_restricted() {
+        return prepare_restricted_entry(entry, collection_budget, scope, &parsed);
+    }
     let authorized = match scope.authorize(&parsed) {
         Ok(path) => path,
         Err(message) => {
@@ -278,6 +281,107 @@ fn prepare_entry(
         Ok(content) => PreparedOutcome::Content(content),
         Err(message) => PreparedOutcome::Message(message),
     };
+    PreparedEntry {
+        path: path_display,
+        outcome,
+    }
+}
+
+fn prepare_restricted_entry(
+    entry: &BatchReadEntry,
+    collection_budget: usize,
+    scope: &ReadScope,
+    parsed: &std::path::Path,
+) -> PreparedEntry {
+    let input_display = display_path(parsed);
+    let routed = match scope.route(parsed) {
+        Ok(routed) => routed,
+        Err(message) => {
+            return PreparedEntry {
+                path: input_display,
+                outcome: PreparedOutcome::Message(message),
+            };
+        }
+    };
+    let metadata = match routed.capability.metadata(&routed.relative) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return PreparedEntry {
+                path: input_display,
+                outcome: PreparedOutcome::Message(missing_read_file_message(&entry.path)),
+            };
+        }
+        Err(error) => {
+            return PreparedEntry {
+                path: input_display,
+                outcome: PreparedOutcome::Message(io_error_message(parsed, &error)),
+            };
+        }
+    };
+    let path_display = routed.display.clone();
+    if metadata.is_dir() {
+        return PreparedEntry {
+            path: path_display.clone(),
+            outcome: PreparedOutcome::Message(format!(
+                "{path_display} is a directory, not a file. Use the glob tool to list its contents."
+            )),
+        };
+    }
+    if !metadata.is_file() {
+        return PreparedEntry {
+            path: path_display.clone(),
+            outcome: PreparedOutcome::Message(format!(
+                "Cannot read non-regular file: {path_display}. Only regular files are supported."
+            )),
+        };
+    }
+    let mut file = match routed.capability.open(&routed.relative) {
+        Ok(file) => file.into_std(),
+        Err(error) => {
+            return PreparedEntry {
+                path: path_display,
+                outcome: PreparedOutcome::Message(io_error_message(parsed, &error)),
+            };
+        }
+    };
+    #[cfg(test)]
+    crate::file_snapshot::tests::notify_original_open(&routed.canonical);
+    let prefix = match read_prefix(&mut file) {
+        Ok(prefix) => prefix,
+        Err(error) => {
+            return PreparedEntry {
+                path: path_display,
+                outcome: PreparedOutcome::Message(io_error_message(parsed, &error)),
+            };
+        }
+    };
+    if pdf::is_pdf(&routed.canonical, &prefix) {
+        return PreparedEntry {
+            path: path_display,
+            outcome: PreparedOutcome::Message(
+                "PDF files cannot be included in files. Read this file separately with file_path and optional pages/pdf_mode.".to_string(),
+            ),
+        };
+    }
+    if image_file::detect_image_mime(&routed.canonical, &prefix).is_some() {
+        return PreparedEntry {
+            path: path_display,
+            outcome: PreparedOutcome::Message(
+                "Image files cannot be included in files. Read this file separately with file_path.".to_string(),
+            ),
+        };
+    }
+    let outcome = text_file::read_batch_text_handle(
+        &file,
+        &routed.canonical,
+        &path_display,
+        entry.offset,
+        entry.limit,
+        entry.encoding.as_deref(),
+        detect_binary_type(&prefix),
+        collection_budget,
+    )
+    .map_or_else(PreparedOutcome::Message, PreparedOutcome::Content);
     PreparedEntry {
         path: path_display,
         outcome,

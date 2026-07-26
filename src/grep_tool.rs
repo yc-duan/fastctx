@@ -9,7 +9,9 @@ use crate::encoding::{
     canonical_encoding_label, validate_snapshot_encoding,
 };
 use crate::file_executor::GrepGlobExecutor;
-use crate::file_snapshot::{CaptureDisposition, CaptureFailure, capture_classify};
+use crate::file_snapshot::{
+    CaptureDisposition, CaptureFailure, capture_classify, capture_classify_open_file,
+};
 use crate::grep_sink::{
     CapturedLine, ContentEntry, ContentSpec, FileResult, GrepSearchPlan, GrepSinkError,
     LineMatchSpan, PlanSink,
@@ -20,7 +22,8 @@ use crate::operation::{
 };
 use crate::ordered_window::{OrderedError, for_each_ordered};
 use crate::path_codec::{
-    PathRecord as Candidate, RootRequirement, io_error_message, resolve_search_root_with_scope,
+    PathRecord as Candidate, RootRequirement, display_path as search_display_path,
+    io_error_message, resolve_search_root_with_scope,
 };
 use crate::paths::ReadScope;
 use crate::render_plan::{
@@ -578,6 +581,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
         let mut failure: Option<ToolResponse> = None;
         let worker_matcher = Arc::clone(&matcher);
         let worker_encoding = search_encoding.clone();
+        let worker_scope = scope.clone();
         let panic_candidates = Arc::clone(&candidates);
         let ordered = for_each_ordered(
             Arc::clone(&candidates),
@@ -590,6 +594,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
                     plan,
                     multiline,
                     &worker_encoding,
+                    &worker_scope,
                     work,
                 )
             },
@@ -698,6 +703,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
     let mut failure: Option<String> = None;
     let worker_matcher = Arc::clone(&matcher);
     let worker_encoding = search_encoding.clone();
+    let worker_scope = scope.clone();
     let panic_candidates = Arc::clone(&candidates);
     let ordered = for_each_ordered(
         Arc::clone(&candidates),
@@ -710,6 +716,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
                 worker_plan,
                 multiline,
                 &worker_encoding,
+                &worker_scope,
                 work,
             )
         },
@@ -750,6 +757,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
                         exact,
                         multiline,
                         &search_encoding,
+                        scope,
                         Some(&exact_work),
                     ) {
                         Ok(outcome) => (outcome, true),
@@ -910,17 +918,50 @@ fn search_candidate(
     plan: GrepSearchPlan,
     multiline: bool,
     encoding: &SearchEncoding,
+    scope: &ReadScope,
     operation: Option<&dyn WorkCheckpoint>,
 ) -> Result<SearchOutcome, SearchFailure> {
     if let Some(content_multiline) = plan.content_multiline() {
         debug_assert_eq!(content_multiline, multiline);
     }
-    let snapshot = match capture_classify(
-        candidate,
-        encoding.explicit.as_deref(),
-        encoding.fallback.as_deref(),
-        operation,
-    ) {
+    let capture = if scope.is_restricted() {
+        let routed = scope
+            .route_with_formatter(&candidate.native, search_display_path)
+            .map_err(SearchFailure::Message)?;
+        let file = match routed.capability.open(&routed.relative) {
+            Ok(file) => file.into_std(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(SearchOutcome {
+                    result: None,
+                    entries_seen: 0,
+                    skip: Some(CandidateSkip::ChangedWhileSearched),
+                    transcoding_note: None,
+                    used_fallback: false,
+                });
+            }
+            Err(error) => {
+                return Err(SearchFailure::Message(io_error_message(
+                    &candidate.native,
+                    &error,
+                )));
+            }
+        };
+        capture_classify_open_file(
+            file,
+            candidate.clone(),
+            encoding.explicit.as_deref(),
+            encoding.fallback.as_deref(),
+            operation,
+        )
+    } else {
+        capture_classify(
+            candidate,
+            encoding.explicit.as_deref(),
+            encoding.fallback.as_deref(),
+            operation,
+        )
+    };
+    let snapshot = match capture {
         Ok(CaptureDisposition::Searchable(snapshot)) => snapshot,
         Ok(CaptureDisposition::BinarySkipped(proof)) => {
             debug_assert!(matches!(
@@ -1149,9 +1190,18 @@ fn search_candidate_for_work(
     plan: GrepSearchPlan,
     multiline: bool,
     encoding: &SearchEncoding,
+    scope: &ReadScope,
     work: &WorkCtx,
 ) -> Result<Result<SearchOutcome, SearchFailure>, WorkStop> {
-    match search_candidate(candidate, matcher, plan, multiline, encoding, Some(work)) {
+    match search_candidate(
+        candidate,
+        matcher,
+        plan,
+        multiline,
+        encoding,
+        scope,
+        Some(work),
+    ) {
         Err(SearchFailure::Cancelled) => Err(WorkStop::RequestCancelled),
         Err(SearchFailure::EpochRetired) => Err(WorkStop::EpochRetired),
         outcome => Ok(outcome),
@@ -2701,6 +2751,7 @@ mod tests {
                 explicit: None,
                 fallback: None,
             },
+            &ReadScope::unrestricted(),
             None,
         ) {
             Ok(outcome) => outcome,
@@ -3656,6 +3707,96 @@ mod tests {
         };
         assert!(text.starts_with("Permission denied: "), "{text}");
         assert!(!text.contains("secret-symlink-grep-content"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_grep_keeps_stable_file_symlinks_in_configured_roots() {
+        let fixture = tempfile::tempdir().unwrap();
+        let left = fixture.path().join("left");
+        let right = fixture.path().join("right");
+        std::fs::create_dir(&left).unwrap();
+        std::fs::create_dir(&right).unwrap();
+        std::fs::write(left.join("same-target.txt"), b"stable-hit\n").unwrap();
+        std::fs::write(right.join("cross-target.txt"), b"stable-hit\n").unwrap();
+        std::os::unix::fs::symlink("same-target.txt", left.join("same-link.txt")).unwrap();
+        std::os::unix::fs::symlink(right.join("cross-target.txt"), left.join("cross-link.txt"))
+            .unwrap();
+        let scope = ReadScope::from_allow_roots(&[left.clone(), right]).unwrap();
+        let mut request = grep_request(&left, OutputMode::FilesWithMatches);
+        request.pattern = "stable-hit".to_string();
+        let restricted = grep_files_with_scope(request.clone(), CancellationToken::new(), &scope);
+        let unrestricted = grep_files_with_scope(
+            request,
+            CancellationToken::new(),
+            &ReadScope::unrestricted(),
+        );
+        assert_eq!(restricted, unrestricted);
+        let ToolContent::Text(text) = &restricted.content[0] else {
+            panic!("expected text response: {restricted:?}");
+        };
+        assert!(text.contains("same-link.txt"), "{text}");
+        assert!(text.contains("cross-link.txt"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_grep_rejects_candidate_after_final_component_swap() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("inside.txt");
+        let old = root.join("inside.old");
+        std::fs::write(&path, b"original-grep-hit\n").unwrap();
+        let path_for_hook = path.clone();
+        let old_for_hook = old.clone();
+        let _hook =
+            crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(move |_| {
+                if path_for_hook.exists() {
+                    std::fs::rename(&path_for_hook, &old_for_hook).unwrap();
+                    std::fs::write(&path_for_hook, b"replacement-grep-hit\n").unwrap();
+                }
+            }));
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let mut request = grep_request(&root, OutputMode::Content);
+        request.pattern = "original-grep-hit".to_string();
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text response: {response:?}");
+        };
+        assert!(text.contains("changed while being searched"), "{text}");
+        assert!(!text.contains("original-grep-hit"), "{text}");
+        assert!(!text.contains("replacement-grep-hit"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_grep_rejects_same_length_same_mtime_change_after_open() {
+        use std::os::unix::fs::MetadataExt;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("inside.txt");
+        std::fs::write(&path, b"original-grep\n").unwrap();
+        let modified = std::fs::metadata(&path).unwrap();
+        let mtime =
+            filetime::FileTime::from_unix_time(modified.mtime(), modified.mtime_nsec() as u32);
+        let path_for_hook = path.clone();
+        let _hook =
+            crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(move |_| {
+                std::fs::write(&path_for_hook, b"replaced-grep\n").unwrap();
+                filetime::set_file_mtime(&path_for_hook, mtime).unwrap();
+            }));
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let mut request = grep_request(&root, OutputMode::FilesWithMatches);
+        request.pattern = "replaced-grep".to_string();
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text response: {response:?}");
+        };
+        assert!(text.contains("changed while being searched"), "{text}");
+        assert!(!text.contains("replaced-grep"), "{text}");
     }
 
     #[test]

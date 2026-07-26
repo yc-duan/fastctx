@@ -78,6 +78,86 @@ impl FileIdentityHint {
             }
         }
     }
+
+    fn from_cap_metadata(metadata: &cap_std::fs::Metadata) -> Self {
+        #[cfg(unix)]
+        {
+            use cap_std::fs::MetadataExt;
+            Self {
+                len: metadata.len(),
+                modified: metadata.modified().ok().map(|time| time.into_std()),
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                modified_seconds: metadata.mtime(),
+                modified_nanoseconds: metadata.mtime_nsec(),
+                changed_seconds: metadata.ctime(),
+                changed_nanoseconds: metadata.ctime_nsec(),
+            }
+        }
+        #[cfg(windows)]
+        {
+            use cap_std::fs::MetadataExt;
+            Self {
+                len: metadata.len(),
+                modified: metadata.modified().ok().map(|time| time.into_std()),
+                creation_time: metadata.creation_time(),
+                last_write_time: metadata.last_write_time(),
+                attributes: metadata.file_attributes(),
+            }
+        }
+    }
+}
+
+pub(crate) trait MetadataView {
+    fn is_file(&self) -> bool;
+    fn is_dir(&self) -> bool;
+    fn modified(&self) -> io::Result<SystemTime>;
+    fn len(&self) -> u64;
+    fn identity_hint(&self) -> FileIdentityHint;
+}
+
+impl MetadataView for Metadata {
+    fn is_file(&self) -> bool {
+        self.is_file()
+    }
+
+    fn is_dir(&self) -> bool {
+        self.is_dir()
+    }
+
+    fn modified(&self) -> io::Result<SystemTime> {
+        self.modified()
+    }
+
+    fn len(&self) -> u64 {
+        self.len()
+    }
+
+    fn identity_hint(&self) -> FileIdentityHint {
+        FileIdentityHint::from_metadata(self)
+    }
+}
+
+impl MetadataView for cap_std::fs::Metadata {
+    fn is_file(&self) -> bool {
+        self.is_file()
+    }
+
+    fn is_dir(&self) -> bool {
+        self.is_dir()
+    }
+
+    fn modified(&self) -> io::Result<SystemTime> {
+        self.modified().map(|time| time.into_std())
+    }
+
+    fn len(&self) -> u64 {
+        self.len()
+    }
+
+    fn identity_hint(&self) -> FileIdentityHint {
+        FileIdentityHint::from_cap_metadata(self)
+    }
 }
 
 /// One candidate path with separate native identity and canonical model-facing keys.
@@ -109,10 +189,10 @@ impl PathRecord {
     }
 
     /// Captures walker metadata, optionally requiring the modification-time sort key.
-    pub(crate) fn from_metadata(
+    pub(crate) fn from_metadata<M: MetadataView>(
         native: &Path,
         match_root: &Path,
-        metadata: &Metadata,
+        metadata: &M,
         include_modified: bool,
     ) -> io::Result<Self> {
         let mut record = Self::without_metadata(native, match_root);
@@ -122,7 +202,7 @@ impl PathRecord {
             None
         };
         record.traversal_len_hint = Some(metadata.len());
-        record.traversal_fingerprint = Some(FileIdentityHint::from_metadata(metadata));
+        record.traversal_fingerprint = Some(metadata.identity_hint());
         Ok(record)
     }
 }
@@ -134,12 +214,55 @@ pub(crate) enum RootKind {
     Directory,
 }
 
+#[derive(Debug)]
+pub(crate) enum RootMetadata {
+    Ambient(Metadata),
+    Scoped(cap_std::fs::Metadata),
+}
+
+impl MetadataView for RootMetadata {
+    fn is_file(&self) -> bool {
+        match self {
+            Self::Ambient(metadata) => metadata.is_file(),
+            Self::Scoped(metadata) => metadata.is_file(),
+        }
+    }
+
+    fn is_dir(&self) -> bool {
+        match self {
+            Self::Ambient(metadata) => metadata.is_dir(),
+            Self::Scoped(metadata) => metadata.is_dir(),
+        }
+    }
+
+    fn modified(&self) -> io::Result<SystemTime> {
+        match self {
+            Self::Ambient(metadata) => metadata.modified(),
+            Self::Scoped(metadata) => metadata.modified().map(|time| time.into_std()),
+        }
+    }
+
+    fn len(&self) -> u64 {
+        match self {
+            Self::Ambient(metadata) => metadata.len(),
+            Self::Scoped(metadata) => metadata.len(),
+        }
+    }
+
+    fn identity_hint(&self) -> FileIdentityHint {
+        match self {
+            Self::Ambient(metadata) => FileIdentityHint::from_metadata(metadata),
+            Self::Scoped(metadata) => FileIdentityHint::from_cap_metadata(metadata),
+        }
+    }
+}
+
 /// A search root whose one metadata result is reused by every downstream decision.
 #[derive(Debug)]
 pub(crate) struct ResolvedRoot {
     pub(crate) native: PathBuf,
     pub(crate) display: Arc<str>,
-    pub(crate) metadata: Metadata,
+    pub(crate) metadata: RootMetadata,
     pub(crate) kind: RootKind,
     pub(crate) scope: ReadScope,
 }
@@ -151,7 +274,7 @@ impl ResolvedRoot {
         Ok(Self {
             display: Arc::from(display_path(&native)),
             native,
-            metadata,
+            metadata: RootMetadata::Ambient(metadata),
             kind,
             scope: ReadScope::unrestricted(),
         })
@@ -282,14 +405,30 @@ pub(crate) fn resolve_search_root_with_scope(
         return Err(missing_relative_search_path_message(&parsed));
     }
 
-    let authorized = scope.authorize_with_formatter(&parsed, display_path)?;
-    let metadata = root_metadata(&authorized).map_err(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            missing_absolute_search_path_message(&authorized)
-        } else {
-            io_error_message(&authorized, &error)
-        }
-    })?;
+    let (authorized, metadata) = if scope.is_restricted() {
+        let routed = scope.route_with_formatter(&parsed, display_path)?;
+        let metadata = routed
+            .capability
+            .metadata(&routed.relative)
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    missing_absolute_search_path_message(&routed.canonical)
+                } else {
+                    io_error_message(&routed.canonical, &error)
+                }
+            })?;
+        (routed.canonical, RootMetadata::Scoped(metadata))
+    } else {
+        let authorized = scope.authorize_with_formatter(&parsed, display_path)?;
+        let metadata = root_metadata(&authorized).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                missing_absolute_search_path_message(&authorized)
+            } else {
+                io_error_message(&authorized, &error)
+            }
+        })?;
+        (authorized, RootMetadata::Ambient(metadata))
+    };
     let kind = metadata_kind(&authorized, &metadata)?;
     if requirement == RootRequirement::Directory && kind != RootKind::Directory {
         return Err(format!(
@@ -298,8 +437,11 @@ pub(crate) fn resolve_search_root_with_scope(
         ));
     }
 
-    let canonical =
-        canonical_existing(&authorized).map_err(|error| io_error_message(&authorized, &error))?;
+    let canonical = if scope.is_restricted() {
+        authorized
+    } else {
+        canonical_existing(&authorized).map_err(|error| io_error_message(&authorized, &error))?
+    };
     Ok(ResolvedRoot {
         display: Arc::from(display_path(&canonical)),
         native: canonical,
@@ -309,7 +451,7 @@ pub(crate) fn resolve_search_root_with_scope(
     })
 }
 
-fn metadata_kind(path: &Path, metadata: &Metadata) -> Result<RootKind, String> {
+fn metadata_kind<M: MetadataView>(path: &Path, metadata: &M) -> Result<RootKind, String> {
     if metadata.is_file() {
         Ok(RootKind::File)
     } else if metadata.is_dir() {
@@ -608,8 +750,9 @@ fn append_prefix(display: &mut String, prefix: std::path::PrefixComponent<'_>) {
 mod tests {
     use super::{
         ROOT_METADATA_CALLS, RootKind, RootRequirement, display_path, io_error_message,
-        parse_input_path, resolve_search_root,
+        parse_input_path, resolve_search_root, resolve_search_root_with_scope,
     };
+    use crate::paths::ReadScope;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -701,6 +844,23 @@ mod tests {
         .unwrap();
         assert_eq!(root.native, dunce::canonicalize(temp.path()).unwrap());
         ROOT_METADATA_CALLS.with(|calls| assert_eq!(calls.get(), 1));
+    }
+
+    #[test]
+    fn restricted_root_resolution_uses_capability_metadata_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let scope = ReadScope::from_allow_roots(&[temp.path().to_path_buf()]).unwrap();
+
+        ROOT_METADATA_CALLS.with(|calls| calls.set(0));
+        let root = resolve_search_root_with_scope(
+            Some(temp.path().to_str().unwrap()),
+            RootRequirement::Directory,
+            &scope,
+        )
+        .unwrap();
+
+        assert_eq!(root.native, dunce::canonicalize(temp.path()).unwrap());
+        ROOT_METADATA_CALLS.with(|calls| assert_eq!(calls.get(), 0));
     }
 
     #[test]

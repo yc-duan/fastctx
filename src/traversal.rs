@@ -11,17 +11,21 @@ use crate::path_codec::{
 };
 use crate::paths::ReadScope;
 use globset::GlobSet;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::types::TypesBuilder;
-use ignore::{DirEntry, WalkBuilder, WalkState};
+use ignore::{DirEntry, Match as IgnoreMatch, WalkBuilder, WalkState};
 use parking_lot::Mutex;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) const TRAVERSAL_BATCH_ITEMS: usize = 256;
+pub(crate) const MAX_IGNORE_CONFIG_BYTES: usize = 1024 * 1024;
+const MAX_GIT_DIR_CONFIG_BYTES: u64 = 64 * 1024;
+const OVERSIZED_IGNORE_CONFIG_ERROR: &str = "Ignore configuration exceeds maximum size.";
 
 /// Legacy replace candidate retained while search uses `PathRecord` directly.
 #[derive(Debug)]
@@ -106,6 +110,9 @@ pub(crate) fn collect_search_candidates(
         return Err("Request cancelled.".to_string());
     }
     let type_filter = build_type_filter(file_type)?;
+    if root.scope.is_restricted() {
+        return collect_capability_candidates(root, glob, type_filter.as_ref(), operation);
+    }
     let mut candidates = Vec::new();
     if root.kind == RootKind::File {
         let candidate =
@@ -121,6 +128,624 @@ pub(crate) fn collect_search_candidates(
     sort_cancelable(candidates, compare_search_candidates, operation, executor)
         .map(|sorted| sorted.items)
         .map_err(|error| error.to_string())
+}
+
+fn collect_capability_candidates(
+    root: &ResolvedRoot,
+    glob: Option<&GlobSet>,
+    type_filter: Option<&ignore::types::Types>,
+    operation: Option<&OperationCtx>,
+) -> Result<Vec<PathRecord>, String> {
+    collect_capability_candidates_filtered(
+        root,
+        glob,
+        type_filter,
+        operation,
+        CapabilityCandidateOptions {
+            honor_ignore: true,
+            detail: CandidateDetail::Metadata,
+            limit: None,
+            limit_message: "",
+        },
+    )
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum CandidateDetail {
+    Path,
+    Metadata,
+}
+
+pub(crate) struct CapabilityCandidateOptions {
+    pub(crate) honor_ignore: bool,
+    pub(crate) detail: CandidateDetail,
+    pub(crate) limit: Option<usize>,
+    pub(crate) limit_message: &'static str,
+}
+
+pub(crate) fn collect_capability_candidates_filtered(
+    root: &ResolvedRoot,
+    glob: Option<&GlobSet>,
+    type_filter: Option<&ignore::types::Types>,
+    operation: Option<&OperationCtx>,
+    options: CapabilityCandidateOptions,
+) -> Result<Vec<PathRecord>, String> {
+    let routed = root
+        .scope
+        .route_with_formatter(&root.native, search_display_path)?;
+    if root.kind == RootKind::File {
+        let candidate = if options.detail == CandidateDetail::Path {
+            PathRecord::without_metadata(&root.native, root.match_root())
+        } else {
+            PathRecord::from_metadata(&root.native, root.match_root(), &root.metadata, true)
+                .map_err(|error| search_io_error_message(&root.native, &error))?
+        };
+        return Ok(matches_record(&candidate, glob, type_filter)
+            .then_some(candidate)
+            .into_iter()
+            .collect());
+    }
+    let mut candidates = Vec::new();
+    let ignore = if options.honor_ignore {
+        CapabilityIgnoreRules::at_root(&routed.capability, &routed.relative, &routed.canonical)?
+    } else {
+        CapabilityIgnoreRules::default()
+    };
+    let context = CapabilityTraversalContext {
+        capability: &routed.capability,
+        match_root: &root.native,
+        scope: &root.scope,
+        honor_ignore: options.honor_ignore,
+        glob,
+        type_filter,
+        detail: options.detail,
+        operation,
+        limit: options.limit,
+        limit_message: options.limit_message,
+    };
+    context.collect_directory(&routed.relative, &root.native, ignore, &mut candidates)?;
+    sort_cancelable(candidates, compare_search_candidates, operation, None)
+        .map(|sorted| sorted.items)
+        .map_err(|error| error.to_string())
+}
+
+struct CapabilityTraversalContext<'a> {
+    capability: &'a Arc<cap_std::fs::Dir>,
+    match_root: &'a Path,
+    scope: &'a ReadScope,
+    honor_ignore: bool,
+    glob: Option<&'a GlobSet>,
+    type_filter: Option<&'a ignore::types::Types>,
+    detail: CandidateDetail,
+    operation: Option<&'a OperationCtx>,
+    limit: Option<usize>,
+    limit_message: &'static str,
+}
+
+impl CapabilityTraversalContext<'_> {
+    fn collect_directory(
+        &self,
+        relative: &Path,
+        native_dir: &Path,
+        ignore: CapabilityIgnoreRules,
+        candidates: &mut Vec<PathRecord>,
+    ) -> Result<(), String> {
+        // The capability walk is deliberately iterative: deeply nested trees must
+        // not consume the process stack, and every child is discovered through the
+        // startup capability rather than an ambient filesystem walk.
+        let mut pending = vec![(relative.to_path_buf(), native_dir.to_path_buf(), ignore)];
+        while let Some((relative, native_dir, ignore)) = pending.pop() {
+            let entries = self
+                .capability
+                .read_dir(&relative)
+                .map_err(|error| search_io_error_message(&native_dir, &error))?;
+            for entry in entries {
+                stage_traversal_entry(self.operation);
+                if operation_cancelled(self.operation) {
+                    return Err("Request cancelled.".to_string());
+                }
+                let entry = entry.map_err(|error| search_io_error_message(&native_dir, &error))?;
+                let name = entry.file_name();
+                let child_native = native_dir.join(&name);
+                let child_relative = relative.join(&name);
+                let file_type = entry
+                    .file_type()
+                    .map_err(|error| search_io_error_message(&child_native, &error))?;
+                if file_type.is_dir() {
+                    if name == ".git" && self.honor_ignore {
+                        continue;
+                    }
+                    if self.honor_ignore && ignore.ignored(&child_native, true) {
+                        // Match WalkBuilder's pruning behavior. A negation below an
+                        // ignored directory is intentionally unreachable.
+                        continue;
+                    }
+                    let child_ignore = if self.honor_ignore {
+                        ignore.descend(self.capability, &child_relative, &child_native)?
+                    } else {
+                        CapabilityIgnoreRules::default()
+                    };
+                    pending.push((child_relative, child_native, child_ignore));
+                    continue;
+                }
+                if !file_type.is_file() && !file_type.is_symlink() {
+                    continue;
+                }
+                if self.honor_ignore && ignore.ignored(&child_native, false) {
+                    continue;
+                }
+                let preliminary = PathRecord::without_metadata(&child_native, self.match_root);
+                if !matches_record(&preliminary, self.glob, self.type_filter) {
+                    continue;
+                }
+                let target = self
+                    .scope
+                    .route_with_formatter(&child_native, search_display_path)?;
+                #[cfg(test)]
+                if file_type.is_symlink() {
+                    crate::file_snapshot::tests::notify_original_open(&child_native);
+                }
+                let metadata = if file_type.is_symlink() || self.detail == CandidateDetail::Metadata
+                {
+                    match target.capability.metadata(&target.relative) {
+                        Ok(metadata) if metadata.is_file() => Some(metadata),
+                        Ok(_) => continue,
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                        Err(error) => return Err(search_io_error_message(&child_native, &error)),
+                    }
+                } else {
+                    None
+                };
+                let confirmed = match self
+                    .scope
+                    .route_with_formatter(&child_native, search_display_path)
+                {
+                    Ok(confirmed) => confirmed,
+                    Err(_) => continue,
+                };
+                if confirmed.canonical != target.canonical {
+                    continue;
+                }
+                let candidate = match metadata {
+                    Some(metadata) if self.detail == CandidateDetail::Metadata => {
+                        PathRecord::from_metadata(&child_native, self.match_root, &metadata, true)
+                            .map_err(|error| search_io_error_message(&child_native, &error))?
+                    }
+                    Some(_) | None => preliminary,
+                };
+                {
+                    if self.limit.is_some_and(|limit| candidates.len() >= limit) {
+                        return Err(self.limit_message.to_string());
+                    }
+                    candidates.push(candidate);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
+struct CapabilityIgnoreRules {
+    global: MatcherStack,
+    exclude: MatcherStack,
+    gitignore: MatcherStack,
+    ignore: MatcherStack,
+    repository: Option<CapabilityRepository>,
+}
+
+type MatcherStack = Option<Arc<MatcherNode>>;
+
+struct MatcherNode {
+    matcher: Gitignore,
+    parent: MatcherStack,
+}
+
+#[derive(Clone)]
+struct CapabilityRepository {
+    relative: std::path::PathBuf,
+    native: std::path::PathBuf,
+}
+
+impl CapabilityIgnoreRules {
+    fn at_root(
+        capability: &Arc<cap_std::fs::Dir>,
+        root_relative: &Path,
+        root_native: &Path,
+    ) -> Result<Self, String> {
+        let (global, _) = Gitignore::global();
+        let mut rules = Self::default();
+        if !global.is_empty() {
+            push_matcher(&mut rules.global, global);
+        }
+        // `WalkBuilder` loads parent ignore rules even when the request is
+        // routed through a nested capability root. These configuration reads
+        // are the one approved ambient exception: their matchers can only omit
+        // candidates; traversal and every candidate operation stay capability
+        // based.
+        let mut ambient_ancestors = root_native.ancestors().skip(1).collect::<Vec<_>>();
+        ambient_ancestors.reverse();
+        for ancestor in ambient_ancestors {
+            rules.add_ambient_directory(ancestor)?;
+        }
+        let mut native = root_native.to_path_buf();
+        for component in root_relative.components() {
+            if matches!(component, std::path::Component::Normal(_)) {
+                native.pop();
+            }
+        }
+        let mut ancestors = vec![(Path::new(".").to_path_buf(), native.clone())];
+        let mut relative = Path::new(".").to_path_buf();
+        for component in root_relative.components() {
+            if !matches!(component, std::path::Component::Normal(_)) {
+                continue;
+            }
+            relative.push(component.as_os_str());
+            native.push(component.as_os_str());
+            ancestors.push((relative.clone(), native.clone()));
+        }
+
+        for (relative, native) in &ancestors {
+            if is_capability_repository(capability, relative)? {
+                rules.repository = Some(CapabilityRepository {
+                    relative: relative.clone(),
+                    native: native.clone(),
+                });
+                rules.exclude = None;
+                rules.gitignore = None;
+            }
+            if let Some(matcher) = read_capability_ignore(capability, relative, native, ".ignore")?
+            {
+                push_matcher(&mut rules.ignore, matcher);
+            }
+            if let Some(matcher) =
+                read_capability_ignore(capability, relative, native, ".gitignore")?
+            {
+                push_matcher(&mut rules.gitignore, matcher);
+            }
+        }
+        if let Some(repository) = &rules.repository
+            && let Some(matcher) =
+                read_capability_git_exclude(capability, &repository.relative, &repository.native)?
+        {
+            push_matcher(&mut rules.exclude, matcher);
+        }
+        Ok(rules)
+    }
+
+    fn descend(
+        &self,
+        capability: &Arc<cap_std::fs::Dir>,
+        relative: &Path,
+        native: &Path,
+    ) -> Result<Self, String> {
+        let mut rules = self.clone();
+        if is_capability_repository(capability, relative)? {
+            rules.repository = Some(CapabilityRepository {
+                relative: relative.to_path_buf(),
+                native: native.to_path_buf(),
+            });
+            rules.exclude = None;
+            rules.gitignore = None;
+            if let Some(matcher) = read_capability_git_exclude(capability, relative, native)? {
+                push_matcher(&mut rules.exclude, matcher);
+            }
+        }
+        if let Some(matcher) = read_capability_ignore(capability, relative, native, ".ignore")? {
+            push_matcher(&mut rules.ignore, matcher);
+        }
+        if rules.repository.is_some()
+            && let Some(matcher) =
+                read_capability_ignore(capability, relative, native, ".gitignore")?
+        {
+            push_matcher(&mut rules.gitignore, matcher);
+        }
+        Ok(rules)
+    }
+
+    fn add_ambient_directory(&mut self, directory: &Path) -> Result<(), String> {
+        if is_ambient_repository(directory)? {
+            self.repository = Some(CapabilityRepository {
+                relative: std::path::PathBuf::new(),
+                native: directory.to_path_buf(),
+            });
+            self.exclude = None;
+            self.gitignore = None;
+            if let Some(matcher) = read_ambient_git_exclude(directory)? {
+                push_matcher(&mut self.exclude, matcher);
+            }
+        }
+        if let Some(matcher) = read_ambient_ignore(directory, ".ignore")? {
+            push_matcher(&mut self.ignore, matcher);
+        }
+        // Git-related rules are collected from every ancestor, but only used
+        // once a repository exists. This matches WalkBuilder's require-git
+        // gating while retaining rules above the repository boundary.
+        if let Some(matcher) = read_ambient_ignore(directory, ".gitignore")? {
+            push_matcher(&mut self.gitignore, matcher);
+        }
+        Ok(())
+    }
+
+    fn ignored(&self, path: &Path, is_dir: bool) -> bool {
+        // Ignore has four precedence tiers. Within each tier the deepest
+        // directory wins; the tiers themselves are global < exclude <
+        // .gitignore < .ignore, matching ignore::WalkBuilder project filters.
+        let global = self
+            .repository
+            .as_ref()
+            .and_then(|_| ignored_by_matchers(&self.global, path, is_dir));
+        ignored_by_matchers(&self.ignore, path, is_dir)
+            .or_else(|| ignored_by_matchers(&self.gitignore, path, is_dir))
+            .or_else(|| ignored_by_matchers(&self.exclude, path, is_dir))
+            .or(global)
+            .unwrap_or(false)
+    }
+}
+
+fn is_capability_repository(
+    capability: &Arc<cap_std::fs::Dir>,
+    relative: &Path,
+) -> Result<bool, String> {
+    match capability.metadata(relative.join(".git")) {
+        // A worktree's `.git` is a gitdir file. It is still a repository
+        // boundary even when its external common dir is outside the capability.
+        Ok(metadata) => Ok(metadata.is_dir() || metadata.is_file()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(search_io_error_message(&relative.join(".git"), &error)),
+    }
+}
+
+fn is_ambient_repository(directory: &Path) -> Result<bool, String> {
+    match fs::metadata(directory.join(".git")) {
+        Ok(metadata) => Ok(metadata.is_dir() || metadata.is_file()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(search_io_error_message(&directory.join(".git"), &error)),
+    }
+}
+
+fn read_capability_ignore(
+    capability: &Arc<cap_std::fs::Dir>,
+    relative_dir: &Path,
+    native_dir: &Path,
+    name: &str,
+) -> Result<Option<Gitignore>, String> {
+    read_capability_ignore_path(
+        capability,
+        &relative_dir.join(name),
+        native_dir,
+        &native_dir.join(name),
+    )
+}
+
+fn read_capability_git_exclude(
+    capability: &Arc<cap_std::fs::Dir>,
+    repository_relative: &Path,
+    repository_native: &Path,
+) -> Result<Option<Gitignore>, String> {
+    let dot_git = repository_relative.join(".git");
+    let source = repository_native.join(".git");
+    let metadata = match capability.metadata(&dot_git) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(search_io_error_message(&source, &error)),
+    };
+    if metadata.is_dir() {
+        return read_capability_ignore_path(
+            capability,
+            &dot_git.join("info/exclude"),
+            repository_native,
+            &source.join("info/exclude"),
+        );
+    }
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+    let mut file = capability
+        .open(&dot_git)
+        .map_err(|error| search_io_error_message(&source, &error))?;
+    let gitdir = read_first_line(&mut file, &source)?;
+    let Some(gitdir) = gitdir.strip_prefix("gitdir: ") else {
+        return Ok(None);
+    };
+    let common = resolve_worktree_common_dir(&source, gitdir)?;
+    read_ambient_ignore_path(&common.join("info/exclude"), repository_native)
+}
+
+fn read_ambient_git_exclude(repository: &Path) -> Result<Option<Gitignore>, String> {
+    let dot_git = repository.join(".git");
+    let metadata = match fs::metadata(&dot_git) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(search_io_error_message(&dot_git, &error)),
+    };
+    if metadata.is_dir() {
+        return read_ambient_ignore_path(&dot_git.join("info/exclude"), repository);
+    }
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+    let Some(gitdir) = read_ambient_first_line(&dot_git)? else {
+        return Ok(None);
+    };
+    let Some(gitdir) = gitdir.strip_prefix("gitdir: ") else {
+        return Ok(None);
+    };
+    let common = resolve_worktree_common_dir(&dot_git, gitdir)?;
+    read_ambient_ignore_path(&common.join("info/exclude"), repository)
+}
+
+fn resolve_worktree_common_dir(dot_git: &Path, gitdir: &str) -> Result<std::path::PathBuf, String> {
+    let gitdir = resolve_relative_config_path(dot_git.parent().unwrap_or(dot_git), gitdir);
+    let common = read_ambient_first_line(&gitdir.join("commondir"))?
+        .map(|commondir| resolve_relative_config_path(&gitdir, &commondir))
+        .unwrap_or_else(|| gitdir.clone());
+    Ok(common)
+}
+
+fn resolve_relative_config_path(base: &Path, value: &str) -> std::path::PathBuf {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    }
+}
+
+fn read_capability_ignore_path(
+    capability: &Arc<cap_std::fs::Dir>,
+    path: &Path,
+    matcher_root: &Path,
+    source: &Path,
+) -> Result<Option<Gitignore>, String> {
+    let file = match capability.open(path) {
+        Ok(file) => file,
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(search_io_error_message(source, &error)),
+    };
+    let mut file = file;
+    let contents = read_bounded_ignore_config(&mut file, source)?;
+    build_ignore(matcher_root, source, &contents)
+}
+
+fn read_ambient_ignore(directory: &Path, name: &str) -> Result<Option<Gitignore>, String> {
+    read_ambient_ignore_path(&directory.join(name), directory)
+}
+
+fn read_ambient_ignore_path(
+    source: &Path,
+    matcher_root: &Path,
+) -> Result<Option<Gitignore>, String> {
+    let mut file = match fs::File::open(source) {
+        Ok(file) => file,
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(search_io_error_message(source, &error)),
+    };
+    let contents = read_bounded_ignore_config(&mut file, source)?;
+    build_ambient_ignore(matcher_root, source, &contents)
+}
+
+fn read_first_line(file: &mut impl std::io::Read, source: &Path) -> Result<String, String> {
+    let mut contents = String::new();
+    file.take(MAX_GIT_DIR_CONFIG_BYTES)
+        .read_to_string(&mut contents)
+        .map_err(|error| search_io_error_message(source, &error))?;
+    Ok(contents.lines().next().unwrap_or_default().to_string())
+}
+
+fn read_ambient_first_line(source: &Path) -> Result<Option<String>, String> {
+    let mut file = match fs::File::open(source) {
+        Ok(file) => file,
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(search_io_error_message(source, &error)),
+    };
+    read_first_line(&mut file, source).map(Some)
+}
+
+fn read_bounded_ignore_config(
+    file: &mut impl std::io::Read,
+    source: &Path,
+) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    file.take((MAX_IGNORE_CONFIG_BYTES.saturating_add(1)) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| search_io_error_message(source, &error))?;
+    if bytes.len() > MAX_IGNORE_CONFIG_BYTES {
+        return Err(OVERSIZED_IGNORE_CONFIG_ERROR.to_string());
+    }
+    String::from_utf8(bytes).map_err(|error| {
+        search_io_error_message(source, &io::Error::new(io::ErrorKind::InvalidData, error))
+    })
+}
+
+fn build_ignore(
+    matcher_root: &Path,
+    source: &Path,
+    contents: &str,
+) -> Result<Option<Gitignore>, String> {
+    let mut builder = GitignoreBuilder::new(matcher_root);
+    for (index, line) in contents.lines().enumerate() {
+        let line = if index == 0 {
+            line.strip_prefix('\u{feff}').unwrap_or(line)
+        } else {
+            line
+        };
+        builder
+            .add_line(Some(source.to_path_buf()), line)
+            .map_err(|error| {
+                format!(
+                    "Cannot parse ignore file {}: {error}",
+                    search_display_path(source)
+                )
+            })?;
+    }
+    builder.build().map(Some).map_err(|error| {
+        format!(
+            "Cannot parse ignore file {}: {error}",
+            search_display_path(source)
+        )
+    })
+}
+
+fn build_ambient_ignore(
+    matcher_root: &Path,
+    source: &Path,
+    contents: &str,
+) -> Result<Option<Gitignore>, String> {
+    let mut builder = GitignoreBuilder::new(matcher_root);
+    for (index, line) in contents.lines().enumerate() {
+        let line = if index == 0 {
+            line.strip_prefix('\u{feff}').unwrap_or(line)
+        } else {
+            line
+        };
+        // Ambient configuration is allowed only to omit candidates. Ignore
+        // malformed entries so an out-of-root pattern cannot surface in a
+        // diagnostic, while valid rules in the same file still apply.
+        let _ = builder.add_line(Some(source.to_path_buf()), line);
+    }
+    Ok(builder.build().ok())
+}
+
+fn push_matcher(stack: &mut MatcherStack, matcher: Gitignore) {
+    *stack = Some(Arc::new(MatcherNode {
+        matcher,
+        parent: stack.clone(),
+    }));
+}
+
+fn ignored_by_matchers(stack: &MatcherStack, path: &Path, is_dir: bool) -> Option<bool> {
+    let mut stack = stack.as_deref();
+    while let Some(node) = stack {
+        let matched = node.matcher.matched(path, is_dir);
+        match matched {
+            IgnoreMatch::Ignore(_) => return Some(true),
+            IgnoreMatch::Whitelist(_) => return Some(false),
+            IgnoreMatch::None => stack = node.parent.as_deref(),
+        }
+    }
+    None
 }
 
 /// Collects files for replace while preserving its pre-codec display contract.

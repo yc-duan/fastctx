@@ -1,5 +1,7 @@
 //! Cross-platform input parsing, output normalization, and filesystem error translation.
 
+use cap_std::ambient_authority;
+use cap_std::fs::Dir;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -11,7 +13,23 @@ use std::sync::Arc;
 /// was started without `--allow-root`.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ReadScope {
-    roots: Option<Arc<[PathBuf]>>,
+    roots: Option<Arc<[AllowedRoot]>>,
+}
+
+#[derive(Clone, Debug)]
+struct AllowedRoot {
+    canonical: PathBuf,
+    capability: Arc<Dir>,
+}
+
+/// A path routed to an immutable startup capability. The relative locator is
+/// never interpreted by ambient filesystem APIs.
+#[derive(Clone)]
+pub(crate) struct ScopedPath {
+    pub(crate) canonical: PathBuf,
+    pub(crate) relative: PathBuf,
+    pub(crate) display: String,
+    pub(crate) capability: Arc<Dir>,
 }
 
 impl ReadScope {
@@ -54,10 +72,20 @@ impl ReadScope {
                     display_path(root)
                 )
             })?;
-            canonical.push(root);
+            let capability =
+                Dir::open_ambient_dir(&root, ambient_authority()).map_err(|error| {
+                    format!(
+                        "Invalid --allow-root {}: cannot open the directory capability ({error}).",
+                        display_path(&root)
+                    )
+                })?;
+            canonical.push(AllowedRoot {
+                canonical: root,
+                capability: Arc::new(capability),
+            });
         }
-        canonical.sort();
-        canonical.dedup();
+        canonical.sort_by(|left, right| left.canonical.cmp(&right.canonical));
+        canonical.dedup_by(|left, right| left.canonical == right.canonical);
         Ok(Self {
             roots: Some(Arc::from(canonical)),
         })
@@ -85,7 +113,10 @@ impl ReadScope {
                 io_error_message_with_formatter(path, &error, formatter)
             }
         })?;
-        if roots.iter().any(|root| canonical.starts_with(root)) {
+        if roots
+            .iter()
+            .any(|root| canonical.starts_with(&root.canonical))
+        {
             Ok(canonical)
         } else {
             Err(self.denied_with_formatter(path, formatter))
@@ -94,6 +125,50 @@ impl ReadScope {
 
     fn denied_with_formatter(&self, path: &Path, formatter: fn(&Path) -> String) -> String {
         format!("Permission denied: {}", formatter(path))
+    }
+
+    /// Routes a request to the longest matching startup capability and returns
+    /// a capability-relative locator. Canonicalization here is only routing;
+    /// all subsequent metadata, open, and traversal operations use `capability`.
+    pub(crate) fn route_with_formatter(
+        &self,
+        path: &Path,
+        formatter: fn(&Path) -> String,
+    ) -> Result<ScopedPath, String> {
+        let Some(roots) = &self.roots else {
+            return Err("internal error: unrestricted scope has no capability root".to_string());
+        };
+        let canonical = canonical_for_authorization(path).map_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                self.denied_with_formatter(path, formatter)
+            } else {
+                io_error_message_with_formatter(path, &error, formatter)
+            }
+        })?;
+        let root = roots
+            .iter()
+            .filter(|root| canonical.starts_with(&root.canonical))
+            .max_by_key(|root| root.canonical.components().count())
+            .ok_or_else(|| self.denied_with_formatter(path, formatter))?;
+        let relative = canonical
+            .strip_prefix(&root.canonical)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let display = formatter(&canonical);
+        Ok(ScopedPath {
+            canonical,
+            relative: if relative.as_os_str().is_empty() {
+                PathBuf::from(".")
+            } else {
+                relative
+            },
+            display,
+            capability: Arc::clone(&root.capability),
+        })
+    }
+
+    pub(crate) fn route(&self, path: &Path) -> Result<ScopedPath, String> {
+        self.route_with_formatter(path, display_path)
     }
 }
 
@@ -394,6 +469,25 @@ mod tests {
         std::fs::write(&file, b"content").unwrap();
         let non_directory = ReadScope::from_allow_roots(&[file]).unwrap_err();
         assert!(non_directory.contains("not a directory"), "{non_directory}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capability_roots_route_symlink_hubs_only_when_target_root_is_configured() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root_a = fixture.path().join("a");
+        let root_b = fixture.path().join("b");
+        std::fs::create_dir(&root_a).unwrap();
+        std::fs::create_dir(&root_b).unwrap();
+        std::fs::write(root_b.join("inside.txt"), b"cross-root").unwrap();
+        let hub = root_a.join("hub");
+        std::os::unix::fs::symlink(&root_b, &hub).unwrap();
+        let target = hub.join("inside.txt");
+        let only_a = ReadScope::from_allow_roots(std::slice::from_ref(&root_a)).unwrap();
+        assert!(only_a.route(&target).is_err());
+        let both = ReadScope::from_allow_roots(&[root_a, root_b]).unwrap();
+        let routed = both.route(&target).unwrap();
+        assert_eq!(routed.canonical, dunce::canonicalize(&target).unwrap());
     }
 
     #[test]

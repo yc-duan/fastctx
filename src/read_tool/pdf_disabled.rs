@@ -45,3 +45,13 @@ pub(super) fn read_pdf(
         "PDF support is unavailable: could not load the bundled PDF engine (this binary was built without the pdf feature). Other file types are unaffected.",
     )
 }
+
+pub(super) fn read_pdf_handle(
+    _file: std::fs::File,
+    path: &Path,
+    pages_value: Option<&str>,
+    mode: PdfMode,
+    text_budget: Option<TokenBudget>,
+) -> ToolResponse {
+    read_pdf(path, pages_value, mode, text_budget)
+}

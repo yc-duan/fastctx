@@ -8,6 +8,7 @@ use image::ImageFormat;
 use pdfium_render::prelude::{PdfDocument, PdfRenderConfig, PdfiumError, PdfiumInternalError};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::fs::File;
 use std::io::Cursor;
 use std::path::Path;
 
@@ -82,6 +83,26 @@ pub(super) fn read_pdf(
     }
 }
 
+pub(super) fn read_pdf_handle(
+    file: File,
+    path: &Path,
+    pages_value: Option<&str>,
+    mode: PdfMode,
+    text_budget: Option<TokenBudget>,
+) -> ToolResponse {
+    let path_display = crate::paths::display_path(path);
+    let pages_value = pages_value.map(str::to_string);
+    match run_pdf_operation(move || {
+        read_pdf_reader_inner(file, pages_value.as_deref(), mode, text_budget)
+    }) {
+        Ok(response) => response,
+        Err(PdfOperationError::TimedOut) => ToolResponse::error(format!(
+            "PDF operation on {path_display} timed out and was aborted. The file may be malformed; other file types are unaffected."
+        )),
+        Err(PdfOperationError::Unavailable(reason)) => pdf_engine_error(&reason),
+    }
+}
+
 fn read_pdf_inner(
     path: &Path,
     pages_value: Option<&str>,
@@ -105,6 +126,39 @@ fn read_pdf_inner(
         Err(message) => return ToolResponse::error(message),
     };
 
+    match mode {
+        PdfMode::Text => read_pdf_text(
+            &document,
+            &selected,
+            total_pages,
+            text_budget.expect("text mode always receives a token budget"),
+        ),
+        PdfMode::Image => read_pdf_images(&document, &selected, total_pages),
+    }
+}
+
+fn read_pdf_reader_inner(
+    file: File,
+    pages_value: Option<&str>,
+    mode: PdfMode,
+    text_budget: Option<TokenBudget>,
+) -> ToolResponse {
+    let (_operation, pdfium) = match pdfium_session() {
+        Ok(session) => session,
+        Err(reason) => return pdf_engine_error(&reason),
+    };
+    let document = match pdfium.load_pdf_from_reader(file, None) {
+        Ok(document) => document,
+        Err(error) => return pdf_load_error(error),
+    };
+    let total_pages = document.pages().len() as usize;
+    if total_pages == 0 {
+        return corrupted_pdf();
+    }
+    let selected = match parse_pages(pages_value, total_pages, mode) {
+        Ok(selected) => selected,
+        Err(message) => return ToolResponse::error(message),
+    };
     match mode {
         PdfMode::Text => read_pdf_text(
             &document,

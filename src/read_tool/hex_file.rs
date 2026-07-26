@@ -27,7 +27,7 @@ pub(super) fn read_hex_file(
         return ToolResponse::error("Invalid limit value: 0. Expected an integer >= 1.");
     }
 
-    let mut file = match File::open(path) {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) => return ToolResponse::error(io_error_message(path, &error)),
     };
@@ -35,10 +35,44 @@ pub(super) fn read_hex_file(
         Ok(metadata) => metadata.len(),
         Err(error) => return ToolResponse::error(io_error_message(path, &error)),
     };
+    read_hex_reader(file, file_size, path, offset, limit, budget)
+}
+
+pub(super) fn read_hex_handle(
+    file: File,
+    path: &Path,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    budget: TokenBudget,
+) -> ToolResponse {
+    let offset = offset.unwrap_or(1);
+    let limit = limit.unwrap_or(DEFAULT_HEX_LINE_LIMIT);
+    if offset == 0 {
+        return ToolResponse::error("Invalid offset value: 0. Expected an integer >= 1.");
+    }
+    if limit == 0 {
+        return ToolResponse::error("Invalid limit value: 0. Expected an integer >= 1.");
+    }
+    let file_size = match file.metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(error) => return ToolResponse::error(io_error_message(path, &error)),
+    };
+    read_hex_reader(file, file_size, path, offset, limit, budget)
+}
+
+fn read_hex_reader(
+    mut file: impl Read + Seek,
+    file_size: u64,
+    path: &Path,
+    offset: usize,
+    limit: usize,
+    budget: TokenBudget,
+) -> ToolResponse {
     if file_size == 0 {
         return ToolResponse::text("Warning: the file exists but is empty.");
     }
-    let total_lines = file_size / BYTES_PER_LINE + u64::from(file_size % BYTES_PER_LINE != 0);
+    let total_lines =
+        file_size / BYTES_PER_LINE + u64::from(!file_size.is_multiple_of(BYTES_PER_LINE));
     let offset_line = offset as u64;
     if offset_line > total_lines {
         let noun = if total_lines == 1 { "line" } else { "lines" };

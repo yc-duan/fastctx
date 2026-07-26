@@ -354,6 +354,16 @@ FastCtx MCP server 继承宿主进程的本地权限。
 | TUI 更新检查 | npm 与 GitHub Release 启动时开启 | 从 `registry.npmjs.org` 与 GitHub 的 `releases/latest` 网页重定向获取版本元数据；下载必须由用户确认 |
 | MCP runtime 网络请求 | 无 | `serve` 与工具调用不产生遥测或更新流量 |
 
+如需只读候选文件系统边界，请使用一个或多个绝对路径的 `--allow-root`
+启动服务器。FastCtx 在启动时获取这些目录能力；此时配置路径所在的命名空间
+必须可信且保持稳定。之后，受限的 `read`、`batch`、`grep` 和 `glob`
+请求只通过这些能力及其打开的文件句柄执行，因此运行期间同一用户的重命名或
+符号链接替换不会把已授权候选文件变成根目录外读取。现有项目过滤行为保持
+不变：FastCtx 仍可能从允许根目录外读取父级 `.ignore`、`.gitignore`、仓库
+`.git/info/exclude`、gitfile 的 `gitdir`/`commondir` 元数据及其 exclude 文件，
+以及全局 Git 配置。这些只用于过滤的读取只能排除候选项，绝不会授予读取、返回
+或搜索候选内容的权限。不指定 `--allow-root` 时，历史上的不受限行为保持不变。
+
 启动检查只会发送 FastCtx 版本、常规 HTTPS 请求元数据，以及 npm 的标准仓库请求；不会发送仓库路径、任务数据或文件内容。后台任务的命令、工作目录、输出与退出状态只保存在当前用户的私有目录 `~/.fastctx/jobs/` 中；当前格式任务使用完整纯文本日志。FastCtx 不会上传这些数据。Bash 命令仍可按照命令本身访问网络。预构建版本已经内嵌 PDF 引擎。
 
 MCP server 位于宿主文件沙箱之外。需要逐次确认写入和命令执行时，可以配置：
