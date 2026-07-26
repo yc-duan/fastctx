@@ -18,6 +18,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[cfg(all(windows, target_arch = "aarch64"))]
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(not(all(windows, target_arch = "aarch64")))]
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_POLL: Duration = Duration::from_millis(20);
 const READER_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -85,7 +88,10 @@ pub(crate) fn launch_supervisor(
         }
         Err(_) => {
             abort_failed_launch(&mut child, spec);
-            Err("Cannot start the background job supervisor: it did not become ready within 10 seconds.".to_string())
+            Err(format!(
+                "Cannot start the background job supervisor: it did not become ready within {} seconds.",
+                STARTUP_TIMEOUT.as_secs()
+            ))
         }
     }
 }

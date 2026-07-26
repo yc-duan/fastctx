@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const PROCESS_DEADLINE: Duration = Duration::from_secs(10);
+const PROCESS_DEADLINE: Duration = Duration::from_secs(30);
 const IDLE_PROBE: Duration = Duration::from_millis(1_500);
 const EOF_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 

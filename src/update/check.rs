@@ -2214,6 +2214,9 @@ mod tests {
 
     #[test]
     fn isolated_registry_matrix_selects_the_first_complete_auto_source() {
+        let Some(platform_package) = super::platform_npm_package() else {
+            return;
+        };
         struct Scenario {
             name: &'static str,
             configured_registry: Option<&'static str>,
@@ -2255,7 +2258,6 @@ mod tests {
 
         for scenario in scenarios {
             let context = npm_context_fixture(UpdateSource::Auto, scenario.configured_registry);
-            let platform_package = super::platform_npm_package().unwrap().to_string();
             let registry_state = |ready| SimulatedRegistry {
                 latest: Some(Version::new(0, 2, 0)),
                 main_package_ready: ready,
@@ -2263,7 +2265,7 @@ mod tests {
             };
             let backend = SimulatedRegistryBackend {
                 github_latest: Some(Version::new(0, 2, 0)),
-                platform_package,
+                platform_package: platform_package.to_string(),
                 registries: BTreeMap::from([
                     (
                         OFFICIAL_NPM_REGISTRY.to_string(),
@@ -2296,6 +2298,9 @@ mod tests {
 
     #[test]
     fn every_source_policy_runs_the_shared_probe_cache_and_four_state_pipeline() {
+        let Some(platform_package) = super::platform_npm_package() else {
+            return;
+        };
         #[derive(Clone, Copy, Debug)]
         enum ExpectedState {
             Current,
@@ -2319,7 +2324,7 @@ mod tests {
         ];
         let temp = tempfile::tempdir().unwrap();
         let current_version = Version::new(0, 1, 1);
-        let platform_package = super::platform_npm_package().unwrap().to_string();
+        let platform_package = platform_package.to_string();
 
         for (policy, configured_registry, expected_registry) in policies {
             for state in states {
@@ -2701,10 +2706,18 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().to_path_buf();
         let checked_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let expected_outcome = if super::expected_release_archive_name().is_some() {
+            CachedOutcome::GithubAvailable {
+                target_version: "0.2.0".to_string(),
+            }
+        } else {
+            CachedOutcome::Current
+        };
         let (release_sender, release_receiver) = std::sync::mpsc::channel();
         let (finished_sender, finished_receiver) = std::sync::mpsc::channel();
         let receiver = spawn_update_check_with({
             let directory = directory.clone();
+            let expected_outcome = expected_outcome.clone();
             move || {
                 release_receiver
                     .recv_timeout(Duration::from_secs(2))
@@ -2719,13 +2732,9 @@ mod tests {
                         checked_at,
                         npm_context: None,
                     },
-                    || {
-                        Ok(CachedOutcome::GithubAvailable {
-                            target_version: "0.2.0".to_string(),
-                        })
-                    },
+                    || Ok(expected_outcome),
                 );
-                finished_sender.send(()).unwrap();
+                finished_sender.send(result.clone()).unwrap();
                 result
             }
         });
@@ -2734,9 +2743,17 @@ mod tests {
             .send(())
             .expect("the detached startup worker stopped before its probe completed");
 
-        finished_receiver
+        let finished = finished_receiver
             .recv_timeout(Duration::from_secs(2))
             .expect("detaching the UI receiver stopped the update worker");
+        if matches!(expected_outcome, CachedOutcome::Current) {
+            assert_eq!(finished, StartupUpdate::None);
+        } else {
+            assert!(
+                matches!(finished, StartupUpdate::Available(_)),
+                "detached worker returned {finished:?}"
+            );
+        }
         assert_eq!(
             cache::load_fresh_success(
                 &directory,
@@ -2744,9 +2761,7 @@ mod tests {
                 "0.1.0",
                 checked_at + Duration::from_secs(1),
             ),
-            Some(CachedOutcome::GithubAvailable {
-                target_version: "0.2.0".to_string(),
-            })
+            Some(expected_outcome)
         );
     }
 

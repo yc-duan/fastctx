@@ -2,7 +2,7 @@ mod common;
 
 use common::{McpSession, mcp_text, normalized};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
@@ -640,11 +640,11 @@ fn job_output_wait_window_delivers_accumulated_output_without_returning_on_each_
         "job_output",
         serde_json::json!({
             "job_id": job_id,
-            "wait_ms": 3_000,
+            "wait_ms": 5_000,
             "after_seq": 0
         }),
     );
-    assert!(waiting_started.elapsed() >= Duration::from_millis(2_900));
+    assert!(waiting_started.elapsed() >= Duration::from_millis(4_500));
     assert_eq!(job_body_lines(mcp_text(&output)), ["first", "second"]);
     assert!(
         mcp_text(&output).ends_with(&format!(
@@ -1030,7 +1030,7 @@ fn global_background_limit_and_job_ids_survive_across_server_instances() {
     for _ in 0..2 {
         let response = session.call(
             "run_background",
-            serde_json::json!({"command": "sleep 10", "login_shell": false}),
+            serde_json::json!({"command": "sleep 60", "login_shell": false}),
         );
         ids.push(started_job_id(mcp_text(&response)));
     }
@@ -1087,7 +1087,7 @@ fn job_list_defaults_to_running_uses_the_saved_page_size_and_requires_explicit_h
         .map(|_| {
             started_job_id(mcp_text(&session.call(
                 "run_background",
-                serde_json::json!({"command": "sleep 10", "login_shell": false}),
+                serde_json::json!({"command": "sleep 60", "login_shell": false}),
             )))
         })
         .collect::<Vec<_>>();
@@ -1539,6 +1539,15 @@ fn non_login_shell_finds_the_unix_toolset_without_git_on_the_host_path() {
     // bash is still discovered via the standard install path, not via this PATH.
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
     command.env("PATH", format!("{system_root}\\System32;{system_root}"));
+    // Portable and Scoop-only Windows builders may not have a standard Git
+    // install. Preserve the test's clean child PATH while supplying the real
+    // host Bash explicitly in that environment.
+    if !standard_windows_bash_exists() {
+        command.env(
+            "FASTCTX_BASH",
+            host_path_bash().expect("the shell contract requires a usable host bash"),
+        );
+    }
     let mut session = McpSession::start(command);
     let response = session.call(
         "run",
@@ -1550,6 +1559,50 @@ fn non_login_shell_finds_the_unix_toolset_without_git_on_the_host_path() {
     assert_eq!(response["result"]["isError"], false, "{response}");
     assert_eq!(mcp_text(&response), "ok\n\n(Complete: exited 0; 1 line.)");
     assert!(session.close().success());
+}
+
+#[cfg(windows)]
+fn standard_windows_bash_exists() -> bool {
+    ["ProgramFiles", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(PathBuf::from)
+        .map(|root| root.join("Git/usr/bin/bash.exe"))
+        .chain(
+            std::env::var_os("LocalAppData")
+                .map(PathBuf::from)
+                .map(|root| root.join("Programs/Git/usr/bin/bash.exe")),
+        )
+        .any(|candidate| candidate.is_file())
+}
+
+#[cfg(windows)]
+fn host_path_bash() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("FASTCTX_BASH").map(PathBuf::from)
+        && path.is_file()
+    {
+        return Some(path);
+    }
+    for directory in std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default()
+    {
+        let direct = directory.join("bash.exe");
+        if direct.is_file() {
+            return Some(direct);
+        }
+        let git = directory.join("git.exe");
+        let mut ancestor = git.parent();
+        for _ in 0..4 {
+            let Some(root) = ancestor else { break };
+            let candidate = root.join("usr/bin/bash.exe");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            ancestor = root.parent();
+        }
+    }
+    None
 }
 
 fn shell_contract_guard() -> MutexGuard<'static, ()> {

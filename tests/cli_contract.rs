@@ -1248,7 +1248,11 @@ fn start_persistent_job(home: &Path, command: &str) -> String {
             "login_shell": false
         }),
     );
-    let body = mcp_text(&started)
+    let response = mcp_text(&started);
+    let body = response
+        .lines()
+        .last()
+        .unwrap_or_default()
         .strip_prefix("(Complete: job ")
         .and_then(|value| value.strip_suffix(".)"))
         .expect("run_background must return its stable start terminal");

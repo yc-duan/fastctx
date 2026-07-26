@@ -839,6 +839,23 @@ fn stdio_preserves_utf8_text_without_host_codepage_transcoding() {
 }
 
 #[test]
+fn stdio_reads_a_utf8_path_without_host_codepage_transcoding() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("中文路径").join("示例.txt");
+    write(&file, "alpha\n中文 sentinel\n".as_bytes());
+    let response = call_tool(
+        Command::new(env!("CARGO_BIN_EXE_fastctx")),
+        "read",
+        serde_json::json!({"file_path": normalized(&file)}),
+    );
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(
+        response["result"]["content"][0]["text"],
+        "1\talpha\n2\t中文 sentinel\n3\t\n\n(Complete: reached end of file; lines 1-3 of 3 shown.)"
+    );
+}
+
+#[test]
 fn stdio_invalid_token_budget_is_an_exact_tool_error() {
     let temp = tempfile::tempdir().unwrap();
     let file = temp.path().join("plain.txt");
