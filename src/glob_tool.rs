@@ -7,7 +7,10 @@ use crate::budget::{
 use crate::file_executor::GrepGlobExecutor;
 use crate::model::ToolResponse;
 use crate::operation::{OpError, OperationCtx, RequestWorkGuard};
-use crate::path_codec::{PathRecord, ResolvedRoot, RootRequirement, resolve_search_root};
+use crate::path_codec::{
+    PathRecord, ResolvedRoot, RootRequirement, resolve_search_root_with_scope,
+};
+use crate::paths::ReadScope;
 use crate::render_plan::{LineRenderGraph, RenderPlanError};
 use crate::traversal::{TraversalFailure, TraversalLimit, collect_walk_batched};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
@@ -83,19 +86,29 @@ struct GlobCollectionProbe {
 /// rendering, and token verification. A cancelled operation returns an error
 /// response and never exposes a partial success body.
 pub fn glob_files(request: GlobRequest, cancellation: CancellationToken) -> ToolResponse {
+    glob_files_with_scope(request, cancellation, &ReadScope::unrestricted())
+}
+
+pub(crate) fn glob_files_with_scope(
+    request: GlobRequest,
+    cancellation: CancellationToken,
+    scope: &ReadScope,
+) -> ToolResponse {
     let (mut guard, operation) = RequestWorkGuard::new(
         rmcp::model::RequestId::String(Arc::from("direct-glob")),
         cancellation,
     );
-    let response = glob_files_with_execution(request, operation, GrepGlobExecutor::shared());
+    let response =
+        glob_files_with_execution_scoped(request, operation, GrepGlobExecutor::shared(), scope);
     guard.disarm();
     response
 }
 
-fn glob_files_with_execution(
+fn glob_files_with_execution_scoped(
     request: GlobRequest,
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: &ReadScope,
 ) -> ToolResponse {
     let adapter = ErrorBudgetAdapter::new(
         error_budget_hint(GLOB_TOKEN_BUDGET_ENV),
@@ -113,6 +126,7 @@ fn glob_files_with_execution(
         &executor,
         #[cfg(test)]
         None,
+        scope,
     ))
 }
 
@@ -123,11 +137,16 @@ fn glob_files_with_execution_unadapted(
     operation: &OperationCtx,
     executor: &Arc<GrepGlobExecutor>,
     #[cfg(test)] collection_probe: Option<&GlobCollectionProbe>,
+    scope: &ReadScope,
 ) -> ToolResponse {
     if operation.check().is_err() {
         return ToolResponse::error("Request cancelled.");
     }
-    let root = match resolve_search_root(request.path.as_deref(), RootRequirement::Directory) {
+    let root = match resolve_search_root_with_scope(
+        request.path.as_deref(),
+        RootRequirement::Directory,
+        scope,
+    ) {
         Ok(root) => root,
         Err(message) => return ToolResponse::error(message),
     };
@@ -180,11 +199,12 @@ fn glob_files_with_execution_unadapted(
 pub(crate) fn glob_files_cancellable(
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: ReadScope,
     request: GlobRequest,
 ) -> Result<ToolResponse, OpError> {
     let work = operation.inline_work();
     work.check_inline()?;
-    let response = glob_files_with_execution(request, operation.clone(), executor);
+    let response = glob_files_with_execution_scoped(request, operation.clone(), executor, &scope);
     work.check_inline()?;
     Ok(response)
 }
@@ -214,6 +234,28 @@ fn collect_matches(
 ) -> Result<Vec<MatchEntry>, String> {
     if operation.check().is_err() {
         return Err("Request cancelled.".to_string());
+    }
+    if root.scope.is_restricted() {
+        let candidates = crate::traversal::collect_capability_candidates_filtered(
+            root,
+            Some(matcher),
+            None,
+            Some(operation),
+            crate::traversal::CapabilityCandidateOptions {
+                honor_ignore: filter_mode == FilterMode::Project,
+                detail: if sort == SortMode::Path {
+                    crate::traversal::CandidateDetail::Path
+                } else {
+                    crate::traversal::CandidateDetail::Metadata
+                },
+                limit: Some(MAX_RESULTS),
+                limit_message: TOO_MANY_MATCHES_ERROR,
+            },
+        )?;
+        return Ok(candidates
+            .into_iter()
+            .map(|path| MatchEntry { path })
+            .collect());
     }
     let mut builder = WalkBuilder::new(&root.native);
     match filter_mode {
@@ -534,16 +576,20 @@ mod tests {
     use super::{
         FilterMode, GlobCollectionProbe, GlobRequest, MatchEntry, SortMode, build_matcher,
         collect_matches, ensure_result_capacity, format_matches,
-        glob_files_with_execution_unadapted,
+        glob_files_with_execution_unadapted, glob_files_with_scope,
     };
     use crate::file_executor::{GrepGlobExecutor, LedgerSnapshot};
     use crate::operation::RequestWorkGuard;
+    use crate::path_codec::display_path as search_display_path;
     use crate::path_codec::{PathRecord, RootRequirement, resolve_search_root};
+    use crate::paths::ReadScope;
     use crate::render_plan::RenderPlanMetrics;
     use crate::{ToolContent, ToolResponse};
     use rmcp::model::RequestId;
+    use std::env;
     use std::fs;
     use std::path::Path;
+    use std::process::Command;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::SystemTime;
@@ -571,6 +617,7 @@ mod tests {
             &operation,
             &executor,
             None,
+            &ReadScope::unrestricted(),
         );
         guard.disarm();
         executor.wait_for_test_quiescence();
@@ -600,6 +647,22 @@ mod tests {
         } else {
             body.lines().map(str::to_string).collect()
         }
+    }
+
+    fn restricted_project_glob(root: &Path) -> ToolResponse {
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root.to_path_buf())).unwrap();
+        glob_files_with_scope(
+            GlobRequest {
+                pattern: "*.txt".to_string(),
+                path: Some(root.to_string_lossy().into_owned()),
+                filter_mode: Some(FilterMode::Project),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        )
     }
 
     fn safe_fixture_display(path: &Path) -> String {
@@ -818,5 +881,557 @@ mod tests {
             assert_released_once(burst);
             assert_released_once(tickets);
         }
+    }
+
+    #[test]
+    fn restricted_project_walk_reads_worktree_excludes_from_commondir_or_gitdir() {
+        for (name, gitdir_relative, commondir, exclude_relative) in [
+            (
+                "relative commondir",
+                "../common/.git/worktrees/checked-out",
+                Some("../.."),
+                "../common/.git/info/exclude",
+            ),
+            (
+                "gitdir fallback",
+                "../gitdir",
+                None,
+                "../gitdir/info/exclude",
+            ),
+        ] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("worktree");
+            let gitdir = root.join(gitdir_relative);
+            let exclude = root.join(exclude_relative);
+            fs::create_dir(&root).unwrap();
+            fs::create_dir_all(&gitdir).unwrap();
+            fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+            fs::write(root.join(".git"), format!("gitdir: {gitdir_relative}\n")).unwrap();
+            if let Some(commondir) = commondir {
+                fs::write(gitdir.join("commondir"), format!("{commondir}\n")).unwrap();
+            }
+            fs::write(exclude, "excluded.txt\n").unwrap();
+            fs::write(root.join("excluded.txt"), b"excluded").unwrap();
+            fs::write(root.join("visible.txt"), b"visible").unwrap();
+
+            let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+            let restricted = glob_files_with_scope(
+                GlobRequest {
+                    pattern: "*.txt".to_string(),
+                    path: Some(root.to_string_lossy().into_owned()),
+                    filter_mode: Some(FilterMode::Project),
+                    sort: Some(SortMode::Path),
+                    offset: None,
+                    limit: None,
+                },
+                CancellationToken::new(),
+                &scope,
+            );
+            let text = response_path_lines(&restricted).join("\n");
+            assert!(text.contains("visible.txt"), "{name}: {text}");
+            assert!(!text.contains("excluded.txt"), "{name}: {text}");
+        }
+    }
+
+    #[test]
+    fn malformed_parent_ignore_is_not_disclosed_and_later_rule_still_filters() {
+        let fixture = tempfile::tempdir().unwrap();
+        let parent = fixture.path().join("parent");
+        let root = parent.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let secret = "synthetic-secret-ignore-pattern";
+        fs::write(parent.join(".ignore"), format!("[{secret}\nhidden.txt\n")).unwrap();
+        fs::write(root.join("hidden.txt"), b"hidden").unwrap();
+        fs::write(root.join("visible.txt"), b"visible").unwrap();
+
+        let response = restricted_project_glob(&root);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text response: {response:?}");
+        };
+        assert!(!text.contains(secret), "{text}");
+        let paths = response_path_lines(&response);
+        assert_eq!(paths.len(), 1, "{paths:?}");
+        assert!(paths[0].ends_with("visible.txt"), "{paths:?}");
+    }
+
+    #[test]
+    fn restricted_glob_accepts_ignore_config_at_the_size_limit() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("root");
+        fs::create_dir(&root).unwrap();
+        let rule = "hidden.txt\n";
+        let contents = format!(
+            "{rule}#{}",
+            "x".repeat(crate::traversal::MAX_IGNORE_CONFIG_BYTES - rule.len() - 1)
+        );
+        assert_eq!(contents.len(), crate::traversal::MAX_IGNORE_CONFIG_BYTES);
+        fs::write(root.join(".ignore"), contents).unwrap();
+        fs::write(root.join("hidden.txt"), b"hidden").unwrap();
+        fs::write(root.join("visible.txt"), b"visible").unwrap();
+
+        let paths = response_path_lines(&restricted_project_glob(&root));
+        assert_eq!(paths.len(), 1, "{paths:?}");
+        assert!(paths[0].ends_with("visible.txt"), "{paths:?}");
+    }
+
+    #[test]
+    fn restricted_glob_rejects_oversized_ignore_without_partial_matching_or_disclosure() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("root");
+        fs::create_dir(&root).unwrap();
+        let secret = "synthetic-secret-ignore-pattern";
+        let prefix = "hidden.txt\n#";
+        let contents = format!(
+            "{prefix}{}{secret}",
+            "x".repeat(crate::traversal::MAX_IGNORE_CONFIG_BYTES + 1 - prefix.len() - secret.len())
+        );
+        assert_eq!(
+            contents.len(),
+            crate::traversal::MAX_IGNORE_CONFIG_BYTES + 1
+        );
+        fs::write(root.join(".ignore"), contents).unwrap();
+        fs::write(root.join("hidden.txt"), b"hidden").unwrap();
+        fs::write(root.join("visible.txt"), b"visible").unwrap();
+
+        let response = restricted_project_glob(&root);
+        assert!(response.is_error, "{response:?}");
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error: {response:?}");
+        };
+        assert_eq!(text, "Ignore configuration exceeds maximum size.");
+        for forbidden in [secret, "hidden.txt", "visible.txt"] {
+            assert!(!text.contains(forbidden), "{text}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_glob_lists_unreadable_regular_files_without_opening_them() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().join("unreadable.txt");
+        fs::write(&path, b"content").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        let scope = ReadScope::from_allow_roots(&[fixture.path().to_path_buf()]).unwrap();
+        let request = GlobRequest {
+            pattern: "*.txt".to_string(),
+            path: Some(fixture.path().to_string_lossy().into_owned()),
+            filter_mode: Some(FilterMode::All),
+            sort: Some(SortMode::Modified),
+            offset: None,
+            limit: None,
+        };
+        let restricted = glob_files_with_scope(request.clone(), CancellationToken::new(), &scope);
+        let unrestricted = glob_files_with_scope(
+            request,
+            CancellationToken::new(),
+            &ReadScope::unrestricted(),
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(restricted, unrestricted);
+        assert!(response_path_lines(&restricted)[0].ends_with("unreadable.txt"));
+    }
+
+    #[test]
+    fn restricted_project_walk_matches_walkbuilder_matrix() {
+        let fixture = tempfile::tempdir().unwrap();
+        let workspace = fixture.path().join("workspace");
+        let project = workspace.join("project");
+        let nested = project.join("nested");
+        let nested_repo = project.join("nested-repo");
+        fs::create_dir_all(workspace.join(".git/info")).unwrap();
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(nested_repo.join(".git")).unwrap();
+
+        fs::write(
+            workspace.join(".gitignore"),
+            b"\xEF\xBB\xBF/project/parent-anchored.txt\n/project/nested-repo/outer-must-not-apply.txt\n",
+        )
+        .unwrap();
+        fs::write(workspace.join(".ignore"), "/project/parent-ignore.txt\n").unwrap();
+        fs::write(
+            workspace.join(".git/info/exclude"),
+            "/project/project-exclude.txt\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join(".gitignore"),
+            "/child-anchored.txt\ntier.txt\nblocked/\n!blocked/keep.txt\n",
+        )
+        .unwrap();
+        fs::write(project.join(".ignore"), "!tier.txt\n").unwrap();
+        fs::write(nested.join(".gitignore"), "/nested-only.txt\n").unwrap();
+        fs::write(nested_repo.join(".gitignore"), "nested-repo-hidden.txt\n").unwrap();
+
+        for path in [
+            project.join("parent-anchored.txt"),
+            project.join("child-anchored.txt"),
+            project.join("project-exclude.txt"),
+            project.join("parent-ignore.txt"),
+            project.join("tier.txt"),
+            project.join(".hidden.txt"),
+            project.join("blocked/keep.txt"),
+            nested.join("nested-only.txt"),
+            nested_repo.join("outer-must-not-apply.txt"),
+            nested_repo.join("nested-repo-hidden.txt"),
+            nested_repo.join("visible.txt"),
+        ] {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, b"fixture").unwrap();
+        }
+
+        let request = |filter_mode| GlobRequest {
+            pattern: "**/*".to_string(),
+            path: Some(project.to_string_lossy().into_owned()),
+            filter_mode: Some(filter_mode),
+            sort: Some(SortMode::Path),
+            offset: None,
+            limit: None,
+        };
+        for allow_roots in [
+            vec![workspace.clone()],
+            vec![workspace.clone(), project.clone()],
+        ] {
+            let scope = ReadScope::from_allow_roots(&allow_roots).unwrap();
+            for filter_mode in [FilterMode::Project, FilterMode::All] {
+                let restricted =
+                    glob_files_with_scope(request(filter_mode), CancellationToken::new(), &scope);
+                let unrestricted = glob_files_with_scope(
+                    request(filter_mode),
+                    CancellationToken::new(),
+                    &ReadScope::unrestricted(),
+                );
+                assert_eq!(restricted, unrestricted, "{filter_mode:?}, {allow_roots:?}");
+            }
+        }
+
+        let scope = ReadScope::from_allow_roots(&[workspace, project.clone()]).unwrap();
+        let project_result = glob_files_with_scope(
+            request(FilterMode::Project),
+            CancellationToken::new(),
+            &scope,
+        );
+        let project_text = response_path_lines(&project_result).join("\n");
+        for visible in [
+            "tier.txt",
+            "outer-must-not-apply.txt",
+            "visible.txt",
+            ".hidden.txt",
+        ] {
+            assert!(project_text.contains(visible), "{project_text}");
+        }
+        for hidden in [
+            "parent-anchored.txt",
+            "parent-ignore.txt",
+            "child-anchored.txt",
+            "project-exclude.txt",
+            "blocked/keep.txt",
+            "nested-only.txt",
+            "nested-repo-hidden.txt",
+        ] {
+            assert!(!project_text.contains(hidden), "{project_text}");
+        }
+    }
+
+    #[test]
+    fn restricted_modified_sort_matches_unrestricted() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("root");
+        fs::create_dir(&root).unwrap();
+        let older = root.join("older.txt");
+        let newer = root.join("newer.txt");
+        fs::write(&older, b"old").unwrap();
+        fs::write(&newer, b"new").unwrap();
+        filetime::set_file_mtime(&older, filetime::FileTime::from_unix_time(1, 0)).unwrap();
+        filetime::set_file_mtime(&newer, filetime::FileTime::from_unix_time(2, 0)).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let request = GlobRequest {
+            pattern: "*.txt".to_string(),
+            path: Some(root.to_string_lossy().into_owned()),
+            filter_mode: Some(FilterMode::All),
+            sort: Some(SortMode::Modified),
+            offset: None,
+            limit: None,
+        };
+        let restricted = glob_files_with_scope(request.clone(), CancellationToken::new(), &scope);
+        let unrestricted = glob_files_with_scope(
+            request,
+            CancellationToken::new(),
+            &ReadScope::unrestricted(),
+        );
+        assert_eq!(restricted, unrestricted);
+        let lines = response_path_lines(&restricted);
+        assert!(lines[0].ends_with("newer.txt"), "{lines:?}");
+    }
+
+    #[test]
+    fn restricted_walk_is_iterative_and_stops_at_the_candidate_limit() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("root");
+        fs::create_dir(&root).unwrap();
+        let mut deep = root.clone();
+        for _ in 0..256 {
+            deep.push("nested");
+            fs::create_dir(&deep).unwrap();
+        }
+        fs::write(deep.join("leaf.txt"), b"leaf").unwrap();
+        fs::write(root.join("first.txt"), b"first").unwrap();
+        fs::write(root.join("second.txt"), b"second").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let request = GlobRequest {
+            pattern: "**/*.txt".to_string(),
+            path: Some(root.to_string_lossy().into_owned()),
+            filter_mode: Some(FilterMode::All),
+            sort: Some(SortMode::Path),
+            offset: None,
+            limit: None,
+        };
+        let restricted = glob_files_with_scope(request.clone(), CancellationToken::new(), &scope);
+        let unrestricted = glob_files_with_scope(
+            request,
+            CancellationToken::new(),
+            &ReadScope::unrestricted(),
+        );
+        assert_eq!(restricted, unrestricted);
+
+        let resolved = crate::path_codec::resolve_search_root_with_scope(
+            Some(&root.to_string_lossy()),
+            RootRequirement::Directory,
+            &scope,
+        )
+        .unwrap();
+        let error = crate::traversal::collect_capability_candidates_filtered(
+            &resolved,
+            None,
+            None,
+            None,
+            crate::traversal::CapabilityCandidateOptions {
+                honor_ignore: false,
+                detail: crate::traversal::CandidateDetail::Path,
+                limit: Some(1),
+                limit_message: "candidate cap reached",
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error, "candidate cap reached");
+    }
+
+    #[test]
+    fn restricted_global_ignore_matches_unrestricted_in_isolated_subprocess() {
+        if env::var_os("FASTCTX_GLOBAL_IGNORE_CHILD").is_some() {
+            let global =
+                std::path::PathBuf::from(env::var_os("FASTCTX_GLOBAL_IGNORE_PATH").unwrap());
+            fs::write(&global, "globally-hidden.txt\n").unwrap();
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("project");
+            fs::create_dir(&root).unwrap();
+            fs::create_dir(root.join(".git")).unwrap();
+            fs::write(root.join("globally-hidden.txt"), b"hidden").unwrap();
+            fs::write(root.join("visible.txt"), b"visible").unwrap();
+            let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+            let request = |filter_mode| GlobRequest {
+                pattern: "**/*".to_string(),
+                path: Some(root.to_string_lossy().into_owned()),
+                filter_mode: Some(filter_mode),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            };
+            let project = glob_files_with_scope(
+                request(FilterMode::Project),
+                CancellationToken::new(),
+                &scope,
+            );
+            let unrestricted = glob_files_with_scope(
+                request(FilterMode::Project),
+                CancellationToken::new(),
+                &ReadScope::unrestricted(),
+            );
+            let all =
+                glob_files_with_scope(request(FilterMode::All), CancellationToken::new(), &scope);
+            assert_eq!(project, unrestricted);
+            let ToolContent::Text(project) = &project.content[0] else {
+                panic!("{project:?}")
+            };
+            let ToolContent::Text(all) = &all.content[0] else {
+                panic!("{all:?}")
+            };
+            assert!(!project.contains("globally-hidden.txt"), "{project}");
+            assert!(all.contains("globally-hidden.txt"), "{all}");
+            return;
+        }
+        let fixture = tempfile::tempdir().unwrap();
+        let config = fixture.path().join("gitconfig");
+        let global = fixture.path().join("global-ignore");
+        fs::write(
+            &config,
+            format!("[core]\n\texcludesFile = {}\n", global.display()),
+        )
+        .unwrap();
+        let status = Command::new(env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("glob_tool::tests::restricted_global_ignore_matches_unrestricted_in_isolated_subprocess")
+            .env("FASTCTX_GLOBAL_IGNORE_CHILD", "1")
+            .env("FASTCTX_GLOBAL_IGNORE_PATH", &global)
+            .env("GIT_CONFIG_GLOBAL", &config)
+            .env("HOME", fixture.path())
+            .env("XDG_CONFIG_HOME", fixture.path().join("xdg"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "global-ignore child failed: {status}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_glob_keeps_stable_file_symlinks_in_configured_roots() {
+        let fixture = tempfile::tempdir().unwrap();
+        let left = fixture.path().join("left");
+        let right = fixture.path().join("right");
+        fs::create_dir(&left).unwrap();
+        fs::create_dir(&right).unwrap();
+        fs::write(left.join("same-target.txt"), b"same").unwrap();
+        fs::write(right.join("cross-target.txt"), b"cross").unwrap();
+        std::os::unix::fs::symlink("same-target.txt", left.join("same-link.txt")).unwrap();
+        std::os::unix::fs::symlink(right.join("cross-target.txt"), left.join("cross-link.txt"))
+            .unwrap();
+        let scope = ReadScope::from_allow_roots(&[left.clone(), right]).unwrap();
+        let request = GlobRequest {
+            pattern: "*.txt".to_string(),
+            path: Some(left.to_string_lossy().into_owned()),
+            filter_mode: Some(FilterMode::All),
+            sort: Some(SortMode::Path),
+            offset: None,
+            limit: None,
+        };
+        let restricted = glob_files_with_scope(request.clone(), CancellationToken::new(), &scope);
+        let unrestricted = glob_files_with_scope(
+            request,
+            CancellationToken::new(),
+            &ReadScope::unrestricted(),
+        );
+        assert_eq!(restricted, unrestricted);
+        let paths = response_path_lines(&restricted);
+        assert!(
+            paths.iter().any(|path| path.ends_with("same-link.txt")),
+            "{paths:?}"
+        );
+        assert!(
+            paths.iter().any(|path| path.ends_with("cross-link.txt")),
+            "{paths:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_glob_denies_recursive_file_symlink_without_returning_target_path() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        fs::create_dir(&root).unwrap();
+        fs::File::create(&outside).unwrap();
+        let link = root.join("outside-link.txt");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let response = glob_files_with_scope(
+            GlobRequest {
+                pattern: "**/*".to_string(),
+                path: Some(root.to_string_lossy().into_owned()),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        );
+        assert!(response.is_error, "{response:?}");
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.starts_with("Permission denied: "), "{text}");
+        assert!(
+            !text.contains(&outside.to_string_lossy().to_string()),
+            "{text}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_glob_fails_closed_when_candidate_symlink_retargets_after_routing() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside.txt");
+        fs::create_dir(&root).unwrap();
+        fs::File::create(root.join("inside.txt")).unwrap();
+        fs::File::create(&outside).unwrap();
+        let link = root.join("candidate-link.txt");
+        let old_link = root.join("candidate-link.old");
+        std::os::unix::fs::symlink("inside.txt", &link).unwrap();
+        let link_for_hook = link.clone();
+        let old_for_hook = old_link.clone();
+        let outside_for_hook = outside.clone();
+        let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
+            move |path| {
+                if path == link_for_hook && link_for_hook.exists() {
+                    fs::rename(&link_for_hook, &old_for_hook).unwrap();
+                    std::os::unix::fs::symlink(&outside_for_hook, &link_for_hook).unwrap();
+                }
+            },
+        ));
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let response = glob_files_with_scope(
+            GlobRequest {
+                pattern: "**/*".to_string(),
+                path: Some(root.to_string_lossy().into_owned()),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        );
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text response: {response:?}");
+        };
+        assert!(response.is_error || text.contains("inside.txt"), "{text}");
+        assert!(!text.contains("candidate-link.txt"), "{text}");
+        assert!(
+            !text.contains(&outside.to_string_lossy().to_string()),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn scoped_glob_path_denial_is_line_safe_and_does_not_leak_raw_path() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside\nsecret.txt");
+        fs::create_dir(&root).unwrap();
+        fs::File::create(&outside).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let response = glob_files_with_scope(
+            GlobRequest {
+                pattern: "*".to_string(),
+                path: Some(search_display_path(&outside)),
+                filter_mode: Some(FilterMode::All),
+                sort: Some(SortMode::Path),
+                offset: None,
+                limit: None,
+            },
+            CancellationToken::new(),
+            &scope,
+        );
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(response.is_error, "{response:?}");
+        assert!(text.starts_with("Permission denied: "), "{text}");
+        assert!(text.contains("~fastctx~b"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
+        assert!(!text.contains("outside\nsecret"), "{text:?}");
     }
 }

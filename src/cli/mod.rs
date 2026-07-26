@@ -8,6 +8,7 @@ use crate::control::i18n::{ALL_LANGUAGES, Language};
 use crate::control::paths::ControlPaths;
 use crate::control::settings::{self, Tier};
 use crate::file_executor::GrepGlobExecutor;
+use crate::paths::ReadScope;
 use crate::server::{FastCtxServer, ServerOptions};
 use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
@@ -42,6 +43,9 @@ enum Command {
         /// Deprecated compatibility flag; replace is always published.
         #[arg(long, hide = true)]
         enable_edit: bool,
+        /// Restrict all read, grep, and glob targets to this directory; repeatable.
+        #[arg(long = "allow-root", value_name = "PATH")]
+        allow_roots: Vec<PathBuf>,
     },
     /// Force the full-screen control terminal.
     Ui,
@@ -153,7 +157,11 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         Some(Command::Serve {
             enable_shell,
             enable_edit: _,
-        }) => run_server_with_options(ServerOptions { enable_shell }).await,
+            allow_roots,
+        }) => {
+            let scope = ReadScope::from_allow_roots(&allow_roots)?;
+            run_server_with_options_and_scope(ServerOptions { enable_shell }, scope).await
+        }
         Some(Command::Ui) => {
             require_tty()?;
             let paths = ControlPaths::discover()?;
@@ -289,11 +297,26 @@ pub async fn run_server() -> Result<ExitCode, String> {
 
 /// Starts the single server with the requested optional tool groups.
 pub async fn run_server_with_options(options: ServerOptions) -> Result<ExitCode, String> {
+    run_server_with_options_and_scope(options, ReadScope::unrestricted()).await
+}
+
+pub(crate) async fn run_server_with_options_and_scope(
+    options: ServerOptions,
+    scope: ReadScope,
+) -> Result<ExitCode, String> {
     let paths = ControlPaths::discover()?;
     let executor = load_search_executor(&paths)?;
     let parent = crate::process_identity::parent_identity_from_environment()?;
     let stdin = crate::stdio_transport::DetachedStdin::start()?;
-    run_server_with_io_and_executor(options, parent, stdin, tokio::io::stdout(), executor).await
+    run_server_with_io_and_executor_and_scope(
+        options,
+        parent,
+        stdin,
+        tokio::io::stdout(),
+        executor,
+        scope,
+    )
+    .await
 }
 
 fn load_search_executor(paths: &ControlPaths) -> Result<Arc<GrepGlobExecutor>, String> {
@@ -319,16 +342,24 @@ async fn run_server_with_io<W>(
 where
     W: tokio::io::AsyncWrite + Send + Unpin + 'static,
 {
-    run_server_with_io_and_executor(options, parent, stdin, stdout, GrepGlobExecutor::shared())
-        .await
+    run_server_with_io_and_executor_and_scope(
+        options,
+        parent,
+        stdin,
+        stdout,
+        GrepGlobExecutor::shared(),
+        ReadScope::unrestricted(),
+    )
+    .await
 }
 
-async fn run_server_with_io_and_executor<W>(
+async fn run_server_with_io_and_executor_and_scope<W>(
     options: ServerOptions,
     parent: Option<Option<crate::process_identity::ProcessIdentity>>,
     stdin: crate::stdio_transport::DetachedStdin,
     stdout: W,
     executor: Arc<GrepGlobExecutor>,
+    scope: ReadScope,
 ) -> Result<ExitCode, String>
 where
     W: tokio::io::AsyncWrite + Send + Unpin + 'static,
@@ -337,7 +368,7 @@ where
     let stdin_read_error = stdin.read_error_receiver();
     let stdin_read_error_wait = wait_for_stdin_read_error(stdin_read_error.clone());
     tokio::pin!(stdin_read_error_wait);
-    let service = match FastCtxServer::with_options_and_executor(options, executor)
+    let service = match FastCtxServer::with_options_and_executor_and_scope(options, executor, scope)
         .serve((stdin, stdout))
         .await
     {
@@ -702,7 +733,7 @@ fn print_receipt(receipt: &crate::control::apply::OperationReceipt) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ServerOptions, load_search_executor, run_server_with_io};
+    use super::{Cli, Command, ServerOptions, load_search_executor, run_cli, run_server_with_io};
     use crate::control::paths::ControlPaths;
     use crate::stdio_transport::DetachedStdin;
     use std::io::{Cursor, Read};
@@ -792,6 +823,22 @@ mod tests {
         assert_eq!(
             result.unwrap_err(),
             "Cannot read MCP stdin: injected established-session stdin failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_validates_allow_roots_before_starting_the_server() {
+        let result = run_cli(Cli {
+            command: Some(Command::Serve {
+                enable_shell: false,
+                enable_edit: false,
+                allow_roots: vec![std::path::PathBuf::from("relative-root")],
+            }),
+        })
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid --allow-root relative-root: the path must be absolute."
         );
     }
 }

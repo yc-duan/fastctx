@@ -12,7 +12,8 @@ use std::path::Path;
 const BYTES_PER_LINE: u64 = 16;
 const HEX_COLUMN_WIDTH: usize = 48;
 
-pub(super) fn read_hex_file(
+pub(super) fn read_hex_handle(
+    file: File,
     path: &Path,
     offset: Option<usize>,
     limit: Option<usize>,
@@ -26,19 +27,26 @@ pub(super) fn read_hex_file(
     if limit == 0 {
         return ToolResponse::error("Invalid limit value: 0. Expected an integer >= 1.");
     }
-
-    let mut file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) => return ToolResponse::error(io_error_message(path, &error)),
-    };
     let file_size = match file.metadata() {
         Ok(metadata) => metadata.len(),
         Err(error) => return ToolResponse::error(io_error_message(path, &error)),
     };
+    read_hex_reader(file, file_size, path, offset, limit, budget)
+}
+
+fn read_hex_reader(
+    mut file: impl Read + Seek,
+    file_size: u64,
+    path: &Path,
+    offset: usize,
+    limit: usize,
+    budget: TokenBudget,
+) -> ToolResponse {
     if file_size == 0 {
         return ToolResponse::text("Warning: the file exists but is empty.");
     }
-    let total_lines = file_size / BYTES_PER_LINE + u64::from(file_size % BYTES_PER_LINE != 0);
+    let total_lines =
+        file_size / BYTES_PER_LINE + u64::from(!file_size.is_multiple_of(BYTES_PER_LINE));
     let offset_line = offset as u64;
     if offset_line > total_lines {
         let noun = if total_lines == 1 { "line" } else { "lines" };
@@ -142,7 +150,7 @@ fn line_span(first: u64, last: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_hex_line, read_hex_file};
+    use super::{format_hex_line, read_hex_handle};
     use crate::ToolContent;
     use crate::budget::TokenBudget;
 
@@ -167,7 +175,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("bytes.bin");
         std::fs::write(&path, b"0123456789ABCDEFmore").unwrap();
-        let response = read_hex_file(
+        let response = read_hex_handle(
+            std::fs::File::open(&path).unwrap(),
             &path,
             None,
             None,

@@ -5,7 +5,8 @@ use crate::edit::ReplaceService;
 use crate::file_executor::GrepGlobExecutor;
 use crate::glob_tool::{GlobRequest, glob_files_cancellable};
 use crate::grep_tool::{GrepRequest, grep_files_cancellable};
-use crate::read_tool::{ReadRequest, read_file};
+use crate::paths::ReadScope;
+use crate::read_tool::{ReadRequest, read_file_with_scope};
 use crate::server_manifest::{ToolContract, ToolManifest};
 use crate::server_support::{BudgetRetry, run_blocking, run_blocking_cancellable};
 use crate::shell::FastShell;
@@ -48,6 +49,7 @@ pub struct FastCtxServer {
     pub(crate) replace: ReplaceService,
     pub(crate) file_permits: Arc<Semaphore>,
     pub(crate) grep_glob_executor: Arc<GrepGlobExecutor>,
+    pub(crate) read_scope: ReadScope,
     pub(crate) shell_permits: Arc<Semaphore>,
     pub(crate) replace_permits: Arc<Semaphore>,
 }
@@ -60,13 +62,17 @@ impl FastCtxServer {
 
     /// Creates one server whose visible tools are selected by startup flags.
     pub fn with_options(options: ServerOptions) -> Self {
-        Self::with_options_and_executor(options, GrepGlobExecutor::shared())
+        Self::with_options_and_executor_and_scope(
+            options,
+            GrepGlobExecutor::shared(),
+            ReadScope::unrestricted(),
+        )
     }
 
-    /// Creates a server with the process-startup search executor selected by current-user config.
-    pub(crate) fn with_options_and_executor(
+    pub(crate) fn with_options_and_executor_and_scope(
         options: ServerOptions,
         grep_glob_executor: Arc<GrepGlobExecutor>,
+        read_scope: ReadScope,
     ) -> Self {
         let mut tool_router = Self::file_tool_router();
         tool_router.merge(Self::shell_tool_router());
@@ -86,6 +92,7 @@ impl FastCtxServer {
             replace: ReplaceService::new(),
             file_permits: Arc::new(Semaphore::new(MAX_FILE_OPERATIONS)),
             grep_glob_executor,
+            read_scope,
             shell_permits: Arc::new(Semaphore::new(MAX_SHELL_OPERATIONS)),
             replace_permits: Arc::new(Semaphore::new(MAX_REPLACE_OPERATIONS)),
         }
@@ -141,12 +148,13 @@ with the exact parameters a Partial note provides.",
     )]
     async fn read(&self, Parameters(request): Parameters<ReadRequest>) -> CallToolResult {
         let status_shell = self.shell.clone();
+        let scope = self.read_scope.clone();
         run_blocking(
             Arc::clone(&self.file_permits),
             READ_TOKEN_BUDGET_ENV,
             move || status_shell.background_status(None),
             BudgetRetry::Safe,
-            move || read_file(request.clone()),
+            move || read_file_with_scope(request.clone(), &scope),
         )
         .await
     }
@@ -166,6 +174,7 @@ with the exact parameters a Partial note provides.",
         Parameters(request): Parameters<GrepRequest>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
+        let scope = self.read_scope.clone();
         run_blocking_cancellable(
             context.id,
             context.ct,
@@ -176,7 +185,9 @@ with the exact parameters a Partial note provides.",
                 let shell = self.shell.clone();
                 move || shell.background_status(None)
             },
-            move |operation, executor| grep_files_cancellable(operation, executor, request.clone()),
+            move |operation, executor| {
+                grep_files_cancellable(operation, executor, scope.clone(), request.clone())
+            },
         )
         .await
     }
@@ -196,6 +207,7 @@ with the exact parameters a Partial note provides.",
         Parameters(request): Parameters<GlobRequest>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
+        let scope = self.read_scope.clone();
         run_blocking_cancellable(
             context.id,
             context.ct,
@@ -206,7 +218,9 @@ with the exact parameters a Partial note provides.",
                 let shell = self.shell.clone();
                 move || shell.background_status(None)
             },
-            move |operation, executor| glob_files_cancellable(operation, executor, request.clone()),
+            move |operation, executor| {
+                glob_files_cancellable(operation, executor, scope.clone(), request.clone())
+            },
         )
         .await
     }
@@ -277,21 +291,127 @@ fn not_a_resource_server() -> ErrorData {
 mod tests {
     use super::{FastCtxServer, ServerOptions};
     use crate::file_executor::GrepGlobExecutor;
+    use crate::paths::{ReadScope, display_path};
     use crate::search_parallelism::MAX_SEARCH_PARALLELISM;
+    use rmcp::RoleServer;
+    use rmcp::model::{
+        CallToolRequest, CallToolRequestParams, ClientJsonRpcMessage, ClientRequest,
+        NumberOrString, ServerResult,
+    };
+    use rmcp::service::serve_directly;
+    use rmcp::transport::OneshotTransport;
     use std::sync::Arc;
+
+    async fn call_server_tool(
+        server: FastCtxServer,
+        name: &'static str,
+        arguments: serde_json::Value,
+    ) -> rmcp::model::CallToolResult {
+        let arguments = arguments
+            .as_object()
+            .cloned()
+            .expect("tool arguments must be a JSON object");
+        let request = ClientJsonRpcMessage::request(
+            ClientRequest::CallToolRequest(CallToolRequest::new(
+                CallToolRequestParams::new(name).with_arguments(arguments),
+            )),
+            NumberOrString::Number(1),
+        );
+        let (transport, mut responses) = OneshotTransport::<RoleServer>::new(request);
+        let service = serve_directly(server, transport, None);
+        let response = responses
+            .recv()
+            .await
+            .expect("server must respond to a routed tool call");
+        let _ = service.cancel().await;
+        let (ServerResult::CallToolResult(result), _) = response
+            .into_response()
+            .expect("tool call must produce a JSON-RPC response")
+        else {
+            panic!("expected a tools/call response");
+        };
+        result
+    }
 
     #[test]
     fn configured_executor_is_the_server_search_source_for_serial_mid_and_maximum_p() {
         let middle = (MAX_SEARCH_PARALLELISM / 2).max(1);
         for parallelism in [1, middle, MAX_SEARCH_PARALLELISM] {
             let executor = Arc::new(GrepGlobExecutor::with_test_parallelism(parallelism));
-            let server = FastCtxServer::with_options_and_executor(
+            let server = FastCtxServer::with_options_and_executor_and_scope(
                 ServerOptions::default(),
                 Arc::clone(&executor),
+                ReadScope::unrestricted(),
             );
             assert!(Arc::ptr_eq(&server.grep_glob_executor, &executor));
             assert_eq!(server.grep_glob_executor.parallelism(), parallelism);
             assert_eq!(server.grep_glob_executor.extra_capacity(), parallelism - 1);
         }
+    }
+
+    #[tokio::test]
+    async fn scoped_server_enforces_file_tool_boundaries() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside_root = fixture.path().join("outside");
+        let outside = outside_root.join("outside.txt");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside_root).unwrap();
+        std::fs::write(root.join("inside.txt"), b"inside").unwrap();
+        std::fs::write(&outside, b"outside-secret").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let server = FastCtxServer::with_options_and_executor_and_scope(
+            ServerOptions::default(),
+            Arc::new(GrepGlobExecutor::with_test_parallelism(1)),
+            scope,
+        );
+        let read = call_server_tool(
+            server.clone(),
+            "read",
+            serde_json::json!({"file_path": display_path(&outside)}),
+        )
+        .await;
+        assert_eq!(read.is_error, Some(true), "{read:?}");
+        let read_debug = format!("{read:?}");
+        assert!(read_debug.contains("Permission denied:"), "{read_debug}");
+        assert!(!read_debug.contains("outside-secret"), "{read_debug}");
+
+        let grep = call_server_tool(
+            server.clone(),
+            "grep",
+            serde_json::json!({
+                "pattern": "outside-secret",
+                "path": display_path(&outside_root),
+            }),
+        )
+        .await;
+        assert_eq!(grep.is_error, Some(true), "{grep:?}");
+        let text = grep
+            .content
+            .first()
+            .and_then(|content| content.as_text())
+            .map(|text| text.text.as_str())
+            .expect("expected text error");
+        assert!(text.starts_with("Permission denied: "), "{text}");
+        assert!(!text.contains("outside-secret"), "{text}");
+
+        let glob = call_server_tool(
+            server,
+            "glob",
+            serde_json::json!({
+                "pattern": "**/*",
+                "path": display_path(&outside_root),
+            }),
+        )
+        .await;
+        assert_eq!(glob.is_error, Some(true), "{glob:?}");
+        let text = glob
+            .content
+            .first()
+            .and_then(|content| content.as_text())
+            .map(|text| text.text.as_str())
+            .expect("expected text error");
+        assert!(text.starts_with("Permission denied: "), "{text}");
+        assert!(!text.contains("outside-secret"), "{text}");
     }
 }

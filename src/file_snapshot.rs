@@ -9,6 +9,7 @@ use crate::operation::{WorkCheckpoint, WorkStop};
 use crate::path_codec::{FileIdentityHint, PathRecord};
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write};
+#[cfg(test)]
 use std::path::Path;
 use std::sync::Arc;
 
@@ -690,6 +691,51 @@ fn capture_reader(
     builder.finish(operation).map(CaptureRead::Complete)
 }
 
+/// Classifies and captures an already-authorized file handle without reopening
+/// its pathname. The handle stays pinned to the routed capability target.
+pub(crate) fn capture_classify_open_file(
+    mut file: File,
+    candidate: PathRecord,
+    explicit_encoding: Option<&str>,
+    fallback_encoding: Option<&str>,
+    operation: Option<&dyn WorkCheckpoint>,
+) -> Result<CaptureDisposition, CaptureFailure> {
+    checkpoint(operation)?;
+    let (before, is_regular) = identity_from_file(&file)
+        .map_err(|error| prefer_stop(operation, CaptureFailure::Io(error)))?;
+    #[cfg(test)]
+    tests::notify_original_open(&candidate.native);
+    if !is_regular || !before.matches_hint(candidate.traversal_fingerprint.as_ref()) {
+        return Ok(CaptureDisposition::FileChanged);
+    }
+    let capture = capture_reader(&mut file, explicit_encoding, fallback_encoding, operation)?;
+    checkpoint(operation)?;
+    #[cfg(test)]
+    if let Some(operation) = operation {
+        operation.stage(crate::operation::TestStage::BeforeIdentityPostCheck);
+    }
+    checkpoint(operation)?;
+    let (after, is_regular) = identity_from_file(&file)
+        .map_err(|error| prefer_stop(operation, CaptureFailure::Io(error)))?;
+    if !is_regular || !before.same_state_for_authorized_capture(&after) {
+        return Ok(CaptureDisposition::FileChanged);
+    }
+    Ok(match capture {
+        CaptureRead::Terminal(proof) => match proof.rejection() {
+            Some(rejection) => CaptureDisposition::EncodingRejected { rejection, proof },
+            None => CaptureDisposition::BinarySkipped(proof),
+        },
+        CaptureRead::Complete(captured) => {
+            CaptureDisposition::Searchable(Box::new(SealedSnapshot {
+                path: candidate,
+                _before: before,
+                _after: after,
+                captured,
+            }))
+        }
+    })
+}
+
 fn checkpoint(operation: Option<&dyn WorkCheckpoint>) -> Result<(), CaptureFailure> {
     match operation.map(WorkCheckpoint::check_work) {
         Some(Err(WorkStop::RequestCancelled)) => Err(CaptureFailure::Cancelled),
@@ -705,12 +751,12 @@ fn prefer_stop(operation: Option<&dyn WorkCheckpoint>, failure: CaptureFailure) 
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(test, not(windows)))]
 fn open_original(path: &Path) -> io::Result<File> {
     File::open(path)
 }
 
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 fn open_original(path: &Path) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -725,6 +771,7 @@ fn open_original(path: &Path) -> io::Result<File> {
 }
 
 /// Opens the original candidate once, captures its bytes, and verifies stable identity.
+#[cfg(test)]
 pub(crate) fn capture_classify(
     candidate: &PathRecord,
     explicit_encoding: Option<&str>,
@@ -839,6 +886,10 @@ impl FileIdentity {
     fn same_state(&self, other: &Self) -> bool {
         self == other
     }
+
+    fn same_state_for_authorized_capture(&self, other: &Self) -> bool {
+        self.same_state(other)
+    }
 }
 
 #[cfg(unix)]
@@ -847,7 +898,7 @@ fn identity_from_file(file: &File) -> io::Result<(FileIdentity, bool)> {
     Ok((FileIdentity::from_metadata(&metadata), metadata.is_file()))
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn identity_from_path(path: &Path) -> io::Result<(FileIdentity, bool)> {
     let metadata = std::fs::metadata(path)?;
     Ok((FileIdentity::from_metadata(&metadata), metadata.is_file()))
@@ -965,6 +1016,10 @@ impl FileIdentity {
                 _ => true,
             }
     }
+
+    fn same_state_for_authorized_capture(&self, other: &Self) -> bool {
+        self.change_time.is_some() && other.change_time.is_some() && self.same_state(other)
+    }
 }
 
 #[cfg(windows)]
@@ -978,7 +1033,7 @@ fn identity_from_file(file: &File) -> io::Result<(FileIdentity, bool)> {
     Ok((FileIdentity::from_file(file)?, metadata.is_file()))
 }
 
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 fn identity_from_path(path: &Path) -> io::Result<(FileIdentity, bool)> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -995,12 +1050,14 @@ fn identity_from_path(path: &Path) -> io::Result<(FileIdentity, bool)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{
         CaptureDisposition, CaptureFailure, CaptureRead, FallbackTerminalState,
         MEMORY_SNAPSHOT_LIMIT, PREFLIGHT_BYTES, SNAPSHOT_CHUNK_BYTES, SnapshotBuilder,
         TerminalProof, capture_classify, capture_reader,
     };
+    #[cfg(windows)]
+    use super::{FileIdentity, WindowsFileId};
     use crate::encoding::{
         ByteSource, EncodingDecision, EncodingRejection, validate_source_encoding,
     };
@@ -1017,12 +1074,31 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio_util::sync::CancellationToken;
 
-    type TempCreateCallback = Arc<dyn Fn(&Path)>;
-    type OriginalOpenCallback = Arc<dyn Fn(&Path)>;
+    pub(crate) type TempCreateCallback = Arc<dyn Fn(&Path)>;
+    pub(crate) type OriginalOpenCallback = Arc<dyn Fn(&Path)>;
 
     thread_local! {
         static TEMP_CREATE_OBSERVER: RefCell<Option<TempCreateCallback>> = RefCell::new(None);
         static ORIGINAL_OPEN_OBSERVER: RefCell<Option<OriginalOpenCallback>> = RefCell::new(None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn authorized_capture_requires_windows_change_time_proof() {
+        let identity = FileIdentity {
+            file_id: WindowsFileId::Legacy {
+                volume_serial: 1,
+                file_index: 2,
+            },
+            len: 3,
+            creation_time: 4,
+            last_write_time: 5,
+            change_time: None,
+            attributes: 6,
+        };
+
+        assert!(identity.same_state(&identity));
+        assert!(!identity.same_state_for_authorized_capture(&identity));
     }
 
     pub(super) fn notify_temp_created(path: &Path) {
@@ -1032,17 +1108,17 @@ mod tests {
         }
     }
 
-    pub(super) fn notify_original_open(path: &Path) {
+    pub(crate) fn notify_original_open(path: &Path) {
         let observer = ORIGINAL_OPEN_OBSERVER.with(|slot| slot.borrow().clone());
         if let Some(observer) = observer {
             observer(path);
         }
     }
 
-    struct TempCreateObserverGuard;
+    pub(crate) struct TempCreateObserverGuard;
 
     impl TempCreateObserverGuard {
-        fn install(observer: TempCreateCallback) -> Self {
+        pub(crate) fn install(observer: TempCreateCallback) -> Self {
             TEMP_CREATE_OBSERVER.with(|slot| {
                 assert!(
                     slot.borrow_mut().replace(observer).is_none(),
@@ -1061,10 +1137,10 @@ mod tests {
         }
     }
 
-    struct OriginalOpenObserverGuard;
+    pub(crate) struct OriginalOpenObserverGuard;
 
     impl OriginalOpenObserverGuard {
-        fn install(observer: OriginalOpenCallback) -> Self {
+        pub(crate) fn install(observer: OriginalOpenCallback) -> Self {
             ORIGINAL_OPEN_OBSERVER.with(|slot| {
                 assert!(
                     slot.borrow_mut().replace(observer).is_none(),

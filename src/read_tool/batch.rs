@@ -1,17 +1,17 @@
 //! Request-ordered text batching with one shared token budget and exact continuations.
 
-use super::{BatchReadEntry, ReadRequest, image_file, pdf, text_file};
+use super::{BatchReadEntry, ReadRequest, image_file, pdf, read_prefix, text_file};
 use crate::binary::detect_binary_type;
 use crate::budget::{READ_TOKEN_BUDGET_ENV, TokenBudget, estimate_tokens, tool_token_budget};
 use crate::encoding::canonical_encoding_label;
 use crate::model::ToolResponse;
 use crate::paths::{
-    canonical_existing, display_path, io_error_message, missing_read_file_message, parse_input_path,
+    ReadScope, absolute_path_required_message, canonical_existing, display_path, io_error_message,
+    missing_read_file_message, parse_input_path,
 };
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
-use std::io::Read;
 
 const MAX_BATCH_FILES: usize = 32;
 
@@ -36,7 +36,7 @@ enum PreparedOutcome {
     Message(String),
 }
 
-pub(super) fn read_text_files(mut request: ReadRequest) -> ToolResponse {
+pub(super) fn read_text_files(mut request: ReadRequest, scope: &ReadScope) -> ToolResponse {
     let entries = request
         .files
         .take()
@@ -69,17 +69,17 @@ pub(super) fn read_text_files(mut request: ReadRequest) -> ToolResponse {
             ));
         }
     }
-    if let Err(error) = validate_entries(&entries) {
+    if let Err(error) = validate_entries(&entries, scope) {
         return ToolResponse::error(error);
     }
     let budget = match tool_token_budget(READ_TOKEN_BUDGET_ENV) {
         Ok(budget) => budget,
         Err(error) => return ToolResponse::error(error),
     };
-    pack_entries(entries, budget)
+    pack_entries(entries, budget, scope)
 }
 
-fn validate_entries(entries: &[BatchReadEntry]) -> Result<(), String> {
+fn validate_entries(entries: &[BatchReadEntry], scope: &ReadScope) -> Result<(), String> {
     let mut seen = HashSet::with_capacity(entries.len());
     for entry in entries {
         if entry.offset == Some(0) {
@@ -94,13 +94,17 @@ fn validate_entries(entries: &[BatchReadEntry]) -> Result<(), String> {
         {
             return Err(rejection.message(""));
         }
-        // A relative entry is an existence problem, not a request-shape one, so it is
-        // reported in its own segment and never discards its neighbors. Keeping it out
-        // of canonicalization also stops it from resolving into a false duplicate.
-        let key_path = if parsed.is_absolute() {
-            canonical_existing(&parsed).unwrap_or(parsed)
-        } else {
+        // Relative restricted entries and denied absolute entries remain inline outcomes;
+        // never canonicalize them during duplicate validation.
+        let key_path = if !parsed.is_absolute() {
             parsed
+        } else if scope.is_restricted() {
+            match scope.authorize(&parsed) {
+                Ok(authorized) => canonical_existing(&authorized).unwrap_or(authorized),
+                Err(_) => parsed,
+            }
+        } else {
+            canonical_existing(&parsed).unwrap_or(parsed)
         };
         let key = display_path(&key_path);
         #[cfg(windows)]
@@ -115,7 +119,11 @@ fn validate_entries(entries: &[BatchReadEntry]) -> Result<(), String> {
     Ok(())
 }
 
-fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolResponse {
+fn pack_entries(
+    entries: Vec<BatchReadEntry>,
+    budget: TokenBudget,
+    scope: &ReadScope,
+) -> ToolResponse {
     let total = entries.len();
     let mut progress = entries
         .iter()
@@ -125,7 +133,7 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
     let mut segments = Vec::new();
 
     for (index, entry) in entries.iter().enumerate() {
-        let prepared = prepare_entry(entry, budget.value);
+        let prepared = prepare_entry(entry, budget.value, scope);
         match prepared.outcome {
             PreparedOutcome::Message(message) => {
                 let segment = format!("=== {} ===\n{message}", prepared.path);
@@ -171,16 +179,33 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
     ToolResponse::text(render_response(&segments, &progress, total))
 }
 
-fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEntry {
+fn prepare_entry(
+    entry: &BatchReadEntry,
+    collection_budget: usize,
+    scope: &ReadScope,
+) -> PreparedEntry {
     let parsed = parse_input_path(&entry.path);
     let input_display = display_path(&parsed);
     if !parsed.is_absolute() {
         return PreparedEntry {
             path: input_display,
-            outcome: PreparedOutcome::Message(missing_read_file_message(&entry.path)),
+            outcome: PreparedOutcome::Message(if scope.is_restricted() {
+                absolute_path_required_message(&entry.path)
+            } else {
+                missing_read_file_message(&entry.path)
+            }),
         };
     }
-    let metadata = match fs::metadata(&parsed) {
+    let routed = match scope.route(&parsed) {
+        Ok(routed) => routed,
+        Err(message) => {
+            return PreparedEntry {
+                path: input_display,
+                outcome: PreparedOutcome::Message(message),
+            };
+        }
+    };
+    let metadata = match routed.capability.metadata(&routed.relative) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return PreparedEntry {
@@ -195,8 +220,7 @@ fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEn
             };
         }
     };
-    let path = canonical_existing(&parsed).unwrap_or(parsed);
-    let path_display = display_path(&path);
+    let path_display = display_path(&routed.canonical);
     if metadata.is_dir() {
         return PreparedEntry {
             path: path_display.clone(),
@@ -213,16 +237,45 @@ fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEn
             )),
         };
     }
-    let mut prefix = Vec::new();
-    if let Err(error) =
-        fs::File::open(&path).and_then(|file| file.take(8 * 1024).read_to_end(&mut prefix))
-    {
-        return PreparedEntry {
-            path: path_display,
-            outcome: PreparedOutcome::Message(io_error_message(&path, &error)),
-        };
-    }
-    if pdf::is_pdf(&path, &prefix) {
+    let mut file = match routed.capability.open(&routed.relative) {
+        Ok(file) => file.into_std(),
+        Err(error) => {
+            return PreparedEntry {
+                path: path_display,
+                outcome: PreparedOutcome::Message(io_error_message(&parsed, &error)),
+            };
+        }
+    };
+    #[cfg(test)]
+    crate::file_snapshot::tests::notify_original_open(&routed.canonical);
+    let prefix = match read_prefix(&mut file) {
+        Ok(prefix) => prefix,
+        Err(error) => {
+            return PreparedEntry {
+                path: path_display,
+                outcome: PreparedOutcome::Message(io_error_message(&parsed, &error)),
+            };
+        }
+    };
+    prepare_classified_entry(
+        entry,
+        collection_budget,
+        &routed.canonical,
+        path_display,
+        &prefix,
+        &file,
+    )
+}
+
+fn prepare_classified_entry(
+    entry: &BatchReadEntry,
+    collection_budget: usize,
+    path: &std::path::Path,
+    path_display: String,
+    prefix: &[u8],
+    file: &fs::File,
+) -> PreparedEntry {
+    if pdf::is_pdf(path, prefix) {
         return PreparedEntry {
             path: path_display,
             outcome: PreparedOutcome::Message(
@@ -231,7 +284,7 @@ fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEn
             ),
         };
     }
-    if image_file::detect_image_mime(&path, &prefix).is_some() {
+    if image_file::detect_image_mime(path, prefix).is_some() {
         return PreparedEntry {
             path: path_display,
             outcome: PreparedOutcome::Message(
@@ -240,21 +293,19 @@ fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEn
             ),
         };
     }
-    let outcome = match text_file::read_batch_text_file(
-        &path,
+    let read = text_file::read_batch_text_handle(
+        file,
+        path,
         &path_display,
         entry.offset,
         entry.limit,
         entry.encoding.as_deref(),
-        detect_binary_type(&prefix),
+        detect_binary_type(prefix),
         collection_budget,
-    ) {
-        Ok(content) => PreparedOutcome::Content(content),
-        Err(message) => PreparedOutcome::Message(message),
-    };
+    );
     PreparedEntry {
         path: path_display,
-        outcome,
+        outcome: read.map_or_else(PreparedOutcome::Message, PreparedOutcome::Content),
     }
 }
 

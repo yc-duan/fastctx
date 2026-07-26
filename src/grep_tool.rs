@@ -9,7 +9,7 @@ use crate::encoding::{
     canonical_encoding_label, validate_snapshot_encoding,
 };
 use crate::file_executor::GrepGlobExecutor;
-use crate::file_snapshot::{CaptureDisposition, CaptureFailure, capture_classify};
+use crate::file_snapshot::{CaptureDisposition, CaptureFailure, capture_classify_open_file};
 use crate::grep_sink::{
     CapturedLine, ContentEntry, ContentSpec, FileResult, GrepSearchPlan, GrepSinkError,
     LineMatchSpan, PlanSink,
@@ -20,8 +20,10 @@ use crate::operation::{
 };
 use crate::ordered_window::{OrderedError, for_each_ordered};
 use crate::path_codec::{
-    PathRecord as Candidate, RootRequirement, io_error_message, resolve_search_root,
+    PathRecord as Candidate, RootRequirement, display_path as search_display_path,
+    io_error_message, resolve_search_root_with_scope,
 };
+use crate::paths::ReadScope;
 use crate::render_plan::{
     DetailRenderGraph, LineRenderGraph, LineRenderView, RenderPlanError, SharedLineRenderGraph,
 };
@@ -235,6 +237,14 @@ struct SearchEncoding {
 /// matching, sorting, rendering, and token verification. A cancelled operation
 /// returns an error response and never exposes a partial success body.
 pub fn grep_files(request: GrepRequest, cancellation: CancellationToken) -> ToolResponse {
+    grep_files_with_scope(request, cancellation, &ReadScope::unrestricted())
+}
+
+pub(crate) fn grep_files_with_scope(
+    request: GrepRequest,
+    cancellation: CancellationToken,
+    scope: &ReadScope,
+) -> ToolResponse {
     let budget = match tool_token_budget(GREP_TOKEN_BUDGET_ENV) {
         Ok(budget) => budget,
         Err(message) => {
@@ -249,7 +259,7 @@ pub fn grep_files(request: GrepRequest, cancellation: CancellationToken) -> Tool
         rmcp::model::RequestId::String(Arc::from("direct-grep")),
         cancellation,
     );
-    let response = grep_files_with_budget_source_and_execution(
+    let response = grep_files_with_budget_source_and_execution_scoped(
         request,
         budget.value,
         budget.variable,
@@ -258,6 +268,7 @@ pub fn grep_files(request: GrepRequest, cancellation: CancellationToken) -> Tool
         None,
         operation,
         GrepGlobExecutor::shared(),
+        scope,
     );
     guard.disarm();
     response
@@ -267,6 +278,7 @@ pub fn grep_files(request: GrepRequest, cancellation: CancellationToken) -> Tool
 pub(crate) fn grep_files_cancellable(
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: ReadScope,
     request: GrepRequest,
 ) -> Result<ToolResponse, OpError> {
     let work = operation.inline_work();
@@ -281,7 +293,7 @@ pub(crate) fn grep_files_cancellable(
             .error(ErrorClass::Budget, message));
         }
     };
-    let response = grep_files_with_budget_source_and_execution(
+    let response = grep_files_with_budget_source_and_execution_scoped(
         request,
         budget.value,
         budget.variable,
@@ -290,6 +302,7 @@ pub(crate) fn grep_files_cancellable(
         None,
         operation.clone(),
         executor,
+        &scope,
     );
     work.check_inline()?;
     Ok(response)
@@ -301,7 +314,7 @@ fn grep_files_with_budget(request: GrepRequest, budget: usize) -> ToolResponse {
         rmcp::model::RequestId::String(Arc::from("test-grep")),
         CancellationToken::new(),
     );
-    let response = grep_files_with_budget_source_and_execution(
+    let response = grep_files_with_budget_source_and_execution_scoped(
         request,
         budget,
         "FASTCTX_TOKEN_BUDGET",
@@ -309,6 +322,7 @@ fn grep_files_with_budget(request: GrepRequest, budget: usize) -> ToolResponse {
         None,
         operation,
         Arc::new(GrepGlobExecutor::with_test_parallelism(1)),
+        &ReadScope::unrestricted(),
     );
     guard.disarm();
     response
@@ -322,7 +336,7 @@ fn grep_files_with_budget_source_and_operation(
     operation: Option<&OperationCtx>,
 ) -> ToolResponse {
     if let Some(operation) = operation {
-        return grep_files_with_budget_source_and_execution(
+        return grep_files_with_budget_source_and_execution_scoped(
             request,
             budget,
             budget_variable,
@@ -330,13 +344,14 @@ fn grep_files_with_budget_source_and_operation(
             None,
             operation.clone(),
             Arc::new(GrepGlobExecutor::with_test_parallelism(1)),
+            &ReadScope::unrestricted(),
         );
     }
     let (mut guard, operation) = RequestWorkGuard::new(
         rmcp::model::RequestId::String(Arc::from("test-grep-operation")),
         CancellationToken::new(),
     );
-    let response = grep_files_with_budget_source_and_execution(
+    let response = grep_files_with_budget_source_and_execution_scoped(
         request,
         budget,
         budget_variable,
@@ -344,6 +359,7 @@ fn grep_files_with_budget_source_and_operation(
         None,
         operation,
         Arc::new(GrepGlobExecutor::with_test_parallelism(1)),
+        &ReadScope::unrestricted(),
     );
     guard.disarm();
     response
@@ -359,7 +375,7 @@ fn grep_files_with_budget_and_parallelism(
         rmcp::model::RequestId::String(Arc::from(format!("test-grep-p{parallelism}"))),
         CancellationToken::new(),
     );
-    let response = grep_files_with_budget_source_and_execution(
+    let response = grep_files_with_budget_source_and_execution_scoped(
         request,
         budget,
         "FASTCTX_TOKEN_BUDGET",
@@ -367,6 +383,7 @@ fn grep_files_with_budget_and_parallelism(
         None,
         operation,
         Arc::new(GrepGlobExecutor::with_test_parallelism(parallelism)),
+        &ReadScope::unrestricted(),
     );
     guard.disarm();
     response
@@ -392,7 +409,7 @@ fn grep_files_with_parallelism_and_capture_limit(
     );
     let executor = Arc::new(GrepGlobExecutor::with_test_parallelism(parallelism));
     let probe = Arc::new(GrepExecutionProbe::default());
-    let response = grep_files_with_budget_source_and_execution(
+    let response = grep_files_with_budget_source_and_execution_scoped(
         request,
         budget,
         "FASTCTX_TOKEN_BUDGET",
@@ -400,6 +417,7 @@ fn grep_files_with_parallelism_and_capture_limit(
         Some(Arc::clone(&probe)),
         operation,
         Arc::clone(&executor),
+        &ReadScope::unrestricted(),
     );
     guard.disarm();
     executor.wait_for_test_quiescence();
@@ -411,7 +429,8 @@ fn grep_files_with_parallelism_and_capture_limit(
     )
 }
 
-fn grep_files_with_budget_source_and_execution(
+#[allow(clippy::too_many_arguments)]
+fn grep_files_with_budget_source_and_execution_scoped(
     request: GrepRequest,
     budget: usize,
     budget_variable: &str,
@@ -419,6 +438,7 @@ fn grep_files_with_budget_source_and_execution(
     #[cfg(test)] execution_probe: Option<Arc<GrepExecutionProbe>>,
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: &ReadScope,
 ) -> ToolResponse {
     let adapter = ErrorBudgetAdapter::new(budget, budget_variable);
     adapter.adapt(grep_files_with_budget_source_and_execution_unadapted(
@@ -430,9 +450,11 @@ fn grep_files_with_budget_source_and_execution(
         execution_probe,
         operation,
         executor,
+        scope,
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grep_files_with_budget_source_and_execution_unadapted(
     request: GrepRequest,
     budget: usize,
@@ -441,9 +463,14 @@ fn grep_files_with_budget_source_and_execution_unadapted(
     #[cfg(test)] execution_probe: Option<Arc<GrepExecutionProbe>>,
     operation: OperationCtx,
     executor: Arc<GrepGlobExecutor>,
+    scope: &ReadScope,
 ) -> ToolResponse {
     let root_input = request.path.clone();
-    let root = match resolve_search_root(root_input.as_deref(), RootRequirement::FileOrDirectory) {
+    let root = match resolve_search_root_with_scope(
+        root_input.as_deref(),
+        RootRequirement::FileOrDirectory,
+        scope,
+    ) {
         Ok(root) => root,
         Err(message) => return ToolResponse::error(message),
     };
@@ -534,6 +561,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
         let mut failure: Option<ToolResponse> = None;
         let worker_matcher = Arc::clone(&matcher);
         let worker_encoding = search_encoding.clone();
+        let worker_scope = scope.clone();
         let panic_candidates = Arc::clone(&candidates);
         let ordered = for_each_ordered(
             Arc::clone(&candidates),
@@ -546,6 +574,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
                     plan,
                     multiline,
                     &worker_encoding,
+                    &worker_scope,
                     work,
                 )
             },
@@ -654,6 +683,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
     let mut failure: Option<String> = None;
     let worker_matcher = Arc::clone(&matcher);
     let worker_encoding = search_encoding.clone();
+    let worker_scope = scope.clone();
     let panic_candidates = Arc::clone(&candidates);
     let ordered = for_each_ordered(
         Arc::clone(&candidates),
@@ -666,6 +696,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
                 worker_plan,
                 multiline,
                 &worker_encoding,
+                &worker_scope,
                 work,
             )
         },
@@ -706,6 +737,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
                         exact,
                         multiline,
                         &search_encoding,
+                        scope,
                         Some(&exact_work),
                     ) {
                         Ok(outcome) => (outcome, true),
@@ -866,17 +898,41 @@ fn search_candidate(
     plan: GrepSearchPlan,
     multiline: bool,
     encoding: &SearchEncoding,
+    scope: &ReadScope,
     operation: Option<&dyn WorkCheckpoint>,
 ) -> Result<SearchOutcome, SearchFailure> {
     if let Some(content_multiline) = plan.content_multiline() {
         debug_assert_eq!(content_multiline, multiline);
     }
-    let snapshot = match capture_classify(
-        candidate,
+    let routed = scope
+        .route_with_formatter(&candidate.native, search_display_path)
+        .map_err(SearchFailure::Message)?;
+    let file = match routed.capability.open(&routed.relative) {
+        Ok(file) => file.into_std(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(SearchOutcome {
+                result: None,
+                entries_seen: 0,
+                skip: Some(CandidateSkip::ChangedWhileSearched),
+                transcoding_note: None,
+                used_fallback: false,
+            });
+        }
+        Err(error) => {
+            return Err(SearchFailure::Message(io_error_message(
+                &candidate.native,
+                &error,
+            )));
+        }
+    };
+    let capture = capture_classify_open_file(
+        file,
+        candidate.clone(),
         encoding.explicit.as_deref(),
         encoding.fallback.as_deref(),
         operation,
-    ) {
+    );
+    let snapshot = match capture {
         Ok(CaptureDisposition::Searchable(snapshot)) => snapshot,
         Ok(CaptureDisposition::BinarySkipped(proof)) => {
             debug_assert!(matches!(
@@ -1105,9 +1161,18 @@ fn search_candidate_for_work(
     plan: GrepSearchPlan,
     multiline: bool,
     encoding: &SearchEncoding,
+    scope: &ReadScope,
     work: &WorkCtx,
 ) -> Result<Result<SearchOutcome, SearchFailure>, WorkStop> {
-    match search_candidate(candidate, matcher, plan, multiline, encoding, Some(work)) {
+    match search_candidate(
+        candidate,
+        matcher,
+        plan,
+        multiline,
+        encoding,
+        scope,
+        Some(work),
+    ) {
         Err(SearchFailure::Cancelled) => Err(WorkStop::RequestCancelled),
         Err(SearchFailure::EpochRetired) => Err(WorkStop::EpochRetired),
         outcome => Ok(outcome),
@@ -2569,10 +2634,12 @@ mod tests {
         build_matcher, capture_limit_error, finish_grep_graph, format_content_mode,
         format_files_mode, grep_files_with_budget, grep_files_with_budget_and_parallelism,
         grep_files_with_budget_source_and_operation, grep_files_with_parallelism_and_capture_limit,
-        normalize_multiline_pattern, replay_compat_binary_probes, search_candidate,
-        search_error_message, snapshot_error_message,
+        grep_files_with_scope, normalize_multiline_pattern, replay_compat_binary_probes,
+        search_candidate, search_error_message, snapshot_error_message,
     };
     use crate::operation::{RequestWorkGuard, TestStage};
+    use crate::path_codec::display_path as search_display_path;
+    use crate::paths::{ReadScope, display_path};
     use crate::{ToolContent, ToolResponse};
     use filetime::{FileTime, set_file_mtime};
     use rmcp::model::RequestId;
@@ -2655,6 +2722,7 @@ mod tests {
                 explicit: None,
                 fallback: None,
             },
+            &ReadScope::unrestricted(),
             None,
         ) {
             Ok(outcome) => outcome,
@@ -3534,5 +3602,253 @@ mod tests {
             snapshot_error_message(&candidate, &io::Error::other("disk full")),
             "Cannot create a stable search snapshot for /large.txt: disk full. Free temporary-disk space or retry after the file stops changing."
         );
+    }
+
+    #[test]
+    fn scoped_grep_denies_outside_direct_and_recursive_symlink_targets() {
+        let assert_denied = |response: ToolResponse, secret: &str| {
+            assert!(response.is_error, "{response:?}");
+            let ToolContent::Text(text) = &response.content[0] else {
+                panic!("expected text error");
+            };
+            assert!(text.starts_with("Permission denied: "), "{text}");
+            assert!(!text.contains(secret), "{text}");
+        };
+
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("work");
+        let sibling = fixture.path().join("work-secret");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&sibling).unwrap();
+        let outside = sibling.join("outside.txt");
+        std::fs::write(&outside, b"secret-grep-content").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let request = GrepRequest {
+            pattern: "secret-grep-content".to_string(),
+            path: Some(display_path(&outside)),
+            glob: None,
+            file_type: None,
+            output_mode: Some(OutputMode::Content),
+            case_insensitive: None,
+            line_numbers: None,
+            only_matching: None,
+            before_context: None,
+            after_context: None,
+            context: None,
+            multiline: None,
+            head_limit: None,
+            offset: None,
+            encoding: None,
+            fallback_encoding: None,
+        };
+        assert_denied(
+            grep_files_with_scope(request, CancellationToken::new(), &scope),
+            "secret-grep-content",
+        );
+
+        #[cfg(unix)]
+        {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("allowed");
+            let outside = fixture.path().join("outside.txt");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(&outside, b"secret-symlink-grep-content").unwrap();
+            let link = root.join("outside-link.txt");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+            let request = GrepRequest {
+                pattern: "secret-symlink-grep-content".to_string(),
+                path: Some(display_path(&root)),
+                glob: Some("**/*".to_string()),
+                file_type: None,
+                output_mode: Some(OutputMode::Content),
+                case_insensitive: None,
+                line_numbers: None,
+                only_matching: None,
+                before_context: None,
+                after_context: None,
+                context: None,
+                multiline: None,
+                head_limit: None,
+                offset: None,
+                encoding: None,
+                fallback_encoding: None,
+            };
+            assert_denied(
+                grep_files_with_scope(request, CancellationToken::new(), &scope),
+                "secret-symlink-grep-content",
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_grep_keeps_stable_file_symlinks_in_configured_roots() {
+        let fixture = tempfile::tempdir().unwrap();
+        let left = fixture.path().join("left");
+        let right = fixture.path().join("right");
+        std::fs::create_dir(&left).unwrap();
+        std::fs::create_dir(&right).unwrap();
+        std::fs::write(left.join("same-target.txt"), b"stable-hit\n").unwrap();
+        std::fs::write(right.join("cross-target.txt"), b"stable-hit\n").unwrap();
+        std::os::unix::fs::symlink("same-target.txt", left.join("same-link.txt")).unwrap();
+        std::os::unix::fs::symlink(right.join("cross-target.txt"), left.join("cross-link.txt"))
+            .unwrap();
+        let scope = ReadScope::from_allow_roots(&[left.clone(), right]).unwrap();
+        let mut request = grep_request(&left, OutputMode::FilesWithMatches);
+        request.pattern = "stable-hit".to_string();
+        let restricted = grep_files_with_scope(request.clone(), CancellationToken::new(), &scope);
+        let unrestricted = grep_files_with_scope(
+            request,
+            CancellationToken::new(),
+            &ReadScope::unrestricted(),
+        );
+        assert_eq!(restricted, unrestricted);
+        let ToolContent::Text(text) = &restricted.content[0] else {
+            panic!("expected text response: {restricted:?}");
+        };
+        assert!(text.contains("same-link.txt"), "{text}");
+        assert!(text.contains("cross-link.txt"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn grep_rejects_candidate_after_final_component_swap_in_both_modes() {
+        for restricted in [false, true] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("allowed");
+            std::fs::create_dir(&root).unwrap();
+            let path = root.join("inside.txt");
+            let old = root.join("inside.old");
+            std::fs::write(&path, b"original-grep-hit\n").unwrap();
+            let path_for_hook = path.clone();
+            let old_for_hook = old.clone();
+            let _hook = crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(
+                move |_| {
+                    if path_for_hook.exists() {
+                        std::fs::rename(&path_for_hook, &old_for_hook).unwrap();
+                        std::fs::write(&path_for_hook, b"replacement-grep-hit\n").unwrap();
+                    }
+                },
+            ));
+            let scope = if restricted {
+                ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap()
+            } else {
+                ReadScope::unrestricted()
+            };
+            let mut request = grep_request(&root, OutputMode::Content);
+            request.pattern = "original-grep-hit".to_string();
+            let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+            let ToolContent::Text(text) = &response.content[0] else {
+                panic!("expected text response: {response:?}");
+            };
+            assert!(
+                text.contains("changed while being searched"),
+                "{restricted}: {text}"
+            );
+            assert!(!text.contains("original-grep-hit"), "{restricted}: {text}");
+            assert!(
+                !text.contains("replacement-grep-hit"),
+                "{restricted}: {text}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_grep_rejects_same_length_same_mtime_change_after_open() {
+        use std::os::unix::fs::MetadataExt;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("inside.txt");
+        std::fs::write(&path, b"original-grep\n").unwrap();
+        let modified = std::fs::metadata(&path).unwrap();
+        let mtime =
+            filetime::FileTime::from_unix_time(modified.mtime(), modified.mtime_nsec() as u32);
+        let path_for_hook = path.clone();
+        let _hook =
+            crate::file_snapshot::tests::OriginalOpenObserverGuard::install(Arc::new(move |_| {
+                std::fs::write(&path_for_hook, b"replaced-grep\n").unwrap();
+                filetime::set_file_mtime(&path_for_hook, mtime).unwrap();
+            }));
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let mut request = grep_request(&root, OutputMode::FilesWithMatches);
+        request.pattern = "replaced-grep".to_string();
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text response: {response:?}");
+        };
+        assert!(text.contains("changed while being searched"), "{text}");
+        assert!(!text.contains("replaced-grep"), "{text}");
+    }
+
+    #[test]
+    fn restricted_relative_grep_request_has_no_cwd_diagnostics() {
+        let fixture = tempfile::tempdir().unwrap();
+        let scope = ReadScope::from_allow_roots(&[fixture.path().to_path_buf()]).unwrap();
+        let mut request = grep_request(Path::new("relative.txt"), OutputMode::Content);
+        request.path = Some("relative.txt".to_string());
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert_eq!(text, "Path must be absolute: relative.txt");
+    }
+
+    #[test]
+    fn scoped_grep_denial_uses_line_safe_encoded_path_display() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        let outside = fixture.path().join("outside\nsecret.txt");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(&outside, b"must-not-leak").unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let request = GrepRequest {
+            pattern: "must-not-leak".to_string(),
+            path: Some(search_display_path(&outside)),
+            glob: None,
+            file_type: None,
+            output_mode: Some(OutputMode::Content),
+            case_insensitive: None,
+            line_numbers: None,
+            only_matching: None,
+            before_context: None,
+            after_context: None,
+            context: None,
+            multiline: None,
+            head_limit: None,
+            offset: None,
+            encoding: None,
+            fallback_encoding: None,
+        };
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.contains("~fastctx~b"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
+        assert!(!text.contains("must-not-leak"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_grep_symlink_resolution_errors_use_line_safe_encoded_paths() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("allowed");
+        std::fs::create_dir(&root).unwrap();
+        let link = root.join("loop\nname");
+        std::os::unix::fs::symlink("loop\nname", &link).unwrap();
+        let scope = ReadScope::from_allow_roots(std::slice::from_ref(&root)).unwrap();
+        let mut request = grep_request(&root, OutputMode::FilesWithMatches);
+        request.pattern = "anything".to_string();
+        request.glob = Some("**/*".to_string());
+        let response = grep_files_with_scope(request, CancellationToken::new(), &scope);
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text error");
+        };
+        assert!(text.contains("~fastctx~b"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
     }
 }

@@ -358,6 +358,21 @@ The FastCtx MCP server inherits the local permissions of the host process.
 | TUI update check | Enabled for npm and GitHub Release launches | Version metadata from `registry.npmjs.org` and GitHub's `releases/latest` web redirect; downloads require explicit confirmation |
 | MCP runtime network requests | None | `serve` and tool calls perform no telemetry or update traffic |
 
+For a read-only candidate-filesystem boundary, start the server with one or more
+absolute `--allow-root` directories. The configured pathname namespace must be
+trusted and stable while FastCtx acquires those directory capabilities at
+startup. Restricted `read`, `batch`, `grep`, and `glob` requests then use only
+those capabilities and the file handles opened through them, so a runtime
+same-user rename or symlink swap cannot turn an authorized candidate into an
+out-of-root read. Existing project filtering is unchanged: FastCtx may read
+parent `.ignore` and `.gitignore` files, repository `.git/info/exclude`,
+gitfile `gitdir`/`commondir` metadata and their exclude file, and global Git
+configuration outside an allowed root. Those filtering-only reads can only omit
+candidates; they never authorize, return, or search candidate content. Without
+`--allow-root`, requested paths remain unrestricted, while each file operation
+uses one capability-opened handle so later pathname replacement cannot redirect
+that operation's content read.
+
 The startup check sends the FastCtx version, normal HTTPS request metadata, and npm's standard registry request; it never sends repository paths, job data, or file contents. Background jobs persist their command, working directory, output, and exit status only in the current user's private `~/.fastctx/jobs/` directory; current-format jobs use a complete plain log. FastCtx does not upload this data. Bash commands can access the network according to the command itself. Prebuilt binaries include the PDF engine.
 
 The MCP server runs outside the host filesystem sandbox. Use an approval mode when every write and command execution should be reviewed:

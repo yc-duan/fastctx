@@ -66,7 +66,7 @@ pub(super) fn validate_source(
                 })
             }
         }
-        ByteSource::File(_) => read_prefix(source, operation)
+        ByteSource::File(_) | ByteSource::Handle(_) => read_prefix(source, operation)
             .and_then(|prefix| validate_with_prefix(source, &prefix, explicit_encoding, operation)),
     };
     prefer_stop(operation, result)

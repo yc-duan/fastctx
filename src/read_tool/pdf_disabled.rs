@@ -35,7 +35,8 @@ pub(super) fn parse_pdf_mode(value: Option<&str>) -> Result<PdfMode, String> {
     }
 }
 
-pub(super) fn read_pdf(
+pub(super) fn read_pdf_handle(
+    _file: std::fs::File,
     _path: &Path,
     _pages_value: Option<&str>,
     _mode: PdfMode,

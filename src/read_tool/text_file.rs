@@ -5,13 +5,17 @@ use super::{
     binary_error_message,
 };
 use crate::budget::{LineTokenCounter, TokenBudget, assemble_text, estimate_tokens};
-use crate::encoding::{EncodingDecision, StreamDecodeFailure, validate_file_encoding};
+use crate::encoding::{
+    ByteSource, EncodingDecision, StreamDecodeFailure, validate_source_encoding,
+};
 use crate::model::ToolResponse;
 use crate::paths::io_error_message;
-use std::fs;
+use std::fs::File;
 use std::path::Path;
 
-pub(super) fn read_text_file(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn read_text_handle(
+    file: &File,
     path: &Path,
     path_display: &str,
     offset: Option<usize>,
@@ -20,19 +24,55 @@ pub(super) fn read_text_file(
     binary_type: Option<&str>,
     budget: TokenBudget,
 ) -> ToolResponse {
-    let offset = offset.unwrap_or(1);
-    let limit = limit.unwrap_or(UNBOUNDED_LINE_LIMIT);
-    if offset == 0 {
-        return ToolResponse::error("Invalid offset value: 0. Expected an integer >= 1.");
-    }
-    if limit == 0 {
-        return ToolResponse::error("Invalid limit value: 0. Expected an integer >= 1.");
-    }
-    let file_size = match fs::metadata(path) {
+    let (offset, limit) = match read_window(offset, limit) {
+        Ok(window) => window,
+        Err(message) => return ToolResponse::error(message),
+    };
+    let file_size = match file.metadata() {
         Ok(metadata) => metadata.len(),
         Err(error) => return ToolResponse::error(io_error_message(path, &error)),
     };
-    let validated = match validate_file_encoding(path, explicit_encoding) {
+    read_text_source(
+        ByteSource::Handle(file),
+        file_size,
+        path,
+        path_display,
+        offset,
+        limit,
+        explicit_encoding,
+        binary_type,
+        budget,
+    )
+}
+
+fn read_window(
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<(usize, usize), &'static str> {
+    let offset = offset.unwrap_or(1);
+    let limit = limit.unwrap_or(UNBOUNDED_LINE_LIMIT);
+    if offset == 0 {
+        return Err("Invalid offset value: 0. Expected an integer >= 1.");
+    }
+    if limit == 0 {
+        return Err("Invalid limit value: 0. Expected an integer >= 1.");
+    }
+    Ok((offset, limit))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_text_source(
+    source: ByteSource<'_>,
+    file_size: u64,
+    path: &Path,
+    path_display: &str,
+    offset: usize,
+    limit: usize,
+    explicit_encoding: Option<&str>,
+    binary_type: Option<&str>,
+    budget: TokenBudget,
+) -> ToolResponse {
+    let validated = match validate_source_encoding(source, explicit_encoding) {
         Ok(EncodingDecision::Text(validated)) => validated,
         Ok(EncodingDecision::Binary) => return binary_error(path_display, binary_type),
         Ok(EncodingDecision::Rejected(rejection)) => {
@@ -44,10 +84,9 @@ pub(super) fn read_text_file(
         return ToolResponse::text("Warning: the file exists but is empty.");
     }
     let transcoding_note = validated.transcoding_note();
-
     let total_is_known = file_size <= TOTAL_COUNT_SIZE_LIMIT;
     let mut collector = LineCollector::new(offset, limit, budget.value, total_is_known);
-    let exhausted = match validated.stream_text(path, |chunk| collector.push(chunk)) {
+    let exhausted = match validated.stream_source(source, |chunk| collector.push(chunk)) {
         Ok(exhausted) => exhausted,
         Err(StreamDecodeFailure::Io(error)) => {
             return ToolResponse::error(io_error_message(path, &error));
@@ -72,7 +111,8 @@ pub(super) struct BatchTextContent {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn read_batch_text_file(
+pub(super) fn read_batch_text_handle(
+    file: &File,
     path: &Path,
     path_display: &str,
     offset: Option<usize>,
@@ -83,18 +123,41 @@ pub(super) fn read_batch_text_file(
 ) -> Result<BatchTextContent, String> {
     let offset = offset.unwrap_or(1);
     let limit = limit.unwrap_or(UNBOUNDED_LINE_LIMIT);
-    let file_size = fs::metadata(path)
+    let file_size = file
+        .metadata()
         .map_err(|error| io_error_message(path, &error))?
         .len();
-    let validated = match validate_file_encoding(path, explicit_encoding) {
-        Ok(EncodingDecision::Text(validated)) => validated,
-        Ok(EncodingDecision::Binary) => {
-            return Err(binary_error_message(path_display, binary_type));
-        }
-        Ok(EncodingDecision::Rejected(rejection)) => {
-            return Err(rejection.message(path_display));
-        }
-        Err(error) => return Err(io_error_message(path, &error)),
+    read_batch_text_source(
+        ByteSource::Handle(file),
+        file_size,
+        path,
+        path_display,
+        offset,
+        limit,
+        explicit_encoding,
+        binary_type,
+        collection_budget,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_batch_text_source(
+    source: ByteSource<'_>,
+    file_size: u64,
+    path: &Path,
+    path_display: &str,
+    offset: usize,
+    limit: usize,
+    explicit_encoding: Option<&str>,
+    binary_type: Option<&str>,
+    collection_budget: usize,
+) -> Result<BatchTextContent, String> {
+    let validated = match validate_source_encoding(source, explicit_encoding)
+        .map_err(|error| io_error_message(path, &error))?
+    {
+        EncodingDecision::Text(validated) => validated,
+        EncodingDecision::Binary => return Err(binary_error_message(path_display, binary_type)),
+        EncodingDecision::Rejected(rejection) => return Err(rejection.message(path_display)),
     };
     if validated.total_lines == 0 {
         return Err("Warning: the file exists but is empty.".to_string());
@@ -114,13 +177,12 @@ pub(super) fn read_batch_text_file(
     let total_is_known = file_size <= TOTAL_COUNT_SIZE_LIMIT;
     let transcoding_note = validated.transcoding_note();
     let mut collector = LineCollector::new(offset, limit, collection_budget, total_is_known);
-    let exhausted = match validated.stream_text(path, |chunk| collector.push(chunk)) {
-        Ok(exhausted) => exhausted,
-        Err(StreamDecodeFailure::Io(error)) => return Err(io_error_message(path, &error)),
-        Err(StreamDecodeFailure::Malformed) => {
-            return Err(validated.malformed_rejection().message(path_display));
-        }
-    };
+    let exhausted = validated
+        .stream_source(source, |chunk| collector.push(chunk))
+        .map_err(|error| match error {
+            StreamDecodeFailure::Io(error) => io_error_message(path, &error),
+            StreamDecodeFailure::Malformed => validated.malformed_rejection().message(path_display),
+        })?;
     if exhausted {
         collector.finish_eof();
     }
@@ -352,7 +414,7 @@ fn line_span(first: usize, last: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::read_text_file;
+    use super::read_text_handle;
     use crate::ToolContent;
     use crate::budget::TokenBudget;
     use std::fs;
@@ -366,7 +428,9 @@ mod tests {
             ["界".repeat(20), "文".repeat(20), "字".repeat(20)].join("\n"),
         )
         .unwrap();
-        let response = read_text_file(
+        let file = fs::File::open(&path).unwrap();
+        let response = read_text_handle(
+            &file,
             &path,
             "budget.txt",
             None,
@@ -397,7 +461,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("tiny-budget.txt");
         fs::write(&path, "content\nmore").unwrap();
-        let response = read_text_file(
+        let file = fs::File::open(&path).unwrap();
+        let response = read_text_handle(
+            &file,
             &path,
             "tiny-budget.txt",
             None,

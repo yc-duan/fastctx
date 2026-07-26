@@ -31,7 +31,7 @@ const FIXED_LEGACY_ENCODINGS: [(&str, &Encoding); 5] = [
     ("euc-kr", EUC_KR),
 ];
 
-/// One validation input: an on-disk file or an immutable byte snapshot.
+/// One validation input: an on-disk file, an already-authorized file handle, or an immutable byte snapshot.
 ///
 /// Both variants drive the exact same chunked validation machinery, so the
 /// trust hierarchy has a single implementation. Grep uses `Snapshot` so every
@@ -39,12 +39,14 @@ const FIXED_LEGACY_ENCODINGS: [(&str, &Encoding); 5] = [
 #[derive(Clone, Copy)]
 pub(crate) enum ByteSource<'a> {
     File(&'a Path),
+    Handle(&'a File),
     Bytes(&'a [u8]),
     Snapshot(&'a SealedSnapshot),
 }
 
 enum SourceReader<'a> {
     File(BufReader<File>),
+    Handle(BufReader<File>),
     Bytes(io::Cursor<&'a [u8]>),
     Snapshot(SnapshotReader<'a>),
 }
@@ -53,6 +55,7 @@ impl<'a> SourceReader<'a> {
     fn open(source: ByteSource<'a>, start: u64) -> io::Result<Self> {
         match source {
             ByteSource::File(path) => Ok(Self::open_file(path, start)?),
+            ByteSource::Handle(file) => Ok(Self::open_handle(file, start)?),
             ByteSource::Bytes(bytes) => {
                 let start = usize::try_from(start)
                     .unwrap_or(usize::MAX)
@@ -72,12 +75,19 @@ impl<'a> SourceReader<'a> {
         }
         Ok(SourceReader::File(reader))
     }
+
+    fn open_handle(file: &File, start: u64) -> io::Result<SourceReader<'static>> {
+        let mut reader = BufReader::new(file.try_clone()?);
+        reader.seek(SeekFrom::Start(start))?;
+        Ok(SourceReader::Handle(reader))
+    }
 }
 
 impl Read for SourceReader<'_> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         match self {
             SourceReader::File(reader) => reader.read(output),
+            SourceReader::Handle(reader) => reader.read(output),
             SourceReader::Bytes(cursor) => cursor.read(output),
             SourceReader::Snapshot(reader) => reader.read(output),
         }
@@ -156,13 +166,14 @@ impl ValidatedFileEncoding {
         decode_bytes(raw, &self.detected).map(|text| std::borrow::Cow::Owned(text.into_bytes()))
     }
 
-    /// Streams UTF-8 text on character boundaries and stops immediately when the callback returns false.
-    pub(crate) fn stream_text(
+    /// Streams decoded text from the supplied source without choosing a new
+    /// pathname.
+    pub(crate) fn stream_source(
         &self,
-        path: &Path,
+        source: ByteSource<'_>,
         mut on_text: impl FnMut(&str) -> bool,
     ) -> Result<bool, StreamDecodeFailure> {
-        let mut decoder = DecodedChunkReader::open(ByteSource::File(path), self.detected.clone())?;
+        let mut decoder = DecodedChunkReader::open(source, self.detected.clone())?;
         loop {
             match decoder.next_chunk()? {
                 Some(chunk) if !on_text(&chunk) => return Ok(false),
