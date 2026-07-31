@@ -13,6 +13,54 @@ pub fn parse_input_path(input: &str) -> PathBuf {
     }
 }
 
+/// Converts a local absolute `file://` URI into the current platform's filesystem path.
+///
+/// This is a narrow compatibility path for hosts that route local files through MCP resources
+/// despite the server omitting the resources capability. Remote authorities and URI decorations
+/// are rejected so the fallback cannot silently reinterpret a different resource identifier.
+pub(crate) fn local_file_uri_to_path(input: &str) -> Option<PathBuf> {
+    if !input
+        .get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+    {
+        return None;
+    }
+    let url = url::Url::parse(input).ok()?;
+    if url.scheme() != "file"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url
+            .host_str()
+            .is_some_and(|host| !host.eq_ignore_ascii_case("localhost"))
+    {
+        return None;
+    }
+    let path = url.to_file_path().ok()?;
+    path.is_absolute().then_some(path)
+}
+
+/// Converts a local absolute path or `file://` URI into a filesystem path.
+///
+/// Generic MCP resource helpers have emitted both forms for the same local file. Plain paths are
+/// accepted only when they are absolute; URI-shaped inputs continue through the stricter
+/// `file://` parser above.
+pub(crate) fn local_resource_path(input: &str) -> Option<PathBuf> {
+    if input
+        .get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+    {
+        return local_file_uri_to_path(input);
+    }
+    if input.contains("://") {
+        return None;
+    }
+    let path = parse_input_path(input);
+    path.is_absolute().then_some(path)
+}
+
 /// Returns an absolute display path that never depends on platform backslashes.
 pub fn display_path(path: &Path) -> String {
     let mut value = path.to_string_lossy().replace('\\', "/");
@@ -201,7 +249,44 @@ pub fn missing_search_path_message(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{file_url_note, missing_file_message, missing_search_path_message};
+    use super::{
+        file_url_note, local_file_uri_to_path, local_resource_path, missing_file_message,
+        missing_search_path_message,
+    };
+
+    #[test]
+    fn local_file_uri_conversion_accepts_only_plain_local_absolute_uris() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("resource notes.txt");
+        let uri = url::Url::from_file_path(&path).unwrap();
+        assert_eq!(local_file_uri_to_path(uri.as_str()), Some(path.clone()));
+        assert_eq!(
+            local_resource_path(&path.to_string_lossy()),
+            Some(path.clone())
+        );
+
+        let mut localhost = uri.clone();
+        localhost.set_host(Some("localhost")).unwrap();
+        assert_eq!(local_file_uri_to_path(localhost.as_str()), Some(path));
+
+        for input in [
+            "https://example.com/resource.txt",
+            "file:relative.txt",
+            "file://server/share/resource.txt",
+            "file:///tmp/resource.txt?download=1",
+            "file:///tmp/resource.txt#line-1",
+            "file://",
+        ] {
+            assert!(local_file_uri_to_path(input).is_none(), "{input}");
+        }
+        for input in [
+            "relative.txt",
+            "https://example.com/resource.txt",
+            "file://server/share/resource.txt",
+        ] {
+            assert!(local_resource_path(input).is_none(), "{input}");
+        }
+    }
 
     #[test]
     fn file_urls_are_translated_to_the_plain_path() {
