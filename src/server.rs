@@ -5,6 +5,8 @@ use crate::edit::ReplaceService;
 use crate::file_executor::GrepGlobExecutor;
 use crate::glob_tool::{GlobRequest, glob_files_cancellable};
 use crate::grep_tool::{GrepRequest, grep_files_cancellable};
+use crate::model::{ImageDetail, ToolContent, ToolResponse};
+use crate::paths::local_resource_path;
 use crate::read_tool::{ReadRequest, read_file};
 use crate::server_manifest::{ToolContract, ToolManifest};
 use crate::server_support::{BudgetRetry, run_blocking, run_blocking_cancellable};
@@ -13,8 +15,8 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, ErrorCode, ErrorData, Implementation, ListResourceTemplatesResult,
-    ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult,
-    ServerCapabilities, ServerInfo,
+    ListResourcesResult, Meta, PaginatedRequestParams, ReadResourceRequestParams,
+    ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -249,22 +251,59 @@ impl ServerHandler for FastCtxServer {
 
     async fn read_resource(
         &self,
-        _request: ReadResourceRequestParams,
+        request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
-        Err(not_a_resource_server())
+        let uri = request.uri;
+        let path = local_resource_path(&uri).ok_or_else(|| {
+            ErrorData::invalid_params(
+                "FastCtx resources/read compatibility accepts only an absolute local path or local file:// URI; remote URIs, queries, and fragments are rejected.",
+                None,
+            )
+        })?;
+        let file_path = path.to_str().map(str::to_owned).ok_or_else(|| {
+            ErrorData::invalid_params(
+                "The local resource path cannot be represented as UTF-8.",
+                None,
+            )
+        })?;
+        let permit = Arc::clone(&self.file_permits)
+            .acquire_owned()
+            .await
+            .map_err(|_| {
+                ErrorData::internal_error(
+                    "The blocking-operation limiter is unavailable for resources/read.",
+                    None,
+                )
+            })?;
+        let response = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            read_file(ReadRequest {
+                file_path: Some(file_path),
+                files: None,
+                offset: None,
+                limit: None,
+                pages: None,
+                pdf_mode: None,
+                encoding: None,
+                view: None,
+            })
+        })
+        .await
+        .map_err(|error| {
+            ErrorData::internal_error(format!("Internal resource read failure: {error}"), None)
+        })?;
+        resource_read_result(uri, response)
     }
 }
 
-/// Rejection shared by every `resources/*` method, naming the tool that actually does the job.
+/// Rejection shared by the resource discovery methods, naming the tools that do those jobs.
 ///
 /// 2026-07-24: hosts publish generic resource tools for every configured MCP server without
 /// checking whether the server declared the `resources` capability, so these methods are reachable
-/// even though FastCtx never advertises them. The SDK default would answer the two list methods
-/// with an empty array, which reads as "this server does resources and happens to have none" and
-/// invites a follow-up read of an invented URI; one rejection for all three cuts that off at the
-/// first step. Callers arrive holding a `file://` URL, so the recovery names the parameter shape
-/// as well as the tool.
+/// even though FastCtx never advertises them. The SDK default would answer these methods with an
+/// empty array, which reads as "this server does resources and happens to have none" and invites a
+/// follow-up read of an invented URI.
 fn not_a_resource_server() -> ErrorData {
     ErrorData::new(
         ErrorCode::METHOD_NOT_FOUND,
@@ -273,12 +312,103 @@ fn not_a_resource_server() -> ErrorData {
     )
 }
 
+fn resource_read_result(
+    uri: String,
+    response: ToolResponse,
+) -> Result<ReadResourceResult, ErrorData> {
+    let ToolResponse { content, is_error } = response;
+    if is_error {
+        let message = content
+            .into_iter()
+            .filter_map(|block| match block {
+                ToolContent::Text(text) => Some(text),
+                ToolContent::Image { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(ErrorData::invalid_params(
+            if message.is_empty() {
+                "The local resource could not be read.".to_string()
+            } else {
+                message
+            },
+            None,
+        ));
+    }
+    let contents = content
+        .into_iter()
+        .map(|block| match block {
+            ToolContent::Text(text) => ResourceContents::text(text, uri.clone()),
+            ToolContent::Image {
+                data,
+                mime_type,
+                detail,
+            } => {
+                let contents = ResourceContents::blob(data, uri.clone()).with_mime_type(mime_type);
+                if detail == Some(ImageDetail::High) {
+                    let mut meta = Meta::new();
+                    meta.0.insert(
+                        "codex/imageDetail".to_string(),
+                        serde_json::Value::String("high".to_string()),
+                    );
+                    contents.with_meta(meta)
+                } else {
+                    contents
+                }
+            }
+        })
+        .collect();
+    Ok(ReadResourceResult::new(contents))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FastCtxServer, ServerOptions};
+    use super::{FastCtxServer, ServerOptions, resource_read_result};
+    use crate::ToolResponse;
     use crate::file_executor::GrepGlobExecutor;
+    use crate::model::{ImageDetail, ToolContent};
     use crate::search_parallelism::MAX_SEARCH_PARALLELISM;
+    use rmcp::model::ErrorCode;
     use std::sync::Arc;
+
+    #[test]
+    fn resource_read_result_preserves_text_and_image_content() {
+        let result = resource_read_result(
+            "file:///C:/notes.txt".to_string(),
+            ToolResponse {
+                content: vec![
+                    ToolContent::Text("1\tline".to_string()),
+                    ToolContent::Image {
+                        data: "aW1hZ2U=".to_string(),
+                        mime_type: "image/png".to_string(),
+                        detail: Some(ImageDetail::High),
+                    },
+                ],
+                is_error: false,
+            },
+        )
+        .unwrap();
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["contents"][0]["uri"], "file:///C:/notes.txt");
+        assert_eq!(value["contents"][0]["mimeType"], "text/plain");
+        assert_eq!(value["contents"][0]["text"], "1\tline");
+        assert_eq!(value["contents"][1]["uri"], "file:///C:/notes.txt");
+        assert_eq!(value["contents"][1]["mimeType"], "image/png");
+        assert_eq!(value["contents"][1]["blob"], "aW1hZ2U=");
+        assert_eq!(value["contents"][1]["_meta"]["codex/imageDetail"], "high");
+    }
+
+    #[test]
+    fn resource_read_result_surfaces_tool_errors_as_protocol_errors() {
+        let error = resource_read_result(
+            "file:///C:/missing.txt".to_string(),
+            ToolResponse::error("File does not exist: C:/missing.txt"),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(error.message, "File does not exist: C:/missing.txt");
+        assert!(error.data.is_none());
+    }
 
     #[test]
     fn configured_executor_is_the_server_search_source_for_serial_mid_and_maximum_p() {

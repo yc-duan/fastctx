@@ -658,7 +658,14 @@ fn stdio_pdf_call_extracts_one_hashed_engine_and_preserves_image_meta() {
 }
 
 #[test]
-fn stdio_mcp_is_tool_only_lists_tools_and_never_returns_structured_content() {
+fn stdio_mcp_stays_tool_only_but_accepts_misrouted_local_file_reads() {
+    let temp = tempfile::tempdir().unwrap();
+    let resource_path = temp.path().join("resource notes.txt");
+    write(&resource_path, "compatibility read\n");
+    let resource_uri = url::Url::from_file_path(&resource_path)
+        .expect("temporary file path should convert to a file URI")
+        .to_string();
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_fastctx"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -722,21 +729,59 @@ fn stdio_mcp_is_tool_only_lists_tools_and_never_returns_structured_content() {
     assert!(called["result"].get("structuredContent").is_none());
     assert_eq!(called["result"]["content"][0]["type"], "text");
 
-    // All three resource methods must answer alike. An empty list from the SDK default would
-    // read as "this server does resources and has none", which is the step upstream hosts turn
-    // into a follow-up read of an invented URI (2026-07-24).
-    for (id, method, params) in [
-        (
-            4,
-            "resources/read",
-            serde_json::json!({"uri":"file:///Z:/definitely/missing.txt"}),
-        ),
-        (5, "resources/list", serde_json::json!({})),
-        (6, "resources/templates/list", serde_json::json!({})),
-    ] {
+    // Some hosts still route a local file URI through resources/read even when the server omits
+    // the resources capability. Accept that one defensive compatibility path so the host does
+    // not surface a repeated protocol error.
+    send(
+        &mut stdin,
+        serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":4,
+            "method":"resources/read",
+            "params":{"uri":resource_uri}
+        }),
+    );
+    let resource = read_response(&mut stdout);
+    assert_eq!(resource["id"], 4);
+    assert!(resource.get("error").is_none(), "{resource}");
+    assert_eq!(resource["result"]["contents"][0]["uri"], resource_uri);
+    assert_eq!(resource["result"]["contents"][0]["mimeType"], "text/plain");
+    assert!(
+        resource["result"]["contents"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("1\tcompatibility read")),
+        "{resource}"
+    );
+
+    // The same host path is also observed as a plain Windows absolute path. Keep the response URI
+    // byte-for-byte identical to the request so generic clients can correlate the result.
+    let plain_path = resource_path.to_string_lossy().into_owned();
+    send(
+        &mut stdin,
+        serde_json::json!({
+            "jsonrpc":"2.0",
+            "id":5,
+            "method":"resources/read",
+            "params":{"uri":plain_path}
+        }),
+    );
+    let plain_resource = read_response(&mut stdout);
+    assert_eq!(plain_resource["id"], 5);
+    assert!(plain_resource.get("error").is_none(), "{plain_resource}");
+    assert_eq!(plain_resource["result"]["contents"][0]["uri"], plain_path);
+    assert!(
+        plain_resource["result"]["contents"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("1\tcompatibility read")),
+        "{plain_resource}"
+    );
+
+    // Resource discovery remains rejected. Empty SDK-default lists imply a real resource surface
+    // and invite hosts to invent another URI after the compatibility read (2026-07-31).
+    for (id, method) in [(6, "resources/list"), (7, "resources/templates/list")] {
         send(
             &mut stdin,
-            serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}),
+            serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":{}}),
         );
         let rejected = read_response(&mut stdout);
         assert_eq!(rejected["id"], id, "{method}");
