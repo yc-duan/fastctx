@@ -279,7 +279,12 @@ impl FastCtxServer {
 impl ServerHandler for FastCtxServer {
     fn get_info(&self) -> ServerInfo {
         self.activity.touch();
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
             .with_server_info(Implementation::new(
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION"),
@@ -352,6 +357,14 @@ impl ServerHandler for FastCtxServer {
     /// This handles the misrouted `resources/read` calls that some hosts produce
     /// even when the server does not advertise the `resources` capability. Remote
     /// authorities, non-file schemes, queries, and fragments are rejected.
+    ///
+    /// **Token budget protection**: this goes through `run_blocking` with
+    /// `READ_TOKEN_BUDGET_ENV`, the same path as `inspect_local_file`. This
+    /// ensures the response respects the configured output budget and triggers
+    /// the guarded-burst stub when the response would exhaust the turn's shared
+    /// output pool — preventing context-window blowout via `resources/read`
+    /// (#24). Without this, a large file read through `resources/read` would
+    /// bypass the budget and dump unlimited content into the model's context.
     fn read_resource(
         &self,
         request: ReadResourceRequestParams,
@@ -371,62 +384,57 @@ impl ServerHandler for FastCtxServer {
             )
         })?;
 
-        // Acquire a file-operation permit so resource reads compete fairly with
-        // `inspect_local_file` calls under the same concurrency limit.
-        let permit = Arc::clone(&self.file_permits)
-            .acquire_owned()
-            .await
-            .map_err(|_| {
-                ErrorData::internal_error(
-                    "The blocking-operation limiter is unavailable for resources/read.",
-                    None,
-                )
-            })?;
+        // Reuse the same session, permits, and budget system as inspect_local_file.
+        // run_blocking acquires a file-permit, activates the session, applies the
+        // guarded-burst budget ceiling, and converts to CallToolResult. We then
+        // convert CallToolResult back to ReadResourceResult.
+        let session = Arc::clone(&self.session);
+        let permits = Arc::clone(&self.file_permits);
+        let shell = self.shell.clone();
+        let result = run_blocking(
+            session,
+            permits,
+            READ_TOKEN_BUDGET_ENV,
+            move || shell.background_status(None),
+            BudgetRetry::Safe,
+            move || {
+                read_file(ReadRequest {
+                    file_path: Some(file_path),
+                    files: None,
+                    offset: None,
+                    limit: None,
+                    pages: None,
+                    pdf_mode: None,
+                    encoding: None,
+                    view: None,
+                })
+            },
+        )
+        .await;
 
-        let response = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            read_file(ReadRequest {
-                file_path: Some(file_path),
-                files: None,
-                offset: None,
-                limit: None,
-                pages: None,
-                pdf_mode: None,
-                encoding: None,
-                view: None,
-            })
-        })
-        .await
-        .map_err(|error| {
-            ErrorData::internal_error(
-                format!("Internal resource read failure: {error}"),
-                None,
-            )
-        })?;
-
-        resource_read_result(uri, response)
+        call_tool_result_to_resource_result(uri, result)
     }
 }
 
-/// Converts a `ToolResponse` from `read_file` into an MCP `ReadResourceResult`.
+/// Converts a `CallToolResult` from `run_blocking` into an MCP `ReadResourceResult`.
 ///
-/// Text blocks become `ResourceContents::text` and image blocks become
+/// Text content blocks become `ResourceContents::text` and image blocks become
 /// `ResourceContents::blob` with the appropriate MIME type. When the tool
 /// response is an error, it is surfaced as an `invalid_params` protocol error
 /// so the host can display a meaningful message rather than an opaque failure.
-fn resource_read_result(
+fn call_tool_result_to_resource_result(
     uri: String,
-    response: crate::model::ToolResponse,
+    result: CallToolResult,
 ) -> Result<ReadResourceResult, ErrorData> {
-    use crate::model::{ImageDetail, ToolContent, ToolResponse};
+    use rmcp::model::ContentBlock;
 
-    let ToolResponse { content, is_error } = response;
-    if is_error {
-        let message = content
+    if result.is_error == Some(true) {
+        let message = result
+            .content
             .into_iter()
             .filter_map(|block| match block {
-                ToolContent::Text(text) => Some(text),
-                ToolContent::Image { .. } => None,
+                ContentBlock::Text(text) => Some(text.text),
+                _ => None,
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -440,17 +448,22 @@ fn resource_read_result(
         ));
     }
 
-    let contents = content
+    let contents = result
+        .content
         .into_iter()
         .map(|block| match block {
-            ToolContent::Text(text) => ResourceContents::text(text, uri.clone()),
-            ToolContent::Image {
-                data,
-                mime_type,
-                detail,
-            } => {
-                let contents = ResourceContents::blob(data, uri.clone()).with_mime_type(mime_type);
-                if detail == Some(ImageDetail::High) {
+            ContentBlock::Text(text) => {
+                ResourceContents::text(text.text, uri.clone())
+            }
+            ContentBlock::Image(image) => {
+                let contents = ResourceContents::blob(image.data, uri.clone())
+                    .with_mime_type(image.mime_type);
+                if image
+                    ._meta
+                    .as_ref()
+                    .and_then(|meta| meta.0.get("codex/imageDetail"))
+                    .is_some_and(|v| v == "high")
+                {
                     let mut meta = Meta::new();
                     meta.0.insert(
                         "codex/imageDetail".to_string(),
@@ -461,6 +474,10 @@ fn resource_read_result(
                     contents
                 }
             }
+            _ => ResourceContents::text(
+                "Unsupported content block type in resource read.".to_string(),
+                uri.clone(),
+            ),
         })
         .collect();
 
@@ -469,31 +486,31 @@ fn resource_read_result(
 
 #[cfg(test)]
 mod tests {
-    use super::{FastCtxServer, ServerOptions, SharedRuntime, resource_read_result};
+    use super::{FastCtxServer, ServerOptions, SharedRuntime, call_tool_result_to_resource_result};
     use crate::file_executor::GrepGlobExecutor;
-    use crate::model::{ImageDetail, ToolContent, ToolResponse};
     use crate::search_parallelism::MAX_SEARCH_PARALLELISM;
-    use rmcp::model::ErrorCode;
+    use rmcp::model::{CallToolResult, ContentBlock, ErrorCode, ImageContent, Meta};
     use std::sync::Arc;
 
     #[test]
-    fn resource_read_result_preserves_text_and_image_content() {
-        let result = resource_read_result(
+    fn call_tool_result_to_resource_preserves_text_and_image() {
+        let mut image_meta = Meta::new();
+        image_meta.0.insert(
+            "codex/imageDetail".to_string(),
+            serde_json::Value::String("high".to_string()),
+        );
+        let result = call_tool_result_to_resource_result(
             "file:///C:/notes.txt".to_string(),
-            ToolResponse {
-                content: vec![
-                    ToolContent::Text("1\tline".to_string()),
-                    ToolContent::Image {
-                        data: "aW1hZ2U=".to_string(),
-                        mime_type: "image/png".to_string(),
-                        detail: Some(ImageDetail::High),
-                    },
-                ],
-                is_error: false,
-            },
+            CallToolResult::success(vec![
+                ContentBlock::Text(rmcp::model::TextContent::new("1\tline")),
+                ContentBlock::Image(
+                    ImageContent::new("aW1hZ2U=".to_string(), "image/png".to_string())
+                        .with_meta(image_meta),
+                ),
+            ]),
         )
         .unwrap();
-        let value = serde_json::to_value(result).unwrap();
+        let value = serde_json::to_value(&result).unwrap();
         assert_eq!(value["contents"][0]["uri"], "file:///C:/notes.txt");
         assert_eq!(value["contents"][0]["mimeType"], "text/plain");
         assert_eq!(value["contents"][0]["text"], "1\tline");
@@ -504,10 +521,12 @@ mod tests {
     }
 
     #[test]
-    fn resource_read_result_surfaces_tool_errors_as_protocol_errors() {
-        let error = resource_read_result(
+    fn call_tool_result_to_resource_surfaces_errors() {
+        let error = call_tool_result_to_resource_result(
             "file:///C:/missing.txt".to_string(),
-            ToolResponse::error("File does not exist: C:/missing.txt"),
+            CallToolResult::error(vec![ContentBlock::Text(
+                rmcp::model::TextContent::new("File does not exist: C:/missing.txt"),
+            )]),
         )
         .unwrap_err();
         assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
