@@ -49,6 +49,28 @@ pub enum SortMode {
     Modified,
 }
 
+fn string_enum_schema(values: &[&str]) -> schemars::Schema {
+    let mut map = serde_json::Map::new();
+    map.insert("type".into(), "string".into());
+    map.insert(
+        "enum".into(),
+        values
+            .iter()
+            .map(|value| serde_json::Value::String((*value).to_string()))
+            .collect::<Vec<_>>()
+            .into(),
+    );
+    schemars::Schema::from(map)
+}
+
+fn filter_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum_schema(&["project", "all"])
+}
+
+fn sort_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum_schema(&["path", "modified"])
+}
+
 /// Parameters for the glob tool.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct GlobRequest {
@@ -60,8 +82,10 @@ pub struct GlobRequest {
     ))]
     pub path: Option<String>,
     /// "project" respects .gitignore/.ignore, includes hidden files, excludes .git (same traversal as grep). "all" disables all filtering.
+    #[schemars(schema_with = "filter_mode_schema")]
     pub filter_mode: Option<FilterMode>,
     /// "path" = byte-order path sort. "modified" = most recently modified first.
+    #[schemars(schema_with = "sort_mode_schema")]
     pub sort: Option<SortMode>,
     /// Skip the first N results — for paging.
     pub offset: Option<usize>,

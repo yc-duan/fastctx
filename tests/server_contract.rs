@@ -70,6 +70,34 @@ fn all_nine_tools_publish_explicit_three_hint_annotations() {
 }
 
 #[test]
+fn glob_enum_options_publish_explicit_string_schemas() {
+    let tools = FastCtxServer::new().tool_definitions();
+    let glob = tools.iter().find(|tool| tool.name == "glob").unwrap();
+
+    assert_string_enum_schema(
+        &glob.input_schema["properties"]["filter_mode"],
+        &["project", "all"],
+    );
+    assert_string_enum_schema(
+        &glob.input_schema["properties"]["sort"],
+        &["path", "modified"],
+    );
+}
+
+fn assert_string_enum_schema(schema: &Value, expected_values: &[&str]) {
+    assert_eq!(schema["type"], "string", "{schema}");
+    assert_eq!(
+        schema["enum"]
+            .as_array()
+            .expect("enum schema should list accepted string values")
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        expected_values
+    );
+}
+
+#[test]
 fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
     let tools = FastCtxServer::with_options(ServerOptions::all()).tool_definitions();
     let shell = tools
