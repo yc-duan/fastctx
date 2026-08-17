@@ -1,6 +1,6 @@
 //! Adaptive ratatui views and the shared TUI theme.
 
-use super::app::{ActiveHost, App, Screen, StatusState};
+use super::app::{ActiveHost, App, Screen, StatusState, display_dsh_status};
 use super::budget_editor::{self, ToolBudgetInputError};
 use super::config::{
     self, ConfigGroupId, ConfigItemId, ConfigItemRole, ConfigListRow, ConfigValue,
@@ -172,7 +172,11 @@ fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             frame,
             app,
             area,
-            app.messages().confirm_apply,
+            if app.active_host == ActiveHost::DeepSeekHarness {
+                app.messages().confirm_dsh_apply
+            } else {
+                app.messages().confirm_apply
+            },
             theme::accent(),
         ),
         Screen::ApplyRunning | Screen::UnapplyRunning => {
@@ -191,6 +195,8 @@ fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             area,
             if app.active_host == ActiveHost::All {
                 "Disconnect every host and delete all shared FastCtx data?"
+            } else if app.active_host == ActiveHost::DeepSeekHarness {
+                app.messages().confirm_dsh_unapply
             } else {
                 app.messages().confirm_unapply
             },
@@ -600,7 +606,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .split(inner(area, 2, 1));
     let messages = app.messages();
     let labels = [
-        messages.menu_apply,
+        messages.menu_connections,
         messages.menu_config,
         app.job_messages().menu,
         app.update_messages().page_title,
@@ -612,7 +618,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(index, label)| {
-            let requires_action = index == 0 && app.link_state.requires_apply();
+            let requires_action = index == 0 && connections_require_attention(app);
             let item = ListItem::new(format!(" {}", main_menu_label(app, index, label)));
             if requires_action {
                 item.style(
@@ -637,7 +643,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     // The panel reports the connection rather than echoing the highlighted entry: the cursor
     // already names that, and the one thing the menu cannot otherwise show is whether FastCtx is
     // still connected to the host with the guidance this build writes.
-    let mut details = vec![link_status_line(app)];
+    let mut details = vec![link_status_line(app), dsh_status_line(app)];
     if app.link_state.requires_apply() {
         details.push(Line::styled(
             messages.link_state_stale_hint,
@@ -687,19 +693,11 @@ fn render_connections(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
         .split(inner(area, 2, 1));
-    let codex = if app.settings.integrations.codex.is_some() {
-        "Connected"
-    } else {
-        "Not connected"
-    };
-    let dsh = app
-        .dsh_status
-        .as_ref()
-        .map(|(state, _)| state.clone())
-        .unwrap_or_else(|_| "unhealthy".to_string());
+    let codex = codex_connection_status(app.link_state);
+    let dsh = dsh_connection_status(app);
     let items = [
-        format!(" ChatGPT / Codex          {codex}"),
-        format!(" DeepSeek Harness         {dsh}"),
+        connection_row("ChatGPT / Codex", codex),
+        connection_row("DeepSeek Harness", &dsh),
         " Disconnect all".to_string(),
     ]
     .into_iter()
@@ -747,13 +745,65 @@ fn render_connections(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     );
 }
 
+fn connection_row(host: &str, status: &str) -> String {
+    format!(" {host:<18}{status}")
+}
+
 /// Marks the action that repairs a stale connection in text, so it stays visible without colour.
 fn main_menu_label(app: &App, index: usize, label: &str) -> String {
-    if index == 0 && app.link_state.requires_apply() {
+    if index == 0 && connections_require_attention(app) {
         format!("! {label}")
     } else {
         label.to_string()
     }
+}
+
+fn connections_require_attention(app: &App) -> bool {
+    app.link_state.requires_apply()
+        || !matches!(
+            &app.dsh_status,
+            Ok((state, _)) if matches!(state.as_str(), "connected" | "not connected")
+        )
+}
+
+/// Keeps the Connections row aligned with the richer Codex status shown elsewhere. A receipt on
+/// disk is ownership evidence, not proof that the current connection contract is healthy.
+fn codex_connection_status(state: LinkState) -> &'static str {
+    match state {
+        LinkState::Absent => "Not connected",
+        LinkState::Current => "Connected",
+        LinkState::ApplyRequired
+        | LinkState::KnownLegacy
+        | LinkState::Missing
+        | LinkState::Drifted
+        | LinkState::Malformed
+        | LinkState::Unreadable => "Needs attention",
+    }
+}
+
+/// DSH diagnosis labels are stable lowercase machine values; UI surfaces use sentence case.
+fn dsh_connection_status(app: &App) -> String {
+    app.dsh_status
+        .as_ref()
+        .map(|(state, _)| display_dsh_status(state))
+        .unwrap_or_else(|_| "Unhealthy".to_string())
+}
+
+fn dsh_status_line(app: &App) -> Line<'static> {
+    let state = app
+        .dsh_status
+        .as_ref()
+        .map(|(state, _)| state.as_str())
+        .unwrap_or("unhealthy");
+    let (symbol, colour) = match state {
+        "connected" => ("✓", theme::success()),
+        "not connected" => ("○", theme::accent()),
+        _ => ("!", theme::warning()),
+    };
+    Line::styled(
+        format!("{symbol} DeepSeek Harness: {}", display_dsh_status(state)),
+        Style::default().fg(colour).add_modifier(Modifier::BOLD),
+    )
 }
 
 /// One line naming the connection to the host, shared by the main menu and the connect page so
@@ -837,23 +887,23 @@ fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .split(inner(area, 2, 1));
     frame.render_stateful_widget(
         List::new(items)
-            .block(panel(messages.apply_title))
+            .block(panel(if app.active_host == ActiveHost::DeepSeekHarness {
+                "DeepSeek Harness"
+            } else {
+                messages.apply_title
+            }))
             .highlight_style(selected_style())
             .highlight_symbol("❯"),
         chunks[0],
         &mut state,
     );
     let mut details = if app.active_host == ActiveHost::DeepSeekHarness {
-        let state = app
-            .dsh_status
-            .as_ref()
-            .map(|(state, _)| state.clone())
-            .unwrap_or_else(|_| "unhealthy".to_string());
+        let state = dsh_connection_status(app);
         vec![detail_line("DeepSeek Harness", &state)]
     } else {
         vec![link_status_line(app)]
     };
-    if app.link_state.requires_apply() {
+    if app.active_host == ActiveHost::Codex && app.link_state.requires_apply() {
         details.push(Line::styled(
             messages.link_state_stale_hint,
             Style::default().fg(theme::muted()),
@@ -899,11 +949,8 @@ fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     );
 }
 
-fn render_dsh_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: bool) {
-    let Some(plan) = app.dsh_plan.as_ref() else {
-        render_loading(frame, app, area, app.messages().empty);
-        return;
-    };
+fn dsh_preview_lines(app: &App, apply: bool) -> Option<Vec<Line<'static>>> {
+    let plan = app.dsh_plan.as_ref()?;
     let mut lines = vec![
         detail_line("Host", "DeepSeek Harness"),
         detail_line("Scope", "Host-wide (all DSH profiles)"),
@@ -958,6 +1005,14 @@ fn render_dsh_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: b
         },
         Style::default().fg(theme::muted()),
     ));
+    Some(lines)
+}
+
+fn render_dsh_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: bool) {
+    let Some(lines) = dsh_preview_lines(app, apply) else {
+        render_loading(frame, app, area, app.messages().empty);
+        return;
+    };
     let preview_area = inner(area, 2, 1);
     app.detail_viewport.update(
         lines.len(),
@@ -2674,7 +2729,7 @@ fn render_receipt(frame: &mut Frame<'_>, app: &App, area: Rect) {
         }
         lines.push(Line::raw(""));
         lines.push(Line::styled(
-            app.messages().restart_notice,
+            host_restart_notice(app),
             Style::default().fg(theme::accent()),
         ));
     }
@@ -2684,6 +2739,14 @@ fn render_receipt(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .wrap(Wrap { trim: false }),
         inner(area, 3, 2),
     );
+}
+
+fn host_restart_notice(app: &App) -> &'static str {
+    if app.active_host == ActiveHost::DeepSeekHarness {
+        app.messages().dsh_restart_notice
+    } else {
+        app.messages().restart_notice
+    }
 }
 
 fn render_error(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -2946,6 +3009,19 @@ fn render_narrow_details(
 }
 
 fn render_narrow_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: bool) {
+    if app.active_host == ActiveHost::DeepSeekHarness {
+        let mut lines = vec![narrow_title(app.messages().preview_title)];
+        if let Some(details) = dsh_preview_lines(app, apply) {
+            lines.extend(details);
+        } else {
+            lines.push(Line::styled(
+                app.messages().loading,
+                Style::default().fg(theme::muted()),
+            ));
+        }
+        render_narrow_details(frame, app, area, lines);
+        return;
+    }
     let running_processes = (!apply)
         .then(|| {
             app.unapply_plan
@@ -3015,7 +3091,7 @@ fn render_narrow_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply
     }
     if has_changes {
         lines.push(Line::styled(
-            app.messages().restart_notice,
+            host_restart_notice(app),
             Style::default().fg(theme::muted()),
         ));
     }
@@ -3131,7 +3207,7 @@ fn render_narrow_receipt(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ));
     }
     lines.push(Line::styled(
-        truncate_display_width(app.messages().restart_notice, usize::from(area.width)),
+        truncate_display_width(host_restart_notice(app), usize::from(area.width)),
         Style::default().fg(theme::accent()),
     ));
     render_narrow_details(frame, app, area, lines);
@@ -3222,7 +3298,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ),
         Screen::Main => {
             let labels = [
-                messages.menu_apply,
+                messages.menu_connections,
                 messages.menu_config,
                 app.job_messages().menu,
                 app.update_messages().page_title,
@@ -3264,8 +3340,20 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .unwrap_or_else(|| app.job_messages().empty.to_string()),
         Screen::JobsKillConfirm => app.job_messages().kill_prompt.to_string(),
         Screen::ApplyConflict => messages.conflict_warning.to_string(),
-        Screen::ApplyConfirm => messages.confirm_apply.to_string(),
-        Screen::UnapplyConfirm => messages.confirm_unapply.to_string(),
+        Screen::ApplyConfirm => if app.active_host == ActiveHost::DeepSeekHarness {
+            messages.confirm_dsh_apply
+        } else {
+            messages.confirm_apply
+        }
+        .to_string(),
+        Screen::UnapplyConfirm => if app.active_host == ActiveHost::All {
+            "Disconnect every host and delete all shared FastCtx data?"
+        } else if app.active_host == ActiveHost::DeepSeekHarness {
+            messages.confirm_dsh_unapply
+        } else {
+            messages.confirm_unapply
+        }
+        .to_string(),
         Screen::ApplyLoading
         | Screen::ApplyRunning
         | Screen::UnapplyLoading
@@ -3287,7 +3375,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .fg(
                 if app.screen == Screen::Main
                     && app.selected == 0
-                    && app.link_state.requires_apply()
+                    && connections_require_attention(app)
                 {
                     theme::warning()
                 } else {
@@ -3302,14 +3390,16 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         app.screen,
         Screen::Main | Screen::Connections | Screen::ApplyHome
     ) {
-        let status = if app.screen == Screen::Connections && app.selected == 1 {
+        let showing_dsh = (app.screen == Screen::Connections && app.selected == 1)
+            || (app.screen == Screen::ApplyHome && app.active_host == ActiveHost::DeepSeekHarness);
+        let status = if showing_dsh {
             let state = app
                 .dsh_status
                 .as_ref()
                 .map(|(state, _)| state.as_str())
                 .unwrap_or("unhealthy");
             Line::styled(
-                format!("DeepSeek Harness: {state}"),
+                format!("DeepSeek Harness: {}", display_dsh_status(state)),
                 Style::default().fg(theme::accent()),
             )
         } else if app.screen == Screen::Connections && app.selected == 2 {
@@ -3326,7 +3416,19 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             truncate_end(&text, usize::from(area.width.saturating_sub(4))),
             status.style,
         ));
-        if app.link_state.requires_apply() {
+        if app.screen == Screen::Main {
+            let dsh_status = dsh_status_line(app);
+            let text = dsh_status
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            lines.push(Line::styled(
+                truncate_end(&text, usize::from(area.width.saturating_sub(4))),
+                dsh_status.style,
+            ));
+        }
+        if app.link_state.requires_apply() && !showing_dsh {
             lines.push(Line::styled(
                 truncate_end(
                     app.messages().link_state_stale_hint,
@@ -3670,7 +3772,7 @@ fn localized_check_name<'a>(app: &'a App, name: &'a str) -> &'a str {
     match name {
         "Codex profile" => "~/.codex",
         "Codex config" => app.messages().menu_config,
-        "Applied state" => app.messages().menu_apply,
+        "Applied state" => app.messages().apply_title,
         "Provider output guard" => app.guard_messages().label,
         "Installed binary" => "FastCtx",
         "MCP server contract" => "FastCtx MCP",
@@ -3941,6 +4043,143 @@ mod tests {
     }
 
     #[test]
+    fn connections_use_health_state_and_consistent_status_casing() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.settings.language = Some("en".to_string());
+        app.screen = Screen::Connections;
+        app.link_state = crate::control::link::LinkState::ApplyRequired;
+        app.dsh_status = Ok(("connected".to_string(), String::new()));
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+
+        assert!(
+            contains_visible_text(&text, "ChatGPT / Codex Needs attention"),
+            "{text}"
+        );
+        assert!(
+            contains_visible_text(&text, "DeepSeek Harness Connected"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("DeepSeek Harness         connected"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn simplified_chinese_main_menu_exposes_connections_and_both_hosts() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.language = Language::ZhCn;
+        app.settings.language = Some("zh-CN".to_string());
+        app.screen = Screen::Main;
+        app.selected = 0;
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+
+        assert!(contains_visible_text(&text, "连接"), "{text}");
+        assert!(contains_visible_text(&text, "Codex"), "{text}");
+        assert!(contains_visible_text(&text, "DeepSeek Harness"), "{text}");
+    }
+
+    #[test]
+    fn dsh_flow_uses_host_specific_copy_and_renders_its_narrow_preview() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.language = Language::ZhCn;
+        app.settings.language = Some("zh-CN".to_string());
+        app.screen = Screen::Connections;
+        app.selected = 1;
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.active_host, super::ActiveHost::DeepSeekHarness);
+        assert_eq!(app.screen, Screen::ApplyHome);
+
+        let render_at = |app: &mut App, width, height| {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|frame| render(frame, app)).unwrap();
+            buffer_text(&terminal)
+        };
+
+        let home = render_at(&mut app, 100, 30);
+        assert!(contains_visible_text(&home, "DeepSeek Harness"), "{home}");
+        assert!(
+            !contains_visible_text(&home, app.messages().apply_title),
+            "{home}"
+        );
+
+        app.selected = 0;
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::ApplyPreview);
+        let narrow_preview = render_at(&mut app, 42, 10);
+        assert!(
+            contains_visible_text(&narrow_preview, "DeepSeek Harness"),
+            "{narrow_preview}"
+        );
+        assert!(
+            !contains_visible_text(&narrow_preview, app.messages().loading),
+            "{narrow_preview}"
+        );
+
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::ApplyConfirm);
+        for (width, height) in [(100, 30), (42, 10)] {
+            let confirm = render_at(&mut app, width, height);
+            assert!(
+                contains_visible_text(&confirm, app.messages().confirm_dsh_apply),
+                "{confirm}"
+            );
+            assert!(
+                !contains_visible_text(&confirm, app.messages().confirm_apply),
+                "{confirm}"
+            );
+        }
+
+        app.screen = Screen::UnapplyConfirm;
+        let remove = render_at(&mut app, 100, 30);
+        assert!(
+            contains_visible_text(&remove, app.messages().confirm_dsh_unapply),
+            "{remove}"
+        );
+        assert!(
+            !contains_visible_text(&remove, app.messages().confirm_unapply),
+            "{remove}"
+        );
+
+        app.receipt = Some(crate::control::apply::OperationReceipt {
+            changed_targets: 4,
+            notes: Vec::new(),
+        });
+        app.screen = Screen::Receipt;
+        let receipt = render_at(&mut app, 100, 30);
+        assert!(
+            contains_visible_text(&receipt, app.messages().dsh_restart_notice),
+            "{receipt}"
+        );
+        assert!(
+            !contains_visible_text(&receipt, app.messages().restart_notice),
+            "{receipt}"
+        );
+    }
+
+    #[test]
     fn all_languages_render_at_cjk_and_narrow_boundaries_without_panicking() {
         let temp = tempfile::tempdir().unwrap();
         let paths = ControlPaths::for_home(temp.path());
@@ -3965,7 +4204,7 @@ mod tests {
                     );
                 } else if width == 40 {
                     let selected_label = [
-                        app.messages().menu_apply,
+                        app.messages().menu_connections,
                         app.messages().menu_config,
                         app.messages().menu_status,
                         app.messages().menu_about,

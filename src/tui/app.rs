@@ -76,6 +76,14 @@ pub(crate) enum ActiveHost {
     All,
 }
 
+pub(crate) fn display_dsh_status(value: &str) -> String {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return String::new();
+    };
+    first.to_uppercase().chain(characters).collect()
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum StatusState {
     Loading,
@@ -846,48 +854,50 @@ impl App {
             Effect::CommitDshApply => self
                 .dsh_plan
                 .take()
-                .ok_or_else(|| "The DeepSeek Harness Apply preview expired. Preview again.".to_string())
+                .ok_or_else(|| {
+                    "The DeepSeek Harness Apply preview expired. Preview again.".to_string()
+                })
                 .and_then(crate::control::dsh::commit_apply)
                 .and_then(|changed| {
                     self.settings = settings::load(&self.paths)?;
                     self.dsh_status = crate::control::dsh::status(&self.paths);
                     self.show_receipt(OperationReceipt {
                         changed_targets: changed,
-                        notes: vec!["DeepSeek Harness is connected host-wide. New sessions will use FastCtx.".to_string()],
+                        notes: Vec::new(),
                     });
                     Ok(())
                 }),
-            Effect::PlanDshUnapply => crate::control::dsh::plan_unapply(
-                &self.paths,
-                self.current_executable.clone(),
-            )
-            .map(|plan| {
-                self.dsh_plan = Some(plan);
-                self.screen = Screen::UnapplyPreview;
-                self.selected = 0;
-            }),
+            Effect::PlanDshUnapply => {
+                crate::control::dsh::plan_unapply(&self.paths, self.current_executable.clone()).map(
+                    |plan| {
+                        self.dsh_plan = Some(plan);
+                        self.screen = Screen::UnapplyPreview;
+                        self.selected = 0;
+                    },
+                )
+            }
             Effect::CommitDshUnapply => self
                 .dsh_plan
                 .take()
-                .ok_or_else(|| "The DeepSeek Harness Unapply preview expired. Preview again.".to_string())
+                .ok_or_else(|| {
+                    "The DeepSeek Harness Unapply preview expired. Preview again.".to_string()
+                })
                 .and_then(crate::control::dsh::commit_unapply)
                 .map(|changed| {
                     self.settings = settings::load(&self.paths).unwrap_or_default();
                     self.dsh_status = crate::control::dsh::status(&self.paths);
                     self.show_receipt(OperationReceipt {
                         changed_targets: changed,
-                        notes: vec!["DeepSeek Harness was disconnected. Other host connections were preserved.".to_string()],
+                        notes: Vec::new(),
                     });
                 }),
-            Effect::PlanUnapplyAll => plan_unapply_all(
-                &self.paths,
-                self.current_executable.clone(),
-            )
-            .map(|plan| {
-                self.unapply_plan = Some(plan);
-                self.screen = Screen::UnapplyPreview;
-                self.selected = 0;
-            }),
+            Effect::PlanUnapplyAll => {
+                plan_unapply_all(&self.paths, self.current_executable.clone()).map(|plan| {
+                    self.unapply_plan = Some(plan);
+                    self.screen = Screen::UnapplyPreview;
+                    self.selected = 0;
+                })
+            }
             Effect::RunDoctor => {
                 let report = doctor::run(&self.paths);
                 self.status = if report.checks.is_empty() {
@@ -903,7 +913,9 @@ impl App {
                 self.selected = 2;
                 self.toast = Some(Toast {
                     message: match &self.dsh_status {
-                        Ok((state, detail)) => format!("DeepSeek Harness: {state}\n{detail}"),
+                        Ok((state, detail)) => {
+                            format!("DeepSeek Harness: {}\n{detail}", display_dsh_status(state))
+                        }
                         Err(error) => format!("DeepSeek Harness status failed: {error}"),
                     },
                     warning: !matches!(&self.dsh_status, Ok((state, _)) if state == "connected"),
