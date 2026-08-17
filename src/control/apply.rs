@@ -6,7 +6,7 @@ use crate::control::paths::ControlPaths;
 use crate::control::processes::{self, InstalledProcess, TerminationOutcome};
 use crate::control::provider;
 use crate::control::settings::{
-    self, AppliedRecord, ManagedFileRecord, Tier, ToolBudgetPreferences,
+    self, AppliedRecord, InstallationRecord, ManagedFileRecord, Tier, ToolBudgetPreferences,
 };
 use crate::control::transaction::{self, FileAction, FileChange};
 use sha2::{Digest, Sha256};
@@ -160,6 +160,7 @@ pub struct UnapplyPlan {
     paths: ControlPaths,
     running_jobs: usize,
     running_processes: Vec<InstalledProcess>,
+    complete_removal: bool,
 }
 
 impl UnapplyPlan {
@@ -183,6 +184,14 @@ impl UnapplyPlan {
     /// Number of installed FastCtx process images that confirmation will terminate.
     pub fn running_processes(&self) -> usize {
         self.running_processes.len()
+    }
+
+    pub(crate) fn changes(&self) -> &[FileChange] {
+        &self.changes
+    }
+
+    pub(crate) fn into_changes(self) -> Vec<FileChange> {
+        self.changes
     }
 }
 
@@ -222,7 +231,7 @@ pub(crate) fn synchronize_applied_binary(
 ) -> Result<AppliedBinarySync, String> {
     let settings_original = transaction::read_snapshot(&paths.fastctx_config)?;
     let mut current_settings = settings::load(paths)?;
-    let Some(record) = current_settings.applied.as_mut() else {
+    let Some(record) = current_settings.integrations.codex.as_mut() else {
         return Ok(AppliedBinarySync::NotApplied);
     };
     if !same_path(Path::new(&record.command), &paths.installed_binary) {
@@ -278,7 +287,7 @@ pub(crate) fn synchronize_applied_guidance(
     paths: &ControlPaths,
 ) -> Result<AppliedGuidanceSync, String> {
     let settings = settings::load(paths)?;
-    let Some(record) = settings.applied.as_ref() else {
+    let Some(record) = settings.integrations.codex.as_ref() else {
         return Ok(AppliedGuidanceSync::NotApplied);
     };
     if !record.targets_codex_profile(paths) {
@@ -388,14 +397,16 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         current_settings.tool_budget_epoch = Some(settings::TOOL_BUDGET_EPOCH);
     }
     if let Some(record) = current_settings
-        .applied
+        .integrations
+        .codex
         .as_ref()
         .filter(|record| !record.targets_codex_profile(paths))
     {
         return Err(receipt_profile_mismatch(paths, record));
     }
     let previous_applied = current_settings
-        .applied
+        .integrations
+        .codex
         .clone()
         .filter(|record| record.targets_codex_profile(paths));
     let codex_dir_created = previous_applied
@@ -457,7 +468,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
                 codex_edit.previous_token_limit_present,
                 codex_edit.previous_token_limit,
             ));
-        current_settings.applied = Some(AppliedRecord {
+        current_settings.integrations.codex = Some(AppliedRecord {
             applied_at_utc: timestamp.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             command: expected.command.clone(),
@@ -487,6 +498,20 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
             codex_agents_inserted_separator: agents_inserted_separator,
             binary_sha256: binary_hash,
         });
+        current_settings.installation = Some(InstallationRecord {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            binary_path: expected.command.clone(),
+            binary_sha256: sha256(&source_binary),
+        });
+        if let Some(dsh) = current_settings.integrations.deepseek_harness.as_mut() {
+            if dsh.command != expected.command {
+                return Err(
+                    "The Codex and DeepSeek Harness receipts reference different stable binaries. Re-apply DeepSeek Harness before connecting Codex."
+                        .to_string(),
+                );
+            }
+            dsh.version = env!("CARGO_PKG_VERSION").to_string();
+        }
         settings::encode(&current_settings)?
     };
 
@@ -584,21 +609,34 @@ pub fn commit_apply(
 
 /// Computes the complete immutable Unapply plan.
 pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<UnapplyPlan, String> {
-    let running_jobs = crate::shell::jobs::running_summaries(paths)?.len();
-    let running_processes = processes::installed_processes(&paths.fastctx_bin_dir)?
-        .into_iter()
-        .filter(|process| process.identity.pid != std::process::id())
-        .collect::<Vec<_>>();
     let settings_original = transaction::read_snapshot(&paths.fastctx_config)?;
-    let loaded_settings = settings::load(paths)?;
+    let mut loaded_settings = settings::load(paths)?;
     if let Some(record) = loaded_settings
-        .applied
+        .integrations
+        .codex
         .as_ref()
         .filter(|record| !record.targets_codex_profile(paths))
     {
         return Err(receipt_profile_mismatch(paths, record));
     }
-    let applied = loaded_settings.applied;
+    let applied = loaded_settings.integrations.codex.take();
+    let complete_removal = loaded_settings.integrations.deepseek_harness.is_none();
+    if complete_removal {
+        loaded_settings.installation = None;
+    }
+    let running_jobs = if complete_removal {
+        crate::shell::jobs::running_summaries(paths)?.len()
+    } else {
+        0
+    };
+    let running_processes = if complete_removal {
+        processes::installed_processes(&paths.fastctx_bin_dir)?
+            .into_iter()
+            .filter(|process| process.identity.pid != std::process::id())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let codex_dir_cleanup = applied
         .as_ref()
         .is_some_and(|record| record.codex_dir_created)
@@ -658,13 +696,17 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
     let installed_original = transaction::read_snapshot(&paths.installed_binary)?;
     let running_installed =
         cfg!(windows) && same_path(&options.current_executable, &paths.installed_binary);
-    let manual_binary_cleanup = (cfg!(windows)
+    let manual_binary_cleanup = (complete_removal
+        && cfg!(windows)
         && processes::path_is_under(&options.current_executable, &paths.fastctx_bin_dir)
         && options.current_executable.exists())
     .then(|| options.current_executable.clone());
 
-    // Unapply is a complete removal, so `~/.fastctx/` is always deleted.
-    let settings_action = FileAction::Delete;
+    let settings_action = if complete_removal {
+        FileAction::Delete
+    } else {
+        FileAction::Write(settings::encode(&loaded_settings)?)
+    };
 
     let mut changes = vec![
         FileChange {
@@ -689,13 +731,13 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             locked_binary_fallback: false,
         },
     ];
-    if !running_installed {
+    if complete_removal && !running_installed {
         changes.push(FileChange {
             target: paths.installed_binary.clone(),
             original: installed_original,
             action: FileAction::Delete,
             unix_mode: transaction::existing_unix_mode(&paths.installed_binary).or(Some(0o755)),
-            locked_binary_fallback: false,
+            locked_binary_fallback: true,
         });
     }
     let preview = preview_unapply(
@@ -718,11 +760,106 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
         paths: paths.clone(),
         running_jobs,
         running_processes,
+        complete_removal,
     })
+}
+
+/// Promotes host-specific file removals into the shared last-host cleanup plan.
+pub(crate) fn plan_complete_removal(
+    paths: &ControlPaths,
+    current_executable: PathBuf,
+    mut changes: Vec<FileChange>,
+) -> Result<UnapplyPlan, String> {
+    changes.retain(|change| {
+        change.target != paths.fastctx_config && change.target != paths.installed_binary
+    });
+    let settings_original = transaction::read_snapshot(&paths.fastctx_config)?;
+    changes.push(FileChange {
+        target: paths.fastctx_config.clone(),
+        original: settings_original,
+        action: FileAction::Delete,
+        unix_mode: transaction::existing_unix_mode(&paths.fastctx_config).or(Some(0o600)),
+        locked_binary_fallback: false,
+    });
+
+    let installed_original = transaction::read_snapshot(&paths.installed_binary)?;
+    let running_installed =
+        cfg!(windows) && same_path(&current_executable, &paths.installed_binary);
+    let manual_binary_cleanup = (cfg!(windows)
+        && processes::path_is_under(&current_executable, &paths.fastctx_bin_dir)
+        && current_executable.exists())
+    .then_some(current_executable);
+    if !running_installed {
+        changes.push(FileChange {
+            target: paths.installed_binary.clone(),
+            original: installed_original,
+            action: FileAction::Delete,
+            unix_mode: transaction::existing_unix_mode(&paths.installed_binary).or(Some(0o755)),
+            locked_binary_fallback: true,
+        });
+    }
+
+    let running_jobs = crate::shell::jobs::running_summaries(paths)?.len();
+    let running_processes = processes::installed_processes(&paths.fastctx_bin_dir)?
+        .into_iter()
+        .filter(|process| process.identity.pid != std::process::id())
+        .collect::<Vec<_>>();
+    let preview = preview_unapply(
+        &changes,
+        false,
+        None,
+        None,
+        manual_binary_cleanup.as_deref(),
+    );
+    Ok(UnapplyPlan {
+        changes,
+        preview,
+        fastctx_dir: paths.fastctx_dir.clone(),
+        codex_dir_cleanup: None,
+        manual_binary_cleanup,
+        paths: paths.clone(),
+        running_jobs,
+        running_processes,
+        complete_removal: true,
+    })
+}
+
+/// Freezes removal of every host and all shared FastCtx state in one transaction.
+pub fn plan_unapply_all(
+    paths: &ControlPaths,
+    current_executable: PathBuf,
+) -> Result<UnapplyPlan, String> {
+    let dsh = crate::control::dsh::plan_unapply(paths, current_executable.clone())?;
+    let codex = plan_unapply(
+        paths,
+        UnapplyOptions {
+            current_executable: current_executable.clone(),
+        },
+    )?;
+    let mut changes = dsh.changes;
+    changes.extend(codex.into_changes());
+    plan_complete_removal(paths, current_executable, changes)
 }
 
 /// Commits an existing Unapply plan; complete removal always deletes `~/.fastctx/`.
 pub fn commit_unapply(plan: UnapplyPlan) -> Result<OperationReceipt, String> {
+    if !plan.complete_removal {
+        let changed_targets = plan
+            .changes
+            .iter()
+            .filter(|change| change.is_changed())
+            .count();
+        transaction::commit(&plan.changes)?;
+        let mut notes = vec![
+            "DeepSeek Harness remains connected; the shared binary, settings, jobs, and running servers were kept."
+                .to_string(),
+        ];
+        cleanup_codex_directory(plan.codex_dir_cleanup.as_ref(), &mut notes);
+        return Ok(OperationReceipt {
+            changed_targets,
+            notes,
+        });
+    }
     let mut admission = crate::shell::jobs::acquire_unapply_admission(&plan.paths)?;
     transaction::validate(&plan.changes)?;
     // Fence older servers while admission is locked so no job can appear after the kill scan.
@@ -771,25 +908,7 @@ pub fn commit_unapply(plan: UnapplyPlan) -> Result<OperationReceipt, String> {
         remove_tree(&plan.fastctx_dir, "FastCtx configuration")
             .map_err(|error| augment_directory_error(error, &plan.paths))?;
     }
-    if let Some(directory) = plan.codex_dir_cleanup {
-        match fs::remove_dir(&directory) {
-            Ok(()) => notes.push(format!(
-                "Removed the empty configuration directory {} created by Apply.",
-                crate::paths::display_path(&directory)
-            )),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
-                notes.push(format!(
-                    "Kept {} because it now contains files not owned by fastctx.",
-                    crate::paths::display_path(&directory)
-                ));
-            }
-            Err(error) => notes.push(format!(
-                "Could not remove the empty configuration directory {}: {error}. Inspect it and remove it manually if desired.",
-                crate::paths::display_path(&directory)
-            )),
-        }
-    }
+    cleanup_codex_directory(plan.codex_dir_cleanup.as_ref(), &mut notes);
     if let Some(path) = plan.manual_binary_cleanup {
         notes.push(format!(
             "The running binary could not remove itself. Delete {} after this process exits.",
@@ -819,6 +938,28 @@ pub fn commit_unapply(plan: UnapplyPlan) -> Result<OperationReceipt, String> {
         changed_targets,
         notes,
     })
+}
+
+fn cleanup_codex_directory(directory: Option<&PathBuf>, notes: &mut Vec<String>) {
+    if let Some(directory) = directory {
+        match fs::remove_dir(directory) {
+            Ok(()) => notes.push(format!(
+                "Removed the empty configuration directory {} created by Apply.",
+                crate::paths::display_path(directory)
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
+                notes.push(format!(
+                    "Kept {} because it now contains files not owned by fastctx.",
+                    crate::paths::display_path(directory)
+                ));
+            }
+            Err(error) => notes.push(format!(
+                "Could not remove the empty configuration directory {}: {error}. Inspect it and remove it manually if desired.",
+                crate::paths::display_path(directory)
+            )),
+        }
+    }
 }
 
 fn remove_tree(path: &Path, label: &str) -> Result<(), String> {

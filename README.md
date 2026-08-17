@@ -15,9 +15,9 @@ npm install --global fastctx
 fastctx
 ```
 
-The `fastctx` command opens the control terminal. Review the proposed changes, select **Connect to Codex**, then start a new ChatGPT / Codex session.
+The `fastctx` command opens the control terminal. Open **Connections**, choose ChatGPT / Codex or DeepSeek Harness, review the proposed changes, then start a new host session.
 
-FastCtx currently provides first-class setup for ChatGPT App and Codex CLI. Any MCP client can also register `fastctx serve` directly.
+FastCtx provides first-class setup for ChatGPT App, Codex CLI, and DeepSeek Harness. Any MCP client can also register `fastctx serve` directly.
 
 ## What FastCtx solves
 
@@ -112,6 +112,26 @@ fastctx unapply --yes
 - `lang <code>`: set the control terminal language.
 
 `status` uses three states: `[PASS]`, `[INFO]`, and `[FAIL]`. It also reports the detected search CPU ceiling and the configured/effective parallelism. A `[FAIL]` result returns a non-zero exit code.
+
+### DeepSeek Harness
+
+DeepSeek Harness must already be installed and initialized. FastCtx does not install, initialize, or upgrade it. Connect its machine-wide configuration with:
+
+```console
+fastctx apply --host deepseek-harness --yes
+fastctx status --host deepseek-harness
+fastctx unapply --host deepseek-harness --yes
+```
+
+`--host dsh` is a short alias. The DSH home is resolved in this order: `--dsh-home <PATH>`, `DSH_HOME`, then `~/.dsh`. Apply owns one marked block in `$DSH_HOME/cordis.patch.yml` and one marked guidance section in `$DSH_HOME/AGENTS.md`; comments and all other bytes are preserved. The generated MCP entry uses `@deepseek-ai/dsh-mcp-client`, `cwd: !!js process.cwd()`, and `toolCallTimeoutMs: 300000`.
+
+This integration is host-wide and affects every DSH profile that consumes the machine patch. DSH supplies the MCP process working directory at invocation time, so concurrent workspaces share the same FastCtx installation and control center but retain per-connection cwd; FastCtx does not claim workspace-level MCP process isolation.
+
+Codex and DSH can be connected simultaneously. Disconnecting one preserves the other, the stable binary, running jobs, and shared settings. Use `fastctx status --all` to inspect both or `fastctx unapply --all --yes` for one confirmed, transactional removal of all managed connections and shared FastCtx data.
+
+DeepSeek Harness is currently a developer-preview integration surface. FastCtx follows its present generic stdio MCP client contract, but a future DSH release may require a compatibility update. If Status reports `drifted`, `conflicted`, or `partial`, inspect the marked blocks and restore the last FastCtx-owned bytes before reapplying or removing; FastCtx will not overwrite or delete ambiguous user edits.
+
+Settings schema v1 is read without rewriting and migrated to the multi-host schema on the next write-capable startup. Existing Codex receipts and unknown TOML fields are preserved during that migration.
 
 ### Tool limits and settings reset
 

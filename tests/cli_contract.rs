@@ -440,6 +440,196 @@ fn a_non_tty_apply_without_yes_refuses_a_shared_limit_conflict_without_writes() 
     assert!(!temp.path().join(".fastctx").exists());
 }
 
+#[test]
+fn dsh_alias_apply_status_and_unapply_use_the_selected_home() {
+    let temp = profile_test_home();
+    let dsh = temp.path().join("dsh-profile");
+    let applied = isolated_command(temp.path())
+        .args(["apply", "--host", "dsh", "--dsh-home"])
+        .arg(&dsh)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert_success(&applied);
+    let preview = String::from_utf8(applied.stdout).unwrap();
+    assert!(preview.contains("DeepSeek Harness"), "{preview}");
+    assert!(preview.contains("Host-wide"), "{preview}");
+    let patch = std::fs::read_to_string(dsh.join("cordis.patch.yml")).unwrap();
+    assert!(
+        patch.contains("name: '@deepseek-ai/dsh-mcp-client'"),
+        "{patch}"
+    );
+    assert!(patch.contains("cwd: !!js process.cwd()"), "{patch}");
+    assert!(patch.contains("toolCallTimeoutMs: 300000"), "{patch}");
+
+    let patch_mtime = std::fs::metadata(dsh.join("cordis.patch.yml"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let agents_mtime = std::fs::metadata(dsh.join("AGENTS.md"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let reapplied = isolated_command(temp.path())
+        .args(["apply", "--host", "dsh", "--dsh-home"])
+        .arg(&dsh)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert_success(&reapplied);
+    let reapplied = String::from_utf8(reapplied.stdout).unwrap();
+    assert!(reapplied.contains("No changes were needed."), "{reapplied}");
+    assert_eq!(
+        std::fs::metadata(dsh.join("cordis.patch.yml"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        patch_mtime
+    );
+    assert_eq!(
+        std::fs::metadata(dsh.join("AGENTS.md"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        agents_mtime
+    );
+
+    let status = isolated_command(temp.path())
+        .args(["status", "--host", "deepseek-harness", "--dsh-home"])
+        .arg(&dsh)
+        .output()
+        .unwrap();
+    assert_success(&status);
+    let status = String::from_utf8(status.stdout).unwrap();
+    assert!(status.contains("[CONNECTED] DeepSeek Harness"), "{status}");
+
+    let removed = isolated_command(temp.path())
+        .args(["unapply", "--host", "dsh", "--dsh-home"])
+        .arg(&dsh)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert_success(&removed);
+    assert!(!dsh.join("cordis.patch.yml").exists());
+    assert!(!dsh.join("AGENTS.md").exists());
+    assert!(!temp.path().join(".fastctx").exists());
+}
+
+#[test]
+fn host_home_and_all_flag_conflicts_fail_without_writes() {
+    let temp = profile_test_home();
+    let dsh = temp.path().join("dsh-profile");
+    for args in [
+        vec!["apply", "--host", "codex", "--dsh-home"],
+        vec!["apply", "--host", "dsh", "--codex-home"],
+        vec!["status", "--all", "--host", "codex"],
+        vec!["unapply", "--all", "--dsh-home"],
+    ] {
+        let mut command = isolated_command(temp.path());
+        command.args(&args);
+        if args.last().is_some_and(|arg| arg.ends_with("home")) {
+            command.arg(&dsh);
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success(), "{args:?}");
+    }
+    assert!(!temp.path().join(".fastctx").exists());
+    assert!(!dsh.exists());
+}
+
+#[test]
+fn dsh_home_resolution_honors_flag_environment_default_and_precedence() {
+    let temp = profile_test_home();
+    let env_home = temp.path().join("dsh-from-env");
+    let flag_home = temp.path().join("dsh-from-flag");
+
+    let from_default = isolated_command(temp.path())
+        .args(["status", "--host", "dsh"])
+        .output()
+        .unwrap();
+    assert_eq!(from_default.status.code(), Some(1));
+    let from_default = String::from_utf8(from_default.stdout).unwrap();
+    assert!(from_default.contains("(source: default)"), "{from_default}");
+    assert!(
+        from_default.contains(&normalized(&temp.path().join(".dsh"))),
+        "{from_default}"
+    );
+
+    let from_env = isolated_command(temp.path())
+        .args(["status", "--host", "dsh"])
+        .env("DSH_HOME", &env_home)
+        .output()
+        .unwrap();
+    assert_eq!(from_env.status.code(), Some(1));
+    let from_env = String::from_utf8(from_env.stdout).unwrap();
+    assert!(from_env.contains("(source: env)"), "{from_env}");
+    assert!(from_env.contains(&normalized(&env_home)), "{from_env}");
+
+    let from_flag = isolated_command(temp.path())
+        .args(["status", "--host", "dsh", "--dsh-home"])
+        .arg(&flag_home)
+        .env("DSH_HOME", &env_home)
+        .output()
+        .unwrap();
+    assert_eq!(from_flag.status.code(), Some(1));
+    let from_flag = String::from_utf8(from_flag.stdout).unwrap();
+    assert!(from_flag.contains("(source: flag)"), "{from_flag}");
+    assert!(from_flag.contains(&normalized(&flag_home)), "{from_flag}");
+    assert!(!from_flag.contains(&normalized(&env_home)), "{from_flag}");
+
+    let relative = isolated_command(temp.path())
+        .args(["status", "--host", "dsh", "--dsh-home", "relative-dsh-home"])
+        .output()
+        .unwrap();
+    assert!(!relative.status.success());
+    let relative = String::from_utf8(relative.stderr).unwrap();
+    assert!(relative.contains("must be an absolute path"), "{relative}");
+}
+
+#[test]
+fn status_all_and_unapply_all_cover_a_dual_host_installation() {
+    let temp = profile_test_home();
+    let codex = temp.path().join("codex-profile");
+    let dsh = temp.path().join("dsh-profile");
+    assert_success(
+        &isolated_command(temp.path())
+            .args(["apply", "--codex-home"])
+            .arg(&codex)
+            .arg("--yes")
+            .output()
+            .unwrap(),
+    );
+    assert_success(
+        &isolated_command(temp.path())
+            .args(["apply", "--host", "dsh", "--dsh-home"])
+            .arg(&dsh)
+            .arg("--yes")
+            .output()
+            .unwrap(),
+    );
+
+    let status = isolated_command(temp.path())
+        .args(["status", "--all"])
+        .output()
+        .unwrap();
+    assert_success(&status);
+    let status = String::from_utf8(status.stdout).unwrap();
+    assert!(status.contains("[CONNECTED] DeepSeek Harness"), "{status}");
+    assert!(status.contains("[PASS] Applied state"), "{status}");
+
+    let removed = isolated_command(temp.path())
+        .args(["unapply", "--all", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&removed);
+    assert!(!codex.join("config.toml").exists());
+    assert!(!codex.join("AGENTS.md").exists());
+    assert!(!dsh.join("cordis.patch.yml").exists());
+    assert!(!dsh.join("AGENTS.md").exists());
+    assert!(!temp.path().join(".fastctx").exists());
+}
+
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_fastctx"))
 }
@@ -450,6 +640,7 @@ fn isolated_command(home: &Path) -> Command {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env_remove("CODEX_HOME")
+        .env_remove("DSH_HOME")
         .env("TMPDIR", home)
         .env("TMP", home)
         .env("TEMP", home);
