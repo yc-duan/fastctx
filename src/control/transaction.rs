@@ -236,11 +236,26 @@ fn apply_change(change: &FileChange) -> Result<(), String> {
             change.unix_mode,
             change.locked_binary_fallback,
         ),
-        FileAction::Delete => match fs::remove_file(&change.target) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.to_string()),
-        },
+        FileAction::Delete => remove_file(&change.target, change.locked_binary_fallback),
+    }
+}
+
+fn remove_file(path: &Path, retry_locked: bool) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            #[cfg(windows)]
+            Err(error)
+                if retry_locked
+                    && matches!(error.raw_os_error(), Some(5 | 32 | 33))
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(error) => return Err(error.to_string()),
+        }
     }
 }
 

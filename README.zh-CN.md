@@ -13,9 +13,9 @@ npm install --global fastctx
 fastctx
 ```
 
-`fastctx` 命令会打开控制终端。检查变更后选择 **接入 Codex**，再启动新的 ChatGPT / Codex 会话即可使用。
+`fastctx` 命令会打开控制终端。进入 **Connections**，选择 ChatGPT / Codex 或 DeepSeek Harness，检查变更后再启动新的宿主会话。
 
-当前优先支持 ChatGPT App 与 Codex CLI。任何 MCP client 也可以直接注册 `fastctx serve`。
+当前一等支持 ChatGPT App、Codex CLI 与 DeepSeek Harness。任何 MCP client 也可以直接注册 `fastctx serve`。
 
 ## FastCtx 解决什么
 
@@ -110,6 +110,26 @@ fastctx unapply --yes
 - `lang <code>`：设置控制终端语言。
 
 `status` 使用 `[PASS]`、`[INFO]`、`[FAIL]` 三种状态，也会显示探测到的搜索 CPU 上界以及配置值/实际生效并行度。出现 `[FAIL]` 时退出码为非零。
+
+### DeepSeek Harness
+
+使用前必须已经安装并初始化 DeepSeek Harness。FastCtx 不负责安装、初始化或升级 DSH。接入机器级配置：
+
+```console
+fastctx apply --host deepseek-harness --yes
+fastctx status --host deepseek-harness
+fastctx unapply --host deepseek-harness --yes
+```
+
+`--host dsh` 是短别名。DSH Home 按以下优先级解析：`--dsh-home <PATH>`、`DSH_HOME`、`~/.dsh`。Apply 只拥有 `$DSH_HOME/cordis.patch.yml` 中一个带 marker 的区块，以及 `$DSH_HOME/AGENTS.md` 中一个带 marker 的 guidance 段；注释和其他所有字节保持原样。生成的 MCP 条目使用 `@deepseek-ai/dsh-mcp-client`、`cwd: !!js process.cwd()` 和 `toolCallTimeoutMs: 300000`。
+
+这是 Host-wide 集成，会影响所有读取机器 patch 的 DSH profile。DSH 在调用时把工作目录传给 MCP 进程，因此并发 workspace 共享同一份 FastCtx 安装和控制中心，但每条连接保留自己的 cwd；FastCtx 不承诺 workspace 级 MCP 子进程隔离。
+
+Codex 与 DSH 可以同时接入。断开其中一个会保留另一个、稳定 binary、运行中的 job 和共享设置。使用 `fastctx status --all` 检查两个宿主；使用 `fastctx unapply --all --yes` 经一次确认、一个事务移除全部受管连接和共享 FastCtx 数据。
+
+DeepSeek Harness 当前仍属于 developer-preview 集成面。FastCtx 对接的是它目前的通用 stdio MCP client 合同，未来 DSH 版本可能需要兼容性更新。若 Status 显示 `drifted`、`conflicted` 或 `partial`，请检查 marker 区块并恢复上次由 FastCtx 写入的字节后再 Apply 或移除；FastCtx 不会覆盖或删除归属不明确的用户修改。
+
+旧 settings schema v1 在只读加载时不会被改写，并在下一次可写启动时迁移为多宿主 schema。迁移会保留现有 Codex 回执和未知 TOML 字段。
 
 ### 工具上限与设置重置
 

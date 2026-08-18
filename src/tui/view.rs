@@ -1,6 +1,6 @@
 //! Adaptive ratatui views and the shared TUI theme.
 
-use super::app::{App, Screen, StatusState};
+use super::app::{ActiveHost, App, Screen, StatusState, display_dsh_status};
 use super::budget_editor::{self, ToolBudgetInputError};
 use super::config::{
     self, ConfigGroupId, ConfigItemId, ConfigItemRole, ConfigListRow, ConfigValue,
@@ -14,6 +14,7 @@ use crate::control::link::LinkState;
 use crate::control::settings::{
     MAX_REPLACE_FILE_LIMIT_MIB, MIN_REPLACE_FILE_LIMIT_MIB, Tier, ToolBudgetLevel,
 };
+use crate::control::transaction::FileAction;
 use crate::search_parallelism::{self, SearchParallelismInputError};
 use crate::shell::jobs::{JobSourceSummary, JobSummary};
 use crate::update::{NpmDiscovery, NpmVersionAuthority, StartupUpdate};
@@ -148,11 +149,18 @@ fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Screen::UpdateConfirm => render_update_confirmation(frame, app, area),
         Screen::Language { .. } => render_languages(frame, app, area),
         Screen::Main => render_main(frame, app, area),
+        Screen::Connections => render_connections(frame, app, area),
         Screen::ApplyHome => render_apply_home(frame, app, area),
         Screen::ApplyLoading | Screen::UnapplyLoading => {
             render_loading(frame, app, area, app.messages().loading)
         }
-        Screen::ApplyPreview => render_preview(frame, app, area, true),
+        Screen::ApplyPreview => {
+            if app.active_host == ActiveHost::DeepSeekHarness {
+                render_dsh_preview(frame, app, area, true)
+            } else {
+                render_preview(frame, app, area, true)
+            }
+        }
         Screen::ApplyConflict => render_confirmation(
             frame,
             app,
@@ -164,18 +172,34 @@ fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             frame,
             app,
             area,
-            app.messages().confirm_apply,
+            if app.active_host == ActiveHost::DeepSeekHarness {
+                app.messages().confirm_dsh_apply
+            } else {
+                app.messages().confirm_apply
+            },
             theme::accent(),
         ),
         Screen::ApplyRunning | Screen::UnapplyRunning => {
             render_loading(frame, app, area, app.messages().loading)
         }
-        Screen::UnapplyPreview => render_preview(frame, app, area, false),
+        Screen::UnapplyPreview => {
+            if app.active_host == ActiveHost::DeepSeekHarness {
+                render_dsh_preview(frame, app, area, false)
+            } else {
+                render_preview(frame, app, area, false)
+            }
+        }
         Screen::UnapplyConfirm => render_confirmation(
             frame,
             app,
             area,
-            app.messages().confirm_unapply,
+            if app.active_host == ActiveHost::All {
+                "Disconnect every host and delete all shared FastCtx data?"
+            } else if app.active_host == ActiveHost::DeepSeekHarness {
+                app.messages().confirm_dsh_unapply
+            } else {
+                app.messages().confirm_unapply
+            },
             theme::danger(),
         ),
         Screen::Config => render_config(frame, app, area),
@@ -582,7 +606,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .split(inner(area, 2, 1));
     let messages = app.messages();
     let labels = [
-        messages.menu_apply,
+        messages.menu_connections,
         messages.menu_config,
         app.job_messages().menu,
         app.update_messages().page_title,
@@ -594,7 +618,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(index, label)| {
-            let requires_action = index == 0 && app.link_state.requires_apply();
+            let requires_action = index == 0 && connections_require_attention(app);
             let item = ListItem::new(format!(" {}", main_menu_label(app, index, label)));
             if requires_action {
                 item.style(
@@ -619,7 +643,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     // The panel reports the connection rather than echoing the highlighted entry: the cursor
     // already names that, and the one thing the menu cannot otherwise show is whether FastCtx is
     // still connected to the host with the guidance this build writes.
-    let mut details = vec![link_status_line(app)];
+    let mut details = vec![link_status_line(app), dsh_status_line(app)];
     if app.link_state.requires_apply() {
         details.push(Line::styled(
             messages.link_state_stale_hint,
@@ -664,13 +688,122 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     );
 }
 
+fn render_connections(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .split(inner(area, 2, 1));
+    let codex = codex_connection_status(app.link_state);
+    let dsh = dsh_connection_status(app);
+    let items = [
+        connection_row("ChatGPT / Codex", codex),
+        connection_row("DeepSeek Harness", &dsh),
+        " Disconnect all".to_string(),
+    ]
+    .into_iter()
+    .map(ListItem::new)
+    .collect::<Vec<_>>();
+    let mut state = ListState::default().with_selected(Some(app.selected));
+    frame.render_stateful_widget(
+        List::new(items)
+            .block(panel("Connections"))
+            .highlight_style(selected_style())
+            .highlight_symbol("❯"),
+        chunks[0],
+        &mut state,
+    );
+    let details = if app.selected == 0 {
+        vec![
+            detail_line("Host", "ChatGPT / Codex"),
+            detail_line("Home", &crate::paths::display_path(&app.paths.codex_dir)),
+            detail_line("Scope", "Selected Codex profile"),
+        ]
+    } else if app.selected == 1 {
+        vec![
+            detail_line("Host", "DeepSeek Harness"),
+            detail_line("Home", &crate::paths::display_path(&app.paths.dsh_dir)),
+            detail_line("Source", app.paths.dsh_home_source.as_str()),
+            detail_line("Patch", &crate::paths::display_path(&app.paths.dsh_patch)),
+            detail_line("Timeout", "300000 ms"),
+            detail_line("Scope", "Host-wide (all DSH profiles)"),
+        ]
+    } else {
+        vec![
+            detail_line("Action", "Disconnect every host"),
+            detail_line("Shared data", "Delete FastCtx settings, binary, and jobs"),
+            Line::styled(
+                "A separate destructive confirmation is required.",
+                Style::default().fg(theme::danger()),
+            ),
+        ]
+    };
+    frame.render_widget(
+        Paragraph::new(details)
+            .block(panel("Connection details"))
+            .wrap(Wrap { trim: false }),
+        chunks[1],
+    );
+}
+
+fn connection_row(host: &str, status: &str) -> String {
+    format!(" {host:<18}{status}")
+}
+
 /// Marks the action that repairs a stale connection in text, so it stays visible without colour.
 fn main_menu_label(app: &App, index: usize, label: &str) -> String {
-    if index == 0 && app.link_state.requires_apply() {
+    if index == 0 && connections_require_attention(app) {
         format!("! {label}")
     } else {
         label.to_string()
     }
+}
+
+fn connections_require_attention(app: &App) -> bool {
+    app.link_state.requires_apply()
+        || !matches!(
+            &app.dsh_status,
+            Ok((state, _)) if matches!(state.as_str(), "connected" | "not connected")
+        )
+}
+
+/// Keeps the Connections row aligned with the richer Codex status shown elsewhere. A receipt on
+/// disk is ownership evidence, not proof that the current connection contract is healthy.
+fn codex_connection_status(state: LinkState) -> &'static str {
+    match state {
+        LinkState::Absent => "Not connected",
+        LinkState::Current => "Connected",
+        LinkState::ApplyRequired
+        | LinkState::KnownLegacy
+        | LinkState::Missing
+        | LinkState::Drifted
+        | LinkState::Malformed
+        | LinkState::Unreadable => "Needs attention",
+    }
+}
+
+/// DSH diagnosis labels are stable lowercase machine values; UI surfaces use sentence case.
+fn dsh_connection_status(app: &App) -> String {
+    app.dsh_status
+        .as_ref()
+        .map(|(state, _)| display_dsh_status(state))
+        .unwrap_or_else(|_| "Unhealthy".to_string())
+}
+
+fn dsh_status_line(app: &App) -> Line<'static> {
+    let state = app
+        .dsh_status
+        .as_ref()
+        .map(|(state, _)| state.as_str())
+        .unwrap_or("unhealthy");
+    let (symbol, colour) = match state {
+        "connected" => ("✓", theme::success()),
+        "not connected" => ("○", theme::accent()),
+        _ => ("!", theme::warning()),
+    };
+    Line::styled(
+        format!("{symbol} DeepSeek Harness: {}", display_dsh_status(state)),
+        Style::default().fg(colour).add_modifier(Modifier::BOLD),
+    )
 }
 
 /// One line naming the connection to the host, shared by the main menu and the connect page so
@@ -743,6 +876,7 @@ fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let items = vec![
         ListItem::new(format!(" {}", messages.action_apply)),
         ListItem::new(format!(" {}", messages.action_unapply)),
+        ListItem::new(" Doctor"),
     ];
     let mut state = ListState::default().with_selected(Some(app.selected));
     let saved_budgets = app.settings.tool_budgets.resolve(app.settings.tier);
@@ -753,14 +887,23 @@ fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .split(inner(area, 2, 1));
     frame.render_stateful_widget(
         List::new(items)
-            .block(panel(messages.apply_title))
+            .block(panel(if app.active_host == ActiveHost::DeepSeekHarness {
+                "DeepSeek Harness"
+            } else {
+                messages.apply_title
+            }))
             .highlight_style(selected_style())
             .highlight_symbol("❯"),
         chunks[0],
         &mut state,
     );
-    let mut details = vec![link_status_line(app)];
-    if app.link_state.requires_apply() {
+    let mut details = if app.active_host == ActiveHost::DeepSeekHarness {
+        let state = dsh_connection_status(app);
+        vec![detail_line("DeepSeek Harness", &state)]
+    } else {
+        vec![link_status_line(app)]
+    };
+    if app.active_host == ActiveHost::Codex && app.link_state.requires_apply() {
         details.push(Line::styled(
             messages.link_state_stale_hint,
             Style::default().fg(theme::muted()),
@@ -803,6 +946,87 @@ fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     frame.render_widget(
         Paragraph::new(details).block(panel(messages.config_title)),
         chunks[1],
+    );
+}
+
+fn dsh_preview_lines(app: &App, apply: bool) -> Option<Vec<Line<'static>>> {
+    let plan = app.dsh_plan.as_ref()?;
+    let mut lines = vec![
+        detail_line("Host", "DeepSeek Harness"),
+        detail_line("Scope", "Host-wide (all DSH profiles)"),
+        detail_line("Home", &crate::paths::display_path(&plan.dsh_home)),
+        detail_line("Timeout", "300000 ms"),
+        Line::raw(""),
+    ];
+    for change in plan.preview_changes() {
+        let (verb, colour) = if !change.is_changed() {
+            ("Unchanged", theme::muted())
+        } else {
+            match change.action {
+                FileAction::Write(_) if change.original.is_none() => ("Create", theme::accent()),
+                FileAction::Write(_) => ("Update", theme::accent()),
+                FileAction::Delete => ("Delete", theme::danger()),
+            }
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{verb:<10}"), Style::default().fg(colour)),
+            Span::styled(
+                crate::paths::display_path(&change.target),
+                Style::default().fg(theme::fg()),
+            ),
+        ]));
+    }
+    if !apply && plan.running_jobs() > 0 {
+        lines.push(Line::styled(
+            format!(
+                "Stop      {} running background job(s)",
+                plan.running_jobs()
+            ),
+            Style::default().fg(theme::danger()),
+        ));
+    }
+    if !apply && plan.running_processes() > 0 {
+        lines.push(Line::styled(
+            format!(
+                "Stop      {} running FastCtx process(es)",
+                plan.running_processes()
+            ),
+            Style::default().fg(theme::danger()),
+        ));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        if apply {
+            "New DeepSeek Harness sessions will use this connection."
+        } else if app.settings.integrations.codex.is_some() {
+            "ChatGPT / Codex and the shared FastCtx installation will be preserved."
+        } else {
+            "This is the last connection; shared FastCtx data will also be removed."
+        },
+        Style::default().fg(theme::muted()),
+    ));
+    Some(lines)
+}
+
+fn render_dsh_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: bool) {
+    let Some(lines) = dsh_preview_lines(app, apply) else {
+        render_loading(frame, app, area, app.messages().empty);
+        return;
+    };
+    let preview_area = inner(area, 2, 1);
+    app.detail_viewport.update(
+        lines.len(),
+        usize::from(preview_area.height.saturating_sub(2)),
+    );
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel(app.messages().preview_title))
+            .scroll((
+                u16::try_from(app.detail_viewport.offset()).unwrap_or(u16::MAX),
+                0,
+            ))
+            .wrap(Wrap { trim: false }),
+        preview_area,
     );
 }
 
@@ -2505,7 +2729,7 @@ fn render_receipt(frame: &mut Frame<'_>, app: &App, area: Rect) {
         }
         lines.push(Line::raw(""));
         lines.push(Line::styled(
-            app.messages().restart_notice,
+            host_restart_notice(app),
             Style::default().fg(theme::accent()),
         ));
     }
@@ -2515,6 +2739,14 @@ fn render_receipt(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .wrap(Wrap { trim: false }),
         inner(area, 3, 2),
     );
+}
+
+fn host_restart_notice(app: &App) -> &'static str {
+    if app.active_host == ActiveHost::DeepSeekHarness {
+        app.messages().dsh_restart_notice
+    } else {
+        app.messages().restart_notice
+    }
 }
 
 fn render_error(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -2777,6 +3009,19 @@ fn render_narrow_details(
 }
 
 fn render_narrow_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: bool) {
+    if app.active_host == ActiveHost::DeepSeekHarness {
+        let mut lines = vec![narrow_title(app.messages().preview_title)];
+        if let Some(details) = dsh_preview_lines(app, apply) {
+            lines.extend(details);
+        } else {
+            lines.push(Line::styled(
+                app.messages().loading,
+                Style::default().fg(theme::muted()),
+            ));
+        }
+        render_narrow_details(frame, app, area, lines);
+        return;
+    }
     let running_processes = (!apply)
         .then(|| {
             app.unapply_plan
@@ -2846,7 +3091,7 @@ fn render_narrow_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply
     }
     if has_changes {
         lines.push(Line::styled(
-            app.messages().restart_notice,
+            host_restart_notice(app),
             Style::default().fg(theme::muted()),
         ));
     }
@@ -2962,7 +3207,7 @@ fn render_narrow_receipt(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ));
     }
     lines.push(Line::styled(
-        truncate_display_width(app.messages().restart_notice, usize::from(area.width)),
+        truncate_display_width(host_restart_notice(app), usize::from(area.width)),
         Style::default().fg(theme::accent()),
     ));
     render_narrow_details(frame, app, area, lines);
@@ -3053,7 +3298,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ),
         Screen::Main => {
             let labels = [
-                messages.menu_apply,
+                messages.menu_connections,
                 messages.menu_config,
                 app.job_messages().menu,
                 app.update_messages().page_title,
@@ -3063,8 +3308,11 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             ];
             main_menu_label(app, app.selected, labels[app.selected])
         }
+        Screen::Connections => {
+            ["ChatGPT / Codex", "DeepSeek Harness", "Disconnect all"][app.selected].to_string()
+        }
         Screen::ApplyHome => {
-            [messages.action_apply, messages.action_unapply][app.selected].to_string()
+            [messages.action_apply, messages.action_unapply, "Doctor"][app.selected].to_string()
         }
         Screen::Config => config_narrow_summary(app),
         Screen::ConfigCpuEdit => format!(
@@ -3092,8 +3340,20 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .unwrap_or_else(|| app.job_messages().empty.to_string()),
         Screen::JobsKillConfirm => app.job_messages().kill_prompt.to_string(),
         Screen::ApplyConflict => messages.conflict_warning.to_string(),
-        Screen::ApplyConfirm => messages.confirm_apply.to_string(),
-        Screen::UnapplyConfirm => messages.confirm_unapply.to_string(),
+        Screen::ApplyConfirm => if app.active_host == ActiveHost::DeepSeekHarness {
+            messages.confirm_dsh_apply
+        } else {
+            messages.confirm_apply
+        }
+        .to_string(),
+        Screen::UnapplyConfirm => if app.active_host == ActiveHost::All {
+            "Disconnect every host and delete all shared FastCtx data?"
+        } else if app.active_host == ActiveHost::DeepSeekHarness {
+            messages.confirm_dsh_unapply
+        } else {
+            messages.confirm_unapply
+        }
+        .to_string(),
         Screen::ApplyLoading
         | Screen::ApplyRunning
         | Screen::UnapplyLoading
@@ -3115,7 +3375,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .fg(
                 if app.screen == Screen::Main
                     && app.selected == 0
-                    && app.link_state.requires_apply()
+                    && connections_require_attention(app)
                 {
                     theme::warning()
                 } else {
@@ -3126,8 +3386,27 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     ));
     // A terminal too small for the panel still has to show whether the host is connected; the
     // symbol keeps it readable after the text is truncated.
-    if matches!(app.screen, Screen::Main | Screen::ApplyHome) {
-        let status = link_status_line(app);
+    if matches!(
+        app.screen,
+        Screen::Main | Screen::Connections | Screen::ApplyHome
+    ) {
+        let showing_dsh = (app.screen == Screen::Connections && app.selected == 1)
+            || (app.screen == Screen::ApplyHome && app.active_host == ActiveHost::DeepSeekHarness);
+        let status = if showing_dsh {
+            let state = app
+                .dsh_status
+                .as_ref()
+                .map(|(state, _)| state.as_str())
+                .unwrap_or("unhealthy");
+            Line::styled(
+                format!("DeepSeek Harness: {}", display_dsh_status(state)),
+                Style::default().fg(theme::accent()),
+            )
+        } else if app.screen == Screen::Connections && app.selected == 2 {
+            Line::styled("Destructive action", Style::default().fg(theme::danger()))
+        } else {
+            link_status_line(app)
+        };
         let text = status
             .spans
             .iter()
@@ -3137,7 +3416,19 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             truncate_end(&text, usize::from(area.width.saturating_sub(4))),
             status.style,
         ));
-        if app.link_state.requires_apply() {
+        if app.screen == Screen::Main {
+            let dsh_status = dsh_status_line(app);
+            let text = dsh_status
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            lines.push(Line::styled(
+                truncate_end(&text, usize::from(area.width.saturating_sub(4))),
+                dsh_status.style,
+            ));
+        }
+        if app.link_state.requires_apply() && !showing_dsh {
             lines.push(Line::styled(
                 truncate_end(
                     app.messages().link_state_stale_hint,
@@ -3481,7 +3772,7 @@ fn localized_check_name<'a>(app: &'a App, name: &'a str) -> &'a str {
     match name {
         "Codex profile" => "~/.codex",
         "Codex config" => app.messages().menu_config,
-        "Applied state" => app.messages().menu_apply,
+        "Applied state" => app.messages().apply_title,
         "Provider output guard" => app.guard_messages().label,
         "Installed binary" => "FastCtx",
         "MCP server contract" => "FastCtx MCP",
@@ -3722,6 +4013,173 @@ mod tests {
     }
 
     #[test]
+    fn connections_render_both_hosts_and_dsh_scope_at_standard_and_narrow_widths() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.settings.language = Some("en".to_string());
+        app.screen = Screen::Connections;
+        app.selected = 1;
+
+        for (width, height) in [(100, 30), (42, 10)] {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|frame| render(frame, &mut app)).unwrap();
+            let text = buffer_text(&terminal);
+            assert!(contains_visible_text(&text, "DeepSeek Harness"), "{text}");
+            if width >= 100 {
+                assert!(contains_visible_text(&text, "ChatGPT / Codex"), "{text}");
+                assert!(
+                    contains_visible_text(&text, "Host-wide (all DSH profiles)"),
+                    "{text}"
+                );
+                assert!(contains_visible_text(&text, "300000 ms"), "{text}");
+                assert!(contains_visible_text(&text, "Patch"), "{text}");
+                assert!(contains_visible_text(&text, "rdis.patch.yml"), "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn connections_use_health_state_and_consistent_status_casing() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.settings.language = Some("en".to_string());
+        app.screen = Screen::Connections;
+        app.link_state = crate::control::link::LinkState::ApplyRequired;
+        app.dsh_status = Ok(("connected".to_string(), String::new()));
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+
+        assert!(
+            contains_visible_text(&text, "ChatGPT / Codex Needs attention"),
+            "{text}"
+        );
+        assert!(
+            contains_visible_text(&text, "DeepSeek Harness Connected"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("DeepSeek Harness         connected"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn simplified_chinese_main_menu_exposes_connections_and_both_hosts() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.language = Language::ZhCn;
+        app.settings.language = Some("zh-CN".to_string());
+        app.screen = Screen::Main;
+        app.selected = 0;
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = buffer_text(&terminal);
+
+        assert!(contains_visible_text(&text, "连接"), "{text}");
+        assert!(contains_visible_text(&text, "Codex"), "{text}");
+        assert!(contains_visible_text(&text, "DeepSeek Harness"), "{text}");
+    }
+
+    #[test]
+    fn dsh_flow_uses_host_specific_copy_and_renders_its_narrow_preview() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join("source");
+        std::fs::write(&executable, b"binary").unwrap();
+        let mut app = App::for_test(paths, executable);
+        app.language = Language::ZhCn;
+        app.settings.language = Some("zh-CN".to_string());
+        app.screen = Screen::Connections;
+        app.selected = 1;
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.active_host, super::ActiveHost::DeepSeekHarness);
+        assert_eq!(app.screen, Screen::ApplyHome);
+
+        let render_at = |app: &mut App, width, height| {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|frame| render(frame, app)).unwrap();
+            buffer_text(&terminal)
+        };
+
+        let home = render_at(&mut app, 100, 30);
+        assert!(contains_visible_text(&home, "DeepSeek Harness"), "{home}");
+        assert!(
+            !contains_visible_text(&home, app.messages().apply_title),
+            "{home}"
+        );
+
+        app.selected = 0;
+        app.handle_key(key(KeyCode::Enter));
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::ApplyPreview);
+        let narrow_preview = render_at(&mut app, 42, 10);
+        assert!(
+            contains_visible_text(&narrow_preview, "DeepSeek Harness"),
+            "{narrow_preview}"
+        );
+        assert!(
+            !contains_visible_text(&narrow_preview, app.messages().loading),
+            "{narrow_preview}"
+        );
+
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::ApplyConfirm);
+        for (width, height) in [(100, 30), (42, 10)] {
+            let confirm = render_at(&mut app, width, height);
+            assert!(
+                contains_visible_text(&confirm, app.messages().confirm_dsh_apply),
+                "{confirm}"
+            );
+            assert!(
+                !contains_visible_text(&confirm, app.messages().confirm_apply),
+                "{confirm}"
+            );
+        }
+
+        app.screen = Screen::UnapplyConfirm;
+        let remove = render_at(&mut app, 100, 30);
+        assert!(
+            contains_visible_text(&remove, app.messages().confirm_dsh_unapply),
+            "{remove}"
+        );
+        assert!(
+            !contains_visible_text(&remove, app.messages().confirm_unapply),
+            "{remove}"
+        );
+
+        app.receipt = Some(crate::control::apply::OperationReceipt {
+            changed_targets: 4,
+            notes: Vec::new(),
+        });
+        app.screen = Screen::Receipt;
+        let receipt = render_at(&mut app, 100, 30);
+        assert!(
+            contains_visible_text(&receipt, app.messages().dsh_restart_notice),
+            "{receipt}"
+        );
+        assert!(
+            !contains_visible_text(&receipt, app.messages().restart_notice),
+            "{receipt}"
+        );
+    }
+
+    #[test]
     fn all_languages_render_at_cjk_and_narrow_boundaries_without_panicking() {
         let temp = tempfile::tempdir().unwrap();
         let paths = ControlPaths::for_home(temp.path());
@@ -3746,7 +4204,7 @@ mod tests {
                     );
                 } else if width == 40 {
                     let selected_label = [
-                        app.messages().menu_apply,
+                        app.messages().menu_connections,
                         app.messages().menu_config,
                         app.messages().menu_status,
                         app.messages().menu_about,

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 const BEGIN_MARKER: &str = "<!-- fastctx:begin -->";
 const END_MARKER: &str = "<!-- fastctx:end -->";
-pub(crate) const MANAGED_SECTION_CONTRACT_ID: &str = "guidance-v4";
+pub(crate) const MANAGED_SECTION_CONTRACT_ID: &str = "guidance-v5";
 const LEGACY_BEGIN_MARKER: &str = "<!-- fastread:begin -->";
 const LEGACY_END_MARKER: &str = "<!-- fastread:end -->";
 const LEGACY_FASTREAD_SECTION: &str = concat!(
@@ -54,8 +54,8 @@ const SHELL_GUIDANCE: &str = concat!(
     "never PowerShell syntax.\n",
     "\n",
     "Never pass `apply_patch` to FastCtx's `run`: it is not a program and\n",
-    "no shell can run it. Reach it through Codex itself — as its own tool\n",
-    "call, or in Codex's built-in shell — never through the FastCtx tools.\n",
+    "no shell can run it. Invoke the host's patch or edit tool directly; never\n",
+    "pass it through FastCtx's shell tools.\n",
     "\n",
     "Commands must be non-interactive (no TTY): use flags like -y\n",
     "or --no-edit, and expect editors/pagers to be disabled. For anything\n",
@@ -143,10 +143,32 @@ const V024_READ_TOOL_NAME_FILE_GUIDANCE: &str = concat!(
 // bytes. Keep the alias rather than a second copy: the frozen hashes below cover both names, and
 // a copy would let one drift while the other stayed put.
 const V024_READ_TOOL_NAME_SHELL_GUIDANCE: &str = V022_RESOURCE_ROUTING_SHELL_GUIDANCE;
+const V025_HOST_SPECIFIC_SHELL_GUIDANCE: &str = concat!(
+    "### Shell commands\n",
+    "\n",
+    "Prefer FastCtx's `run` over the built-in shell for terminal work: it\n",
+    "executes with bash (Git Bash on Windows), so always write POSIX bash —\n",
+    "never PowerShell syntax.\n",
+    "\n",
+    "Never pass `apply_patch` to FastCtx's `run`: it is not a program and\n",
+    "no shell can run it. Reach it through Codex itself — as its own tool\n",
+    "call, or in Codex's built-in shell — never through the FastCtx tools.\n",
+    "\n",
+    "Commands must be non-interactive (no TTY): use flags like -y\n",
+    "or --no-edit, and expect editors/pagers to be disabled. For anything\n",
+    "that may outlast run's four-minute maximum, use `run_background`, check\n",
+    "on it with `job_output`, and stop it with `job_kill`. Background jobs run\n",
+    "independently of this session and survive restarts; rediscover an earlier\n",
+    "job with `job_list` and read its output by job_id. A non-zero exit code is\n",
+    "a normal result. The last line of every result says `Complete` or\n",
+    "`Partial`.\n"
+);
 
 /// One byte-frozen managed block from a superseded release.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum KnownLegacyGuidance {
+    /// 0.2.5, whose shell guidance referred specifically to Codex.
+    HostSpecific,
     /// 0.2.2/0.2.3, whose prohibition named the very resource tools it steered away from.
     ResourceRouting,
     /// 0.2.4, superseded when the file-inspection tool was renamed away from `read`.
@@ -155,10 +177,15 @@ pub(crate) enum KnownLegacyGuidance {
 
 impl KnownLegacyGuidance {
     /// Every superseded release this build still recognises, newest first.
-    pub(crate) const ALL: [Self; 2] = [Self::ReadToolName, Self::ResourceRouting];
+    pub(crate) const ALL: [Self; 3] = [
+        Self::HostSpecific,
+        Self::ReadToolName,
+        Self::ResourceRouting,
+    ];
 
     fn guidance(self) -> (&'static str, &'static str) {
         match self {
+            Self::HostSpecific => (FILE_GUIDANCE_SUFFIX, V025_HOST_SPECIFIC_SHELL_GUIDANCE),
             Self::ResourceRouting => (
                 V022_RESOURCE_ROUTING_FILE_GUIDANCE,
                 V022_RESOURCE_ROUTING_SHELL_GUIDANCE,
@@ -172,6 +199,20 @@ impl KnownLegacyGuidance {
 
     /// Rebuilds this release's exact managed block for the optional shell group.
     pub(crate) fn section(self, fastshell_enabled: bool) -> String {
+        if self == Self::HostSpecific {
+            let mut output = String::from(BEGIN_MARKER);
+            output.push('\n');
+            output.push_str(FILE_GUIDANCE_PREFIX);
+            output.push_str(crate::model_guidance::LOCAL_FILE_ROUTE_GUIDANCE);
+            output.push('\n');
+            output.push_str(FILE_GUIDANCE_SUFFIX);
+            if fastshell_enabled {
+                output.push('\n');
+                output.push_str(V025_HOST_SPECIFIC_SHELL_GUIDANCE);
+            }
+            output.push_str(END_MARKER);
+            return output;
+        }
         let (file_guidance, shell_guidance) = self.guidance();
         let mut output = String::from(BEGIN_MARKER);
         output.push('\n');

@@ -7,7 +7,7 @@ use super::migration::{self as migration_copy, MigrationMessages};
 use super::update::{self as update_copy, UpdateMessages};
 use crate::control::apply::{
     ApplyOptions, ApplyPlan, OperationReceipt, UnapplyOptions, UnapplyPlan, commit_apply,
-    commit_unapply, plan_apply, plan_unapply,
+    commit_unapply, plan_apply, plan_unapply, plan_unapply_all,
 };
 use crate::control::config_i18n::{self, ConfigMessages};
 use crate::control::doctor::{self, DoctorReport};
@@ -39,6 +39,7 @@ pub(crate) enum Screen {
     UpdateConfirm,
     Language { first_run: bool },
     Main,
+    Connections,
     ApplyHome,
     ApplyLoading,
     ApplyPreview,
@@ -65,6 +66,22 @@ pub(crate) enum Screen {
     About,
     Receipt,
     OperationFailed,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum ActiveHost {
+    #[default]
+    Codex,
+    DeepSeekHarness,
+    All,
+}
+
+pub(crate) fn display_dsh_status(value: &str) -> String {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return String::new();
+    };
+    first.to_uppercase().chain(characters).collect()
 }
 
 #[derive(Clone, Debug)]
@@ -204,7 +221,13 @@ enum Effect {
     CommitApply,
     PlanUnapply,
     CommitUnapply,
+    PlanDshApply,
+    CommitDshApply,
+    PlanDshUnapply,
+    CommitDshUnapply,
+    PlanUnapplyAll,
     RunDoctor,
+    RunDshDoctor,
     LoadJobs,
     LoadJobTail { job_id: String },
     RefreshJobCount,
@@ -250,6 +273,8 @@ pub(crate) struct App {
     pub pending_job: Option<JobSummary>,
     pub running_job_count: Option<usize>,
     pub(crate) link_state: LinkState,
+    pub(crate) active_host: ActiveHost,
+    pub(crate) dsh_status: Result<(String, String), String>,
     pub status: StatusState,
     pub receipt: Option<OperationReceipt>,
     pub error: Option<String>,
@@ -260,6 +285,7 @@ pub(crate) struct App {
     exit_update: Option<UpdatePlan>,
     pub(crate) apply_plan: Option<ApplyPlan>,
     pub(crate) unapply_plan: Option<UnapplyPlan>,
+    pub(crate) dsh_plan: Option<crate::control::dsh::Plan>,
     pending: Option<Effect>,
     retry_effect: Option<Effect>,
     last_jobs_refresh: Option<Instant>,
@@ -283,11 +309,12 @@ impl App {
         let startup_settings = settings::load_for_startup(&paths)?;
         let migration_notice_pending = startup_settings.migration_notice;
         let settings = startup_settings.settings;
+        let paths = settings::paths_for_integrations(&paths, &settings)?;
         let provider_detection = provider::detect_path(&paths.codex_config);
         let running_job_count = jobs::running_summaries(&paths)
             .ok()
             .map(|running| running.len());
-        let link_state = link::link_state(&paths, settings.applied.as_ref());
+        let link_state = link::link_state(&paths, settings.integrations.codex.as_ref());
         let language = settings
             .language
             .as_deref()
@@ -347,6 +374,7 @@ impl App {
             | StartupUpdate::NpmPending { .. }
             | StartupUpdate::Failed(_) => None,
         };
+        let dsh_status = crate::control::dsh::status(&paths);
         Ok(Self {
             config_draft: ConfigDraft::from_settings(&settings),
             config_cursor: ConfigCursor::default(),
@@ -361,6 +389,8 @@ impl App {
             pending_job: None,
             running_job_count,
             link_state,
+            active_host: ActiveHost::Codex,
+            dsh_status,
             paths,
             settings,
             provider_detection,
@@ -378,6 +408,7 @@ impl App {
             exit_update: None,
             apply_plan: None,
             unapply_plan: None,
+            dsh_plan: None,
             pending: None,
             retry_effect: None,
             last_jobs_refresh: Some(Instant::now()),
@@ -607,6 +638,7 @@ impl App {
             Screen::UpdateConfirm => self.handle_update_confirm(key.code),
             Screen::Language { first_run } => self.handle_language(key.code, first_run),
             Screen::Main => self.handle_main(key.code),
+            Screen::Connections => self.handle_connections(key.code),
             Screen::ApplyHome => self.handle_apply_home(key.code),
             Screen::ApplyPreview => self.handle_apply_preview(key.code),
             Screen::ApplyConflict => {
@@ -646,6 +678,8 @@ impl App {
         let retry_effect = match &effect {
             Effect::CommitApply => Effect::PlanApply,
             Effect::CommitUnapply => Effect::PlanUnapply,
+            Effect::CommitDshApply => Effect::PlanDshApply,
+            Effect::CommitDshUnapply => Effect::PlanDshUnapply,
             effect => effect.clone(),
         };
         let is_doctor_effect = matches!(&effect, Effect::RunDoctor);
@@ -800,9 +834,70 @@ impl App {
                 .ok_or_else(|| "The Unapply preview expired. Preview again.".to_string())
                 .and_then(commit_unapply)
                 .map(|receipt| {
-                    self.settings.applied = None;
+                    self.settings.integrations.codex = None;
                     self.show_receipt(receipt);
                 }),
+            Effect::PlanDshApply => crate::control::dsh::plan_apply(
+                &self.paths,
+                crate::control::dsh::ApplyOptions {
+                    tier: self.settings.tier,
+                    tool_budgets: self.settings.tool_budgets,
+                    fastshell_enabled: self.settings.fastshell.enabled,
+                    current_executable: self.current_executable.clone(),
+                },
+            )
+            .map(|plan| {
+                self.dsh_plan = Some(plan);
+                self.screen = Screen::ApplyPreview;
+                self.selected = 0;
+            }),
+            Effect::CommitDshApply => self
+                .dsh_plan
+                .take()
+                .ok_or_else(|| {
+                    "The DeepSeek Harness Apply preview expired. Preview again.".to_string()
+                })
+                .and_then(crate::control::dsh::commit_apply)
+                .and_then(|changed| {
+                    self.settings = settings::load(&self.paths)?;
+                    self.dsh_status = crate::control::dsh::status(&self.paths);
+                    self.show_receipt(OperationReceipt {
+                        changed_targets: changed,
+                        notes: Vec::new(),
+                    });
+                    Ok(())
+                }),
+            Effect::PlanDshUnapply => {
+                crate::control::dsh::plan_unapply(&self.paths, self.current_executable.clone()).map(
+                    |plan| {
+                        self.dsh_plan = Some(plan);
+                        self.screen = Screen::UnapplyPreview;
+                        self.selected = 0;
+                    },
+                )
+            }
+            Effect::CommitDshUnapply => self
+                .dsh_plan
+                .take()
+                .ok_or_else(|| {
+                    "The DeepSeek Harness Unapply preview expired. Preview again.".to_string()
+                })
+                .and_then(crate::control::dsh::commit_unapply)
+                .map(|changed| {
+                    self.settings = settings::load(&self.paths).unwrap_or_default();
+                    self.dsh_status = crate::control::dsh::status(&self.paths);
+                    self.show_receipt(OperationReceipt {
+                        changed_targets: changed,
+                        notes: Vec::new(),
+                    });
+                }),
+            Effect::PlanUnapplyAll => {
+                plan_unapply_all(&self.paths, self.current_executable.clone()).map(|plan| {
+                    self.unapply_plan = Some(plan);
+                    self.screen = Screen::UnapplyPreview;
+                    self.selected = 0;
+                })
+            }
             Effect::RunDoctor => {
                 let report = doctor::run(&self.paths);
                 self.status = if report.checks.is_empty() {
@@ -810,6 +905,21 @@ impl App {
                 } else {
                     StatusState::Ready(report)
                 };
+                Ok(())
+            }
+            Effect::RunDshDoctor => {
+                self.dsh_status = crate::control::dsh::status(&self.paths);
+                self.screen = Screen::ApplyHome;
+                self.selected = 2;
+                self.toast = Some(Toast {
+                    message: match &self.dsh_status {
+                        Ok((state, detail)) => {
+                            format!("DeepSeek Harness: {}\n{detail}", display_dsh_status(state))
+                        }
+                        Err(error) => format!("DeepSeek Harness status failed: {error}"),
+                    },
+                    warning: !matches!(&self.dsh_status, Ok((state, _)) if state == "connected"),
+                });
                 Ok(())
             }
             Effect::LoadJobs => {
@@ -1052,7 +1162,7 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => self.move_previous(7),
             KeyCode::Down | KeyCode::Char('j') => self.move_next(7),
             KeyCode::Enter => match self.selected {
-                0 => self.set_screen(Screen::ApplyHome),
+                0 => self.set_screen(Screen::Connections),
                 1 => {
                     self.provider_detection = provider::detect_path(&self.paths.codex_config);
                     self.config_draft = ConfigDraft::from_settings(&self.settings);
@@ -1091,19 +1201,60 @@ impl App {
         }
     }
 
-    fn handle_apply_home(&mut self, key: KeyCode) {
+    fn handle_connections(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Up | KeyCode::Char('k') => self.move_previous(2),
-            KeyCode::Down | KeyCode::Char('j') => self.move_next(2),
-            KeyCode::Enter if self.selected == 0 => {
-                self.screen = Screen::ApplyLoading;
-                self.pending = Some(Effect::PlanApply);
-            }
+            KeyCode::Up | KeyCode::Char('k') => self.move_previous(3),
+            KeyCode::Down | KeyCode::Char('j') => self.move_next(3),
             KeyCode::Enter => {
-                self.screen = Screen::UnapplyLoading;
-                self.pending = Some(Effect::PlanUnapply);
+                self.active_host = match self.selected {
+                    0 => ActiveHost::Codex,
+                    1 => ActiveHost::DeepSeekHarness,
+                    _ => ActiveHost::All,
+                };
+                if self.active_host == ActiveHost::All {
+                    self.screen = Screen::UnapplyLoading;
+                    self.pending = Some(Effect::PlanUnapplyAll);
+                } else {
+                    self.set_screen(Screen::ApplyHome);
+                }
             }
             KeyCode::Esc => self.back_to_main(),
+            _ => {}
+        }
+    }
+
+    fn handle_apply_home(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Up | KeyCode::Char('k') => self.move_previous(3),
+            KeyCode::Down | KeyCode::Char('j') => self.move_next(3),
+            KeyCode::Enter if self.selected == 0 => {
+                self.screen = Screen::ApplyLoading;
+                self.pending = Some(match self.active_host {
+                    ActiveHost::Codex => Effect::PlanApply,
+                    ActiveHost::DeepSeekHarness => Effect::PlanDshApply,
+                    ActiveHost::All => return,
+                });
+            }
+            KeyCode::Enter if self.selected == 1 => {
+                self.screen = Screen::UnapplyLoading;
+                self.pending = Some(match self.active_host {
+                    ActiveHost::Codex => Effect::PlanUnapply,
+                    ActiveHost::DeepSeekHarness => Effect::PlanDshUnapply,
+                    ActiveHost::All => Effect::PlanUnapplyAll,
+                });
+            }
+            KeyCode::Enter => match self.active_host {
+                ActiveHost::Codex => {
+                    self.status = StatusState::Loading;
+                    self.screen = Screen::Status;
+                    self.pending = Some(Effect::RunDoctor);
+                }
+                ActiveHost::DeepSeekHarness => {
+                    self.pending = Some(Effect::RunDshDoctor);
+                }
+                ActiveHost::All => {}
+            },
+            KeyCode::Esc => self.set_screen(Screen::Connections),
             _ => {}
         }
     }
@@ -1128,6 +1279,7 @@ impl App {
             }
             KeyCode::Esc => {
                 self.apply_plan = None;
+                self.dsh_plan = None;
                 self.set_screen(Screen::ApplyHome);
             }
             _ => {}
@@ -1162,7 +1314,11 @@ impl App {
             }
             KeyCode::Esc => {
                 self.unapply_plan = None;
-                self.set_screen(Screen::ApplyHome);
+                self.set_screen(if self.active_host == ActiveHost::All {
+                    Screen::Connections
+                } else {
+                    Screen::ApplyHome
+                });
             }
             _ => {}
         }
@@ -1175,7 +1331,11 @@ impl App {
             }
             KeyCode::Enter if self.selected == 1 => {
                 self.screen = Screen::ApplyRunning;
-                self.pending = Some(Effect::CommitApply);
+                self.pending = Some(match self.active_host {
+                    ActiveHost::Codex => Effect::CommitApply,
+                    ActiveHost::DeepSeekHarness => Effect::CommitDshApply,
+                    ActiveHost::All => return,
+                });
             }
             KeyCode::Enter | KeyCode::Esc => {
                 self.apply_plan = None;
@@ -1192,11 +1352,19 @@ impl App {
             }
             KeyCode::Enter if self.selected == 1 => {
                 self.screen = Screen::UnapplyRunning;
-                self.pending = Some(Effect::CommitUnapply);
+                self.pending = Some(match self.active_host {
+                    ActiveHost::Codex => Effect::CommitUnapply,
+                    ActiveHost::DeepSeekHarness => Effect::CommitDshUnapply,
+                    ActiveHost::All => Effect::CommitUnapply,
+                });
             }
             KeyCode::Enter | KeyCode::Esc => {
                 self.unapply_plan = None;
-                self.set_screen(Screen::ApplyHome);
+                self.set_screen(if self.active_host == ActiveHost::All {
+                    Screen::Connections
+                } else {
+                    Screen::ApplyHome
+                });
             }
             _ => {}
         }
@@ -1591,10 +1759,16 @@ impl App {
                     Effect::PlanUnapply => Screen::UnapplyLoading,
                     Effect::CommitApply => Screen::ApplyRunning,
                     Effect::CommitUnapply => Screen::UnapplyRunning,
+                    Effect::PlanDshApply => Screen::ApplyLoading,
+                    Effect::CommitDshApply => Screen::ApplyRunning,
+                    Effect::PlanDshUnapply => Screen::UnapplyLoading,
+                    Effect::CommitDshUnapply => Screen::UnapplyRunning,
+                    Effect::PlanUnapplyAll => Screen::UnapplyLoading,
                     Effect::RunDoctor => {
                         self.status = StatusState::Loading;
                         Screen::Status
                     }
+                    Effect::RunDshDoctor => Screen::ApplyHome,
                     Effect::SaveConfig => Screen::Config,
                     Effect::ResetConfig => Screen::ConfigResetting,
                     Effect::SaveLanguage { first_run } => Screen::Language { first_run },
@@ -1618,7 +1792,7 @@ impl App {
     fn show_receipt(&mut self, receipt: OperationReceipt) {
         // Apply and Unapply both reach this after refreshing the receipt, so it is the single
         // place the menu's connection state has to be recomputed.
-        self.link_state = link::link_state(&self.paths, self.settings.applied.as_ref());
+        self.link_state = link::link_state(&self.paths, self.settings.integrations.codex.as_ref());
         self.receipt = Some(receipt);
         self.screen = Screen::Receipt;
         self.selected = 0;
@@ -1813,7 +1987,7 @@ mod tests {
         app.handle_key(key(KeyCode::Enter));
         assert!(app.has_pending_effect());
         app.execute_pending();
-        assert_eq!(app.screen, Screen::Main);
+        assert_eq!(app.screen, Screen::Main, "{:?}", app.error);
         assert!(app.settings.language.is_some());
     }
 
@@ -1823,6 +1997,8 @@ mod tests {
         app.settings.language = Some("en".to_string());
         app.screen = Screen::Main;
         app.selected = 0;
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::Connections);
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.screen, Screen::ApplyHome);
         app.handle_key(key(KeyCode::Enter));
@@ -1837,6 +2013,90 @@ mod tests {
         app.execute_pending();
         assert_eq!(app.screen, Screen::Receipt);
         assert!(app.receipt.as_ref().unwrap().changed_targets >= 3);
+    }
+
+    #[test]
+    fn connections_selects_deepseek_harness_and_runs_its_apply_flow() {
+        let (_temp, mut app) = fixture();
+        app.settings.language = Some("en".to_string());
+        app.screen = Screen::Connections;
+        app.selected = 1;
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.active_host, super::ActiveHost::DeepSeekHarness);
+        assert_eq!(app.screen, Screen::ApplyHome);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::ApplyLoading);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::ApplyPreview, "{:?}", app.error);
+        assert!(app.dsh_plan.is_some());
+        assert!(app.apply_plan.is_none());
+    }
+
+    #[test]
+    fn startup_restores_a_nondefault_dsh_home_from_the_apply_receipt() {
+        let temp = tempfile::tempdir().unwrap();
+        let default_paths = ControlPaths::for_home(temp.path());
+        let dsh_home = temp.path().join("custom-dsh");
+        let dsh_paths = ControlPaths::for_home_and_codex_home_and_dsh_home(
+            temp.path(),
+            &default_paths.codex_dir,
+            default_paths.codex_home_source,
+            Some(dsh_home.clone()),
+        )
+        .unwrap();
+        let executable = temp.path().join(if cfg!(windows) {
+            "source.exe"
+        } else {
+            "source"
+        });
+        std::fs::write(&executable, b"binary").unwrap();
+        let plan = crate::control::dsh::plan_apply(
+            &dsh_paths,
+            crate::control::dsh::ApplyOptions {
+                tier: Tier::Standard,
+                tool_budgets: crate::control::settings::ToolBudgetPreferences::default(),
+                fastshell_enabled: false,
+                current_executable: executable,
+            },
+        )
+        .unwrap();
+        crate::control::dsh::commit_apply(plan).unwrap();
+        let mut saved = crate::control::settings::load(&dsh_paths).unwrap();
+        saved.installation = None;
+        std::fs::write(
+            &dsh_paths.fastctx_config,
+            crate::control::settings::encode(&saved).unwrap(),
+        )
+        .unwrap();
+
+        let app = App::load(default_paths).unwrap();
+
+        assert_eq!(app.paths.dsh_dir, dsh_home);
+        assert_eq!(
+            app.paths.dsh_home_source,
+            crate::control::paths::DshHomeSource::Receipt
+        );
+        assert!(matches!(&app.dsh_status, Ok((state, _)) if state == "unhealthy"));
+    }
+
+    #[test]
+    fn disconnect_all_uses_a_separate_frozen_preview_and_cancel_is_zero_write() {
+        let (temp, mut app) = fixture();
+        app.settings.language = Some("en".to_string());
+        app.screen = Screen::Connections;
+        app.selected = 2;
+        let before = file_tree(temp.path());
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.active_host, super::ActiveHost::All);
+        assert_eq!(app.screen, Screen::UnapplyLoading);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::UnapplyPreview, "{:?}", app.error);
+        assert!(app.unapply_plan.is_some());
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::UnapplyConfirm);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::Connections);
+        assert_eq!(file_tree(temp.path()), before);
     }
 
     #[test]

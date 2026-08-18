@@ -9,10 +9,11 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 const LEGACY_SCHEMA_VERSION: u32 = 0;
+const SINGLE_HOST_SCHEMA_VERSION: u32 = 1;
 /// Generation of the recommended per-tool budget defaults.
 ///
 /// Bump this whenever the tier limits or the per-tool defaults move. Startup then clears stored
@@ -678,6 +679,80 @@ pub struct AppliedRecord {
     pub binary_sha256: String,
 }
 
+/// Ownership receipt for a DeepSeek Harness integration.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DshAppliedRecord {
+    pub applied_at_utc: String,
+    pub version: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub tier: Tier,
+    pub fastctx_token_budget: usize,
+    pub tool_budgets: ToolBudgets,
+    #[serde(default)]
+    pub fastshell_enabled: bool,
+    pub dsh_dir: String,
+    pub patch: ManagedFileRecord,
+    pub agents: ManagedFileRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_contract_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_inserted_separator: Option<InsertedSeparator>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_inserted_separator: Option<crate::control::dsh_config::InsertedSeparator>,
+}
+
+/// Per-host integration receipts. Each host can be connected and removed independently.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct IntegrationRecords {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex: Option<AppliedRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deepseek_harness: Option<DshAppliedRecord>,
+}
+
+/// Resolves connected host homes from their ownership receipts while preserving unconnected defaults.
+pub fn paths_for_integrations(
+    paths: &ControlPaths,
+    settings: &FastCtxSettings,
+) -> Result<ControlPaths, String> {
+    let codex_home = settings
+        .integrations
+        .codex
+        .as_ref()
+        .map(|record| {
+            PathBuf::from(&record.codex_config.path)
+                .parent()
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    "The saved Codex config path has no parent directory. Reapply that host with --codex-home and retry."
+                        .to_string()
+                })
+        })
+        .transpose()?;
+    let dsh_home = settings
+        .integrations
+        .deepseek_harness
+        .as_ref()
+        .map(|record| PathBuf::from(&record.dsh_dir));
+    paths.with_recorded_host_homes(codex_home, dsh_home)
+}
+
+impl IntegrationRecords {
+    fn is_empty(&self) -> bool {
+        self.codex.is_none() && self.deepseek_harness.is_none()
+    }
+}
+
+/// Receipt for the stable FastCtx installation shared by all connected hosts.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct InstallationRecord {
+    pub version: String,
+    pub binary_path: String,
+    pub binary_sha256: String,
+}
+
 impl AppliedRecord {
     /// Reports whether this receipt owns the Codex files selected by the current profile resolver.
     pub fn targets_codex_profile(&self, paths: &ControlPaths) -> bool {
@@ -732,9 +807,15 @@ pub struct FastCtxSettings {
     /// Legacy config key accepted but omitted from every newly written settings file.
     #[serde(default, skip_serializing)]
     pub fastedit: FeatureToggle,
-    /// Receipt for the most recent successful Apply.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Legacy schema-v1 Codex receipt. Read for migration and never written.
+    #[serde(default, skip_serializing)]
     pub applied: Option<AppliedRecord>,
+    /// Independent host integration receipts.
+    #[serde(skip_serializing_if = "IntegrationRecords::is_empty")]
+    pub integrations: IntegrationRecords,
+    /// Stable installation shared by all host integrations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installation: Option<InstallationRecord>,
 }
 
 /// Settings prepared for a user-facing control-plane startup.
@@ -762,6 +843,8 @@ impl Default for FastCtxSettings {
             replace: ReplaceSettings::default(),
             fastedit: FeatureToggle::default(),
             applied: None,
+            integrations: IntegrationRecords::default(),
+            installation: None,
         }
     }
 }
@@ -799,6 +882,15 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
             )
         })?;
         let mut settings = decode_source(&paths.fastctx_config, source)?;
+        let schema_migration_pending = source
+            .parse::<toml_edit::DocumentMut>()
+            .ok()
+            .and_then(|document| {
+                document
+                    .get("schema_version")
+                    .and_then(toml_edit::Item::as_integer)
+            })
+            .is_some_and(|version| version < i64::from(CURRENT_SCHEMA_VERSION));
         let migration_notice = settings.tool_budget_epoch.unwrap_or(0) < TOOL_BUDGET_EPOCH;
         if migration_notice {
             // This migration intentionally drops customized shares along with old defaults: a
@@ -808,7 +900,7 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
         }
         let current_version = env!("CARGO_PKG_VERSION");
         let watermark_changed = settings.last_seen_version.as_deref() != Some(current_version);
-        if !migration_notice && !watermark_changed {
+        if !schema_migration_pending && !migration_notice && !watermark_changed {
             return Ok(StartupSettings {
                 settings,
                 migration_notice: false,
@@ -816,7 +908,12 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
         }
         settings.last_seen_version = Some(current_version.to_string());
         settings.tool_budget_epoch = Some(TOOL_BUDGET_EPOCH);
-        let bytes = encode_startup_normalization(&paths.fastctx_config, source, migration_notice)?;
+        let bytes = encode_startup_normalization(
+            &paths.fastctx_config,
+            source,
+            &settings,
+            migration_notice,
+        )?;
         let change = transaction::FileChange {
             target: paths.fastctx_config.clone(),
             original: Some(original),
@@ -956,7 +1053,8 @@ pub(crate) fn reset_user_preferences(settings: &FastCtxSettings) -> FastCtxSetti
         // A reset lands exactly on this generation's defaults, so stamp it rather than leaving the
         // file looking unreconciled and re-showing the migration notice on the next launch.
         tool_budget_epoch: Some(TOOL_BUDGET_EPOCH),
-        applied: settings.applied.clone(),
+        integrations: settings.integrations.clone(),
+        installation: settings.installation.clone(),
         ..FastCtxSettings::default()
     }
 }
@@ -1122,7 +1220,7 @@ fn decode_source(path: &Path, source: &str) -> Result<FastCtxSettings, String> {
     }
     if !matches!(
         schema_version,
-        LEGACY_SCHEMA_VERSION | CURRENT_SCHEMA_VERSION
+        LEGACY_SCHEMA_VERSION | SINGLE_HOST_SCHEMA_VERSION | CURRENT_SCHEMA_VERSION
     ) {
         return Err(format!(
             "Unsupported fastctx settings schema_version {schema_version} in {}. Upgrade fastctx or repair the file.",
@@ -1137,7 +1235,20 @@ fn decode_source(path: &Path, source: &str) -> Result<FastCtxSettings, String> {
             crate::paths::display_path(path)
         )
     })?;
-    if schema_version == LEGACY_SCHEMA_VERSION {
+    if schema_version <= SINGLE_HOST_SCHEMA_VERSION {
+        if settings.integrations.codex.is_none() {
+            settings.integrations.codex = settings.applied.clone();
+        }
+        if settings.installation.is_none()
+            && let Some(record) = settings.integrations.codex.as_ref()
+        {
+            settings.installation = Some(InstallationRecord {
+                version: record.version.clone(),
+                binary_path: record.command.clone(),
+                binary_sha256: record.binary_sha256.clone(),
+            });
+        }
+        settings.applied = None;
         settings.schema_version = CURRENT_SCHEMA_VERSION;
     }
     if let Some(language) = settings.language.as_deref()
@@ -1161,6 +1272,7 @@ fn decode_source(path: &Path, source: &str) -> Result<FastCtxSettings, String> {
 fn encode_startup_normalization(
     path: &Path,
     source: &str,
+    settings: &FastCtxSettings,
     reset_tool_budgets: bool,
 ) -> Result<Vec<u8>, String> {
     let mut document = source.parse::<toml_edit::DocumentMut>().map_err(|error| {
@@ -1169,9 +1281,44 @@ fn encode_startup_normalization(
             crate::paths::display_path(path)
         )
     })?;
+    let source_schema_version = document
+        .get("schema_version")
+        .and_then(toml_edit::Item::as_integer)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(CURRENT_SCHEMA_VERSION);
     document["schema_version"] = toml_edit::value(i64::from(CURRENT_SCHEMA_VERSION));
     document["last_seen_version"] = toml_edit::value(env!("CARGO_PKG_VERSION"));
     document["tool_budget_epoch"] = toml_edit::value(i64::from(TOOL_BUDGET_EPOCH));
+    if source_schema_version < CURRENT_SCHEMA_VERSION {
+        if let Some(applied) = document.remove("applied") {
+            let integrations = document
+                .entry("integrations")
+                .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| {
+                    format!(
+                        "Cannot migrate fastctx settings {}: integrations is not a table.",
+                        crate::paths::display_path(path)
+                    )
+                })?;
+            integrations.insert("codex", applied);
+        }
+        if document.get("installation").is_none()
+            && let Some(installation) = settings.installation.as_ref()
+        {
+            let mut table = toml_edit::Table::new();
+            table.insert("version", toml_edit::value(installation.version.clone()));
+            table.insert(
+                "binary_path",
+                toml_edit::value(installation.binary_path.clone()),
+            );
+            table.insert(
+                "binary_sha256",
+                toml_edit::value(installation.binary_sha256.clone()),
+            );
+            document.insert("installation", toml_edit::Item::Table(table));
+        }
+    }
     if reset_tool_budgets {
         document.remove("tool_budgets");
     }
@@ -1232,6 +1379,7 @@ pub fn save(paths: &ControlPaths, settings: &FastCtxSettings) -> Result<bool, St
 #[cfg(test)]
 mod tests {
     use super::{Tier, load_for_startup, load_from};
+    use crate::control::apply::{ApplyOptions, commit_apply, plan_apply};
     use crate::control::paths::ControlPaths;
 
     #[test]
@@ -1300,5 +1448,67 @@ mod tests {
         let error = load_from(&missing).unwrap_err();
         assert!(error.contains("schema_version is missing"), "{error}");
         assert_eq!(std::fs::read(&missing).unwrap(), b"language = \"en\"\n");
+    }
+
+    #[test]
+    fn schema_one_receipt_is_read_only_then_migrates_losslessly_on_startup() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ControlPaths::for_home(temp.path());
+        let executable = temp.path().join(if cfg!(windows) {
+            "source.exe"
+        } else {
+            "source"
+        });
+        std::fs::write(&executable, b"binary").unwrap();
+        let plan = plan_apply(
+            &paths,
+            ApplyOptions {
+                tier: Tier::Standard,
+                tool_budgets: super::ToolBudgetPreferences::default(),
+                output_guard_enabled: true,
+                fastshell_enabled: false,
+                current_executable: executable,
+            },
+        )
+        .unwrap();
+        commit_apply(plan, true).unwrap();
+
+        let current = std::fs::read_to_string(&paths.fastctx_config).unwrap();
+        let mut document = current.parse::<toml_edit::DocumentMut>().unwrap();
+        document["schema_version"] = toml_edit::value(1);
+        let codex = document["integrations"]
+            .as_table_mut()
+            .unwrap()
+            .remove("codex")
+            .unwrap();
+        document.remove("integrations");
+        document.remove("installation");
+        document.insert("applied", codex);
+        document["future_user_key"] = toml_edit::value("preserve-me");
+        let legacy = document.to_string().into_bytes();
+        std::fs::write(&paths.fastctx_config, &legacy).unwrap();
+
+        let loaded = super::load(&paths).unwrap();
+        assert!(loaded.integrations.codex.is_some());
+        assert!(loaded.installation.is_some());
+        assert_eq!(std::fs::read(&paths.fastctx_config).unwrap(), legacy);
+
+        let first = load_for_startup(&paths).unwrap();
+        assert!(first.settings.integrations.codex.is_some());
+        assert!(first.settings.installation.is_some());
+        let migrated = std::fs::read_to_string(&paths.fastctx_config).unwrap();
+        assert!(migrated.contains("schema_version = 2"), "{migrated}");
+        assert!(migrated.contains("[integrations.codex]"), "{migrated}");
+        assert!(migrated.contains("[installation]"), "{migrated}");
+        assert!(
+            migrated.contains("future_user_key = \"preserve-me\""),
+            "{migrated}"
+        );
+        assert!(!migrated.contains("[applied]"), "{migrated}");
+
+        let after_first = std::fs::read(&paths.fastctx_config).unwrap();
+        let second = load_for_startup(&paths).unwrap();
+        assert_eq!(second.settings, first.settings);
+        assert_eq!(std::fs::read(&paths.fastctx_config).unwrap(), after_first);
     }
 }

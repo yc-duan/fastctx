@@ -157,7 +157,7 @@ pub fn run(paths: &ControlPaths) -> DoctorReport {
 
     let settings = settings::load(paths);
     let saved_settings = settings.as_ref().ok();
-    let all_applied = saved_settings.and_then(|settings| settings.applied.as_ref());
+    let all_applied = saved_settings.and_then(|settings| settings.integrations.codex.as_ref());
     let profile_applied = all_applied.filter(|record| record.targets_codex_profile(paths));
     let provider_detection = provider::detect_path(&paths.codex_config);
     checks.push(check_output_guard(
@@ -742,7 +742,7 @@ fn check_drift(
     config: Option<&[u8]>,
 ) -> DoctorCheck {
     let Some(record) = profile_applied else {
-        if let Some(record) = settings.and_then(|settings| settings.applied.as_ref()) {
+        if let Some(record) = settings.and_then(|settings| settings.integrations.codex.as_ref()) {
             let recorded_profile = Path::new(&record.codex_config.path)
                 .parent()
                 .unwrap_or_else(|| Path::new(&record.codex_config.path));
