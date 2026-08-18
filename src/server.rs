@@ -14,7 +14,11 @@ use crate::session::SessionContext;
 use crate::shell::FastShell;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    CallToolResult, ErrorCode, ErrorData, Implementation, ListResourceTemplatesResult,
+    ListResourcesResult, Meta, PaginatedRequestParams, ReadResourceRequestParams,
+    ReadResourceResult, ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
+};
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use std::sync::Arc;
@@ -285,7 +289,12 @@ impl FastCtxServer {
 impl ServerHandler for FastCtxServer {
     fn get_info(&self) -> ServerInfo {
         self.activity.touch();
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
             .with_server_info(Implementation::new(
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION"),
@@ -299,20 +308,241 @@ impl ServerHandler for FastCtxServer {
             ))
     }
 
-    // The three `resources/*` methods stay on the rmcp defaults on purpose: both list methods
-    // answer with an empty list, and `resources/read` answers method-not-found. Overriding them
-    // to reject uniformly (added 0.2.2, reverted 2026-08-01) turned "this server has none" into a
-    // failure, and a failed call makes a model retry with a different `server` argument rather
-    // than switch tools — users reported chains of invented server names that the empty list
-    // never produced. Do not reintroduce an override without evidence from a released build.
+    // FastCtx is a tool-only MCP server by design: it publishes `inspect_local_file`,
+    // `grep`, `glob`, `replace`, and the optional shell group — not MCP resources.
+    //
+    // However, some MCP hosts (notably Codex Desktop / CLI) inject a generic
+    // `read_mcp_resource` tool for *every* configured server regardless of whether
+    // the server advertises the `resources` capability. When the model sees that tool
+    // but has no valid server name or URI template to fill it with, it fabricates
+    // placeholders like `server="?"`, `uri="?"` — producing a chain of failed calls
+    // that never reach the server (tracked in #18, #26).
+    //
+    // The 0.2.2 approach (override `resources/*` to reject uniformly) backfired:
+    // a *failure* makes the model retry with a different invented `server` argument
+    // rather than switch to the correct `inspect_local_file` tool — users reported
+    // chains of invented server names.
+    //
+    // This patch takes the opposite approach: **make resources genuinely work** so
+    // the model has a real target instead of a failure to retry against.
+    //
+    // 1. `list_resource_templates` returns a `file:///{path}` template with a
+    //    description that teaches the model the absolute-path format. This gives the
+    //    model a valid URI pattern to fill, eliminating the `?` placeholder.
+    //
+    // 2. `read_resource` accepts a `file:///` URI (or a plain absolute path) and
+    //    reads the file by reusing the existing `read_file` core, so encoding
+    //    detection, token budgets, PDF/image handling, and error messages stay
+    //    consistent with the `inspect_local_file` tool.
+    //
+    // 3. `list_resources` stays on the rmcp default (empty list) because FastCtx
+    //    does not manage a dynamic resource collection — the template is the single
+    //    entry point.
+    //
+    // This is a complementary approach to PR #21 (which handles misrouted
+    // `resources/read` but keeps `resources/templates/list` rejected). By also
+    // publishing a template, we address the root cause: the model had no valid URI
+    // to fill in the first place.
+
+    /// Returns one `file:///{path}` template so the model has a valid URI pattern
+    /// for `read_mcp_resource` instead of fabricating `?` placeholders.
+    fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        self.activity.touch();
+        let template = ResourceTemplate::new(
+            "file:///{path}",
+            "Read a local file by absolute path. Replace {path} with the full \
+             filesystem path (e.g. file:///C:/Users/me/code.rs on Windows, \
+             file:///home/me/code.rs on Unix). Returns text, images, or PDF \
+             content depending on the file type.",
+        );
+        Ok(ListResourceTemplatesResult::with_all_items(vec![template]))
+    }
+
+    /// Reads a local file from a `file:///` URI or a plain absolute path.
+    ///
+    /// This handles the misrouted `resources/read` calls that some hosts produce
+    /// even when the server does not advertise the `resources` capability. Remote
+    /// authorities, non-file schemes, queries, and fragments are rejected.
+    ///
+    /// **Token budget protection**: this goes through `run_blocking` with
+    /// `READ_TOKEN_BUDGET_ENV`, the same path as `inspect_local_file`. This
+    /// ensures the response respects the configured output budget and triggers
+    /// the guarded-burst stub when the response would exhaust the turn's shared
+    /// output pool — preventing context-window blowout via `resources/read`
+    /// (#24). Without this, a large file read through `resources/read` would
+    /// bypass the budget and dump unlimited content into the model's context.
+    fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        self.activity.touch();
+        let uri = request.uri;
+
+        // Parse the URI or plain path into a local filesystem path.
+        let path = crate::paths::parse_local_path_input(&uri)
+            .map_err(|message| ErrorData::invalid_params(message, None))?;
+
+        let file_path = path.to_str().map(str::to_owned).ok_or_else(|| {
+            ErrorData::invalid_params(
+                "The local resource path cannot be represented as UTF-8.",
+                None,
+            )
+        })?;
+
+        // Reuse the same session, permits, and budget system as inspect_local_file.
+        // run_blocking acquires a file-permit, activates the session, applies the
+        // guarded-burst budget ceiling, and converts to CallToolResult. We then
+        // convert CallToolResult back to ReadResourceResult.
+        let session = Arc::clone(&self.session);
+        let permits = Arc::clone(&self.file_permits);
+        let shell = self.shell.clone();
+        let result = run_blocking(
+            session,
+            permits,
+            READ_TOKEN_BUDGET_ENV,
+            move || shell.background_status(None),
+            BudgetRetry::Safe,
+            move || {
+                read_file(ReadRequest {
+                    file_path: Some(file_path),
+                    files: None,
+                    offset: None,
+                    limit: None,
+                    pages: None,
+                    pdf_mode: None,
+                    encoding: None,
+                    view: None,
+                })
+            },
+        )
+        .await;
+
+        call_tool_result_to_resource_result(uri, result)
+    }
+}
+
+/// Converts a `CallToolResult` from `run_blocking` into an MCP `ReadResourceResult`.
+///
+/// Text content blocks become `ResourceContents::text` and image blocks become
+/// `ResourceContents::blob` with the appropriate MIME type. When the tool
+/// response is an error, it is surfaced as an `invalid_params` protocol error
+/// so the host can display a meaningful message rather than an opaque failure.
+fn call_tool_result_to_resource_result(
+    uri: String,
+    result: CallToolResult,
+) -> Result<ReadResourceResult, ErrorData> {
+    use rmcp::model::ContentBlock;
+
+    if result.is_error == Some(true) {
+        let message = result
+            .content
+            .into_iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(ErrorData::invalid_params(
+            if message.is_empty() {
+                "The local resource could not be read.".to_string()
+            } else {
+                message
+            },
+            None,
+        ));
+    }
+
+    let contents = result
+        .content
+        .into_iter()
+        .map(|block| match block {
+            ContentBlock::Text(text) => {
+                ResourceContents::text(text.text, uri.clone())
+            }
+            ContentBlock::Image(image) => {
+                let contents = ResourceContents::blob(image.data, uri.clone())
+                    .with_mime_type(image.mime_type);
+                if image
+                    ._meta
+                    .as_ref()
+                    .and_then(|meta| meta.0.get("codex/imageDetail"))
+                    .is_some_and(|v| v == "high")
+                {
+                    let mut meta = Meta::new();
+                    meta.0.insert(
+                        "codex/imageDetail".to_string(),
+                        serde_json::Value::String("high".to_string()),
+                    );
+                    contents.with_meta(meta)
+                } else {
+                    contents
+                }
+            }
+            _ => ResourceContents::text(
+                "Unsupported content block type in resource read.".to_string(),
+                uri.clone(),
+            ),
+        })
+        .collect();
+
+    Ok(ReadResourceResult::new(contents))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FastCtxServer, ServerOptions, SharedRuntime};
+    use super::{FastCtxServer, ServerOptions, SharedRuntime, call_tool_result_to_resource_result};
     use crate::file_executor::GrepGlobExecutor;
     use crate::search_parallelism::MAX_SEARCH_PARALLELISM;
+    use rmcp::model::{CallToolResult, ContentBlock, ErrorCode, ImageContent, Meta};
     use std::sync::Arc;
+
+    #[test]
+    fn call_tool_result_to_resource_preserves_text_and_image() {
+        let mut image_meta = Meta::new();
+        image_meta.0.insert(
+            "codex/imageDetail".to_string(),
+            serde_json::Value::String("high".to_string()),
+        );
+        let result = call_tool_result_to_resource_result(
+            "file:///C:/notes.txt".to_string(),
+            CallToolResult::success(vec![
+                ContentBlock::Text(rmcp::model::TextContent::new("1\tline")),
+                ContentBlock::Image(
+                    ImageContent::new("aW1hZ2U=".to_string(), "image/png".to_string())
+                        .with_meta(image_meta),
+                ),
+            ]),
+        )
+        .unwrap();
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["contents"][0]["uri"], "file:///C:/notes.txt");
+        assert_eq!(value["contents"][0]["mimeType"], "text/plain");
+        assert_eq!(value["contents"][0]["text"], "1\tline");
+        assert_eq!(value["contents"][1]["uri"], "file:///C:/notes.txt");
+        assert_eq!(value["contents"][1]["mimeType"], "image/png");
+        assert_eq!(value["contents"][1]["blob"], "aW1hZ2U=");
+        assert_eq!(value["contents"][1]["_meta"]["codex/imageDetail"], "high");
+    }
+
+    #[test]
+    fn call_tool_result_to_resource_surfaces_errors() {
+        let error = call_tool_result_to_resource_result(
+            "file:///C:/missing.txt".to_string(),
+            CallToolResult::error(vec![ContentBlock::Text(
+                rmcp::model::TextContent::new("File does not exist: C:/missing.txt"),
+            )]),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(error.message, "File does not exist: C:/missing.txt");
+        assert!(error.data.is_none());
+    }
 
     #[test]
     fn configured_executor_is_the_server_search_source_for_serial_mid_and_maximum_p() {

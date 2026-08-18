@@ -3,7 +3,9 @@
 /// Positive routing shared by the host guidance file and every fresh MCP connection.
 pub(crate) const LOCAL_FILE_ROUTE_GUIDANCE: &str = concat!(
     "Use FastCtx file tools directly for local-file operations, including when a\n",
-    "local reference is URI-shaped; pass the equivalent plain absolute filesystem path."
+    "local reference is URI-shaped; pass the equivalent plain absolute filesystem path.\n",
+    "FastCtx also accepts file:/// URIs through resources/read, but the direct tool\n",
+    "is preferred for batch reads, offset paging, and encoding control."
 );
 
 /// Shared path-shape contract used by every file tool's path field.

@@ -49,6 +49,21 @@ pub enum SortMode {
     Modified,
 }
 
+/// JSON schema wrapper for `Option<SortMode>` that always emits a `type` field,
+/// required by strict LLM APIs (e.g. Gemini 3.1 Pro) that reject enums without
+/// an explicit `type` (#25).
+pub(crate) fn sort_field_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::schema::Schema {
+    schemars::schema::SchemaObject {
+        instance_type: Some(schemars::schema::InstanceType::String.into()),
+        enum_values: Some(vec![
+            serde_json::Value::String("path".to_string()),
+            serde_json::Value::String("modified".to_string()),
+        ]),
+        ..Default::default()
+    }
+    .into()
+}
+
 /// Parameters for the glob tool.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct GlobRequest {
@@ -67,6 +82,7 @@ pub struct GlobRequest {
     /// "project" respects .gitignore/.ignore, includes hidden files, excludes .git (same traversal as grep). "all" disables all filtering.
     pub filter_mode: Option<FilterMode>,
     /// "path" = byte-order path sort. "modified" = most recently modified first.
+    #[schemars(with = "crate::glob_tool::sort_field_schema")]
     pub sort: Option<SortMode>,
     /// Skip the first N results — for paging.
     pub offset: Option<usize>,
