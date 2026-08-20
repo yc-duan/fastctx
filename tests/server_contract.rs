@@ -232,6 +232,35 @@ fn glob_pattern_parameters_accept_both_the_advertised_array_and_a_bare_string() 
 }
 
 #[test]
+fn file_tool_requests_reject_unknown_target_fields() {
+    let grep = serde_json::from_value::<fastctx::grep_tool::GrepRequest>(serde_json::json!({
+        "pattern": "needle",
+        "file_path": "/tmp/file.txt",
+    }))
+    .unwrap_err()
+    .to_string();
+    assert!(grep.contains("unknown field `file_path`"), "{grep}");
+
+    let glob = serde_json::from_value::<fastctx::glob_tool::GlobRequest>(serde_json::json!({
+        "pattern": ["**/*.rs"],
+        "file_path": "/tmp",
+    }))
+    .unwrap_err()
+    .to_string();
+    assert!(glob.contains("unknown field `file_path`"), "{glob}");
+
+    let replace = serde_json::from_value::<fastctx::edit::ReplaceRequest>(serde_json::json!({
+        "pattern": "needle",
+        "replacement": "thread",
+        "path": "/tmp/file.txt",
+        "file_path": "/tmp/other.txt",
+    }))
+    .unwrap_err()
+    .to_string();
+    assert!(replace.contains("unknown field `file_path`"), "{replace}");
+}
+
+#[test]
 fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
     let tools = FastCtxServer::with_options(ServerOptions::all()).tool_definitions();
     let shell = tools

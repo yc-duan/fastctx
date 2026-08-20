@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 const BEGIN_MARKER: &str = "<!-- fastctx:begin -->";
 const END_MARKER: &str = "<!-- fastctx:end -->";
-pub(crate) const MANAGED_SECTION_CONTRACT_ID: &str = "guidance-v4";
+pub(crate) const MANAGED_SECTION_CONTRACT_ID: &str = "guidance-v5";
 const LEGACY_BEGIN_MARKER: &str = "<!-- fastread:begin -->";
 const LEGACY_END_MARKER: &str = "<!-- fastread:end -->";
 const LEGACY_FASTREAD_SECTION: &str = concat!(
@@ -147,6 +147,8 @@ const V024_READ_TOOL_NAME_SHELL_GUIDANCE: &str = V022_RESOURCE_ROUTING_SHELL_GUI
 /// One byte-frozen managed block from a superseded release.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum KnownLegacyGuidance {
+    /// 0.2.5, superseded when file-tool target fields became explicit host guidance.
+    TargetFields,
     /// 0.2.2/0.2.3, whose prohibition named the very resource tools it steered away from.
     ResourceRouting,
     /// 0.2.4, superseded when the file-inspection tool was renamed away from `read`.
@@ -155,30 +157,45 @@ pub(crate) enum KnownLegacyGuidance {
 
 impl KnownLegacyGuidance {
     /// Every superseded release this build still recognises, newest first.
-    pub(crate) const ALL: [Self; 2] = [Self::ReadToolName, Self::ResourceRouting];
+    pub(crate) const ALL: [Self; 3] = [
+        Self::TargetFields,
+        Self::ReadToolName,
+        Self::ResourceRouting,
+    ];
 
-    fn guidance(self) -> (&'static str, &'static str) {
+    fn frozen_guidance(self) -> Option<(&'static str, &'static str)> {
         match self {
-            Self::ResourceRouting => (
+            Self::TargetFields => None,
+            Self::ResourceRouting => Some((
                 V022_RESOURCE_ROUTING_FILE_GUIDANCE,
                 V022_RESOURCE_ROUTING_SHELL_GUIDANCE,
-            ),
-            Self::ReadToolName => (
+            )),
+            Self::ReadToolName => Some((
                 V024_READ_TOOL_NAME_FILE_GUIDANCE,
                 V024_READ_TOOL_NAME_SHELL_GUIDANCE,
-            ),
+            )),
         }
     }
 
     /// Rebuilds this release's exact managed block for the optional shell group.
     pub(crate) fn section(self, fastshell_enabled: bool) -> String {
-        let (file_guidance, shell_guidance) = self.guidance();
         let mut output = String::from(BEGIN_MARKER);
         output.push('\n');
-        output.push_str(file_guidance);
-        if fastshell_enabled {
+        if self == Self::TargetFields {
+            output.push_str(FILE_GUIDANCE_PREFIX);
+            output.push_str(crate::model_guidance::LOCAL_FILE_ROUTE_GUIDANCE);
             output.push('\n');
-            output.push_str(shell_guidance);
+            output.push_str(FILE_GUIDANCE_SUFFIX);
+            if fastshell_enabled {
+                output.push('\n');
+                output.push_str(SHELL_GUIDANCE);
+            }
+        } else if let Some((file_guidance, shell_guidance)) = self.frozen_guidance() {
+            output.push_str(file_guidance);
+            if fastshell_enabled {
+                output.push('\n');
+                output.push_str(shell_guidance);
+            }
         }
         output.push_str(END_MARKER);
         output
@@ -228,6 +245,8 @@ pub fn section(fastshell_enabled: bool) -> String {
     output.push('\n');
     output.push_str(FILE_GUIDANCE_PREFIX);
     output.push_str(crate::model_guidance::LOCAL_FILE_ROUTE_GUIDANCE);
+    output.push('\n');
+    output.push_str(crate::model_guidance::LOCAL_FILE_TARGET_FIELD_GUIDANCE);
     output.push('\n');
     output.push_str(FILE_GUIDANCE_SUFFIX);
     if fastshell_enabled {
@@ -457,4 +476,29 @@ fn marker_range(
     }
     let end = end_start + end_marker.len();
     Ok(Some((start, end)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        KnownLegacyGuidance, ManagedSectionState, classify_managed_section,
+        refresh_known_legacy_section, section,
+    };
+
+    #[test]
+    fn v025_guidance_is_recognized_and_refreshes_to_explicit_target_fields() {
+        for fastshell_enabled in [false, true] {
+            let legacy = KnownLegacyGuidance::TargetFields.section(fastshell_enabled);
+            assert_eq!(
+                classify_managed_section(legacy.as_bytes(), fastshell_enabled),
+                ManagedSectionState::KnownLegacy
+            );
+            let refreshed = refresh_known_legacy_section(legacy.as_bytes(), fastshell_enabled)
+                .expect("v0.2.5 guidance should refresh");
+            assert_eq!(refreshed, section(fastshell_enabled).into_bytes());
+            let refreshed = String::from_utf8(refreshed).unwrap();
+            assert!(refreshed.contains("`inspect_local_file` uses `file_path`"));
+            assert!(refreshed.contains("`grep`, `glob`, and `replace` use `path`"));
+        }
+    }
 }

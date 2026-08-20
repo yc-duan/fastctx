@@ -250,6 +250,14 @@ fn apply_status_and_unapply_cover_both_shell_states() {
         assert_eq!(agents.contains("### Shell commands"), fastshell);
         assert!(agents.contains("### Batch replacement"), "{agents}");
         assert!(agents.contains("FastCtx's `replace`"), "{agents}");
+        assert!(
+            agents.contains("`inspect_local_file` uses `file_path`"),
+            "{agents}"
+        );
+        assert!(
+            agents.contains("`grep`, `glob`, and `replace` use `path`"),
+            "{agents}"
+        );
         for removed in ["copy", "cut", "paste", "clips", "drop"] {
             assert!(!agents.contains(&format!("`{removed}`")));
         }
