@@ -283,8 +283,8 @@ fn decode_whatwg(bytes: &[u8], encoding: &'static Encoding) -> DecodedBytes {
 fn decode_utf32(bytes: &[u8], little_endian: bool) -> DecodedBytes {
     let mut text = String::with_capacity(bytes.len());
     let mut invalid_offsets = Vec::new();
-    let mut chunks = bytes.chunks_exact(4);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = bytes.as_chunks::<4>();
+    for chunk in chunks {
         let value = if little_endian {
             u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
         } else {
@@ -297,7 +297,7 @@ fn decode_utf32(bytes: &[u8], little_endian: bool) -> DecodedBytes {
             text.push(char::REPLACEMENT_CHARACTER);
         }
     }
-    if !chunks.remainder().is_empty() {
+    if !remainder.is_empty() {
         invalid_offsets.push(text.len());
         text.push(char::REPLACEMENT_CHARACTER);
     }

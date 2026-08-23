@@ -386,7 +386,7 @@ fn decode_utf32(bytes: &[u8], little_endian: bool) -> Option<String> {
         return None;
     }
     let mut output = String::with_capacity(bytes.len());
-    for raw in bytes.chunks_exact(4) {
+    for raw in bytes.as_chunks::<4>().0 {
         let unit = if little_endian {
             u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])
         } else {

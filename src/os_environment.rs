@@ -283,8 +283,10 @@ fn read_environment_key(
 fn wide_value(bytes: &[u8]) -> OsString {
     use std::os::windows::ffi::OsStringExt;
     let units = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
         .collect::<Vec<u16>>();
     let end = units
         .iter()

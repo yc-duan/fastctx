@@ -914,7 +914,7 @@ fn decode_utf32_chunk(
         *carry = bytes.split_off(complete_len);
     }
     let mut output = String::with_capacity(complete_len);
-    for raw in bytes[..complete_len].chunks_exact(4) {
+    for raw in bytes[..complete_len].as_chunks::<4>().0 {
         let unit = if little_endian {
             u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])
         } else {
@@ -992,7 +992,7 @@ fn decode_utf32_bytes(bytes: &[u8], little_endian: bool) -> Option<String> {
         return None;
     }
     let mut output = String::with_capacity(bytes.len());
-    for raw in bytes.chunks_exact(4) {
+    for raw in bytes.as_chunks::<4>().0 {
         let unit = if little_endian {
             u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])
         } else {

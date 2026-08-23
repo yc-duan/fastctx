@@ -235,8 +235,10 @@ impl OutputLogWriter {
             .unwrap_or(self.indexed_position);
         self.durable_lines.saturating_add(
             self.pending_index
-                .chunks_exact(INDEX_ENTRY_BYTES as usize)
-                .filter_map(LineIndexEntry::decode)
+                .as_chunks::<{ INDEX_ENTRY_BYTES as usize }>()
+                .0
+                .iter()
+                .filter_map(|bytes| LineIndexEntry::decode(bytes))
                 .take_while(|entry| entry.record_end <= log_len)
                 .count() as u64,
         )

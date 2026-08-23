@@ -656,7 +656,7 @@ impl StrictDecoderScratch {
                     carry.extend_from_slice(&joined[complete_len..]);
                 }
                 self.output.reserve(complete_len);
-                for raw in joined[..complete_len].chunks_exact(4) {
+                for raw in joined[..complete_len].as_chunks::<4>().0 {
                     let unit = if *little_endian {
                         u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])
                     } else {

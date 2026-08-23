@@ -432,8 +432,10 @@ fn decode_windows_component(payload: &str, source: &str) -> Result<OsString, Pat
     use std::os::windows::ffi::OsStringExt;
     let units = payload
         .as_bytes()
-        .chunks_exact(4)
-        .map(decode_hex_u16)
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| decode_hex_u16(bytes))
         .collect::<Vec<_>>();
     if windows_token(units.iter().copied()) != source {
         return Err(PathCodecError::new(source));
@@ -529,7 +531,9 @@ fn append_lower_hex(output: &mut String, bytes: &[u8]) {
 fn decode_byte_pairs(payload: &str) -> Vec<u8> {
     payload
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (decode_hex_nibble(pair[0]) << 4) | decode_hex_nibble(pair[1]))
         .collect()
 }
