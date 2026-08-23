@@ -111,7 +111,7 @@ pub struct GlobRequest {
 #[derive(Debug, Eq, PartialEq)]
 struct MatchEntry {
     path: PathRecord,
-    details: Option<Arc<str>>,
+    rendered: Arc<str>,
 }
 
 /// Finds files within a caller-owned cancellation scope.
@@ -204,7 +204,6 @@ fn glob_files_with_execution_unadapted(
         &report,
         request.offset.unwrap_or(0),
         limit,
-        output_mode,
         budget,
         budget_variable,
         Some(operation),
@@ -325,9 +324,10 @@ fn evaluate_match(
             .file_type()
             .is_some_and(|file_type| file_type.is_file())
     {
+        let rendered = Arc::clone(&preliminary.display);
         return Ok(Some(MatchEntry {
             path: preliminary,
-            details: None,
+            rendered,
         }));
     }
     let metadata = if entry
@@ -358,17 +358,14 @@ fn evaluate_match(
     let include_modified = sort == SortMode::Modified || output_mode == GlobOutputMode::Details;
     let record = PathRecord::from_metadata(path, &root.native, &metadata, include_modified)
         .map_err(|error| TraversalFailure::from_io(path, &error))?;
-    let details = if output_mode == GlobOutputMode::Details {
-        Some(
-            format_match_details(&record)
-                .map_err(|error| TraversalFailure::from_io(path, &error))?,
-        )
+    let rendered = if output_mode == GlobOutputMode::Details {
+        format_match_details(&record).map_err(|error| TraversalFailure::from_io(path, &error))?
     } else {
-        None
+        Arc::clone(&record.display)
     };
     Ok(Some(MatchEntry {
         path: record,
-        details,
+        rendered,
     }))
 }
 
@@ -454,7 +451,6 @@ fn format_matches(
     report: &SkipReport,
     offset: usize,
     limit: usize,
-    output_mode: GlobOutputMode,
     budget: usize,
     budget_variable: &str,
     operation: Option<&OperationCtx>,
@@ -486,14 +482,8 @@ fn format_matches(
     let maximum = limit.min(total - offset);
     let lines = matches[offset..offset + maximum]
         .iter()
-        .map(|entry| match output_mode {
-            GlobOutputMode::Paths => Some(Arc::clone(&entry.path.display)),
-            GlobOutputMode::Details => entry.details.as_ref().map(Arc::clone),
-        })
-        .collect::<Option<Vec<_>>>();
-    let Some(lines) = lines else {
-        return ToolResponse::error("Internal glob metadata failure: a detail line is missing.");
-    };
+        .map(|entry| Arc::clone(&entry.rendered))
+        .collect::<Vec<_>>();
     let mut graph = match LineRenderGraph::new(
         lines,
         operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),
