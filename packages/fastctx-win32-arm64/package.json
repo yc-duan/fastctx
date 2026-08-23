@@ -1,6 +1,6 @@
 {
   "name": "@fastctx/win32-arm64",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "FastCtx binary for Windows arm64",
   "author": "yc-duan <dy2958830371@gmail.com>",
   "license": "Apache-2.0",

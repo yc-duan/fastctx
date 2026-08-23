@@ -5672,7 +5672,7 @@ limitations under the License.
 
 Used by:
 
-- [fastctx 0.2.5](https://github.com/yc-duan/fastctx)
+- [fastctx 0.2.6](https://github.com/yc-duan/fastctx)
 
 ```text
                               Apache License
