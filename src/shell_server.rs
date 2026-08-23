@@ -17,7 +17,7 @@ use std::sync::Arc;
 impl FastCtxServer {
     #[tool(
         name = "run",
-        description = "Run a shell command with bash (Git Bash on Windows; system bash elsewhere)\nand return its merged stdout+stderr with the exit code. Write POSIX bash —\nnever PowerShell. Commands must be non-interactive: there is no TTY or\nstdin; use flags like -y or --no-edit. A non-zero exit code is a normal\nresult, not an error. Oversized output is truncated; for the full output,\nredirect it to a file (command > file 2>&1) and page that file with\ninspect_local_file.\nDefault timeout 120000 ms, ceiling 240000 — start anything that may outlast\nit with run_background. If output looks garbled (U+FFFD), pass encoding\n(e.g. \"gbk\"). The last line states Complete or Partial.",
+        description = "Use for non-interactive local CLI work, including Git, build/test tools,\npackage managers, database CLIs, and project scripts. Commands run with bash\n(Git Bash on Windows; system bash elsewhere) and return merged stdout+stderr\nwith the exit code. Write POSIX bash — never PowerShell. There is no TTY or\nstdin; use flags like -y or --no-edit. A non-zero exit code is a normal\nresult, not an error. Oversized output is truncated; for the full output,\nredirect it to a file (command > file 2>&1) and page that file with\ninspect_local_file.\nDefault timeout 120000 ms, ceiling 240000 — start anything that may outlast\nit with run_background. If output looks garbled (U+FFFD), pass encoding\n(e.g. \"gbk\"). The last line states Complete or Partial.",
         annotations(
             title = "Run bash command",
             read_only_hint = false,

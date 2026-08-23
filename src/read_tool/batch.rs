@@ -38,7 +38,7 @@ enum PreparedOutcome {
 }
 
 pub(super) fn read_text_files(mut request: ReadRequest) -> ToolResponse {
-    let entries = request
+    let mut entries = request
         .files
         .take()
         .expect("batch shape was validated by read_file");
@@ -50,13 +50,20 @@ pub(super) fn read_text_files(mut request: ReadRequest) -> ToolResponse {
     }
     for (parameter, present) in [
         ("offset", request.offset.is_some()),
-        ("limit", request.limit.is_some()),
         ("encoding", request.encoding.is_some()),
     ] {
         if present {
             return ToolResponse::error(format!(
                 "The top-level {parameter} parameter cannot be combined with files; set it inside the files entries instead."
             ));
+        }
+    }
+    if request.limit == Some(0) {
+        return ToolResponse::error("Invalid limit value: 0. Expected an integer >= 1.");
+    }
+    if let Some(default_limit) = request.limit {
+        for entry in &mut entries {
+            entry.limit.get_or_insert(default_limit);
         }
     }
     for (parameter, present) in [

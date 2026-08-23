@@ -195,11 +195,12 @@ FastCtx 提供九个同级 MCP 工具：
     {"path": "V:/repo/src/main.rs", "offset": 120, "limit": 40},
     {"path": "V:/repo/src/config.rs"},
     {"path": "V:/repo/docs/legacy.txt", "encoding": "gbk"}
-  ]
+  ],
+  "limit": 400
 }
 ```
 
-`files` 形态接受 1–32 个文本文件，严格保持请求顺序，并在同一份 read 预算内装箱。某个成员不存在、为空、属于二进制或编码无法判定时，问题会留在该文件自己的段内，其余文件继续处理。预算装满后，末行 `Partial` 会给出下一次调用可原样使用的紧凑 `files=[...]` 数组，包含逐文件 offset、剩余 limit 与 encoding。图片、PDF 和 hex 视图仍使用单文件调用。
+`files` 形态接受 1–32 个文本文件，严格保持请求顺序，并在同一份 read 预算内装箱。顶层 `limit` 会作为每个未自行设置 limit 的条目的默认值；上例第一个条目用自己的值覆盖默认。某个成员不存在、为空、属于二进制或编码无法判定时，问题会留在该文件自己的段内，其余文件继续处理。预算装满后，末行 `Partial` 会给出下一次调用可原样使用的紧凑 `files=[...]` 数组，包含逐文件 offset、剩余 limit 与 encoding。图片、PDF 和 hex 视图仍使用单文件调用。
 
 `inspect_local_file` 还支持：
 
@@ -255,7 +256,7 @@ V:/repo/src/edit/locks.rs
 - `count`：返回每个文件的 occurrence 数；
 - `summary`：完成全量扫描后返回总数。
 
-搜索默认尊重 `.gitignore` 和 `.ignore`，包含隐藏文件，排除 `.git` 与二进制文件。常用筛选参数包括 `glob`、`type`、`case_insensitive`、`multiline` 和 `context`。结果通过 `head_limit` 与 `offset` 分页。
+`grep` 默认尊重 `.gitignore` 和 `.ignore`，包含隐藏文件，排除 `.git` 与二进制文件。常用筛选参数包括 `glob`、`type`、`case_insensitive`、`multiline` 和 `context`。结果通过 `head_limit` 与 `offset` 分页。
 
 编码判定存疑的文件会进入跳过报告，报告中包含路径、原因和解决参数。单文件可以传 `encoding`，目录搜索可以传 `fallback_encoding`。
 
@@ -267,24 +268,29 @@ V:/repo/src/edit/locks.rs
 {
   "pattern": "**/*.toml",
   "path": "V:/repo",
-  "sort": "modified"
+  "sort": "modified",
+  "output_mode": "details"
 }
 ```
 
 ```text
-V:/repo/crates/core/Cargo.toml
-V:/repo/Cargo.toml
+{"path":"V:/repo/crates/core/Cargo.toml","bytes":1842,"modified":"2026-08-23T16:42:18.123456700Z"}
+{"path":"V:/repo/Cargo.toml","bytes":2937,"modified":"2026-08-23T15:07:03.000000000Z"}
 
 (Complete: all 2 files shown.)
 ```
 
 主要参数：
 
-- `filter_mode: "project"`：应用忽略规则，排除 `.git`，保留隐藏文件；
-- `filter_mode: "all"`：列出全部文件；
+- `filter_mode: "ignore"`（默认）：只尊重普通 `.ignore` 文件；
+- `filter_mode: "all"`：关闭普通 `.ignore` 过滤；
+- `output_mode: "paths"`（默认）：每行返回一条绝对路径；
+- `output_mode: "details"`：每行返回一个紧凑 JSON 对象，包含路径、字节数和固定九位小数的 RFC 3339 UTC 修改时间；
 - `sort: "path"`：按稳定路径顺序排列；
 - `sort: "modified"`：按修改时间从新到旧排列；
 - `offset` / `limit`：分页读取结果。
+
+`glob` 从不读取 `.gitignore`、`.git/info/exclude` 或用户的 global Git ignore，也不会自动隐藏 `.git`。隐藏文件与 Git 内部文件都是普通候选；不需要的目录应使用 `!target/**`、`!.git/**` 这类负 pattern 明确排除。旧值 `filter_mode: "project"` 仍可反序列化并按 `"ignore"` 执行，但不再发布到工具 schema。`grep` 与 `replace` 的 Git ignore 行为保持不变。
 
 ### `replace`
 

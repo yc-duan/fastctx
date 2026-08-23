@@ -1,4 +1,4 @@
-//! Project filtering, deterministic ordering, and resumable paging for the glob tool.
+//! Explicit ignore policy, deterministic ordering, metadata rendering, and resumable paging.
 
 use crate::bounded_sort::sort_cancelable;
 use crate::budget::{
@@ -16,9 +16,12 @@ use crate::traversal::{
 };
 use ignore::WalkBuilder;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io;
 use std::sync::Arc;
+use std::time::SystemTime;
+use time::{OffsetDateTime, macros::format_description};
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_LIMIT: usize = 100;
@@ -27,15 +30,32 @@ const MAX_RESULTS: usize = 100_000;
 const TOO_MANY_MATCHES_ERROR: &str =
     "Too many matches: over 100000 files matched. Narrow the pattern or path.";
 
-/// Project filtering policy used by glob traversal.
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, Eq, PartialEq)]
+/// Ignore-file policy used by glob traversal.
+#[derive(Clone, Copy, Debug, Default, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterMode {
-    /// Respect ignore files, include hidden files, and exclude `.git`.
+    /// Respect plain `.ignore` files while keeping every other file visible.
     #[default]
-    Project,
-    /// Disable ignore, hidden-file, and `.git` filtering.
+    Ignore,
+    /// Disable plain `.ignore` filtering.
     All,
+}
+
+impl<'de> Deserialize<'de> for FilterMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "ignore" | "project" => Ok(Self::Ignore),
+            "all" => Ok(Self::All),
+            _ => Err(serde::de::Error::unknown_variant(
+                &value,
+                &["ignore", "all"],
+            )),
+        }
+    }
 }
 
 /// Deterministic ordering for glob results.
@@ -47,6 +67,17 @@ pub enum SortMode {
     Path,
     /// Sort by modification time descending, then by path bytes ascending.
     Modified,
+}
+
+/// Presentation used for each matched file.
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GlobOutputMode {
+    /// Return only the canonical model-facing path.
+    #[default]
+    Paths,
+    /// Return one compact JSON object with path, byte size, and UTC modification time.
+    Details,
 }
 
 /// Parameters for the glob tool.
@@ -64,10 +95,12 @@ pub struct GlobRequest {
         "Directory to search. Omit for the session working directory; when provided, it must name an existing directory."
     ))]
     pub path: Option<String>,
-    /// "project" respects .gitignore/.ignore, includes hidden files, excludes .git (same traversal as grep). "all" disables all filtering.
+    /// "ignore" respects only plain .ignore files; "all" disables that filtering. Both include hidden files and .git, and neither reads any Git ignore source. The legacy value "project" is accepted as "ignore" but is not published.
     pub filter_mode: Option<FilterMode>,
     /// "path" = byte-order path sort. "modified" = most recently modified first.
     pub sort: Option<SortMode>,
+    /// "paths" (default) returns one path per line. "details" returns one compact JSON object per line as {"path":"...","bytes":123,"modified":"YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ"}.
+    pub output_mode: Option<GlobOutputMode>,
     /// Skip the first N results — for paging.
     pub offset: Option<usize>,
     /// Max results per page (1-1000).
@@ -78,6 +111,7 @@ pub struct GlobRequest {
 #[derive(Debug, Eq, PartialEq)]
 struct MatchEntry {
     path: PathRecord,
+    details: Option<Arc<str>>,
 }
 
 /// Finds files within a caller-owned cancellation scope.
@@ -142,11 +176,13 @@ fn glob_files_with_execution_unadapted(
         ));
     }
     let sort = request.sort.unwrap_or_default();
+    let output_mode = request.output_mode.unwrap_or_default();
     let collected = match collect_matches(
         &root,
         &matcher,
         request.filter_mode.unwrap_or_default(),
         sort,
+        output_mode,
         operation,
         executor,
     ) {
@@ -168,6 +204,7 @@ fn glob_files_with_execution_unadapted(
         &report,
         request.offset.unwrap_or(0),
         limit,
+        output_mode,
         budget,
         budget_variable,
         Some(operation),
@@ -200,6 +237,7 @@ fn collect_matches(
     matcher: &PathGlobFilter,
     filter_mode: FilterMode,
     sort: SortMode,
+    output_mode: GlobOutputMode,
     operation: &OperationCtx,
     executor: &Arc<GrepGlobExecutor>,
 ) -> Result<TraversalCollection<MatchEntry>, String> {
@@ -208,20 +246,18 @@ fn collect_matches(
     }
     let mut builder = WalkBuilder::new(&root.native);
     match filter_mode {
-        FilterMode::Project => {
+        FilterMode::Ignore => {
             builder
+                .standard_filters(false)
+                .parents(true)
                 .hidden(false)
                 .ignore(true)
-                .git_ignore(true)
-                .git_global(true)
-                .git_exclude(true)
-                .follow_links(false)
-                .filter_entry(|entry| entry.depth() == 0 || entry.file_name() != ".git");
+                .git_ignore(false)
+                .git_global(false)
+                .git_exclude(false)
+                .follow_links(false);
         }
         FilterMode::All => {
-            // standard_filters(false) + hidden(false) matches the previous
-            // unfiltered walkdir semantics: no ignore files, hidden and .git
-            // contents included, links not followed.
             builder
                 .standard_filters(false)
                 .hidden(false)
@@ -244,7 +280,7 @@ fn collect_matches(
             {
                 return Ok(None);
             }
-            evaluate_match(root, entry, matcher, sort)
+            evaluate_match(root, entry, matcher, sort, output_mode)
         },
     )
 }
@@ -276,6 +312,7 @@ fn evaluate_match(
     entry: &ignore::DirEntry,
     matcher: &PathGlobFilter,
     sort: SortMode,
+    output_mode: GlobOutputMode,
 ) -> Result<Option<MatchEntry>, TraversalFailure> {
     let path = entry.path();
     let preliminary = PathRecord::without_metadata(path, &root.native);
@@ -283,11 +320,15 @@ fn evaluate_match(
         return Ok(None);
     }
     if sort == SortMode::Path
+        && output_mode == GlobOutputMode::Paths
         && entry
             .file_type()
             .is_some_and(|file_type| file_type.is_file())
     {
-        return Ok(Some(MatchEntry { path: preliminary }));
+        return Ok(Some(MatchEntry {
+            path: preliminary,
+            details: None,
+        }));
     }
     let metadata = if entry
         .file_type()
@@ -314,10 +355,65 @@ fn evaluate_match(
             },
         }
     };
-    let record =
-        PathRecord::from_metadata(path, &root.native, &metadata, sort == SortMode::Modified)
-            .map_err(|error| TraversalFailure::from_io(path, &error))?;
-    Ok(Some(MatchEntry { path: record }))
+    let include_modified = sort == SortMode::Modified || output_mode == GlobOutputMode::Details;
+    let record = PathRecord::from_metadata(path, &root.native, &metadata, include_modified)
+        .map_err(|error| TraversalFailure::from_io(path, &error))?;
+    let details = if output_mode == GlobOutputMode::Details {
+        Some(
+            format_match_details(&record)
+                .map_err(|error| TraversalFailure::from_io(path, &error))?,
+        )
+    } else {
+        None
+    };
+    Ok(Some(MatchEntry {
+        path: record,
+        details,
+    }))
+}
+
+#[derive(Serialize)]
+struct MatchDetails<'a> {
+    path: &'a str,
+    bytes: u64,
+    modified: &'a str,
+}
+
+fn format_match_details(record: &PathRecord) -> io::Result<Arc<str>> {
+    let bytes = record
+        .traversal_len_hint
+        .ok_or_else(|| io::Error::other("glob detail metadata is missing the file size"))?;
+    let modified = record
+        .modified
+        .ok_or_else(|| io::Error::other("glob detail metadata is missing the modification time"))?;
+    let modified = format_modified_utc(modified)?;
+    serde_json::to_string(&MatchDetails {
+        path: &record.display,
+        bytes,
+        modified: &modified,
+    })
+    .map(Arc::from)
+    .map_err(|error| io::Error::other(format!("cannot serialize glob details: {error}")))
+}
+
+fn format_modified_utc(value: SystemTime) -> io::Result<String> {
+    let nanoseconds = match value.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => {
+            i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos())
+        }
+        Err(error) => {
+            let duration = error.duration();
+            -(i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos()))
+        }
+    };
+    OffsetDateTime::from_unix_timestamp_nanos(nanoseconds)
+        .map_err(|error| {
+            io::Error::other(format!("file modification time is out of range: {error}"))
+        })?
+        .format(format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:9]Z"
+        ))
+        .map_err(|error| io::Error::other(format!("cannot format file modification time: {error}")))
 }
 
 /// A note set that fits the budget, with the token count that proved it.
@@ -358,6 +454,7 @@ fn format_matches(
     report: &SkipReport,
     offset: usize,
     limit: usize,
+    output_mode: GlobOutputMode,
     budget: usize,
     budget_variable: &str,
     operation: Option<&OperationCtx>,
@@ -389,8 +486,14 @@ fn format_matches(
     let maximum = limit.min(total - offset);
     let lines = matches[offset..offset + maximum]
         .iter()
-        .map(|entry| Arc::clone(&entry.path.display))
-        .collect::<Vec<_>>();
+        .map(|entry| match output_mode {
+            GlobOutputMode::Paths => Some(Arc::clone(&entry.path.display)),
+            GlobOutputMode::Details => entry.details.as_ref().map(Arc::clone),
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(lines) = lines else {
+        return ToolResponse::error("Internal glob metadata failure: a detail line is missing.");
+    };
     let mut graph = match LineRenderGraph::new(
         lines,
         operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),

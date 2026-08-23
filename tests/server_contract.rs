@@ -260,9 +260,10 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
     assert_eq!(
         run.description.as_deref(),
         Some(concat!(
-            "Run a shell command with bash (Git Bash on Windows; system bash elsewhere)\n",
-            "and return its merged stdout+stderr with the exit code. Write POSIX bash —\n",
-            "never PowerShell. Commands must be non-interactive: there is no TTY or\n",
+            "Use for non-interactive local CLI work, including Git, build/test tools,\n",
+            "package managers, database CLIs, and project scripts. Commands run with bash\n",
+            "(Git Bash on Windows; system bash elsewhere) and return merged stdout+stderr\n",
+            "with the exit code. Write POSIX bash — never PowerShell. There is no TTY or\n",
             "stdin; use flags like -y or --no-edit. A non-zero exit code is a normal\n",
             "result, not an error. Oversized output is truncated; for the full output,\n",
             "redirect it to a file (command > file 2>&1) and page that file with\n",

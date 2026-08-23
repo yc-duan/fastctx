@@ -448,6 +448,7 @@ fn glob_offset_pages_reassemble_without_duplicates_or_gaps_across_a_matrix() {
                 path: Some(normalized(&root)),
                 filter_mode: Some(FilterMode::All),
                 sort: Some(SortMode::Path),
+                output_mode: None,
                 offset: Some(offset),
                 limit: Some(page_width),
             }));

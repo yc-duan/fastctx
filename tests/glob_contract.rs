@@ -14,6 +14,7 @@ fn request(path: &std::path::Path, pattern: &str) -> GlobRequest {
         path: Some(normalized(path)),
         filter_mode: None,
         sort: None,
+        output_mode: None,
         offset: None,
         limit: None,
     }

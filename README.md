@@ -195,11 +195,12 @@ When several known text files are relevant, batch them into one call instead of 
     {"path": "V:/repo/src/main.rs", "offset": 120, "limit": 40},
     {"path": "V:/repo/src/config.rs"},
     {"path": "V:/repo/docs/legacy.txt", "encoding": "gbk"}
-  ]
+  ],
+  "limit": 400
 }
 ```
 
-The `files` form accepts 1–32 text files, preserves request order, and packs them into one shared read budget. A missing, empty, binary, or undecodable member is reported inside its own segment while the remaining files continue. If the budget fills, the final `Partial` line contains the exact compact `files=[...]` array for the next call, including per-file offsets, remaining limits, and encodings. Images, PDFs, and hex view remain single-file calls.
+The `files` form accepts 1–32 text files, preserves request order, and packs them into one shared read budget. A top-level `limit` applies to every entry that omits its own; the first entry above overrides the default. A missing, empty, binary, or undecodable member is reported inside its own segment while the remaining files continue. If the budget fills, the final `Partial` line contains the exact compact `files=[...]` array for the next call, including per-file offsets, remaining limits, and encodings. Images, PDFs, and hex view remain single-file calls.
 
 `inspect_local_file` also supports:
 
@@ -255,7 +256,7 @@ V:/repo/src/edit/locks.rs
 - `count`: return the occurrence count for each file;
 - `summary`: scan the full target and return global totals.
 
-Searches respect `.gitignore` and `.ignore` by default, include hidden files, and exclude `.git` and binary files. Common filters include `glob`, `type`, `case_insensitive`, `multiline`, and `context`. Page through results with `head_limit` and `offset`.
+`grep` respects `.gitignore` and `.ignore` by default, includes hidden files, and excludes `.git` and binary files. Common filters include `glob`, `type`, `case_insensitive`, `multiline`, and `context`. Page through results with `head_limit` and `offset`.
 
 Files with uncertain encodings appear in a skip report with their path, reason, and resolution parameters. Use `encoding` for a single file and `fallback_encoding` for a directory search.
 
@@ -271,24 +272,29 @@ A directory the walk cannot enter — denied permissions, a locked file, a symli
 {
   "pattern": "**/*.toml",
   "path": "V:/repo",
-  "sort": "modified"
+  "sort": "modified",
+  "output_mode": "details"
 }
 ```
 
 ```text
-V:/repo/crates/core/Cargo.toml
-V:/repo/Cargo.toml
+{"path":"V:/repo/crates/core/Cargo.toml","bytes":1842,"modified":"2026-08-23T16:42:18.123456700Z"}
+{"path":"V:/repo/Cargo.toml","bytes":2937,"modified":"2026-08-23T15:07:03.000000000Z"}
 
 (Complete: all 2 files shown.)
 ```
 
 Main parameters:
 
-- `filter_mode: "project"`: apply ignore rules, exclude `.git`, and keep hidden files visible;
-- `filter_mode: "all"`: list every file;
+- `filter_mode: "ignore"` (default): respect plain `.ignore` files only;
+- `filter_mode: "all"`: disable plain `.ignore` filtering;
+- `output_mode: "paths"` (default): return one absolute path per line;
+- `output_mode: "details"`: return one compact JSON object per line with path, byte size, and a fixed nine-digit RFC 3339 UTC modification time;
 - `sort: "path"`: use a stable path order;
 - `sort: "modified"`: order files from newest to oldest;
 - `offset` / `limit`: page through the result set.
+
+`glob` never reads `.gitignore`, `.git/info/exclude`, or the user's global Git ignore, and it never hides `.git` automatically. Hidden and Git-internal files remain ordinary candidates; exclude unwanted trees explicitly with a negative pattern such as `!target/**` or `!.git/**`. The legacy value `filter_mode: "project"` is still accepted and behaves as `"ignore"`, but is no longer published in the tool schema. `grep` and `replace` keep their existing Git-ignore behavior.
 
 `grep` and `glob` render filename components that are unsafe to place directly in a line as reversible `~fastctx~b...~` or `~fastctx~w...~` escapes. Copy the whole component exactly into a later grep/glob call; do not decode or edit it.
 

@@ -65,13 +65,15 @@ pub struct ReadRequest {
     /// 1-32 text ranges in one call. Repeat a path for distinct ranges, each with its own
     /// offset/limit, and freely mix ranges from multiple files. Each entry behaves like its
     /// own single-file text request; results stay in request order. Mutually exclusive with
-    /// file_path and with the top-level offset/limit/encoding/pages/pdf_mode/view parameters.
+    /// file_path and with the top-level offset/encoding/pages/pdf_mode/view parameters.
     #[schemars(length(min = 1, max = 32))]
     pub files: Option<Vec<BatchReadEntry>>,
     /// The 1-based line number to start reading from. Use for paging through large files.
     #[schemars(range(min = 1))]
     pub offset: Option<usize>,
-    /// The number of lines to return. Omit to return as much as the output budget holds.
+    /// The number of lines to return. With files, this is the default for entries that omit
+    /// limit; an entry's own limit takes precedence. Otherwise, omit it to let the output budget
+    /// decide.
     #[schemars(range(min = 1))]
     pub limit: Option<usize>,
     /// Page range for PDF files, e.g. "1-5", "3", "10-20". Max 20 pages per call. Required in text mode for PDFs with more than 10 pages.
@@ -98,7 +100,8 @@ pub struct BatchReadEntry {
     /// The 1-based line number to start reading from.
     #[schemars(range(min = 1))]
     pub offset: Option<usize>,
-    /// Maximum lines to return from this range in this call. Omit to let the shared budget decide.
+    /// Maximum lines to return from this range in this call. Overrides the top-level limit when
+    /// both are present; omit it to inherit that default or let the shared budget decide.
     #[schemars(range(min = 1))]
     pub limit: Option<usize>,
     /// Known source encoding for this file, using the same labels as the top-level encoding parameter.
