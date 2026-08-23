@@ -721,6 +721,58 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
     })
 }
 
+/// How many times Unapply re-scans for managed processes before giving the remainder to the user.
+///
+/// One pass is no longer enough: an MCP session outlives its engine (R-30), so terminating a
+/// control center makes every proxy still connected to it start a replacement before it is itself
+/// terminated. The replacement holds the same binary image and would block the directory removal.
+const UNAPPLY_TERMINATION_SWEEPS: usize = 4;
+/// Time for a proxy's replacement engine to appear in the process table between two sweeps.
+const UNAPPLY_SWEEP_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Terminates every managed process, repeating until a scan comes back empty.
+fn terminate_managed_processes(plan: &UnapplyPlan) -> Result<usize, String> {
+    let mut terminated = 0usize;
+    let mut known = plan.running_processes.clone();
+    for sweep in 0..UNAPPLY_TERMINATION_SWEEPS {
+        if sweep > 0 {
+            std::thread::sleep(UNAPPLY_SWEEP_SETTLE);
+            known.clear();
+        }
+        for process in
+            processes::installed_processes(&plan.paths.fastctx_bin_dir).map_err(|error| {
+                format!(
+                    "Cannot refresh running FastCtx processes before removal; no host configuration was changed: {error}"
+                )
+            })?
+        {
+            if process.identity.pid != std::process::id()
+                && !known.iter().any(|other| other.identity == process.identity)
+            {
+                known.push(process);
+            }
+        }
+        if known.is_empty() {
+            break;
+        }
+        let mut failures = Vec::new();
+        for process in &known {
+            match processes::terminate_installed_process(process, &plan.paths.fastctx_bin_dir) {
+                Ok(TerminationOutcome::Terminated) => terminated += 1,
+                Ok(TerminationOutcome::NoLongerManaged) => {}
+                Err(error) => failures.push(error),
+            }
+        }
+        if !failures.is_empty() {
+            return Err(format!(
+                "Cannot terminate every running FastCtx process; no host configuration was changed. Stop the listed processes and retry Unapply: {}",
+                failures.join("; ")
+            ));
+        }
+    }
+    Ok(terminated)
+}
+
 /// Commits an existing Unapply plan; complete removal always deletes `~/.fastctx/`.
 pub fn commit_unapply(plan: UnapplyPlan) -> Result<OperationReceipt, String> {
     let mut admission = crate::shell::jobs::acquire_unapply_admission(&plan.paths)?;
@@ -728,35 +780,7 @@ pub fn commit_unapply(plan: UnapplyPlan) -> Result<OperationReceipt, String> {
     // Fence older servers while admission is locked so no job can appear after the kill scan.
     admission.advance_generation()?;
     let killed_jobs = crate::shell::jobs::kill_all_running(&plan.paths)?;
-    let mut running_processes = plan.running_processes.clone();
-    for process in processes::installed_processes(&plan.paths.fastctx_bin_dir).map_err(|error| {
-        format!(
-            "Cannot refresh running FastCtx processes before removal; no host configuration was changed: {error}"
-        )
-    })? {
-        if process.identity.pid != std::process::id()
-            && !running_processes
-                .iter()
-                .any(|known| known.identity == process.identity)
-        {
-            running_processes.push(process);
-        }
-    }
-    let mut terminated_processes = 0usize;
-    let mut termination_failures = Vec::new();
-    for process in &running_processes {
-        match processes::terminate_installed_process(process, &plan.paths.fastctx_bin_dir) {
-            Ok(TerminationOutcome::Terminated) => terminated_processes += 1,
-            Ok(TerminationOutcome::NoLongerManaged) => {}
-            Err(error) => termination_failures.push(error),
-        }
-    }
-    if !termination_failures.is_empty() {
-        return Err(format!(
-            "Cannot terminate every running FastCtx process; no host configuration was changed. Stop the listed processes and retry Unapply: {}",
-            termination_failures.join("; ")
-        ));
-    }
+    let terminated_processes = terminate_managed_processes(&plan)?;
     let changed_targets = plan
         .changes
         .iter()

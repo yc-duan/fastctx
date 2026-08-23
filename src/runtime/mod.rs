@@ -1,33 +1,43 @@
 //! Thin stdio proxy and the per-user, per-build FastCtx control center.
 
 pub(crate) mod activity;
+mod hosts;
+mod journal;
 mod local_ipc;
 mod protocol;
+mod session;
 #[cfg(windows)]
 mod windows_process;
 
 use crate::control::paths::ControlPaths;
 use crate::file_executor::GrepGlobExecutor;
+use crate::process_identity::ProcessIdentity;
 use crate::server::{FastCtxServer, ServerOptions, SharedRuntime};
 use crate::session::{SessionContext, SessionEnvironment};
 use fs2::FileExt;
+use hosts::HostRegistry;
 use local_ipc::{BoxedStream, Listener, LocalEndpoint};
 use rmcp::ServiceExt;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncWriteExt, split};
+use tokio::io::split;
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
-/// How long a proxy waits for the control center before falling back to a standalone server.
+pub(crate) use session::run_proxy_session;
+
+/// How long a proxy waits for the control center before falling back to an in-process engine.
 pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_RETRY: Duration = Duration::from_millis(20);
 const ACCEPT_RETRY: Duration = Duration::from_secs(1);
+/// How long a control center with nothing left to serve waits before exiting.
+///
+/// This timer only starts once every host that used the control center has exited, so in normal
+/// use it measures the gap between closing the last Codex window and reclaiming the runtime.
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60);
 const SERVICE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
@@ -37,6 +47,9 @@ const RESPONSE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long work in progress may keep running after its client stopped reading. Long enough for a
 /// finished handler to write its answer, short enough that nothing outlives the session by much.
 const INPUT_CLOSED_GRACE: Duration = Duration::from_millis(250);
+/// Buffer between the proxy and an in-process engine. Both directions are pumped by independent
+/// tasks on either side, so this only bounds how far ahead a writer may run.
+const IN_PROCESS_BUFFER_BYTES: usize = 256 * 1024;
 #[cfg(unix)]
 const MAX_UNIX_SOCKET_PATH_BYTES: usize = 100;
 
@@ -45,10 +58,11 @@ pub(crate) fn capture_proxy_environment() -> Result<SessionEnvironment, String> 
     SessionEnvironment::capture()
 }
 
-/// Connects to the matching control center or starts exactly one before MCP stdin is consumed.
+/// Connects to the matching control center or starts exactly one.
 pub(crate) async fn connect_or_start(
     options: ServerOptions,
     environment: &SessionEnvironment,
+    host: Option<ProcessIdentity>,
 ) -> Result<BoxedStream, String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?;
@@ -59,7 +73,7 @@ pub(crate) async fn connect_or_start(
     )?;
 
     if let Ok(mut stream) = local_ipc::connect(&endpoint).await {
-        establish(&mut stream, options, environment.clone()).await?;
+        establish(&mut stream, options, environment.clone(), host.clone()).await?;
         return Ok(stream);
     }
 
@@ -70,7 +84,7 @@ pub(crate) async fn connect_or_start(
     acquire_startup_lock(&startup_lock, &endpoint.startup_lock_path()).await?;
 
     if let Ok(mut stream) = local_ipc::connect(&endpoint).await {
-        establish(&mut stream, options, environment.clone()).await?;
+        establish(&mut stream, options, environment.clone(), host.clone()).await?;
         return Ok(stream);
     }
 
@@ -79,7 +93,7 @@ pub(crate) async fn connect_or_start(
     loop {
         match local_ipc::connect(&endpoint).await {
             Ok(mut stream) => {
-                establish(&mut stream, options, environment.clone()).await?;
+                establish(&mut stream, options, environment.clone(), host).await?;
                 return Ok(stream);
             }
             Err(_) if Instant::now() < deadline => {
@@ -94,13 +108,46 @@ pub(crate) async fn connect_or_start(
     }
 }
 
+/// Runs a control-center session inside the proxy itself.
+///
+/// This is the engine of last resort. It costs this session its own search executor instead of a
+/// shared one, which is exactly the cost the shared control center exists to avoid — but a session
+/// that cannot reach the shared runtime has only two remaining options, and losing the host's MCP
+/// transport is the worse one.
+async fn start_in_process(
+    options: ServerOptions,
+    environment: &SessionEnvironment,
+    host: Option<ProcessIdentity>,
+) -> Result<BoxedStream, String> {
+    let (proxy_side, engine_side) = tokio::io::duplex(IN_PROCESS_BUFFER_BYTES);
+    let state = HostState::new();
+    let connection = state
+        .activity
+        .try_connection()
+        .ok_or_else(|| "The in-process FastCtx engine refused its own session.".to_string())?;
+    tokio::spawn(serve_connection(
+        Box::new(engine_side) as BoxedStream,
+        state,
+        CancellationToken::new(),
+        connection,
+    ));
+    let mut stream = Box::new(proxy_side) as BoxedStream;
+    establish(&mut stream, options, environment.clone(), host).await?;
+    Ok(stream)
+}
+
 async fn establish(
     stream: &mut BoxedStream,
     options: ServerOptions,
     environment: SessionEnvironment,
+    host: Option<ProcessIdentity>,
 ) -> Result<(), String> {
     tokio::time::timeout(STARTUP_TIMEOUT, async {
-        protocol::write_handshake(stream, &protocol::Handshake::new(options, environment)).await?;
+        protocol::write_handshake(
+            stream,
+            &protocol::Handshake::new(options, environment, host),
+        )
+        .await?;
         protocol::read_handshake_response(stream).await
     })
     .await
@@ -295,6 +342,7 @@ struct HostState {
     runtime: OnceCell<Arc<SharedRuntime>>,
     control_paths: OnceCell<ControlPaths>,
     activity: Arc<activity::RuntimeActivity>,
+    hosts: Arc<HostRegistry>,
 }
 
 impl HostState {
@@ -303,6 +351,7 @@ impl HostState {
             runtime: OnceCell::new(),
             control_paths: OnceCell::new(),
             activity: activity::RuntimeActivity::new(),
+            hosts: Arc::new(HostRegistry::new()),
         })
     }
 
@@ -523,6 +572,9 @@ async fn serve_connection(
             return;
         }
     };
+    // Recorded before the session runs, so a host that connects once keeps the runtime warm for
+    // every later conversation it opens, not only while this connection lasts.
+    state.hosts.remember(handshake.host);
     let runtime = match state.runtime_for(&session).await {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -609,6 +661,17 @@ async fn monitor_idle(
             scan_failing_since = None;
             continue;
         }
+        // A host that is still running can open another conversation at any moment, and a host
+        // whose stdio MCP server has died never gets it back. Staying resident is the cheap side
+        // of that trade, so the idle timer does not even start while one of them is alive.
+        let hosts = Arc::clone(&state.hosts);
+        let hosts_alive = tokio::task::spawn_blocking(move || hosts.prune_and_check())
+            .await
+            .unwrap_or(true);
+        if hosts_alive {
+            scan_failing_since = None;
+            continue;
+        }
         let Some(paths) = state.control_paths.get().cloned() else {
             if candidate.send(()).await.is_err() {
                 return;
@@ -652,177 +715,6 @@ async fn monitor_idle(
             }
         }
     }
-}
-
-/// Why a proxy session stopped pumping bytes.
-enum ProxyStop {
-    /// stdin reached EOF. No further request can arrive, but answers already owed are still due.
-    InputClosed,
-    /// The session ends now, with nothing left to deliver.
-    Immediate,
-}
-
-/// Pumps MCP bytes after the handshake. Any post-establishment failure exits without fallback.
-pub(crate) async fn forward_stdio(
-    stream: BoxedStream,
-    parent: Option<Option<crate::process_identity::ProcessIdentity>>,
-) -> Result<ExitCode, String> {
-    let stdin = crate::stdio_transport::DetachedStdin::start()?;
-    let stdin_eof = stdin.eof_token();
-    let stdin_error = stdin.read_error_receiver();
-    let (mut reader, mut writer) = split(stream);
-    let mut stdout = tokio::io::stdout();
-    let forwarded = Arc::new(AtomicBool::new(false));
-    let upload_forwarded = Arc::clone(&forwarded);
-    let mut upload = tokio::spawn(async move {
-        // The end-of-input frame, not the socket state, is what tells the control center that no
-        // further request is coming; closing the write direction only releases it where the
-        // transport supports that.
-        let result =
-            protocol::forward_requests(&mut { stdin }, &mut writer, &upload_forwarded).await;
-        let shutdown = writer.shutdown().await;
-        result.and(shutdown)
-    });
-    let mut download = tokio::spawn(async move {
-        tokio::io::copy(&mut reader, &mut stdout).await?;
-        stdout.flush().await
-    });
-
-    let monitor_stop = Arc::new(AtomicBool::new(false));
-    let (parent_exit, monitor) = parent_exit_monitor(parent, Arc::clone(&monitor_stop));
-    tokio::pin!(parent_exit);
-    let stdin_error_wait = wait_for_stdin_error(stdin_error.clone());
-    tokio::pin!(stdin_error_wait);
-
-    let stop = tokio::select! {
-        biased;
-        error = &mut stdin_error_wait => Err(error),
-        () = stdin_eof.cancelled() => Ok(ProxyStop::InputClosed),
-        () = &mut parent_exit => Ok(ProxyStop::Immediate),
-        () = wait_for_termination_signal() => Ok(ProxyStop::Immediate),
-        result = &mut upload => match stdin_error.borrow().clone() {
-            Some(error) => Err(error),
-            None => match result {
-                Ok(Ok(_)) => Ok(ProxyStop::InputClosed),
-                Ok(Err(error)) => Err(format!("Cannot forward MCP stdin to the FastCtx control center: {error}")),
-                Err(error) => Err(format!("The FastCtx control-center input task failed: {error}")),
-            }
-        },
-        result = &mut download => match result {
-            Ok(Ok(_)) => Err(
-                "The FastCtx control-center connection closed unexpectedly; the in-flight request was not replayed."
-                    .to_string(),
-            ),
-            Ok(Err(error)) => Err(format!("The FastCtx control-center connection failed: {error}")),
-            Err(error) => Err(format!("The FastCtx control-center output task failed: {error}")),
-        },
-    };
-
-    let result = match stop {
-        Err(error) => Err(error),
-        Ok(ProxyStop::Immediate) => Ok(()),
-        // Nothing was ever asked, so nothing can be owed; waiting would only stall a client that
-        // opened the transport and changed its mind.
-        Ok(ProxyStop::InputClosed) if !forwarded.load(Ordering::Acquire) => Ok(()),
-        Ok(ProxyStop::InputClosed) => drain_owed_answers(&mut download, &mut parent_exit).await,
-    };
-    upload.abort();
-    download.abort();
-    monitor_stop.store(true, Ordering::Release);
-    if let Some(monitor) = monitor {
-        let _ = monitor.await;
-    }
-    result?;
-    Ok(ExitCode::SUCCESS)
-}
-
-/// Delivers the answers the control center still owes once stdin has closed.
-///
-/// A stdio proxy that abandoned the connection at EOF would report success while silently
-/// discarding responses to requests it had already forwarded — `initialize | tools/list | close`
-/// came back empty. Unix half-closes the socket, so the control center sees the end of input and
-/// closes as soon as it is done; Windows named pipes have no half-close, so sessions that end this
-/// way wait out the bound instead. Codex ends MCP children by signal rather than by closing stdin,
-/// so only scripted clients and diagnostics ever pay it.
-async fn drain_owed_answers(
-    download: &mut tokio::task::JoinHandle<std::io::Result<()>>,
-    parent_exit: &mut (impl std::future::Future<Output = ()> + Unpin),
-) -> Result<(), String> {
-    tokio::select! {
-        biased;
-        () = parent_exit => Ok(()),
-        () = wait_for_termination_signal() => Ok(()),
-        drained = tokio::time::timeout(RESPONSE_DRAIN_TIMEOUT, download) => match drained {
-            // After EOF the control center closing the connection is the clean end of a session.
-            Ok(Ok(Ok(()))) => Ok(()),
-            Ok(Ok(Err(error))) => Err(format!("The FastCtx control-center connection failed: {error}")),
-            Ok(Err(error)) => Err(format!("The FastCtx control-center output task failed: {error}")),
-            // A control center still busy with cancelled work does not hold a closing session open.
-            Err(_) => Ok(()),
-        },
-    }
-}
-
-type ParentExitFuture = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
-type ParentExitMonitor = (ParentExitFuture, Option<tokio::task::JoinHandle<()>>);
-
-fn parent_exit_monitor(
-    parent: Option<Option<crate::process_identity::ProcessIdentity>>,
-    stop: Arc<AtomicBool>,
-) -> ParentExitMonitor {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    let monitor = match parent {
-        None => None,
-        Some(None) => {
-            let _ = sender.send(());
-            return (Box::pin(async {}), None);
-        }
-        Some(Some(identity)) => Some(tokio::task::spawn_blocking(move || {
-            if crate::process_identity::wait_for_identity_exit_until(&identity, &stop) {
-                let _ = sender.send(());
-            }
-        })),
-    };
-    let future = async move {
-        match receiver.await {
-            Ok(()) => {}
-            Err(_) => std::future::pending::<()>().await,
-        }
-    };
-    (Box::pin(future), monitor)
-}
-
-async fn wait_for_stdin_error(
-    mut receiver: tokio::sync::watch::Receiver<Option<String>>,
-) -> String {
-    loop {
-        if let Some(error) = receiver.borrow().clone() {
-            return error;
-        }
-        if receiver.changed().await.is_err() {
-            return std::future::pending::<String>().await;
-        }
-    }
-}
-
-#[cfg(unix)]
-async fn wait_for_termination_signal() {
-    use tokio::signal::unix::{SignalKind, signal};
-    let Ok(mut terminate) = signal(SignalKind::terminate()) else {
-        return std::future::pending::<()>().await;
-    };
-    let Ok(mut interrupt) = signal(SignalKind::interrupt()) else {
-        return std::future::pending::<()>().await;
-    };
-    tokio::select! {
-        _ = terminate.recv() => {}
-        _ = interrupt.recv() => {}
-    }
-}
-
-#[cfg(not(unix))]
-async fn wait_for_termination_signal() {
-    std::future::pending::<()>().await
 }
 
 #[cfg(test)]

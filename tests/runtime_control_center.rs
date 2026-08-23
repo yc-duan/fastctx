@@ -448,7 +448,7 @@ fn build_id_isolation_keeps_old_and_new_control_centers_independent() {
 }
 
 #[test]
-fn control_center_crash_rebuilds_once_without_replaying_an_inflight_request() {
+fn a_control_center_crash_keeps_the_session_alive_without_replaying_an_inflight_request() {
     let _serial = runtime_guard();
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
@@ -461,8 +461,8 @@ fn control_center_crash_rebuilds_once_without_replaying_an_inflight_request() {
         shell_quote(&normalized(&counter)),
         shell_quote(&normalized(&counter))
     );
-    let mut first = McpSession::start(server_command(&home, &workspace, &event_log));
-    first.begin_call(
+    let mut session = McpSession::start(server_command(&home, &workspace, &event_log));
+    let inflight = session.begin_call(
         "run",
         serde_json::json!({
             "command": &command_text,
@@ -471,22 +471,18 @@ fn control_center_crash_rebuilds_once_without_replaying_an_inflight_request() {
         }),
     );
     wait_for_text(&counter, "1", PROCESS_DEADLINE);
-    assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "1");
     let first_host = wait_for_host_starts(&event_log, 1, PROCESS_DEADLINE)[0];
+
     terminate_process(first_host);
     wait_for_process_exit(first_host, PROCESS_DEADLINE);
-    let (status, stderr) = first.wait_for_exit_with_stderr();
-    assert!(
-        !status.success(),
-        "proxy exited successfully after host crash"
-    );
-    assert!(
-        stderr.contains("FastCtx control-center")
-            && (stderr.contains("closed unexpectedly") || stderr.contains("connection failed")),
-        "missing explicit control-center failure: {stderr}"
-    );
 
-    let mut replacement = McpSession::start(server_command(&home, &workspace, &event_log));
+    // The host never restarts a stdio MCP server it lost, so the session has to outlive its engine.
+    let answer = session.await_response_with_timeout(inflight, PROCESS_DEADLINE);
+    let failure = answer["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        failure.contains("control center"),
+        "an interrupted call must be closed out explicitly: {answer}"
+    );
     let hosts = wait_for_host_starts(&event_log, 2, PROCESS_DEADLINE);
     assert_ne!(hosts[0], hosts[1]);
     assert_eq!(
@@ -494,13 +490,15 @@ fn control_center_crash_rebuilds_once_without_replaying_an_inflight_request() {
         "1",
         "the proxy must not replay a completed side-effecting request"
     );
-    let healthy = replacement.call(
+    let healthy = session.call_with_timeout(
         "run",
         serde_json::json!({"command": "printf rebuilt", "login_shell": false}),
+        PROCESS_DEADLINE,
     );
-    assert!(mcp_text(&healthy).starts_with("rebuilt"));
+    assert!(mcp_text(&healthy).starts_with("rebuilt"), "{healthy}");
 
-    let _ = replacement.kill_proxy();
+    let status = session.close();
+    assert!(status.success(), "stdin EOF must remain a clean proxy exit");
     terminate_process(hosts[1]);
 }
 

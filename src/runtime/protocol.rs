@@ -1,12 +1,12 @@
 //! Length-delimited control-center handshake, framed requests, and a raw MCP answer stream.
 
+use crate::process_identity::ProcessIdentity;
 use crate::server::ServerOptions;
 use crate::session::SessionEnvironment;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
 const MAX_HANDSHAKE_BYTES: usize = 16 * 1024 * 1024;
 /// Largest payload the proxy places in one request frame, and the buffer the control center reads
 /// it back into.
@@ -17,14 +17,22 @@ pub(crate) struct Handshake {
     protocol_version: u32,
     pub(crate) options: ServerOptions,
     pub(crate) environment: SessionEnvironment,
+    /// The host application this session belongs to, when the proxy could identify it. The control
+    /// center keeps its runtime warm while any named host is still running.
+    pub(crate) host: Option<ProcessIdentity>,
 }
 
 impl Handshake {
-    pub(crate) fn new(options: ServerOptions, environment: SessionEnvironment) -> Self {
+    pub(crate) fn new(
+        options: ServerOptions,
+        environment: SessionEnvironment,
+        host: Option<ProcessIdentity>,
+    ) -> Self {
         Self {
             protocol_version: PROTOCOL_VERSION,
             options,
             environment,
+            host,
         }
     }
 
@@ -99,8 +107,7 @@ pub(crate) async fn read_handshake_response(
     }
 }
 
-/// Streams MCP stdin to the control center as length-prefixed frames, ending with a zero-length
-/// frame once stdin closes.
+/// Sends one chunk of MCP request bytes to the control center as a length-prefixed frame.
 ///
 /// A raw byte stream cannot say "no more requests" on every platform: Unix half-closes a socket,
 /// Windows named pipes have no equivalent. Without that mark the control center holds a finished
@@ -109,26 +116,50 @@ pub(crate) async fn read_handshake_response(
 /// shut down promptly. The explicit end-of-input frame removes the guess. Both ends always come
 /// from the same build, because the endpoint name carries the build id, so the framing needs no
 /// negotiation.
-/// `forwarded` records that at least one request byte reached the control center, which is how the
-/// caller tells "answers are owed" from "the client never asked anything".
-pub(crate) async fn forward_requests(
-    input: &mut (impl AsyncRead + Unpin),
+pub(crate) async fn write_request_frame(
     output: &mut (impl AsyncWrite + Unpin),
-    forwarded: &AtomicBool,
-) -> std::io::Result<()> {
-    let mut buffer = vec![0_u8; MAX_REQUEST_FRAME_BYTES];
-    loop {
-        let read = input.read(&mut buffer).await?;
+    payload: &[u8],
+) -> Result<(), FrameWriteFailure> {
+    let mut reached_engine = false;
+    for chunk in payload.chunks(MAX_REQUEST_FRAME_BYTES) {
         let length =
-            u32::try_from(read).expect("a single read never exceeds the request frame buffer");
-        output.write_all(&length.to_be_bytes()).await?;
-        if read == 0 {
-            return output.flush().await;
+            u32::try_from(chunk.len()).expect("a request frame never exceeds the frame size limit");
+        if let Err(error) = output.write_all(&length.to_be_bytes()).await {
+            return Err(FrameWriteFailure {
+                reached_engine,
+                error,
+            });
         }
-        output.write_all(&buffer[..read]).await?;
-        forwarded.store(true, Ordering::Release);
-        output.flush().await?;
+        if let Err(error) = output.write_all(chunk).await {
+            // The length prefix landed, so the engine saw part of this payload.
+            return Err(FrameWriteFailure {
+                reached_engine: true,
+                error,
+            });
+        }
+        reached_engine = true;
     }
+    output.flush().await.map_err(|error| FrameWriteFailure {
+        reached_engine,
+        error,
+    })
+}
+
+/// A frame write that failed, and whether any of its bytes reached the engine.
+///
+/// The distinction is what lets a closed-out call say "nothing ran" instead of the weaker "this
+/// may or may not have finished", which matters most for the calls that have side effects.
+pub(crate) struct FrameWriteFailure {
+    pub(crate) reached_engine: bool,
+    pub(crate) error: std::io::Error,
+}
+
+/// Marks the end of input, which is what makes the control center stop expecting requests.
+pub(crate) async fn write_end_of_input(
+    output: &mut (impl AsyncWrite + Unpin),
+) -> std::io::Result<()> {
+    output.write_all(&0_u32.to_be_bytes()).await?;
+    output.flush().await
 }
 
 /// Reassembles framed requests into the plain byte stream the MCP server reads.
@@ -246,6 +277,7 @@ mod tests {
                 std::env::current_dir().unwrap(),
                 vec![(OsString::from("PATH"), OsString::from("sentinel"))],
             ),
+            None,
         );
         let client_task = tokio::spawn(async move {
             write_handshake(&mut client, &handshake).await.unwrap();

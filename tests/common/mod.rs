@@ -236,7 +236,7 @@ impl McpSession {
         self.await_response_with_timeout(id, MCP_RESPONSE_TIMEOUT)
     }
 
-    fn await_response_with_timeout(&mut self, id: i64, timeout: Duration) -> Value {
+    pub fn await_response_with_timeout(&mut self, id: i64, timeout: Duration) -> Value {
         if let Some(response) = self.pending_responses.remove(&id) {
             return response;
         }
