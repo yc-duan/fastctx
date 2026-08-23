@@ -117,7 +117,7 @@ fastctx unapply --yes
 
 ### Tool limits and settings reset
 
-grep/glob uses automatic parallelism by default: the operating system's available parallelism, capped at 16. In **Config → Search**, choose a preset with ←/→ or press Enter and type `auto` or any integer in the displayed `1..=maximum` range. The setting is loaded when the shared control center starts, takes effect after that control center restarts, and does not require reconnecting.
+grep/glob uses automatic parallelism by default: the operating system's available parallelism, capped at 16. In **Config → Search**, choose a preset with ←/→ or press Enter and type `auto` or any integer in the displayed `1..=maximum` range. The setting is loaded when the shared control center starts and takes effect after that control center restarts, which happens once every Codex process using it has exited. Reconnecting is not required.
 
 The same setting can be written manually in `~/.fastctx/config.toml`:
 
