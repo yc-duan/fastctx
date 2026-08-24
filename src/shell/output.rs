@@ -77,13 +77,13 @@ pub(crate) fn validate_run_budget(timeout_ms: u64) -> Result<TokenBudget, String
             i32::MIN
         ),
         format!(
-            "(Partial: timed out after {timeout_ms} ms and the process tree was killed; no output captured. Increase timeout_ms or use run_background.)"
+            "(Killed: timed out after {timeout_ms} ms and the process tree was killed; no output captured. Re-run with a larger timeout_ms or use run_background.)"
         ),
         format!(
-            "(Partial: timed out after {timeout_ms} ms and the process tree was killed; {maximum} lines captured. Increase timeout_ms or use run_background.)"
+            "(Killed: timed out after {timeout_ms} ms and the process tree was killed; {maximum} lines captured. Re-run with a larger timeout_ms or use run_background.)"
         ),
         format!(
-            "(Partial: timed out after {timeout_ms} ms and the process tree was killed; showing the first 0 and last 0 of {maximum} captured lines. Increase timeout_ms or use run_background.)"
+            "(Killed: timed out after {timeout_ms} ms and the process tree was killed; showing the first 0 and last 0 of {maximum} captured lines. Re-run with a larger timeout_ms or use run_background.)"
         ),
         ring_loss,
     ];
@@ -208,10 +208,10 @@ fn full_terminal(
 ) -> String {
     match timeout_ms {
         Some(timeout) if total == 0 => format!(
-            "(Partial: timed out after {timeout} ms and the process tree was killed; no output captured. Increase timeout_ms or use run_background.)"
+            "(Killed: timed out after {timeout} ms and the process tree was killed; no output captured. Re-run with a larger timeout_ms or use run_background.)"
         ),
         Some(timeout) => format!(
-            "(Partial: timed out after {timeout} ms and the process tree was killed; {total} {} captured. Increase timeout_ms or use run_background.)",
+            "(Killed: timed out after {timeout} ms and the process tree was killed; {total} {} captured. Re-run with a larger timeout_ms or use run_background.)",
             plural(total, "line", "lines")
         ),
         None if total == 0 => format!("(Complete: exited {exit_code}; no output.)"),
@@ -238,7 +238,7 @@ fn window_terminal(
             "(Partial: showing the first {first} and last {last} of {total} lines; exited {exit_code}.)"
         ),
         Some(timeout) => format!(
-            "(Partial: timed out after {timeout} ms and the process tree was killed; showing the first {first} and last {last} of {total} captured lines. Increase timeout_ms or use run_background.)"
+            "(Killed: timed out after {timeout} ms and the process tree was killed; showing the first {first} and last {last} of {total} captured lines. Re-run with a larger timeout_ms or use run_background.)"
         ),
     }
 }

@@ -124,7 +124,7 @@ fn independent_o200k_oracle_keeps_high_entropy_outputs_below_the_budget() {
         "{batch_output}"
     );
     let pending_json = batch_terminal
-        .strip_prefix("(Partial: 0 of 3 entries processed. Continue with files=")
+        .strip_prefix("(Partial: 1 entry in progress, 3 requested. Continue with files=")
         .and_then(|terminal| terminal.strip_suffix(".)"))
         .unwrap_or_else(|| panic!("unexpected batch terminal: {batch_terminal}"));
     assert!(
@@ -138,6 +138,8 @@ fn independent_o200k_oracle_keeps_high_entropy_outputs_below_the_budget() {
     assert_eq!(pending.len(), 3);
     let next_offset = pending[0]["offset"].as_u64().unwrap() as usize;
     assert!(next_offset > 1);
+    // The continuation's limit counts the requested window (50 lines starting at
+    // offset 1), not the file, and is dropped once the window is exhausted.
     assert_eq!(pending[0]["limit"], 50 - (next_offset - 1));
     assert_eq!(pending[0]["encoding"], "utf-8");
     assert_eq!(pending[1]["path"], normalized(&batch_second));

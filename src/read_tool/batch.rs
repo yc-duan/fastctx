@@ -148,6 +148,14 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
         .map(Some)
         .collect::<Vec<_>>();
     let mut segments = Vec::new();
+    // How many leading entries this response has fully settled (content shown in
+    // full or an inline problem reported). A budget break stops the loop, so every
+    // entry after the break was never attempted and must not be counted against
+    // the ones already delivered (#32).
+    let mut delivered = 0_usize;
+    // The index whose content is only partially shown, if any; it stays in the
+    // continuation array but counts as processed for the tally.
+    let mut partially_shown = false;
 
     for (index, entry) in entries.iter().enumerate() {
         let prepared = prepare_entry(entry, budget.value);
@@ -156,7 +164,15 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
                 let segment = format!("=== {} ===\n{message}", prepared.path);
                 let mut proposed = progress.clone();
                 proposed[index] = None;
-                if !candidate_fits(&segments, &segment, &proposed, total, budget.value) {
+                if !candidate_fits(
+                    &segments,
+                    &segment,
+                    &proposed,
+                    total,
+                    delivered,
+                    partially_shown,
+                    budget.value,
+                ) {
                     if segments.is_empty() {
                         return budget_too_small(budget);
                     }
@@ -164,6 +180,7 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
                 }
                 segments.push(segment);
                 progress = proposed;
+                delivered += 1;
             }
             PreparedOutcome::Content(content) => {
                 let shown = largest_fitting_prefix(
@@ -187,13 +204,21 @@ fn pack_entries(entries: Vec<BatchReadEntry>, budget: TokenBudget) -> ToolRespon
                 progress[index] = proposed;
                 segments.push(segment);
                 if shown < content.lines.len() || !content.slice_complete {
+                    partially_shown = true;
                     break;
                 }
+                delivered += 1;
             }
         }
     }
 
-    ToolResponse::text(render_response(&segments, &progress, total))
+    ToolResponse::text(render_response(
+        &segments,
+        &progress,
+        total,
+        delivered,
+        partially_shown,
+    ))
 }
 
 fn prepare_entry(entry: &BatchReadEntry, collection_budget: usize) -> PreparedEntry {
@@ -299,7 +324,17 @@ fn largest_fitting_prefix(
         let mut proposed = progress.to_vec();
         proposed[index] = progress_after(entry, content, shown);
         let segment = content_segment(path, content, shown);
-        candidate_fits(segments, &segment, &proposed, total, budget)
+        // During the binary search this entry is by definition the partially
+        // shown one; the delivered count comes from the caller via `segments`.
+        candidate_fits(
+            segments,
+            &segment,
+            &proposed,
+            total,
+            segments.len(),
+            true,
+            budget,
+        )
     };
 
     // Probing the whole slice first is what makes the search sound: dropping the last line
@@ -338,13 +373,20 @@ fn progress_after(
     if last >= content.total_lines {
         return None;
     }
+    // The continuation's limit counts the requested window, not the file: the next
+    // call should read exactly the lines this request promised but did not show.
+    // A limit that already ran past EOF carries no remainder, so it is dropped —
+    // an explicit cap of "whatever is left" is what an omitted limit already means.
+    let remaining_lines = content.total_lines - last;
+    let limit = entry.limit.and_then(|limit| {
+        let requested_end = content.first.saturating_add(limit.saturating_sub(1));
+        let value = requested_end.min(content.total_lines) - last;
+        (value > 0 && value < remaining_lines).then_some(value)
+    });
     Some(ContinuationEntry {
         path: entry.path.clone(),
         offset: Some(last.saturating_add(1)),
-        limit: entry
-            .limit
-            .and_then(|limit| limit.checked_sub(shown))
-            .filter(|remaining| *remaining > 0),
+        limit,
         encoding: entry.encoding.clone(),
     })
 }
@@ -373,19 +415,29 @@ fn candidate_fits(
     candidate: &str,
     progress: &[Option<ContinuationEntry>],
     total: usize,
+    delivered: usize,
+    partially_shown: bool,
     budget: usize,
 ) -> bool {
     let mut proposed = segments.to_vec();
     proposed.push(candidate.to_string());
-    estimate_tokens(&render_response(&proposed, progress, total)) <= budget
+    estimate_tokens(&render_response(
+        &proposed,
+        progress,
+        total,
+        delivered,
+        partially_shown,
+    )) <= budget
 }
 
 fn render_response(
     segments: &[String],
     progress: &[Option<ContinuationEntry>],
     total: usize,
+    delivered: usize,
+    partially_shown: bool,
 ) -> String {
-    let terminal = batch_terminal(progress, total);
+    let terminal = batch_terminal(progress, total, delivered, partially_shown);
     if segments.is_empty() {
         terminal
     } else {
@@ -393,15 +445,32 @@ fn render_response(
     }
 }
 
-fn batch_terminal(progress: &[Option<ContinuationEntry>], total: usize) -> String {
+fn batch_terminal(
+    progress: &[Option<ContinuationEntry>],
+    total: usize,
+    delivered: usize,
+    partially_shown: bool,
+) -> String {
     let pending = progress.iter().flatten().collect::<Vec<_>>();
     if pending.is_empty() {
         let noun = if total == 1 { "entry" } else { "entries" };
         return format!("(Complete: {total} {noun} processed.)");
     }
+    // `delivered` counts fully settled entries; a partially shown entry counts as
+    // processed too, because its continuation carries the exact resume point. The
+    // remainder of `total` was never attempted — the budget broke before it — so
+    // saying "0 of N" for them would tell the model its delivered content did not
+    // happen (#32).
+    let processed = if partially_shown {
+        delivered + 1
+    } else {
+        delivered
+    };
+    let noun = if processed == 1 { "entry" } else { "entries" };
     let json = serde_json::to_string(&pending).expect("continuation entries serialize");
-    let processed = total - pending.len();
-    format!("(Partial: {processed} of {total} entries processed. Continue with files={json}.)")
+    format!(
+        "(Partial: {processed} {noun} in progress, {total} requested. Continue with files={json}.)"
+    )
 }
 
 fn budget_too_small(budget: TokenBudget) -> ToolResponse {
