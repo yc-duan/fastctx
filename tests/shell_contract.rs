@@ -184,7 +184,7 @@ fn foreground_timeout_kills_descendants_and_keeps_captured_output() {
     assert_eq!(response["result"]["isError"], false);
     assert_eq!(
         mcp_text(&response),
-        "started\n\n(Partial: timed out after 2000 ms and the process tree was killed; 1 line captured. Increase timeout_ms or use run_background.)"
+        "started\n\n(Killed: timed out after 2000 ms and the process tree was killed; 1 line captured. Re-run with a larger timeout_ms or use run_background.)"
     );
     assert!(
         spawned.exists(),
