@@ -219,6 +219,7 @@ fn guarded_response_metadata(response: &ToolResponse) -> String {
                 let line = line.trim();
                 line.starts_with("(Complete:")
                     || line.starts_with("(Partial:")
+                    || line.starts_with("(Killed:")
                     || line.starts_with("Script running with cell ID")
             })
             .map(str::trim)
