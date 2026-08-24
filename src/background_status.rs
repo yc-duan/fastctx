@@ -169,7 +169,10 @@ fn decorate_response(response: ToolResponse, outcome: ResponseReservationOutcome
 fn insert_status_line(text: &mut String, status: &str) {
     let terminal_start = text.rfind('\n').map_or(0, |index| index.saturating_add(1));
     let last = &text[terminal_start..];
-    if last.starts_with("(Complete:") || last.starts_with("(Partial:") {
+    if last.starts_with("(Complete:")
+        || last.starts_with("(Partial:")
+        || last.starts_with("(Killed:")
+    {
         if terminal_start == 0 {
             *text = format!("{status}\n{text}");
         } else {
