@@ -270,7 +270,7 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
             "inspect_local_file.\n",
             "Default timeout 120000 ms, ceiling 240000 — start anything that may outlast\n",
             "it with run_background. If output looks garbled (U+FFFD), pass encoding\n",
-            "(e.g. \"gbk\"). The last line states Complete or Partial."
+            "(e.g. \"gbk\"). The last line states Complete, Partial, or Killed."
         ))
     );
     assert_eq!(run.input_schema["required"], serde_json::json!(["command"]));
