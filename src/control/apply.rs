@@ -723,7 +723,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
 
 /// How many times Unapply re-scans for managed processes before giving the remainder to the user.
 ///
-/// One pass is no longer enough: an MCP session outlives its engine (R-30), so terminating a
+/// One pass is no longer enough: an MCP session outlives its engine, so terminating a
 /// control center makes every proxy still connected to it start a replacement before it is itself
 /// terminated. The replacement holds the same binary image and would block the directory removal.
 const UNAPPLY_TERMINATION_SWEEPS: usize = 4;

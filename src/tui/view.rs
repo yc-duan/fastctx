@@ -675,7 +675,7 @@ fn main_menu_label(app: &App, index: usize, label: &str) -> String {
 
 /// One line naming the connection to the host, shared by the main menu and the connect page so
 /// the two can never disagree about what "connected" means. The symbol carries the state on its
-/// own because monochrome terminals have no colour to read (R-22).
+/// own because monochrome terminals have no colour to read.
 fn link_status_line(app: &App) -> Line<'static> {
     let messages = app.messages();
     let (symbol, text, colour) = match app.link_state {
