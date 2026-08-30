@@ -304,33 +304,60 @@ fn codex_apply_and_disconnect_preserve_unowned_same_name_state() {
     assert_success(&removed);
     assert_eq!(std::fs::read(codex.join("config.toml")).unwrap(), original);
 
-    let removed_namespace = tempfile::tempdir().unwrap();
-    let codex = removed_namespace.path().join(".codex");
-    std::fs::create_dir_all(&codex).unwrap();
-    std::fs::write(
-        codex.join("config.toml"),
-        "[features.code_mode]\ndirect_only_tool_namespaces = ['user', 'mcp__fastctx']\n",
-    )
-    .unwrap();
-    let applied = isolated_command(removed_namespace.path())
-        .args(["apply", "--yes"])
-        .output()
+    for target_only in [false, true] {
+        let removed_namespace = tempfile::tempdir().unwrap();
+        let codex = removed_namespace.path().join(".codex");
+        std::fs::create_dir_all(&codex).unwrap();
+        std::fs::write(
+            codex.join("config.toml"),
+            "[features.code_mode]\ndirect_only_tool_namespaces = ['user', 'mcp__fastctx']\n",
+        )
         .unwrap();
-    assert_success(&applied);
-    let config_path = codex.join("config.toml");
-    let config = std::fs::read_to_string(&config_path).unwrap();
-    let without_unowned_namespace = config.replace("'user', 'mcp__fastctx'", "'user'");
-    assert_ne!(config, without_unowned_namespace);
-    std::fs::write(&config_path, &without_unowned_namespace).unwrap();
-    let removed = isolated_command(removed_namespace.path())
+        let applied = isolated_command(removed_namespace.path())
+            .args(["apply", "--yes"])
+            .output()
+            .unwrap();
+        assert_success(&applied);
+        let config_path = codex.join("config.toml");
+        let config = std::fs::read_to_string(&config_path).unwrap();
+        let without_unowned_namespace = config.replace("'user', 'mcp__fastctx'", "'user'");
+        assert_ne!(config, without_unowned_namespace);
+        std::fs::write(&config_path, &without_unowned_namespace).unwrap();
+        let mut command = isolated_command(removed_namespace.path());
+        command.arg("unapply");
+        if target_only {
+            command.args(["--target", "codex"]);
+        }
+        let removed = command.arg("--yes").output().unwrap();
+        assert_success(&removed);
+        let config = std::fs::read_to_string(config_path).unwrap();
+        assert!(config.contains("direct_only_tool_namespaces = ['user']"));
+        assert!(!config.contains("mcp_servers.fastctx"));
+        assert!(!config.contains("mcp__fastctx"));
+    }
+
+    let no_receipt = tempfile::tempdir().unwrap();
+    let codex = no_receipt.path().join(".codex");
+    std::fs::create_dir_all(&codex).unwrap();
+    let invalid_config = b"\xffuser-owned Codex config\n";
+    let invalid_guidance = b"\xfeuser-owned Codex guidance\n";
+    std::fs::write(codex.join("config.toml"), invalid_config).unwrap();
+    std::fs::write(codex.join("AGENTS.md"), invalid_guidance).unwrap();
+    write_shell_settings(no_receipt.path(), false);
+    let removed = isolated_command(no_receipt.path())
         .args(["unapply", "--yes"])
         .output()
         .unwrap();
     assert_success(&removed);
-    let config = std::fs::read_to_string(config_path).unwrap();
-    assert!(config.contains("direct_only_tool_namespaces = ['user']"));
-    assert!(!config.contains("mcp_servers.fastctx"));
-    assert!(!config.contains("mcp__fastctx"));
+    assert_eq!(
+        std::fs::read(codex.join("config.toml")).unwrap(),
+        invalid_config
+    );
+    assert_eq!(
+        std::fs::read(codex.join("AGENTS.md")).unwrap(),
+        invalid_guidance
+    );
+    assert!(!no_receipt.path().join(".fastctx").exists());
 
     for conflicting in [
         "[mcp_servers.fastctx]\ncommand = 'user-owned'\n",
