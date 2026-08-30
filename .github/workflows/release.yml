@@ -376,7 +376,7 @@ jobs:
       - name: Retain npm packages for manual publishing
         uses: actions/upload-artifact@v4
         with:
-          name: npm-tarballs-${{ github.ref_name }}
+          name: npm-tarballs-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/npm/*.tgz
           if-no-files-found: error
           retention-days: 90
@@ -447,7 +447,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: npm-tarballs-${{ github.ref_name }}
+          name: npm-tarballs-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/npm
       - uses: actions/setup-node@v6
         with:
