@@ -107,7 +107,7 @@ pub(crate) fn global_token_budget() -> Result<TokenBudget, String> {
 
 pub(crate) fn budget_too_small_message(budget: TokenBudget) -> String {
     format!(
-        "{}={} is too small to return the required response head note. Increase it and retry.",
+        "{}={} is too small to return the required response head note. That budget is fixed for this session; retrying cannot raise it.",
         budget.variable, budget.value
     )
 }

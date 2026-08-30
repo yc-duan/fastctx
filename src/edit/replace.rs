@@ -938,7 +938,7 @@ fn render_report(
             return render_report(groups, base, &[], expanded.value, false);
         }
         ToolResponse::error(format!(
-            "FASTCTX_TOKEN_BUDGET={budget} is too small to return the replace head note. Increase it and retry."
+            "FASTCTX_TOKEN_BUDGET={budget} is too small to return the replace head note. That budget is fixed for this session; retrying cannot raise it."
         ))
     }
 }

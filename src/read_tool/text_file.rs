@@ -207,7 +207,7 @@ impl LineCollector {
             let shown = self.rendered.len();
             if shown == 0 && (self.stopped_early || self.storage_saturated) {
                 return ToolResponse::error(format!(
-                    "{}={} is too small to return the response head note and one content line. Increase it and retry.",
+                    "{}={} is too small to return the response head note and one content line. That budget is fixed for this session; retrying cannot raise it.",
                     budget.variable, budget.value
                 ));
             }
@@ -235,7 +235,7 @@ impl LineCollector {
             }
             if self.rendered.pop().is_none() {
                 return ToolResponse::error(format!(
-                    "{}={} is too small to return the response head note and one content line. Increase it and retry.",
+                    "{}={} is too small to return the response head note and one content line. That budget is fixed for this session; retrying cannot raise it.",
                     budget.variable, budget.value
                 ));
             }

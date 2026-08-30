@@ -631,7 +631,7 @@ fn budget_too_small(budget: usize, budget_variable: &str) -> ToolResponse {
     ErrorBudgetAdapter::new(budget, budget_variable).error(
         ErrorClass::Budget,
         format!(
-            "{budget_variable}={budget} is too small to return the glob head note and one result. Increase it and retry."
+            "{budget_variable}={budget} is too small to return the glob head note and one result. That budget is fixed for this session; retrying cannot raise it."
         ),
     )
 }

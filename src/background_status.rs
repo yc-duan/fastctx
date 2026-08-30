@@ -292,7 +292,7 @@ mod tests {
 
     fn budget_error(value: usize) -> ToolResponse {
         ToolResponse::error(format!(
-            "FASTCTX_TOKEN_BUDGET={value} is too small to return the required status note. Increase it and retry."
+            "FASTCTX_TOKEN_BUDGET={value} is too small to return the required status note. That budget is fixed for this session; retrying cannot raise it."
         ))
     }
 

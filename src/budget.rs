@@ -326,7 +326,7 @@ impl<'a> ErrorBudgetAdapter<'a> {
 
         let fallbacks = match class {
             ErrorClass::Budget => vec![
-                format!("Increase {}.", self.variable),
+                format!("{} too small.", self.variable),
                 "Budget too small.".to_string(),
                 "Budget.".to_string(),
             ],
@@ -429,7 +429,7 @@ mod tests {
         let cases = [
             (
                 ErrorClass::Budget,
-                "FASTCTX_GREP_TOKEN_BUDGET=1 is too small to return the grep head note and one result. Increase it and retry.",
+                "FASTCTX_GREP_TOKEN_BUDGET=1 is too small to return the grep head note and one result. That budget is fixed for this session; retrying cannot raise it.",
             ),
             (ErrorClass::Cancelled, "Request cancelled."),
             (

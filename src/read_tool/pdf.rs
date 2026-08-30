@@ -452,7 +452,7 @@ fn pdf_engine_error(reason: &str) -> ToolResponse {
 
 fn budget_too_small(budget: TokenBudget) -> ToolResponse {
     ToolResponse::error(format!(
-        "{}={} is too small to return the response head note and PDF content. Increase it and retry.",
+        "{}={} is too small to return the response head note and PDF content. That budget is fixed for this session; retrying cannot raise it.",
         budget.variable, budget.value
     ))
 }

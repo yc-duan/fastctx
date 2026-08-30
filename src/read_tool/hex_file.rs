@@ -87,7 +87,7 @@ pub(super) fn read_hex_file(
     loop {
         if rendered.is_empty() {
             return ToolResponse::error(format!(
-                "{}={} is too small to return the response head note and one hex line. Increase it and retry.",
+                "{}={} is too small to return the response head note and one hex line. That budget is fixed for this session; retrying cannot raise it.",
                 budget.variable, budget.value
             ));
         }
