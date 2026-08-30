@@ -3,16 +3,21 @@
 use crate::control::agents::InsertedSeparator;
 use crate::control::i18n::ALL_LANGUAGES;
 use crate::control::paths::ControlPaths;
+use crate::control::targets::AgentTarget;
 use crate::control::transaction;
 use crate::search_parallelism::{self, SearchParallelism};
+use crate::server_manifest::EnabledTools;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 const LEGACY_SCHEMA_VERSION: u32 = 0;
+const SINGLE_TARGET_SCHEMA_VERSION: u32 = 1;
 /// Generation of the recommended per-tool budget defaults.
 ///
 /// Bump this whenever the tier limits or the per-tool defaults move. Startup then clears stored
@@ -658,6 +663,9 @@ pub struct AppliedRecord {
     /// Whether fastshell was registered by this Apply.
     #[serde(default)]
     pub fastshell_enabled: bool,
+    /// Exact 1.0 tool set; older receipts derive it from fastshell_enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_tools: Option<EnabledTools>,
     /// Legacy receipt field accepted so older installations can be re-applied safely.
     #[serde(default, skip_serializing)]
     pub fastedit_enabled: bool,
@@ -684,6 +692,66 @@ impl AppliedRecord {
         paths_refer_to_same_location(Path::new(&self.codex_config.path), &paths.codex_config)
             && paths_refer_to_same_location(Path::new(&self.codex_agents.path), &paths.codex_agents)
     }
+}
+
+/// Shared self-installation receipt used by every target connection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct InstallationRecord {
+    pub version: String,
+    pub command: String,
+    pub binary_sha256: String,
+}
+
+/// Codex-only ownership and host-budget facts retained inside its target receipt.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CodexReceipt {
+    pub tier: Tier,
+    pub tool_output_token_limit: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_timeout_sec: Option<i64>,
+    pub previous_token_limit_present: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_token_limit: Option<i64>,
+    pub tool_budgets: ToolBudgets,
+    #[serde(default)]
+    pub codex_dir_created: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_contract_id: Option<String>,
+}
+
+/// Minimal inverse-edit evidence for one source-preserving JSONC MCP insertion.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct JsoncConfigReceipt {
+    /// Smallest property path inserted by the first Apply, such as `mcpServers.fastctx`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inserted_path: Vec<String>,
+    /// Whether the insertion parent used a trailing comma before FastCtx appended its property.
+    #[serde(default)]
+    pub parent_had_trailing_comma: bool,
+    /// Whether Apply created the root object from an empty existing file.
+    #[serde(default)]
+    pub root_was_empty: bool,
+}
+
+/// Ownership receipt for one agent target.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TargetReceipt {
+    pub applied_at_utc: String,
+    pub version: String,
+    pub enabled_tools: EnabledTools,
+    pub fastctx_token_budget: usize,
+    pub config: ManagedFileRecord,
+    pub guidance: ManagedFileRecord,
+    pub config_entry_sha256: String,
+    pub guidance_managed_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guidance_inserted_separator: Option<InsertedSeparator>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub created_directories: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jsonc_config: Option<JsoncConfigReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<CodexReceipt>,
 }
 
 fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {
@@ -732,8 +800,17 @@ pub struct FastCtxSettings {
     /// Legacy config key accepted but omitted from every newly written settings file.
     #[serde(default, skip_serializing)]
     pub fastedit: FeatureToggle,
-    /// Receipt for the most recent successful Apply.
+    /// Shared stable binary installation receipt.
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub installation: Option<InstallationRecord>,
+    /// Last selected tool set per target, retained across Disconnect.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub target_preferences: BTreeMap<String, EnabledTools>,
+    /// Per-target connection and ownership receipts.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub applied_targets: BTreeMap<String, TargetReceipt>,
+    /// Schema-v1 Codex receipt accepted and rebuilt in memory for the legacy control implementation.
+    #[serde(default, skip_serializing)]
     pub applied: Option<AppliedRecord>,
 }
 
@@ -761,8 +838,169 @@ impl Default for FastCtxSettings {
             search: SearchSettings::default(),
             replace: ReplaceSettings::default(),
             fastedit: FeatureToggle::default(),
+            installation: None,
+            target_preferences: BTreeMap::new(),
+            applied_targets: BTreeMap::new(),
             applied: None,
         }
+    }
+}
+
+impl FastCtxSettings {
+    pub fn target_receipt(&self, target: AgentTarget) -> Option<&TargetReceipt> {
+        self.applied_targets.get(target.id())
+    }
+
+    pub fn selected_tools(&self, target: AgentTarget) -> EnabledTools {
+        self.target_preferences
+            .get(target.id())
+            .copied()
+            .or_else(|| {
+                self.target_receipt(target)
+                    .map(|receipt| receipt.enabled_tools)
+            })
+            .unwrap_or_else(EnabledTools::files)
+    }
+
+    pub fn set_target_receipt(&mut self, target: AgentTarget, receipt: TargetReceipt) {
+        self.target_preferences
+            .insert(target.id().to_string(), receipt.enabled_tools);
+        self.applied_targets
+            .insert(target.id().to_string(), receipt);
+    }
+
+    pub fn remove_target_receipt(&mut self, target: AgentTarget) -> Option<TargetReceipt> {
+        if target == AgentTarget::Codex {
+            self.applied = None;
+        }
+        self.applied_targets.remove(target.id())
+    }
+
+    fn normalize_receipts_after_decode(&mut self, source_schema: u32) -> Result<(), String> {
+        for id in self
+            .target_preferences
+            .keys()
+            .chain(self.applied_targets.keys())
+        {
+            AgentTarget::from_str(id).map_err(|_| {
+                format!("FastCtx settings contain unsupported agent target id \"{id}\".")
+            })?;
+        }
+        if source_schema <= SINGLE_TARGET_SCHEMA_VERSION {
+            let legacy_tools = if self.fastshell.enabled {
+                EnabledTools::all()
+            } else {
+                EnabledTools::files()
+            };
+            self.target_preferences
+                .entry(AgentTarget::Codex.id().to_string())
+                .or_insert(legacy_tools);
+            self.sync_codex_receipt_to_v2();
+        } else {
+            self.rebuild_legacy_codex_view();
+        }
+        self.schema_version = CURRENT_SCHEMA_VERSION;
+        Ok(())
+    }
+
+    fn sync_codex_receipt_to_v2(&mut self) {
+        let Some(record) = self.applied.clone() else {
+            return;
+        };
+        self.installation = Some(InstallationRecord {
+            version: record.version.clone(),
+            command: record.command.clone(),
+            binary_sha256: record.binary_sha256.clone(),
+        });
+        let enabled_tools = record.enabled_tools.unwrap_or_else(|| {
+            if record.fastshell_enabled {
+                EnabledTools::all()
+            } else {
+                EnabledTools::files()
+            }
+        });
+        self.target_preferences
+            .entry(AgentTarget::Codex.id().to_string())
+            .or_insert(enabled_tools);
+        let previous = self.applied_targets.get(AgentTarget::Codex.id());
+        let config_entry_sha256 = previous
+            .map(|receipt| receipt.config_entry_sha256.clone())
+            .unwrap_or_default();
+        let guidance_managed_sha256 = previous
+            .map(|receipt| receipt.guidance_managed_sha256.clone())
+            .unwrap_or_else(|| record.codex_agents.applied_sha256.clone());
+        self.applied_targets.insert(
+            AgentTarget::Codex.id().to_string(),
+            TargetReceipt {
+                applied_at_utc: record.applied_at_utc.clone(),
+                version: record.version.clone(),
+                enabled_tools,
+                fastctx_token_budget: record.fastctx_token_budget,
+                config: record.codex_config.clone(),
+                guidance: record.codex_agents.clone(),
+                config_entry_sha256,
+                guidance_managed_sha256,
+                guidance_inserted_separator: record.codex_agents_inserted_separator,
+                created_directories: if record.codex_dir_created {
+                    record
+                        .codex_config
+                        .path
+                        .as_str()
+                        .rsplit_once(['/', '\\'])
+                        .map(|(directory, _)| vec![directory.to_string()])
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                },
+                jsonc_config: None,
+                codex: Some(CodexReceipt {
+                    tier: record.tier,
+                    tool_output_token_limit: record.tool_output_token_limit,
+                    tool_timeout_sec: record.tool_timeout_sec,
+                    previous_token_limit_present: record.previous_token_limit_present,
+                    previous_token_limit: record.previous_token_limit,
+                    tool_budgets: record.tool_budgets,
+                    codex_dir_created: record.codex_dir_created,
+                    agents_contract_id: record.agents_contract_id.clone(),
+                }),
+            },
+        );
+    }
+
+    fn rebuild_legacy_codex_view(&mut self) {
+        let Some(installation) = self.installation.as_ref() else {
+            self.applied = None;
+            return;
+        };
+        let Some(receipt) = self.applied_targets.get(AgentTarget::Codex.id()) else {
+            self.applied = None;
+            return;
+        };
+        let Some(codex) = receipt.codex.as_ref() else {
+            self.applied = None;
+            return;
+        };
+        self.applied = Some(AppliedRecord {
+            applied_at_utc: receipt.applied_at_utc.clone(),
+            version: receipt.version.clone(),
+            command: installation.command.clone(),
+            tier: codex.tier,
+            tool_output_token_limit: codex.tool_output_token_limit,
+            tool_timeout_sec: codex.tool_timeout_sec,
+            previous_token_limit_present: codex.previous_token_limit_present,
+            previous_token_limit: codex.previous_token_limit,
+            fastctx_token_budget: receipt.fastctx_token_budget,
+            tool_budgets: codex.tool_budgets,
+            fastshell_enabled: receipt.enabled_tools.shell_enabled(),
+            enabled_tools: Some(receipt.enabled_tools),
+            fastedit_enabled: false,
+            codex_dir_created: codex.codex_dir_created,
+            codex_config: receipt.config.clone(),
+            codex_agents: receipt.guidance.clone(),
+            agents_contract_id: codex.agents_contract_id.clone(),
+            codex_agents_inserted_separator: receipt.guidance_inserted_separator,
+            binary_sha256: installation.binary_sha256.clone(),
+        });
     }
 }
 
@@ -798,6 +1036,7 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
                 crate::paths::display_path(&paths.fastctx_config)
             )
         })?;
+        let source_schema = source_schema_version(&paths.fastctx_config, source)?;
         let mut settings = decode_source(&paths.fastctx_config, source)?;
         let migration_notice = settings.tool_budget_epoch.unwrap_or(0) < TOOL_BUDGET_EPOCH;
         if migration_notice {
@@ -808,7 +1047,8 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
         }
         let current_version = env!("CARGO_PKG_VERSION");
         let watermark_changed = settings.last_seen_version.as_deref() != Some(current_version);
-        if !migration_notice && !watermark_changed {
+        let schema_changed = source_schema != CURRENT_SCHEMA_VERSION;
+        if !migration_notice && !watermark_changed && !schema_changed {
             return Ok(StartupSettings {
                 settings,
                 migration_notice: false,
@@ -816,7 +1056,11 @@ pub(crate) fn load_for_startup(paths: &ControlPaths) -> Result<StartupSettings, 
         }
         settings.last_seen_version = Some(current_version.to_string());
         settings.tool_budget_epoch = Some(TOOL_BUDGET_EPOCH);
-        let bytes = encode_startup_normalization(&paths.fastctx_config, source, migration_notice)?;
+        let bytes = if schema_changed {
+            encode(&settings)?
+        } else {
+            encode_startup_normalization(&paths.fastctx_config, source, migration_notice)?
+        };
         let change = transaction::FileChange {
             target: paths.fastctx_config.clone(),
             original: Some(original),
@@ -957,6 +1201,9 @@ pub(crate) fn reset_user_preferences(settings: &FastCtxSettings) -> FastCtxSetti
         // file looking unreconciled and re-showing the migration notice on the next launch.
         tool_budget_epoch: Some(TOOL_BUDGET_EPOCH),
         applied: settings.applied.clone(),
+        installation: settings.installation.clone(),
+        target_preferences: settings.target_preferences.clone(),
+        applied_targets: settings.applied_targets.clone(),
         ..FastCtxSettings::default()
     }
 }
@@ -1122,7 +1369,7 @@ fn decode_source(path: &Path, source: &str) -> Result<FastCtxSettings, String> {
     }
     if !matches!(
         schema_version,
-        LEGACY_SCHEMA_VERSION | CURRENT_SCHEMA_VERSION
+        LEGACY_SCHEMA_VERSION | SINGLE_TARGET_SCHEMA_VERSION | CURRENT_SCHEMA_VERSION
     ) {
         return Err(format!(
             "Unsupported fastctx settings schema_version {schema_version} in {}. Upgrade fastctx or repair the file.",
@@ -1137,9 +1384,7 @@ fn decode_source(path: &Path, source: &str) -> Result<FastCtxSettings, String> {
             crate::paths::display_path(path)
         )
     })?;
-    if schema_version == LEGACY_SCHEMA_VERSION {
-        settings.schema_version = CURRENT_SCHEMA_VERSION;
-    }
+    settings.normalize_receipts_after_decode(schema_version)?;
     if let Some(language) = settings.language.as_deref()
         && !ALL_LANGUAGES
             .iter()
@@ -1156,6 +1401,25 @@ fn decode_source(path: &Path, source: &str) -> Result<FastCtxSettings, String> {
         ));
     }
     Ok(settings)
+}
+
+fn source_schema_version(path: &Path, source: &str) -> Result<u32, String> {
+    let document = source.parse::<toml_edit::DocumentMut>().map_err(|error| {
+        format!(
+            "Cannot parse fastctx settings {}: {error}. Repair or remove the file and retry.",
+            crate::paths::display_path(path)
+        )
+    })?;
+    document
+        .get("schema_version")
+        .and_then(toml_edit::Item::as_integer)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| {
+            format!(
+                "Cannot parse fastctx settings {}: schema_version is missing or invalid.",
+                crate::paths::display_path(path)
+            )
+        })
 }
 
 fn encode_startup_normalization(
@@ -1196,7 +1460,10 @@ pub fn encode(settings: &FastCtxSettings) -> Result<Vec<u8>, String> {
     settings
         .replace_file_limit_mib()
         .map_err(|error| format!("Cannot encode fastctx settings: {error}."))?;
-    let mut source = toml_edit::ser::to_string_pretty(settings)
+    let mut serializable = settings.clone();
+    serializable.sync_codex_receipt_to_v2();
+    serializable.schema_version = CURRENT_SCHEMA_VERSION;
+    let mut source = toml_edit::ser::to_string_pretty(&serializable)
         .map_err(|error| format!("Cannot encode fastctx settings: {error}"))?;
     if !source.ends_with('\n') {
         source.push('\n');

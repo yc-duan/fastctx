@@ -50,32 +50,6 @@ struct ResponseReservationState {
 
 thread_local! {
     static RESPONSE_RESERVATION: RefCell<Option<ResponseReservationState>> = const { RefCell::new(None) };
-    static RESPONSE_BUDGET_CEILING: RefCell<Option<usize>> = const { RefCell::new(None) };
-}
-
-/// One thread-local aggregate-burst ceiling installed around a single formatter.
-pub(crate) struct ResponseBudgetCeiling {
-    previous: Option<usize>,
-    active: bool,
-}
-
-impl ResponseBudgetCeiling {
-    pub(crate) fn install(budget: usize) -> Self {
-        let previous = RESPONSE_BUDGET_CEILING.with(|slot| slot.borrow_mut().replace(budget));
-        Self {
-            previous,
-            active: true,
-        }
-    }
-}
-
-impl Drop for ResponseBudgetCeiling {
-    fn drop(&mut self) {
-        if self.active {
-            RESPONSE_BUDGET_CEILING.with(|slot| *slot.borrow_mut() = self.previous.take());
-            self.active = false;
-        }
-    }
 }
 
 /// One thread-local response-budget reservation installed around a single tool formatter.
@@ -98,8 +72,7 @@ impl ResponseReservation {
         full_line: String,
         summary_line: String,
     ) -> Option<Self> {
-        let configured_budget =
-            apply_response_ceiling(configured_tool_token_budget(variable).ok()?.value);
+        let configured_budget = configured_tool_token_budget(variable).ok()?.value;
         Some(Self::install_with_budget(
             variable,
             configured_budget,
@@ -192,10 +165,9 @@ impl Drop for ResponseReservation {
 
 /// Reads the global text budget, rejecting invalid configuration instead of silently falling back.
 pub fn token_budget() -> Result<usize, String> {
-    let configured = apply_response_ceiling(configured_token_budget()?);
     Ok(apply_response_reservation(
         GLOBAL_TOKEN_BUDGET_ENV,
-        configured,
+        configured_token_budget()?,
     ))
 }
 
@@ -212,7 +184,6 @@ fn configured_token_budget() -> Result<usize, String> {
 /// Reads a tool budget; omission inherits the global value and explicit values may not exceed it.
 pub fn tool_token_budget(variable: &'static str) -> Result<TokenBudget, String> {
     let mut budget = configured_tool_token_budget(variable)?;
-    budget.value = apply_response_ceiling(budget.value);
     budget.value = apply_response_reservation(variable, budget.value);
     Ok(budget)
 }
@@ -243,23 +214,15 @@ fn configured_tool_token_budget(variable: &'static str) -> Result<TokenBudget, S
 /// the requested tool budget itself can be trusted.
 pub(crate) fn error_budget_hint(variable: &'static str) -> usize {
     let Ok(global) = configured_token_budget() else {
-        return apply_response_ceiling(DEFAULT_TOKEN_BUDGET);
+        return DEFAULT_TOKEN_BUDGET;
     };
-    let budget = match crate::session::var(variable) {
+    match crate::session::var(variable) {
         Ok(value) => parse_token_budget(variable, &value)
             .ok()
             .filter(|value| *value <= global)
             .unwrap_or(global),
         Err(_) => global,
-    };
-    apply_response_ceiling(budget)
-}
-
-fn apply_response_ceiling(configured: usize) -> usize {
-    RESPONSE_BUDGET_CEILING.with(|slot| {
-        slot.borrow()
-            .map_or(configured, |ceiling| configured.min(ceiling))
-    })
+    }
 }
 
 fn apply_response_reservation(variable: &'static str, configured: usize) -> usize {
@@ -660,12 +623,12 @@ mod tests {
         let mut restored = ExactPrefixCounter::from_checkpoint(&checkpoint);
         restored.append(" replacement", None).unwrap();
         let restored_checkpoint = restored.checkpoint();
-        let suffix = "\n\n(Complete.)";
+        let suffix = "\n\n(end.)";
         assert_eq!(
             restored
                 .count_with_suffix(&restored_checkpoint, suffix, None)
                 .unwrap(),
-            estimate_tokens("one long replacement\n\n(Complete.)")
+            estimate_tokens("one long replacement\n\n(end.)")
         );
     }
 
@@ -696,7 +659,7 @@ mod tests {
         let cases = [
             (
                 ErrorClass::Budget,
-                "FASTCTX_GREP_TOKEN_BUDGET=1 is too small to return the required grep continuation note. Increase it and retry.",
+                "FASTCTX_GREP_TOKEN_BUDGET=1 is too small to return the grep head note and one result. Increase it and retry.",
             ),
             (ErrorClass::Cancelled, "Request cancelled."),
             (

@@ -1,7 +1,8 @@
 //! Sixteen-byte paged hexadecimal view for any regular file.
 
 use super::DEFAULT_HEX_LINE_LIMIT;
-use crate::budget::{TokenBudget, assemble_text, estimate_tokens};
+use crate::budget::{TokenBudget, estimate_tokens};
+use crate::head_note::{CoverageTotal, CoveredRange, HeadMetric, HeadNote};
 use crate::model::ToolResponse;
 use crate::paths::io_error_message;
 use std::fmt::Write as _;
@@ -36,15 +37,24 @@ pub(super) fn read_hex_file(
         Err(error) => return ToolResponse::error(io_error_message(path, &error)),
     };
     if file_size == 0 {
-        return ToolResponse::text("Warning: the file exists but is empty.");
+        return HeadNote::new(
+            crate::paths::display_path(path),
+            HeadMetric::count(0, "line", "lines"),
+        )
+        .into_text_response("");
     }
     let total_lines = file_size / BYTES_PER_LINE + u64::from(file_size % BYTES_PER_LINE != 0);
     let offset_line = offset as u64;
     if offset_line > total_lines {
-        let noun = if total_lines == 1 { "line" } else { "lines" };
-        return ToolResponse::text(format!(
-            "Warning: the file has only {total_lines} {noun}, but offset={offset} was requested."
-        ));
+        return HeadNote::new(
+            crate::paths::display_path(path),
+            HeadMetric::count(0, "line", "lines"),
+        )
+        .fact(format!(
+            "file has {total_lines} {}",
+            if total_lines == 1 { "line" } else { "lines" }
+        ))
+        .into_text_response("");
     }
 
     let byte_offset = (offset_line - 1) * BYTES_PER_LINE;
@@ -77,25 +87,21 @@ pub(super) fn read_hex_file(
     loop {
         if rendered.is_empty() {
             return ToolResponse::error(format!(
-                "{}={} is too small to return the required continuation note. Increase it and retry.",
+                "{}={} is too small to return the response head note and one hex line. Increase it and retry.",
                 budget.variable, budget.value
             ));
         }
         let shown = rendered.len() as u64;
         let last = offset_line + shown - 1;
-        let terminal = if last < total_lines {
-            format!(
-                "(Partial: {} of {total_lines} shown. Continue with offset={}.)",
-                line_span(offset_line, last),
-                last + 1
-            )
-        } else {
-            format!(
-                "(Complete: reached end of file; {} of {total_lines} shown.)",
-                line_span(offset_line, last)
-            )
-        };
-        let output = assemble_text(&rendered, &[terminal]);
+        let note = HeadNote::new(
+            crate::paths::display_path(path),
+            HeadMetric::Coverage {
+                unit: "lines",
+                ranges: vec![CoveredRange::new(offset_line as usize, last as usize)],
+                total: CoverageTotal::Exact(total_lines as usize),
+            },
+        );
+        let output = note.render_with_body(&rendered.join("\n"));
         if estimate_tokens(&output) <= budget.value {
             return ToolResponse::text(output);
         }
@@ -130,12 +136,4 @@ fn format_hex_line(offset: u64, bytes: &[u8]) -> String {
         })
         .collect::<String>();
     format!("{offset:08x}  {hex_column}  |{ascii}|")
-}
-
-fn line_span(first: u64, last: u64) -> String {
-    if first == last {
-        format!("line {first}")
-    } else {
-        format!("lines {first}-{last}")
-    }
 }

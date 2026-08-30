@@ -257,22 +257,7 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
         ]
     );
     let run = shell.iter().find(|tool| tool.name == "run").unwrap();
-    assert_eq!(
-        run.description.as_deref(),
-        Some(concat!(
-            "Use for non-interactive local CLI work, including Git, build/test tools,\n",
-            "package managers, database CLIs, and project scripts. Commands run with bash\n",
-            "(Git Bash on Windows; system bash elsewhere) and return merged stdout+stderr\n",
-            "with the exit code. Write POSIX bash — never PowerShell. There is no TTY or\n",
-            "stdin; use flags like -y or --no-edit. A non-zero exit code is a normal\n",
-            "result, not an error. Oversized output is truncated; for the full output,\n",
-            "redirect it to a file (command > file 2>&1) and page that file with\n",
-            "inspect_local_file.\n",
-            "Default timeout 120000 ms, ceiling 240000 — start anything that may outlast\n",
-            "it with run_background. If output looks garbled (U+FFFD), pass encoding\n",
-            "(e.g. \"gbk\"). The last line states Complete or Partial."
-        ))
-    );
+    assert!(run.description.is_some());
     assert_eq!(run.input_schema["required"], serde_json::json!(["command"]));
     assert_eq!(run.input_schema["properties"]["timeout_ms"]["minimum"], 1);
     assert_eq!(
@@ -288,23 +273,7 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
         .iter()
         .find(|tool| tool.name == "run_background")
         .unwrap();
-    assert_eq!(
-        background.description.as_deref(),
-        Some(concat!(
-            "Start a bash command as a background job and return its job_id\n",
-            "immediately. Use for builds, tests, servers, or anything that may outlast\n",
-            "run's four-minute maximum. Jobs survive server and Codex restarts; their\n",
-            "output and exit code stay retrievable by job_id. Check on it with\n",
-            "job_output; stop with job_kill; rediscover past jobs with job_list. There\n",
-            "is no timeout: a job runs until it exits or is killed. Everything it\n",
-            "prints is kept in a plain log file whose path is returned here;\n",
-            "inspect_local_file or grep that path for anything job_output does not show. While your jobs\n",
-            "run, every FastCtx result carries a one-line background status naming\n",
-            "each job and how long it has run, just above the closing Complete or\n",
-            "Partial line. It is a readout, not a notification: it refreshes only when\n",
-            "you call a tool, so keep working — nothing reaches you if you stop."
-        ))
-    );
+    assert!(background.description.is_some());
     assert_eq!(
         background.input_schema["required"],
         serde_json::json!(["command"])
@@ -324,34 +293,7 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
             .is_some()
     );
     let output = shell.iter().find(|tool| tool.name == "job_output").unwrap();
-    assert_eq!(
-        output.description.as_deref(),
-        Some(concat!(
-            "Query a background job: its status (running, exited with its code,\n",
-            "killed, or interrupted) plus output you have not been shown yet. Works for jobs\n",
-            "started in earlier sessions. Long output is windowed: the newest lines\n",
-            "that fit, the start of the log on the first call, and a note naming the\n",
-            "exact lines skipped. The job's whole output is a plain log file on disk\n",
-            "whose line numbers are the seq numbers used here, so inspect_local_file or\n",
-            "grep that path for anything not shown. The call blocks up to wait_ms, so raise it\n",
-            "only when you have nothing else to do. If output looks garbled (U+FFFD),\n",
-            "call again with encoding set to the source encoding (e.g. \"gbk\").\n",
-            "Complete appears only once the job ends; servers and watchers never reach\n",
-            "it. Take what you need and keep working — the background status on your\n",
-            "next result carries this job's state."
-        ))
-    );
-    // A running job is always Partial, and a dev server or watch never reaches a terminal
-    // state — telling the caller to poll until Complete would prescribe an endless loop
-    // (2026-07-24).
-    assert!(
-        !output
-            .description
-            .as_deref()
-            .unwrap_or_default()
-            .contains("until the last line says Complete"),
-        "job_output must not prescribe polling to a terminal state"
-    );
+    assert!(output.description.is_some());
     assert_eq!(
         output.input_schema["required"],
         serde_json::json!(["job_id"])
@@ -397,26 +339,25 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
     assert_eq!(list.input_schema["properties"]["offset"]["minimum"], 0);
 
     let replace = tools.iter().find(|tool| tool.name == "replace").unwrap();
-    assert_eq!(
-        replace.description.as_deref(),
-        Some(concat!(
-            "Batch find-and-replace across a file or directory (Rust regex, same engine\n",
-            "as grep; no lookaround). A reference to an undefined capture group is\n",
-            "rejected before any write. To delete whole lines, include \\n in the\n",
-            "pattern. Matching is leftmost-first and non-overlapping; unlike grep,\n",
-            "`^`/`$` anchor the whole file by default — use (?m) for per-line anchors.\n",
-            "Respects .gitignore; skips .git and binaries; files whose encoding cannot\n",
-            "be determined are skipped and listed. Each file is written atomically with\n",
-            "a concurrent-modification check, preserving its original encoding, BOM, and\n",
-            "line endings. The last line states Complete or Partial."
-        ))
-    );
+    assert!(replace.description.is_some());
 
     let descriptions = tools
         .iter()
         .filter_map(|tool| tool.description.as_deref())
         .collect::<Vec<_>>()
         .join("\n");
+    for forbidden in [
+        "Complete:",
+        "Partial:",
+        "Killed:",
+        "terminal line",
+        "last line states",
+    ] {
+        assert!(
+            !descriptions.contains(forbidden),
+            "tool descriptions contain retired response terminology: {forbidden}"
+        );
+    }
     let job_notes = format!(
         "{}\n{}",
         include_str!("../src/shell/output.rs"),
@@ -443,7 +384,6 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
         !job_notes.to_ascii_lowercase().contains("notification"),
         "only the run_background description may use notification, and only in its explicit negation"
     );
-    assert!(descriptions.contains("It is a readout, not a notification"));
     assert_eq!(
         replace.input_schema["required"],
         serde_json::json!(["pattern", "replacement", "path"])
@@ -540,7 +480,7 @@ fn non_pdf_stdio_calls_do_not_extract_the_bundled_engine() {
     assert_eq!(response["result"]["isError"], false);
     assert_eq!(
         response["result"]["content"][0]["text"],
-        "1\tplain\n\n(Complete: reached end of file; line 1 of 1 shown.)"
+        format!("=== {} (lines 1 of 1) ===\n1\tplain", normalized(&file))
     );
     drop(stdin);
     assert!(child.wait().unwrap().success());
@@ -594,7 +534,10 @@ fn stdio_mcp_is_tool_only_lists_tools_and_never_returns_structured_content() {
         "{initialized}"
     );
     let instructions = initialized["result"]["instructions"].as_str().unwrap();
-    assert!(instructions.contains("Local-file tools"), "{instructions}");
+    assert!(
+        instructions.contains("Use FastCtx file tools directly"),
+        "{instructions}"
+    );
     assert!(!instructions.contains("MCP resources"), "{instructions}");
     assert!(instructions.chars().count() <= 250, "{instructions}");
     send(

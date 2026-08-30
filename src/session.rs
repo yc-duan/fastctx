@@ -4,7 +4,6 @@ use crate::budget::{
     GLOB_TOKEN_BUDGET_ENV, GLOBAL_TOKEN_BUDGET_ENV, GREP_TOKEN_BUDGET_ENV,
     JOB_OUTPUT_TOKEN_BUDGET_ENV, READ_TOKEN_BUDGET_ENV, RUN_TOKEN_BUDGET_ENV,
 };
-use crate::context_guard::{BURST_GAP, BurstTicket, GuardedBurstPool};
 use crate::control::paths::{CodexHomeSource, ControlPaths};
 use crate::control::provider::{EffectiveOutput, EffectiveOutputMode, ProviderDetection};
 use crate::control::settings::{FastCtxSettings, ToolBudgets};
@@ -260,8 +259,6 @@ pub struct SessionContext {
     pub provider: ProviderDetection,
     /// Provider-aware output policy made for this connection.
     pub effective_output: EffectiveOutput,
-    /// Aggregate response pool owned by this connection when Guarded is effective.
-    guarded_burst: Option<Arc<GuardedBurstPool>>,
 }
 
 impl SessionContext {
@@ -282,7 +279,6 @@ impl SessionContext {
             &provider,
         );
         let tool_environment = Arc::new(environment.with_guarded_output(effective_output));
-        let guarded_burst = guarded_burst_for(effective_output);
         let command_environment =
             Arc::new(crate::os_environment::command_environment(&environment));
         let environment = Arc::new(environment);
@@ -294,7 +290,6 @@ impl SessionContext {
             settings,
             provider,
             effective_output,
-            guarded_burst,
         }))
     }
 
@@ -324,7 +319,6 @@ impl SessionContext {
                 &provider,
             );
             let tool_environment = Arc::new(environment.with_guarded_output(effective_output));
-            let guarded_burst = guarded_burst_for(effective_output);
             let command_environment =
                 Arc::new(crate::os_environment::command_environment(&environment));
             Arc::new(Self {
@@ -335,7 +329,6 @@ impl SessionContext {
                 settings,
                 provider,
                 effective_output,
-                guarded_burst,
             })
         })
     }
@@ -349,18 +342,6 @@ impl SessionContext {
     pub fn tool_budgets(&self) -> ToolBudgets {
         self.effective_output.tool_budgets
     }
-
-    /// Registers one tool response with this connection's Guarded burst, when active.
-    pub(crate) fn begin_guarded_response(&self) -> Option<BurstTicket> {
-        self.guarded_burst.as_ref().map(GuardedBurstPool::begin)
-    }
-}
-
-fn guarded_burst_for(output: EffectiveOutput) -> Option<Arc<GuardedBurstPool>> {
-    if output.mode != EffectiveOutputMode::Guarded {
-        return None;
-    }
-    Some(GuardedBurstPool::new(output.fastctx_budget, BURST_GAP))
 }
 
 struct SessionEnvironmentScope {

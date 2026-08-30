@@ -27,7 +27,7 @@ fn micro_edit_golden_preserves_every_unowned_byte_and_writes_the_exact_private_s
         "\n",
         "[mcp_servers.fastctx]\n",
         "command = \"C:/Users/test/.fastctx/bin/fastctx.exe\"\n",
-        "args = [\"serve\"]\n",
+        "args = [\"serve\", \"--tools\", \"inspect_local_file,grep,glob,replace\"]\n",
         "startup_timeout_sec = 120\n",
         "tool_timeout_sec = 300\n",
         "\n",
@@ -53,7 +53,7 @@ fn micro_edit_golden_preserves_every_unowned_byte_and_writes_the_exact_private_s
                 run: ToolBudgetLevel::Inherit,
                 job_output: ToolBudgetLevel::Inherit,
             },
-            fastshell_enabled: false,
+            enabled_tools: fastctx::server_manifest::EnabledTools::files(),
         },
     )
     .unwrap();
@@ -79,7 +79,7 @@ fn malformed_toml_and_ambiguous_agents_markers_fail_before_producing_bytes() {
         host_limit: Tier::Standard.host_limit(),
         fastctx_budget: Tier::Standard.fastctx_budget(),
         tool_budgets: ToolBudgets::default(),
-        fastshell_enabled: false,
+        enabled_tools: fastctx::server_manifest::EnabledTools::files(),
     };
     let toml_error = codex_config::apply(b"[broken", &expected).unwrap_err();
     assert!(toml_error.contains("Repair it manually"));

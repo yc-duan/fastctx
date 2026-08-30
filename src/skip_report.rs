@@ -28,11 +28,11 @@ impl SkipTally {
         self.files == 0 && self.unreachable == 0
     }
 
-    /// The clause appended inside a terminal note, without its punctuation.
+    /// The concise fact inserted into a response head note.
     ///
     /// `shown` is how many detail lines survived the budget; a value below
     /// `listed` adds the hint that narrowing the request reveals the rest.
-    fn clause(&self, shown: usize) -> Option<String> {
+    pub(crate) fn fact(&self, shown: usize) -> Option<String> {
         if self.is_empty() {
             return None;
         }
@@ -59,22 +59,6 @@ impl SkipTally {
         }
         Some(clause)
     }
-}
-
-/// Folds a skip clause into a terminal note that ends in `.)`.
-///
-/// Returns `None` only when the note has no such ending, which is a rendering
-/// bug rather than a state a caller can recover from.
-pub(crate) fn terminal_with_skips(
-    terminal: &str,
-    tally: &SkipTally,
-    shown: usize,
-) -> Option<String> {
-    let Some(clause) = tally.clause(shown) else {
-        return Some(terminal.to_string());
-    };
-    let stem = terminal.strip_suffix(".)")?;
-    Some(format!("{stem}; {clause}.)"))
 }
 
 fn counted(count: usize, singular: &str, plural: &str) -> String {

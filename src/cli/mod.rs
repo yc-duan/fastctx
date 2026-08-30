@@ -1,13 +1,17 @@
 //! Command-line parsing, dual-mode TTY dispatch, and non-interactive control commands.
 
-use crate::control::apply::{
-    ApplyOptions, UnapplyOptions, commit_apply, commit_unapply, plan_apply, plan_unapply,
-};
+use crate::control::apply::{UnapplyOptions, commit_unapply, plan_unapply};
 use crate::control::doctor;
 use crate::control::i18n::{ALL_LANGUAGES, Language};
 use crate::control::paths::ControlPaths;
 use crate::control::settings::{self, Tier};
+use crate::control::target_apply::{
+    TargetApplyOptions, commit_target_apply, commit_target_disconnect, plan_target_apply,
+    plan_target_disconnect,
+};
+use crate::control::targets::AgentTarget;
 use crate::server::ServerOptions;
+use crate::server_manifest::EnabledTools;
 use clap::{Parser, Subcommand};
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
@@ -32,8 +36,11 @@ pub struct Cli {
 enum Command {
     /// Force the stdio MCP server.
     Serve {
+        /// Comma-separated enabled tools; file tools are independent and shell tools are atomic.
+        #[arg(long, value_name = "TOOL,...", conflicts_with = "enable_shell")]
+        tools: Option<String>,
         /// Publish the five optional shell tools.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         enable_shell: bool,
         /// Deprecated compatibility flag; replace is always published.
         #[arg(long, hide = true)]
@@ -41,8 +48,14 @@ enum Command {
     },
     /// Force the full-screen control terminal.
     Ui,
-    /// Preview and apply the ChatGPT/Codex integration.
+    /// Preview and apply one agent integration.
     Apply {
+        /// Agent target; defaults to Codex.
+        #[arg(long, value_name = "ID")]
+        target: Option<AgentTarget>,
+        /// Comma-separated enabled tools; omission reuses the target preference.
+        #[arg(long, value_name = "TOOL,...")]
+        tools: Option<String>,
         /// Codex profile directory; overrides CODEX_HOME and the default.
         #[arg(long, value_name = "PATH")]
         codex_home: Option<PathBuf>,
@@ -53,8 +66,11 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
-    /// Preview and remove the ChatGPT/Codex integration.
+    /// Disconnect one target, or remove FastCtx completely when target is omitted.
     Unapply {
+        /// Disconnect only this agent target.
+        #[arg(long, value_name = "ID")]
+        target: Option<AgentTarget>,
         /// Codex profile directory; overrides CODEX_HOME and the default.
         #[arg(long, value_name = "PATH")]
         codex_home: Option<PathBuf>,
@@ -65,6 +81,9 @@ enum Command {
     /// Run all local integration checks.
     #[command(visible_alias = "doctor")]
     Status {
+        /// Show detailed checks for one target after the shared report.
+        #[arg(long, value_name = "ID")]
+        target: Option<AgentTarget>,
         /// Codex profile directory; overrides CODEX_HOME and the default.
         #[arg(long, value_name = "PATH")]
         codex_home: Option<PathBuf>,
@@ -164,21 +183,35 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
     }
     match cli.command {
         Some(Command::Serve {
+            tools,
             enable_shell,
             enable_edit: _,
-        }) => run_server_with_options(ServerOptions { enable_shell }).await,
+        }) => {
+            let tools = match tools {
+                Some(csv) => EnabledTools::from_csv(&csv)?,
+                None if enable_shell => EnabledTools::all(),
+                None => EnabledTools::files(),
+            };
+            run_server_with_options(ServerOptions { tools }).await
+        }
         Some(Command::Ui) => {
             require_tty()?;
             let paths = ControlPaths::discover()?;
             run_tui_with_check(paths)
         }
         Some(Command::Apply {
+            target,
+            tools,
             codex_home,
             tier,
             yes,
-        }) => run_apply(codex_home, tier, yes),
-        Some(Command::Unapply { codex_home, yes }) => run_unapply(codex_home, yes),
-        Some(Command::Status { codex_home }) => run_status(codex_home),
+        }) => run_apply(target, tools, codex_home, tier, yes),
+        Some(Command::Unapply {
+            target,
+            codex_home,
+            yes,
+        }) => run_unapply(target, codex_home, yes),
+        Some(Command::Status { target, codex_home }) => run_status(target, codex_home),
         Some(Command::Lang { code }) => run_lang(&code),
         Some(Command::Jobs { command }) => run_jobs(command),
         #[cfg(unix)]
@@ -343,30 +376,41 @@ pub async fn run_server_with_options(options: ServerOptions) -> Result<ExitCode,
 }
 
 fn run_apply(
+    target: Option<AgentTarget>,
+    tools: Option<String>,
     codex_home: Option<PathBuf>,
     tier: Option<Tier>,
     yes: bool,
 ) -> Result<ExitCode, String> {
+    let target = target.unwrap_or(AgentTarget::Codex);
+    if target != AgentTarget::Codex && codex_home.is_some() {
+        return Err("--codex-home is valid only with --target codex.".to_string());
+    }
     let paths = ControlPaths::discover_with_codex_home(codex_home)?;
     let startup = settings::load_for_startup(&paths)?;
     if startup.migration_notice {
-        print_cli_migration_notice("This Apply will write them into Codex.");
+        print_cli_migration_notice("This Apply will record the selected target policy.");
     }
     let saved = startup.settings;
-    let plan = plan_apply(
+    let enabled_tools = match tools {
+        Some(csv) => EnabledTools::from_csv(&csv)?,
+        None => saved.selected_tools(target),
+    };
+    let plan = plan_target_apply(
         &paths,
-        ApplyOptions {
+        TargetApplyOptions {
+            target,
+            enabled_tools,
             tier: tier.unwrap_or(saved.tier),
             tool_budgets: saved.tool_budgets,
             output_guard_enabled: saved.output_guard.enabled,
-            fastshell_enabled: saved.fastshell.enabled,
             current_executable: std::env::current_exe()
                 .map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?,
         },
     )?;
     print_preview("Apply preview", plan.preview());
     if plan.is_empty() {
-        let receipt = commit_apply(plan, true)?;
+        let receipt = commit_target_apply(plan, true)?;
         print_receipt(&receipt);
         return Ok(ExitCode::SUCCESS);
     }
@@ -377,12 +421,9 @@ fn run_apply(
                     .to_string(),
             );
         }
-        if let Some(conflict) = plan.token_limit_conflict() {
-            println!(
-                "Shared setting warning: tool_output_token_limit is {}, requested {}.",
-                conflict.current, conflict.requested
-            );
-            if !confirm("Change this shared ChatGPT/Codex setting?")? {
+        if plan.needs_confirmation() {
+            println!("Shared setting warning: Codex tool_output_token_limit will change.");
+            if !confirm("Change this shared Codex setting?")? {
                 println!("Cancelled. No files were written.");
                 return Ok(ExitCode::SUCCESS);
             }
@@ -392,13 +433,39 @@ fn run_apply(
             return Ok(ExitCode::SUCCESS);
         }
     }
-    let receipt = commit_apply(plan, yes || io::stdin().is_terminal())?;
+    let receipt = commit_target_apply(plan, yes || io::stdin().is_terminal())?;
     print_receipt(&receipt);
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_unapply(codex_home: Option<PathBuf>, yes: bool) -> Result<ExitCode, String> {
+fn run_unapply(
+    target: Option<AgentTarget>,
+    codex_home: Option<PathBuf>,
+    yes: bool,
+) -> Result<ExitCode, String> {
+    if target.is_some_and(|target| target != AgentTarget::Codex) && codex_home.is_some() {
+        return Err("--codex-home is valid only with --target codex.".to_string());
+    }
     let paths = ControlPaths::discover_with_codex_home(codex_home)?;
+    if let Some(target) = target {
+        let plan = plan_target_disconnect(&paths, target)?;
+        print_preview("Disconnect preview", plan.preview());
+        if !yes && !plan.is_empty() {
+            if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+                return Err(
+                    "Disconnect requires confirmation in a terminal. Re-run with --yes after reviewing the preview."
+                        .to_string(),
+                );
+            }
+            if !confirm(&format!("Disconnect {}?", target.display_name()))? {
+                println!("Cancelled. No files were written.");
+                return Ok(ExitCode::SUCCESS);
+            }
+        }
+        let receipt = commit_target_disconnect(plan)?;
+        print_receipt(&receipt);
+        return Ok(ExitCode::SUCCESS);
+    }
     let plan = plan_unapply(
         &paths,
         UnapplyOptions {
@@ -449,11 +516,49 @@ fn run_unapply(codex_home: Option<PathBuf>, yes: bool) -> Result<ExitCode, Strin
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_status(codex_home: Option<PathBuf>) -> Result<ExitCode, String> {
+fn run_status(
+    target: Option<AgentTarget>,
+    codex_home: Option<PathBuf>,
+) -> Result<ExitCode, String> {
     use crate::control::doctor::DoctorCheckStatus;
 
     let paths = ControlPaths::discover_with_codex_home(codex_home)?;
-    let report = doctor::run(&paths);
+    let settings = settings::load(&paths)?;
+    for candidate in AgentTarget::ALL {
+        let status = crate::control::target_status::inspect_target(&paths, &settings, candidate);
+        let label = match status.state {
+            crate::control::target_status::TargetConnectionState::NotConnected => "NOT CONNECTED",
+            crate::control::target_status::TargetConnectionState::Connected => "CONNECTED",
+            crate::control::target_status::TargetConnectionState::NeedsAttention => "ATTENTION",
+            crate::control::target_status::TargetConnectionState::PermissionDenied => "NO ACCESS",
+            crate::control::target_status::TargetConnectionState::Error => "ERROR",
+        };
+        println!(
+            "[{label}] {}: {}",
+            candidate.display_name(),
+            status.enabled_tools.names().join(",")
+        );
+        if target == Some(candidate) {
+            println!(
+                "       Config: {}",
+                crate::paths::display_path(&status.config_path)
+            );
+            println!(
+                "       Guidance: {}",
+                crate::paths::display_path(&status.guidance_path)
+            );
+            println!("       Budget: {} tokens", status.effective_budget);
+            for fact in &status.facts {
+                println!("       {fact}");
+            }
+        }
+    }
+    println!();
+    let report = if target.is_some() {
+        doctor::run(&paths)
+    } else {
+        doctor::run_with_connected_targets(&paths)
+    };
     for check in &report.checks {
         let label = match check.status {
             DoctorCheckStatus::Pass => "PASS",
@@ -465,11 +570,28 @@ fn run_status(codex_home: Option<PathBuf>) -> Result<ExitCode, String> {
             println!("       Next: {remedy}");
         }
     }
-    Ok(if report.passed() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    })
+    let target_report = target.map(|target| doctor::run_target(&paths, target));
+    if let Some(target_report) = &target_report {
+        println!();
+        for check in &target_report.checks {
+            let label = match check.status {
+                DoctorCheckStatus::Pass => "PASS",
+                DoctorCheckStatus::Info => "INFO",
+                DoctorCheckStatus::Fail => "FAIL",
+            };
+            println!("[{label}] {}: {}", check.name, check.detail);
+            if let Some(remedy) = &check.remedy {
+                println!("       Next: {remedy}");
+            }
+        }
+    }
+    Ok(
+        if report.passed() && target_report.as_ref().is_none_or(|report| report.passed()) {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        },
+    )
 }
 
 fn run_lang(code: &str) -> Result<ExitCode, String> {

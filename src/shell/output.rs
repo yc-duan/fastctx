@@ -1,9 +1,10 @@
-//! Shell output capture, bounded presentation windows, and terminal status notes.
+//! Shell output capture, bounded presentation windows, and leading result facts.
 
 use crate::budget::{
     JOB_OUTPUT_TOKEN_BUDGET_ENV, RUN_TOKEN_BUDGET_ENV, TokenBudget, estimate_tokens, token_budget,
     tool_token_budget, tool_token_budget_for_required,
 };
+use crate::head_note::{CoverageTotal, CoveredRange, HeadMetric, HeadNote};
 use crate::model::ToolResponse;
 use crate::shell::apply_patch_hint;
 use crate::shell::buffer::{BufferedLine, LineRing};
@@ -58,33 +59,22 @@ pub(crate) fn capture_foreground(mut reader: impl Read) -> std::io::Result<Captu
 /// Rejects an unusably small run budget before a command can cause side effects.
 pub(crate) fn validate_run_budget(timeout_ms: u64) -> Result<TokenBudget, String> {
     let maximum = u64::MAX;
-    let drop_note = dropped_note(maximum).expect("a positive count always creates a note");
-    let ring_loss_terminal = window_terminal(i32::MIN, None, 0, 0, maximum);
-    let ring_loss = compose_response(
-        Some(&drop_note),
-        &[format!("... [{maximum} lines omitted] ...")],
-        &ring_loss_terminal,
-    );
+    let ring_loss = run_head(i32::MIN, None, maximum, &[], true, maximum, &[])
+        .render_with_body(&format!("... [{maximum} lines omitted] ..."));
     let candidates = [
-        format!("(Complete: exited {}; no output.)", i32::MIN),
-        format!("(Complete: exited {}; {maximum} lines.)", i32::MIN),
-        format!(
-            "(Partial: exited {}; {maximum} lines shown, but one or more long lines were truncated at 2000 chars.)",
-            i32::MIN
-        ),
-        format!(
-            "(Partial: showing the first 0 and last 0 of {maximum} lines; exited {}.)",
-            i32::MIN
-        ),
-        format!(
-            "(Partial: timed out after {timeout_ms} ms and the process tree was killed; no output captured. Increase timeout_ms or use run_background.)"
-        ),
-        format!(
-            "(Partial: timed out after {timeout_ms} ms and the process tree was killed; {maximum} lines captured. Increase timeout_ms or use run_background.)"
-        ),
-        format!(
-            "(Partial: timed out after {timeout_ms} ms and the process tree was killed; showing the first 0 and last 0 of {maximum} captured lines. Increase timeout_ms or use run_background.)"
-        ),
+        run_head(i32::MIN, None, 0, &[], false, 0, &[]).render(),
+        run_head(
+            i32::MIN,
+            None,
+            maximum,
+            &[CoveredRange::new(1, usize::MAX)],
+            true,
+            0,
+            &[],
+        )
+        .render(),
+        run_head(i32::MIN, Some(timeout_ms), 0, &[], false, 0, &[]).render(),
+        run_head(i32::MIN, Some(timeout_ms), maximum, &[], false, 0, &[]).render(),
         ring_loss,
     ];
     let required = candidates
@@ -117,19 +107,51 @@ pub(crate) fn global_token_budget() -> Result<TokenBudget, String> {
 
 pub(crate) fn budget_too_small_message(budget: TokenBudget) -> String {
     format!(
-        "{}={} is too small to return the required status note. Increase it and retry.",
+        "{}={} is too small to return the required response head note. Increase it and retry.",
         budget.variable, budget.value
     )
 }
 
-pub(crate) fn terminal_response(terminal: String, budget: TokenBudget) -> ToolResponse {
-    let required = estimate_tokens(&terminal);
-    let budget = tool_token_budget_for_required(budget.variable, required).unwrap_or(budget);
-    if required <= budget.value {
-        ToolResponse::text(terminal)
+fn run_head(
+    exit_code: i32,
+    timeout_ms: Option<u64>,
+    total: u64,
+    ranges: &[CoveredRange],
+    had_truncation: bool,
+    dropped: u64,
+    extra_facts: &[String],
+) -> HeadNote {
+    let total_usize = usize::try_from(total).unwrap_or(usize::MAX);
+    let metric = if ranges.is_empty() || (ranges.len() == 1 && ranges[0].is(1, total_usize)) {
+        HeadMetric::count(total_usize, "line", "lines")
     } else {
-        ToolResponse::error(budget_too_small_message(budget))
+        HeadMetric::Coverage {
+            unit: "lines",
+            ranges: ranges.to_vec(),
+            total: CoverageTotal::Exact(total_usize),
+        }
+    };
+    let mut head = HeadNote::new("run", metric);
+    head = match timeout_ms {
+        Some(timeout) => head.fact(format!("timed out after {timeout} ms, process tree killed")),
+        None => head.fact(format!("exited {exit_code}")),
+    };
+    if ranges.is_empty() && total > 0 {
+        head = head.fact("captured output omitted from the body at the FastCtx budget");
     }
+    if had_truncation {
+        head = head.fact("one or more shown lines truncated at 2000 chars");
+    }
+    if dropped > 0 {
+        head = head.fact(format!(
+            "{dropped} earlier {} dropped from the in-memory buffer and cannot be retrieved",
+            plural(dropped, "line", "lines")
+        ));
+    }
+    for fact in extra_facts {
+        head = head.fact(fact);
+    }
+    head
 }
 
 /// Formats a normal or timed-out foreground result without writing any shell artifacts.
@@ -170,16 +192,25 @@ fn format_foreground_with_budget(
     let lines = decoded.lines;
     let total = output.total_lines();
     let dropped = output.dropped_lines();
-    let trailing = join_notes(
-        decoded.transcoding_note.as_deref(),
-        apply_patch_hint::misuse_note(command, exit_code, timeout_ms).as_deref(),
-    );
+    let mut facts = Vec::new();
+    facts.extend(decoded.transcoding_note);
+    facts.extend(apply_patch_hint::misuse_note(
+        command, exit_code, timeout_ms,
+    ));
 
     if dropped == 0 {
-        let terminal = full_terminal(exit_code, timeout_ms, total, decoded.had_truncation);
-        let leading = run_garble_note(decoded.invalid_sequences);
-        let response =
-            compose_response_with_tail(leading.as_deref(), &lines, trailing.as_deref(), &terminal);
+        facts.extend(run_garble_note(decoded.invalid_sequences));
+        let ranges = (!lines.is_empty()).then(|| CoveredRange::new(1, lines.len()));
+        let response = run_head(
+            exit_code,
+            timeout_ms,
+            total,
+            ranges.as_slice(),
+            decoded.had_truncation,
+            0,
+            &facts,
+        )
+        .render_with_body(&lines.join("\n"));
         if estimate_tokens(&response) <= budget.value {
             return ToolResponse::text(response);
         }
@@ -188,7 +219,8 @@ fn format_foreground_with_budget(
     let window = ForegroundWindow {
         lines: &lines,
         invalid_per_line: &decoded.invalid_sequences_per_line,
-        trailing_notes: trailing.as_deref(),
+        truncated_per_line: &decoded.truncated_per_line,
+        facts: &facts,
         total,
         dropped,
         exit_code,
@@ -200,54 +232,11 @@ fn format_foreground_with_budget(
     }
 }
 
-fn full_terminal(
-    exit_code: i32,
-    timeout_ms: Option<u64>,
-    total: u64,
-    had_truncation: bool,
-) -> String {
-    match timeout_ms {
-        Some(timeout) if total == 0 => format!(
-            "(Partial: timed out after {timeout} ms and the process tree was killed; no output captured. Increase timeout_ms or use run_background.)"
-        ),
-        Some(timeout) => format!(
-            "(Partial: timed out after {timeout} ms and the process tree was killed; {total} {} captured. Increase timeout_ms or use run_background.)",
-            plural(total, "line", "lines")
-        ),
-        None if total == 0 => format!("(Complete: exited {exit_code}; no output.)"),
-        None if had_truncation => format!(
-            "(Partial: exited {exit_code}; {total} {} shown, but one or more long lines were truncated at 2000 chars.)",
-            plural(total, "line", "lines")
-        ),
-        None => format!(
-            "(Complete: exited {exit_code}; {total} {}.)",
-            plural(total, "line", "lines")
-        ),
-    }
-}
-
-fn window_terminal(
-    exit_code: i32,
-    timeout_ms: Option<u64>,
-    first: usize,
-    last: usize,
-    total: u64,
-) -> String {
-    match timeout_ms {
-        None => format!(
-            "(Partial: showing the first {first} and last {last} of {total} lines; exited {exit_code}.)"
-        ),
-        Some(timeout) => format!(
-            "(Partial: timed out after {timeout} ms and the process tree was killed; showing the first {first} and last {last} of {total} captured lines. Increase timeout_ms or use run_background.)"
-        ),
-    }
-}
-
 struct ForegroundWindow<'a> {
     lines: &'a [String],
     invalid_per_line: &'a [u64],
-    /// Already-joined notes that sit between the output and the terminal note.
-    trailing_notes: Option<&'a str>,
+    truncated_per_line: &'a [bool],
+    facts: &'a [String],
     total: u64,
     dropped: u64,
     exit_code: i32,
@@ -331,74 +320,42 @@ fn window_candidate(window: &ForegroundWindow<'_>, bounds: WindowBounds) -> Stri
         .chain(window.invalid_per_line.iter().rev().take(last))
         .copied()
         .fold(0_u64, u64::saturating_add);
-    let garble_note = run_garble_note(invalid);
-    let drop_note = dropped_note(window.dropped);
-    let leading = match (drop_note.as_deref(), garble_note.as_deref()) {
-        (Some(drop_note), Some(garble_note)) => Some(format!("{drop_note}\n\n{garble_note}")),
-        (Some(drop_note), None) => Some(drop_note.to_string()),
-        (None, Some(garble_note)) => Some(garble_note.to_string()),
-        (None, None) => None,
-    };
-    let terminal = window_terminal(
+    let had_truncation = window
+        .truncated_per_line
+        .iter()
+        .take(first)
+        .chain(window.truncated_per_line.iter().rev().take(last))
+        .any(|truncated| *truncated);
+    let mut facts = window.facts.to_vec();
+    facts.extend(run_garble_note(invalid));
+    let retained_first = window.dropped.saturating_add(1);
+    let mut ranges = Vec::with_capacity(2);
+    if first > 0 {
+        let first_end = retained_first
+            .saturating_add(first as u64)
+            .saturating_sub(1);
+        ranges.push(CoveredRange::new(
+            usize::try_from(retained_first).unwrap_or(usize::MAX),
+            usize::try_from(first_end).unwrap_or(usize::MAX),
+        ));
+    }
+    if last > 0 {
+        let tail_first = window.total.saturating_sub(last as u64).saturating_add(1);
+        ranges.push(CoveredRange::new(
+            usize::try_from(tail_first).unwrap_or(usize::MAX),
+            usize::try_from(window.total).unwrap_or(usize::MAX),
+        ));
+    }
+    run_head(
         window.exit_code,
         window.timeout_ms,
-        first,
-        last,
         window.total,
-    );
-    compose_response_with_tail(leading.as_deref(), &body, window.trailing_notes, &terminal)
-}
-
-/// Joins two optional notes with the same separator `compose_response_with_tail` uses between them.
-fn join_notes(first: Option<&str>, second: Option<&str>) -> Option<String> {
-    match (first, second) {
-        (Some(first), Some(second)) => Some(format!("{first}\n{second}")),
-        (Some(only), None) | (None, Some(only)) => Some(only.to_string()),
-        (None, None) => None,
-    }
-}
-
-/// Reports ring-buffer loss as a bare fact: what to do about it is the caller's
-/// call, and the only remedy would be re-running a command whose sheer output
-/// volume makes heavy side effects likely (2026-07-25).
-pub(crate) fn dropped_note(dropped: u64) -> Option<String> {
-    (dropped > 0).then(|| {
-        format!(
-            "(Note: {dropped} earlier {} {} dropped from the buffer and cannot be retrieved.)",
-            plural(dropped, "line", "lines"),
-            if dropped == 1 { "was" } else { "were" }
-        )
-    })
-}
-
-pub(crate) fn compose_response(
-    leading_note: Option<&str>,
-    lines: &[String],
-    terminal: &str,
-) -> String {
-    compose_response_with_tail(leading_note, lines, None, terminal)
-}
-
-pub(crate) fn compose_response_with_tail(
-    leading_note: Option<&str>,
-    lines: &[String],
-    trailing_note: Option<&str>,
-    terminal: &str,
-) -> String {
-    let mut notes = Vec::with_capacity(2);
-    if let Some(note) = trailing_note {
-        notes.push(note.to_string());
-    }
-    notes.push(terminal.to_string());
-    let body = if lines.is_empty() {
-        notes.join("\n")
-    } else {
-        format!("{}\n\n{}", lines.join("\n"), notes.join("\n"))
-    };
-    match leading_note {
-        Some(note) => format!("{note}\n\n{body}"),
-        None => body,
-    }
+        &ranges,
+        had_truncation,
+        window.dropped,
+        &facts,
+    )
+    .render_with_body(&body.join("\n"))
 }
 
 pub(crate) fn plural<'a>(count: u64, singular: &'a str, plural: &'a str) -> &'a str {

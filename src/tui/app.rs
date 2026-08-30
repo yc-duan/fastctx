@@ -1,10 +1,12 @@
 //! Pure TUI state transitions and controlled I/O effects.
 
+use super::agents::{AgentDetailCursor, AgentDetailItem, AgentListState, AgentToolDraft};
 use super::budget_editor::{self, BudgetEditor};
 use super::config::{self, ConfigCursor, ConfigDraft, ConfigItemId, ConfigValue, ConfigViewport};
 use super::jobs::{JobsDetail, JobsState, JobsViewport, visible_job_count, visible_jobs};
 use super::migration::{self as migration_copy, MigrationMessages};
 use super::update::{self as update_copy, UpdateMessages};
+use crate::control::agent_i18n::{self, AgentMessages};
 use crate::control::apply::{
     ApplyOptions, ApplyPlan, OperationReceipt, UnapplyOptions, UnapplyPlan, commit_apply,
     commit_unapply, plan_apply, plan_unapply,
@@ -18,7 +20,14 @@ use crate::control::link::{self, LinkState};
 use crate::control::paths::ControlPaths;
 use crate::control::provider::{self, EffectiveOutput, GuardReason};
 use crate::control::settings::{self, FastCtxSettings};
+use crate::control::target_apply::{
+    TargetApplyOptions, TargetApplyPlan, TargetDisconnectPlan, commit_target_apply,
+    commit_target_disconnect, plan_target_apply, plan_target_disconnect,
+};
+use crate::control::target_status::{self, TargetStatus};
+use crate::control::targets::AgentTarget;
 use crate::search_parallelism::{self, SearchParallelismInputError};
+use crate::server_manifest::EnabledTools;
 use crate::shell::jobs::{self, JobSummary};
 use crate::update::{CheckFailure, CheckFailureKind, StartupUpdate, UpdatePlan};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -39,6 +48,21 @@ pub(crate) enum Screen {
     UpdateConfirm,
     Language { first_run: bool },
     Main,
+    AgentListLoading,
+    AgentList,
+    AgentDetail,
+    AgentDraftConfirm,
+    AgentApplyLoading,
+    AgentApplyPreview,
+    AgentApplyConflict,
+    AgentApplyConfirm,
+    AgentApplyRunning,
+    AgentDisconnectLoading,
+    AgentDisconnectPreview,
+    AgentDisconnectConfirm,
+    AgentDisconnectRunning,
+    AgentDoctorLoading,
+    AgentDoctor,
     ApplyHome,
     ApplyLoading,
     ApplyPreview,
@@ -197,7 +221,9 @@ fn finalize_notice_toast(
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Effect {
     RetryUpdate,
-    SaveLanguage { first_run: bool },
+    SaveLanguage {
+        first_run: bool,
+    },
     SaveConfig,
     ResetConfig,
     PlanApply,
@@ -205,10 +231,27 @@ enum Effect {
     PlanUnapply,
     CommitUnapply,
     RunDoctor,
+    LoadAgentStatuses,
+    PlanTargetApply {
+        target: AgentTarget,
+        enabled_tools: EnabledTools,
+    },
+    CommitTargetApply,
+    PlanTargetDisconnect {
+        target: AgentTarget,
+    },
+    CommitTargetDisconnect,
+    RunTargetDoctor {
+        target: AgentTarget,
+    },
     LoadJobs,
-    LoadJobTail { job_id: String },
+    LoadJobTail {
+        job_id: String,
+    },
     RefreshJobCount,
-    KillJob { job_id: String },
+    KillJob {
+        job_id: String,
+    },
 }
 
 /// Editable search CPU limit plus the last validation failure.
@@ -250,6 +293,11 @@ pub(crate) struct App {
     pub pending_job: Option<JobSummary>,
     pub running_job_count: Option<usize>,
     pub(crate) link_state: LinkState,
+    pub(crate) agent_list_state: AgentListState,
+    pub(crate) agent_list_selected: usize,
+    pub(crate) agent_draft: AgentToolDraft,
+    pub(crate) agent_cursor: AgentDetailCursor,
+    pub(crate) target_doctor: StatusState,
     pub status: StatusState,
     pub receipt: Option<OperationReceipt>,
     pub error: Option<String>,
@@ -260,6 +308,9 @@ pub(crate) struct App {
     exit_update: Option<UpdatePlan>,
     pub(crate) apply_plan: Option<ApplyPlan>,
     pub(crate) unapply_plan: Option<UnapplyPlan>,
+    pub(crate) target_apply_plan: Option<TargetApplyPlan>,
+    pub(crate) target_disconnect_plan: Option<TargetDisconnectPlan>,
+    receipt_returns_to_agent: bool,
     pending: Option<Effect>,
     retry_effect: Option<Effect>,
     last_jobs_refresh: Option<Instant>,
@@ -361,6 +412,14 @@ impl App {
             pending_job: None,
             running_job_count,
             link_state,
+            agent_list_state: AgentListState::Loading,
+            agent_list_selected: 0,
+            agent_draft: AgentToolDraft::new(
+                AgentTarget::Codex,
+                settings.selected_tools(AgentTarget::Codex),
+            ),
+            agent_cursor: AgentDetailCursor::default(),
+            target_doctor: StatusState::Loading,
             paths,
             settings,
             provider_detection,
@@ -378,6 +437,9 @@ impl App {
             exit_update: None,
             apply_plan: None,
             unapply_plan: None,
+            target_apply_plan: None,
+            target_disconnect_plan: None,
+            receipt_returns_to_agent: false,
             pending: None,
             retry_effect: None,
             last_jobs_refresh: Some(Instant::now()),
@@ -402,6 +464,15 @@ impl App {
         } else {
             self.language.messages()
         }
+    }
+
+    pub(crate) fn agent_messages(&self) -> &'static AgentMessages {
+        let language = if self.settings.language.is_none() {
+            Language::En
+        } else {
+            self.language
+        };
+        agent_i18n::messages(language)
     }
 
     pub(crate) fn unapply_processes_message(&self) -> &'static str {
@@ -607,6 +678,15 @@ impl App {
             Screen::UpdateConfirm => self.handle_update_confirm(key.code),
             Screen::Language { first_run } => self.handle_language(key.code, first_run),
             Screen::Main => self.handle_main(key.code),
+            Screen::AgentList => self.handle_agent_list(key.code),
+            Screen::AgentDetail => self.handle_agent_detail(key.code),
+            Screen::AgentDraftConfirm => self.handle_agent_draft_confirm(key.code),
+            Screen::AgentApplyPreview => self.handle_agent_apply_preview(key.code),
+            Screen::AgentApplyConflict => self.handle_agent_apply_conflict(key.code),
+            Screen::AgentApplyConfirm => self.handle_agent_apply_confirm(key.code),
+            Screen::AgentDisconnectPreview => self.handle_agent_disconnect_preview(key.code),
+            Screen::AgentDisconnectConfirm => self.handle_agent_disconnect_confirm(key.code),
+            Screen::AgentDoctor => self.handle_agent_doctor(key.code),
             Screen::ApplyHome => self.handle_apply_home(key.code),
             Screen::ApplyPreview => self.handle_apply_preview(key.code),
             Screen::ApplyConflict => {
@@ -629,6 +709,12 @@ impl App {
             Screen::Receipt => self.handle_receipt(key.code),
             Screen::OperationFailed => self.handle_operation_failed(key.code),
             Screen::UpdateChecking
+            | Screen::AgentListLoading
+            | Screen::AgentApplyLoading
+            | Screen::AgentApplyRunning
+            | Screen::AgentDisconnectLoading
+            | Screen::AgentDisconnectRunning
+            | Screen::AgentDoctorLoading
             | Screen::ApplyLoading
             | Screen::ApplyRunning
             | Screen::UnapplyLoading
@@ -646,6 +732,13 @@ impl App {
         let retry_effect = match &effect {
             Effect::CommitApply => Effect::PlanApply,
             Effect::CommitUnapply => Effect::PlanUnapply,
+            Effect::CommitTargetApply => Effect::PlanTargetApply {
+                target: self.agent_draft.target,
+                enabled_tools: self.agent_draft.current,
+            },
+            Effect::CommitTargetDisconnect => Effect::PlanTargetDisconnect {
+                target: self.agent_draft.target,
+            },
             effect => effect.clone(),
         };
         let is_doctor_effect = matches!(&effect, Effect::RunDoctor);
@@ -760,7 +853,9 @@ impl App {
                     tier: self.settings.tier,
                     tool_budgets: self.settings.tool_budgets,
                     output_guard_enabled: self.settings.output_guard.enabled,
-                    fastshell_enabled: self.settings.fastshell.enabled,
+                    enabled_tools: self
+                        .settings
+                        .selected_tools(crate::control::targets::AgentTarget::Codex),
                     current_executable: self.current_executable.clone(),
                 },
             )
@@ -781,6 +876,7 @@ impl App {
                             "Apply succeeded, but the receipt could not be reloaded: {error}"
                         )),
                     }
+                    self.receipt_returns_to_agent = false;
                     self.show_receipt(receipt);
                 }),
             Effect::PlanUnapply => plan_unapply(
@@ -801,15 +897,107 @@ impl App {
                 .and_then(commit_unapply)
                 .map(|receipt| {
                     self.settings.applied = None;
+                    self.receipt_returns_to_agent = false;
                     self.show_receipt(receipt);
                 }),
             Effect::RunDoctor => {
-                let report = doctor::run(&self.paths);
+                let report = doctor::run_with_connected_targets(&self.paths);
                 self.status = if report.checks.is_empty() {
                     StatusState::Empty
                 } else {
                     StatusState::Ready(report)
                 };
+                Ok(())
+            }
+            Effect::LoadAgentStatuses => {
+                match settings::load(&self.paths) {
+                    Ok(settings) => {
+                        self.settings = settings;
+                        self.refresh_agent_statuses();
+                    }
+                    Err(error) => self.agent_list_state = AgentListState::Error(error),
+                }
+                self.screen = Screen::AgentList;
+                self.selected = self
+                    .agent_list_selected
+                    .min(AgentTarget::ALL.len().saturating_sub(1));
+                Ok(())
+            }
+            Effect::PlanTargetApply {
+                target,
+                enabled_tools,
+            } => plan_target_apply(
+                &self.paths,
+                TargetApplyOptions {
+                    target,
+                    enabled_tools,
+                    tier: self.settings.tier,
+                    tool_budgets: self.settings.tool_budgets,
+                    output_guard_enabled: self.settings.output_guard.enabled,
+                    current_executable: self.current_executable.clone(),
+                },
+            )
+            .map(|plan| {
+                self.target_apply_plan = Some(plan);
+                self.screen = Screen::AgentApplyPreview;
+                self.selected = 0;
+            }),
+            Effect::CommitTargetApply => self
+                .target_apply_plan
+                .take()
+                .ok_or_else(|| "The target Apply preview expired. Preview again.".to_string())
+                .and_then(|plan| commit_target_apply(plan, true))
+                .map(|mut receipt| {
+                    match settings::load(&self.paths) {
+                        Ok(settings) => {
+                            self.settings = settings;
+                            let persisted = self.settings.selected_tools(self.agent_draft.target);
+                            self.agent_draft.accept(persisted);
+                            self.refresh_agent_statuses();
+                        }
+                        Err(error) => receipt.notes.push(format!(
+                            "Apply succeeded, but the target receipt could not be reloaded: {error}"
+                        )),
+                    }
+                    self.receipt_returns_to_agent = true;
+                    self.show_receipt(receipt);
+                }),
+            Effect::PlanTargetDisconnect { target } => plan_target_disconnect(&self.paths, target)
+                .map(|plan| {
+                    self.target_disconnect_plan = Some(plan);
+                    self.screen = Screen::AgentDisconnectPreview;
+                    self.selected = 0;
+                }),
+            Effect::CommitTargetDisconnect => self
+                .target_disconnect_plan
+                .take()
+                .ok_or_else(|| {
+                    "The target Disconnect preview expired. Preview again.".to_string()
+                })
+                .and_then(commit_target_disconnect)
+                .map(|mut receipt| {
+                    match settings::load(&self.paths) {
+                        Ok(settings) => {
+                            self.settings = settings;
+                            let persisted = self.settings.selected_tools(self.agent_draft.target);
+                            self.agent_draft.accept(persisted);
+                            self.refresh_agent_statuses();
+                        }
+                        Err(error) => receipt.notes.push(format!(
+                            "Disconnect succeeded, but the target receipt could not be reloaded: {error}"
+                        )),
+                    }
+                    self.receipt_returns_to_agent = true;
+                    self.show_receipt(receipt);
+                }),
+            Effect::RunTargetDoctor { target } => {
+                let report = doctor::run_target(&self.paths, target);
+                self.target_doctor = if report.checks.is_empty() {
+                    StatusState::Empty
+                } else {
+                    StatusState::Ready(report)
+                };
+                self.screen = Screen::AgentDoctor;
                 Ok(())
             }
             Effect::LoadJobs => {
@@ -1052,7 +1240,7 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => self.move_previous(7),
             KeyCode::Down | KeyCode::Char('j') => self.move_next(7),
             KeyCode::Enter => match self.selected {
-                0 => self.set_screen(Screen::ApplyHome),
+                0 => self.begin_agent_list_load(),
                 1 => {
                     self.provider_detection = provider::detect_path(&self.paths.codex_config);
                     self.config_draft = ConfigDraft::from_settings(&self.settings);
@@ -1089,6 +1277,290 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             _ => {}
         }
+    }
+
+    fn begin_agent_list_load(&mut self) {
+        self.agent_list_state = AgentListState::Loading;
+        self.screen = Screen::AgentListLoading;
+        self.pending = Some(Effect::LoadAgentStatuses);
+    }
+
+    fn refresh_agent_statuses(&mut self) {
+        let statuses = AgentTarget::ALL
+            .into_iter()
+            .map(|target| target_status::inspect_target(&self.paths, &self.settings, target))
+            .collect::<Vec<_>>();
+        self.agent_list_state = if statuses.is_empty() {
+            AgentListState::Empty
+        } else {
+            AgentListState::Ready(statuses)
+        };
+    }
+
+    fn handle_agent_list(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Up | KeyCode::Char('k') => self.move_previous(AgentTarget::ALL.len()),
+            KeyCode::Down | KeyCode::Char('j') => self.move_next(AgentTarget::ALL.len()),
+            KeyCode::Enter if matches!(self.agent_list_state, AgentListState::Ready(_)) => {
+                let target = AgentTarget::ALL[self.selected.min(AgentTarget::ALL.len() - 1)];
+                self.enter_agent_detail(target);
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.agent_list_selected = self.selected;
+                self.begin_agent_list_load();
+            }
+            KeyCode::Char('u') | KeyCode::Char('U') => {
+                self.screen = Screen::ApplyHome;
+                self.selected = 1;
+            }
+            KeyCode::Esc => self.back_to_main(),
+            _ => {}
+        }
+    }
+
+    fn enter_agent_detail(&mut self, target: AgentTarget) {
+        self.agent_list_selected = AgentTarget::ALL
+            .iter()
+            .position(|candidate| *candidate == target)
+            .unwrap_or(0);
+        let persisted = self
+            .agent_list_state
+            .get(target)
+            .map(|status| status.enabled_tools)
+            .unwrap_or_else(|| self.settings.selected_tools(target));
+        self.agent_draft = AgentToolDraft::new(target, persisted);
+        self.agent_cursor = AgentDetailCursor::default();
+        self.target_apply_plan = None;
+        self.target_disconnect_plan = None;
+        self.screen = Screen::AgentDetail;
+        self.selected = 0;
+    }
+
+    fn handle_agent_detail(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Up | KeyCode::Char('k') => self.agent_cursor = self.agent_cursor.previous(),
+            KeyCode::Down | KeyCode::Char('j') => self.agent_cursor = self.agent_cursor.next(),
+            KeyCode::Left | KeyCode::Char('h') if self.agent_cursor.item().is_toggle() => {
+                self.toggle_agent_tool();
+            }
+            KeyCode::Right | KeyCode::Char('l') if self.agent_cursor.item().is_toggle() => {
+                self.toggle_agent_tool();
+            }
+            KeyCode::Char(' ') if self.agent_cursor.item().is_toggle() => self.toggle_agent_tool(),
+            KeyCode::Enter => match self.agent_cursor.item() {
+                item if item.is_toggle() => self.toggle_agent_tool(),
+                AgentDetailItem::Apply => self.begin_target_apply(),
+                AgentDetailItem::Disconnect if self.agent_has_receipt() => {
+                    self.begin_target_disconnect();
+                }
+                AgentDetailItem::Disconnect => {
+                    self.toast = Some(Toast {
+                        message: self.agent_messages().not_connected.to_string(),
+                        warning: true,
+                    });
+                }
+                AgentDetailItem::Doctor => self.begin_target_doctor(),
+                _ => {}
+            },
+            KeyCode::Char('s') | KeyCode::Char('S') => self.begin_target_apply(),
+            KeyCode::Char('r') | KeyCode::Char('R') => self.begin_target_doctor(),
+            KeyCode::Esc if self.agent_draft.is_dirty() => {
+                self.selected = 0;
+                self.screen = Screen::AgentDraftConfirm;
+            }
+            KeyCode::Esc => self.return_to_agent_list(),
+            _ => {}
+        }
+    }
+
+    fn toggle_agent_tool(&mut self) {
+        if let Err(error) = self.agent_draft.toggle(self.agent_cursor.item()) {
+            self.toast = Some(Toast {
+                message: if error.contains("cannot be empty") {
+                    self.agent_messages().empty_set.to_string()
+                } else {
+                    error
+                },
+                warning: true,
+            });
+        }
+    }
+
+    pub(crate) fn agent_has_receipt(&self) -> bool {
+        self.settings
+            .target_receipt(self.agent_draft.target)
+            .is_some()
+    }
+
+    pub(crate) fn current_agent_status(&self) -> Option<&TargetStatus> {
+        self.agent_list_state.get(self.agent_draft.target)
+    }
+
+    pub(crate) const fn receipt_is_for_agent(&self) -> bool {
+        self.receipt_returns_to_agent
+    }
+
+    fn handle_agent_draft_confirm(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Left | KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Right | KeyCode::Down => self.selected = (self.selected + 1).min(2),
+            KeyCode::Enter => match self.selected {
+                0 => {
+                    self.selected = 0;
+                    self.screen = Screen::AgentDetail;
+                }
+                1 => {
+                    self.agent_draft.discard();
+                    self.return_to_agent_list();
+                }
+                2 => self.begin_target_apply(),
+                _ => {}
+            },
+            KeyCode::Esc => {
+                self.selected = 0;
+                self.screen = Screen::AgentDetail;
+            }
+            _ => {}
+        }
+    }
+
+    fn begin_target_apply(&mut self) {
+        self.target_apply_plan = None;
+        self.screen = Screen::AgentApplyLoading;
+        self.pending = Some(Effect::PlanTargetApply {
+            target: self.agent_draft.target,
+            enabled_tools: self.agent_draft.current,
+        });
+    }
+
+    fn handle_agent_apply_preview(&mut self, key: KeyCode) {
+        if self.detail_viewport.handle_key(key) {
+            return;
+        }
+        match key {
+            KeyCode::Enter => {
+                self.selected = 0;
+                self.screen = if self
+                    .target_apply_plan
+                    .as_ref()
+                    .is_some_and(TargetApplyPlan::needs_confirmation)
+                {
+                    Screen::AgentApplyConflict
+                } else {
+                    Screen::AgentApplyConfirm
+                };
+            }
+            KeyCode::Esc => {
+                self.target_apply_plan = None;
+                self.screen = Screen::AgentDetail;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_agent_apply_conflict(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
+                self.selected = 1 - self.selected.min(1);
+            }
+            KeyCode::Enter if self.selected == 1 => {
+                self.selected = 0;
+                self.screen = Screen::AgentApplyConfirm;
+            }
+            KeyCode::Enter | KeyCode::Esc => {
+                self.target_apply_plan = None;
+                self.selected = 0;
+                self.screen = Screen::AgentDetail;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_agent_apply_confirm(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
+                self.selected = 1 - self.selected.min(1);
+            }
+            KeyCode::Enter if self.selected == 1 => {
+                self.screen = Screen::AgentApplyRunning;
+                self.pending = Some(Effect::CommitTargetApply);
+            }
+            KeyCode::Enter | KeyCode::Esc => {
+                self.target_apply_plan = None;
+                self.selected = 0;
+                self.screen = Screen::AgentDetail;
+            }
+            _ => {}
+        }
+    }
+
+    fn begin_target_disconnect(&mut self) {
+        self.target_disconnect_plan = None;
+        self.screen = Screen::AgentDisconnectLoading;
+        self.pending = Some(Effect::PlanTargetDisconnect {
+            target: self.agent_draft.target,
+        });
+    }
+
+    fn handle_agent_disconnect_preview(&mut self, key: KeyCode) {
+        if self.detail_viewport.handle_key(key) {
+            return;
+        }
+        match key {
+            KeyCode::Enter => {
+                self.selected = 0;
+                self.screen = Screen::AgentDisconnectConfirm;
+            }
+            KeyCode::Esc => {
+                self.target_disconnect_plan = None;
+                self.screen = Screen::AgentDetail;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_agent_disconnect_confirm(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
+                self.selected = 1 - self.selected.min(1);
+            }
+            KeyCode::Enter if self.selected == 1 => {
+                self.screen = Screen::AgentDisconnectRunning;
+                self.pending = Some(Effect::CommitTargetDisconnect);
+            }
+            KeyCode::Enter | KeyCode::Esc => {
+                self.target_disconnect_plan = None;
+                self.selected = 0;
+                self.screen = Screen::AgentDetail;
+            }
+            _ => {}
+        }
+    }
+
+    fn begin_target_doctor(&mut self) {
+        self.target_doctor = StatusState::Loading;
+        self.screen = Screen::AgentDoctorLoading;
+        self.pending = Some(Effect::RunTargetDoctor {
+            target: self.agent_draft.target,
+        });
+    }
+
+    fn handle_agent_doctor(&mut self, key: KeyCode) {
+        if self.detail_viewport.handle_key(key) {
+            return;
+        }
+        match key {
+            KeyCode::Char('r') | KeyCode::Enter => self.begin_target_doctor(),
+            KeyCode::Esc => self.screen = Screen::AgentDetail,
+            _ => {}
+        }
+    }
+
+    fn return_to_agent_list(&mut self) {
+        self.target_apply_plan = None;
+        self.target_disconnect_plan = None;
+        self.screen = Screen::AgentList;
+        self.selected = self.agent_list_selected;
     }
 
     fn handle_apply_home(&mut self, key: KeyCode) {
@@ -1571,7 +2043,12 @@ impl App {
         if matches!(key, KeyCode::Enter | KeyCode::Esc) {
             self.error = None;
             self.receipt = None;
-            self.back_to_main();
+            if std::mem::take(&mut self.receipt_returns_to_agent) {
+                self.screen = Screen::AgentDetail;
+                self.selected = 0;
+            } else {
+                self.back_to_main();
+            }
         }
     }
 
@@ -1595,6 +2072,15 @@ impl App {
                         self.status = StatusState::Loading;
                         Screen::Status
                     }
+                    Effect::LoadAgentStatuses => Screen::AgentListLoading,
+                    Effect::PlanTargetApply { .. } => Screen::AgentApplyLoading,
+                    Effect::CommitTargetApply => Screen::AgentApplyRunning,
+                    Effect::PlanTargetDisconnect { .. } => Screen::AgentDisconnectLoading,
+                    Effect::CommitTargetDisconnect => Screen::AgentDisconnectRunning,
+                    Effect::RunTargetDoctor { .. } => {
+                        self.target_doctor = StatusState::Loading;
+                        Screen::AgentDoctorLoading
+                    }
                     Effect::SaveConfig => Screen::Config,
                     Effect::ResetConfig => Screen::ConfigResetting,
                     Effect::SaveLanguage { first_run } => Screen::Language { first_run },
@@ -1607,9 +2093,25 @@ impl App {
                 self.pending = Some(effect);
             }
             KeyCode::Esc => {
+                let return_to_agent = self.retry_effect.as_ref().is_some_and(|effect| {
+                    matches!(
+                        effect,
+                        Effect::LoadAgentStatuses
+                            | Effect::PlanTargetApply { .. }
+                            | Effect::CommitTargetApply
+                            | Effect::PlanTargetDisconnect { .. }
+                            | Effect::CommitTargetDisconnect
+                            | Effect::RunTargetDoctor { .. }
+                    )
+                });
                 self.retry_effect = None;
                 self.error = None;
-                self.back_to_main();
+                if return_to_agent {
+                    self.screen = Screen::AgentDetail;
+                    self.selected = 0;
+                } else {
+                    self.back_to_main();
+                }
             }
             _ => {}
         }
@@ -1818,25 +2320,61 @@ mod tests {
     }
 
     #[test]
-    fn apply_flow_reaches_preview_and_receipt_from_one_frozen_plan() {
+    fn agent_apply_and_disconnect_flows_return_to_the_same_target_detail() {
         let (_temp, mut app) = fixture();
         app.settings.language = Some("en".to_string());
         app.screen = Screen::Main;
         app.selected = 0;
         app.handle_key(key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::ApplyHome);
-        app.handle_key(key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::ApplyLoading);
+        assert_eq!(app.screen, Screen::AgentListLoading);
         app.execute_pending();
-        assert_eq!(app.screen, Screen::ApplyPreview);
+        assert_eq!(app.screen, Screen::AgentList);
+        app.selected = 2;
         app.handle_key(key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::ApplyConfirm);
+        assert_eq!(app.screen, Screen::AgentDetail);
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert!(app.agent_draft.is_dirty());
+        app.handle_key(key(KeyCode::Char('s')));
+        assert_eq!(app.screen, Screen::AgentApplyLoading);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::AgentApplyPreview);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::AgentApplyConfirm);
         app.handle_key(key(KeyCode::Right));
         app.handle_key(key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::ApplyRunning);
+        assert_eq!(app.screen, Screen::AgentApplyRunning);
         app.execute_pending();
         assert_eq!(app.screen, Screen::Receipt);
         assert!(app.receipt.as_ref().unwrap().changed_targets >= 3);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::AgentDetail);
+        assert!(
+            app.settings
+                .target_receipt(crate::control::targets::AgentTarget::Cursor)
+                .is_some()
+        );
+
+        for _ in 0..6 {
+            app.handle_key(key(KeyCode::Down));
+        }
+        assert_eq!(app.agent_cursor.item(), super::AgentDetailItem::Disconnect);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::AgentDisconnectLoading);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::AgentDisconnectPreview);
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Right));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::AgentDisconnectRunning);
+        app.execute_pending();
+        assert_eq!(app.screen, Screen::Receipt);
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::AgentDetail);
+        assert!(
+            app.settings
+                .target_receipt(crate::control::targets::AgentTarget::Cursor)
+                .is_none()
+        );
     }
 
     #[test]

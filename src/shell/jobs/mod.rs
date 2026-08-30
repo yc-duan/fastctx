@@ -13,6 +13,7 @@ use crate::budget::{
     relax_tool_token_budget, tool_token_budget_for_required,
 };
 use crate::control::paths::ControlPaths;
+use crate::head_note::{CoverageTotal, CoveredRange, HeadMetric, HeadNote};
 use crate::model::ToolResponse;
 use crate::paths::display_path;
 use crate::shell::JobListStatus;
@@ -20,8 +21,7 @@ use crate::shell::encoding::{
     OutputEncoding, decode_job, job_garble_note, validate_output_encoding,
 };
 use crate::shell::output::{
-    budget_too_small_message, compose_response_with_tail, global_token_budget,
-    job_output_token_budget, plural, terminal_response,
+    budget_too_small_message, global_token_budget, job_output_token_budget,
 };
 use model::{JobRecord, JobStatus, LaunchSpec, StoredLine};
 use std::collections::{BTreeMap, HashMap};
@@ -254,13 +254,12 @@ impl JobManager {
         }
 
         let log_path = job_dir.join(model::OUTPUT_LOG_FILE);
-        let terminal = format!(
-            "(Complete: job {job_id} started; log at {}.)",
-            display_path(&log_path)
-        );
+        let response = HeadNote::new(format!("job {job_id}"), HeadMetric::event("started"))
+            .fact(format!("log at {}", display_path(&log_path)))
+            .render();
         let budget = match tool_token_budget_for_required(
             GLOBAL_TOKEN_BUDGET_ENV,
-            estimate_tokens(&terminal),
+            estimate_tokens(&response),
         ) {
             Ok(budget) => budget,
             Err(error) => {
@@ -268,7 +267,7 @@ impl JobManager {
                 return ToolResponse::error(error);
             }
         };
-        if estimate_tokens(&terminal) > budget.value {
+        if estimate_tokens(&response) > budget.value {
             store::remove_reserved_job(&job_dir);
             return ToolResponse::error(budget_too_small_message(budget));
         }
@@ -288,7 +287,7 @@ impl JobManager {
         match host::launch_supervisor(executable, &spec) {
             Ok(()) => {
                 self.background.track_id(&job_id, SystemTime::now());
-                ToolResponse::text(terminal)
+                ToolResponse::text(response)
             }
             Err(error) => {
                 let live = store::read_json::<model::JobMeta>(
@@ -432,16 +431,11 @@ impl JobManager {
             Ok(paths) => paths,
             Err(error) => return ToolResponse::error(error),
         };
-        let killed = format!("(Complete: job {job_id} killed.)");
+        let killed = job_event(job_id, "killed");
         let required = [
             estimate_tokens(&killed),
-            estimate_tokens(&format!(
-                "(Complete: job {job_id} had already exited with code {}.)",
-                i32::MIN
-            )),
-            estimate_tokens(&format!(
-                "(Complete: job {job_id} had already been interrupted.)"
-            )),
+            estimate_tokens(&job_event(job_id, &format!("already exited {}", i32::MIN))),
+            estimate_tokens(&job_event(job_id, "already interrupted")),
         ]
         .into_iter()
         .max()
@@ -455,12 +449,12 @@ impl JobManager {
         }
         let response = match terminate(paths, job_id) {
             Ok(KillState::Killed) => ToolResponse::text(killed),
-            Ok(KillState::AlreadyExited(code)) => global_terminal(format!(
-                "(Complete: job {job_id} had already exited with code {code}.)"
-            )),
-            Ok(KillState::AlreadyInterrupted) => global_terminal(format!(
-                "(Complete: job {job_id} had already been interrupted.)"
-            )),
+            Ok(KillState::AlreadyExited(code)) => {
+                global_head(job_event(job_id, &format!("already exited {code}")))
+            }
+            Ok(KillState::AlreadyInterrupted) => {
+                global_head(job_event(job_id, "already interrupted"))
+            }
             Err(error) => {
                 if matches!(store::find_record(&paths.jobs_dir, job_id), Ok(None)) {
                     self.background.remove(job_id);
@@ -798,48 +792,42 @@ fn render_candidate(
         .map(|line| line.encoded_line())
         .collect::<Vec<_>>();
     let decoded = decode_job(&encoded, call_encoding, snapshot.default_encoding);
-    let mut notes = Vec::new();
+    let mut facts = Vec::new();
     if let Some(path) = snapshot.direct_log.as_ref() {
         for (first, last) in omitted_ranges(snapshot, &selected) {
-            notes.push(omission_note(first, last, path));
+            facts.push(omission_fact(first, last, path));
         }
     } else if snapshot.legacy_loss {
-        notes.push(legacy_loss_note(snapshot));
+        facts.push(legacy_loss_fact(snapshot));
     }
     if let Some(error) = &snapshot.capture_error {
-        notes.push(capture_failure_note(error, snapshot.direct_log.as_deref()));
+        facts.push(capture_failure_fact(error, snapshot.direct_log.as_deref()));
     }
     if let Some(truncation) = &snapshot.output_truncation {
-        notes.push(output_truncation_note(
+        facts.push(output_truncation_fact(
             truncation,
             snapshot.direct_log.as_deref(),
         ));
     }
     if let Some(note) = job_garble_note(decoded.invalid_sequences, snapshot.anchor) {
-        notes.push(note);
+        facts.push(note);
     }
+    facts.extend(decoded.transcoding_note);
     if let Some(path) = snapshot.direct_log.as_ref() {
         for (line, truncated) in selected.iter().zip(&decoded.truncated_per_line) {
             if *truncated {
-                notes.push(format!(
-                    "(Note: line {} was truncated at 2000 chars in this response; read the complete line at {} with offset={}, or inspect a fragment with grep or the inspect_local_file tool's hex view.)",
+                facts.push(format!(
+                    "line {} truncated at 2000 chars in this response; complete log at {}",
                     line.seq,
-                    display_path(path),
-                    line.seq
+                    display_path(path)
                 ));
             }
         }
     }
-    let leading = (!notes.is_empty()).then(|| notes.join("\n\n"));
     let last_seq = selected.last().map(|line| line.seq);
-    let terminal = output_terminal(job_id, wait_ms, snapshot, selected.len(), last_seq);
+    let head = output_head(job_id, wait_ms, snapshot, &selected, last_seq, &facts);
     RenderedCandidate {
-        response: compose_response_with_tail(
-            leading.as_deref(),
-            &decoded.lines,
-            decoded.transcoding_note.as_deref(),
-            &terminal,
-        ),
+        response: head.render_with_body(&decoded.lines.join("\n")),
         last_seq,
     }
 }
@@ -890,158 +878,135 @@ fn omitted_ranges(snapshot: &OutputSnapshot, selected: &[&StoredLine]) -> Vec<(u
     ranges
 }
 
-fn omission_note(first: u64, last: u64, path: &Path) -> String {
+fn omission_fact(first: u64, last: u64, path: &Path) -> String {
     if first == last {
         format!(
-            "(Note: line {first} was omitted from this response; read it at {} with offset={first}.)",
+            "line {first} omitted from the body; complete log at {}",
             display_path(path)
         )
     } else {
         format!(
-            "(Note: lines {first}-{last} were omitted from this response; read them at {} with offset={first}.)",
+            "lines {first}-{last} omitted from the body; complete log at {}",
             display_path(path)
         )
     }
 }
 
-fn legacy_loss_note(snapshot: &OutputSnapshot) -> String {
+fn legacy_loss_fact(snapshot: &OutputSnapshot) -> String {
     let expected = snapshot.anchor.saturating_add(1);
     let missing = snapshot.unread_first.saturating_sub(expected);
     if missing > 0 {
         format!(
-            "(Note: {missing} earlier {} {} dropped from this legacy job record and cannot be retrieved.)",
-            plural(missing, "line", "lines"),
-            if missing == 1 { "was" } else { "were" }
+            "{missing} earlier {} dropped from this legacy job record and cannot be retrieved",
+            if missing == 1 {
+                "line was"
+            } else {
+                "lines were"
+            }
         )
     } else {
-        "(Note: this legacy job record lost or truncated output that cannot be retrieved.)"
-            .to_string()
+        "this legacy job record lost or truncated output that cannot be retrieved".to_string()
     }
 }
 
-fn capture_failure_note(error: &model::CaptureErrorRecord, direct_log: Option<&Path>) -> String {
+fn capture_failure_fact(error: &model::CaptureErrorRecord, direct_log: Option<&Path>) -> String {
     match direct_log {
         Some(path) => format!(
-            "(Note: output capture failed after seq {}: {}. This does not kill the process; its exit status remains available, but the log at {} stops here.)",
+            "output capture failed after stored line {}: {}; the process was not killed, and the log at {} stops there",
             error.after_seq,
             error.reason,
             display_path(path)
         ),
         None => format!(
-            "(Note: output capture failed after seq {}: {}. This did not kill the process; its exit status remains available, but this legacy record stops here.)",
+            "output capture failed after stored line {}: {}; the process was not killed, and this legacy record stops there",
             error.after_seq, error.reason
         ),
     }
 }
 
-fn output_truncation_note(
+fn output_truncation_fact(
     truncation: &model::OutputTruncationRecord,
     direct_log: Option<&Path>,
 ) -> String {
     match direct_log {
         Some(path) => format!(
-            "(Note: this job reached its {}-byte combined output.log + output.idx hard limit after seq {}. The supervisor kept draining output and did not stop the command, but later output was not persisted. The preserved prefix is at {}.)",
+            "the job reached its {}-byte log limit after stored line {}; later output was drained but not persisted; preserved prefix at {}",
             truncation.limit_bytes,
             truncation.after_seq,
             display_path(path)
         ),
         None => format!(
-            "(Note: this job reached its {}-byte output hard limit after seq {}. The supervisor kept draining output and did not stop the command, but later output was not persisted.)",
+            "the job reached its {}-byte output limit after stored line {}; later output was drained but not persisted",
             truncation.limit_bytes, truncation.after_seq
         ),
     }
 }
 
-fn output_terminal(
+fn output_head(
     job_id: &str,
     wait_ms: u64,
     snapshot: &OutputSnapshot,
-    shown: usize,
+    selected: &[&StoredLine],
     last_seq: Option<u64>,
-) -> String {
-    if let JobStatus::Running = snapshot.status {
-        if shown > 0 {
-            return format!(
-                "(Partial: job {job_id} is running; {shown} new {} shown. Call job_output again for more, or move on and check back.)",
-                plural(shown as u64, "line", "lines")
-            );
+    facts: &[String],
+) -> HeadNote {
+    let state = match &snapshot.status {
+        JobStatus::Running => "running".to_string(),
+        JobStatus::Exited(exit) if exit.was_killed() => "killed".to_string(),
+        JobStatus::Exited(exit) => format!("exited {}", exit.exit_code),
+        JobStatus::Interrupted => "interrupted".to_string(),
+    };
+    let ranges = selected_ranges(selected);
+    let metric = if ranges.is_empty() {
+        HeadMetric::count(0, "new line", "new lines")
+    } else {
+        HeadMetric::Coverage {
+            unit: "lines",
+            ranges,
+            total: CoverageTotal::Exact(
+                usize::try_from(snapshot.total_lines).unwrap_or(usize::MAX),
+            ),
         }
-        if wait_ms < crate::shell::MAX_BLOCKING_CALL_MS {
-            return format!(
-                "(Partial: job {job_id} is running; no new output within {wait_ms} ms. Move on and check back, or raise wait_ms if you have nothing else to do.)"
-            );
-        }
-        return format!(
-            "(Partial: job {job_id} is running; no new output within {wait_ms} ms. It may stay quiet for a long time, or never exit — move on and check back.)"
-        );
+    };
+    let mut head = HeadNote::new(format!("job {job_id} {state}"), metric);
+    if matches!(snapshot.status, JobStatus::Running) && selected.is_empty() {
+        head = head.fact(format!("no new output within {wait_ms} ms"));
     }
     if let Some(path) = snapshot.direct_log.as_ref() {
-        return match &snapshot.status {
-            JobStatus::Exited(exit) if exit.was_killed() => format!(
-                "(Complete: job {job_id} was killed; {} {} total. Full log: {})",
-                snapshot.total_lines,
-                plural(snapshot.total_lines, "line", "lines"),
-                display_path(path)
-            ),
-            JobStatus::Exited(exit) => format!(
-                "(Complete: job {job_id} exited {}; {} {} total. Full log: {})",
-                exit.exit_code,
-                snapshot.total_lines,
-                plural(snapshot.total_lines, "line", "lines"),
-                display_path(path)
-            ),
-            JobStatus::Interrupted => format!(
-                "(Complete: job {job_id} was interrupted: its process ended without an exit record (machine restart or external kill); {} {} preserved. Full log: {})",
-                snapshot.total_lines,
-                plural(snapshot.total_lines, "line", "lines"),
-                display_path(path)
-            ),
-            JobStatus::Running => unreachable!(),
-        };
+        head = head.fact(format!("log at {}", display_path(path)));
     }
     let next = last_seq.unwrap_or(snapshot.anchor);
     let more = next < snapshot.unread_last
         && (!snapshot.all_unread_loaded
             || snapshot.head.last().is_some_and(|line| line.seq > next));
     if more {
-        return match &snapshot.status {
-            JobStatus::Exited(exit) if exit.was_killed() => format!(
-                "(Partial: job {job_id} was killed; more legacy output remains. Call job_output again with after_seq={next}.)"
-            ),
-            JobStatus::Exited(exit) => format!(
-                "(Partial: job {job_id} exited {}; more legacy output remains. Call job_output again with after_seq={next}.)",
-                exit.exit_code
-            ),
-            JobStatus::Interrupted => format!(
-                "(Partial: job {job_id} was interrupted; more legacy output remains. Call job_output again with after_seq={next}.)"
-            ),
-            JobStatus::Running => unreachable!(),
-        };
+        head = head.fact("older legacy output remains");
     }
-    let loss = if snapshot.legacy_loss {
-        ", but this legacy record lost or truncated output that cannot be retrieved"
-    } else {
-        ""
-    };
-    match &snapshot.status {
-        JobStatus::Exited(exit) if exit.was_killed() => format!(
-            "(Complete: job {job_id} was killed; {} {} total{loss}.)",
-            snapshot.total_lines,
-            plural(snapshot.total_lines, "line", "lines")
-        ),
-        JobStatus::Exited(exit) => format!(
-            "(Complete: job {job_id} exited {}; {} {} total{loss}.)",
-            exit.exit_code,
-            snapshot.total_lines,
-            plural(snapshot.total_lines, "line", "lines")
-        ),
-        JobStatus::Interrupted => format!(
-            "(Complete: job {job_id} was interrupted: its process ended without an exit record (machine restart or external kill); {} {} preserved{loss}.)",
-            snapshot.total_lines,
-            plural(snapshot.total_lines, "line", "lines")
-        ),
-        JobStatus::Running => unreachable!(),
+    if matches!(snapshot.status, JobStatus::Interrupted) {
+        head = head.fact("process ended without an exit record");
     }
+    for fact in facts {
+        head = head.fact(fact);
+    }
+    head
+}
+
+fn selected_ranges(selected: &[&StoredLine]) -> Vec<CoveredRange> {
+    let mut raw = Vec::<(u64, u64)>::new();
+    for line in selected {
+        match raw.last_mut() {
+            Some((_, last)) if line.seq == last.saturating_add(1) => *last = line.seq,
+            _ => raw.push((line.seq, line.seq)),
+        }
+    }
+    raw.into_iter()
+        .map(|(first, last)| {
+            CoveredRange::new(
+                usize::try_from(first).unwrap_or(usize::MAX),
+                usize::try_from(last).unwrap_or(usize::MAX),
+            )
+        })
+        .collect()
 }
 
 fn format_job_list(
@@ -1087,7 +1052,10 @@ fn format_job_list_with_budget(
         JobListStatus::All => true,
     });
     if records.is_empty() {
-        return terminal_response(empty_job_list_terminal(status), budget);
+        return head_with_budget(
+            HeadNote::new("jobs", HeadMetric::count(0, "job", "jobs")).render(),
+            budget,
+        );
     }
     records.sort_by(
         |left, right| match (left.status.is_running(), right.status.is_running()) {
@@ -1108,11 +1076,10 @@ fn format_job_list_with_budget(
     let total = records.len();
     let start = usize::try_from(offset).unwrap_or(usize::MAX).min(total);
     if start == total {
-        return terminal_response(
-            format!(
-                "(Complete: no {} at offset={offset}; {total} available.)",
-                job_list_scope(status)
-            ),
+        return head_with_budget(
+            HeadNote::new("jobs", HeadMetric::count(0, "job", "jobs"))
+                .fact(format!("{total} jobs exist"))
+                .render(),
             budget,
         );
     }
@@ -1123,13 +1090,7 @@ fn format_job_list_with_budget(
         .iter()
         .map(format_job_entry)
         .collect::<Vec<_>>();
-    let complete_terminal = complete_job_list_terminal(status, running, finished);
-    let terminal = if page_end < total {
-        partial_job_list_terminal(status, start, entries.len(), total, limit)
-    } else {
-        complete_terminal.clone()
-    };
-    let complete = compose_list(&entries, &terminal);
+    let complete = render_job_list(start, &entries, total, running, finished);
     if estimate_tokens(&complete) <= budget.value {
         return ToolResponse::text(complete);
     }
@@ -1138,8 +1099,7 @@ fn format_job_list_with_budget(
     let mut best = None;
     while low <= high {
         let shown = low + (high - low) / 2;
-        let terminal = partial_job_list_terminal(status, start, shown, total, limit);
-        let response = compose_list(&entries[..shown], &terminal);
+        let response = render_job_list(start, &entries[..shown], total, running, finished);
         if estimate_tokens(&response) <= budget.value {
             best = Some(response);
             low = shown.saturating_add(1);
@@ -1155,63 +1115,25 @@ fn format_job_list_with_budget(
     )
 }
 
-fn empty_job_list_terminal(status: JobListStatus) -> String {
-    match status {
-        JobListStatus::Running => "(Complete: no running jobs.)",
-        JobListStatus::Finished => "(Complete: no finished records.)",
-        JobListStatus::All => "(Complete: no jobs.)",
-    }
-    .to_string()
-}
-
-fn complete_job_list_terminal(status: JobListStatus, running: u64, finished: u64) -> String {
-    match status {
-        JobListStatus::Running => format!(
-            "(Complete: {running} running {}.)",
-            plural(running, "job", "jobs")
-        ),
-        JobListStatus::Finished => format!(
-            "(Complete: {finished} finished {}.)",
-            plural(finished, "record", "records")
-        ),
-        JobListStatus::All => format!(
-            "(Complete: {running} running {}, {finished} finished {}.)",
-            plural(running, "job", "jobs"),
-            plural(finished, "record", "records")
-        ),
-    }
-}
-
-fn partial_job_list_terminal(
-    status: JobListStatus,
+fn render_job_list(
     start: usize,
-    shown: usize,
+    entries: &[String],
     total: usize,
-    limit: u64,
+    running: u64,
+    finished: u64,
 ) -> String {
     let first = start.saturating_add(1);
-    let next = start.saturating_add(shown);
-    format!(
-        "(Partial: showing {first}-{next} of {total} {}. Call job_list again with status=\"{}\", limit={limit}, offset={next}.)",
-        job_list_scope(status),
-        job_list_status_name(status)
+    let last = start.saturating_add(entries.len());
+    HeadNote::new(
+        "jobs",
+        HeadMetric::Coverage {
+            unit: "jobs",
+            ranges: vec![CoveredRange::new(first, last)],
+            total: CoverageTotal::Exact(total),
+        },
     )
-}
-
-fn job_list_scope(status: JobListStatus) -> &'static str {
-    match status {
-        JobListStatus::Running => "running jobs",
-        JobListStatus::Finished => "finished records",
-        JobListStatus::All => "jobs",
-    }
-}
-
-fn job_list_status_name(status: JobListStatus) -> &'static str {
-    match status {
-        JobListStatus::Running => "running",
-        JobListStatus::Finished => "finished",
-        JobListStatus::All => "all",
-    }
+    .fact(format!("{running} running, {finished} finished"))
+    .render_with_body(&entries.join("\n\n"))
 }
 
 fn format_job_entry(record: &JobRecord) -> String {
@@ -1254,14 +1176,6 @@ fn single_line(value: &str) -> String {
         .collect()
 }
 
-fn compose_list(entries: &[String], terminal: &str) -> String {
-    if entries.is_empty() {
-        terminal.to_string()
-    } else {
-        format!("{}\n\n{terminal}", entries.join("\n\n"))
-    }
-}
-
 fn missing_job(job_id: &str) -> ToolResponse {
     ToolResponse::error(missing_job_text(job_id))
 }
@@ -1272,9 +1186,21 @@ fn missing_job_text(job_id: &str) -> String {
     )
 }
 
-fn global_terminal(terminal: String) -> ToolResponse {
+fn job_event(job_id: &str, event: &str) -> String {
+    HeadNote::new(format!("job {job_id}"), HeadMetric::event(event)).render()
+}
+
+fn head_with_budget(head: String, budget: TokenBudget) -> ToolResponse {
+    if estimate_tokens(&head) <= budget.value {
+        ToolResponse::text(head)
+    } else {
+        ToolResponse::error(budget_too_small_message(budget))
+    }
+}
+
+fn global_head(head: String) -> ToolResponse {
     match global_token_budget() {
-        Ok(budget) => terminal_response(terminal, budget),
+        Ok(budget) => head_with_budget(head, budget),
         Err(error) => ToolResponse::error(error),
     }
 }
@@ -1383,13 +1309,13 @@ pub(crate) fn refresh_tail(
     }
     tail.capture_error = delta.capture_error.map(|error| {
         format!(
-            "Output capture failed after seq {}: {}",
+            "Output capture failed after stored line {}: {}",
             error.after_seq, error.reason
         )
     });
     tail.output_truncation = delta.output_truncation.map(|truncation| {
         format!(
-            "Output storage reached its {}-byte hard limit after seq {}; later output was drained but not persisted.",
+            "Output storage reached its {}-byte hard limit after stored line {}; later output was drained but not persisted.",
             truncation.limit_bytes, truncation.after_seq
         )
     });
@@ -1561,7 +1487,7 @@ mod tests {
             budget,
         )
         .unwrap();
-        assert!(interrupted.response.contains("Full log:"));
+        assert!(interrupted.response.contains("log at"));
         assert!(interrupted.response.contains("output.log"));
 
         let capture = format_snapshot(
@@ -1596,9 +1522,9 @@ mod tests {
             budget,
         )
         .unwrap();
-        assert!(capture.response.contains("this legacy record stops here"));
+        assert!(capture.response.contains("this legacy record stops there"));
         assert!(capture.response.contains("cannot be retrieved"));
-        assert!(!capture.response.contains("Full log:"));
+        assert!(!capture.response.contains("complete log at"));
         assert!(!capture.response.contains("offset="));
     }
 
@@ -1643,19 +1569,17 @@ mod tests {
         assert!(
             rendered
                 .response
-                .contains("output capture failed after seq 1: disk unavailable"),
+                .contains("output capture failed after stored line 1: disk unavailable"),
             "{}",
             rendered.response
         );
         assert!(
-            rendered
-                .response
-                .contains("This does not kill the process; its exit status remains available"),
+            rendered.response.contains("the process was not killed"),
             "{}",
             rendered.response
         );
         assert!(
-            rendered.response.contains("output.log") && rendered.response.contains("stops here.)"),
+            rendered.response.contains("output.log") && rendered.response.contains("stops there"),
             "{}",
             rendered.response
         );

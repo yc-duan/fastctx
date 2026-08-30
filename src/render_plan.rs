@@ -20,8 +20,6 @@ pub(crate) struct VerifiedRender {
 pub(crate) enum RenderPlanError {
     Token(TokenCountError),
     InvalidPrefix { shown: usize, available: usize },
-    InvalidTerminal,
-    CountMismatch { incremental: usize, full: usize },
     OverBudget { tokens: usize, budget: usize },
 }
 
@@ -41,13 +39,6 @@ impl fmt::Display for RenderPlanError {
             Self::InvalidPrefix { shown, available } => write!(
                 formatter,
                 "The renderer selected {shown} entries from only {available} available entries."
-            ),
-            Self::InvalidTerminal => formatter.write_str(
-                "The renderer received a terminal note outside the grep compatibility grammar.",
-            ),
-            Self::CountMismatch { incremental, full } => write!(
-                formatter,
-                "Internal token-count invariant failed: incremental={incremental}, full={full}."
             ),
             Self::OverBudget { tokens, budget } => write!(
                 formatter,
@@ -94,22 +85,12 @@ impl LineRenderGraph {
         })
     }
 
-    /// Returns the immutable tokenizer state at one body-entry prefix.
-    pub(crate) fn checkpoint(&self, shown: usize) -> Result<TokenCheckpoint, RenderPlanError> {
-        self.checkpoints
-            .get(shown)
-            .cloned()
-            .ok_or(RenderPlanError::InvalidPrefix {
-                shown,
-                available: self.lines.len(),
-            })
-    }
-
-    /// Counts a prefix plus its notes using only the checkpoint tail and short trailer.
-    pub(crate) fn probe_notes<T: AsRef<str>>(
+    /// Conservatively counts a leading head note, a body prefix, and trailing body details.
+    pub(crate) fn probe_head<T: AsRef<str>>(
         &mut self,
         shown: usize,
-        notes: &[T],
+        head: &str,
+        details: &[T],
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<usize, RenderPlanError> {
         check_render_work(operation, TestRenderStage::TokenProbe)?;
@@ -120,18 +101,17 @@ impl LineRenderGraph {
                 shown,
                 available: self.lines.len(),
             })?;
-        let trailer = render_notes_suffix(shown, notes);
-        self.counter
-            .count_with_suffix(checkpoint, &trailer, operation)
-            .map_err(Into::into)
+        let body_tokens = self.counter.count_with_suffix(checkpoint, "", operation)?;
+        conservative_head_tokens(head, shown > 0, body_tokens, details)
     }
 
-    /// Assembles the selected view once, then independently verifies the full text once.
-    pub(crate) fn finish<T: AsRef<str>>(
+    /// Assembles a head-first response once and independently verifies its exact token count.
+    pub(crate) fn finish_head<T: AsRef<str>>(
         &mut self,
         shown: usize,
-        notes: &[T],
-        incremental_tokens: usize,
+        head: &str,
+        details: &[T],
+        conservative_tokens: usize,
         budget: usize,
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<VerifiedRender, RenderPlanError> {
@@ -142,33 +122,10 @@ impl LineRenderGraph {
             });
         }
         check_render_work(operation, TestRenderStage::Unit)?;
-        let mut text = String::new();
-        for (index, line) in self.lines[..shown].iter().enumerate() {
-            if index > 0 {
-                text.push('\n');
-            }
-            text.push_str(line);
-        }
-        if !notes.is_empty() {
-            if shown > 0 {
-                text.push_str("\n\n");
-            }
-            for (index, note) in notes.iter().enumerate() {
-                if index > 0 {
-                    text.push('\n');
-                }
-                text.push_str(note.as_ref());
-            }
-        }
-
+        let text = render_head_first(head, &self.lines[..shown], details);
         check_render_work(operation, TestRenderStage::FinalVerify)?;
         let full_tokens = self.counter.verify_full(&text, operation)?;
-        if full_tokens != incremental_tokens {
-            return Err(RenderPlanError::CountMismatch {
-                incremental: incremental_tokens,
-                full: full_tokens,
-            });
-        }
+        debug_assert!(full_tokens <= conservative_tokens);
         if full_tokens > budget {
             return Err(RenderPlanError::OverBudget {
                 tokens: full_tokens,
@@ -186,16 +143,6 @@ impl LineRenderGraph {
 pub(crate) struct LineRenderView {
     lines: Arc<[Arc<str>]>,
     checkpoint: TokenCheckpoint,
-}
-
-impl LineRenderView {
-    pub(crate) fn len(&self) -> usize {
-        self.lines.len()
-    }
-
-    pub(crate) fn checkpoint(&self) -> &TokenCheckpoint {
-        &self.checkpoint
-    }
 }
 
 struct SharedPrefixNode {
@@ -257,57 +204,36 @@ impl SharedLineRenderGraph {
         })
     }
 
-    pub(crate) fn probe_notes<T: AsRef<str>>(
+    /// Conservatively counts one prepared body view under a leading head note.
+    pub(crate) fn probe_head<T: AsRef<str>>(
         &mut self,
         view: &LineRenderView,
-        notes: &[T],
+        head: &str,
+        details: &[T],
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<usize, RenderPlanError> {
         check_render_work(operation, TestRenderStage::TokenProbe)?;
-        let suffix = render_notes_suffix(view.len(), notes);
         let mut counter = ExactPrefixCounter::from_checkpoint(&view.checkpoint);
-        counter
-            .count_with_suffix(&view.checkpoint, &suffix, operation)
-            .map_err(Into::into)
+        let body_tokens = counter.count_with_suffix(&view.checkpoint, "", operation)?;
+        conservative_head_tokens(head, !view.lines.is_empty(), body_tokens, details)
     }
 
-    pub(crate) fn finish<T: AsRef<str>>(
+    /// Assembles one prepared body view below a head note and verifies the exact result.
+    pub(crate) fn finish_head<T: AsRef<str>>(
         &mut self,
         view: &LineRenderView,
-        notes: &[T],
-        incremental_tokens: usize,
+        head: &str,
+        details: &[T],
+        conservative_tokens: usize,
         budget: usize,
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<VerifiedRender, RenderPlanError> {
         check_render_work(operation, TestRenderStage::Unit)?;
-        let mut text = String::new();
-        for (index, line) in view.lines.iter().enumerate() {
-            if index > 0 {
-                text.push('\n');
-            }
-            text.push_str(line);
-        }
-        if !notes.is_empty() {
-            if !view.lines.is_empty() {
-                text.push_str("\n\n");
-            }
-            for (index, note) in notes.iter().enumerate() {
-                if index > 0 {
-                    text.push('\n');
-                }
-                text.push_str(note.as_ref());
-            }
-        }
-
+        let text = render_head_first(head, &view.lines, details);
         check_render_work(operation, TestRenderStage::FinalVerify)?;
         let full_tokens = crate::budget::estimate_tokens(&text);
         check_render_work(operation, TestRenderStage::FinalVerify)?;
-        if full_tokens != incremental_tokens {
-            return Err(RenderPlanError::CountMismatch {
-                incremental: incremental_tokens,
-                full: full_tokens,
-            });
-        }
+        debug_assert!(full_tokens <= conservative_tokens);
         if full_tokens > budget {
             return Err(RenderPlanError::OverBudget {
                 tokens: full_tokens,
@@ -321,122 +247,39 @@ impl SharedLineRenderGraph {
     }
 }
 
-/// Exact checkpoints for an optional prefix of diagnostic detail lines after a fixed body.
-pub(crate) struct DetailRenderGraph {
-    prefix_has_body: bool,
-    fixed_lines: usize,
-    detail_lines: usize,
-    checkpoints: Vec<TokenCheckpoint>,
-    counter: ExactPrefixCounter,
+fn conservative_head_tokens<T: AsRef<str>>(
+    head: &str,
+    has_body: bool,
+    body_tokens: usize,
+    details: &[T],
+) -> Result<usize, RenderPlanError> {
+    let mut total = crate::budget::estimate_tokens(head);
+    if has_body {
+        total = total
+            .checked_add(crate::budget::estimate_tokens("\n"))
+            .and_then(|value| value.checked_add(body_tokens))
+            .ok_or(RenderPlanError::Token(TokenCountError::Overflow))?;
+    }
+    for detail in details {
+        total = total
+            .checked_add(crate::budget::estimate_tokens("\n"))
+            .and_then(|value| value.checked_add(crate::budget::estimate_tokens(detail.as_ref())))
+            .ok_or(RenderPlanError::Token(TokenCountError::Overflow))?;
+    }
+    Ok(total)
 }
 
-impl DetailRenderGraph {
-    pub(crate) fn new(
-        body_checkpoint: &TokenCheckpoint,
-        prefix_has_body: bool,
-        fixed_lines: &[Arc<str>],
-        detail_lines: &[Arc<str>],
-        operation: Option<&dyn WorkCheckpoint>,
-    ) -> Result<Self, RenderPlanError> {
-        let mut counter = ExactPrefixCounter::from_checkpoint(body_checkpoint);
-        let mut note_count = 0_usize;
-        for line in fixed_lines {
-            append_note_line(&mut counter, line, prefix_has_body, note_count, operation)?;
-            note_count = note_count.saturating_add(1);
-        }
-        let mut checkpoints = Vec::with_capacity(detail_lines.len().saturating_add(1));
-        checkpoints.push(counter.checkpoint());
-        for line in detail_lines {
-            append_note_line(&mut counter, line, prefix_has_body, note_count, operation)?;
-            note_count = note_count.saturating_add(1);
-            checkpoints.push(counter.checkpoint());
-        }
-        Ok(Self {
-            prefix_has_body,
-            fixed_lines: fixed_lines.len(),
-            detail_lines: detail_lines.len(),
-            checkpoints,
-            counter,
-        })
+fn render_head_first<T: AsRef<str>>(head: &str, body: &[Arc<str>], details: &[T]) -> String {
+    let mut text = String::from(head);
+    for line in body {
+        text.push('\n');
+        text.push_str(line);
     }
-
-    /// Counts the selected detail prefix plus mandatory trailing note lines.
-    pub(crate) fn probe_tail<T: AsRef<str>>(
-        &mut self,
-        shown_details: usize,
-        tail_lines: &[T],
-        operation: Option<&dyn WorkCheckpoint>,
-    ) -> Result<usize, RenderPlanError> {
-        check_render_work(operation, TestRenderStage::TokenProbe)?;
-        let checkpoint =
-            self.checkpoints
-                .get(shown_details)
-                .ok_or(RenderPlanError::InvalidPrefix {
-                    shown: shown_details,
-                    available: self.detail_lines,
-                })?;
-        let existing_notes = self.fixed_lines.saturating_add(shown_details);
-        let suffix = render_continuation_suffix(self.prefix_has_body, existing_notes, tail_lines);
-        self.counter
-            .count_with_suffix(checkpoint, &suffix, operation)
-            .map_err(Into::into)
+    for detail in details {
+        text.push('\n');
+        text.push_str(detail.as_ref());
     }
-}
-
-fn append_note_line(
-    counter: &mut ExactPrefixCounter,
-    line: &str,
-    prefix_has_body: bool,
-    existing_notes: usize,
-    operation: Option<&dyn WorkCheckpoint>,
-) -> Result<(), RenderPlanError> {
-    if existing_notes > 0 {
-        counter.append("\n", operation)?;
-    } else if prefix_has_body {
-        counter.append("\n\n", operation)?;
-    }
-    counter.append(line, operation)?;
-    Ok(())
-}
-
-fn render_continuation_suffix<T: AsRef<str>>(
-    prefix_has_body: bool,
-    existing_notes: usize,
-    lines: &[T],
-) -> String {
-    if lines.is_empty() {
-        return String::new();
-    }
-    let mut suffix = String::new();
-    if existing_notes > 0 {
-        suffix.push('\n');
-    } else if prefix_has_body {
-        suffix.push_str("\n\n");
-    }
-    for (index, line) in lines.iter().enumerate() {
-        if index > 0 {
-            suffix.push('\n');
-        }
-        suffix.push_str(line.as_ref());
-    }
-    suffix
-}
-
-fn render_notes_suffix<T: AsRef<str>>(shown: usize, notes: &[T]) -> String {
-    if notes.is_empty() {
-        return String::new();
-    }
-    let mut suffix = String::new();
-    if shown > 0 {
-        suffix.push_str("\n\n");
-    }
-    for (index, note) in notes.iter().enumerate() {
-        if index > 0 {
-            suffix.push('\n');
-        }
-        suffix.push_str(note.as_ref());
-    }
-    suffix
+    text
 }
 
 #[derive(Clone, Copy)]

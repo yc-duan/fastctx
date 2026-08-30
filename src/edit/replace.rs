@@ -3,12 +3,10 @@
 use super::document::TextDocument;
 use super::locks::{FilePathLock, PathIdentity};
 use super::{ReplaceRequest, ReplaceService, edit_token_budget, plural};
-use crate::budget::{
-    GLOBAL_TOKEN_BUDGET_ENV, assemble_text, estimate_tokens, tool_token_budget_for_required,
-};
+use crate::budget::{GLOBAL_TOKEN_BUDGET_ENV, estimate_tokens, tool_token_budget_for_required};
 use crate::glob_filter::{GlobPatterns, PathGlobFilter};
+use crate::head_note::{HeadMetric, HeadNote};
 use crate::model::ToolResponse;
-use crate::skip_report::{SkipTally, terminal_with_skips};
 use regex::{Captures, Regex, RegexBuilder};
 use std::collections::BTreeMap;
 use std::fs;
@@ -406,7 +404,7 @@ pub(super) fn replace(
         unreachable,
         written_replacements,
         budget,
-        &fallback_note(&analyzed, fallback_label),
+        &fallback_facts(&analyzed, fallback_label),
     )
 }
 
@@ -797,26 +795,36 @@ fn format_dry_run(
     groups.extend(issue_groups(failures, "failed"));
     groups.extend(issue_groups(unreachable.issues, "unreachable"));
     let matched_files = analyzed.len();
-    let terminal = if total_matches == 0 {
-        "(Complete: dry run — no matches found.)".to_string()
-    } else {
-        format!(
-            "(Complete: dry run — {total_matches} {} in {matched_files} {}; nothing written.)",
-            plural(total_matches, "match", "matches"),
-            plural(matched_files, "file", "files")
-        )
-    };
-    let terminal = downgrade_if_unreachable(terminal, unreachable.total);
-    let tally = SkipTally {
-        files: skipped.len() + failures.len(),
-        unreachable: unreachable.total,
-        listed: 0,
-    };
-    let terminal = terminal_with_skips(&terminal, &tally, 0).unwrap_or(terminal);
+    let mut note = HeadNote::new(
+        "replace dry run",
+        HeadMetric::count_in_files(total_matches, "match", "matches", matched_files),
+    )
+    .fact("nothing written");
+    if !skipped.is_empty() {
+        note = note.fact(format!(
+            "{} {} skipped",
+            skipped.len(),
+            plural(skipped.len(), "file", "files")
+        ));
+    }
+    if !failures.is_empty() {
+        note = note.fact(format!(
+            "{} {} failed",
+            failures.len(),
+            plural(failures.len(), "file", "files")
+        ));
+    }
+    if unreachable.total > 0 {
+        note = note.fact(format!(
+            "{} {} unreachable",
+            unreachable.total,
+            plural(unreachable.total, "path", "paths")
+        ));
+    }
     render_report(
         &groups,
-        &terminal,
-        &fallback_note(analyzed, fallback_label),
+        note,
+        &fallback_facts(analyzed, fallback_label),
         budget,
         analyzed.iter().any(|file| file.previews_truncated),
     )
@@ -843,52 +851,41 @@ fn format_apply(
     groups.extend(issue_groups(skipped, "skipped"));
     groups.extend(issue_groups(failures, "failed"));
     groups.extend(issue_groups(unreachable.issues, "unreachable"));
-    let terminal = if replacements == 0 && failures.is_empty() {
-        "(Complete: no matches found; nothing written.)".to_string()
-    } else if failures.is_empty() {
-        format!(
-            "(Complete: {replacements} {} in {} {}.)",
-            plural(replacements, "replacement", "replacements"),
-            successes.len(),
-            plural(successes.len(), "file", "files")
-        )
-    } else {
-        format!(
-            "(Partial: {replacements} {} written in {} {}; {} {} failed — see the report above.)",
-            plural(replacements, "replacement", "replacements"),
-            successes.len(),
-            plural(successes.len(), "file", "files"),
+    let mut note = HeadNote::new(
+        "replace",
+        HeadMetric::count_in_files(replacements, "replacement", "replacements", successes.len()),
+    );
+    if replacements == 0 && failures.is_empty() {
+        note = note.fact("nothing written");
+    }
+    if !skipped.is_empty() {
+        note = note.fact(format!(
+            "{} {} skipped",
+            skipped.len(),
+            plural(skipped.len(), "file", "files")
+        ));
+    }
+    if !failures.is_empty() {
+        note = note.fact(format!(
+            "{} {} failed — see report",
             failures.len(),
             plural(failures.len(), "file", "files")
-        )
-    };
-    let terminal = downgrade_if_unreachable(terminal, unreachable.total);
-    let tally = SkipTally {
-        files: skipped.len(),
-        unreachable: unreachable.total,
-        listed: 0,
-    };
-    let terminal = terminal_with_skips(&terminal, &tally, 0).unwrap_or(terminal);
-    render_report(&groups, &terminal, extra_notes, budget, false)
-}
-
-/// A run that could not enter every path did not finish the job, however well
-/// the files it did reach turned out. `Complete` would overstate the coverage,
-/// and for a tool that writes, overstated coverage is the dangerous direction.
-fn downgrade_if_unreachable(terminal: String, unreachable: usize) -> String {
-    if unreachable == 0 {
-        return terminal;
+        ));
     }
-    if let Some(rest) = terminal.strip_prefix("(Complete:") {
-        return format!("(Partial:{rest}");
+    if unreachable.total > 0 {
+        note = note.fact(format!(
+            "{} {} unreachable",
+            unreachable.total,
+            plural(unreachable.total, "path", "paths")
+        ));
     }
-    terminal
+    render_report(&groups, note, extra_notes, budget, false)
 }
 
 fn render_report(
     groups: &[ReportGroup],
-    terminal: &str,
-    extra_notes: &[String],
+    note: HeadNote,
+    extra_facts: &[String],
     budget: usize,
     force_truncated: bool,
 ) -> ToolResponse {
@@ -896,51 +893,41 @@ fn render_report(
         .iter()
         .flat_map(|group| group.lines.iter().cloned())
         .collect::<Vec<_>>();
-    let mut notes = extra_notes.to_vec();
-    notes.push(terminal.to_string());
-    let full = assemble_text(&all_lines, &notes);
+    let mut base = note;
+    for fact in extra_facts {
+        base = base.fact(fact);
+    }
+    if force_truncated {
+        base = base.fact("preview details were capped before rendering");
+    }
+    let full = base.render_with_body(&all_lines.join("\n"));
     if !force_truncated && estimate_tokens(&full) <= budget {
         return ToolResponse::text(full);
     }
-    let truncated_terminal = append_terminal_clause(terminal, "list truncated, see the note above");
-    let mut shown_lines = Vec::new();
-    let mut shown_files = 0_usize;
-    for group in groups {
-        let start_len = shown_lines.len();
-        for line in &group.lines {
-            shown_lines.push(line.clone());
-            let mut trial_notes = vec![format!(
-                "(Note: showing {} of {} files; totals below cover all files.)",
-                shown_files + 1,
-                groups.len()
-            )];
-            trial_notes.extend(extra_notes.iter().cloned());
-            trial_notes.push(truncated_terminal.clone());
-            if estimate_tokens(&assemble_text(&shown_lines, &trial_notes)) > budget {
-                shown_lines.pop();
-                break;
-            }
-        }
-        if shown_lines.len() > start_len {
-            shown_files += 1;
-        }
-        let mut trial_notes = vec![format!(
-            "(Note: showing {shown_files} of {} files; totals below cover all files.)",
-            groups.len()
-        )];
-        trial_notes.extend(extra_notes.iter().cloned());
-        trial_notes.push(truncated_terminal.clone());
-        if estimate_tokens(&assemble_text(&shown_lines, &trial_notes)) >= budget {
+    let total_lines = all_lines.len();
+    let mut low = 0_usize;
+    let mut high = total_lines;
+    let mut best = None;
+    while low <= high {
+        let shown = low + (high - low) / 2;
+        let candidate_note = base
+            .clone()
+            .fact(format!("report shows {shown} of {total_lines} lines"));
+        let candidate = candidate_note.render_with_body(&all_lines[..shown].join("\n"));
+        if estimate_tokens(&candidate) <= budget {
+            best = Some(candidate);
+            low = shown.saturating_add(1);
+        } else if shown == 0 {
             break;
+        } else {
+            high = shown - 1;
         }
     }
-    let mut truncated_notes = vec![format!(
-        "(Note: showing {shown_files} of {} files; totals below cover all files.)",
-        groups.len()
-    )];
-    truncated_notes.extend(extra_notes.iter().cloned());
-    truncated_notes.push(truncated_terminal);
-    let output = assemble_text(&shown_lines, &truncated_notes);
+    let output = best.unwrap_or_else(|| {
+        base.clone()
+            .fact(format!("report shows 0 of {total_lines} lines"))
+            .render()
+    });
     if estimate_tokens(&output) <= budget {
         ToolResponse::text(output)
     } else {
@@ -948,16 +935,10 @@ fn render_report(
         if let Ok(expanded) = tool_token_budget_for_required(GLOBAL_TOKEN_BUDGET_ENV, required)
             && expanded.value > budget
         {
-            return render_report(
-                groups,
-                terminal,
-                extra_notes,
-                expanded.value,
-                force_truncated,
-            );
+            return render_report(groups, base, &[], expanded.value, false);
         }
         ToolResponse::error(format!(
-            "FASTCTX_TOKEN_BUDGET={budget} is too small to return the required status note. Increase it and retry."
+            "FASTCTX_TOKEN_BUDGET={budget} is too small to return the replace head note. Increase it and retry."
         ))
     }
 }
@@ -971,24 +952,17 @@ fn issue_groups(issues: &[Issue], label: &str) -> Vec<ReportGroup> {
         .collect()
 }
 
-fn fallback_note(analyzed: &[AnalyzedFile], encoding: Option<&str>) -> Vec<String> {
+fn fallback_facts(analyzed: &[AnalyzedFile], encoding: Option<&str>) -> Vec<String> {
     let count = analyzed.iter().filter(|file| file.used_fallback).count();
     if count == 0 {
         Vec::new()
     } else {
         let encoding = encoding.unwrap_or("the requested fallback");
         vec![format!(
-            "(Note: {count} {} decoded using fallback encoding {encoding}.)",
+            "{count} {} decoded using fallback encoding {encoding}",
             plural(count, "file", "files"),
         )]
     }
-}
-
-fn append_terminal_clause(terminal: &str, clause: &str) -> String {
-    let stem = terminal
-        .strip_suffix(".)")
-        .expect("replace terminal notes always end with .)");
-    format!("{stem}; {clause}.)")
 }
 
 fn preview_text(text: &str) -> String {

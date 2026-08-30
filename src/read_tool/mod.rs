@@ -1,6 +1,5 @@
 //! Text, image, PDF, and raw-byte dispatch for the file-inspection tool.
 
-mod batch;
 mod hex_file;
 mod image_file;
 #[cfg(feature = "pdf")]
@@ -56,24 +55,15 @@ enum ViewMode {
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadRequest {
-    /// File to inspect; mutually exclusive with files.
+    /// File to inspect.
     #[schemars(description = crate::model_guidance::local_path_description(
-        "File to inspect; both / and \\\\ are accepted. Mutually exclusive with files."
+        "File to inspect; both / and \\\\ are accepted."
     ))]
-    pub file_path: Option<String>,
-    /// Batch form: an array of {"path", "offset"?, "limit"?, "encoding"?} objects for
-    /// 1-32 text ranges in one call. Repeat a path for distinct ranges, each with its own
-    /// offset/limit, and freely mix ranges from multiple files. Each entry behaves like its
-    /// own single-file text request; results stay in request order. Mutually exclusive with
-    /// file_path and with the top-level offset/encoding/pages/pdf_mode/view parameters.
-    #[schemars(length(min = 1, max = 32))]
-    pub files: Option<Vec<BatchReadEntry>>,
+    pub file_path: String,
     /// The 1-based line number to start reading from. Use for paging through large files.
     #[schemars(range(min = 1))]
     pub offset: Option<usize>,
-    /// The number of lines to return. With files, this is the default for entries that omit
-    /// limit; an entry's own limit takes precedence. Otherwise, omit it to let the output budget
-    /// decide.
+    /// The number of lines to return. Omit it to let the output budget decide.
     #[schemars(range(min = 1))]
     pub limit: Option<usize>,
     /// Page range for PDF files, e.g. "1-5", "3", "10-20". Max 20 pages per call. Required in text mode for PDFs with more than 10 pages.
@@ -88,39 +78,9 @@ pub struct ReadRequest {
     pub view: Option<String>,
 }
 
-/// One text range in a batch inspection request.
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BatchReadEntry {
-    /// Text file to inspect.
-    #[schemars(description = crate::model_guidance::local_path_description(
-        "Text file to inspect; both / and \\\\ are accepted."
-    ))]
-    pub path: String,
-    /// The 1-based line number to start reading from.
-    #[schemars(range(min = 1))]
-    pub offset: Option<usize>,
-    /// Maximum lines to return from this range in this call. Overrides the top-level limit when
-    /// both are present; omit it to inherit that default or let the shared budget decide.
-    #[schemars(range(min = 1))]
-    pub limit: Option<usize>,
-    /// Known source encoding for this file, using the same labels as the top-level encoding parameter.
-    pub encoding: Option<String>,
-}
-
 /// Reads text, images, PDFs, or raw bytes and surfaces every expected failure explicitly.
 pub fn read_file(request: ReadRequest) -> ToolResponse {
-    match (request.file_path.as_deref(), request.files.as_ref()) {
-        (Some(_), Some(_)) | (None, None) => {
-            return ToolResponse::error("Provide exactly one of file_path or files.");
-        }
-        (None, Some(_)) => return batch::read_text_files(request),
-        (Some(_), None) => {}
-    }
-    let file_path = request
-        .file_path
-        .as_deref()
-        .expect("single-file shape was validated");
+    let file_path = request.file_path.as_str();
     let parsed = match parse_local_path_input(file_path) {
         Ok(path) => path,
         Err(message) => return ToolResponse::error(message),

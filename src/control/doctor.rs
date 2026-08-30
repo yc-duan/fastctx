@@ -1,13 +1,12 @@
 //! Diagnosable Status/Doctor checks and a real stdio MCP handshake.
 
-use crate::context_guard::INNER_COMPACTION_BUFFER;
 use crate::control::agents;
 use crate::control::codex_config::{self, ExpectedConfig};
 use crate::control::paths::ControlPaths;
 use crate::control::provider::{self, CodexCompaction, EffectiveOutputMode, ProviderProvenance};
 use crate::control::settings;
 use crate::server::{FastCtxServer, ServerOptions};
-use crate::server_manifest::{ToolContract, ToolManifest};
+use crate::server_manifest::{EnabledTools, ToolContract, ToolManifest};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -211,6 +210,179 @@ pub fn run(paths: &ControlPaths) -> DoctorReport {
     DoctorReport { checks }
 }
 
+/// Runs the shared/Codex report and appends scoped checks for every other connected target.
+pub fn run_with_connected_targets(paths: &ControlPaths) -> DoctorReport {
+    let mut report = run(paths);
+    let Ok(settings) = settings::load(paths) else {
+        return report;
+    };
+    for target in crate::control::targets::AgentTarget::ALL {
+        if target == crate::control::targets::AgentTarget::Codex
+            || settings.target_receipt(target).is_none()
+        {
+            continue;
+        }
+        let mut target_report = run_target(paths, target);
+        for check in &mut target_report.checks {
+            check.detail = format!("{}: {}", target.display_name(), check.detail);
+            if let Some(remedy) = &mut check.remedy {
+                *remedy = format!("{}: {remedy}", target.display_name());
+            }
+        }
+        report.checks.extend(target_report.checks);
+    }
+    report
+}
+
+/// Runs checks scoped to one agent connection without treating an unapplied target as a global failure.
+pub fn run_target(
+    paths: &ControlPaths,
+    target: crate::control::targets::AgentTarget,
+) -> DoctorReport {
+    let settings = match settings::load(paths) {
+        Ok(settings) => settings,
+        Err(error) => {
+            return DoctorReport {
+                checks: vec![DoctorCheck::fail(
+                    "Target settings",
+                    error,
+                    "Repair ~/.fastctx/config.toml, then retry target Doctor.",
+                )],
+            };
+        }
+    };
+    let status = crate::control::target_status::inspect_target(paths, &settings, target);
+    let mut checks = Vec::new();
+    use crate::control::target_status::TargetConnectionState;
+    checks.push(match status.state {
+        TargetConnectionState::NotConnected => DoctorCheck::info(
+            "Target connection",
+            format!(
+                "{} is not connected. Run fastctx apply --target {}.",
+                target.display_name(),
+                target.id()
+            ),
+        ),
+        TargetConnectionState::Connected => DoctorCheck::pass(
+            "Target connection",
+            format!(
+                "{} config, guidance, enabled set, ownership receipt, and installed binary agree.",
+                target.display_name()
+            ),
+        ),
+        TargetConnectionState::NeedsAttention => DoctorCheck::fail(
+            "Target connection",
+            status.facts.join(" "),
+            format!(
+                "Review the drift, then run fastctx apply --target {} to rebuild it or fastctx unapply --target {} to Disconnect safely.",
+                target.id(),
+                target.id()
+            ),
+        ),
+        TargetConnectionState::PermissionDenied => DoctorCheck::fail(
+            "Target connection",
+            status.facts.join(" "),
+            "Restore read/write permission to the target config and guidance paths, then retry.",
+        ),
+        TargetConnectionState::Error => DoctorCheck::fail(
+            "Target connection",
+            status.facts.join(" "),
+            "Repair the target configuration format or path, then retry target Doctor.",
+        ),
+    });
+    checks.push(target_budget_check(&settings, target));
+    if status.state == TargetConnectionState::Connected {
+        checks.push(match probe_mcp(
+            &paths.installed_binary,
+            ServerOptions {
+                tools: status.enabled_tools,
+            },
+        ) {
+            Ok(()) => DoctorCheck::pass(
+                "Target MCP contract",
+                format!(
+                    "The target's {} published tools match their schemas and permission annotations.",
+                    status.enabled_tools.names().len()
+                ),
+            ),
+            Err(error) => DoctorCheck::fail(
+                "Target MCP contract",
+                error,
+                "Re-run Apply for this target, then retry target Doctor.",
+            ),
+        });
+    }
+    DoctorReport { checks }
+}
+
+fn target_budget_check(
+    settings: &settings::FastCtxSettings,
+    target: crate::control::targets::AgentTarget,
+) -> DoctorCheck {
+    use crate::control::targets::BudgetPolicy;
+    let Some(receipt) = settings.target_receipt(target) else {
+        return DoctorCheck::info(
+            "Target output budget",
+            format!(
+                "{}; no applied target budget exists yet.",
+                target.budget_policy().doctor_fact()
+            ),
+        );
+    };
+    match target.budget_policy() {
+        BudgetPolicy::CodexManaged => {
+            let Some(codex) = receipt.codex.as_ref() else {
+                return DoctorCheck::fail(
+                    "Target output budget",
+                    "The Codex receipt is missing its host token limit.",
+                    "Run fastctx apply --target codex to rebuild the receipt.",
+                );
+            };
+            let envelope = usize::try_from(codex.tool_output_token_limit)
+                .unwrap_or_default()
+                .saturating_mul(12)
+                / 10;
+            let per_tool_ok = [
+                ("inspect_local_file", codex.tool_budgets.read),
+                ("grep", codex.tool_budgets.grep),
+                ("glob", codex.tool_budgets.glob),
+                ("run", codex.tool_budgets.run),
+                ("job_output", codex.tool_budgets.job_output),
+            ]
+            .into_iter()
+            .filter(|(tool, _)| receipt.enabled_tools.contains(tool))
+            .all(|(_, budget)| {
+                budget.ceiling(receipt.fastctx_token_budget) <= receipt.fastctx_token_budget
+            });
+            if receipt.fastctx_token_budget <= envelope && per_tool_ok {
+                DoctorCheck::pass(
+                    "Target output budget",
+                    format!(
+                        "FastCtx budget {} <= Codex host envelope {} × 1.2 = {envelope}; every per-tool budget is within the FastCtx budget.",
+                        receipt.fastctx_token_budget, codex.tool_output_token_limit
+                    ),
+                )
+            } else {
+                DoctorCheck::fail(
+                    "Target output budget",
+                    "Codex host/global/per-tool output budgets violate the managed envelope.",
+                    "Run fastctx apply --target codex to realign the budgets.",
+                )
+            }
+        }
+        BudgetPolicy::ClaudeDocumented
+        | BudgetPolicy::OpenCodeByteCeiling
+        | BudgetPolicy::UnknownHost => DoctorCheck::info(
+            "Target output budget",
+            format!(
+                "FastCtx uses {} tokens; {}.",
+                receipt.fastctx_token_budget,
+                target.budget_policy().doctor_fact()
+            ),
+        ),
+    }
+}
+
 fn check_running_instances(paths: &ControlPaths) -> DoctorCheck {
     match crate::control::processes::installed_processes(&paths.fastctx_bin_dir) {
         Ok(processes) => {
@@ -396,11 +568,8 @@ fn check_output_guard(
                     DoctorCheck::pass(
                         "Provider and compaction",
                         format!(
-                            "{} Guarded is active: host limit {}, FastCtx burst budget {}, below Codex 0.147.0's {}-token inner compaction buffer. This limits FastCtx's aggregate turn output but cannot verify the other relay contracts.",
-                            detection.detail,
-                            effective.host_limit,
-                            effective.fastctx_budget,
-                            INNER_COMPACTION_BUFFER
+                            "{} Guarded is active: host limit {}, FastCtx per-call budget {}, within Codex 0.151.0's host-limit × 1.2 tool-output envelope. This prevents host middle truncation for FastCtx output but cannot verify the other relay contracts.",
+                            detection.detail, effective.host_limit, effective.fastctx_budget
                         ),
                     )
                 }
@@ -671,17 +840,34 @@ fn missing_receipt_keys(
     if env.get("FASTCTX_TOKEN_BUDGET").is_none() {
         missing.push("mcp_servers.fastctx.env.FASTCTX_TOKEN_BUDGET");
     }
-    for (key, budget) in [
-        ("FASTCTX_READ_TOKEN_BUDGET", record.tool_budgets.read),
-        ("FASTCTX_GREP_TOKEN_BUDGET", record.tool_budgets.grep),
-        ("FASTCTX_GLOB_TOKEN_BUDGET", record.tool_budgets.glob),
-        ("FASTCTX_RUN_TOKEN_BUDGET", record.tool_budgets.run),
+    let tools = applied_tools(record);
+    for (tool, key, budget) in [
         (
+            "inspect_local_file",
+            "FASTCTX_READ_TOKEN_BUDGET",
+            record.tool_budgets.read,
+        ),
+        (
+            "grep",
+            "FASTCTX_GREP_TOKEN_BUDGET",
+            record.tool_budgets.grep,
+        ),
+        (
+            "glob",
+            "FASTCTX_GLOB_TOKEN_BUDGET",
+            record.tool_budgets.glob,
+        ),
+        ("run", "FASTCTX_RUN_TOKEN_BUDGET", record.tool_budgets.run),
+        (
+            "job_output",
             "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET",
             record.tool_budgets.job_output,
         ),
     ] {
-        if budget.resolve(record.fastctx_token_budget).is_some() && env.get(key).is_none() {
+        if tools.contains(tool)
+            && budget.resolve(record.fastctx_token_budget).is_some()
+            && env.get(key).is_none()
+        {
             missing.push(match key {
                 "FASTCTX_READ_TOKEN_BUDGET" => "mcp_servers.fastctx.env.FASTCTX_READ_TOKEN_BUDGET",
                 "FASTCTX_GREP_TOKEN_BUDGET" => "mcp_servers.fastctx.env.FASTCTX_GREP_TOKEN_BUDGET",
@@ -772,7 +958,7 @@ fn check_drift(
         host_limit: record.tool_output_token_limit,
         fastctx_budget: record.fastctx_token_budget,
         tool_budgets: record.tool_budgets,
-        fastshell_enabled: record.fastshell_enabled,
+        enabled_tools: applied_tools(record),
     };
     let legacy_fastedit =
         settings.is_some_and(|settings| settings.fastedit.enabled) || record.fastedit_enabled;
@@ -996,14 +1182,14 @@ fn check_mcp(executable: &Path, applied: Option<&settings::AppliedRecord>) -> Do
         );
     }
     let options = applied.map_or_else(ServerOptions::default, |record| ServerOptions {
-        enable_shell: record.fastshell_enabled,
+        tools: applied_tools(record),
     });
     match probe_mcp(executable, options) {
         Ok(()) => DoctorCheck::pass(
             "MCP server contract",
             format!(
                 "FastCtx initialize and tools/list returned {} tools with matching contract hashes. This proves the server contract only, not model-side tool exposure.",
-                ToolManifest::expected_names(options.enable_shell).len()
+                ToolManifest::expected_names(options.tools).len()
             ),
         ),
         Err(error) => DoctorCheck::fail(
@@ -1054,7 +1240,7 @@ fn check_agents(paths: &ControlPaths, applied: Option<&settings::AppliedRecord>)
         Ok(bytes) => {
             let state = applied.map_or_else(
                 || classify_unowned_agents(&bytes),
-                |record| agents::classify_managed_section(&bytes, record.fastshell_enabled),
+                |record| agents::classify_managed_section_for_tools(&bytes, applied_tools(record)),
             );
             check_agents_state(paths, applied, state)
         }
@@ -1073,15 +1259,41 @@ fn check_agents(paths: &ControlPaths, applied: Option<&settings::AppliedRecord>)
 }
 
 fn classify_unowned_agents(bytes: &[u8]) -> agents::ManagedSectionState {
-    let file_only = agents::classify_managed_section(bytes, false);
-    if !matches!(file_only, agents::ManagedSectionState::Drifted) {
-        return file_only;
+    let file_names = ["inspect_local_file", "grep", "glob", "replace"];
+    let shell_names = [
+        "run",
+        "run_background",
+        "job_output",
+        "job_kill",
+        "job_list",
+    ];
+    for mask in 1_u8..16 {
+        for shell in [false, true] {
+            let names = file_names
+                .iter()
+                .enumerate()
+                .filter_map(|(index, name)| (mask & (1 << index) != 0).then_some(*name))
+                .chain(shell.then_some(shell_names).into_iter().flatten())
+                .collect::<Vec<_>>();
+            let tools = EnabledTools::from_names(names)
+                .expect("the closed Doctor enumeration only builds valid tool sets");
+            let state = agents::classify_managed_section_for_tools(bytes, tools);
+            if !matches!(state, agents::ManagedSectionState::Drifted) {
+                return state;
+            }
+        }
     }
-    match agents::classify_managed_section(bytes, true) {
-        state @ (agents::ManagedSectionState::Current
-        | agents::ManagedSectionState::KnownLegacy) => state,
-        _ => file_only,
-    }
+    agents::ManagedSectionState::Drifted
+}
+
+fn applied_tools(record: &settings::AppliedRecord) -> EnabledTools {
+    record.enabled_tools.unwrap_or_else(|| {
+        if record.fastshell_enabled {
+            EnabledTools::all()
+        } else {
+            EnabledTools::files()
+        }
+    })
 }
 
 fn check_agents_state(
@@ -1165,11 +1377,8 @@ fn check_agents_state(
 /// Runs MCP initialize and tools/list through a real child process.
 pub fn probe_mcp(executable: &Path, options: ServerOptions) -> Result<(), String> {
     let expected = FastCtxServer::with_options(options).tool_contracts();
-    let mut arguments = vec!["serve"];
-    if options.enable_shell {
-        arguments.push("--enable-shell");
-    }
-    probe_mcp_server(executable, &arguments, &expected)
+    let tools = options.tools.names().join(",");
+    probe_mcp_server(executable, &["serve", "--tools", &tools], &expected)
 }
 
 /// Probes one explicit server invocation and requires exact tool contracts.
@@ -1277,10 +1486,12 @@ pub fn probe_mcp_server(
             .map_err(|error| {
                 format!("MCP tools/list returned an invalid tool definition: {error}")
             })?;
-        let enable_shell = expected_contracts
-            .iter()
-            .any(|contract| contract.group == crate::server_manifest::ToolGroup::Shell);
-        ToolManifest::validate(&definitions, enable_shell)
+        let enabled = EnabledTools::from_names(
+            expected_contracts
+                .iter()
+                .map(|contract| contract.name.as_str()),
+        )?;
+        ToolManifest::validate(&definitions, enabled)
             .map_err(|error| format!("MCP tools/list manifest mismatch: {error}"))?;
         let actual = ToolManifest::contracts(&definitions)?
             .into_iter()

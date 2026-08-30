@@ -6,7 +6,7 @@ use crate::file_executor::GrepGlobExecutor;
 use crate::glob_tool::{GlobRequest, glob_files_cancellable};
 use crate::grep_tool::{GrepRequest, grep_files_cancellable};
 use crate::read_tool::{ReadRequest, read_file};
-use crate::server_manifest::{ToolContract, ToolManifest};
+use crate::server_manifest::{EnabledTools, ToolContract, ToolManifest};
 use crate::server_support::{
     BudgetRetry, CancellableBlockingRequest, run_blocking, run_blocking_cancellable,
 };
@@ -27,14 +27,16 @@ const MAX_REPLACE_OPERATIONS: usize = 8;
 /// Optional tool groups published by the single `fastctx` server.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ServerOptions {
-    /// Publish the five shell tools.
-    pub enable_shell: bool,
+    /// Validated tool names to publish.
+    pub tools: EnabledTools,
 }
 
 impl ServerOptions {
     /// Enables all nine tools; intended for contract tests and doctor probes.
     pub const fn all() -> Self {
-        Self { enable_shell: true }
+        Self {
+            tools: EnabledTools::all(),
+        }
     }
 }
 
@@ -129,7 +131,7 @@ impl FastCtxServer {
             .attr
             .description = Some(crate::model_guidance::inspect_tool_description().into());
         for entry in ToolManifest::entries() {
-            if !entry.group.enabled(options.enable_shell) {
+            if !options.tools.contains(entry.name) {
                 tool_router.remove_route(entry.name);
             }
         }
@@ -144,7 +146,7 @@ impl FastCtxServer {
             ));
         }
         let definitions = tool_router.list_all();
-        ToolManifest::validate(&definitions, options.enable_shell)
+        ToolManifest::validate(&definitions, options.tools)
             .expect("the compiled tool router must match ToolManifest");
         Self {
             tool_router,
@@ -214,7 +216,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "grep",
-        description = "Fast regex content search (ripgrep engine; Rust regex, no lookaround). Output\nmodes: \"files_with_matches\" (default, paths only), \"content\", \"count\" (total\nmatches, not matching lines), \"summary\" (global totals). Respects .gitignore;\nsearches hidden files; skips .git and binaries. Files are decoded to UTF-8\nbefore searching; files whose encoding can't be determined, that change, or\nthat cannot be searched are skipped and listed for directory targets; the\nequivalent single-file failure returns an error. Matching is line-by-line:\n`^` and `$` anchor line boundaries and are CRLF-aware. A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and\ndo not decode or rewrite it. The last line of every successful result states\nComplete or Partial — continue only with the exact offset a Partial note\nprovides; errors are self-contained.",
+        description = "Fast regex content search (ripgrep engine; Rust regex, no lookaround). Output\nmodes: \"files_with_matches\" (default, paths only), \"content\", \"count\" (total\nmatches, not matching lines), \"summary\" (global totals). Respects .gitignore;\nsearches hidden files; skips .git and binaries. Files are decoded to UTF-8\nbefore searching; files whose encoding can't be determined, that change, or\nthat cannot be searched are skipped and listed for directory targets; the\nequivalent single-file failure returns an error. Matching is line-by-line:\n`^` and `$` anchor line boundaries and are CRLF-aware. A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and\ndo not decode or rewrite it. Continue a paged result with offset equal to the\nlast covered result number; errors are self-contained.",
         annotations(
             title = "Search file contents",
             read_only_hint = true,
@@ -248,7 +250,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "glob",
-        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Matches files\nonly, never directories. Returns absolute paths sorted by path (or newest first\nwith sort=\"modified\"), 100 per page by default. filter_mode defaults to\n\"ignore\" (plain .ignore files only); \"all\" disables that filtering. Hidden\nfiles and .git are always visible unless a negative pattern excludes them.\noutput_mode defaults to \"paths\"; \"details\" returns compact JSON lines with\npath, byte size, and UTC modification time. Omit `path` entirely for the session\nworking directory — never pass \"null\" or \"undefined\". A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and do\nnot decode or rewrite it. The last line of every successful result states\nComplete or Partial — continue only with the exact offset a Partial note\nprovides; errors are self-contained.",
+        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Matches files\nonly, never directories. Returns absolute paths sorted by path (or newest first\nwith sort=\"modified\"), 100 per page by default. filter_mode defaults to\n\"ignore\" (plain .ignore files only); \"all\" disables that filtering. Hidden\nfiles and .git are always visible unless a negative pattern excludes them.\noutput_mode defaults to \"paths\"; \"details\" returns compact JSON lines with\npath, byte size, and UTC modification time. Omit `path` entirely for the session\nworking directory — never pass \"null\" or \"undefined\". A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and do\nnot decode or rewrite it. Continue a paged result with offset equal to the last\ncovered file number; errors are self-contained.",
         annotations(
             title = "Match file paths",
             read_only_hint = true,
@@ -294,9 +296,7 @@ impl ServerHandler for FastCtxServer {
             // blurb and may keep only its first line and first 250 characters, so this text
             // has to introduce the toolset within that budget. Behavioural rules belong in
             // the host guidance file, which has no such limit.
-            .with_instructions(crate::model_guidance::server_instructions(
-                self.options.enable_shell,
-            ))
+            .with_instructions(crate::model_guidance::server_instructions())
     }
 
     // The three `resources/*` methods stay on the rmcp defaults on purpose: both list methods

@@ -1,7 +1,7 @@
 //! Stable manifest for tool grouping, gating, and contract hashes.
 
 use rmcp::model::Tool;
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,12 +16,8 @@ pub enum ToolGroup {
 }
 
 impl ToolGroup {
-    /// Returns whether this group is published for the startup flags.
-    pub const fn enabled(self, enable_shell: bool) -> bool {
-        match self {
-            Self::File => true,
-            Self::Shell => enable_shell,
-        }
+    const fn is_shell(self) -> bool {
+        matches!(self, Self::Shell)
     }
 }
 
@@ -84,6 +80,141 @@ const TOOL_ENTRIES: [ToolManifestEntry; 9] = [
     },
 ];
 
+const FILE_MASK: u16 = 0b0000_1111;
+const SHELL_MASK: u16 = 0b1_1111_0000;
+const ALL_MASK: u16 = FILE_MASK | SHELL_MASK;
+
+/// A validated, non-empty set of published tools.
+///
+/// File tools are individually selectable; the five shell tools are either all
+/// present or all absent so a background job can never be started without its
+/// lifecycle controls.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct EnabledTools(u16);
+
+impl EnabledTools {
+    /// The default four-file-tool surface.
+    pub const fn files() -> Self {
+        Self(FILE_MASK)
+    }
+
+    /// The complete nine-tool surface.
+    pub const fn all() -> Self {
+        Self(ALL_MASK)
+    }
+
+    /// Validates tool names and the atomic shell-group invariant.
+    pub fn from_names<I, S>(names: I) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut bits = 0_u16;
+        for supplied in names {
+            let name = supplied.as_ref().trim();
+            if name.is_empty() {
+                return Err("Tool names cannot be empty.".to_string());
+            }
+            let Some(index) = TOOL_ENTRIES.iter().position(|entry| entry.name == name) else {
+                return Err(format!(
+                    "Unknown FastCtx tool \"{name}\". Valid names: {}.",
+                    Self::valid_names().join(", ")
+                ));
+            };
+            let bit = 1_u16 << index;
+            if bits & bit != 0 {
+                return Err(format!("Duplicate FastCtx tool \"{name}\"."));
+            }
+            bits |= bit;
+        }
+        Self::from_bits(bits)
+    }
+
+    /// Parses the comma-separated representation accepted by `fastctx serve`.
+    pub fn from_csv(csv: &str) -> Result<Self, String> {
+        Self::from_names(csv.split(','))
+    }
+
+    fn from_bits(bits: u16) -> Result<Self, String> {
+        if bits == 0 {
+            return Err(
+                "The enabled tool set cannot be empty; disconnect the target instead.".to_string(),
+            );
+        }
+        if bits & !ALL_MASK != 0 {
+            return Err("The enabled tool set contains unknown bits.".to_string());
+        }
+        let shell = bits & SHELL_MASK;
+        if shell != 0 && shell != SHELL_MASK {
+            return Err(format!(
+                "Shell tools are atomic; enable all of {} or none of them.",
+                Self::shell_names().join(", ")
+            ));
+        }
+        Ok(Self(bits))
+    }
+
+    /// Returns whether one manifest tool is enabled.
+    pub fn contains(self, name: &str) -> bool {
+        TOOL_ENTRIES
+            .iter()
+            .position(|entry| entry.name == name)
+            .is_some_and(|index| self.0 & (1_u16 << index) != 0)
+    }
+
+    /// Names in stable manifest order.
+    pub fn names(self) -> Vec<&'static str> {
+        TOOL_ENTRIES
+            .iter()
+            .filter(|entry| self.contains(entry.name))
+            .map(|entry| entry.name)
+            .collect()
+    }
+
+    /// Whether the complete shell group is enabled.
+    pub const fn shell_enabled(self) -> bool {
+        self.0 & SHELL_MASK == SHELL_MASK
+    }
+
+    /// Every valid tool name in stable manifest order.
+    pub fn valid_names() -> Vec<&'static str> {
+        TOOL_ENTRIES.iter().map(|entry| entry.name).collect()
+    }
+
+    fn shell_names() -> Vec<&'static str> {
+        TOOL_ENTRIES
+            .iter()
+            .filter(|entry| entry.group.is_shell())
+            .map(|entry| entry.name)
+            .collect()
+    }
+}
+
+impl Default for EnabledTools {
+    fn default() -> Self {
+        Self::files()
+    }
+}
+
+impl Serialize for EnabledTools {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.names().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for EnabledTools {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let names = Vec::<String>::deserialize(deserializer)?;
+        Self::from_names(names).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Access to the single source of enumerable tool facts.
 pub struct ToolManifest;
 
@@ -94,16 +225,12 @@ impl ToolManifest {
     }
 
     /// Returns expected names for one startup flag combination.
-    pub fn expected_names(enable_shell: bool) -> Vec<&'static str> {
-        TOOL_ENTRIES
-            .iter()
-            .filter(|entry| entry.group.enabled(enable_shell))
-            .map(|entry| entry.name)
-            .collect()
+    pub fn expected_names(enabled: EnabledTools) -> Vec<&'static str> {
+        enabled.names()
     }
 
     /// Validates names and explicit permission annotations against the manifest.
-    pub fn validate(tools: &[Tool], enable_shell: bool) -> Result<(), String> {
+    pub fn validate(tools: &[Tool], enabled: EnabledTools) -> Result<(), String> {
         let mut name_counts = BTreeMap::<&str, usize>::new();
         for tool in tools {
             *name_counts.entry(tool.name.as_ref()).or_default() += 1;
@@ -119,7 +246,7 @@ impl ToolManifest {
             ));
         }
 
-        let expected = Self::expected_names(enable_shell)
+        let expected = Self::expected_names(enabled)
             .into_iter()
             .collect::<BTreeSet<_>>();
         let actual = tools
@@ -217,17 +344,47 @@ fn contract_hash(tool: &Tool, group: ToolGroup) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolGroup, ToolManifest, contract_hash};
+    use super::{EnabledTools, TOOL_ENTRIES, ToolGroup, ToolManifest, contract_hash};
     use crate::server::{FastCtxServer, ServerOptions};
     use std::collections::BTreeSet;
 
     #[test]
-    fn enabled_combinations_have_the_frozen_counts_and_order() {
-        assert_eq!(ToolManifest::expected_names(false).len(), 4);
-        assert_eq!(ToolManifest::expected_names(true).len(), 9);
+    fn manifest_order_and_atomic_shell_selection_are_stable() {
+        assert_eq!(ToolManifest::expected_names(EnabledTools::files()).len(), 4);
+        assert_eq!(ToolManifest::expected_names(EnabledTools::all()).len(), 9);
         assert_eq!(ToolManifest::entries()[0].group, ToolGroup::File);
         assert_eq!(ToolManifest::entries()[3].name, "replace");
         assert_eq!(ToolManifest::entries()[8].name, "job_list");
+    }
+
+    #[test]
+    fn every_nonempty_file_subset_and_atomic_shell_choice_publishes_exactly_that_contract() {
+        for file_mask in 1_u8..16 {
+            for shell in [false, true] {
+                let names = TOOL_ENTRIES
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        let enabled = match entry.group {
+                            ToolGroup::File => file_mask & (1 << index) != 0,
+                            ToolGroup::Shell => shell,
+                        };
+                        enabled.then_some(entry.name)
+                    })
+                    .collect::<Vec<_>>();
+                let enabled = EnabledTools::from_names(names.clone()).unwrap();
+                let tools = FastCtxServer::with_options(ServerOptions { tools: enabled })
+                    .tool_definitions();
+                ToolManifest::validate(&tools, enabled).unwrap();
+                assert_eq!(
+                    tools
+                        .iter()
+                        .map(|tool| tool.name.as_ref())
+                        .collect::<BTreeSet<_>>(),
+                    names.into_iter().collect::<BTreeSet<_>>(),
+                );
+            }
+        }
     }
 
     #[test]
@@ -240,7 +397,7 @@ mod tests {
             .clone();
         tools.push(duplicate);
         assert_eq!(
-            ToolManifest::validate(&tools, false).unwrap_err(),
+            ToolManifest::validate(&tools, EnabledTools::files()).unwrap_err(),
             "tool router contains duplicate names: inspect_local_file"
         );
         assert_eq!(
@@ -255,7 +412,7 @@ mod tests {
             .unwrap()
             .annotations = None;
         assert_eq!(
-            ToolManifest::validate(&missing, false).unwrap_err(),
+            ToolManifest::validate(&missing, EnabledTools::files()).unwrap_err(),
             "tool inspect_local_file is missing annotations"
         );
 
@@ -269,7 +426,7 @@ mod tests {
             .unwrap()
             .open_world_hint = Some(true);
         assert_eq!(
-            ToolManifest::validate(&incorrect, false).unwrap_err(),
+            ToolManifest::validate(&incorrect, EnabledTools::files()).unwrap_err(),
             "tool inspect_local_file has incorrect permission annotations: expected readOnlyHint=true, destructiveHint=false, openWorldHint=false"
         );
     }
@@ -334,7 +491,7 @@ mod tests {
         );
         let mut prose = vec![(
             "server instructions".to_string(),
-            crate::model_guidance::server_instructions(true),
+            crate::model_guidance::server_instructions(),
         )];
         for tool in all_published_tools() {
             if let Some(description) = tool.description.as_deref() {

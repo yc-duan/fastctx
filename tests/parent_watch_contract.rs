@@ -91,12 +91,15 @@ fn parent_watch_ends_foreground_work_but_preserves_detached_background_jobs() {
     );
     let started = wait_for_response(&background.response_path, 2, PROCESS_DEADLINE);
     let body = mcp_text(&started)
-        .strip_prefix("(Complete: job ")
-        .and_then(|value| value.strip_suffix(".)"))
-        .expect("run_background must return its durable start terminal");
+        .strip_prefix("=== job ")
+        .and_then(|value| value.strip_suffix(" ==="))
+        .expect("run_background must return its durable start head note");
     let (job_id, log_path) = body
-        .split_once(" started; log at ")
+        .split_once(" (started; log at ")
         .expect("run_background must return its durable job id and log path");
+    let log_path = log_path
+        .strip_suffix(')')
+        .expect("run_background start facts must close their head-note metric");
     assert!(Path::new(log_path).is_absolute(), "{log_path}");
     let job_id = job_id.to_string();
     release_parent_and_wait_for_server(&mut background);
@@ -117,8 +120,8 @@ fn parent_watch_ends_foreground_work_but_preserves_detached_background_jobs() {
         let output = mcp_text(&response).to_string();
         if output
             .lines()
-            .last()
-            .is_some_and(|line| line.starts_with("(Complete:"))
+            .next()
+            .is_some_and(|line| line.starts_with(&format!("=== job {job_id} exited 17 (")))
         {
             break output;
         }

@@ -235,10 +235,12 @@ fn apply_status_and_unapply_cover_both_shell_states() {
             .iter()
             .map(|value| value.as_str().unwrap())
             .collect::<Vec<_>>();
-        let mut expected_args = vec!["serve"];
-        if fastshell {
-            expected_args.push("--enable-shell");
-        }
+        let enabled = if fastshell {
+            "inspect_local_file,grep,glob,replace,run,run_background,job_output,job_kill,job_list"
+        } else {
+            "inspect_local_file,grep,glob,replace"
+        };
+        let expected_args = vec!["serve", "--tools", enabled];
         assert_eq!(args, expected_args, "{config}");
         assert!(config.contains("mcp__fastctx"));
         assert_eq!(config.matches("mcp__fastctx").count(), 1);
@@ -247,9 +249,12 @@ fn apply_status_and_unapply_cover_both_shell_states() {
         let agents = std::fs::read_to_string(codex.join("AGENTS.md")).unwrap();
         assert_eq!(agents.matches("<!-- fastctx:begin -->").count(), 1);
         assert_eq!(agents.matches("<!-- fastctx:end -->").count(), 1);
-        assert_eq!(agents.contains("### Shell commands"), fastshell);
-        assert!(agents.contains("### Batch replacement"), "{agents}");
-        assert!(agents.contains("FastCtx's `replace`"), "{agents}");
+        assert_eq!(agents.contains("Write POSIX bash for run"), fastshell);
+        assert!(
+            agents.contains("Use replace for mechanical edits"),
+            "{agents}"
+        );
+        assert!(agents.contains("## FastCtx local tools"), "{agents}");
         for removed in ["copy", "cut", "paste", "clips", "drop"] {
             assert!(!agents.contains(&format!("`{removed}`")));
         }
@@ -368,7 +373,10 @@ fn apply_migrates_owned_three_server_config_and_legacy_agents_blocks_atomically(
     assert!(config.contains("command = 'keep-me'"), "{config}");
     assert!(config.contains("[mcp_servers.fastctx]"), "{config}");
     assert!(
-        config.contains("args = [\"serve\", \"--enable-shell\"]"),
+        config.contains(concat!(
+            "args = [\"serve\", \"--tools\", ",
+            "\"inspect_local_file,grep,glob,replace,run,run_background,job_output,job_kill,job_list\"]"
+        )),
         "{config}"
     );
     for legacy in [
@@ -388,9 +396,12 @@ fn apply_migrates_owned_three_server_config_and_legacy_agents_blocks_atomically(
     assert!(agents.ends_with("\nuser suffix\n"), "{agents}");
     assert!(!agents.contains("<!-- fastread:begin -->"), "{agents}");
     assert_eq!(agents.matches("<!-- fastctx:begin -->").count(), 1);
-    assert!(agents.contains("### Shell commands"), "{agents}");
-    assert!(agents.contains("### Batch replacement"), "{agents}");
-    assert!(agents.contains("FastCtx's `replace`"), "{agents}");
+    assert!(agents.contains("## FastCtx local tools"), "{agents}");
+    assert!(
+        agents.contains("Use replace for mechanical edits"),
+        "{agents}"
+    );
+    assert!(agents.contains("Write POSIX bash for run"), "{agents}");
     assert!(!agents.contains("mcp__fastctx__copy"), "{agents}");
     assert!(!agents.contains("mcp__fastctx__paste"), "{agents}");
 }
@@ -469,7 +480,11 @@ fn profile_test_home() -> tempfile::TempDir {
 
 fn start_persistent_job(home: &Path, command: &str) -> String {
     let mut server = isolated_command(home);
-    server.args(["serve", "--enable-shell"]);
+    server.args([
+        "serve",
+        "--tools",
+        "inspect_local_file,grep,glob,replace,run,run_background,job_output,job_kill,job_list",
+    ]);
     let mut session = McpSession::start(server);
     let started = session.call(
         "run_background",
@@ -480,12 +495,15 @@ fn start_persistent_job(home: &Path, command: &str) -> String {
         }),
     );
     let body = mcp_text(&started)
-        .strip_prefix("(Complete: job ")
-        .and_then(|value| value.strip_suffix(".)"))
-        .expect("run_background must return its stable start terminal");
+        .strip_prefix("=== job ")
+        .and_then(|value| value.strip_suffix(" ==="))
+        .expect("run_background must return its stable start head note");
     let (job_id, log_path) = body
-        .split_once(" started; log at ")
+        .split_once(" (started; log at ")
         .expect("run_background must return its stable job id and log path");
+    let log_path = log_path
+        .strip_suffix(')')
+        .expect("run_background start facts must close their head-note metric");
     assert!(Path::new(log_path).is_absolute(), "{log_path}");
     assert!(session.close().success());
     job_id.to_string()

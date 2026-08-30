@@ -1,5 +1,6 @@
 //! Image magic-byte detection and MCP image-content construction for read.
 
+use crate::head_note::{HeadMetric, HeadNote};
 use crate::model::{ToolContent, ToolResponse};
 use crate::paths::io_error_message;
 use base64::Engine;
@@ -71,11 +72,20 @@ pub(super) fn read_image(path: &Path) -> ToolResponse {
         ));
     };
     ToolResponse {
-        content: vec![ToolContent::Image {
-            data: base64::engine::general_purpose::STANDARD.encode(bytes),
-            mime_type: mime_type.to_string(),
-            detail: None,
-        }],
+        content: vec![
+            ToolContent::Text(
+                HeadNote::new(
+                    crate::paths::display_path(path),
+                    HeadMetric::count(1, "image", "images"),
+                )
+                .render(),
+            ),
+            ToolContent::Image {
+                data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                mime_type: mime_type.to_string(),
+                detail: None,
+            },
+        ],
         is_error: false,
     }
 }

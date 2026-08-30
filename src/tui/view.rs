@@ -1,5 +1,6 @@
 //! Adaptive ratatui views and the shared TUI theme.
 
+use super::agents::{AgentDetailItem, AgentListState};
 use super::app::{App, Screen, StatusState};
 use super::budget_editor::{self, ToolBudgetInputError};
 use super::config::{
@@ -14,6 +15,7 @@ use crate::control::link::LinkState;
 use crate::control::settings::{
     MAX_REPLACE_FILE_LIMIT_MIB, MIN_REPLACE_FILE_LIMIT_MIB, Tier, ToolBudgetLevel,
 };
+use crate::control::target_status::{TargetConnectionState, TargetStatus};
 use crate::search_parallelism::{self, SearchParallelismInputError};
 use crate::shell::jobs::{JobSourceSummary, JobSummary};
 use crate::update::{NpmDiscovery, NpmVersionAuthority, StartupUpdate};
@@ -84,6 +86,15 @@ fn uses_narrow_layout(area: Rect, screen: Screen) -> bool {
         | Screen::Jobs
         | Screen::Update
         | Screen::UpdateConfirm => false,
+        Screen::AgentList
+        | Screen::AgentDetail
+        | Screen::AgentDraftConfirm
+        | Screen::AgentApplyPreview
+        | Screen::AgentApplyConflict
+        | Screen::AgentApplyConfirm
+        | Screen::AgentDisconnectPreview
+        | Screen::AgentDisconnectConfirm
+        | Screen::AgentDoctor => area.width < 78 || area.height < 20,
         Screen::ApplyPreview
         | Screen::UnapplyPreview
         | Screen::Status
@@ -148,6 +159,39 @@ fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Screen::UpdateConfirm => render_update_confirmation(frame, app, area),
         Screen::Language { .. } => render_languages(frame, app, area),
         Screen::Main => render_main(frame, app, area),
+        Screen::AgentListLoading
+        | Screen::AgentApplyLoading
+        | Screen::AgentApplyRunning
+        | Screen::AgentDisconnectLoading
+        | Screen::AgentDisconnectRunning
+        | Screen::AgentDoctorLoading => render_loading(frame, app, area, app.messages().loading),
+        Screen::AgentList => render_agent_list(frame, app, area),
+        Screen::AgentDetail => render_agent_detail(frame, app, area),
+        Screen::AgentDraftConfirm => render_agent_draft_confirmation(frame, app, area),
+        Screen::AgentApplyPreview => render_agent_preview(frame, app, area, true),
+        Screen::AgentApplyConflict => render_confirmation(
+            frame,
+            app,
+            area,
+            app.messages().conflict_warning,
+            theme::warning(),
+        ),
+        Screen::AgentApplyConfirm => render_confirmation(
+            frame,
+            app,
+            area,
+            app.agent_messages().apply,
+            theme::accent(),
+        ),
+        Screen::AgentDisconnectPreview => render_agent_preview(frame, app, area, false),
+        Screen::AgentDisconnectConfirm => render_confirmation(
+            frame,
+            app,
+            area,
+            app.agent_messages().disconnect,
+            theme::danger(),
+        ),
+        Screen::AgentDoctor => render_target_doctor(frame, app, area),
         Screen::ApplyHome => render_apply_home(frame, app, area),
         Screen::ApplyLoading | Screen::UnapplyLoading => {
             render_loading(frame, app, area, app.messages().loading)
@@ -582,7 +626,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .split(inner(area, 2, 1));
     let messages = app.messages();
     let labels = [
-        messages.menu_apply,
+        app.agent_messages().title,
         messages.menu_config,
         app.job_messages().menu,
         app.update_messages().page_title,
@@ -593,19 +637,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let items = labels
         .iter()
         .enumerate()
-        .map(|(index, label)| {
-            let requires_action = index == 0 && app.link_state.requires_apply();
-            let item = ListItem::new(format!(" {}", main_menu_label(app, index, label)));
-            if requires_action {
-                item.style(
-                    Style::default()
-                        .fg(theme::warning())
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                item
-            }
-        })
+        .map(|(index, label)| ListItem::new(format!(" {}", main_menu_label(app, index, label))))
         .collect::<Vec<_>>();
     let mut state = ListState::default().with_selected(Some(app.selected));
     frame.render_stateful_widget(
@@ -616,22 +648,22 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         chunks[0],
         &mut state,
     );
-    // The panel reports the connection rather than echoing the highlighted entry: the cursor
-    // already names that, and the one thing the menu cannot otherwise show is whether FastCtx is
-    // still connected to the host with the guidance this build writes.
-    let mut details = vec![link_status_line(app)];
-    if app.link_state.requires_apply() {
-        details.push(Line::styled(
-            messages.link_state_stale_hint,
-            Style::default().fg(theme::muted()),
-        ));
-    }
-    details.extend([
-        Line::raw(""),
+    let mut details = vec![
         detail_line("FastCtx", &format!("v{}", env!("CARGO_PKG_VERSION"))),
         detail_line(messages.tier_label, app.settings.tier.display_name()),
         detail_line(messages.menu_language, app.language.native_name()),
-    ]);
+    ];
+    if app.selected == 0 {
+        details.push(Line::raw(""));
+        details.push(detail_line(
+            app.agent_messages().connected,
+            &format!(
+                "{} / {}",
+                app.settings.applied_targets.len(),
+                crate::control::targets::AgentTarget::ALL.len()
+            ),
+        ));
+    }
     if app.selected == 2 {
         let count = app
             .running_job_count
@@ -664,13 +696,8 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     );
 }
 
-/// Marks the action that repairs a stale connection in text, so it stays visible without colour.
-fn main_menu_label(app: &App, index: usize, label: &str) -> String {
-    if index == 0 && app.link_state.requires_apply() {
-        format!("! {label}")
-    } else {
-        label.to_string()
-    }
+fn main_menu_label(_app: &App, _index: usize, label: &str) -> String {
+    label.to_string()
 }
 
 /// One line naming the connection to the host, shared by the main menu and the connect page so
@@ -736,6 +763,357 @@ fn tier_color(tier: Tier) -> Color {
         Tier::Standard => theme::accent(),
         Tier::High => theme::warning(),
     }
+}
+
+fn target_state_visual(
+    app: &App,
+    state: TargetConnectionState,
+) -> (&'static str, &'static str, Color) {
+    let messages = app.agent_messages();
+    match state {
+        TargetConnectionState::NotConnected => ("○", messages.not_connected, theme::muted()),
+        TargetConnectionState::Connected => ("✓", messages.connected, theme::success()),
+        TargetConnectionState::NeedsAttention => ("!", messages.needs_attention, theme::warning()),
+        TargetConnectionState::PermissionDenied => {
+            ("!", messages.permission_denied, theme::warning())
+        }
+        TargetConnectionState::Error => ("×", messages.error, theme::danger()),
+    }
+}
+
+fn target_state_line(app: &App, status: &TargetStatus) -> Line<'static> {
+    let (symbol, label, color) = target_state_visual(app, status.state);
+    Line::styled(
+        format!("{symbol} {label}"),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn target_detail_lines(app: &App, status: &TargetStatus) -> Vec<Line<'static>> {
+    let messages = app.agent_messages();
+    let mut lines = vec![
+        target_state_line(app, status),
+        Line::raw(""),
+        detail_line(
+            messages.tools_title,
+            &status.enabled_tools.names().join(", "),
+        ),
+        detail_line(
+            messages.effective_budget,
+            &status.effective_budget.to_string(),
+        ),
+        detail_line(
+            messages.config_path,
+            &crate::paths::display_path(&status.config_path),
+        ),
+        detail_line(
+            messages.guidance_path,
+            &crate::paths::display_path(&status.guidance_path),
+        ),
+        detail_line(
+            messages.receipt,
+            if app.settings.target_receipt(status.target).is_some() {
+                app.messages().enabled_label
+            } else {
+                app.messages().disabled_label
+            },
+        ),
+    ];
+    if !status.facts.is_empty() {
+        lines.push(Line::raw(""));
+        lines.extend(
+            status
+                .facts
+                .iter()
+                .map(|fact| Line::styled(fact.clone(), Style::default().fg(theme::muted()))),
+        );
+    }
+    lines
+}
+
+fn render_agent_list(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    match &app.agent_list_state {
+        AgentListState::Loading => {
+            render_loading(frame, app, area, app.messages().loading);
+        }
+        AgentListState::Empty => render_message_panel(
+            frame,
+            inner(area, 3, 2),
+            app.agent_messages().title,
+            app.messages().empty,
+            theme::muted(),
+        ),
+        AgentListState::Error(error) => render_message_panel(
+            frame,
+            inner(area, 3, 2),
+            app.agent_messages().title,
+            &format!("{error}\n\n{}", app.messages().action_retry),
+            theme::danger(),
+        ),
+        AgentListState::Ready(statuses) => {
+            let selected = app.selected.min(statuses.len().saturating_sub(1));
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                .split(inner(area, 2, 1));
+            let items = statuses
+                .iter()
+                .map(|status| {
+                    let (symbol, label, color) = target_state_visual(app, status.state);
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{symbol} "), Style::default().fg(color)),
+                        Span::styled(
+                            status.target.display_name(),
+                            Style::default().fg(theme::fg()),
+                        ),
+                        Span::styled(format!("  {label}"), Style::default().fg(color)),
+                    ]))
+                })
+                .collect::<Vec<_>>();
+            let mut state = ListState::default().with_selected(Some(selected));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(panel(app.agent_messages().title))
+                    .highlight_style(selected_style())
+                    .highlight_symbol("❯ "),
+                chunks[0],
+                &mut state,
+            );
+            let status = &statuses[selected];
+            frame.render_widget(
+                Paragraph::new(target_detail_lines(app, status))
+                    .block(panel(status.target.display_name()))
+                    .wrap(Wrap { trim: false }),
+                chunks[1],
+            );
+        }
+    }
+}
+
+fn agent_item_label(app: &App, item: AgentDetailItem) -> &'static str {
+    match item {
+        AgentDetailItem::Inspect => "inspect_local_file",
+        AgentDetailItem::Grep => "grep",
+        AgentDetailItem::Glob => "glob",
+        AgentDetailItem::Replace => "replace",
+        AgentDetailItem::ShellSuite => app.agent_messages().shell_suite,
+        AgentDetailItem::Apply => app.agent_messages().apply,
+        AgentDetailItem::Disconnect => app.agent_messages().disconnect,
+        AgentDetailItem::Doctor => app.agent_messages().doctor,
+    }
+}
+
+fn render_agent_detail(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .split(inner(area, 2, 1));
+    let focused = app.agent_cursor.item();
+    let items = AgentDetailItem::ALL
+        .into_iter()
+        .map(|item| {
+            let unavailable = item == AgentDetailItem::Disconnect && !app.agent_has_receipt();
+            let mut spans = vec![Span::styled(
+                agent_item_label(app, item),
+                Style::default().fg(if unavailable {
+                    theme::muted()
+                } else {
+                    theme::fg()
+                }),
+            )];
+            if let Some(enabled) = app.agent_draft.enabled(item) {
+                spans.push(Span::styled(
+                    format!("  ‹ {} ›", toggle_label(app.messages(), enabled)),
+                    Style::default().fg(if enabled {
+                        theme::success()
+                    } else {
+                        theme::muted()
+                    }),
+                ));
+                if app.agent_draft.item_changed(item) {
+                    spans.push(Span::styled(" ●", Style::default().fg(theme::warning())));
+                }
+            } else if item == AgentDetailItem::Disconnect && unavailable {
+                spans.push(Span::styled(
+                    format!("  {}", app.agent_messages().not_connected),
+                    Style::default().fg(theme::muted()),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    "  Enter",
+                    Style::default().fg(theme::accent()),
+                ));
+            }
+            ListItem::new(Line::from(spans))
+        })
+        .collect::<Vec<_>>();
+    let title = if app.agent_draft.is_dirty() {
+        format!(
+            "{} · {}",
+            app.agent_draft.target.display_name(),
+            app.agent_messages().unsaved
+        )
+    } else {
+        app.agent_draft.target.display_name().to_string()
+    };
+    let mut state = ListState::default().with_selected(Some(app.agent_cursor.index()));
+    frame.render_stateful_widget(
+        List::new(items)
+            .block(panel(&title))
+            .highlight_style(selected_style())
+            .highlight_symbol("❯ "),
+        chunks[0],
+        &mut state,
+    );
+    let mut details = app.current_agent_status().map_or_else(
+        || {
+            vec![Line::styled(
+                app.messages().empty,
+                Style::default().fg(theme::muted()),
+            )]
+        },
+        |status| target_detail_lines(app, status),
+    );
+    details.push(Line::raw(""));
+    details.push(detail_line(
+        app.agent_messages().tools_title,
+        &app.agent_draft.current.names().join(", "),
+    ));
+    if focused.is_toggle() {
+        details.push(Line::raw(""));
+        details.push(Line::styled(
+            agent_item_label(app, focused),
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    frame.render_widget(
+        Paragraph::new(details)
+            .block(panel(app.agent_messages().tools_title))
+            .wrap(Wrap { trim: false }),
+        chunks[1],
+    );
+}
+
+fn render_agent_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: bool) {
+    let items = if apply {
+        app.target_apply_plan.as_ref().map(|plan| plan.preview())
+    } else {
+        app.target_disconnect_plan
+            .as_ref()
+            .map(|plan| plan.preview())
+    };
+    let Some(items) = items else {
+        render_loading(frame, app, area, app.messages().empty);
+        return;
+    };
+    let mut lines = Vec::new();
+    if items
+        .iter()
+        .all(|item| item.action == PreviewAction::Unchanged)
+    {
+        lines.push(Line::styled(
+            app.messages().no_changes,
+            Style::default()
+                .fg(theme::success())
+                .add_modifier(Modifier::BOLD),
+        ));
+        lines.push(Line::raw(""));
+    }
+    for item in items {
+        push_preview_card(&mut lines, app, item);
+        lines.push(Line::raw(""));
+    }
+    let preview_area = inner(area, 2, 1);
+    app.detail_viewport.update(
+        lines.len(),
+        usize::from(preview_area.height.saturating_sub(2)),
+    );
+    let title = format!(
+        "{} · {}",
+        app.agent_draft.target.display_name(),
+        app.messages().preview_title
+    );
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel(&title))
+            .scroll((
+                u16::try_from(app.detail_viewport.offset()).unwrap_or(u16::MAX),
+                0,
+            ))
+            .wrap(Wrap { trim: false }),
+        preview_area,
+    );
+}
+
+fn render_target_doctor(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    render_doctor_state(
+        frame,
+        app,
+        area,
+        &app.target_doctor,
+        &format!(
+            "{} · {}",
+            app.agent_draft.target.display_name(),
+            app.agent_messages().doctor
+        ),
+    );
+}
+
+fn render_agent_draft_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let messages = app.agent_messages();
+    let actions = [messages.cancel, messages.discard, messages.save_apply];
+    let spans = actions
+        .iter()
+        .enumerate()
+        .flat_map(|(index, label)| {
+            let mut spans = Vec::new();
+            if index > 0 {
+                spans.push(Span::raw("   "));
+            }
+            let color = match index {
+                1 => theme::danger(),
+                2 => theme::accent(),
+                _ => theme::muted(),
+            };
+            let style = if app.selected == index {
+                Style::default()
+                    .fg(theme::bg())
+                    .bg(color)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(color)
+            };
+            spans.push(Span::styled(format!(" {label} "), style));
+            spans
+        })
+        .collect::<Vec<_>>();
+    let popup = if area.width < 72 || area.height < 14 {
+        inner(area, 1, 0)
+    } else {
+        centered_rect(72, 38, area)
+    };
+    if popup != area {
+        frame.render_widget(Clear, popup);
+    }
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                messages.leave_prompt,
+                Style::default()
+                    .fg(theme::fg())
+                    .add_modifier(Modifier::BOLD),
+            )
+            .alignment(Alignment::Center),
+            Line::raw(""),
+            Line::from(spans).alignment(Alignment::Center),
+        ])
+        .alignment(Alignment::Center)
+        .block(panel(messages.unsaved).border_style(Style::default().fg(theme::warning())))
+        .wrap(Wrap { trim: false }),
+        popup,
+    );
 }
 
 fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
@@ -811,6 +1189,8 @@ fn preview_purpose(app: &App, target: PreviewTarget) -> &'static str {
         PreviewTarget::Binary => app.messages().purpose_binary,
         PreviewTarget::CodexConfig => app.messages().purpose_codex_config,
         PreviewTarget::Agents => app.messages().purpose_agents,
+        PreviewTarget::AgentConfig => app.messages().purpose_codex_config,
+        PreviewTarget::AgentGuidance => app.messages().purpose_agents,
         PreviewTarget::Receipt => app.messages().purpose_receipt,
     }
 }
@@ -2389,19 +2769,29 @@ fn config_value_line(app: &App, item: ConfigItemId, selected: bool) -> Line<'sta
 }
 
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    match &app.status {
+    render_doctor_state(frame, app, area, &app.status, app.messages().status_title);
+}
+
+fn render_doctor_state(
+    frame: &mut Frame<'_>,
+    app: &App,
+    area: Rect,
+    state: &StatusState,
+    title: &str,
+) {
+    match state {
         StatusState::Loading => render_loading(frame, app, area, app.messages().loading),
         StatusState::Empty => render_message_panel(
             frame,
             inner(area, 3, 2),
-            app.messages().status_title,
+            title,
             app.messages().empty,
             theme::muted(),
         ),
         StatusState::Error(error) => render_message_panel(
             frame,
             area,
-            app.messages().status_title,
+            title,
             &format!("{error}\n\n{}", app.messages().action_retry),
             theme::danger(),
         ),
@@ -2438,7 +2828,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     ],
                 )
                 .column_spacing(1)
-                .block(panel(app.messages().status_title)),
+                .block(panel(title)),
                 inner(area, 1, 1),
             );
         }
@@ -2505,7 +2895,11 @@ fn render_receipt(frame: &mut Frame<'_>, app: &App, area: Rect) {
         }
         lines.push(Line::raw(""));
         lines.push(Line::styled(
-            app.messages().restart_notice,
+            if app.receipt_is_for_agent() {
+                app.agent_messages().restart_notice
+            } else {
+                app.messages().restart_notice
+            },
             Style::default().fg(theme::accent()),
         ));
     }
@@ -2854,8 +3248,24 @@ fn render_narrow_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply
 }
 
 fn render_narrow_status(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let mut lines = vec![narrow_title(app.messages().status_title)];
-    match &app.status {
+    render_narrow_doctor_state(
+        frame,
+        app,
+        area,
+        &app.status.clone(),
+        app.messages().status_title.to_string(),
+    );
+}
+
+fn render_narrow_doctor_state(
+    frame: &mut Frame<'_>,
+    app: &mut App,
+    area: Rect,
+    state: &StatusState,
+    title: String,
+) {
+    let mut lines = vec![narrow_title(title)];
+    match state {
         StatusState::Loading => lines.push(Line::styled(
             app.messages().loading,
             Style::default().fg(theme::accent()),
@@ -2930,6 +3340,143 @@ fn render_narrow_status(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     render_narrow_details(frame, app, area, lines);
 }
 
+fn render_narrow_agent_list(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let mut lines = vec![narrow_title(app.agent_messages().title)];
+    match &app.agent_list_state {
+        AgentListState::Loading => lines.push(Line::styled(
+            app.messages().loading,
+            Style::default().fg(theme::accent()),
+        )),
+        AgentListState::Empty => lines.push(Line::styled(
+            app.messages().empty,
+            Style::default().fg(theme::muted()),
+        )),
+        AgentListState::Error(error) => {
+            lines.push(Line::styled(
+                error.clone(),
+                Style::default().fg(theme::danger()),
+            ));
+            lines.push(Line::styled(
+                app.messages().action_retry,
+                Style::default().fg(theme::accent()),
+            ));
+        }
+        AgentListState::Ready(statuses) => {
+            let status = &statuses[app.selected.min(statuses.len().saturating_sub(1))];
+            lines.push(Line::styled(
+                status.target.display_name(),
+                Style::default()
+                    .fg(theme::accent())
+                    .add_modifier(Modifier::BOLD),
+            ));
+            lines.push(target_state_line(app, status));
+            lines.push(detail_line(
+                app.agent_messages().tools_title,
+                &status.enabled_tools.names().join(", "),
+            ));
+            lines.push(detail_line(
+                app.agent_messages().effective_budget,
+                &status.effective_budget.to_string(),
+            ));
+        }
+    }
+    render_narrow_details(frame, app, area, lines);
+}
+
+fn render_narrow_agent_detail(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let state = app.current_agent_status().map(|status| {
+        let (_, label, _) = target_state_visual(app, status.state);
+        label
+    });
+    let title = state.map_or_else(
+        || app.agent_draft.target.display_name().to_string(),
+        |state| format!("{} · {state}", app.agent_draft.target.display_name()),
+    );
+    let mut lines = vec![narrow_title(title)];
+    let focused = app.agent_cursor.index();
+    let visible = usize::from(area.height.saturating_sub(1).max(1));
+    let start = focused
+        .saturating_sub(visible / 2)
+        .min(AgentDetailItem::ALL.len().saturating_sub(visible));
+    let end = start
+        .saturating_add(visible)
+        .min(AgentDetailItem::ALL.len());
+    for (index, item) in AgentDetailItem::ALL[start..end].iter().copied().enumerate() {
+        let absolute = start + index;
+        let unavailable = item == AgentDetailItem::Disconnect && !app.agent_has_receipt();
+        let mut spans = vec![Span::styled(
+            if absolute == focused { "❯ " } else { "  " },
+            Style::default().fg(theme::accent()),
+        )];
+        spans.push(Span::styled(
+            agent_item_label(app, item),
+            Style::default()
+                .fg(if unavailable {
+                    theme::muted()
+                } else {
+                    theme::fg()
+                })
+                .add_modifier(if absolute == focused {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        ));
+        if let Some(enabled) = app.agent_draft.enabled(item) {
+            spans.push(Span::styled(
+                format!("  {}", toggle_label(app.messages(), enabled)),
+                Style::default().fg(if enabled {
+                    theme::success()
+                } else {
+                    theme::muted()
+                }),
+            ));
+            if app.agent_draft.item_changed(item) {
+                spans.push(Span::styled(" ●", Style::default().fg(theme::warning())));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    render_narrow_details(frame, app, area, lines);
+}
+
+fn render_narrow_agent_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: bool) {
+    let items = if apply {
+        app.target_apply_plan.as_ref().map(|plan| plan.preview())
+    } else {
+        app.target_disconnect_plan
+            .as_ref()
+            .map(|plan| plan.preview())
+    };
+    let mut lines = vec![narrow_title(format!(
+        "{} · {}",
+        app.agent_draft.target.display_name(),
+        app.messages().preview_title
+    ))];
+    let Some(items) = items else {
+        lines.push(Line::styled(
+            app.messages().loading,
+            Style::default().fg(theme::muted()),
+        ));
+        render_narrow_details(frame, app, area, lines);
+        return;
+    };
+    if items
+        .iter()
+        .all(|item| item.action == PreviewAction::Unchanged)
+    {
+        lines.push(Line::styled(
+            app.messages().no_changes,
+            Style::default().fg(theme::success()),
+        ));
+    }
+    for item in items {
+        push_preview_card(&mut lines, app, item);
+        lines.push(Line::raw(""));
+    }
+    render_narrow_details(frame, app, area, lines);
+}
+
 fn render_narrow_receipt(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let mut lines = vec![narrow_title(app.messages().receipt_title)];
     let Some(receipt) = &app.receipt else {
@@ -2962,7 +3509,14 @@ fn render_narrow_receipt(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ));
     }
     lines.push(Line::styled(
-        truncate_display_width(app.messages().restart_notice, usize::from(area.width)),
+        truncate_display_width(
+            if app.receipt_is_for_agent() {
+                app.agent_messages().restart_notice
+            } else {
+                app.messages().restart_notice
+            },
+            usize::from(area.width),
+        ),
         Style::default().fg(theme::accent()),
     ));
     render_narrow_details(frame, app, area, lines);
@@ -3013,6 +3567,70 @@ fn render_narrow_about(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 
 fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     match app.screen {
+        Screen::AgentList => {
+            render_narrow_agent_list(frame, app, area);
+            return;
+        }
+        Screen::AgentDetail => {
+            render_narrow_agent_detail(frame, app, area);
+            return;
+        }
+        Screen::AgentDraftConfirm => {
+            render_agent_draft_confirmation(frame, app, area);
+            return;
+        }
+        Screen::AgentApplyPreview => {
+            render_narrow_agent_preview(frame, app, area, true);
+            return;
+        }
+        Screen::AgentDisconnectPreview => {
+            render_narrow_agent_preview(frame, app, area, false);
+            return;
+        }
+        Screen::AgentApplyConflict => {
+            render_confirmation(
+                frame,
+                app,
+                area,
+                app.messages().conflict_warning,
+                theme::warning(),
+            );
+            return;
+        }
+        Screen::AgentApplyConfirm => {
+            render_confirmation(
+                frame,
+                app,
+                area,
+                app.agent_messages().apply,
+                theme::accent(),
+            );
+            return;
+        }
+        Screen::AgentDisconnectConfirm => {
+            render_confirmation(
+                frame,
+                app,
+                area,
+                app.agent_messages().disconnect,
+                theme::danger(),
+            );
+            return;
+        }
+        Screen::AgentDoctor => {
+            render_narrow_doctor_state(
+                frame,
+                app,
+                area,
+                &app.target_doctor.clone(),
+                format!(
+                    "{} · {}",
+                    app.agent_draft.target.display_name(),
+                    app.agent_messages().doctor
+                ),
+            );
+            return;
+        }
         Screen::ApplyPreview => {
             render_narrow_preview(frame, app, area, true);
             return;
@@ -3053,7 +3671,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ),
         Screen::Main => {
             let labels = [
-                messages.menu_apply,
+                app.agent_messages().title,
                 messages.menu_config,
                 app.job_messages().menu,
                 app.update_messages().page_title,
@@ -3066,6 +3684,12 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Screen::ApplyHome => {
             [messages.action_apply, messages.action_unapply][app.selected].to_string()
         }
+        Screen::AgentListLoading
+        | Screen::AgentApplyLoading
+        | Screen::AgentApplyRunning
+        | Screen::AgentDisconnectLoading
+        | Screen::AgentDisconnectRunning
+        | Screen::AgentDoctorLoading => messages.loading.to_string(),
         Screen::Config => config_narrow_summary(app),
         Screen::ConfigCpuEdit => format!(
             "{} · {}",
@@ -3102,6 +3726,15 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         | Screen::ConfigSaving
         | Screen::JobsKilling => messages.loading.to_string(),
         Screen::ApplyPreview
+        | Screen::AgentList
+        | Screen::AgentDetail
+        | Screen::AgentDraftConfirm
+        | Screen::AgentApplyPreview
+        | Screen::AgentApplyConflict
+        | Screen::AgentApplyConfirm
+        | Screen::AgentDisconnectPreview
+        | Screen::AgentDisconnectConfirm
+        | Screen::AgentDoctor
         | Screen::UnapplyPreview
         | Screen::Status
         | Screen::About
@@ -3112,21 +3745,12 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     lines.push(Line::styled(
         selected,
         Style::default()
-            .fg(
-                if app.screen == Screen::Main
-                    && app.selected == 0
-                    && app.link_state.requires_apply()
-                {
-                    theme::warning()
-                } else {
-                    theme::fg()
-                },
-            )
+            .fg(theme::fg())
             .add_modifier(Modifier::BOLD),
     ));
     // A terminal too small for the panel still has to show whether the host is connected; the
     // symbol keeps it readable after the text is truncated.
-    if matches!(app.screen, Screen::Main | Screen::ApplyHome) {
+    if app.screen == Screen::ApplyHome {
         let status = link_status_line(app);
         let text = status
             .spans
@@ -3255,6 +3879,37 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
             messages.footer_select,
             messages.footer_quit,
         ],
+        Screen::AgentList => vec![
+            messages.footer_move,
+            messages.footer_select,
+            messages.action_refresh,
+            messages.action_unapply,
+            messages.footer_back,
+        ],
+        Screen::AgentDetail => vec![
+            messages.footer_move,
+            messages.footer_select,
+            messages.footer_save,
+            messages.footer_back,
+        ],
+        Screen::AgentDraftConfirm
+        | Screen::AgentApplyConflict
+        | Screen::AgentApplyConfirm
+        | Screen::AgentDisconnectConfirm => vec![
+            messages.footer_move,
+            messages.footer_select,
+            messages.footer_back,
+        ],
+        Screen::AgentApplyPreview | Screen::AgentDisconnectPreview => {
+            vec![messages.footer_select, messages.footer_back]
+        }
+        Screen::AgentDoctor => vec![messages.action_refresh, messages.footer_back],
+        Screen::AgentListLoading
+        | Screen::AgentApplyLoading
+        | Screen::AgentApplyRunning
+        | Screen::AgentDisconnectLoading
+        | Screen::AgentDisconnectRunning
+        | Screen::AgentDoctorLoading => vec![messages.loading],
         Screen::ApplyLoading
         | Screen::ApplyRunning
         | Screen::UnapplyLoading
@@ -3730,6 +4385,7 @@ mod tests {
         std::fs::write(&executable, b"binary").unwrap();
         for language in ALL_LANGUAGES {
             let mut app = App::for_test(paths.clone(), executable.clone());
+            app.settings.language = Some(language.code().to_string());
             app.language = Language::parse(language.code()).unwrap();
             app.screen = Screen::Main;
             for (width, height) in [(100, 30), (52, 12), (40, 10), (39, 8)] {
@@ -3746,8 +4402,10 @@ mod tests {
                     );
                 } else if width == 40 {
                     let selected_label = [
-                        app.messages().menu_apply,
+                        app.agent_messages().title,
                         app.messages().menu_config,
+                        app.job_messages().menu,
+                        app.update_messages().page_title,
                         app.messages().menu_status,
                         app.messages().menu_about,
                         app.messages().menu_language,
@@ -3759,6 +4417,38 @@ mod tests {
                     );
                 } else if width == 39 {
                     assert!(text.contains("40×9"), "{}\n{text}", language.code());
+                }
+            }
+
+            app.screen = Screen::Main;
+            app.selected = 0;
+            app.handle_key(key(KeyCode::Enter));
+            app.execute_pending();
+            assert_eq!(app.screen, Screen::AgentList);
+            for (width, height) in [(100, 30), (52, 12), (40, 10)] {
+                let backend = TestBackend::new(width, height);
+                let mut terminal = Terminal::new(backend).unwrap();
+                terminal.draw(|frame| render(frame, &mut app)).unwrap();
+                let text = buffer_text(&terminal);
+                assert!(
+                    contains_visible_text(&text, "Codex / ChatGPT"),
+                    "{} agent list at {width}x{height}\n{text}",
+                    language.code()
+                );
+            }
+            app.handle_key(key(KeyCode::Enter));
+            assert_eq!(app.screen, Screen::AgentDetail);
+            for (width, height) in [(100, 30), (52, 12), (40, 10)] {
+                let backend = TestBackend::new(width, height);
+                let mut terminal = Terminal::new(backend).unwrap();
+                terminal.draw(|frame| render(frame, &mut app)).unwrap();
+                let text = buffer_text(&terminal);
+                for expected in ["Codex / ChatGPT", "inspect_local_file"] {
+                    assert!(
+                        contains_visible_text(&text, expected),
+                        "{} agent detail missing {expected} at {width}x{height}\n{text}",
+                        language.code()
+                    );
                 }
             }
         }

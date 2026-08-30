@@ -7,8 +7,7 @@ use fastctx::read_tool::{ReadRequest, read_file};
 
 fn request(path: &std::path::Path, pages: Option<&str>, mode: Option<&str>) -> ReadRequest {
     ReadRequest {
-        file_path: Some(normalized(path)),
-        files: None,
+        file_path: normalized(path),
         offset: None,
         limit: None,
         pages: pages.map(str::to_string),
@@ -41,9 +40,11 @@ fn concurrent_pdf_reads_do_not_corrupt_each_others_documents() {
             }));
         }
         for handle in handles {
-            assert_eq!(
-                text(handle.join().unwrap()),
-                "=== Page 1 ===\nConcurrent PDF\n\n(Complete: page 1 of 1 shown.)"
+            let output = text(handle.join().unwrap());
+            assert!(output.starts_with("=== "), "{output}");
+            assert!(
+                output.ends_with("=== Page 1 ===\nConcurrent PDF"),
+                "{output}"
             );
         }
     });
@@ -60,7 +61,10 @@ fn image_mode_rejects_oversized_pages_before_bitmap_allocation() {
     );
     assert_eq!(
         text(read_file(request(&path, None, None))),
-        "=== Page 1 ===\nhuge\n\n(Complete: page 1 of 1 shown.)"
+        format!(
+            "=== {} (pages 1 of 1) ===\n=== Page 1 ===\nhuge",
+            normalized(&path)
+        )
     );
 }
 

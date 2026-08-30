@@ -1,11 +1,9 @@
 //! Strict incremental decoding, line collection, and budget closure for text reads.
 
-use super::{
-    MAX_LINE_CHARS, TOTAL_COUNT_SIZE_LIMIT, UNBOUNDED_LINE_LIMIT, binary_error,
-    binary_error_message,
-};
-use crate::budget::{LineTokenCounter, TokenBudget, assemble_text, estimate_tokens};
+use super::{MAX_LINE_CHARS, TOTAL_COUNT_SIZE_LIMIT, UNBOUNDED_LINE_LIMIT, binary_error};
+use crate::budget::{LineTokenCounter, TokenBudget, estimate_tokens};
 use crate::encoding::{EncodingDecision, StreamDecodeFailure, validate_file_encoding};
+use crate::head_note::{CoverageTotal, CoveredRange, HeadMetric, HeadNote};
 use crate::model::ToolResponse;
 use crate::paths::io_error_message;
 use std::fs;
@@ -41,9 +39,10 @@ pub(super) fn read_text_file(
         Err(error) => return ToolResponse::error(io_error_message(path, &error)),
     };
     if validated.total_lines == 0 {
-        return ToolResponse::text("Warning: the file exists but is empty.");
+        return HeadNote::new(path_display, HeadMetric::count(0, "line", "lines"))
+            .into_text_response("");
     }
-    let transcoding_note = validated.transcoding_note();
+    let transcoding_fact = validated.transcoding_fact();
 
     let total_is_known = file_size <= TOTAL_COUNT_SIZE_LIMIT;
     let mut collector = LineCollector::new(offset, limit, budget.value, total_is_known);
@@ -59,79 +58,7 @@ pub(super) fn read_text_file(
     if exhausted {
         collector.finish_eof();
     }
-    collector.into_response(transcoding_note, budget)
-}
-
-pub(super) struct BatchTextContent {
-    pub(super) first: usize,
-    pub(super) lines: Vec<String>,
-    pub(super) total_lines: usize,
-    pub(super) total_is_known: bool,
-    pub(super) transcoding_note: Option<String>,
-    pub(super) slice_complete: bool,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn read_batch_text_file(
-    path: &Path,
-    path_display: &str,
-    offset: Option<usize>,
-    limit: Option<usize>,
-    explicit_encoding: Option<&str>,
-    binary_type: Option<&str>,
-    collection_budget: usize,
-) -> Result<BatchTextContent, String> {
-    let offset = offset.unwrap_or(1);
-    let limit = limit.unwrap_or(UNBOUNDED_LINE_LIMIT);
-    let file_size = fs::metadata(path)
-        .map_err(|error| io_error_message(path, &error))?
-        .len();
-    let validated = match validate_file_encoding(path, explicit_encoding) {
-        Ok(EncodingDecision::Text(validated)) => validated,
-        Ok(EncodingDecision::Binary) => {
-            return Err(binary_error_message(path_display, binary_type));
-        }
-        Ok(EncodingDecision::Rejected(rejection)) => {
-            return Err(rejection.message(path_display));
-        }
-        Err(error) => return Err(io_error_message(path, &error)),
-    };
-    if validated.total_lines == 0 {
-        return Err("Warning: the file exists but is empty.".to_string());
-    }
-    if validated.total_lines < offset {
-        let noun = if validated.total_lines == 1 {
-            "line"
-        } else {
-            "lines"
-        };
-        return Err(format!(
-            "Warning: the file has only {} {noun}, but offset={offset} was requested.",
-            validated.total_lines
-        ));
-    }
-    let total_lines = validated.total_lines;
-    let total_is_known = file_size <= TOTAL_COUNT_SIZE_LIMIT;
-    let transcoding_note = validated.transcoding_note();
-    let mut collector = LineCollector::new(offset, limit, collection_budget, total_is_known);
-    let exhausted = match validated.stream_text(path, |chunk| collector.push(chunk)) {
-        Ok(exhausted) => exhausted,
-        Err(StreamDecodeFailure::Io(error)) => return Err(io_error_message(path, &error)),
-        Err(StreamDecodeFailure::Malformed) => {
-            return Err(validated.malformed_rejection().message(path_display));
-        }
-    };
-    if exhausted {
-        collector.finish_eof();
-    }
-    Ok(BatchTextContent {
-        first: offset,
-        lines: collector.rendered,
-        total_lines,
-        total_is_known,
-        transcoding_note,
-        slice_complete: !collector.storage_saturated,
-    })
+    collector.into_response(path_display, file_size, transcoding_fact, budget)
 }
 
 struct LineCollector {
@@ -252,100 +179,67 @@ impl LineCollector {
         if self.last_was_newline || self.decoded_any || self.current_chars > 0 {
             let _ = self.finish_line();
         }
+        self.total_is_known = true;
     }
 
     fn into_response(
         mut self,
-        transcoding_note: Option<String>,
+        path_display: &str,
+        file_size: u64,
+        transcoding_fact: Option<String>,
         budget: TokenBudget,
     ) -> ToolResponse {
         if self.total_lines < self.offset {
-            let noun = if self.total_lines == 1 {
-                "line"
-            } else {
-                "lines"
-            };
-            return ToolResponse::text(format!(
-                "Warning: the file has only {} {noun}, but offset={} was requested.",
-                self.total_lines, self.offset,
-            ));
+            let note =
+                HeadNote::new(path_display, HeadMetric::count(0, "line", "lines")).fact(format!(
+                    "file has {} {}",
+                    self.total_lines,
+                    if self.total_lines == 1 {
+                        "line"
+                    } else {
+                        "lines"
+                    }
+                ));
+            return note.into_text_response("");
         }
 
         loop {
             let shown = self.rendered.len();
             if shown == 0 && (self.stopped_early || self.storage_saturated) {
                 return ToolResponse::error(format!(
-                    "{}={} is too small to return the required continuation note. Increase it and retry.",
+                    "{}={} is too small to return the response head note and one content line. Increase it and retry.",
                     budget.variable, budget.value
                 ));
             }
             let last = self.offset.saturating_add(shown.saturating_sub(1));
-            let truncated = self.stopped_early
-                || self.storage_saturated
-                || (shown > 0 && last < self.total_lines);
-            let notes = read_notes(
-                transcoding_note.as_deref(),
-                truncated,
-                self.offset,
-                shown,
-                self.total_lines,
-                self.total_is_known,
+            let total = if self.total_is_known {
+                CoverageTotal::Exact(self.total_lines)
+            } else {
+                CoverageTotal::FileBytes(file_size)
+            };
+            let mut note = HeadNote::new(
+                path_display,
+                HeadMetric::Coverage {
+                    unit: "lines",
+                    ranges: vec![CoveredRange::new(self.offset, last)],
+                    total,
+                },
             );
-            let output = assemble_text(&self.rendered, &notes);
+            if let Some(fact) = transcoding_fact.as_deref() {
+                note = note.fact(fact);
+            }
+            let body = self.rendered.join("\n");
+            let output = note.render_with_body(&body);
             if estimate_tokens(&output) <= budget.value {
                 return ToolResponse::text(output);
             }
             if self.rendered.pop().is_none() {
                 return ToolResponse::error(format!(
-                    "{}={} is too small to return the required continuation note. Increase it and retry.",
+                    "{}={} is too small to return the response head note and one content line. Increase it and retry.",
                     budget.variable, budget.value
                 ));
             }
             self.storage_saturated = true;
         }
-    }
-}
-
-fn read_notes(
-    transcoding_note: Option<&str>,
-    truncated: bool,
-    offset: usize,
-    shown: usize,
-    total: usize,
-    total_is_known: bool,
-) -> Vec<String> {
-    let mut notes = Vec::new();
-    if let Some(note) = transcoding_note {
-        notes.push(note.to_string());
-    }
-    if shown > 0 {
-        let last = offset + shown - 1;
-        let span = line_span(offset, last);
-        if truncated {
-            if total_is_known {
-                notes.push(format!(
-                    "(Partial: {span} of {total} shown. Continue with offset={}.)",
-                    last + 1
-                ));
-            } else {
-                notes.push(format!(
-                    "(Partial: {span} shown. Continue with offset={}.)",
-                    last + 1
-                ));
-            }
-        } else {
-            notes.push(format!(
-                "(Complete: reached end of file; {span} of {total} shown.)"
-            ));
-        }
-    }
-    notes
-}
-
-fn line_span(first: usize, last: usize) -> String {
-    if first == last {
-        format!("line {first}")
-    } else {
-        format!("lines {first}-{last}")
     }
 }

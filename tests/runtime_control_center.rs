@@ -145,7 +145,10 @@ fn connection_context_keeps_cwd_path_budget_cursor_and_cancellation_isolated() {
                 "login_shell": false
             }),
         );
-        assert!(mcp_text(&response).starts_with(expected), "{response}");
+        assert!(
+            response_body(mcp_text(&response)).starts_with(expected),
+            "{response}"
+        );
     }
 
     let mut invalid_budget_command = server_command(&home, &first, &event_log);
@@ -163,7 +166,7 @@ fn connection_context_keeps_cwd_path_budget_cursor_and_cancellation_isolated() {
         "run",
         serde_json::json!({"command": "printf budget-second", "login_shell": false}),
     );
-    assert!(mcp_text(&healthy).starts_with("budget-second"));
+    assert!(response_body(mcp_text(&healthy)).starts_with("budget-second"));
 
     let started = second_session.call(
         "run_background",
@@ -209,7 +212,7 @@ fn connection_context_keeps_cwd_path_budget_cursor_and_cancellation_isolated() {
         "run",
         serde_json::json!({"command": "printf survivor", "login_shell": false}),
     );
-    assert!(mcp_text(&survivor).starts_with("survivor"));
+    assert!(response_body(mcp_text(&survivor)).starts_with("survivor"));
     std::thread::sleep(Duration::from_secs(1));
     assert!(
         !escaped_marker.exists(),
@@ -252,7 +255,7 @@ fn runtime_guard_tightens_without_apply_and_releases_on_the_next_connection() {
             "login_shell": false
         }),
     );
-    assert!(mcp_text(&inherited).starts_with("54000/54000"));
+    assert!(mcp_text(&inherited).contains("\n54000/54000"));
     let guarded_response = guarded.call(
         "run",
         serde_json::json!({"command": output_command, "login_shell": false}),
@@ -264,7 +267,11 @@ fn runtime_guard_tightens_without_apply_and_releases_on_the_next_connection() {
         guarded_tokens <= 9_000,
         "guarded response used {guarded_tokens} tokens"
     );
-    assert!(guarded_text.contains("(Partial:"), "{guarded_text}");
+    assert!(
+        guarded_text.starts_with("=== run (lines "),
+        "{guarded_text}"
+    );
+    assert!(!guarded_text.contains("\n(Partial:"), "{guarded_text}");
 
     std::fs::create_dir_all(home.join(".fastctx")).unwrap();
     std::fs::write(
@@ -331,7 +338,7 @@ fn output_quota_stops_log_and_index_growth_but_not_the_command_or_exit_status() 
     let running_output = mcp_text(&running_output);
     assert!(running_output.contains("running"), "{running_output}");
     assert!(
-        running_output.contains("combined output.log + output.idx hard limit"),
+        running_output.contains("reached its 1048576-byte log limit"),
         "{running_output}"
     );
     wait_for_file(&job_dir.join("exit.json"), PROCESS_DEADLINE);
@@ -343,10 +350,13 @@ fn output_quota_stops_log_and_index_growth_but_not_the_command_or_exit_status() 
     );
     let output = mcp_text(&output);
     assert!(
-        output.contains("combined output.log + output.idx hard limit"),
+        output.contains("reached its 1048576-byte log limit"),
         "{output}"
     );
-    assert!(output.contains("kept draining output"), "{output}");
+    assert!(
+        output.contains("later output was drained but not persisted"),
+        "{output}"
+    );
     assert!(output.contains("exited 17"), "{output}");
     let combined = std::fs::metadata(job_dir.join("output.log")).unwrap().len()
         + std::fs::metadata(job_dir.join("output.idx")).unwrap().len();
@@ -433,14 +443,14 @@ fn build_id_isolation_keeps_old_and_new_control_centers_independent() {
         "run",
         serde_json::json!({"command": "printf new", "login_shell": false}),
     );
-    assert!(mcp_text(&old_response).starts_with("old"));
-    assert!(mcp_text(&new_response).starts_with("new"));
+    assert!(response_body(mcp_text(&old_response)).starts_with("old"));
+    assert!(response_body(mcp_text(&new_response)).starts_with("new"));
     terminate_process(hosts[0]);
     let survivor = new.call(
         "run",
         serde_json::json!({"command": "printf still-new", "login_shell": false}),
     );
-    assert!(mcp_text(&survivor).starts_with("still-new"));
+    assert!(response_body(mcp_text(&survivor)).starts_with("still-new"));
 
     let _ = old.kill_proxy();
     let _ = new.kill_proxy();
@@ -495,7 +505,10 @@ fn a_control_center_crash_keeps_the_session_alive_without_replaying_an_inflight_
         serde_json::json!({"command": "printf rebuilt", "login_shell": false}),
         PROCESS_DEADLINE,
     );
-    assert!(mcp_text(&healthy).starts_with("rebuilt"), "{healthy}");
+    assert!(
+        response_body(mcp_text(&healthy)).starts_with("rebuilt"),
+        "{healthy}"
+    );
 
     let status = session.close();
     assert!(status.success(), "stdin EOF must remain a clean proxy exit");
@@ -524,7 +537,10 @@ fn live_connection_survives_idle_and_host_exits_only_after_disconnect() {
         "run",
         serde_json::json!({"command": "printf resumed", "login_shell": false}),
     );
-    assert!(mcp_text(&resumed).starts_with("resumed"), "{resumed}");
+    assert!(
+        response_body(mcp_text(&resumed)).starts_with("resumed"),
+        "{resumed}"
+    );
 
     let status = session.close();
     assert!(status.success(), "stdin EOF must remain a clean proxy exit");
@@ -585,7 +601,10 @@ fn a_damaged_job_record_does_not_pin_the_control_center_open() {
         "run",
         serde_json::json!({"command": "printf ready", "login_shell": false}),
     );
-    assert!(mcp_text(&response).starts_with("ready"), "{response}");
+    assert!(
+        response_body(mcp_text(&response)).starts_with("ready"),
+        "{response}"
+    );
     let host = wait_for_host_starts(&event_log, 1, PROCESS_DEADLINE)[0];
     assert!(session.close().success());
 
@@ -626,8 +645,8 @@ fn multiple_idle_connections_resume_together_through_the_same_host() {
     );
     let first_response = first.await_response(first_id);
     let second_response = second.await_response(second_id);
-    assert!(mcp_text(&first_response).starts_with("first"));
-    assert!(mcp_text(&second_response).starts_with("second"));
+    assert!(response_body(mcp_text(&first_response)).starts_with("first"));
+    assert!(response_body(mcp_text(&second_response)).starts_with("second"));
     assert_eq!(
         host_start_pids(&event_log),
         vec![host],
@@ -658,7 +677,7 @@ fn thin_proxy_stays_within_a_measured_memory_and_thread_ceiling_after_real_tools
         "run",
         serde_json::json!({"command": "printf complete", "login_shell": false}),
     );
-    assert!(mcp_text(&response).starts_with("complete"));
+    assert!(response_body(mcp_text(&response)).starts_with("complete"));
     std::thread::sleep(Duration::from_millis(100));
     let (private_bytes, threads) = process_metrics(session.child_id());
     eprintln!(
@@ -692,7 +711,11 @@ fn server_command(home: &Path, cwd: &Path, event_log: &Path) -> Command {
     }
     let mut command = Command::new(env!("CARGO_BIN_EXE_fastctx"));
     command
-        .args(["serve", "--enable-shell"])
+        .args([
+            "serve",
+            "--tools",
+            "inspect_local_file,grep,glob,replace,run,run_background,job_output,job_kill,job_list",
+        ])
         .current_dir(cwd)
         .env("HOME", home)
         .env("USERPROFILE", home)
@@ -735,10 +758,21 @@ fn write_path_command(directory: &Path, value: &str) {
 fn started_job_id(text: &str) -> String {
     text.lines()
         .find_map(|line| {
-            line.strip_prefix("(Complete: job ")
-                .and_then(|rest| rest.split_once(" started;").map(|(id, _)| id.to_string()))
+            let rest = line.strip_prefix("=== job ")?.strip_suffix(" ===")?;
+            rest.split_once(" (started;").map(|(id, _)| id.to_string())
         })
         .unwrap_or_else(|| panic!("missing job id in {text}"))
+}
+
+fn response_body(text: &str) -> &str {
+    let Some((_, after_head)) = text.split_once('\n') else {
+        return "";
+    };
+    if after_head.starts_with("=== jobs:") {
+        after_head.split_once('\n').map_or("", |(_, body)| body)
+    } else {
+        after_head
+    }
 }
 
 fn shell_quote(value: &str) -> String {

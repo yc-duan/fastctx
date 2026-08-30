@@ -178,12 +178,9 @@ fn decode_lines(lines: &[EncodedLine<'_>], plan: DecodePlan) -> DecodedLines {
     let mut decoded = DecodedLines {
         transcoding_note: (!plan.is_utf8()).then(|| {
             if plan.requested {
-                format!(
-                    "(Note: decoded from {} as requested; output is UTF-8.)",
-                    plan.label()
-                )
+                format!("decoded from {} as requested", plan.label())
             } else {
-                format!("(Note: decoded from {}; output is UTF-8.)", plan.label())
+                format!("decoded from {}", plan.label())
             }
         }),
         ..DecodedLines::default()
@@ -318,15 +315,13 @@ pub(crate) fn run_garble_note(invalid_sequences: u64) -> Option<String> {
     };
     Some(match legacy_code_page_label() {
         Some(label) => format!(
-            "(Note: {invalid_sequences} invalid byte {noun} shown as U+FFFD — the command likely wrote {label}, this system's legacy code page. Re-run with encoding=\"{label}\", or redirect to a file and use the inspect_local_file tool.)"
+            "{invalid_sequences} invalid byte {noun} shown as U+FFFD; likely source encoding {label}"
         ),
-        None => format!(
-            "(Note: {invalid_sequences} invalid byte {noun} shown as U+FFFD. If the text looks garbled, pass the source encoding via the encoding parameter.)"
-        ),
+        None => format!("{invalid_sequences} invalid byte {noun} shown as U+FFFD"),
     })
 }
 
-pub(crate) fn job_garble_note(invalid_sequences: u64, anchor: u64) -> Option<String> {
+pub(crate) fn job_garble_note(invalid_sequences: u64, _anchor: u64) -> Option<String> {
     if invalid_sequences == 0 {
         return None;
     }
@@ -337,11 +332,9 @@ pub(crate) fn job_garble_note(invalid_sequences: u64, anchor: u64) -> Option<Str
     };
     Some(match legacy_code_page_label() {
         Some(label) => format!(
-            "(Note: {invalid_sequences} invalid byte {noun} shown as U+FFFD — the job likely wrote {label}, this system's legacy code page. Call job_output again with after_seq={anchor} and encoding=\"{label}\" to re-read this page.)"
+            "{invalid_sequences} invalid byte {noun} shown as U+FFFD; likely source encoding {label}"
         ),
-        None => format!(
-            "(Note: {invalid_sequences} invalid byte {noun} shown as U+FFFD. If the text looks garbled, call job_output again with after_seq={anchor} and the source encoding via encoding.)"
-        ),
+        None => format!("{invalid_sequences} invalid byte {noun} shown as U+FFFD"),
     })
 }
 
@@ -393,7 +386,7 @@ mod tests {
         assert_eq!(decoded.lines, ["ab"]);
         assert_eq!(
             decoded.transcoding_note.as_deref(),
-            Some("(Note: decoded from UTF-16LE; output is UTF-8.)")
+            Some("decoded from UTF-16LE")
         );
         assert_eq!(
             validate_output_encoding("utf-16le").unwrap_err(),

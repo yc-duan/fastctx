@@ -174,18 +174,16 @@ impl ValidatedFileEncoding {
         }
     }
 
-    /// Returns the transcoding audit note published after the body; original UTF-8 produces no note.
-    pub(crate) fn transcoding_note(&self) -> Option<String> {
+    /// Returns the concise transcoding fact used in a response head note.
+    pub(crate) fn transcoding_fact(&self) -> Option<String> {
         let encoding = self.detected.source_encoding?;
         match &self.detected.origin {
             EncodingOrigin::Explicit(_) if self.explicit_utf8_warning => Some(format!(
-                "(Note: decoded from {encoding} as requested; output is UTF-8. Warning: the raw bytes are also valid UTF-8 — if this looks garbled, retry with encoding=\"utf-8\" or omit encoding.)"
+                "decoded from {encoding} as requested; raw bytes are also valid UTF-8"
             )),
-            EncodingOrigin::Explicit(_) => Some(format!(
-                "(Note: decoded from {encoding} as requested; output is UTF-8.)"
-            )),
+            EncodingOrigin::Explicit(_) => Some(format!("decoded from {encoding} as requested")),
             EncodingOrigin::Bom(_) | EncodingOrigin::Automatic => {
-                Some(format!("(Note: decoded from {encoding}; output is UTF-8.)"))
+                Some(format!("decoded from {encoding}"))
             }
         }
     }

@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 #[test]
-fn background_status_tracks_only_known_jobs_and_consumes_terminal_entries_explicitly() {
+fn background_status_tracks_only_known_jobs_and_delivers_each_terminal_edge_once() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
     let probe = temp.path().join("probe.txt");
@@ -21,27 +21,28 @@ fn background_status_tracks_only_known_jobs_and_consumes_terminal_entries_explic
         serde_json::json!({"command": "sleep 30", "login_shell": false}),
     );
     let running = started_job_id(mcp_text(&running_start));
-    assert!(!mcp_text(&running_start).contains("(Background:"));
+    assert!(background_line(mcp_text(&running_start)).is_none());
 
     let read = session.call("inspect_local_file", read_arguments.clone());
     let read_text = mcp_text(&read);
     let read_lines = read_text.lines().collect::<Vec<_>>();
+    assert!(read_lines[0].starts_with("=== "), "{read_text}");
     assert!(
-        read_lines[read_lines.len() - 2].starts_with(&format!("(Background: {running} running ")),
+        read_lines[1].starts_with(&format!("=== jobs: {running} running ")),
         "{read_text}"
     );
-    assert!(read_lines.last().unwrap().starts_with("(Complete:"));
+    assert!(read_lines.contains(&"1\tprobe"), "{read_text}");
 
     let missing = session.call(
         "inspect_local_file",
         serde_json::json!({"file_path": normalized(&temp.path().join("missing.txt"))}),
     );
     assert_eq!(missing["result"]["isError"], true);
-    assert!(!mcp_text(&missing).contains("(Background:"));
+    assert!(background_line(mcp_text(&missing)).is_none());
 
     let mut other = shell_session(temp.path(), None);
     let isolated = other.call("inspect_local_file", read_arguments.clone());
-    assert!(!mcp_text(&isolated).contains("(Background:"));
+    assert!(background_line(mcp_text(&isolated)).is_none());
     assert!(other.close().success());
 
     let finished_start = session.call(
@@ -49,10 +50,7 @@ fn background_status_tracks_only_known_jobs_and_consumes_terminal_entries_explic
         serde_json::json!({"command": "exit 7", "login_shell": false}),
     );
     let finished = started_job_id(mcp_text(&finished_start));
-    let start_status = mcp_text(&finished_start)
-        .lines()
-        .find(|line| line.starts_with("(Background:"))
-        .unwrap();
+    let start_status = background_line(mcp_text(&finished_start)).unwrap();
     assert!(start_status.contains(&running), "{start_status}");
     assert!(!start_status.contains(&finished), "{start_status}");
 
@@ -69,10 +67,7 @@ fn background_status_tracks_only_known_jobs_and_consumes_terminal_entries_explic
     }
 
     let both = session.call("inspect_local_file", read_arguments.clone());
-    let both_status = mcp_text(&both)
-        .lines()
-        .find(|line| line.starts_with("(Background:"))
-        .unwrap();
+    let both_status = background_line(mcp_text(&both)).unwrap();
     assert!(both_status.contains(&format!("{running} running ")));
     assert!(both_status.contains(&format!("{finished} exited 7")));
 
@@ -80,42 +75,30 @@ fn background_status_tracks_only_known_jobs_and_consumes_terminal_entries_explic
         "job_list",
         serde_json::json!({"status": "all", "limit": 100}),
     );
-    let list_status = mcp_text(&listed)
-        .lines()
-        .find(|line| line.starts_with("(Background:"))
-        .unwrap();
+    let list_status = background_line(mcp_text(&listed)).unwrap();
     assert!(list_status.contains(&running));
-    assert!(list_status.contains(&finished));
+    assert!(!list_status.contains(&finished));
     let after_list = session.call("inspect_local_file", read_arguments.clone());
-    let after_list_status = mcp_text(&after_list)
-        .lines()
-        .find(|line| line.starts_with("(Background:"))
-        .unwrap();
+    let after_list_status = background_line(mcp_text(&after_list)).unwrap();
     assert!(after_list_status.contains(&running));
-    assert!(after_list_status.contains(&finished));
+    assert!(!after_list_status.contains(&finished));
 
     let consumed = session.call(
         "job_output",
         serde_json::json!({"job_id": &finished, "wait_ms": 0}),
     );
-    let consumed_status = mcp_text(&consumed)
-        .lines()
-        .find(|line| line.starts_with("(Background:"))
-        .unwrap();
+    let consumed_status = background_line(mcp_text(&consumed)).unwrap();
     assert!(consumed_status.contains(&running));
     assert!(!consumed_status.contains(&finished));
     let after_output = session.call("inspect_local_file", read_arguments.clone());
-    let after_output_status = mcp_text(&after_output)
-        .lines()
-        .find(|line| line.starts_with("(Background:"))
-        .unwrap();
+    let after_output_status = background_line(mcp_text(&after_output)).unwrap();
     assert!(after_output_status.contains(&running));
     assert!(!after_output_status.contains(&finished));
 
     let killed = session.call("job_kill", serde_json::json!({"job_id": &running}));
-    assert!(!mcp_text(&killed).contains("(Background:"));
+    assert!(background_line(mcp_text(&killed)).is_none());
     let empty = session.call("inspect_local_file", read_arguments);
-    assert!(!mcp_text(&empty).contains("(Background:"));
+    assert!(background_line(mcp_text(&empty)).is_none());
     assert!(session.close().success());
 }
 
@@ -138,10 +121,11 @@ fn foreground_output_over_eight_mib_runs_to_natural_exit_and_reports_true_line_c
     assert_eq!(response["result"]["isError"], false);
     let text = mcp_text(&response);
     assert!(
-        text.starts_with("(Note: "),
+        text.starts_with("=== run (lines "),
         "ring loss must be explicit: {text}"
     );
-    assert!(text.contains(" of 9000 lines; exited 23."), "{text}");
+    assert!(text.contains(" of 9000; exited 23"), "{text}");
+    assert!(text.contains("dropped from the in-memory buffer"), "{text}");
     assert!(text.contains("0000"), "{text}");
     assert_no_shell_artifacts(temp.path());
     assert!(session.close().success());
@@ -158,7 +142,7 @@ fn foreground_timeout_kills_descendants_and_keeps_captured_output() {
         "run",
         serde_json::json!({"command": "true", "login_shell": false}),
     );
-    assert_eq!(mcp_text(&complete), "(Complete: exited 0; no output.)");
+    assert_eq!(mcp_text(&complete), "=== run (0 lines; exited 0) ===");
 
     // Two independent deadlines have to hold: the shell must reach `printf
     // started` before the kill, and the descendant must still be sleeping when
@@ -184,7 +168,7 @@ fn foreground_timeout_kills_descendants_and_keeps_captured_output() {
     assert_eq!(response["result"]["isError"], false);
     assert_eq!(
         mcp_text(&response),
-        "started\n\n(Partial: timed out after 2000 ms and the process tree was killed; 1 line captured. Increase timeout_ms or use run_background.)"
+        "=== run (1 line; timed out after 2000 ms, process tree killed) ===\nstarted"
     );
     assert!(
         spawned.exists(),
@@ -204,7 +188,7 @@ fn foreground_timeout_kills_descendants_and_keeps_captured_output() {
 /// (2026-08-08).
 
 #[test]
-fn background_log_over_eight_mib_is_complete_and_the_omission_coordinate_reads_back() {
+fn background_log_over_eight_mib_keeps_a_directly_readable_omission_coordinate() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
     let mut command = shell_command(temp.path(), None);
@@ -223,15 +207,12 @@ fn background_log_over_eight_mib_is_complete_and_the_omission_coordinate_reads_b
     let job_id = started_job_id(start_text);
     let log_path = started_job_log(start_text);
     let output =
-        wait_for_complete_from_within(&mut session, &job_id, Some(0), Duration::from_secs(60));
+        wait_for_terminal_from_within(&mut session, &job_id, Some(0), Duration::from_secs(60));
 
-    assert!(
-        output.contains(&format!("Full log: {log_path}")),
-        "{output}"
-    );
+    assert!(output.contains(&format!("log at {log_path}")), "{output}");
     let omitted = omitted_start(&output);
     assert!(
-        output.contains(&format!("at {log_path} with offset={omitted}.")),
+        output.contains(&format!("complete log at {log_path}")),
         "{output}"
     );
     let recovered = session.call(
@@ -244,7 +225,7 @@ fn background_log_over_eight_mib_is_complete_and_the_omission_coordinate_reads_b
     );
     assert_eq!(recovered["result"]["isError"], false, "{recovered}");
     assert!(
-        mcp_text(&recovered).starts_with(&format!("{omitted}\t{}", "0".repeat(1_000))),
+        mcp_text(&recovered).contains(&format!("\n{omitted}\t{}", "0".repeat(1_000))),
         "{}",
         mcp_text(&recovered)
     );
@@ -262,7 +243,8 @@ fn background_log_over_eight_mib_is_complete_and_the_omission_coordinate_reads_b
         serde_json::json!({"job_id": job_id, "wait_ms": 0}),
     );
     assert!(job_body_lines(mcp_text(&drained)).is_empty());
-    assert!(mcp_text(&drained).contains("9000 lines total. Full log:"));
+    assert!(mcp_text(&drained).contains("0 new lines"));
+    assert!(mcp_text(&drained).contains("log at"));
     assert!(session.close().success());
 }
 
@@ -308,9 +290,12 @@ fn job_output_waits_through_intermediate_output_until_the_job_ends() {
     );
     let text = mcp_text(&exited);
     assert_eq!(job_body_lines(text), ["first", "second"]);
-    assert!(text.contains(&format!(
-        "(Complete: job {job_id} exited 9; 2 lines total. Full log: "
-    )));
+    assert!(
+        text.starts_with(&format!(
+            "=== job {job_id} exited 9 (lines 1-2 of 2; log at "
+        )),
+        "{text}"
+    );
     assert!(session.close().success());
 }
 
@@ -325,8 +310,8 @@ fn job_output_wait_window_delivers_accumulated_output_without_returning_on_each_
     // wait expired. Three seconds keeps the accumulation claim intact - the
     // elapsed assertion below still proves the call waited out the full window
     // instead of returning on the first line - while leaving room for a slow
-    // start. The trailing sleep outlasts the window so the job stays running
-    // and the terminal note stays Partial. (2026-07-25)
+    // start. The trailing sleep outlasts the window so the job stays running.
+    // (2026-07-25)
     let started = session.call(
         "run_background",
         serde_json::json!({
@@ -347,17 +332,14 @@ fn job_output_wait_window_delivers_accumulated_output_without_returning_on_each_
     assert!(waiting_started.elapsed() >= Duration::from_millis(2_900));
     assert_eq!(job_body_lines(mcp_text(&output)), ["first", "second"]);
     assert!(
-        mcp_text(&output).ends_with(&format!(
-            "(Partial: job {job_id} is running; 2 new lines shown. Call job_output again for more, or move on and check back.)"
+        mcp_text(&output).starts_with(&format!(
+            "=== job {job_id} running (lines 1-2 of 2; log at "
         )),
         "{}",
         mcp_text(&output)
     );
     let killed = session.call("job_kill", serde_json::json!({"job_id": job_id}));
-    assert_eq!(
-        mcp_text(&killed),
-        format!("(Complete: job {job_id} killed.)")
-    );
+    assert_eq!(mcp_text(&killed), format!("=== job {job_id} (killed) ==="));
     assert!(session.close().success());
 }
 
@@ -375,17 +357,14 @@ fn killed_jobs_report_killed_not_a_synthetic_exit_code() {
     );
     let job_id = started_job_id(mcp_text(&started));
     let killed = session.call("job_kill", serde_json::json!({"job_id": job_id}));
-    assert_eq!(
-        mcp_text(&killed),
-        format!("(Complete: job {job_id} killed.)")
-    );
+    assert_eq!(mcp_text(&killed), format!("=== job {job_id} (killed) ==="));
     let output = session.call(
         "job_output",
         serde_json::json!({"job_id": job_id, "wait_ms": 0}),
     );
     let text = mcp_text(&output);
     assert!(
-        text.contains(&format!("(Complete: job {job_id} was killed; ")),
+        text.starts_with(&format!("=== job {job_id} killed (")),
         "{text}"
     );
     let listed = session.call("job_list", serde_json::json!({"status": "finished"}));
@@ -436,14 +415,13 @@ fn global_background_limit_and_job_ids_survive_across_server_instances() {
             serde_json::json!({"job_id": id, "wait_ms": 0}),
         );
         assert!(
-            mcp_text(&output).ends_with(&format!(
-                "(Partial: job {id} is running; no new output within 0 ms. Move on and check back, or raise wait_ms if you have nothing else to do.)"
-            )),
+            mcp_text(&output).starts_with(&format!("=== job {id} running (0 new lines; ")),
             "{}",
             mcp_text(&output)
         );
+        assert!(mcp_text(&output).contains("no new output within 0 ms"));
         let killed = second.call("job_kill", serde_json::json!({"job_id": id}));
-        assert_eq!(mcp_text(&killed), format!("(Complete: job {id} killed.)"));
+        assert_eq!(mcp_text(&killed), format!("=== job {id} (killed) ==="));
     }
     assert!(second.close().success());
 }
@@ -506,13 +484,13 @@ fn concurrent_servers_cannot_oversubscribe_the_machine_job_limit() {
     let killed = cleanup.call("job_kill", serde_json::json!({"job_id": &started[0]}));
     assert_eq!(
         mcp_text(&killed),
-        format!("(Complete: job {} killed.)", started[0])
+        format!("=== job {} (killed) ===", started[0])
     );
     assert!(cleanup.close().success());
 }
 
 #[test]
-fn detached_job_reaches_complete_after_its_starting_server_exits() {
+fn detached_job_reaches_terminal_state_after_its_starting_server_exits() {
     let _serial = shell_contract_guard();
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("survived.txt");
@@ -531,11 +509,14 @@ fn detached_job_reaches_complete_after_its_starting_server_exits() {
     assert!(first.close().success());
 
     let mut second = shell_session(temp.path(), None);
-    let final_text = wait_for_complete_from(&mut second, &job_id, Some(0));
+    let final_text = wait_for_terminal_from(&mut second, &job_id, Some(0));
     assert_eq!(job_body_lines(&final_text), ["one", "two"]);
-    assert!(final_text.lines().last().unwrap().starts_with(&format!(
-        "(Complete: job {job_id} exited 9; 2 lines total. Full log: "
-    )));
+    assert!(
+        final_text.starts_with(&format!(
+            "=== job {job_id} exited 9 (lines 1-2 of 2; log at "
+        )),
+        "{final_text}"
+    );
     assert!(marker.exists());
     assert!(second.close().success());
 }
@@ -558,7 +539,7 @@ fn killing_the_supervisor_reports_interrupted_and_leaves_no_command_descendant()
     );
     let job_id = started_job_id(mcp_text(&started));
     let initial = wait_for_job_text(&mut first, &job_id, "started");
-    assert!(initial.contains("1 new line shown"), "{initial}");
+    assert!(initial.contains("lines 1 of 1"), "{initial}");
     let meta: Value = serde_json::from_slice(
         &std::fs::read(
             temp.path()
@@ -579,15 +560,22 @@ fn killing_the_supervisor_reports_interrupted_and_leaves_no_command_descendant()
         "the supervisor left an orphan command descendant"
     );
     let mut second = shell_session(temp.path(), None);
-    let interrupted = wait_for_complete_from(&mut second, &job_id, Some(0));
+    let interrupted = wait_for_terminal_from(&mut second, &job_id, Some(0));
     assert!(interrupted.contains("started"), "{interrupted}");
-    assert!(interrupted.lines().last().unwrap().starts_with(&format!(
-        "(Complete: job {job_id} was interrupted: its process ended without an exit record (machine restart or external kill); 1 line preserved. Full log: "
-    )));
+    assert!(
+        interrupted.starts_with(&format!(
+            "=== job {job_id} interrupted (lines 1 of 1; log at "
+        )),
+        "{interrupted}"
+    );
+    assert!(
+        interrupted.contains("process ended without an exit record"),
+        "{interrupted}"
+    );
     let already = second.call("job_kill", serde_json::json!({"job_id": job_id}));
     assert_eq!(
         mcp_text(&already),
-        format!("(Complete: job {job_id} had already been interrupted.)")
+        format!("=== job {job_id} (already interrupted) ===")
     );
     assert!(second.close().success());
 }
@@ -623,24 +611,22 @@ fn capture_failure_keeps_the_command_running_and_falls_back_to_the_exit_record()
     wait_until(Duration::from_secs(5), || continued.exists());
     drop(capture_block);
 
-    let final_text = wait_for_complete_from(&mut session, &job_id, Some(0));
+    let final_text = wait_for_terminal_from(&mut session, &job_id, Some(0));
     assert!(continued.exists());
     assert!(
-        final_text.contains("(Note: output capture failed after seq 0:"),
+        final_text.contains("output capture failed after stored line 0:"),
         "{final_text}"
     );
     assert!(
-        final_text.contains("This does not kill the process; its exit status remains available"),
+        final_text.contains("the process was not killed"),
         "{final_text}"
     );
     assert!(
-        final_text.contains("but the log at ") && final_text.contains(" stops here.)"),
+        final_text.contains("the log at ") && final_text.contains(" stops there"),
         "{final_text}"
     );
     assert!(
-        final_text.lines().last().unwrap().starts_with(&format!(
-            "(Complete: job {job_id} exited 17; 0 lines total. Full log: "
-        )),
+        final_text.starts_with(&format!("=== job {job_id} exited 17 (0 new lines; log at ")),
         "{final_text}"
     );
     assert!(session.close().success());
@@ -666,7 +652,11 @@ fn shell_command(root: &Path, run_budget: Option<&str>) -> Command {
     std::fs::create_dir_all(&temp).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_fastctx"));
     command
-        .args(["serve", "--enable-shell"])
+        .args([
+            "serve",
+            "--tools",
+            "inspect_local_file,grep,glob,replace,run,run_background,job_output,job_kill,job_list",
+        ])
         .current_dir(root)
         .env("HOME", root)
         .env("USERPROFILE", root)
@@ -684,31 +674,34 @@ fn bash_quote(path: &Path) -> String {
 }
 
 fn started_job_id(text: &str) -> String {
-    let terminal = text.lines().last().unwrap_or(text);
-    let body = terminal
-        .strip_prefix("(Complete: job ")
-        .and_then(|value| value.strip_suffix(".)"))
-        .unwrap_or_else(|| {
-            panic!("run_background must return the frozen start terminal; got {text:?}")
-        });
+    let head = text.lines().next().unwrap_or(text);
+    let body = head
+        .strip_prefix("=== job ")
+        .and_then(|value| value.strip_suffix(" ==="))
+        .unwrap_or_else(|| panic!("run_background must return a start head note; got {text:?}"));
     let (id, log) = body
-        .split_once(" started; log at ")
+        .split_once(" (started; log at ")
         .unwrap_or_else(|| panic!("run_background must return the log path; got {text:?}"));
+    let log = log
+        .strip_suffix(')')
+        .unwrap_or_else(|| panic!("run_background start metric was not closed: {text:?}"));
     assert!(valid_job_id(id), "{id}");
     assert!(Path::new(log).is_absolute(), "{log}");
     id.to_string()
 }
 
 fn started_job_log(text: &str) -> String {
-    let terminal = text.lines().last().unwrap_or(text);
-    let body = terminal
-        .strip_prefix("(Complete: job ")
-        .and_then(|value| value.strip_suffix(".)"))
-        .unwrap_or_else(|| panic!("invalid run_background terminal: {text:?}"));
+    let head = text.lines().next().unwrap_or(text);
+    let body = head
+        .strip_prefix("=== job ")
+        .and_then(|value| value.strip_suffix(" ==="))
+        .unwrap_or_else(|| panic!("invalid run_background head note: {text:?}"));
     let (_, log) = body
-        .split_once(" started; log at ")
+        .split_once(" (started; log at ")
         .unwrap_or_else(|| panic!("missing run_background log path: {text:?}"));
-    log.to_string()
+    log.strip_suffix(')')
+        .unwrap_or_else(|| panic!("run_background start metric was not closed: {text:?}"))
+        .to_string()
 }
 
 fn valid_job_id(id: &str) -> bool {
@@ -720,23 +713,24 @@ fn valid_job_id(id: &str) -> bool {
 }
 
 fn omitted_start(text: &str) -> u64 {
-    let note = text
-        .lines()
-        .find(|line| line.starts_with("(Note: lines "))
-        .unwrap_or_else(|| panic!("job_output did not report an omitted range: {text}"));
-    note.strip_prefix("(Note: lines ")
+    let head = text.lines().next().unwrap_or(text);
+    head.split("; lines ")
+        .nth(1)
         .and_then(|range| range.split_once('-'))
         .and_then(|(first, _)| first.parse::<u64>().ok())
-        .unwrap_or_else(|| panic!("invalid omission note: {note}"))
+        .unwrap_or_else(|| panic!("job_output did not report an omitted range: {text}"))
 }
 
 fn job_body_lines(text: &str) -> Vec<String> {
-    let Some((body, _)) = text.rsplit_once("\n\n(") else {
-        return Vec::new();
-    };
-    body.lines()
-        .filter(|line| !line.starts_with("(Note:"))
-        .map(ToOwned::to_owned)
+    let lines = text.lines().collect::<Vec<_>>();
+    let start = 1 + usize::from(
+        lines
+            .get(1)
+            .is_some_and(|line| line.starts_with("=== jobs:")),
+    );
+    lines[start..]
+        .iter()
+        .map(|line| (*line).to_string())
         .collect()
 }
 
@@ -761,15 +755,15 @@ fn write_job_settings_with_list_limit(
     .unwrap();
 }
 
-fn wait_for_complete_from(
+fn wait_for_terminal_from(
     session: &mut McpSession,
     job_id: &str,
     after_seq: Option<u64>,
 ) -> String {
-    wait_for_complete_from_within(session, job_id, after_seq, Duration::from_secs(15))
+    wait_for_terminal_from_within(session, job_id, after_seq, Duration::from_secs(15))
 }
 
-fn wait_for_complete_from_within(
+fn wait_for_terminal_from_within(
     session: &mut McpSession,
     job_id: &str,
     after_seq: Option<u64>,
@@ -787,14 +781,25 @@ fn wait_for_complete_from_within(
         }
         let output = session.call("job_output", arguments);
         let text = mcp_text(&output).to_string();
-        if text
-            .lines()
-            .last()
-            .is_some_and(|line| line.starts_with("(Complete:"))
-        {
+        if terminal_job_head(&text, job_id) {
             return text;
         }
     }
+}
+
+fn terminal_job_head(text: &str, job_id: &str) -> bool {
+    let Some(head) = text.lines().next() else {
+        return false;
+    };
+    let prefix = format!("=== job {job_id} ");
+    head.starts_with(&prefix)
+        && (head.contains(" exited ")
+            || head.contains(" killed (")
+            || head.contains(" interrupted ("))
+}
+
+fn background_line(text: &str) -> Option<&str> {
+    text.lines().find(|line| line.starts_with("=== jobs:"))
 }
 
 fn wait_for_job_text(session: &mut McpSession, job_id: &str, needle: &str) -> String {

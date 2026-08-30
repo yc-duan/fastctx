@@ -264,6 +264,7 @@ mod tests {
         write_handshake_success,
     };
     use crate::server::ServerOptions;
+    use crate::server_manifest::EnabledTools;
     use crate::session::SessionEnvironment;
     use std::ffi::OsString;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -272,7 +273,9 @@ mod tests {
     async fn handshake_is_framed_without_consuming_following_mcp_bytes() {
         let (mut client, mut server) = tokio::io::duplex(64 * 1024);
         let handshake = Handshake::new(
-            ServerOptions { enable_shell: true },
+            ServerOptions {
+                tools: EnabledTools::all(),
+            },
             SessionEnvironment::new(
                 std::env::current_dir().unwrap(),
                 vec![(OsString::from("PATH"), OsString::from("sentinel"))],
@@ -286,7 +289,7 @@ mod tests {
         });
 
         let decoded = read_handshake(&mut server).await.unwrap();
-        assert!(decoded.options.enable_shell);
+        assert!(decoded.options.tools.shell_enabled());
         let mut tail = [0_u8; 4];
         server.read_exact(&mut tail).await.unwrap();
         assert_eq!(&tail, b"mcp\n");

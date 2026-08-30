@@ -44,6 +44,13 @@ impl BackgroundTracker {
         self.jobs.lock().unwrap().remove(job_id);
     }
 
+    fn remove_many(&self, job_ids: &[String]) {
+        let mut jobs = self.jobs.lock().unwrap();
+        for job_id in job_ids {
+            jobs.remove(job_id);
+        }
+    }
+
     pub(super) fn has_candidates(&self, exclude: Option<&str>) -> bool {
         self.jobs
             .lock()
@@ -111,7 +118,9 @@ impl BackgroundTracker {
                 jobs.remove(&job_id);
             }
         }
+        let tracker = self.clone();
         BackgroundStatus::render(entries, now)
+            .map(|status| status.with_acknowledger(move |job_ids| tracker.remove_many(job_ids)))
     }
 }
 

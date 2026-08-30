@@ -2,7 +2,10 @@
 
 use crate::budget::{ResponseReservation, ResponseReservationOutcome, estimate_tokens};
 use crate::{ToolContent, ToolResponse};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+
+type TerminalAcknowledger = Arc<dyn Fn(&[String]) + Send + Sync>;
 
 /// Lifecycle displayed for one job known to the current MCP session.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,10 +26,12 @@ pub(crate) struct BackgroundEntry {
 }
 
 /// Fully rendered full and summary forms for one response instant.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub(crate) struct BackgroundStatus {
     full_line: String,
     summary_line: String,
+    terminal_ids: Vec<String>,
+    acknowledge: Option<TerminalAcknowledger>,
 }
 
 impl BackgroundStatus {
@@ -43,6 +48,11 @@ impl BackgroundStatus {
             .iter()
             .filter(|entry| entry.state == BackgroundState::Running)
             .count();
+        let terminal_ids = entries
+            .iter()
+            .filter(|entry| entry.state != BackgroundState::Running)
+            .map(|entry| entry.job_id.clone())
+            .collect();
         let rendered = entries
             .into_iter()
             .map(|entry| match entry.state {
@@ -59,9 +69,19 @@ impl BackgroundStatus {
             .join(", ");
         let running_noun = if running_count == 1 { "job" } else { "jobs" };
         Some(Self {
-            full_line: format!("(Background: {rendered}.)"),
-            summary_line: format!("(Background: {running_count} {running_noun} running.)"),
+            full_line: format!("=== jobs: {rendered} ==="),
+            summary_line: format!("=== jobs: {running_count} {running_noun} running ==="),
+            terminal_ids,
+            acknowledge: None,
         })
+    }
+
+    pub(crate) fn with_acknowledger(
+        mut self,
+        acknowledge: impl Fn(&[String]) + Send + Sync + 'static,
+    ) -> Self {
+        self.acknowledge = Some(Arc::new(acknowledge));
+        self
     }
 }
 
@@ -79,14 +99,26 @@ fn format_elapsed(elapsed: Duration) -> String {
 /// Reservation plus final response insertion for one tool call.
 pub(crate) struct BackgroundDecorator {
     reservation: Option<ResponseReservation>,
+    terminal_ids: Vec<String>,
+    acknowledge: Option<TerminalAcknowledger>,
 }
 
 impl BackgroundDecorator {
     pub(crate) fn new(status: Option<BackgroundStatus>, budget_variable: &'static str) -> Self {
-        let reservation = status.and_then(|status| {
-            ResponseReservation::install(budget_variable, status.full_line, status.summary_line)
-        });
-        Self { reservation }
+        let Some(status) = status else {
+            return Self {
+                reservation: None,
+                terminal_ids: Vec::new(),
+                acknowledge: None,
+            };
+        };
+        let reservation =
+            ResponseReservation::install(budget_variable, status.full_line, status.summary_line);
+        Self {
+            reservation,
+            terminal_ids: status.terminal_ids,
+            acknowledge: status.acknowledge,
+        }
     }
 
     #[cfg(test)]
@@ -98,6 +130,8 @@ impl BackgroundDecorator {
                 status.full_line,
                 status.summary_line,
             )),
+            terminal_ids: status.terminal_ids,
+            acknowledge: status.acknowledge,
         }
     }
 
@@ -113,7 +147,14 @@ impl BackgroundDecorator {
             return response;
         };
         let outcome = reservation.finish();
-        decorate_response(response, outcome)
+        let (response, delivered) = decorate_response(response, outcome);
+        if delivered
+            && !self.terminal_ids.is_empty()
+            && let Some(acknowledge) = self.acknowledge
+        {
+            acknowledge(&self.terminal_ids);
+        }
+        response
     }
 }
 
@@ -124,21 +165,23 @@ fn is_budget_starvation(response: &ToolResponse) -> bool {
         })
 }
 
-fn decorate_response(response: ToolResponse, outcome: ResponseReservationOutcome) -> ToolResponse {
+fn decorate_response(
+    response: ToolResponse,
+    outcome: ResponseReservationOutcome,
+) -> (ToolResponse, bool) {
     if response.is_error {
-        return response;
+        return (response, false);
     }
     let Some(mut line) = outcome.line else {
-        return response;
+        return (response, false);
     };
     let Some(index) = response
         .content
         .iter()
-        .rposition(|content| matches!(content, ToolContent::Text(_)))
+        .position(|content| matches!(content, ToolContent::Text(_)))
     else {
-        return response;
+        return (response, false);
     };
-
     loop {
         let mut candidate = response.clone();
         let ToolContent::Text(text) = &mut candidate.content[index] else {
@@ -154,31 +197,25 @@ fn decorate_response(response: ToolResponse, outcome: ResponseReservationOutcome
             })
             .fold(0_usize, usize::saturating_add);
         if tokens <= outcome.configured_budget {
-            return candidate;
+            return (candidate, true);
         }
         // The reservation counts separators conservatively, so this is only a final guard
         // against multi-block totals or tokenizer boundary effects. User content wins.
         if line != outcome.summary_line {
             line.clone_from(&outcome.summary_line);
         } else {
-            return response;
+            return (response, false);
         }
     }
 }
 
 fn insert_status_line(text: &mut String, status: &str) {
-    let terminal_start = text.rfind('\n').map_or(0, |index| index.saturating_add(1));
-    let last = &text[terminal_start..];
-    if last.starts_with("(Complete:") || last.starts_with("(Partial:") {
-        if terminal_start == 0 {
-            *text = format!("{status}\n{text}");
-        } else {
-            text.insert_str(terminal_start, &format!("{status}\n"));
-        }
-    } else if text.is_empty() {
+    if text.is_empty() {
         text.push_str(status);
+    } else if let Some(first_break) = text.find('\n') {
+        text.insert_str(first_break.saturating_add(1), &format!("{status}\n"));
     } else {
-        text.push_str("\n\n");
+        text.push('\n');
         text.push_str(status);
     }
 }
@@ -213,8 +250,8 @@ mod tests {
             let status =
                 BackgroundStatus::render(vec![entry("j", age, BackgroundState::Running, now)], now)
                     .unwrap();
-            assert_eq!(status.full_line, format!("(Background: {expected}.)"));
-            assert_eq!(status.summary_line, "(Background: 1 job running.)");
+            assert_eq!(status.full_line, format!("=== jobs: {expected} ==="));
+            assert_eq!(status.summary_line, "=== jobs: 1 job running ===");
         }
         let status = BackgroundStatus::render(
             vec![
@@ -226,28 +263,30 @@ mod tests {
         .unwrap();
         assert_eq!(
             status.full_line,
-            "(Background: exit exited 42, lost interrupted.)"
+            "=== jobs: exit exited 42, lost interrupted ==="
         );
-        assert_eq!(status.summary_line, "(Background: 0 jobs running.)");
+        assert_eq!(status.summary_line, "=== jobs: 0 jobs running ===");
         assert!(!status.full_line.contains("line"));
         assert!(!status.full_line.contains("byte"));
     }
 
     #[test]
-    fn status_sits_immediately_before_the_terminal_line() {
-        let mut text = "body\n\n(Note: detail.)\n(Complete: done.)".to_string();
-        insert_status_line(&mut text, "(Background: j running 1s.)");
+    fn status_sits_immediately_after_the_response_head() {
+        let mut text = "=== fixture (2 lines) ===\nfirst\nsecond".to_string();
+        insert_status_line(&mut text, "=== jobs: j running 1s ===");
         assert_eq!(
             text,
-            "body\n\n(Note: detail.)\n(Background: j running 1s.)\n(Complete: done.)"
+            "=== fixture (2 lines) ===\n=== jobs: j running 1s ===\nfirst\nsecond"
         );
-        assert_eq!(text.lines().last(), Some("(Complete: done.)"));
+        assert_eq!(text.lines().last(), Some("second"));
     }
 
     fn synthetic_status() -> BackgroundStatus {
         BackgroundStatus {
-            full_line: "(Background: j-alpha running 12s, j-beta exited 7.)".to_string(),
-            summary_line: "(Background: 1 job running.)".to_string(),
+            full_line: "=== jobs: j-alpha running 12s, j-beta exited 7 ===".to_string(),
+            summary_line: "=== jobs: 1 job running ===".to_string(),
+            terminal_ids: vec!["j-beta".to_string()],
+            acknowledge: None,
         }
     }
 
@@ -258,18 +297,18 @@ mod tests {
     }
 
     fn render_user_lines(budget: usize) -> ToolResponse {
-        let terminal = "(Complete: done.)";
+        let head = "=== fixture (output) ===";
         let mut lines = Vec::new();
         for index in 0..1_000 {
             let mut candidate = lines.clone();
             candidate.push(format!("user-{index:04}-payload"));
-            let text = format!("{}\n\n{terminal}", candidate.join("\n"));
+            let text = format!("{head}\n{}", candidate.join("\n"));
             if estimate_tokens(&text) > budget {
                 break;
             }
             lines = candidate;
         }
-        ToolResponse::text(format!("{}\n\n{terminal}", lines.join("\n")))
+        ToolResponse::text(format!("{head}\n{}", lines.join("\n")))
     }
 
     #[test]
@@ -317,7 +356,7 @@ mod tests {
             let response = if available < required {
                 budget_error(available)
             } else {
-                ToolResponse::text("user result\n\n(Complete: done.)")
+                ToolResponse::text("=== fixture (output) ===\nuser result")
             };
             if decorator.retry_after_budget_starvation(&response) {
                 continue;
@@ -329,7 +368,7 @@ mod tests {
         };
         assert_eq!(observed.len(), 2);
         assert!(observed[0] < observed[1]);
-        assert!(text.contains("(Background: 1 job running.)"));
+        assert!(text.contains("=== jobs: 1 job running ==="));
         assert!(!text.contains("j-alpha"));
         assert!(estimate_tokens(text) <= summary_budget);
 
@@ -341,7 +380,7 @@ mod tests {
             let response = if available < omit_required {
                 budget_error(available)
             } else {
-                ToolResponse::text("user result\n\n(Complete: done.)")
+                ToolResponse::text("=== fixture (output) ===\nuser result")
             };
             if decorator.retry_after_budget_starvation(&response) {
                 continue;
@@ -351,7 +390,36 @@ mod tests {
         let ToolContent::Text(text) = &response.content[0] else {
             panic!("expected text")
         };
-        assert_eq!(text, "user result\n\n(Complete: done.)");
+        assert_eq!(text, "=== fixture (output) ===\nuser result");
+    }
+
+    #[test]
+    fn delivered_summary_acknowledges_terminal_jobs_but_an_omitted_line_does_not() {
+        use std::sync::{Arc, Mutex};
+
+        let acknowledged = Arc::new(Mutex::new(Vec::<String>::new()));
+        let observed = Arc::clone(&acknowledged);
+        let status = synthetic_status().with_acknowledger(move |ids| {
+            observed.lock().unwrap().extend_from_slice(ids);
+        });
+        let decorator = BackgroundDecorator::with_budget(status, GLOBAL_TOKEN_BUDGET_ENV, 256);
+        assert!(decorator.retry_after_budget_starvation(&budget_error(1)));
+        let response = decorator.finish(ToolResponse::text("=== fixture (output) ===\nbody"));
+        let ToolContent::Text(text) = &response.content[0] else {
+            panic!("expected text")
+        };
+        assert!(text.contains("=== jobs: 1 job running ==="));
+        assert_eq!(&*acknowledged.lock().unwrap(), &["j-beta".to_string()]);
+
+        let acknowledged = Arc::new(Mutex::new(Vec::<String>::new()));
+        let observed = Arc::clone(&acknowledged);
+        let status = synthetic_status().with_acknowledger(move |ids| {
+            observed.lock().unwrap().extend_from_slice(ids);
+        });
+        let decorator = BackgroundDecorator::with_budget(status, GLOBAL_TOKEN_BUDGET_ENV, 1);
+        let response = decorator.finish(ToolResponse::text("x"));
+        assert_eq!(response, ToolResponse::text("x"));
+        assert!(acknowledged.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -367,7 +435,7 @@ mod tests {
             panic!("expected text")
         };
         assert!(summary_text.starts_with("user result"));
-        assert!(summary_text.contains("(Background: 1 job running.)"));
+        assert!(summary_text.contains("=== jobs: 1 job running ==="));
         assert!(!summary_text.contains("j-alpha"));
         assert!(estimate_tokens(summary_text) <= full_cost);
 

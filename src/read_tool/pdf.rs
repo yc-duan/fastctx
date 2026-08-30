@@ -1,6 +1,7 @@
 //! PDF page selection, text extraction, and 150-DPI page rendering.
 
-use crate::budget::{TokenBudget, assemble_text, estimate_tokens};
+use crate::budget::{TokenBudget, estimate_tokens};
+use crate::head_note::{CoverageTotal, CoveredRange, HeadMetric, HeadNote};
 use crate::model::{ImageDetail, ToolContent, ToolResponse};
 use crate::read_tool::pdf_engine::{PdfOperationError, pdfium_session, run_pdf_operation};
 use base64::Engine;
@@ -107,16 +108,23 @@ fn read_pdf_inner(
 
     match mode {
         PdfMode::Text => read_pdf_text(
+            &crate::paths::display_path(path),
             &document,
             &selected,
             total_pages,
             text_budget.expect("text mode always receives a token budget"),
         ),
-        PdfMode::Image => read_pdf_images(&document, &selected, total_pages),
+        PdfMode::Image => read_pdf_images(
+            &crate::paths::display_path(path),
+            &document,
+            &selected,
+            total_pages,
+        ),
     }
 }
 
 fn read_pdf_text(
+    path_display: &str,
     document: &PdfDocument<'_>,
     selected: &[usize],
     total_pages: usize,
@@ -137,22 +145,34 @@ fn read_pdf_text(
             text,
         });
     }
-    format_text_pages(&pages, total_pages, budget)
+    format_text_pages(path_display, &pages, total_pages, budget)
 }
 
-fn format_text_pages(pages: &[TextPage], total_pages: usize, budget: TokenBudget) -> ToolResponse {
+fn format_text_pages(
+    path_display: &str,
+    pages: &[TextPage],
+    total_pages: usize,
+    budget: TokenBudget,
+) -> ToolResponse {
     let selected_all_no_text = pages.iter().all(|page| page.text.trim().is_empty());
     for shown in (1..=pages.len()).rev() {
-        let output = render_text_output(&pages[..shown], total_pages, selected_all_no_text, false);
+        let output = render_text_output(
+            path_display,
+            &pages[..shown],
+            total_pages,
+            selected_all_no_text,
+            false,
+        );
         if estimate_tokens(&output) <= budget.value {
             return ToolResponse::text(output);
         }
     }
 
-    truncate_first_text_page(&pages[0], total_pages, budget)
+    truncate_first_text_page(path_display, &pages[0], total_pages, budget)
 }
 
 fn truncate_first_text_page(
+    path_display: &str,
     page: &TextPage,
     total_pages: usize,
     budget: TokenBudget,
@@ -171,7 +191,7 @@ fn truncate_first_text_page(
             number: page.number,
             text,
         };
-        let output = render_text_output(&[truncated], total_pages, false, true);
+        let output = render_text_output(path_display, &[truncated], total_pages, false, true);
         if estimate_tokens(&output) <= budget.value {
             best = Some(output);
             low = count.saturating_add(1);
@@ -189,6 +209,7 @@ fn truncate_first_text_page(
 }
 
 fn render_text_output(
+    path_display: &str,
     pages: &[TextPage],
     total_pages: usize,
     selected_all_no_text: bool,
@@ -199,27 +220,27 @@ fn render_text_output(
         .map(text_page_block)
         .collect::<Vec<_>>()
         .join("\n\n");
-    let mut notes = Vec::new();
+    let mut note = HeadNote::new(
+        path_display,
+        HeadMetric::Coverage {
+            unit: "pages",
+            ranges: vec![CoveredRange::new(
+                pages[0].number,
+                pages.last().expect("text response has a page").number,
+            )],
+            total: CoverageTotal::Exact(total_pages),
+        },
+    );
     if selected_all_no_text {
-        notes.push(
-            "(Note: no text layer in the selected pages; use pdf_mode=\"image\" to view rendered pages.)"
-                .to_string(),
-        );
+        note = note.fact("selected pages have no text layer");
     }
     if first_page_truncated {
-        notes.push(format!(
-            "(Note: page {} text truncated at the token budget; use pdf_mode=\"image\" to view the full page.)",
+        note = note.fact(format!(
+            "page {} text cut at the FastCtx token budget",
             pages[0].number
         ));
     }
-    notes.push(pdf_terminal_note(
-        pages[0].number,
-        pages.last().expect("text response has a page").number,
-        total_pages,
-        PdfMode::Text,
-        pages.len(),
-    ));
-    assemble_text(&[body], &notes)
+    note.render_with_body(&body)
 }
 
 fn text_page_block(page: &TextPage) -> String {
@@ -231,6 +252,7 @@ fn text_page_block(page: &TextPage) -> String {
 }
 
 fn read_pdf_images(
+    path_display: &str,
     document: &PdfDocument<'_>,
     selected: &[usize],
     total_pages: usize,
@@ -239,9 +261,13 @@ fn read_pdf_images(
         Ok(plans) => plans,
         Err(response) => return response,
     };
-    collect_encoded_images(&plans, total_pages, MAX_IMAGE_PAYLOAD_BYTES, |plan| {
-        encode_page_png(document, plan)
-    })
+    collect_encoded_images(
+        path_display,
+        &plans,
+        total_pages,
+        MAX_IMAGE_PAYLOAD_BYTES,
+        |plan| encode_page_png(document, plan),
+    )
 }
 
 fn preflight_render_plans(
@@ -273,12 +299,13 @@ fn preflight_render_plans(
 }
 
 fn collect_encoded_images(
+    path_display: &str,
     plans: &[RenderPlan],
     total_pages: usize,
     payload_limit: usize,
     mut encode: impl FnMut(&RenderPlan) -> Result<String, ToolResponse>,
 ) -> ToolResponse {
-    let mut content = Vec::with_capacity(plans.len() + 1);
+    let mut images = Vec::with_capacity(plans.len());
     let mut payload_bytes = 0_usize;
     for plan in plans {
         let data = match encode(plan) {
@@ -286,7 +313,7 @@ fn collect_encoded_images(
             Err(response) => return response,
         };
         if payload_bytes.saturating_add(data.len()) > payload_limit {
-            if content.is_empty() {
+            if images.is_empty() {
                 return ToolResponse::error(format!(
                     "Cannot return PDF page {} as an image: the encoded image exceeds the 8 MiB payload safety limit. Use pdf_mode=\"text\" for this page.",
                     plan.number
@@ -295,22 +322,26 @@ fn collect_encoded_images(
             break;
         }
         payload_bytes = payload_bytes.saturating_add(data.len());
-        content.push(ToolContent::Image {
+        images.push(ToolContent::Image {
             data,
             mime_type: "image/png".to_string(),
             detail: Some(ImageDetail::High),
         });
     }
-    let delivered = content.len();
+    let delivered = images.len();
     let first = plans[0].number;
     let last = plans[delivered - 1].number;
-    content.push(ToolContent::Text(pdf_terminal_note(
-        first,
-        last,
-        total_pages,
-        PdfMode::Image,
-        delivered,
-    )));
+    let note = HeadNote::new(
+        path_display,
+        HeadMetric::Coverage {
+            unit: "pages",
+            ranges: vec![CoveredRange::new(first, last)],
+            total: CoverageTotal::Exact(total_pages),
+        },
+    );
+    let mut content = Vec::with_capacity(images.len() + 1);
+    content.push(ToolContent::Text(note.render()));
+    content.extend(images);
     ToolResponse {
         content,
         is_error: false,
@@ -331,42 +362,6 @@ fn encode_page_png(document: &PdfDocument<'_>, plan: &RenderPlan) -> Result<Stri
         .write_to(&mut png, ImageFormat::Png)
         .map_err(|_| corrupted_pdf())?;
     Ok(base64::engine::general_purpose::STANDARD.encode(png.into_inner()))
-}
-
-fn pdf_terminal_note(
-    first: usize,
-    last: usize,
-    total: usize,
-    mode: PdfMode,
-    delivered: usize,
-) -> String {
-    let span = page_span(first, last);
-    let verb = match mode {
-        PdfMode::Text => "shown",
-        PdfMode::Image => "rendered",
-    };
-    if last == total {
-        format!("(Complete: {span} of {total} {verb}.)")
-    } else {
-        let next_start = last + 1;
-        let next_end = next_start
-            .saturating_add(delivered.saturating_sub(1))
-            .min(total);
-        let next = if next_start == next_end {
-            next_start.to_string()
-        } else {
-            format!("{next_start}-{next_end}")
-        };
-        format!("(Partial: {span} of {total} {verb}. Continue with pages=\"{next}\".)")
-    }
-}
-
-fn page_span(first: usize, last: usize) -> String {
-    if first == last {
-        format!("page {first}")
-    } else {
-        format!("pages {first}-{last}")
-    }
 }
 
 fn render_dimensions(
@@ -457,7 +452,7 @@ fn pdf_engine_error(reason: &str) -> ToolResponse {
 
 fn budget_too_small(budget: TokenBudget) -> ToolResponse {
     ToolResponse::error(format!(
-        "{}={} is too small to return the required continuation note. Increase it and retry.",
+        "{}={} is too small to return the response head note and PDF content. Increase it and retry.",
         budget.variable, budget.value
     ))
 }

@@ -9,6 +9,7 @@ use crate::control::settings::{
     self, AppliedRecord, ManagedFileRecord, Tier, ToolBudgetPreferences,
 };
 use crate::control::transaction::{self, FileAction, FileChange};
+use crate::server_manifest::EnabledTools;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,8 +25,8 @@ pub struct ApplyOptions {
     pub tool_budgets: ToolBudgetPreferences,
     /// Whether local or unverified relay providers should use the Guarded output policy.
     pub output_guard_enabled: bool,
-    /// Whether the optional shell tool group should be published.
-    pub fastshell_enabled: bool,
+    /// Exact tool set published for the selected target.
+    pub enabled_tools: EnabledTools,
     /// Currently running binary to self-install.
     pub current_executable: PathBuf,
 }
@@ -78,6 +79,10 @@ pub enum PreviewTarget {
     CodexConfig,
     /// `~/.codex/AGENTS.md`: guide the model to prefer FastCtx.
     Agents,
+    /// An agent's user-level MCP configuration.
+    AgentConfig,
+    /// An agent's generated model guidance.
+    AgentGuidance,
     /// `~/.fastctx/config.toml`: Apply receipt used for removal.
     Receipt,
 }
@@ -107,7 +112,7 @@ pub struct PreviewDetail {
 
 impl PreviewDetail {
     /// Detail for writing, modifying, or retaining an item.
-    fn kept(text: impl Into<String>) -> Self {
+    pub(crate) fn kept(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
             removed: false,
@@ -115,7 +120,7 @@ impl PreviewDetail {
     }
 
     /// Removal detail for tables, sections, receipts, or keys deleted by Unapply.
-    fn removed(text: impl Into<String>) -> Self {
+    pub(crate) fn removed(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
             removed: true,
@@ -156,6 +161,7 @@ pub struct UnapplyPlan {
     preview: Vec<PreviewItem>,
     fastctx_dir: PathBuf,
     codex_dir_cleanup: Option<PathBuf>,
+    target_directory_cleanup: Vec<PathBuf>,
     manual_binary_cleanup: Option<PathBuf>,
     paths: ControlPaths,
     running_jobs: usize,
@@ -289,7 +295,14 @@ pub(crate) fn synchronize_applied_guidance(
             agents::ManagedSectionState::Missing,
         ));
     };
-    let state = agents::classify_managed_section(&original, record.fastshell_enabled);
+    let record_tools = record.enabled_tools.unwrap_or_else(|| {
+        if record.fastshell_enabled {
+            EnabledTools::all()
+        } else {
+            EnabledTools::files()
+        }
+    });
+    let state = agents::classify_managed_section_for_tools(&original, record_tools);
     match state {
         agents::ManagedSectionState::Current
             if record.agents_contract_id.as_deref()
@@ -308,8 +321,8 @@ pub(crate) fn synchronize_applied_guidance(
             ))
         }
         agents::ManagedSectionState::KnownLegacy => {
-            let refreshed =
-                agents::refresh_known_legacy_section(&original, record.fastshell_enabled).expect(
+            let refreshed = agents::refresh_known_legacy_section_for_tools(&original, record_tools)
+                .expect(
                     "an exact known legacy classification must produce its current replacement",
                 );
             let change = file_write(
@@ -328,7 +341,7 @@ pub(crate) fn synchronize_applied_guidance(
 
 /// Computes the complete immutable Apply plan without writing to disk.
 pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPlan, String> {
-    if options.fastshell_enabled {
+    if options.enabled_tools.shell_enabled() {
         crate::shell::bash::probe_bash().map_err(|error| {
             format!(
                 "fastshell is enabled, but Apply cannot continue: {error} Disable fastshell in Config and retry, or fix bash first."
@@ -362,14 +375,14 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         // Resolve the environment-derived mode here so what gets written, the receipt, and drift
         // detection all see one concrete policy while the persisted tier remains the user's choice.
         tool_budgets: effective_output.tool_budgets,
-        fastshell_enabled: options.fastshell_enabled,
+        enabled_tools: options.enabled_tools,
     };
     let codex_edit = codex_config::apply(codex_source, &expected)?;
 
     let agents_original = transaction::read_snapshot(&paths.codex_agents)?;
-    let agents_edit = agents::apply_section_with_ownership_for(
+    let agents_edit = agents::apply_section_with_ownership_for_tools(
         agents_original.as_deref().unwrap_or_default(),
-        options.fastshell_enabled,
+        options.enabled_tools,
     )?;
     let agents_bytes = agents_edit.bytes;
 
@@ -432,7 +445,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         && current_settings.tier == options.tier
         && current_settings.tool_budgets == options.tool_budgets
         && current_settings.output_guard.enabled == options.output_guard_enabled
-        && current_settings.fastshell.enabled == options.fastshell_enabled;
+        && current_settings.fastshell.enabled == options.enabled_tools.shell_enabled();
 
     let settings_bytes = if keep_settings_bytes {
         settings_original.clone().unwrap_or_else(|| {
@@ -443,7 +456,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         current_settings.tier = options.tier;
         current_settings.tool_budgets = options.tool_budgets;
         current_settings.output_guard.enabled = options.output_guard_enabled;
-        current_settings.fastshell.enabled = options.fastshell_enabled;
+        current_settings.fastshell.enabled = options.enabled_tools.shell_enabled();
         current_settings.fastedit.enabled = false;
         let (previous_token_limit_present, previous_token_limit) = previous_applied
             .as_ref()
@@ -468,7 +481,8 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
             previous_token_limit,
             fastctx_token_budget: expected.fastctx_budget,
             tool_budgets: expected.tool_budgets,
-            fastshell_enabled: options.fastshell_enabled,
+            fastshell_enabled: options.enabled_tools.shell_enabled(),
+            enabled_tools: Some(options.enabled_tools),
             fastedit_enabled: false,
             codex_dir_created,
             codex_config: managed_record(
@@ -598,6 +612,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
     {
         return Err(receipt_profile_mismatch(paths, record));
     }
+    let applied_targets = loaded_settings.applied_targets.clone();
     let applied = loaded_settings.applied;
     let codex_dir_cleanup = applied
         .as_ref()
@@ -666,7 +681,21 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
     // Unapply is a complete removal, so `~/.fastctx/` is always deleted.
     let settings_action = FileAction::Delete;
 
-    let mut changes = vec![
+    let mut changes = Vec::new();
+    let mut target_directory_cleanup = Vec::new();
+    for target in crate::control::targets::AgentTarget::ALL {
+        if target == crate::control::targets::AgentTarget::Codex
+            || !applied_targets.contains_key(target.id())
+        {
+            continue;
+        }
+        let target_plan = crate::control::target_apply::plan_target_disconnect(paths, target)?;
+        let (mut target_changes, directories) =
+            target_plan.into_host_changes(&paths.fastctx_config);
+        changes.append(&mut target_changes);
+        target_directory_cleanup.extend(directories);
+    }
+    changes.extend([
         FileChange {
             target: paths.codex_config.clone(),
             original: codex_original,
@@ -688,7 +717,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             unix_mode: transaction::existing_unix_mode(&paths.fastctx_config).or(Some(0o600)),
             locked_binary_fallback: false,
         },
-    ];
+    ]);
     if !running_installed {
         changes.push(FileChange {
             target: paths.installed_binary.clone(),
@@ -714,6 +743,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
         preview,
         fastctx_dir: paths.fastctx_dir.clone(),
         codex_dir_cleanup,
+        target_directory_cleanup,
         manual_binary_cleanup,
         paths: paths.clone(),
         running_jobs,
@@ -810,6 +840,23 @@ pub fn commit_unapply(plan: UnapplyPlan) -> Result<OperationReceipt, String> {
             }
             Err(error) => notes.push(format!(
                 "Could not remove the empty configuration directory {}: {error}. Inspect it and remove it manually if desired.",
+                crate::paths::display_path(&directory)
+            )),
+        }
+    }
+    let mut target_directories = plan.target_directory_cleanup;
+    target_directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    target_directories.dedup();
+    for directory in target_directories {
+        match fs::remove_dir(&directory) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => notes.push(format!(
+                "Could not remove the empty FastCtx-created directory {}: {error}.",
                 crate::paths::display_path(&directory)
             )),
         }
@@ -994,7 +1041,14 @@ fn record_matches(record: &AppliedRecord, context: &RecordMatchContext<'_>) -> b
         && record.command == expected.command
         && record.tier == expected.tier
         && record.tool_budgets == expected.tool_budgets
-        && record.fastshell_enabled == expected.fastshell_enabled
+        && record.fastshell_enabled == expected.enabled_tools.shell_enabled()
+        && record.enabled_tools.unwrap_or_else(|| {
+            if record.fastshell_enabled {
+                EnabledTools::all()
+            } else {
+                EnabledTools::files()
+            }
+        }) == expected.enabled_tools
         && !record.fastedit_enabled
         && record.tool_output_token_limit == expected.host_limit
         && record.tool_timeout_sec == Some(codex_config::TOOL_TIMEOUT_SECONDS)
@@ -1089,17 +1143,32 @@ fn short_hash(bytes: &[u8]) -> String {
 fn budget_env_details(expected: &ExpectedConfig) -> Vec<String> {
     let global = expected.fastctx_budget;
     let mut details = vec![format!("FASTCTX_TOKEN_BUDGET = {global}")];
-    for (variable, level) in [
-        ("FASTCTX_READ_TOKEN_BUDGET", expected.tool_budgets.read),
-        ("FASTCTX_GREP_TOKEN_BUDGET", expected.tool_budgets.grep),
-        ("FASTCTX_GLOB_TOKEN_BUDGET", expected.tool_budgets.glob),
-        ("FASTCTX_RUN_TOKEN_BUDGET", expected.tool_budgets.run),
+    for (tool, variable, level) in [
         (
+            "inspect_local_file",
+            "FASTCTX_READ_TOKEN_BUDGET",
+            expected.tool_budgets.read,
+        ),
+        (
+            "grep",
+            "FASTCTX_GREP_TOKEN_BUDGET",
+            expected.tool_budgets.grep,
+        ),
+        (
+            "glob",
+            "FASTCTX_GLOB_TOKEN_BUDGET",
+            expected.tool_budgets.glob,
+        ),
+        ("run", "FASTCTX_RUN_TOKEN_BUDGET", expected.tool_budgets.run),
+        (
+            "job_output",
             "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET",
             expected.tool_budgets.job_output,
         ),
     ] {
-        if let Some(value) = level.resolve(global) {
+        if expected.enabled_tools.contains(tool)
+            && let Some(value) = level.resolve(global)
+        {
             details.push(format!("{variable} = {value}"));
         }
     }
@@ -1239,7 +1308,7 @@ fn preview_apply(
                         expected.tool_budgets.glob.label(),
                         expected.tool_budgets.run.label(),
                         expected.tool_budgets.job_output.label(),
-                        if expected.fastshell_enabled {
+                        if expected.enabled_tools.shell_enabled() {
                             "enabled"
                         } else {
                             "disabled"
@@ -1349,11 +1418,10 @@ fn preview_unapply(
 }
 
 fn server_args_preview(expected: &ExpectedConfig) -> String {
-    let mut args = vec!["\"serve\""];
-    if expected.fastshell_enabled {
-        args.push("\"--enable-shell\"");
-    }
-    args.join(", ")
+    format!(
+        "\"serve\", \"--tools\", \"{}\"",
+        expected.enabled_tools.names().join(",")
+    )
 }
 
 fn timestamp() -> Result<String, String> {

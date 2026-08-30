@@ -185,18 +185,35 @@ fn current_fastctx_matches_the_frozen_v011_ordinary_success_corpus() {
             .get("text")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_else(|| panic!("{}: response content is not text", request.case_id));
-        let replacement_count = text.match_indices(&display_root).count();
-        let normalized = text.replace(&display_root, ROOT_TOKEN);
+        let semantic = semantic_body(text);
+        let expected_semantic = semantic_body(&expected_text);
+        let replacement_count = semantic.match_indices(&display_root).count();
+        let normalized = semantic.replace(&display_root, ROOT_TOKEN);
         if !INTENTIONAL_GLOB_GIT_FILTER_DIVERGENCES.contains(&request.case_id.as_str()) {
             assert_eq!(
                 replacement_count, expected_meta.replacement_count,
                 "{}",
                 request.case_id
             );
-            assert_eq!(normalized, expected_text, "{}", request.case_id);
+            assert_eq!(normalized, expected_semantic, "{}", request.case_id);
         }
         session.close();
     }
+}
+
+fn semantic_body(text: &str) -> &str {
+    let without_head = if text.starts_with("=== ") {
+        text.split_once('\n').map_or("", |(_, body)| body)
+    } else {
+        text
+    };
+    if without_head.starts_with("(Complete:") || without_head.starts_with("(Partial:") {
+        return "";
+    }
+    without_head
+        .rsplit_once("\n\n(")
+        .filter(|(_, tail)| tail.starts_with("Complete:") || tail.starts_with("Partial:"))
+        .map_or(without_head, |(body, _)| body)
 }
 
 fn materialize(root: &Path, spec: &FixtureSpec) {

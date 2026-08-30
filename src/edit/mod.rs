@@ -155,9 +155,13 @@ mod tests {
 
         assert!(!response.is_error);
         assert!(response_text(&response).contains("changed on disk during the edit"));
-        assert!(response_text(&response).contains(
-            "(Partial: 0 replacements written in 0 files; 1 file failed — see the report above.)"
-        ));
+        assert!(
+            response_text(&response).starts_with(
+                "=== replace (0 replacements in 0 files; 1 file failed — see report) ==="
+            ),
+            "{}",
+            response_text(&response)
+        );
         assert_eq!(std::fs::read(&path).unwrap(), b"external replace");
     }
 
@@ -198,7 +202,7 @@ mod tests {
 
         assert!(!response.is_error, "{}", response_text(&response));
         assert!(
-            response_text(&response).ends_with("(Complete: 1 replacement in 1 file.)"),
+            response_text(&response).starts_with("=== replace (1 replacement in 1 file) ==="),
             "{}",
             response_text(&response)
         );

@@ -1,8 +1,7 @@
 //! grep tool backed by ripgrep engines, ignore traversal, deterministic paging, and content formatting.
 
 use crate::budget::{
-    ErrorBudgetAdapter, ErrorClass, GREP_TOKEN_BUDGET_ENV, TokenCheckpoint, error_budget_hint,
-    tool_token_budget,
+    ErrorBudgetAdapter, ErrorClass, GREP_TOKEN_BUDGET_ENV, error_budget_hint, tool_token_budget,
 };
 use crate::encoding::{
     ByteSource, EncodingDecision, EncodingPipelineFailure, EncodingRejection,
@@ -15,6 +14,7 @@ use crate::grep_sink::{
     CapturedLine, ContentEntry, ContentSpec, FileResult, GrepSearchPlan, GrepSinkError,
     LineMatchSpan, PlanSink,
 };
+use crate::head_note::{CoverageTotal, CoveredRange, HeadMetric, HeadNote};
 use crate::model::ToolResponse;
 use crate::operation::{
     OpError, OperationCtx, RequestWorkGuard, WorkCheckpoint, WorkCtx, WorkStop,
@@ -23,9 +23,7 @@ use crate::ordered_window::{OrderedError, for_each_ordered};
 use crate::path_codec::{
     PathRecord as Candidate, RootRequirement, io_error_message, resolve_search_root,
 };
-use crate::render_plan::{
-    DetailRenderGraph, LineRenderGraph, LineRenderView, RenderPlanError, SharedLineRenderGraph,
-};
+use crate::render_plan::{LineRenderGraph, LineRenderView, RenderPlanError, SharedLineRenderGraph};
 use crate::search_text::{SearchText, SearchTextFailure};
 use crate::skip_report::{SkipTally, detail_line};
 use crate::traversal::{SkippedPaths, collect_search_candidates};
@@ -203,6 +201,7 @@ fn capture_overflow_skip(candidate: &Candidate) -> CandidateSkip {
 }
 
 struct PageFormat<'a> {
+    pattern: &'a str,
     offset: usize,
     head_limit: usize,
     budget: usize,
@@ -279,10 +278,10 @@ impl FallbackUsage {
         self.encoding = Some(encoding);
     }
 
-    fn note(&self) -> Option<String> {
+    fn fact(&self) -> Option<String> {
         let encoding = self.encoding?;
         Some(format!(
-            "(Note: {} decoded using fallback encoding {encoding}.)",
+            "{} decoded using fallback encoding {encoding}",
             counted(self.count, "file", "files")
         ))
     }
@@ -541,6 +540,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
             return response;
         }
         let page = PageFormat {
+            pattern: &request.pattern,
             offset: 0,
             head_limit: 0,
             budget,
@@ -746,6 +746,7 @@ fn grep_files_with_budget_source_and_execution_unadapted(
         return ToolResponse::error(message);
     }
     let page = PageFormat {
+        pattern: &request.pattern,
         offset,
         head_limit: effective_head_limit,
         budget,
@@ -931,7 +932,7 @@ fn search_candidate(
     };
     check_search_operation(operation)?;
     let transcoding_note = (!used_fallback)
-        .then(|| validated.transcoding_note())
+        .then(|| validated.transcoding_fact())
         .flatten();
     let mut searcher = SearcherBuilder::new();
     searcher
@@ -1148,62 +1149,49 @@ impl PageFormat<'_> {
 }
 
 struct GrepNoteUnits {
-    fixed: Vec<Arc<str>>,
+    facts: Vec<Arc<str>>,
     details: Vec<Arc<str>>,
-    fallback: Option<Arc<str>>,
     tally: SkipTally,
 }
 
 impl GrepNoteUnits {
     fn new(page: &PageFormat<'_>) -> Self {
-        let fixed = page
+        let mut facts = page
             .transcoding_notes
             .iter()
             .map(|line| Arc::<str>::from(line.as_str()))
-            .collect();
+            .collect::<Vec<_>>();
+        if let Some(fallback) = page.fallback_usage.fact() {
+            facts.push(Arc::from(fallback));
+        }
         let details = page
             .skipped_files
             .entries
             .iter()
             .map(|entry| Arc::<str>::from(detail_line(&entry.path, &entry.reason)))
             .collect();
-        let fallback = page.fallback_usage.note().map(Arc::<str>::from);
         Self {
-            fixed,
+            facts,
             details,
-            fallback,
             tally: page.skipped_files.tally(),
         }
     }
 
-    fn tail(&self, terminal: Arc<str>) -> Vec<Arc<str>> {
-        let mut tail = Vec::with_capacity(2);
-        if let Some(fallback) = &self.fallback {
-            tail.push(Arc::clone(fallback));
-        }
-        tail.push(terminal);
-        tail
+    fn head(&self, page: &PageFormat<'_>, metric: HeadMetric, shown_details: usize) -> String {
+        self.render(
+            HeadNote::new(format!("grep {:?}", page.pattern), metric),
+            shown_details,
+        )
     }
 
-    fn final_notes(&self, shown_skips: usize, terminal: Arc<str>) -> Vec<Arc<str>> {
-        let mut notes = Vec::with_capacity(
-            self.fixed
-                .len()
-                .saturating_add(shown_skips)
-                .saturating_add(2),
-        );
-        notes.extend(self.fixed.iter().cloned());
-        notes.extend(self.details[..shown_skips].iter().cloned());
-        if let Some(fallback) = &self.fallback {
-            notes.push(Arc::clone(fallback));
+    fn render(&self, mut note: HeadNote, shown_details: usize) -> String {
+        for fact in &self.facts {
+            note = note.fact(fact.as_ref());
         }
-        notes.push(terminal);
-        notes
-    }
-
-    fn baseline_notes(&self, terminal: &str) -> Result<Vec<Arc<str>>, RenderPlanError> {
-        let terminal = Arc::<str>::from(terminal_with_skips(terminal, &self.tally, 0)?);
-        Ok(self.final_notes(0, terminal))
+        if let Some(fact) = self.tally.fact(shown_details) {
+            note = note.fact(fact);
+        }
+        note.render()
     }
 }
 
@@ -1232,68 +1220,69 @@ fn replay_compat_binary_probes<T, E>(
     Ok(best)
 }
 
-fn select_body_prefix(
+fn render_line_grep(
     graph: &mut LineRenderGraph,
     maximum: usize,
     page: &PageFormat<'_>,
     notes: &GrepNoteUnits,
-    mut terminal: impl FnMut(usize) -> String,
-) -> Result<Option<(usize, String)>, RenderPlanError> {
-    if maximum == 0 {
-        return Ok(None);
-    }
-    let maximum_terminal = terminal(maximum);
-    let maximum_notes = notes.baseline_notes(&maximum_terminal)?;
-    if graph.probe_notes(maximum, &maximum_notes, page.work())? <= page.budget {
-        return Ok(Some((maximum, maximum_terminal)));
-    }
-
-    replay_compat_binary_probes(1, maximum - 1, None, |middle| {
-        let candidate_terminal = terminal(middle);
-        let candidate_notes = notes.baseline_notes(&candidate_terminal)?;
-        if graph.probe_notes(middle, &candidate_notes, page.work())? <= page.budget {
-            Ok(Some((middle, candidate_terminal)))
-        } else {
-            Ok(None)
-        }
-    })
-}
-
-fn finish_selected_grep_body(
-    graph: &mut LineRenderGraph,
-    selected: Result<Option<(usize, String)>, RenderPlanError>,
-    page: &PageFormat<'_>,
-    notes: &GrepNoteUnits,
+    mut metric: impl FnMut(usize) -> HeadMetric,
 ) -> ToolResponse {
-    let Some((shown, terminal)) = (match selected {
-        Ok(selected) => selected,
+    if maximum == 0 {
+        return budget_too_small(page.budget, page.budget_variable);
+    }
+    let probe = |graph: &mut LineRenderGraph, shown: usize, metric: HeadMetric| {
+        let head = notes.head(page, metric, 0);
+        graph.probe_head(shown, &head, &[] as &[Arc<str>], page.work())
+    };
+    let selected = match probe(graph, maximum, metric(maximum)) {
+        Ok(tokens) if tokens <= page.budget => Some(maximum),
+        Ok(_) if maximum > 1 => match replay_compat_binary_probes(1, maximum - 1, None, |middle| {
+            match probe(graph, middle, metric(middle))? {
+                tokens if tokens <= page.budget => Ok(Some(middle)),
+                _ => Ok(None),
+            }
+        }) {
+            Ok(selected) => selected,
+            Err(error) => return grep_render_failure(error),
+        },
+        Ok(_) => None,
         Err(error) => return grep_render_failure(error),
-    }) else {
+    };
+    let Some(shown) = selected else {
         return budget_too_small(page.budget, page.budget_variable);
     };
-    match finish_grep_graph(graph, shown, page, notes, &terminal) {
+    match finish_line_grep_head(graph, shown, page, notes, metric(shown)) {
         Ok(Some(text)) => ToolResponse::text(text),
         Ok(None) => budget_too_small(page.budget, page.budget_variable),
         Err(error) => grep_render_failure(error),
     }
 }
 
-fn finish_grep_graph(
+fn finish_line_grep_head(
     graph: &mut LineRenderGraph,
     shown: usize,
     page: &PageFormat<'_>,
     notes: &GrepNoteUnits,
-    terminal: &str,
+    metric: HeadMetric,
 ) -> Result<Option<String>, RenderPlanError> {
-    let body_checkpoint = graph.checkpoint(shown)?;
-    let Some(selected) = select_grep_notes(&body_checkpoint, shown > 0, page, notes, terminal)?
+    let Some((shown_details, head, tokens)) = select_grep_details(
+        notes.details.len(),
+        |shown_details| {
+            let head = notes.head(page, metric.clone(), shown_details);
+            let tokens =
+                graph.probe_head(shown, &head, &notes.details[..shown_details], page.work())?;
+            Ok((head, tokens))
+        },
+        page.budget,
+    )?
     else {
         return Ok(None);
     };
-    let rendered = graph.finish(
+    let rendered = graph.finish_head(
         shown,
-        &selected.notes,
-        selected.tokens,
+        &head,
+        &notes.details[..shown_details],
+        tokens,
         page.budget,
         page.work(),
     )?;
@@ -1305,87 +1294,57 @@ fn finish_content_grep_view(
     view: &LineRenderView,
     page: &PageFormat<'_>,
     notes: &GrepNoteUnits,
-    terminal: &str,
+    metric: HeadMetric,
 ) -> Result<Option<String>, RenderPlanError> {
-    let Some(selected) =
-        select_grep_notes(view.checkpoint(), view.len() > 0, page, notes, terminal)?
+    let Some((shown_details, head, tokens)) = select_grep_details(
+        notes.details.len(),
+        |shown_details| {
+            let head = notes.head(page, metric.clone(), shown_details);
+            let tokens =
+                graph.probe_head(view, &head, &notes.details[..shown_details], page.work())?;
+            Ok((head, tokens))
+        },
+        page.budget,
+    )?
     else {
         return Ok(None);
     };
-    let rendered = graph.finish(
+    let rendered = graph.finish_head(
         view,
-        &selected.notes,
-        selected.tokens,
+        &head,
+        &notes.details[..shown_details],
+        tokens,
         page.budget,
         page.work(),
     )?;
     Ok(Some(rendered.text))
 }
 
-struct SelectedGrepNotes {
-    notes: Vec<Arc<str>>,
-    tokens: usize,
-}
-
-fn select_grep_notes(
-    body_checkpoint: &TokenCheckpoint,
-    prefix_has_body: bool,
-    page: &PageFormat<'_>,
-    notes: &GrepNoteUnits,
-    terminal: &str,
-) -> Result<Option<SelectedGrepNotes>, RenderPlanError> {
-    let mut details = DetailRenderGraph::new(
-        body_checkpoint,
-        prefix_has_body,
-        &notes.fixed,
-        &notes.details,
-        page.work(),
-    )?;
-    let total_skipped = notes.details.len();
-
-    let full_terminal =
-        Arc::<str>::from(terminal_with_skips(terminal, &notes.tally, total_skipped)?);
-    let full_tail = notes.tail(Arc::clone(&full_terminal));
-    let full_tokens = details.probe_tail(total_skipped, &full_tail, page.work())?;
-    let (shown_skips, selected_terminal, selected_tokens) = if full_tokens <= page.budget {
-        (total_skipped, full_terminal, full_tokens)
-    } else {
-        let baseline_terminal = Arc::<str>::from(terminal_with_skips(terminal, &notes.tally, 0)?);
-        let baseline_tail = notes.tail(Arc::clone(&baseline_terminal));
-        let baseline_tokens = details.probe_tail(0, &baseline_tail, page.work())?;
-        if baseline_tokens > page.budget {
-            return Ok(None);
-        }
-
-        let baseline = (0_usize, baseline_terminal, baseline_tokens);
-        if total_skipped <= 1 {
-            baseline
-        } else {
-            replay_compat_binary_probes(
-                1,
-                total_skipped - 1,
-                Some(baseline.clone()),
-                |middle| -> Result<Option<(usize, Arc<str>, usize)>, RenderPlanError> {
-                    let candidate_terminal =
-                        Arc::<str>::from(terminal_with_skips(terminal, &notes.tally, middle)?);
-                    let candidate_tail = notes.tail(Arc::clone(&candidate_terminal));
-                    let candidate_tokens =
-                        details.probe_tail(middle, &candidate_tail, page.work())?;
-                    Ok((candidate_tokens <= page.budget).then_some((
-                        middle,
-                        candidate_terminal,
-                        candidate_tokens,
-                    )))
-                },
-            )?
-            .unwrap_or(baseline)
-        }
-    };
-
-    Ok(Some(SelectedGrepNotes {
-        notes: notes.final_notes(shown_skips, selected_terminal),
-        tokens: selected_tokens,
-    }))
+fn select_grep_details(
+    maximum: usize,
+    mut probe: impl FnMut(usize) -> Result<(String, usize), RenderPlanError>,
+    budget: usize,
+) -> Result<Option<(usize, String, usize)>, RenderPlanError> {
+    let (full_head, full_tokens) = probe(maximum)?;
+    if full_tokens <= budget {
+        return Ok(Some((maximum, full_head, full_tokens)));
+    }
+    let (empty_head, empty_tokens) = probe(0)?;
+    if empty_tokens > budget {
+        return Ok(None);
+    }
+    if maximum <= 1 {
+        return Ok(Some((0, empty_head, empty_tokens)));
+    }
+    replay_compat_binary_probes(
+        1,
+        maximum - 1,
+        Some((0, empty_head, empty_tokens)),
+        |middle| {
+            let (head, tokens) = probe(middle)?;
+            Ok((tokens <= budget).then_some((middle, head, tokens)))
+        },
+    )
 }
 
 fn grep_render_failure(error: RenderPlanError) -> ToolResponse {
@@ -1411,18 +1370,9 @@ fn format_files_mode(results: &[FileResult], page: &PageFormat<'_>) -> ToolRespo
         Err(error) => return grep_render_failure(error),
     };
     let notes = GrepNoteUnits::new(page);
-    let selected = select_body_prefix(&mut graph, initial, page, &notes, |shown| {
-        let has_more = shown < results.len() || !page.scan_complete;
-        paged_terminal(
-            "file",
-            "files",
-            page.offset,
-            shown,
-            has_more,
-            page.total_entries_seen,
-        )
-    });
-    finish_selected_grep_body(&mut graph, selected, page, &notes)
+    render_line_grep(&mut graph, initial, page, &notes, |shown| {
+        paged_metric(page, shown, "files")
+    })
 }
 
 fn format_count_mode(results: &[FileResult], page: &PageFormat<'_>) -> ToolResponse {
@@ -1431,16 +1381,8 @@ fn format_count_mode(results: &[FileResult], page: &PageFormat<'_>) -> ToolRespo
     } else {
         page.head_limit.min(results.len())
     };
-    let mut occurrence_prefix = Vec::with_capacity(initial.saturating_add(1));
-    occurrence_prefix.push(0_usize);
     let mut lines = Vec::with_capacity(initial);
     for result in &results[..initial] {
-        let next = occurrence_prefix
-            .last()
-            .copied()
-            .unwrap_or(0)
-            .saturating_add(result.occurrence_count());
-        occurrence_prefix.push(next);
         lines.push(Arc::<str>::from(format!(
             "{}:{}",
             result.path(),
@@ -1452,17 +1394,9 @@ fn format_count_mode(results: &[FileResult], page: &PageFormat<'_>) -> ToolRespo
         Err(error) => return grep_render_failure(error),
     };
     let notes = GrepNoteUnits::new(page);
-    let selected = select_body_prefix(&mut graph, initial, page, &notes, |shown| {
-        let has_more = shown < results.len() || !page.scan_complete;
-        count_terminal(
-            page.offset,
-            shown,
-            occurrence_prefix[shown],
-            has_more,
-            page.total_entries_seen,
-        )
-    });
-    finish_selected_grep_body(&mut graph, selected, page, &notes)
+    render_line_grep(&mut graph, initial, page, &notes, |shown| {
+        paged_metric(page, shown, "files")
+    })
 }
 
 fn format_content_mode(
@@ -1490,15 +1424,7 @@ fn format_content_mode(
     let notes = GrepNoteUnits::new(page);
     let mut render_cache = ContentRenderCache::new();
     let render_page = |shown: usize| {
-        let has_more = shown < entries.len() || !page.scan_complete;
-        let terminal = paged_terminal(
-            "result",
-            "results",
-            page.offset,
-            shown,
-            has_more,
-            page.total_entries_seen,
-        );
+        let metric = paged_metric(page, shown, "matches");
         render_content_page_with_degradation(
             results,
             &entries[..shown],
@@ -1506,7 +1432,7 @@ fn format_content_mode(
             page,
             &notes,
             &mut render_cache,
-            terminal,
+            metric,
         )
     };
     match fit_largest_content_output(initial, render_page) {
@@ -1516,7 +1442,7 @@ fn format_content_mode(
                 &candidate.view,
                 page,
                 &notes,
-                &candidate.terminal,
+                candidate.metric,
             ) {
                 Ok(Some(text)) => ToolResponse::text(text),
                 Ok(None) => budget_too_small(page.budget, page.budget_variable),
@@ -1531,7 +1457,7 @@ fn format_content_mode(
 
 struct ContentBodyCandidate {
     view: LineRenderView,
-    terminal: String,
+    metric: HeadMetric,
 }
 
 enum ContentFormatError {
@@ -1565,7 +1491,7 @@ fn render_content_page_with_degradation(
     page: &PageFormat<'_>,
     notes: &GrepNoteUnits,
     render_cache: &mut ContentRenderCache,
-    terminal: String,
+    metric: HeadMetric,
 ) -> Result<Option<ContentBodyCandidate>, ContentFormatError> {
     let (requested_before, requested_after) = requested_context(request);
     let maximum_context = requested_before.max(requested_after);
@@ -1583,13 +1509,14 @@ fn render_content_page_with_degradation(
         )
         .map_err(ContentFormatError::Source)?;
         let view = render_cache.token_graph.prepare_view(lines, page.work())?;
-        let baseline_notes = notes.baseline_notes(&terminal)?;
-        let tokens = render_cache
-            .token_graph
-            .probe_notes(&view, &baseline_notes, page.work())?;
+        let head = notes.head(page, metric.clone(), 0);
+        let tokens =
+            render_cache
+                .token_graph
+                .probe_head(&view, &head, &[] as &[Arc<str>], page.work())?;
         Ok((tokens <= page.budget).then_some(ContentBodyCandidate {
             view,
-            terminal: terminal.clone(),
+            metric: metric.clone(),
         }))
     };
 
@@ -2284,122 +2211,106 @@ fn format_context_line(prefix: String, line: ResultLine<'_>) -> io::Result<Strin
     }
 }
 
-fn terminal_with_skips(
-    terminal: &str,
-    tally: &SkipTally,
-    shown: usize,
-) -> Result<String, RenderPlanError> {
-    crate::skip_report::terminal_with_skips(terminal, tally, shown)
-        .ok_or(RenderPlanError::InvalidTerminal)
-}
-
 fn format_summary(occurrences: usize, files: usize, page: &PageFormat<'_>) -> ToolResponse {
-    let terminal = format!(
-        "(Complete: {} across {}.)",
-        counted(occurrences, "occurrence", "occurrences"),
-        counted(files, "file", "files")
-    );
-    terminal_only_response(terminal, page)
-}
-
-fn zero_result(mode: OutputMode, page: &PageFormat<'_>) -> ToolResponse {
-    let terminal = match mode {
-        OutputMode::FilesWithMatches => "(Complete: no files matched.)",
-        OutputMode::Content | OutputMode::Count => "(Complete: no matches found.)",
-        OutputMode::Summary => unreachable!("summary has its own zero-count response"),
-    };
-    terminal_only_response(terminal.to_string(), page)
-}
-
-fn offset_exhausted(mode: OutputMode, page: &PageFormat<'_>) -> ToolResponse {
-    let (singular, plural) = match mode {
-        OutputMode::Content => ("result", "results"),
-        OutputMode::FilesWithMatches | OutputMode::Count => ("file", "files"),
-        OutputMode::Summary => unreachable!("summary ignores offset"),
-    };
-    let offset = page.offset;
-    let total = page.total_entries_seen;
-    let verb = if total == 1 { "exists" } else { "exist" };
-    terminal_only_response(
-        format!(
-            "(Complete: no {plural} at offset={offset}; only {} {verb}.)",
-            counted(total, singular, plural)
+    bodyless_grep_response(
+        HeadNote::new(
+            format!("grep {:?}", page.pattern),
+            HeadMetric::count_in_files(occurrences, "occurrence", "occurrences", files),
         ),
         page,
     )
 }
 
-fn terminal_only_response(terminal: String, page: &PageFormat<'_>) -> ToolResponse {
+fn zero_result(mode: OutputMode, page: &PageFormat<'_>) -> ToolResponse {
+    let metric = match mode {
+        OutputMode::FilesWithMatches => HeadMetric::count(0, "file", "files"),
+        OutputMode::Content | OutputMode::Count => HeadMetric::count(0, "match", "matches"),
+        OutputMode::Summary => unreachable!("summary has its own zero-count response"),
+    };
+    bodyless_grep_response(
+        HeadNote::new(format!("grep {:?}", page.pattern), metric),
+        page,
+    )
+}
+
+fn offset_exhausted(mode: OutputMode, page: &PageFormat<'_>) -> ToolResponse {
+    let (singular, plural) = match mode {
+        OutputMode::Content => ("match", "matches"),
+        OutputMode::FilesWithMatches | OutputMode::Count => ("file", "files"),
+        OutputMode::Summary => unreachable!("summary ignores offset"),
+    };
+    let extent = if page.scan_complete {
+        format!(
+            "{} exist",
+            counted(page.total_entries_seen, singular, plural)
+        )
+    } else {
+        format!(
+            "at least {} exist",
+            counted(page.total_entries_seen, singular, plural)
+        )
+    };
+    bodyless_grep_response(
+        HeadNote::new(
+            format!("grep {:?}", page.pattern),
+            HeadMetric::count(0, singular, plural),
+        )
+        .fact(extent),
+        page,
+    )
+}
+
+fn bodyless_grep_response(note: HeadNote, page: &PageFormat<'_>) -> ToolResponse {
     let mut graph = match LineRenderGraph::new(Vec::new(), page.work()) {
         Ok(graph) => graph,
         Err(error) => return grep_render_failure(error),
     };
     let notes = GrepNoteUnits::new(page);
-    match finish_grep_graph(&mut graph, 0, page, &notes, &terminal) {
-        Ok(Some(text)) => ToolResponse::text(text),
-        Ok(None) => budget_too_small(page.budget, page.budget_variable),
+    let selected = select_grep_details(
+        notes.details.len(),
+        |shown_details| {
+            let head = notes.render(note.clone(), shown_details);
+            let tokens =
+                graph.probe_head(0, &head, &notes.details[..shown_details], page.work())?;
+            Ok((head, tokens))
+        },
+        page.budget,
+    );
+    let Some((shown_details, head, tokens)) = (match selected {
+        Ok(selected) => selected,
+        Err(error) => return grep_render_failure(error),
+    }) else {
+        return budget_too_small(page.budget, page.budget_variable);
+    };
+    match graph.finish_head(
+        0,
+        &head,
+        &notes.details[..shown_details],
+        tokens,
+        page.budget,
+        page.work(),
+    ) {
+        Ok(rendered) => ToolResponse::text(rendered.text),
         Err(error) => grep_render_failure(error),
     }
 }
 
-fn paged_terminal(
-    singular: &str,
-    plural: &str,
-    offset: usize,
-    shown: usize,
-    has_more: bool,
-    total: usize,
-) -> String {
-    let range = entry_range(singular, plural, offset + 1, shown);
-    if has_more {
-        format!(
-            "(Partial: {range} shown; more exist. Continue with offset={}.)",
-            offset + shown
-        )
-    } else if offset == 0 {
-        format!(
-            "(Complete: all {} shown.)",
-            counted(total, singular, plural)
-        )
+fn paged_metric(page: &PageFormat<'_>, shown: usize, unit: &'static str) -> HeadMetric {
+    let proven = page
+        .total_entries_seen
+        .max(page.offset.saturating_add(shown));
+    let total = if page.scan_complete {
+        CoverageTotal::Exact(proven)
     } else {
-        format!("(Complete: {range} shown; end of results.)")
-    }
-}
-
-fn count_terminal(
-    offset: usize,
-    shown_files: usize,
-    occurrences: usize,
-    has_more: bool,
-    total_files: usize,
-) -> String {
-    if has_more {
-        format!(
-            "(Partial: {} shown, page subtotal {}; more exist. Continue with offset={}.)",
-            counted(shown_files, "file", "files"),
-            counted(occurrences, "occurrence", "occurrences"),
-            offset + shown_files
-        )
-    } else if offset == 0 {
-        format!(
-            "(Complete: {} across {}.)",
-            counted(occurrences, "occurrence", "occurrences"),
-            counted(total_files, "file", "files")
-        )
-    } else {
-        format!(
-            "(Complete: {} shown, page subtotal {}; end of results.)",
-            entry_range("file", "files", offset + 1, shown_files),
-            counted(occurrences, "occurrence", "occurrences")
-        )
-    }
-}
-
-fn entry_range(singular: &str, plural: &str, first: usize, shown: usize) -> String {
-    if shown == 1 {
-        format!("{singular} {first}")
-    } else {
-        format!("{plural} {first}-{}", first + shown - 1)
+        CoverageTotal::AtLeast(proven.max(page.offset.saturating_add(shown).saturating_add(1)))
+    };
+    HeadMetric::Coverage {
+        unit,
+        ranges: vec![CoveredRange::new(
+            page.offset.saturating_add(1),
+            page.offset.saturating_add(shown),
+        )],
+        total,
     }
 }
 
@@ -2412,7 +2323,7 @@ fn budget_too_small(budget: usize, budget_variable: &str) -> ToolResponse {
     ErrorBudgetAdapter::new(budget, budget_variable).error(
         ErrorClass::Budget,
         format!(
-            "{budget_variable}={budget} is too small to return the required grep continuation note. Increase it and retry."
+            "{budget_variable}={budget} is too small to return the grep head note and one result. Increase it and retry."
         ),
     )
 }

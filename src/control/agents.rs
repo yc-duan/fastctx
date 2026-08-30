@@ -1,10 +1,12 @@
 //! Byte-level editing of the FastCtx-owned section in `~/.codex/AGENTS.md`.
 
+use crate::control::targets::AgentTarget;
+use crate::server_manifest::EnabledTools;
 use serde::{Deserialize, Serialize};
 
 const BEGIN_MARKER: &str = "<!-- fastctx:begin -->";
 const END_MARKER: &str = "<!-- fastctx:end -->";
-pub(crate) const MANAGED_SECTION_CONTRACT_ID: &str = "guidance-v4";
+pub(crate) const MANAGED_SECTION_CONTRACT_ID: &str = "guidance-v5";
 const LEGACY_BEGIN_MARKER: &str = "<!-- fastread:begin -->";
 const LEGACY_END_MARKER: &str = "<!-- fastread:end -->";
 const LEGACY_FASTREAD_SECTION: &str = concat!(
@@ -147,6 +149,8 @@ const V024_READ_TOOL_NAME_SHELL_GUIDANCE: &str = V022_RESOURCE_ROUTING_SHELL_GUI
 /// One byte-frozen managed block from a superseded release.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum KnownLegacyGuidance {
+    /// 0.2.5/0.2.6, whose batch-reading and terminal-note guidance was retired in 1.0.
+    BatchOrchestration,
     /// 0.2.2/0.2.3, whose prohibition named the very resource tools it steered away from.
     ResourceRouting,
     /// 0.2.4, superseded when the file-inspection tool was renamed away from `read`.
@@ -155,10 +159,15 @@ pub(crate) enum KnownLegacyGuidance {
 
 impl KnownLegacyGuidance {
     /// Every superseded release this build still recognises, newest first.
-    pub(crate) const ALL: [Self; 2] = [Self::ReadToolName, Self::ResourceRouting];
+    pub(crate) const ALL: [Self; 3] = [
+        Self::BatchOrchestration,
+        Self::ReadToolName,
+        Self::ResourceRouting,
+    ];
 
     fn guidance(self) -> (&'static str, &'static str) {
         match self {
+            Self::BatchOrchestration => (FILE_GUIDANCE_PREFIX, SHELL_GUIDANCE),
             Self::ResourceRouting => (
                 V022_RESOURCE_ROUTING_FILE_GUIDANCE,
                 V022_RESOURCE_ROUTING_SHELL_GUIDANCE,
@@ -172,6 +181,20 @@ impl KnownLegacyGuidance {
 
     /// Rebuilds this release's exact managed block for the optional shell group.
     pub(crate) fn section(self, fastshell_enabled: bool) -> String {
+        if self == Self::BatchOrchestration {
+            let mut output = String::from(BEGIN_MARKER);
+            output.push('\n');
+            output.push_str(FILE_GUIDANCE_PREFIX);
+            output.push_str(crate::model_guidance::LOCAL_FILE_ROUTE_GUIDANCE);
+            output.push('\n');
+            output.push_str(FILE_GUIDANCE_SUFFIX);
+            if fastshell_enabled {
+                output.push('\n');
+                output.push_str(SHELL_GUIDANCE);
+            }
+            output.push_str(END_MARKER);
+            return output;
+        }
         let (file_guidance, shell_guidance) = self.guidance();
         let mut output = String::from(BEGIN_MARKER);
         output.push('\n');
@@ -224,16 +247,21 @@ pub(crate) enum ManagedSectionState {
 
 /// Builds the exact managed block for the optional shell group.
 pub fn section(fastshell_enabled: bool) -> String {
+    section_for_tools(if fastshell_enabled {
+        EnabledTools::all()
+    } else {
+        EnabledTools::files()
+    })
+}
+
+/// Builds the exact Codex managed block for an arbitrary valid enabled set.
+pub fn section_for_tools(tools: EnabledTools) -> String {
     let mut output = String::from(BEGIN_MARKER);
     output.push('\n');
-    output.push_str(FILE_GUIDANCE_PREFIX);
-    output.push_str(crate::model_guidance::LOCAL_FILE_ROUTE_GUIDANCE);
-    output.push('\n');
-    output.push_str(FILE_GUIDANCE_SUFFIX);
-    if fastshell_enabled {
-        output.push('\n');
-        output.push_str(SHELL_GUIDANCE);
-    }
+    output.push_str(&crate::control::targets::generated_guidance(
+        AgentTarget::Codex,
+        tools,
+    ));
     output.push_str(END_MARKER);
     output
 }
@@ -253,13 +281,27 @@ pub(crate) fn apply_section_with_ownership_for(
     original: &[u8],
     fastshell_enabled: bool,
 ) -> Result<SectionEdit, String> {
+    apply_section_with_ownership_for_tools(
+        original,
+        if fastshell_enabled {
+            EnabledTools::all()
+        } else {
+            EnabledTools::files()
+        },
+    )
+}
+
+pub(crate) fn apply_section_with_ownership_for_tools(
+    original: &[u8],
+    tools: EnabledTools,
+) -> Result<SectionEdit, String> {
     let original = remove_exact_legacy_section(original)?;
     let source = std::str::from_utf8(&original).map_err(|error| {
         format!(
             "Cannot edit AGENTS.md because it is not valid UTF-8 ({error}). Convert it to UTF-8 and retry."
         )
     })?;
-    let expected = section(fastshell_enabled);
+    let expected = section_for_tools(tools);
     match section_range(source)? {
         Some((start, end)) => {
             let mut output = Vec::with_capacity(original.len() + expected.len());
@@ -337,9 +379,20 @@ pub fn has_exact_section(bytes: &[u8]) -> Result<bool, String> {
 
 /// Checks the managed block against the exact optional-shell state.
 pub fn has_exact_section_for(bytes: &[u8], fastshell_enabled: bool) -> Result<bool, String> {
+    has_exact_section_for_tools(
+        bytes,
+        if fastshell_enabled {
+            EnabledTools::all()
+        } else {
+            EnabledTools::files()
+        },
+    )
+}
+
+pub fn has_exact_section_for_tools(bytes: &[u8], tools: EnabledTools) -> Result<bool, String> {
     let source = std::str::from_utf8(bytes)
         .map_err(|error| format!("AGENTS.md is not valid UTF-8: {error}"))?;
-    let expected = section(fastshell_enabled);
+    let expected = section_for_tools(tools);
     Ok(section_range(source)?
         .map(|(start, end)| source[start..end] == expected)
         .unwrap_or(false))
@@ -348,6 +401,20 @@ pub fn has_exact_section_for(bytes: &[u8], fastshell_enabled: bool) -> Result<bo
 pub(crate) fn classify_managed_section(
     bytes: &[u8],
     fastshell_enabled: bool,
+) -> ManagedSectionState {
+    classify_managed_section_for_tools(
+        bytes,
+        if fastshell_enabled {
+            EnabledTools::all()
+        } else {
+            EnabledTools::files()
+        },
+    )
+}
+
+pub(crate) fn classify_managed_section_for_tools(
+    bytes: &[u8],
+    tools: EnabledTools,
 ) -> ManagedSectionState {
     let source = match std::str::from_utf8(bytes) {
         Ok(source) => source,
@@ -364,11 +431,11 @@ pub(crate) fn classify_managed_section(
         return ManagedSectionState::Missing;
     };
     let managed = &source[start..end];
-    if managed == section(fastshell_enabled) {
+    if managed == section_for_tools(tools) {
         ManagedSectionState::Current
     } else if KnownLegacyGuidance::ALL
         .iter()
-        .any(|legacy| managed == legacy.section(fastshell_enabled))
+        .any(|legacy| managed == legacy.section(tools.shell_enabled()))
     {
         ManagedSectionState::KnownLegacy
     } else {
@@ -376,16 +443,16 @@ pub(crate) fn classify_managed_section(
     }
 }
 
-pub(crate) fn refresh_known_legacy_section(
+pub(crate) fn refresh_known_legacy_section_for_tools(
     bytes: &[u8],
-    fastshell_enabled: bool,
+    tools: EnabledTools,
 ) -> Option<Vec<u8>> {
-    if classify_managed_section(bytes, fastshell_enabled) != ManagedSectionState::KnownLegacy {
+    if classify_managed_section_for_tools(bytes, tools) != ManagedSectionState::KnownLegacy {
         return None;
     }
     let source = std::str::from_utf8(bytes).ok()?;
     let (start, end) = section_range(source).ok()??;
-    let current = section(fastshell_enabled);
+    let current = section_for_tools(tools);
     let mut output = Vec::with_capacity(bytes.len() + current.len() - (end - start));
     output.extend_from_slice(&bytes[..start]);
     output.extend_from_slice(current.as_bytes());

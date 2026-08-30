@@ -3,28 +3,17 @@ mod common;
 use common::{McpSession, glob_files, grep_files, mcp_text, normalized, text, write};
 use fastctx::glob_tool::{FilterMode, GlobRequest, SortMode};
 use fastctx::grep_tool::{GrepRequest, OutputMode};
-use fastctx::read_tool::{BatchReadEntry, ReadRequest, read_file};
+use fastctx::read_tool::{ReadRequest, read_file};
 use std::process::Command;
 
 #[test]
 fn independent_o200k_oracle_keeps_high_entropy_outputs_below_the_budget() {
-    // The batch case has to return a continuation note carrying three absolute paths,
-    // and temp roots differ per platform: macOS hands out
-    // /private/var/folders/<hash>/T/, which costs far more tokens than Linux's /tmp.
-    // Below roughly 384 the batch call refuses on macOS alone, and padding a fixture
-    // path to compensate proves nothing, because the tokenizer collapses repeated
-    // characters that a real hash segment never has (2026-07-24).
     const BUDGET: usize = 512;
 
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("entropy.txt");
     let source_text = (1..=400).map(entropy_line).collect::<Vec<_>>().join("\n");
     write(&source, source_text.as_bytes());
-    let batch_second = temp.path().join("entropy-second.txt");
-    let batch_third = temp.path().join("entropy-third.txt");
-    write(&batch_second, source_text.as_bytes());
-    write(&batch_third, source_text.as_bytes());
-
     let glob_root = temp.path().join("glob");
     for index in 0..300 {
         write(
@@ -41,7 +30,11 @@ fn independent_o200k_oracle_keeps_high_entropy_outputs_below_the_budget() {
     // HOME isolation keeps the developer's real Codex profile (and its provider guard, which
     // rewrites budget variables) out of this session's environment.
     command
-        .args(["serve", "--enable-shell"])
+        .args([
+            "serve",
+            "--tools",
+            "inspect_local_file,grep,glob,replace,run,run_background,job_output,job_list,job_kill",
+        ])
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
         .env("FASTCTX_TOKEN_BUDGET", BUDGET.to_string())
@@ -50,17 +43,6 @@ fn independent_o200k_oracle_keeps_high_entropy_outputs_below_the_budget() {
         .env("FASTCTX_GLOB_TOKEN_BUDGET", BUDGET.to_string())
         .env("FASTCTX_RUN_TOKEN_BUDGET", BUDGET.to_string());
     let mut session = McpSession::start(command);
-
-    let batch_response = session.call(
-        "inspect_local_file",
-        serde_json::json!({
-            "files": [
-                {"path": normalized(&source), "limit": 50, "encoding": "utf-8"},
-                {"path": normalized(&batch_second)},
-                {"path": normalized(&batch_third)}
-            ]
-        }),
-    );
 
     let cases = [
         session.call(
@@ -92,7 +74,6 @@ fn independent_o200k_oracle_keeps_high_entropy_outputs_below_the_budget() {
                 "login_shell": false
             }),
         ),
-        batch_response.clone(),
     ];
 
     for response in &cases {
@@ -105,43 +86,11 @@ fn independent_o200k_oracle_keeps_high_entropy_outputs_below_the_budget() {
             oracle_tokens <= BUDGET,
             "independent oracle counted {oracle_tokens} tokens over budget {BUDGET}: {output}"
         );
-        let terminal = output.lines().last().unwrap();
-        assert!(terminal.starts_with("(Partial:"), "{terminal}");
-        assert!(
-            terminal.ends_with(".)"),
-            "terminal note was cut: {terminal}"
-        );
+        let head = output.lines().next().unwrap();
+        assert!(head.starts_with("=== ") && head.ends_with(" ==="), "{head}");
+        assert!(!output.contains("\n(Complete:"), "{output}");
+        assert!(!output.contains("\n(Partial:"), "{output}");
     }
-
-    let batch_output = mcp_text(&batch_response);
-    let (batch_body, batch_terminal) = split_terminal(batch_output);
-    assert!(
-        batch_body.starts_with(&format!("=== {} (lines 1-", normalized(&source))),
-        "{batch_output}"
-    );
-    assert!(
-        !batch_body.contains(&normalized(&batch_second)),
-        "{batch_output}"
-    );
-    let pending_json = batch_terminal
-        .strip_prefix("(Partial: 0 of 3 entries processed. Continue with files=")
-        .and_then(|terminal| terminal.strip_suffix(".)"))
-        .unwrap_or_else(|| panic!("unexpected batch terminal: {batch_terminal}"));
-    assert!(
-        pending_json.starts_with(&format!(
-            "[{{\"path\":\"{}\",\"offset\":",
-            normalized(&source)
-        )),
-        "{pending_json}"
-    );
-    let pending: Vec<serde_json::Value> = serde_json::from_str(pending_json).unwrap();
-    assert_eq!(pending.len(), 3);
-    let next_offset = pending[0]["offset"].as_u64().unwrap() as usize;
-    assert!(next_offset > 1);
-    assert_eq!(pending[0]["limit"], 50 - (next_offset - 1));
-    assert_eq!(pending[0]["encoding"], "utf-8");
-    assert_eq!(pending[1]["path"], normalized(&batch_second));
-    assert_eq!(pending[2]["path"], normalized(&batch_third));
 
     assert!(session.close().success());
 }
@@ -237,8 +186,7 @@ fn read_offset_pages_reassemble_without_duplicates_or_gaps_across_a_matrix() {
             let mut actual = Vec::new();
             while offset <= total {
                 let output = text(read_file(ReadRequest {
-                    file_path: Some(normalized(&path)),
-                    files: None,
+                    file_path: normalized(&path),
                     offset: Some(offset),
                     limit: Some(page_width),
                     pages: None,
@@ -246,7 +194,8 @@ fn read_offset_pages_reassemble_without_duplicates_or_gaps_across_a_matrix() {
                     encoding: None,
                     view: None,
                 }));
-                let (body, terminal) = split_terminal(&output);
+                let (head, body) = split_head(&output);
+                assert!(head.contains("lines "), "{head}");
                 let page = body
                     .lines()
                     .map(|line| {
@@ -263,110 +212,9 @@ fn read_offset_pages_reassemble_without_duplicates_or_gaps_across_a_matrix() {
                     actual.push(value.clone());
                 }
                 offset += page.len();
-                assert_terminal_matches_more(terminal, offset <= total);
             }
             assert_eq!(actual, expected, "total={total}, page_width={page_width}");
         }
-    }
-}
-
-#[test]
-fn batch_read_continuation_chain_matches_independent_per_file_line_oracles() {
-    let temp = tempfile::tempdir().unwrap();
-    let fixtures = [3_usize, 7, 31]
-        .into_iter()
-        .enumerate()
-        .map(|(file_index, total)| {
-            let path = temp.path().join(format!("batch-{file_index}.txt"));
-            let expected = (1..=total)
-                .map(|line| format!("file-{file_index}-value-{line:03}"))
-                .collect::<Vec<_>>();
-            write(&path, expected.join("\n").as_bytes());
-            (path, expected)
-        })
-        .collect::<Vec<_>>();
-
-    for page_width in [1_usize, 2, 5, 11] {
-        let mut pending = fixtures
-            .iter()
-            .map(|(path, _)| BatchReadEntry {
-                path: normalized(path),
-                offset: None,
-                limit: Some(page_width),
-                encoding: None,
-            })
-            .collect::<Vec<_>>();
-        let mut actual = std::collections::BTreeMap::<String, Vec<(usize, String)>>::new();
-        let mut calls = 0;
-        loop {
-            calls += 1;
-            assert!(calls <= 3, "continuation did not converge");
-            let requested_paths = pending
-                .iter()
-                .map(|entry| entry.path.clone())
-                .collect::<Vec<_>>();
-            let output = text(read_file(ReadRequest {
-                file_path: None,
-                files: Some(pending),
-                offset: None,
-                limit: None,
-                pages: None,
-                pdf_mode: None,
-                encoding: None,
-                view: None,
-            }));
-            let (body, terminal) = split_terminal(&output);
-            let mut current_path = None;
-            let mut delivered_paths = Vec::new();
-            for line in body.lines() {
-                if let Some(header) = line.strip_prefix("=== ") {
-                    let path = header
-                        .split_once(" (lines ")
-                        .map(|(path, _)| path)
-                        .unwrap_or_else(|| panic!("invalid batch header: {line}"));
-                    current_path = Some(path.to_string());
-                    delivered_paths.push(path.to_string());
-                } else if let Some((number, value)) = line.split_once('\t') {
-                    let path = current_path
-                        .as_ref()
-                        .unwrap_or_else(|| panic!("line before batch header: {line}"));
-                    actual
-                        .entry(path.clone())
-                        .or_default()
-                        .push((number.parse().unwrap(), value.to_string()));
-                }
-            }
-            assert_eq!(
-                delivered_paths,
-                requested_paths[..delivered_paths.len()],
-                "request order changed: {output}"
-            );
-
-            if terminal.starts_with("(Complete:") {
-                break;
-            }
-            let json = terminal
-                .split_once("Continue with files=")
-                .and_then(|(_, tail)| tail.strip_suffix(".)"))
-                .unwrap_or_else(|| panic!("invalid batch continuation: {terminal}"));
-            pending = serde_json::from_str(json).unwrap();
-        }
-
-        for (path, expected) in &fixtures {
-            let delivered = actual.remove(&normalized(path)).unwrap();
-            assert_eq!(
-                delivered.iter().map(|(line, _)| *line).collect::<Vec<_>>(),
-                (1..=expected.len()).collect::<Vec<_>>()
-            );
-            assert_eq!(
-                delivered
-                    .into_iter()
-                    .map(|(_, value)| value)
-                    .collect::<Vec<_>>(),
-                *expected
-            );
-        }
-        assert!(actual.is_empty());
     }
 }
 
@@ -412,12 +260,12 @@ fn grep_occurrence_pages_reassemble_without_duplicates_or_gaps_across_a_matrix()
                 encoding: None,
                 fallback_encoding: None,
             }));
-            let (body, terminal) = split_terminal(&output);
+            let (head, body) = split_head(&output);
+            assert!(head.contains("matches "), "{head}");
             let page = body.lines().map(str::to_string).collect::<Vec<_>>();
             assert!(!page.is_empty(), "{output}");
             actual.extend(page.iter().cloned());
             offset += page.len();
-            assert_terminal_matches_more(terminal, offset < expected.len());
         }
         assert_eq!(actual, expected, "page_width={page_width}");
     }
@@ -452,30 +300,23 @@ fn glob_offset_pages_reassemble_without_duplicates_or_gaps_across_a_matrix() {
                 offset: Some(offset),
                 limit: Some(page_width),
             }));
-            let (body, terminal) = split_terminal(&output);
+            let (head, body) = split_head(&output);
+            assert!(head.contains("files "), "{head}");
             let page = body.lines().map(str::to_string).collect::<Vec<_>>();
             assert!(!page.is_empty(), "{output}");
             actual.extend(page.iter().cloned());
             offset += page.len();
-            assert_terminal_matches_more(terminal, offset < expected.len());
         }
         assert_eq!(actual, expected, "page_width={page_width}");
     }
 }
 
-fn split_terminal(output: &str) -> (&str, &str) {
-    output
-        .rsplit_once("\n\n")
-        .unwrap_or_else(|| panic!("response has no terminal separator: {output}"))
-}
-
-fn assert_terminal_matches_more(terminal: &str, has_more: bool) {
-    assert_eq!(terminal.starts_with("(Partial:"), has_more, "{terminal}");
-    assert_eq!(terminal.starts_with("(Complete:"), !has_more, "{terminal}");
-    assert!(
-        terminal.ends_with(".)"),
-        "terminal note was cut: {terminal}"
-    );
+fn split_head(output: &str) -> (&str, &str) {
+    let (head, body) = output
+        .split_once('\n')
+        .unwrap_or_else(|| panic!("response has no body after its head note: {output}"));
+    assert!(head.starts_with("=== ") && head.ends_with(" ==="), "{head}");
+    (head, body)
 }
 
 fn entropy_line(index: usize) -> String {

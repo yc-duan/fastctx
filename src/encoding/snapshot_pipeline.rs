@@ -1313,12 +1313,18 @@ mod tests {
                 total_lines: validated.total_lines,
                 has_trailing_newline: validated.has_trailing_newline,
                 explicit_utf8_warning: validated.explicit_utf8_warning,
-                note: validated.transcoding_note(),
+                note: validated.transcoding_fact(),
             },
             EncodingDecision::Binary => ReferenceDecision::Binary,
             EncodingDecision::Rejected(rejection) => {
                 ReferenceDecision::Rejected(normalize_rejection(rejection))
             }
+        }
+    }
+
+    fn strip_presentation_note(decision: &mut ReferenceDecision) {
+        if let ReferenceDecision::Text { note, .. } = decision {
+            *note = None;
         }
     }
 
@@ -1649,8 +1655,10 @@ mod tests {
     #[test]
     fn v011_reference_differential_covers_trust_tree_and_boundaries() {
         for (case, (bytes, explicit)) in reference_corpus().into_iter().enumerate() {
-            let expected = classify_v011(&bytes, explicit);
-            let actual = normalize_production(&validate_bytes_for_test(&bytes, explicit));
+            let mut expected = classify_v011(&bytes, explicit);
+            let mut actual = normalize_production(&validate_bytes_for_test(&bytes, explicit));
+            strip_presentation_note(&mut expected);
+            strip_presentation_note(&mut actual);
             assert_eq!(
                 actual, expected,
                 "differential case {case}, explicit={explicit:?}"
@@ -1661,13 +1669,15 @@ mod tests {
     #[test]
     fn v011_reference_differential_is_invariant_to_reader_chunking() {
         for (case, (fixture, explicit)) in reference_corpus().into_iter().enumerate() {
-            let expected = classify_v011(&fixture, explicit);
+            let mut expected = classify_v011(&fixture, explicit);
+            strip_presentation_note(&mut expected);
             for chunk_bytes in [1, 2, 3, 7, 31, 4_095, 65_535, 65_536] {
-                let actual = normalize_production(&validate_bytes_with_chunk_limit_for_test(
+                let mut actual = normalize_production(&validate_bytes_with_chunk_limit_for_test(
                     &fixture,
                     explicit,
                     chunk_bytes,
                 ));
+                strip_presentation_note(&mut actual);
                 assert_eq!(
                     actual, expected,
                     "case={case}, explicit={explicit:?}, chunk_bytes={chunk_bytes}"

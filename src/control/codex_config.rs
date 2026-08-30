@@ -1,6 +1,7 @@
 //! Ownership-aware Codex TOML editing with `toml_edit` preserving all unowned content.
 
 use crate::control::settings::{Tier, ToolBudgets};
+use crate::server_manifest::EnabledTools;
 use std::ops::Range;
 use std::str::FromStr;
 use toml_edit::{Array, DocumentMut, Item, Table, Value, value};
@@ -33,8 +34,8 @@ pub struct ExpectedConfig {
     pub fastctx_budget: usize,
     /// Five long-output tools' relative budgets.
     pub tool_budgets: ToolBudgets,
-    /// Whether Apply should publish the optional shell tool group.
-    pub fastshell_enabled: bool,
+    /// Exact validated tool set published for this target.
+    pub enabled_tools: EnabledTools,
 }
 
 /// Conflict on a shared key in an Apply plan.
@@ -329,7 +330,7 @@ fn drift_with_limits(
                     && args
                         .iter()
                         .zip(expected_args.iter())
-                        .all(|(actual, expected)| actual.as_str() == Some(*expected))
+                        .all(|(actual, expected)| actual.as_str() == Some(expected.as_str()))
             });
             if !args_match {
                 drift.push("mcp_servers.fastctx.args".to_string());
@@ -495,31 +496,11 @@ fn build_fastctx_table(expected: &ExpectedConfig) -> Table {
     table.insert("tool_timeout_sec", value(TOOL_TIMEOUT_SECONDS));
     let mut env = Table::new();
     env.insert("FASTCTX_TOKEN_BUDGET", value(global.to_string()));
-    insert_tool_budget(
-        &mut env,
-        "FASTCTX_READ_TOKEN_BUDGET",
-        expected.tool_budgets.read.resolve(global),
-    );
-    insert_tool_budget(
-        &mut env,
-        "FASTCTX_GREP_TOKEN_BUDGET",
-        expected.tool_budgets.grep.resolve(global),
-    );
-    insert_tool_budget(
-        &mut env,
-        "FASTCTX_GLOB_TOKEN_BUDGET",
-        expected.tool_budgets.glob.resolve(global),
-    );
-    insert_tool_budget(
-        &mut env,
-        "FASTCTX_RUN_TOKEN_BUDGET",
-        expected.tool_budgets.run.resolve(global),
-    );
-    insert_tool_budget(
-        &mut env,
-        "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET",
-        expected.tool_budgets.job_output.resolve(global),
-    );
+    for (tool, key, budget) in expected_tool_budgets(expected) {
+        if expected.enabled_tools.contains(tool) {
+            insert_tool_budget(&mut env, key, budget);
+        }
+    }
     table.insert("env", Item::Table(env));
     table
 }
@@ -703,12 +684,12 @@ fn positive_integer_string(value: Option<&str>) -> bool {
         .is_some_and(|value| value > 0)
 }
 
-fn server_args(expected: &ExpectedConfig) -> Vec<&'static str> {
-    let mut args = vec!["serve"];
-    if expected.fastshell_enabled {
-        args.push("--enable-shell");
-    }
-    args
+fn server_args(expected: &ExpectedConfig) -> Vec<String> {
+    vec![
+        "serve".to_string(),
+        "--tools".to_string(),
+        expected.enabled_tools.names().join(","),
+    ]
 }
 
 fn insert_tool_budget(table: &mut Table, key: &str, budget: Option<usize>) {
@@ -724,36 +705,51 @@ fn check_env(
     drift: &mut Vec<String>,
 ) {
     check_env_value(env, "FASTCTX_TOKEN_BUDGET", Some(global), drift);
-    check_env_value(
-        env,
-        "FASTCTX_READ_TOKEN_BUDGET",
-        expected.tool_budgets.read.resolve(global),
-        drift,
-    );
-    check_env_value(
-        env,
-        "FASTCTX_GREP_TOKEN_BUDGET",
-        expected.tool_budgets.grep.resolve(global),
-        drift,
-    );
-    check_env_value(
-        env,
-        "FASTCTX_GLOB_TOKEN_BUDGET",
-        expected.tool_budgets.glob.resolve(global),
-        drift,
-    );
-    check_env_value(
-        env,
-        "FASTCTX_RUN_TOKEN_BUDGET",
-        expected.tool_budgets.run.resolve(global),
-        drift,
-    );
-    check_env_value(
-        env,
-        "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET",
-        expected.tool_budgets.job_output.resolve(global),
-        drift,
-    );
+    for (tool, key, budget) in expected_tool_budgets(expected) {
+        check_env_value(
+            env,
+            key,
+            expected
+                .enabled_tools
+                .contains(tool)
+                .then_some(budget)
+                .flatten(),
+            drift,
+        );
+    }
+}
+
+fn expected_tool_budgets(
+    expected: &ExpectedConfig,
+) -> [(&'static str, &'static str, Option<usize>); 5] {
+    let global = expected.fastctx_budget;
+    [
+        (
+            "inspect_local_file",
+            "FASTCTX_READ_TOKEN_BUDGET",
+            expected.tool_budgets.read.resolve(global),
+        ),
+        (
+            "grep",
+            "FASTCTX_GREP_TOKEN_BUDGET",
+            expected.tool_budgets.grep.resolve(global),
+        ),
+        (
+            "glob",
+            "FASTCTX_GLOB_TOKEN_BUDGET",
+            expected.tool_budgets.glob.resolve(global),
+        ),
+        (
+            "run",
+            "FASTCTX_RUN_TOKEN_BUDGET",
+            expected.tool_budgets.run.resolve(global),
+        ),
+        (
+            "job_output",
+            "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET",
+            expected.tool_budgets.job_output.resolve(global),
+        ),
+    ]
 }
 
 fn check_env_value(

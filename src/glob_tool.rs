@@ -6,11 +6,12 @@ use crate::budget::{
 };
 use crate::file_executor::GrepGlobExecutor;
 use crate::glob_filter::{GlobPatterns, PathGlobFilter};
+use crate::head_note::{CoverageTotal, CoveredRange, HeadMetric, HeadNote};
 use crate::model::ToolResponse;
 use crate::operation::{OpError, OperationCtx, RequestWorkGuard};
 use crate::path_codec::{PathRecord, ResolvedRoot, RootRequirement, resolve_search_root};
 use crate::render_plan::{LineRenderGraph, RenderPlanError};
-use crate::skip_report::{SkipTally, detail_line, terminal_with_skips};
+use crate::skip_report::{SkipTally, detail_line};
 use crate::traversal::{
     SkippedPaths, TraversalCollection, TraversalFailure, TraversalLimit, collect_walk_batched,
 };
@@ -413,9 +414,6 @@ fn format_modified_utc(value: SystemTime) -> io::Result<String> {
         .map_err(|error| io::Error::other(format!("cannot format file modification time: {error}")))
 }
 
-/// A note set that fits the budget, with the token count that proved it.
-type FittedNotes = Option<(Vec<Arc<str>>, usize)>;
-
 /// The paths this walk never entered, ready to be rendered alongside results.
 struct SkipReport {
     details: Vec<Arc<str>>,
@@ -438,11 +436,12 @@ impl SkipReport {
         }
     }
 
-    fn notes(&self, shown_details: usize, terminal: &str) -> Option<Vec<Arc<str>>> {
-        let terminal = terminal_with_skips(terminal, &self.tally, shown_details)?;
-        let mut notes = self.details[..shown_details].to_vec();
-        notes.push(Arc::from(terminal));
-        Some(notes)
+    fn head(&self, metric: HeadMetric, shown_details: usize) -> String {
+        let mut note = HeadNote::new("glob", metric);
+        if let Some(fact) = self.tally.fact(shown_details) {
+            note = note.fact(fact);
+        }
+        note.render()
     }
 }
 
@@ -458,7 +457,7 @@ fn format_matches(
     let total = matches.len();
     if total == 0 {
         return status_response(
-            "(Complete: no files matched.)".to_string(),
+            HeadMetric::count(0, "file", "files"),
             report,
             budget,
             budget_variable,
@@ -466,12 +465,11 @@ fn format_matches(
         );
     }
     if offset >= total {
-        let verb = if total == 1 { "exists" } else { "exist" };
         return status_response(
-            format!(
-                "(Complete: no files at offset={offset}; only {} {verb}.)",
-                counted(total, "file", "files")
-            ),
+            HeadMetric::event(format!(
+                "0 files; {total} {} exist",
+                if total == 1 { "file" } else { "files" }
+            )),
             report,
             budget,
             budget_variable,
@@ -494,13 +492,12 @@ fn format_matches(
     // The body is sized against a bare skip tally so results never lose room to
     // the detail lines describing what is missing; detail fills what is left.
     for shown in (1..=maximum).rev() {
-        let terminal = glob_terminal(offset, shown, total);
-        let Some(notes) = report.notes(0, &terminal) else {
-            return render_plan_failure(RenderPlanError::InvalidTerminal);
-        };
-        let tokens = match graph.probe_notes(
+        let metric = glob_metric(offset, shown, total);
+        let head = report.head(metric.clone(), 0);
+        let tokens = match graph.probe_head(
             shown,
-            &notes,
+            &head,
+            &[] as &[Arc<str>],
             operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint),
         ) {
             Ok(tokens) => tokens,
@@ -510,7 +507,7 @@ fn format_matches(
             return finish_with_skips(
                 &mut graph,
                 shown,
-                &terminal,
+                metric,
                 report,
                 budget,
                 budget_variable,
@@ -528,21 +525,20 @@ fn format_matches(
 fn finish_with_skips(
     graph: &mut LineRenderGraph,
     shown: usize,
-    terminal: &str,
+    metric: HeadMetric,
     report: &SkipReport,
     budget: usize,
     budget_variable: &str,
     operation: Option<&OperationCtx>,
 ) -> ToolResponse {
     let work = operation.map(|operation| operation as &dyn crate::operation::WorkCheckpoint);
-    let probe =
-        |graph: &mut LineRenderGraph, details: usize| -> Result<FittedNotes, RenderPlanError> {
-            let notes = report
-                .notes(details, terminal)
-                .ok_or(RenderPlanError::InvalidTerminal)?;
-            let tokens = graph.probe_notes(shown, &notes, work)?;
-            Ok((tokens <= budget).then_some((notes, tokens)))
-        };
+    let probe = |graph: &mut LineRenderGraph,
+                 details: usize|
+     -> Result<Option<(usize, String, usize)>, RenderPlanError> {
+        let head = report.head(metric.clone(), details);
+        let tokens = graph.probe_head(shown, &head, &report.details[..details], work)?;
+        Ok((tokens <= budget).then_some((details, head, tokens)))
+    };
 
     let full = report.details.len();
     let mut best = match probe(graph, full) {
@@ -569,10 +565,17 @@ fn finish_with_skips(
             }
         }
     }
-    let Some((notes, tokens)) = best else {
+    let Some((shown_details, head, tokens)) = best else {
         return budget_too_small(budget, budget_variable);
     };
-    match graph.finish(shown, &notes, tokens, budget, work) {
+    match graph.finish_head(
+        shown,
+        &head,
+        &report.details[..shown_details],
+        tokens,
+        budget,
+        work,
+    ) {
         Ok(rendered) => {
             debug_assert!(rendered.tokens <= budget);
             ToolResponse::text(rendered.text)
@@ -581,37 +584,18 @@ fn finish_with_skips(
     }
 }
 
-fn glob_terminal(offset: usize, shown: usize, total: usize) -> String {
-    let range = entry_range(offset + 1, shown);
-    if offset + shown < total {
-        format!(
-            "(Partial: {range} of {total} shown. Continue with offset={}.)",
-            offset + shown
-        )
-    } else if offset == 0 {
-        format!("(Complete: all {} shown.)", counted(total, "file", "files"))
-    } else {
-        format!("(Complete: {range} of {total} shown; end of results.)")
+fn glob_metric(offset: usize, shown: usize, total: usize) -> HeadMetric {
+    HeadMetric::Coverage {
+        unit: "files",
+        ranges: vec![CoveredRange::new(offset + 1, offset + shown)],
+        total: CoverageTotal::Exact(total),
     }
-}
-
-fn entry_range(first: usize, shown: usize) -> String {
-    if shown == 1 {
-        format!("file {first}")
-    } else {
-        format!("files {first}-{}", first + shown - 1)
-    }
-}
-
-fn counted(count: usize, singular: &str, plural: &str) -> String {
-    let noun = if count == 1 { singular } else { plural };
-    format!("{count} {noun}")
 }
 
 /// Emits a body-less result. An empty match set is exactly when unreachable
 /// paths matter most, so the skip report travels with it.
 fn status_response(
-    status: String,
+    metric: HeadMetric,
     report: &SkipReport,
     budget: usize,
     budget_variable: &str,
@@ -627,7 +611,7 @@ fn status_response(
     finish_with_skips(
         &mut graph,
         0,
-        &status,
+        metric,
         report,
         budget,
         budget_variable,
@@ -647,7 +631,7 @@ fn budget_too_small(budget: usize, budget_variable: &str) -> ToolResponse {
     ErrorBudgetAdapter::new(budget, budget_variable).error(
         ErrorClass::Budget,
         format!(
-            "{budget_variable}={budget} is too small to return the required glob truncation note. Increase it and retry."
+            "{budget_variable}={budget} is too small to return the glob head note and one result. Increase it and retry."
         ),
     )
 }

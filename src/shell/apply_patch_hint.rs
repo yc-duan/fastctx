@@ -1,7 +1,7 @@
 //! Recognition of the host's `apply_patch` editing channel being run as a shell program.
 
 const CHANNEL_NAME: &str = "apply_patch";
-const MISUSE_NOTE: &str = "(Note: apply_patch is not a program and no shell can run it. Reach it through Codex itself — its own tool call, or Codex's built-in shell — not through this tool.)";
+const MISUSE_NOTE: &str = "apply_patch is not a shell program; use the host's editing channel";
 
 /// Returns the guidance note for a failed command that reads as an attempt to run `apply_patch`.
 ///

@@ -1,6 +1,6 @@
 [package]
 name = "fastctx"
-version = "0.2.6"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "FastCtx — fast, context-efficient repository tools for AI agents."
@@ -44,6 +44,7 @@ grep-searcher = "0.1.16"
 hex = "0.4.3"
 ignore = "0.4.28"
 image = { version = "0.25.8", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+jsonc-parser = { version = "0.33.1", features = ["serde_json"] }
 parking_lot = "0.12.5"
 pdfium-render = { version = "=0.9.2", optional = true, default-features = false, features = ["image_025", "pdfium_7763", "thread_safe"] }
 process-wrap = { version = "9.1.0", default-features = false, features = ["std", "job-object", "process-session"] }
@@ -68,6 +69,7 @@ tempfile = "3.23.0"
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
 url = "2.5.8"
 walkdir = "2.5.0"
+yaml-rust2 = "0.11.0"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]

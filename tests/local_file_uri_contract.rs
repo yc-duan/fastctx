@@ -4,8 +4,7 @@ use fastctx::read_tool::{ReadRequest, read_file};
 #[test]
 fn a_drive_shaped_file_uri_cannot_discard_its_remote_authority() {
     let response = read_file(ReadRequest {
-        file_path: Some("file://example.com/C:/secret.txt".to_string()),
-        files: None,
+        file_path: "file://example.com/C:/secret.txt".to_string(),
         offset: None,
         limit: None,
         pages: None,
