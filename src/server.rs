@@ -130,6 +130,30 @@ impl FastCtxServer {
             .expect("the compiled file router must contain inspect_local_file")
             .attr
             .description = Some(crate::model_guidance::inspect_tool_description().into());
+        // The job-log clause names the file tools that can read that log. Naming a tool this
+        // target does not publish teaches the model a route that does not exist, and
+        // co-occurrence beats negation, so the clause follows the enabled set (2026-08-30).
+        for (name, description) in [
+            (
+                "run_background",
+                crate::model_guidance::run_background_tool_description(options.tools),
+            ),
+            (
+                "job_output",
+                crate::model_guidance::job_output_tool_description(options.tools),
+            ),
+            (
+                "replace",
+                crate::model_guidance::replace_tool_description(options.tools),
+            ),
+        ] {
+            tool_router
+                .map
+                .get_mut(name)
+                .expect("the compiled router must contain every generated-description tool")
+                .attr
+                .description = Some(description.into());
+        }
         for entry in ToolManifest::entries() {
             if !options.tools.contains(entry.name) {
                 tool_router.remove_route(entry.name);
@@ -216,7 +240,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "grep",
-        description = "Fast regex content search (ripgrep engine; Rust regex, no lookaround). Output\nmodes: \"files_with_matches\" (default, paths only), \"content\", \"count\" (total\nmatches, not matching lines), \"summary\" (global totals). Respects .gitignore;\nsearches hidden files; skips .git and binaries. Files are decoded to UTF-8\nbefore searching; files whose encoding can't be determined, that change, or\nthat cannot be searched are skipped and listed for directory targets; the\nequivalent single-file failure returns an error. Matching is line-by-line:\n`^` and `$` anchor line boundaries and are CRLF-aware. A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and\ndo not decode or rewrite it. Continue a paged result with offset equal to the\nlast covered result number; errors are self-contained.",
+        description = "Fast regex content search (ripgrep engine; Rust regex, no lookaround). Output\nmodes: \"files_with_matches\" (default, paths only), \"content\", \"count\" (total\nmatches, not matching lines), \"summary\" (global totals). Respects .gitignore;\nsearches hidden files; skips .git and binaries. Files are decoded to UTF-8\nbefore searching; files whose encoding can't be determined, that change, or\nthat cannot be searched are skipped and listed for directory targets; the\nequivalent single-file failure returns an error. Matching is line-by-line:\n`^` and `$` anchor line boundaries and are CRLF-aware. A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and\ndo not decode or rewrite it. Continue a paged result with offset equal to the\nlast covered result number.",
         annotations(
             title = "Search file contents",
             read_only_hint = true,
@@ -250,7 +274,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "glob",
-        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Matches files\nonly, never directories. Returns absolute paths sorted by path (or newest first\nwith sort=\"modified\"), 100 per page by default. filter_mode defaults to\n\"ignore\" (plain .ignore files only); \"all\" disables that filtering. Hidden\nfiles and .git are always visible unless a negative pattern excludes them.\noutput_mode defaults to \"paths\"; \"details\" returns compact JSON lines with\npath, byte size, and UTC modification time. Omit `path` entirely for the session\nworking directory — never pass \"null\" or \"undefined\". A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and do\nnot decode or rewrite it. Continue a paged result with offset equal to the last\ncovered file number; errors are self-contained.",
+        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Matches files\nonly, never directories. Returns absolute paths sorted by path (or newest first\nwith sort=\"modified\"), 100 per page by default. filter_mode defaults to\n\"ignore\" (plain .ignore files only); \"all\" disables that filtering. Hidden\nfiles and .git are always visible unless a negative pattern excludes them.\noutput_mode defaults to \"paths\"; \"details\" returns compact JSON lines with\npath, byte size, and UTC modification time. Omit `path` entirely for the session\nworking directory — never pass \"null\" or \"undefined\". A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and do\nnot decode or rewrite it. Continue a paged result with offset equal to the last\ncovered file number.",
         annotations(
             title = "Match file paths",
             read_only_hint = true,

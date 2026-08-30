@@ -98,7 +98,7 @@ pub struct GrepRequest {
     pub head_limit: Option<usize>,
     /// Skip the first N entries before applying head_limit.
     pub offset: Option<usize>,
-    /// Single-file target only: decode that file with this WHATWG encoding label (e.g. "gbk"), same semantics as inspect_local_file's encoding. On a directory target use fallback_encoding instead.
+    /// Single-file target only: decode that file with this WHATWG encoding label (e.g. "gbk") instead of auto-detecting it; matching and output are always UTF-8. On a directory target use fallback_encoding instead.
     pub encoding: Option<String>,
     /// Directory target: WHATWG encoding to assume only for files auto-detection can't determine — never overrides BOM, valid UTF-8, or already-resolved files. Strict-decoded; files that also fail under it stay in the skip report.
     pub fallback_encoding: Option<String>,

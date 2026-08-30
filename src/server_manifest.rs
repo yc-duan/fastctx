@@ -359,8 +359,13 @@ mod tests {
 
     #[test]
     fn every_nonempty_file_subset_and_atomic_shell_choice_publishes_exactly_that_contract() {
-        for file_mask in 1_u8..16 {
+        // The shell suite alone is a legal set, so the file mask starts at zero and only the
+        // fully empty combination is skipped.
+        for file_mask in 0_u8..16 {
             for shell in [false, true] {
+                if file_mask == 0 && !shell {
+                    continue;
+                }
                 let names = TOOL_ENTRIES
                     .iter()
                     .enumerate()
@@ -473,16 +478,74 @@ mod tests {
         "shift_jis",
     ];
 
-    fn all_published_tools() -> Vec<rmcp::model::Tool> {
-        FastCtxServer::with_options(ServerOptions::all()).tool_definitions()
+    /// Every legal enabled set: any file subset plus the atomic shell choice, minus the
+    /// empty one. Prose is checked against each because a target may publish any of them.
+    fn legal_tool_sets() -> Vec<EnabledTools> {
+        let mut sets = Vec::new();
+        for file_mask in 0_u8..16 {
+            for shell in [false, true] {
+                if file_mask == 0 && !shell {
+                    continue;
+                }
+                let names = TOOL_ENTRIES
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        let enabled = match entry.group {
+                            ToolGroup::File => file_mask & (1 << index) != 0,
+                            ToolGroup::Shell => shell,
+                        };
+                        enabled.then_some(entry.name)
+                    })
+                    .collect::<Vec<_>>();
+                sets.push(EnabledTools::from_names(names).unwrap());
+            }
+        }
+        sets
+    }
+
+    fn published_tools(enabled: EnabledTools) -> Vec<rmcp::model::Tool> {
+        FastCtxServer::with_options(ServerOptions { tools: enabled }).tool_definitions()
+    }
+
+    /// One legal enabled set with the model-visible prose and identifier vocabulary it
+    /// publishes.
+    struct ToolSetProse {
+        enabled: EnabledTools,
+        prose: Vec<(String, String)>,
+        vocabulary: BTreeSet<String>,
+    }
+
+    /// Prose and vocabulary for every legal set, built once. Assembling a server per set is
+    /// the expensive half, and both prose gates need the same sets.
+    fn prose_by_tool_set() -> &'static [ToolSetProse] {
+        static CACHE: std::sync::OnceLock<Vec<ToolSetProse>> = std::sync::OnceLock::new();
+        CACHE.get_or_init(|| {
+            legal_tool_sets()
+                .into_iter()
+                .map(|enabled| {
+                    let (prose, vocabulary) = model_visible_prose_and_vocabulary(enabled);
+                    ToolSetProse {
+                        enabled,
+                        prose,
+                        vocabulary,
+                    }
+                })
+                .collect()
+        })
     }
 
     /// Labelled model-visible prose plus the identifier vocabulary the same surface
-    /// publishes: tool names, every schema property name, and every schema enum value.
-    fn model_visible_prose_and_vocabulary() -> (Vec<(String, String)>, BTreeSet<String>) {
-        let mut vocabulary: BTreeSet<String> = ToolManifest::entries()
-            .iter()
-            .map(|entry| entry.name.to_string())
+    /// publishes: the enabled tool names, every schema property name, and every schema
+    /// enum value. The vocabulary follows the enabled set rather than the whole manifest,
+    /// so prose can never cite a tool this target does not publish.
+    fn model_visible_prose_and_vocabulary(
+        enabled: EnabledTools,
+    ) -> (Vec<(String, String)>, BTreeSet<String>) {
+        let mut vocabulary: BTreeSet<String> = enabled
+            .names()
+            .into_iter()
+            .map(|name| name.to_string())
             .collect();
         vocabulary.extend(
             DOCUMENTED_PROSE_LITERALS
@@ -493,7 +556,7 @@ mod tests {
             "server instructions".to_string(),
             crate::model_guidance::server_instructions(),
         )];
-        for tool in all_published_tools() {
+        for tool in published_tools(enabled) {
             if let Some(description) = tool.description.as_deref() {
                 prose.push((
                     format!("{} description", tool.name),
@@ -595,13 +658,15 @@ mod tests {
     /// a rename can never strand references again (2026-08-08).
     #[test]
     fn model_visible_prose_cites_only_published_identifiers() {
-        let (prose, vocabulary) = model_visible_prose_and_vocabulary();
-        for (context, text) in &prose {
-            for token in identifier_tokens(&text.to_lowercase()) {
-                assert!(
-                    vocabulary.contains(&token),
-                    "{context} cites `{token}`, which no published tool, parameter, or documented value resolves; full text: {text}"
-                );
+        for entry in prose_by_tool_set() {
+            for (context, text) in &entry.prose {
+                for token in identifier_tokens(&text.to_lowercase()) {
+                    assert!(
+                        entry.vocabulary.contains(&token),
+                        "with {:?} enabled, {context} cites `{token}`, which no published tool, parameter, or documented value resolves; full text: {text}",
+                        entry.enabled.names()
+                    );
+                }
             }
         }
     }
@@ -612,13 +677,14 @@ mod tests {
     /// (2026-08-08).
     #[test]
     fn model_visible_prose_never_says_bare_read() {
-        let (prose, _) = model_visible_prose_and_vocabulary();
-        for (context, text) in &prose {
-            for token in word_tokens(&text.to_lowercase()) {
-                assert!(
-                    token != "read" && token != "read's",
-                    "{context} says bare `read`, the file tool's retired name; full text: {text}"
-                );
+        for entry in prose_by_tool_set() {
+            for (context, text) in &entry.prose {
+                for token in word_tokens(&text.to_lowercase()) {
+                    assert!(
+                        token != "read" && token != "read's",
+                        "{context} says bare `read`, the file tool's retired name; full text: {text}"
+                    );
+                }
             }
         }
     }

@@ -46,7 +46,9 @@ impl FastCtxServer {
 
     #[tool(
         name = "run_background",
-        description = "Start a bash command as a background job and return its job_id\nimmediately. Use for builds, tests, servers, or anything that may outlast\nrun's four-minute maximum. Jobs survive server and agent restarts; their\noutput and exit code stay retrievable by job_id. Check on it with\njob_output; stop with job_kill; rediscover past jobs with job_list. There\nis no timeout: a job runs until it exits or is killed. Everything it\nprints is kept in a plain log file whose path is returned here;\ninspect_local_file or grep that path for anything job_output does not show.\nBackground status refreshes only when another FastCtx tool returns; it is not\na push notification, so keep working and check back when useful.",
+        // rmcp accepts only a literal here. `FastCtxServer::with_session_and_runtime` replaces
+        // this inert placeholder with the enabled-set-aware text before the router is observable.
+        description = "Start a bash command as a background job.",
         annotations(
             title = "Start background bash job",
             read_only_hint = false,
@@ -74,7 +76,9 @@ impl FastCtxServer {
 
     #[tool(
         name = "job_output",
-        description = "Query a background job: its status plus output after after_seq (or after\nthe session cursor when omitted). Works for jobs started in earlier sessions.\nLong output is windowed: the first lines on the initial call and newest lines\nthat fit. Sequence numbers in the head note map directly to the plain log file\non disk, so inspect_local_file or grep that path for omitted output. The call\nblocks up to wait_ms; use 0 for a snapshot, and raise it only when you have\nnothing else to do. If output looks garbled (U+FFFD), call again with encoding\nset to the source encoding (e.g. \"gbk\").",
+        // rmcp accepts only a literal here. `FastCtxServer::with_session_and_runtime` replaces
+        // this inert placeholder with the enabled-set-aware text before the router is observable.
+        description = "Query a background job.",
         annotations(
             title = "Check background job output",
             read_only_hint = true,
