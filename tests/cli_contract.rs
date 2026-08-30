@@ -387,6 +387,61 @@ fn codex_apply_and_disconnect_preserve_unowned_same_name_state() {
         taken_over_config
     );
     assert!(taken_over.path().join(".fastctx/config.toml").is_file());
+
+    let guidance_drift = tempfile::tempdir().unwrap();
+    let applied = isolated_command(guidance_drift.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&applied);
+    let config_path = guidance_drift.path().join(".codex/config.toml");
+    let guidance_path = guidance_drift.path().join(".codex/AGENTS.md");
+    let settings_path = guidance_drift.path().join(".fastctx/config.toml");
+    let config = std::fs::read(&config_path).unwrap();
+    let settings = std::fs::read(&settings_path).unwrap();
+    let guidance = std::fs::read_to_string(&guidance_path).unwrap();
+    let user_guidance = guidance.replacen(
+        "## FastCtx local tools",
+        "## User took over this FastCtx block",
+        1,
+    );
+    std::fs::write(&guidance_path, &user_guidance).unwrap();
+    let output = isolated_command(guidance_drift.path())
+        .args(["unapply", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("managed guidance drifted"), "{error}");
+    assert_eq!(std::fs::read(&config_path).unwrap(), config);
+    assert_eq!(std::fs::read(&settings_path).unwrap(), settings);
+    assert_eq!(
+        std::fs::read_to_string(&guidance_path).unwrap(),
+        user_guidance
+    );
+
+    let missing_guidance = tempfile::tempdir().unwrap();
+    let applied = isolated_command(missing_guidance.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&applied);
+    let config_path = missing_guidance.path().join(".codex/config.toml");
+    let guidance_path = missing_guidance.path().join(".codex/AGENTS.md");
+    let settings_path = missing_guidance.path().join(".fastctx/config.toml");
+    let config = std::fs::read(&config_path).unwrap();
+    let settings = std::fs::read(&settings_path).unwrap();
+    std::fs::remove_file(&guidance_path).unwrap();
+    let output = isolated_command(missing_guidance.path())
+        .args(["unapply", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("AGENTS.md is missing"), "{error}");
+    assert_eq!(std::fs::read(&config_path).unwrap(), config);
+    assert_eq!(std::fs::read(&settings_path).unwrap(), settings);
+    assert!(!guidance_path.exists());
 }
 
 #[test]

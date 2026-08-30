@@ -712,10 +712,34 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
                 .is_some_and(|bytes| record.codex_agents.applied_sha256 == sha256(bytes))
         })
         .and_then(|record| record.codex_agents_inserted_separator);
-    let agents_bytes = agents::remove_applied_section(
-        agents_original.as_deref().unwrap_or_default(),
-        agents_inserted_separator,
-    )?;
+    let agents_bytes = match applied.as_ref() {
+        Some(record) => {
+            let original = agents_original.as_deref().ok_or_else(|| {
+                "The managed Codex AGENTS.md is missing. Unapply stopped before removing configuration or the shared binary. Restore the file or repair the Codex connection, then retry."
+                    .to_string()
+            })?;
+            let enabled_tools = record.enabled_tools.unwrap_or_else(|| {
+                if record.fastshell_enabled {
+                    EnabledTools::all()
+                } else {
+                    EnabledTools::files()
+                }
+            });
+            let guidance_state =
+                agents::classify_managed_section_for_tools(original, enabled_tools);
+            let removable = guidance_state == agents::ManagedSectionState::Current
+                || (guidance_state == agents::ManagedSectionState::KnownLegacy
+                    && record.agents_contract_id.is_none());
+            if !removable {
+                return Err(
+                    "Codex managed guidance drifted after Apply. Unapply stopped before removing user-changed bytes or the shared binary; restore the receipt-owned block or remove it manually, then retry."
+                        .to_string(),
+                );
+            }
+            agents::remove_applied_section(original, agents_inserted_separator)?
+        }
+        None => agents_original.clone().unwrap_or_default(),
+    };
     // Delete a now-empty file only when Apply originally created it; otherwise write back the remaining content.
     let agents_original_existed = applied
         .as_ref()

@@ -1519,8 +1519,9 @@ pub fn save(paths: &ControlPaths, settings: &FastCtxSettings) -> Result<bool, St
 
 #[cfg(test)]
 mod tests {
-    use super::{Tier, load_for_startup, load_from};
+    use super::{CURRENT_SCHEMA_VERSION, Tier, encode, load_for_startup, load_from};
     use crate::control::paths::ControlPaths;
+    use crate::control::targets::AgentTarget;
 
     #[test]
     fn startup_migrates_an_existing_unstamped_config_and_overwrites_custom_budgets_once() {
@@ -1588,5 +1589,75 @@ mod tests {
         let error = load_from(&missing).unwrap_err();
         assert!(error.contains("schema_version is missing"), "{error}");
         assert_eq!(std::fs::read(&missing).unwrap(), b"language = \"en\"\n");
+    }
+
+    #[test]
+    fn released_schema_one_codex_receipt_migrates_ownership_conservatively() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            concat!(
+                "schema_version = 1\n",
+                "last_seen_version = \"0.2.6\"\n",
+                "tool_budget_epoch = 2\n",
+                "tier = \"standard\"\n",
+                "\n[fastshell]\n",
+                "enabled = false\n",
+                "\n[applied]\n",
+                "applied_at_utc = \"20260830T000000Z\"\n",
+                "version = \"0.2.6\"\n",
+                "command = \"C:/fixture/.fastctx/bin/fastctx.exe\"\n",
+                "tier = \"standard\"\n",
+                "tool_output_token_limit = 60000\n",
+                "tool_timeout_sec = 300\n",
+                "previous_token_limit_present = false\n",
+                "fastctx_token_budget = 54000\n",
+                "fastshell_enabled = false\n",
+                "codex_dir_created = true\n",
+                "agents_contract_id = \"guidance-v4\"\n",
+                "binary_sha256 = \"binary-hash\"\n",
+                "\n[applied.tool_budgets]\n",
+                "read = \"inherit\"\n",
+                "grep = 20\n",
+                "glob = 10\n",
+                "run = 20\n",
+                "job_output = 10\n",
+                "\n[applied.codex_config]\n",
+                "path = \"C:/fixture/.codex/config.toml\"\n",
+                "original_existed = false\n",
+                "applied_sha256 = \"config-hash\"\n",
+                "\n[applied.codex_agents]\n",
+                "path = \"C:/fixture/.codex/AGENTS.md\"\n",
+                "original_existed = false\n",
+                "applied_sha256 = \"guidance-hash\"\n",
+            ),
+        )
+        .unwrap();
+
+        let migrated = load_from(&path).unwrap();
+        assert_eq!(migrated.schema_version, CURRENT_SCHEMA_VERSION);
+        let receipt = migrated.target_receipt(AgentTarget::Codex).unwrap();
+        let codex = receipt.codex.as_ref().unwrap();
+        assert!(codex.server_entry_owned);
+        assert!(!codex.direct_namespace_inserted);
+        assert_eq!(codex.tool_timeout_sec, Some(300));
+        assert_eq!(receipt.config.applied_sha256, "config-hash");
+        assert_eq!(receipt.guidance.applied_sha256, "guidance-hash");
+        assert_eq!(
+            migrated.installation.as_ref().unwrap().binary_sha256,
+            "binary-hash"
+        );
+
+        std::fs::write(&path, encode(&migrated).unwrap()).unwrap();
+        let round_trip = load_from(&path).unwrap();
+        let codex = round_trip
+            .target_receipt(AgentTarget::Codex)
+            .unwrap()
+            .codex
+            .as_ref()
+            .unwrap();
+        assert!(codex.server_entry_owned);
+        assert!(!codex.direct_namespace_inserted);
     }
 }
