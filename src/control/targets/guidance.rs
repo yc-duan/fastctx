@@ -180,9 +180,15 @@ pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools) -> S
         .map(|name| format!("`{name}`"))
         .collect::<Vec<_>>()
         .join(", ");
-    let mut text = format!(
-        "## FastCtx local tools\n\nUse FastCtx for local filesystem and command work. Enabled tools: {names}.\n"
-    );
+    let scope = if tools.files_enabled() && tools.shell_enabled() {
+        "local filesystem and command work"
+    } else if tools.shell_enabled() {
+        "local command work"
+    } else {
+        "local filesystem work"
+    };
+    let mut text =
+        format!("## FastCtx local tools\n\nUse FastCtx for {scope}. Enabled tools: {names}.\n");
     if tools.contains("inspect_local_file") {
         text.push_str(
             "Each inspect_local_file call accepts one path; issue independent read-only calls in parallel when the host supports it.\n",

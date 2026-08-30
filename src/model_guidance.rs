@@ -8,6 +8,14 @@ pub(crate) const LOCAL_FILE_ROUTE_GUIDANCE: &str = concat!(
     "local reference is URI-shaped; pass the equivalent plain absolute filesystem path."
 );
 
+/// Positive routing for a set that publishes no file tool; the URI clause has no
+/// subject there, and advertising an absent capability teaches a route that does
+/// not exist.
+pub(crate) const LOCAL_SHELL_ROUTE_GUIDANCE: &str = concat!(
+    "Use FastCtx shell tools directly for local command work; they run POSIX bash\n",
+    "on every platform."
+);
+
 /// Shared path-shape contract used by every file tool's path field.
 pub(crate) const LOCAL_PATH_INPUT_GUIDANCE: &str = concat!(
     "Plain absolute local filesystem path. When the source reference is URI-shaped, ",
@@ -44,8 +52,12 @@ pub(crate) fn inspect_tool_description() -> String {
     )
 }
 
-pub(crate) fn server_instructions() -> String {
-    LOCAL_FILE_ROUTE_GUIDANCE.replace('\n', " ")
+pub(crate) fn server_instructions(tools: EnabledTools) -> String {
+    if tools.files_enabled() {
+        LOCAL_FILE_ROUTE_GUIDANCE.replace('\n', " ")
+    } else {
+        LOCAL_SHELL_ROUTE_GUIDANCE.replace('\n', " ")
+    }
 }
 
 /// File tools able to read a background job's log file, in manifest order.

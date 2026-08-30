@@ -176,6 +176,11 @@ impl EnabledTools {
         self.0 & SHELL_MASK == SHELL_MASK
     }
 
+    /// Whether at least one file tool is enabled.
+    pub const fn files_enabled(self) -> bool {
+        self.0 & FILE_MASK != 0
+    }
+
     /// Every valid tool name in stable manifest order.
     pub fn valid_names() -> Vec<&'static str> {
         TOOL_ENTRIES.iter().map(|entry| entry.name).collect()
@@ -554,7 +559,7 @@ mod tests {
         );
         let mut prose = vec![(
             "server instructions".to_string(),
-            crate::model_guidance::server_instructions(),
+            crate::model_guidance::server_instructions(enabled),
         )];
         for tool in published_tools(enabled) {
             if let Some(description) = tool.description.as_deref() {

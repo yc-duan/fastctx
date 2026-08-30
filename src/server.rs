@@ -320,7 +320,9 @@ impl ServerHandler for FastCtxServer {
             // blurb and may keep only its first line and first 250 characters, so this text
             // has to introduce the toolset within that budget. Behavioural rules belong in
             // the host guidance file, which has no such limit.
-            .with_instructions(crate::model_guidance::server_instructions())
+            .with_instructions(crate::model_guidance::server_instructions(
+                self.options.tools,
+            ))
     }
 
     // The three `resources/*` methods stay on the rmcp defaults on purpose: both list methods
