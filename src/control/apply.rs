@@ -665,7 +665,11 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             record.tool_timeout_sec,
         )?
         .into_iter()
-        .filter(|field| field != "tool_output_token_limit")
+        .filter(|field| {
+            field != "tool_output_token_limit"
+                && (record.codex_direct_namespace_inserted
+                    || field != codex_config::DIRECT_NAMESPACE_DRIFT)
+        })
         .collect::<Vec<_>>();
         if !protected_drift.is_empty() {
             return Err(format!(
@@ -685,13 +689,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             record.previous_token_limit_present,
             record.previous_token_limit,
         )?,
-        None => codex_config::unapply(
-            codex_source,
-            codex_config::CodexConfigOwnership::default(),
-            false,
-            false,
-            None,
-        )?,
+        None => codex_source.to_vec(),
     };
     let codex_original_existed = applied
         .as_ref()

@@ -10,6 +10,8 @@ const FASTCTX_NAMESPACE: &str = "mcp__fastctx";
 const LEGACY_FASTREAD_NAMESPACE: &str = "mcp__fastread";
 const LEGACY_FASTSHELL_NAMESPACE: &str = "mcp__fastshell";
 const LEGACY_FASTEDIT_NAMESPACE: &str = "mcp__fastedit";
+pub(crate) const DIRECT_NAMESPACE_DRIFT: &str =
+    "features.code_mode.direct_only_tool_namespaces[mcp__fastctx]";
 const STARTUP_TIMEOUT_SECONDS: i64 = 120;
 /// MCP tool timeout written by Apply so 240-second tool waits retain a 60-second return margin.
 pub(crate) const TOOL_TIMEOUT_SECONDS: i64 = 300;
@@ -437,9 +439,7 @@ fn drift_with_limits(
         })
         .unwrap_or(0);
     if count != 1 {
-        drift.push(format!(
-            "features.code_mode.direct_only_tool_namespaces[{FASTCTX_NAMESPACE}]"
-        ));
+        drift.push(DIRECT_NAMESPACE_DRIFT.to_string());
     }
     if document
         .get("tool_output_token_limit")
