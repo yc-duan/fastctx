@@ -60,6 +60,14 @@ pub(crate) fn server_instructions(tools: EnabledTools) -> String {
     }
 }
 
+/// Collapses the source line breaks of a composed description into one flowed paragraph.
+///
+/// These descriptions are assembled from pieces whose seams move with the enabled set, so a
+/// hard wrap authored for one composition lands mid-clause in another.
+fn flow(text: &str) -> String {
+    text.replace('\n', " ")
+}
+
 /// File tools able to read a background job's log file, in manifest order.
 const LOG_READER_TOOLS: [&str; 2] = ["inspect_local_file", "grep"];
 
@@ -106,10 +114,12 @@ fn log_readers(tools: EnabledTools) -> Option<String> {
 
 pub(crate) fn run_background_tool_description(tools: EnabledTools) -> String {
     let clause = match log_readers(tools) {
-        Some(readers) => format!(";\n{readers} that path for anything job_output does not show.\n"),
-        None => ".\n".to_string(),
+        Some(readers) => format!("; {readers} that path for anything job_output does not show. "),
+        None => ". ".to_string(),
     };
-    format!("{RUN_BACKGROUND_HEAD}{clause}{RUN_BACKGROUND_TAIL}")
+    flow(&format!(
+        "{RUN_BACKGROUND_HEAD}{clause}{RUN_BACKGROUND_TAIL}"
+    ))
 }
 
 pub(crate) fn job_output_tool_description(tools: EnabledTools) -> String {
@@ -117,7 +127,7 @@ pub(crate) fn job_output_tool_description(tools: EnabledTools) -> String {
         Some(readers) => format!(", so {readers} that path for omitted output. "),
         None => ". ".to_string(),
     };
-    format!("{JOB_OUTPUT_HEAD}{clause}{JOB_OUTPUT_TAIL}")
+    flow(&format!("{JOB_OUTPUT_HEAD}{clause}{JOB_OUTPUT_TAIL}"))
 }
 
 const REPLACE_TOOL_HEAD: &str = concat!(
@@ -143,5 +153,5 @@ pub(crate) fn replace_tool_description(tools: EnabledTools) -> String {
     } else {
         ""
     };
-    format!("{REPLACE_TOOL_HEAD}{contrast}{REPLACE_TOOL_TAIL}")
+    flow(&format!("{REPLACE_TOOL_HEAD}{contrast}{REPLACE_TOOL_TAIL}"))
 }
