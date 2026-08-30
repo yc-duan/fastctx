@@ -377,21 +377,6 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         tool_budgets: effective_output.tool_budgets,
         enabled_tools: options.enabled_tools,
     };
-    let codex_edit = codex_config::apply(codex_source, &expected)?;
-
-    let agents_original = transaction::read_snapshot(&paths.codex_agents)?;
-    let agents_edit = agents::apply_section_with_ownership_for_tools(
-        agents_original.as_deref().unwrap_or_default(),
-        options.enabled_tools,
-    )?;
-    let agents_bytes = agents_edit.bytes;
-
-    let installed_original = if same_path(&options.current_executable, &paths.installed_binary) {
-        Some(source_binary.clone())
-    } else {
-        transaction::read_snapshot(&paths.installed_binary)?
-    };
-
     let settings_original = transaction::read_snapshot(&paths.fastctx_config)?;
     let mut current_settings = settings::load(paths)?;
     if settings_original.is_none() {
@@ -411,6 +396,28 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         .applied
         .clone()
         .filter(|record| record.targets_codex_profile(paths));
+    let previous_ownership = previous_applied
+        .as_ref()
+        .map(|record| codex_config::CodexConfigOwnership {
+            server_entry_owned: record.codex_server_entry_owned,
+            direct_namespace_inserted: record.codex_direct_namespace_inserted,
+        })
+        .unwrap_or_default();
+    let codex_edit = codex_config::apply(codex_source, &expected, previous_ownership)?;
+
+    let agents_original = transaction::read_snapshot(&paths.codex_agents)?;
+    let agents_edit = agents::apply_section_with_ownership_for_tools(
+        agents_original.as_deref().unwrap_or_default(),
+        options.enabled_tools,
+    )?;
+    let agents_bytes = agents_edit.bytes;
+
+    let installed_original = if same_path(&options.current_executable, &paths.installed_binary) {
+        Some(source_binary.clone())
+    } else {
+        transaction::read_snapshot(&paths.installed_binary)?
+    };
+
     let codex_dir_created = previous_applied
         .as_ref()
         .map(|record| record.codex_dir_created || codex_dir_missing)
@@ -437,6 +444,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
                 agents_bytes: &agents_bytes,
                 agents_inserted_separator,
                 codex_dir_created,
+                codex_ownership: codex_edit.ownership,
             },
         )
     });
@@ -497,6 +505,8 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
                 &agents_bytes,
                 previous_applied.as_ref().map(|record| &record.codex_agents),
             ),
+            codex_server_entry_owned: codex_edit.ownership.server_entry_owned,
+            codex_direct_namespace_inserted: codex_edit.ownership.direct_namespace_inserted,
             agents_contract_id: Some(agents::MANAGED_SECTION_CONTRACT_ID.to_string()),
             codex_agents_inserted_separator: agents_inserted_separator,
             binary_sha256: binary_hash,
@@ -626,14 +636,62 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
     let restore_token_limit = applied.as_ref().is_some_and(|record| {
         codex_config::current_token_limit(codex_source) == Some(record.tool_output_token_limit)
     });
+    if let Some(record) = applied.as_ref() {
+        if !record.codex_server_entry_owned {
+            return Err(
+                "The Codex receipt does not prove ownership of mcp_servers.fastctx. Unapply stopped before deleting the shared binary; remove or repair that entry manually, then retry."
+                    .to_string(),
+            );
+        }
+        let expected = ExpectedConfig {
+            command: record.command.clone(),
+            tier: record.tier,
+            host_limit: record.tool_output_token_limit,
+            fastctx_budget: record.fastctx_token_budget,
+            tool_budgets: record.tool_budgets,
+            enabled_tools: record.enabled_tools.unwrap_or_else(|| {
+                if record.fastshell_enabled {
+                    EnabledTools::all()
+                } else {
+                    EnabledTools::files()
+                }
+            }),
+        };
+        let protected_drift = codex_config::drift_applied(
+            codex_source,
+            &expected,
+            record.tool_output_token_limit,
+            record.fastctx_token_budget,
+            record.tool_timeout_sec,
+        )?
+        .into_iter()
+        .filter(|field| field != "tool_output_token_limit")
+        .collect::<Vec<_>>();
+        if !protected_drift.is_empty() {
+            return Err(format!(
+                "Codex managed configuration drifted after Apply ({}). Unapply stopped before removing user-changed values or the shared binary; run Doctor and repair or remove those values manually, then retry.",
+                protected_drift.join(", ")
+            ));
+        }
+    }
     let codex_bytes = match applied.as_ref() {
         Some(record) => codex_config::unapply(
             codex_source,
+            codex_config::CodexConfigOwnership {
+                server_entry_owned: record.codex_server_entry_owned,
+                direct_namespace_inserted: record.codex_direct_namespace_inserted,
+            },
             restore_token_limit,
             record.previous_token_limit_present,
             record.previous_token_limit,
         )?,
-        None => codex_config::unapply(codex_source, false, false, None)?,
+        None => codex_config::unapply(
+            codex_source,
+            codex_config::CodexConfigOwnership::default(),
+            false,
+            false,
+            None,
+        )?,
     };
     let codex_original_existed = applied
         .as_ref()
@@ -1026,6 +1084,7 @@ struct RecordMatchContext<'a> {
     agents_bytes: &'a [u8],
     agents_inserted_separator: Option<agents::InsertedSeparator>,
     codex_dir_created: bool,
+    codex_ownership: codex_config::CodexConfigOwnership,
 }
 
 fn record_matches(record: &AppliedRecord, context: &RecordMatchContext<'_>) -> bool {
@@ -1036,6 +1095,7 @@ fn record_matches(record: &AppliedRecord, context: &RecordMatchContext<'_>) -> b
         agents_bytes,
         agents_inserted_separator,
         codex_dir_created,
+        codex_ownership,
     } = context;
     record.version == env!("CARGO_PKG_VERSION")
         && record.command == expected.command
@@ -1058,6 +1118,8 @@ fn record_matches(record: &AppliedRecord, context: &RecordMatchContext<'_>) -> b
         && record.codex_agents.path == crate::paths::display_path(&paths.codex_agents)
         && record.binary_sha256 == *binary_hash
         && record.codex_agents.applied_sha256 == sha256(agents_bytes)
+        && record.codex_server_entry_owned == codex_ownership.server_entry_owned
+        && record.codex_direct_namespace_inserted == codex_ownership.direct_namespace_inserted
         && record.agents_contract_id.as_deref() == Some(agents::MANAGED_SECTION_CONTRACT_ID)
         && record.codex_agents_inserted_separator == *agents_inserted_separator
 }
@@ -1245,8 +1307,18 @@ fn preview_apply(
                     )),
                     PreviewDetail::kept("[mcp_servers.fastctx] startup_timeout_sec = 120"),
                     PreviewDetail::kept("[mcp_servers.fastctx] tool_timeout_sec = 300"),
-                    PreviewDetail::kept("direct_only_tool_namespaces += \"mcp__fastctx\""),
                 ]);
+                if !codex_config::has_namespace(original, "mcp__fastctx")
+                    && codex_config::has_namespace(updated, "mcp__fastctx")
+                {
+                    details.push(PreviewDetail::kept(
+                        "direct_only_tool_namespaces += \"mcp__fastctx\"",
+                    ));
+                } else {
+                    details.push(PreviewDetail::kept(
+                        "direct_only_tool_namespaces contains \"mcp__fastctx\"",
+                    ));
+                }
                 match previous_token_limit {
                     Some(current) if current == new_limit => {}
                     Some(current) => {
@@ -1354,10 +1426,18 @@ fn preview_unapply(
             let (action, details) = if is_codex_config(change) {
                 let original = change.original.as_deref().unwrap_or_default();
                 let mut details = Vec::new();
-                if codex_config::has_server(original, "fastctx") {
+                let updated = match &change.action {
+                    FileAction::Write(bytes) => bytes.as_slice(),
+                    FileAction::Delete => &[],
+                };
+                if codex_config::has_server(original, "fastctx")
+                    && !codex_config::has_server(updated, "fastctx")
+                {
                     details.push(PreviewDetail::removed("[mcp_servers.fastctx]"));
                 }
-                if codex_config::has_namespace(original, "mcp__fastctx") {
+                if codex_config::has_namespace(original, "mcp__fastctx")
+                    && !codex_config::has_namespace(updated, "mcp__fastctx")
+                {
                     details.push(PreviewDetail::removed(
                         "direct_only_tool_namespaces -= \"mcp__fastctx\"",
                     ));

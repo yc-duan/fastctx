@@ -283,6 +283,113 @@ fn apply_status_and_unapply_cover_both_shell_states() {
 }
 
 #[test]
+fn codex_apply_and_disconnect_preserve_unowned_same_name_state() {
+    let preexisting = tempfile::tempdir().unwrap();
+    let codex = preexisting.path().join(".codex");
+    std::fs::create_dir_all(&codex).unwrap();
+    let original =
+        b"# keep\n[features.code_mode]\ndirect_only_tool_namespaces = ['user', 'mcp__fastctx']\n";
+    std::fs::write(codex.join("config.toml"), original).unwrap();
+    let applied = isolated_command(preexisting.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&applied);
+    let config = std::fs::read_to_string(codex.join("config.toml")).unwrap();
+    assert_eq!(config.matches("mcp__fastctx").count(), 1, "{config}");
+    let removed = isolated_command(preexisting.path())
+        .args(["unapply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&removed);
+    assert_eq!(std::fs::read(codex.join("config.toml")).unwrap(), original);
+
+    for conflicting in [
+        "[mcp_servers.fastctx]\ncommand = 'user-owned'\n",
+        "[features.code_mode]\ndirect_only_tool_namespaces = ['mcp__fastctx', 'mcp__fastctx']\n",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let codex = temp.path().join(".codex");
+        std::fs::create_dir_all(&codex).unwrap();
+        std::fs::write(codex.join("config.toml"), conflicting).unwrap();
+        let output = isolated_command(temp.path())
+            .args(["apply", "--yes"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("does not own it") || error.contains("multiple mcp__fastctx"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(codex.join("config.toml")).unwrap(),
+            conflicting.as_bytes()
+        );
+        assert!(!temp.path().join(".fastctx").exists());
+    }
+
+    let drifted = tempfile::tempdir().unwrap();
+    let applied = isolated_command(drifted.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&applied);
+    let config_path = drifted.path().join(".codex/config.toml");
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    let drifted_config = config.replace(
+        "[mcp_servers.fastctx.env]",
+        "user_extra = 'keep'\n\n[mcp_servers.fastctx.env]",
+    );
+    assert_ne!(config, drifted_config);
+    std::fs::write(&config_path, &drifted_config).unwrap();
+    let output = isolated_command(drifted.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("contains unknown keys (user_extra)"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(config_path).unwrap(),
+        drifted_config
+    );
+
+    let taken_over = tempfile::tempdir().unwrap();
+    let applied = isolated_command(taken_over.path())
+        .args(["apply", "--yes"])
+        .output()
+        .unwrap();
+    assert_success(&applied);
+    let config_path = taken_over.path().join(".codex/config.toml");
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    let command_line = config
+        .lines()
+        .find(|line| line.starts_with("command = "))
+        .unwrap();
+    let taken_over_config = config.replacen(command_line, "command = 'user-owned-command'", 1);
+    std::fs::write(&config_path, &taken_over_config).unwrap();
+    let output = isolated_command(taken_over.path())
+        .args(["unapply", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("configuration drifted after Apply"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&config_path).unwrap(),
+        taken_over_config
+    );
+    assert!(taken_over.path().join(".fastctx/config.toml").is_file());
+}
+
+#[test]
 fn apply_migrates_owned_three_server_config_and_legacy_agents_blocks_atomically() {
     let temp = tempfile::tempdir().unwrap();
     let codex = temp.path().join(".codex");
@@ -307,11 +414,6 @@ fn apply_migrates_owned_three_server_config_and_legacy_agents_blocks_atomically(
             "startup_timeout_sec = 120\n",
             "[mcp_servers.fastread.env]\n",
             "FASTREAD_TOKEN_BUDGET = '8500'\n\n",
-            "[mcp_servers.fastctx]\n",
-            "command = '{installed}'\n",
-            "startup_timeout_sec = 120\n",
-            "[mcp_servers.fastctx.env]\n",
-            "FASTCTX_TOKEN_BUDGET = '8500'\n\n",
             "[mcp_servers.fastshell]\n",
             "command = '{installed}'\n",
             "args = ['shell-serve']\n",

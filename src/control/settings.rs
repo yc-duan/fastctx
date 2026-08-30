@@ -676,6 +676,12 @@ pub struct AppliedRecord {
     pub codex_config: ManagedFileRecord,
     /// Ownership receipt for Codex AGENTS.md.
     pub codex_agents: ManagedFileRecord,
+    /// Whether the Codex `mcp_servers.fastctx` entry is owned by this receipt.
+    #[serde(default)]
+    pub codex_server_entry_owned: bool,
+    /// Whether Apply inserted the surviving Codex `mcp__fastctx` direct namespace.
+    #[serde(default)]
+    pub codex_direct_namespace_inserted: bool,
     /// Managed-section contract recorded by an explicit Apply; absent in older receipts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents_contract_id: Option<String>,
@@ -717,6 +723,10 @@ pub struct CodexReceipt {
     pub codex_dir_created: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents_contract_id: Option<String>,
+    #[serde(default)]
+    pub server_entry_owned: bool,
+    #[serde(default)]
+    pub direct_namespace_inserted: bool,
 }
 
 /// Minimal inverse-edit evidence for one source-preserving JSONC MCP insertion.
@@ -887,6 +897,13 @@ impl FastCtxSettings {
             })?;
         }
         if source_schema <= SINGLE_TARGET_SCHEMA_VERSION {
+            if let Some(record) = self.applied.as_mut() {
+                // Every released schema-v1 AppliedRecord was written only after FastCtx created or
+                // adopted its managed server. It did not record whether the direct namespace was
+                // already present, so preserve that occurrence conservatively (2026-08-29).
+                record.codex_server_entry_owned = true;
+                record.codex_direct_namespace_inserted = false;
+            }
             let legacy_tools = if self.fastshell.enabled {
                 EnabledTools::all()
             } else {
@@ -962,6 +979,8 @@ impl FastCtxSettings {
                     tool_budgets: record.tool_budgets,
                     codex_dir_created: record.codex_dir_created,
                     agents_contract_id: record.agents_contract_id.clone(),
+                    server_entry_owned: record.codex_server_entry_owned,
+                    direct_namespace_inserted: record.codex_direct_namespace_inserted,
                 }),
             },
         );
@@ -997,6 +1016,8 @@ impl FastCtxSettings {
             codex_dir_created: codex.codex_dir_created,
             codex_config: receipt.config.clone(),
             codex_agents: receipt.guidance.clone(),
+            codex_server_entry_owned: codex.server_entry_owned,
+            codex_direct_namespace_inserted: codex.direct_namespace_inserted,
             agents_contract_id: codex.agents_contract_id.clone(),
             codex_agents_inserted_separator: receipt.guidance_inserted_separator,
             binary_sha256: installation.binary_sha256.clone(),

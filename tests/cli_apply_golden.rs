@@ -1,5 +1,5 @@
 use fastctx::control::agents;
-use fastctx::control::codex_config::{self, ExpectedConfig};
+use fastctx::control::codex_config::{self, CodexConfigOwnership, ExpectedConfig};
 use fastctx::control::settings::{Tier, ToolBudgetLevel, ToolBudgets};
 
 #[test]
@@ -55,6 +55,7 @@ fn micro_edit_golden_preserves_every_unowned_byte_and_writes_the_exact_private_s
             },
             enabled_tools: fastctx::server_manifest::EnabledTools::files(),
         },
+        CodexConfigOwnership::default(),
     )
     .unwrap();
     assert_eq!(edit.bytes, expected.as_bytes());
@@ -81,7 +82,8 @@ fn malformed_toml_and_ambiguous_agents_markers_fail_before_producing_bytes() {
         tool_budgets: ToolBudgets::default(),
         enabled_tools: fastctx::server_manifest::EnabledTools::files(),
     };
-    let toml_error = codex_config::apply(b"[broken", &expected).unwrap_err();
+    let toml_error =
+        codex_config::apply(b"[broken", &expected, CodexConfigOwnership::default()).unwrap_err();
     assert!(toml_error.contains("Repair it manually"));
     let agents_error = agents::apply_section(
         b"<!-- fastctx:begin -->\n<!-- fastctx:begin -->\n<!-- fastctx:end -->",

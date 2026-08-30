@@ -47,6 +47,15 @@ pub struct TokenLimitConflict {
     pub requested: i64,
 }
 
+/// Independent ownership evidence for the two Codex configuration values managed by Apply.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CodexConfigOwnership {
+    /// Whether the `mcp_servers.fastctx` entry is owned by a FastCtx receipt.
+    pub server_entry_owned: bool,
+    /// Whether FastCtx inserted the surviving `mcp__fastctx` namespace occurrence.
+    pub direct_namespace_inserted: bool,
+}
+
 /// Immutable Codex-config edit result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApplyEdit {
@@ -58,10 +67,16 @@ pub struct ApplyEdit {
     pub previous_token_limit: Option<i64>,
     /// A present and differing shared key requires additional confirmation.
     pub conflict: Option<TokenLimitConflict>,
+    /// Ownership to persist in the successful Apply receipt.
+    pub ownership: CodexConfigOwnership,
 }
 
 /// Parses Codex TOML and produces the post-Apply bytes.
-pub fn apply(original: &[u8], expected: &ExpectedConfig) -> Result<ApplyEdit, String> {
+pub fn apply(
+    original: &[u8],
+    expected: &ExpectedConfig,
+    previous_ownership: CodexConfigOwnership,
+) -> Result<ApplyEdit, String> {
     let (migrated, legacy) = strip_owned_legacy_servers(original, expected)?;
     let mut document = parse(&migrated)?;
     let requested_limit = expected.host_limit;
@@ -84,11 +99,22 @@ pub fn apply(original: &[u8], expected: &ExpectedConfig) -> Result<ApplyEdit, St
 
     let mcp_servers = ensure_table(&mut document, "mcp_servers")?;
     let mut fastctx_table = build_fastctx_table(expected);
-    if let Some(existing) = mcp_servers.get("fastctx").and_then(Item::as_table) {
+    if let Some(existing) = mcp_servers.get("fastctx") {
+        if !previous_ownership.server_entry_owned {
+            return Err(
+                "Codex config already contains mcp_servers.fastctx, but the current FastCtx receipt does not own it. Rename or remove that entry manually, or restore its matching FastCtx receipt, then retry Apply."
+                    .to_string(),
+            );
+        }
+        validate_owned_fastctx_entry(existing)?;
+        let existing = existing
+            .as_table()
+            .expect("validated receipt-owned FastCtx entry must be a table");
         *fastctx_table.decor_mut() = existing.decor().clone();
     }
     mcp_servers.insert("fastctx", Item::Table(fastctx_table));
 
+    let direct_namespace_inserted;
     let features = ensure_table(&mut document, "features")?;
     let code_mode = ensure_child_table(features, "code_mode", "features.code_mode")?;
     match code_mode.get_mut("direct_only_tool_namespaces") {
@@ -106,7 +132,19 @@ pub fn apply(original: &[u8], expected: &ExpectedConfig) -> Result<ApplyEdit, St
             if legacy.fastedit {
                 reconcile_namespace(array, LEGACY_FASTEDIT_NAMESPACE, false);
             }
-            reconcile_namespace(array, FASTCTX_NAMESPACE, true);
+            let count = namespace_count(array, FASTCTX_NAMESPACE);
+            if count > 1 {
+                return Err(
+                    "Codex config contains multiple mcp__fastctx direct-only namespaces. Remove the duplicates manually and retry Apply; FastCtx cannot infer which occurrence is user-owned."
+                        .to_string(),
+                );
+            }
+            if count == 0 {
+                push_preserving_array_trailing(array, FASTCTX_NAMESPACE);
+                direct_namespace_inserted = true;
+            } else {
+                direct_namespace_inserted = previous_ownership.direct_namespace_inserted;
+            }
         }
         None => {
             let mut array = Array::new();
@@ -115,6 +153,7 @@ pub fn apply(original: &[u8], expected: &ExpectedConfig) -> Result<ApplyEdit, St
                 "direct_only_tool_namespaces",
                 Item::Value(Value::Array(array)),
             );
+            direct_namespace_inserted = true;
         }
     }
     set_integer(&mut document, "tool_output_token_limit", requested_limit)?;
@@ -124,19 +163,24 @@ pub fn apply(original: &[u8], expected: &ExpectedConfig) -> Result<ApplyEdit, St
         previous_token_limit_present,
         previous_token_limit,
         conflict,
+        ownership: CodexConfigOwnership {
+            server_entry_owned: true,
+            direct_namespace_inserted,
+        },
     })
 }
 
 /// Removes FastCtx-owned configuration in reverse; the shared token key is restored only when explicitly allowed.
 pub fn unapply(
     original: &[u8],
+    ownership: CodexConfigOwnership,
     restore_token_limit: bool,
     previous_token_limit_present: bool,
     previous_token_limit: Option<i64>,
 ) -> Result<Vec<u8>, String> {
     let mut document = parse(original)?;
-    if document.get("mcp_servers").is_some() {
-        let emptied = {
+    if ownership.server_entry_owned && document.get("mcp_servers").is_some() {
+        let (removed, emptied) = {
             let mcp_servers = document
                 .get_mut("mcp_servers")
                 .and_then(Item::as_table_mut)
@@ -144,18 +188,21 @@ pub fn unapply(
                     "Codex config key mcp_servers is not a table. Repair it manually and retry."
                         .to_string()
                 })?;
-            mcp_servers.remove("fastctx");
-            mcp_servers.is_empty()
+            if let Some(existing) = mcp_servers.get("fastctx") {
+                validate_owned_fastctx_entry(existing)?;
+            }
+            let removed = mcp_servers.remove("fastctx").is_some();
+            (removed, mcp_servers.is_empty())
         };
         // Remove an mcp_servers table created solely by Apply so no empty shell remains;
         // this also keeps drift-free reverse removal byte-exact with Apply (2026-07-12).
-        if emptied {
+        if removed && emptied {
             document.remove("mcp_servers");
         }
     }
 
-    if document.get("features").is_some() {
-        let emptied = {
+    if ownership.direct_namespace_inserted && document.get("features").is_some() {
+        let (removed, emptied) = {
             let features = document
                 .get_mut("features")
                 .and_then(Item::as_table_mut)
@@ -164,6 +211,7 @@ pub fn unapply(
                         .to_string()
                 })?;
             let mut remove_code_mode = false;
+            let mut removed = false;
             if features.get("code_mode").is_some() {
                 let code_mode = features
                     .get_mut("code_mode")
@@ -180,24 +228,30 @@ pub fn unapply(
                             "Codex config key features.code_mode.direct_only_tool_namespaces is not an array. Repair it manually and retry."
                                 .to_string()
                         })?;
-                    for index in (0..array.len()).rev() {
-                        if array.get(index).and_then(Value::as_str) == Some(FASTCTX_NAMESPACE) {
-                            remove_array_index_preserving_trailing(array, index);
-                        }
+                    let matching = namespace_indices(array, FASTCTX_NAMESPACE);
+                    if matching.len() > 1 {
+                        return Err(
+                            "Codex config contains multiple mcp__fastctx direct-only namespaces. Disconnect stopped because it cannot safely identify the receipt-owned occurrence. Remove duplicates manually and retry."
+                                .to_string(),
+                        );
                     }
-                    if array.is_empty() {
+                    if let Some(index) = matching.first().copied() {
+                        remove_array_index_preserving_trailing(array, index);
+                        removed = true;
+                    }
+                    if removed && array.is_empty() {
                         code_mode.remove("direct_only_tool_namespaces");
                     }
                 }
-                remove_code_mode = code_mode.is_empty();
+                remove_code_mode = removed && code_mode.is_empty();
             }
             if remove_code_mode {
                 features.remove("code_mode");
             }
-            features.is_empty()
+            (removed, features.is_empty())
         };
         // Likewise remove a features table created solely by Apply after code_mode is removed.
-        if emptied {
+        if removed && emptied {
             document.remove("features");
         }
     }
@@ -301,6 +355,19 @@ fn drift_with_limits(
         .and_then(Item::as_table_like);
     match fastctx {
         Some(table) => {
+            for (key, _) in table.iter() {
+                if ![
+                    "command",
+                    "args",
+                    "startup_timeout_sec",
+                    "tool_timeout_sec",
+                    "env",
+                ]
+                .contains(&key)
+                {
+                    drift.push(format!("mcp_servers.fastctx.{key}"));
+                }
+            }
             if table.get("command").and_then(Item::as_str) != Some(expected.command.as_str()) {
                 drift.push("mcp_servers.fastctx.command".to_string());
             }
@@ -320,7 +387,23 @@ fn drift_with_limits(
                 .and_then(Item::as_table_like)
                 .ok_or_else(|| "mcp_servers.fastctx.env is missing or not a table".to_string());
             match env {
-                Ok(env) => check_env(env, expected, fastctx_budget, &mut drift),
+                Ok(env) => {
+                    for (key, _) in env.iter() {
+                        if ![
+                            "FASTCTX_TOKEN_BUDGET",
+                            "FASTCTX_READ_TOKEN_BUDGET",
+                            "FASTCTX_GREP_TOKEN_BUDGET",
+                            "FASTCTX_GLOB_TOKEN_BUDGET",
+                            "FASTCTX_RUN_TOKEN_BUDGET",
+                            "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET",
+                        ]
+                        .contains(&key)
+                        {
+                            drift.push(format!("mcp_servers.fastctx.env.{key}"));
+                        }
+                    }
+                    check_env(env, expected, fastctx_budget, &mut drift)
+                }
                 Err(_) => drift.push("mcp_servers.fastctx.env".to_string()),
             }
             let actual_args = table.get("args").and_then(Item::as_array);
@@ -422,11 +505,7 @@ fn push_preserving_array_trailing(array: &mut Array, entry: &str) {
 }
 
 fn reconcile_namespace(array: &mut Array, namespace: &str, enabled: bool) {
-    let matching = array
-        .iter()
-        .enumerate()
-        .filter_map(|(index, value)| (value.as_str() == Some(namespace)).then_some(index))
-        .collect::<Vec<_>>();
+    let matching = namespace_indices(array, namespace);
     let keep = enabled.then(|| matching.first().copied()).flatten();
     for index in matching.into_iter().rev() {
         if Some(index) != keep {
@@ -436,6 +515,21 @@ fn reconcile_namespace(array: &mut Array, namespace: &str, enabled: bool) {
     if enabled && keep.is_none() {
         push_preserving_array_trailing(array, namespace);
     }
+}
+
+fn namespace_indices(array: &Array, namespace: &str) -> Vec<usize> {
+    array
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| (value.as_str() == Some(namespace)).then_some(index))
+        .collect()
+}
+
+fn namespace_count(array: &Array, namespace: &str) -> usize {
+    array
+        .iter()
+        .filter(|value| value.as_str() == Some(namespace))
+        .count()
 }
 
 fn remove_array_index_preserving_trailing(array: &mut Array, index: usize) {
@@ -503,6 +597,57 @@ fn build_fastctx_table(expected: &ExpectedConfig) -> Table {
     }
     table.insert("env", Item::Table(env));
     table
+}
+
+fn validate_owned_fastctx_entry(item: &Item) -> Result<(), String> {
+    let table = item.as_table().ok_or_else(|| {
+        "The receipt-owned Codex key mcp_servers.fastctx is no longer a table. Repair or remove the drifted entry manually and retry Apply."
+            .to_string()
+    })?;
+    let allowed = [
+        "command",
+        "args",
+        "startup_timeout_sec",
+        "tool_timeout_sec",
+        "env",
+    ];
+    let unknown = table
+        .iter()
+        .filter_map(|(key, _)| (!allowed.contains(&key)).then_some(key.to_string()))
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "The receipt-owned Codex entry mcp_servers.fastctx contains unknown keys ({}). Move or remove those user values before Apply; FastCtx will not overwrite them.",
+            unknown.join(", ")
+        ));
+    }
+    if table.get("env").is_some() && table.get("env").and_then(Item::as_table_like).is_none() {
+        return Err(
+            "The receipt-owned Codex key mcp_servers.fastctx.env is no longer a table. Repair or remove the drifted value manually and retry Apply."
+                .to_string(),
+        );
+    }
+    if let Some(env) = table.get("env").and_then(Item::as_table_like) {
+        let allowed_env = [
+            "FASTCTX_TOKEN_BUDGET",
+            "FASTCTX_READ_TOKEN_BUDGET",
+            "FASTCTX_GREP_TOKEN_BUDGET",
+            "FASTCTX_GLOB_TOKEN_BUDGET",
+            "FASTCTX_RUN_TOKEN_BUDGET",
+            "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET",
+        ];
+        let unknown = env
+            .iter()
+            .filter_map(|(key, _)| (!allowed_env.contains(&key)).then_some(key.to_string()))
+            .collect::<Vec<_>>();
+        if !unknown.is_empty() {
+            return Err(format!(
+                "The receipt-owned Codex entry mcp_servers.fastctx.env contains unknown keys ({}). Move or remove those user values before Apply; FastCtx will not overwrite them.",
+                unknown.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn owned_legacy_servers(mcp_servers: &Table, expected: &ExpectedConfig) -> LegacyRemoval {

@@ -459,6 +459,10 @@ fn plan_codex_disconnect(control: &ControlPaths) -> Result<TargetDisconnectPlan,
         codex_config::current_token_limit(&config_original) == Some(record.tool_output_token_limit);
     let config_bytes = codex_config::unapply(
         &config_original,
+        codex_config::CodexConfigOwnership {
+            server_entry_owned: record.codex_server_entry_owned,
+            direct_namespace_inserted: record.codex_direct_namespace_inserted,
+        },
         restore_token_limit,
         record.previous_token_limit_present,
         record.previous_token_limit,
