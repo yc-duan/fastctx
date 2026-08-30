@@ -349,6 +349,7 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
     for forbidden in [
         "Complete:",
         "Partial:",
+        "Partial note",
         "Killed:",
         "terminal line",
         "last line states",

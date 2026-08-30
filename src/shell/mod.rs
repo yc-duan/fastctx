@@ -109,7 +109,8 @@ pub struct JobListRequest {
     /// Maximum records in this page. Omit to use `fastshell.job_list_limit` (default 20).
     #[schemars(range(min = 1, max = 100))]
     pub limit: Option<i64>,
-    /// Skip this many entries of the sorted list (from a prior Partial note's offset).
+    /// Skip this many sorted entries before applying the limit. For the next page, use the
+    /// previous head note's final 1-based covered index.
     #[schemars(range(min = 0))]
     pub offset: Option<i64>,
 }
