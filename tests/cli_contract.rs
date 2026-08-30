@@ -3,9 +3,13 @@ mod common;
 use common::{McpSession, mcp_text, normalized};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Mutex, MutexGuard};
+
+static CLI_CONTRACT_SUITE: Mutex<()> = Mutex::new(());
 
 #[test]
 fn jobs_kill_manages_a_persistent_job_and_is_idempotent() {
+    let _suite = cli_contract_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     write_shell_settings(temp.path(), true);
     let job_id = start_persistent_job(temp.path(), "sleep 60");
@@ -47,6 +51,7 @@ fn jobs_kill_manages_a_persistent_job_and_is_idempotent() {
 
 #[test]
 fn unapply_stops_a_real_persistent_job_before_removing_fastctx_data() {
+    let _suite = cli_contract_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     write_shell_settings(temp.path(), true);
     let applied = isolated_command(temp.path())
@@ -84,6 +89,7 @@ fn unapply_stops_a_real_persistent_job_before_removing_fastctx_data() {
 
 #[test]
 fn codex_home_env_selects_the_profile_without_moving_fastctx_state() {
+    let _suite = cli_contract_suite_guard();
     let temp = profile_test_home();
     let profile = temp.path().join("relocated-codex-profile");
 
@@ -122,6 +128,7 @@ fn codex_home_env_selects_the_profile_without_moving_fastctx_state() {
 
 #[test]
 fn codex_home_flag_overrides_the_live_environment_for_all_control_commands() {
+    let _suite = cli_contract_suite_guard();
     let temp = profile_test_home();
     let environment_profile = temp.path().join("environment-profile");
     let flag_profile = temp.path().join("flag-profile");
@@ -217,6 +224,7 @@ fn codex_home_flag_overrides_the_live_environment_for_all_control_commands() {
 
 #[test]
 fn apply_status_and_unapply_cover_both_shell_states() {
+    let _suite = cli_contract_suite_guard();
     for fastshell in [false, true] {
         let temp = tempfile::tempdir().unwrap();
         write_shell_settings(temp.path(), fastshell);
@@ -284,6 +292,7 @@ fn apply_status_and_unapply_cover_both_shell_states() {
 
 #[test]
 fn codex_apply_and_disconnect_preserve_unowned_same_name_state() {
+    let _suite = cli_contract_suite_guard();
     let preexisting = tempfile::tempdir().unwrap();
     let codex = preexisting.path().join(".codex");
     std::fs::create_dir_all(&codex).unwrap();
@@ -501,6 +510,7 @@ fn codex_apply_and_disconnect_preserve_unowned_same_name_state() {
 
 #[test]
 fn apply_migrates_owned_three_server_config_and_legacy_agents_blocks_atomically() {
+    let _suite = cli_contract_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     let codex = temp.path().join(".codex");
     std::fs::create_dir_all(&codex).unwrap();
@@ -620,6 +630,7 @@ fn apply_migrates_owned_three_server_config_and_legacy_agents_blocks_atomically(
 
 #[test]
 fn fastshell_preflight_failure_leaves_every_target_byte_untouched() {
+    let _suite = cli_contract_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     let codex = temp.path().join(".codex");
     std::fs::create_dir_all(&codex).unwrap();
@@ -645,6 +656,7 @@ fn fastshell_preflight_failure_leaves_every_target_byte_untouched() {
 
 #[test]
 fn a_non_tty_apply_without_yes_refuses_a_shared_limit_conflict_without_writes() {
+    let _suite = cli_contract_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     let codex = temp.path().join(".codex");
     std::fs::create_dir_all(&codex).unwrap();
@@ -665,6 +677,13 @@ fn a_non_tty_apply_without_yes_refuses_a_shared_limit_conflict_without_writes() 
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_fastctx"))
+}
+
+/// Keeps process-heavy CLI contracts from competing for startup and lifecycle deadlines.
+fn cli_contract_suite_guard() -> MutexGuard<'static, ()> {
+    CLI_CONTRACT_SUITE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn isolated_command(home: &Path) -> Command {
