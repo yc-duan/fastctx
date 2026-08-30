@@ -3,7 +3,8 @@ param(
     [string]$PlatformTarball,
     [Parameter(Mandatory = $true)]
     [string]$MainTarball,
-    [string]$AliasTarball
+    [string]$AliasTarball,
+    [string]$UpgradeFromVersion = "0.2.6"
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,10 +25,12 @@ if ($isWindowsPlatform) {
 $workspace = Join-Path ([System.IO.Path]::GetTempPath()) ("fastctx-npm-" + [Guid]::NewGuid().ToString("N"))
 $mainPrefix = Join-Path $workspace "main-prefix"
 $aliasPrefix = Join-Path $workspace "alias-prefix"
+$upgradeMainPrefix = Join-Path $workspace "upgrade-main-prefix"
+$upgradeAliasPrefix = Join-Path $workspace "upgrade-alias-prefix"
 $cache = Join-Path $workspace "cache"
 $fixtures = Join-Path $workspace "fixtures"
 $packs = Join-Path $workspace "packs"
-New-Item -ItemType Directory -Force -Path $mainPrefix, $aliasPrefix, $cache, $fixtures, $packs | Out-Null
+New-Item -ItemType Directory -Force -Path $mainPrefix, $aliasPrefix, $upgradeMainPrefix, $upgradeAliasPrefix, $cache, $fixtures, $packs | Out-Null
 
 function Expand-Package([string]$Tarball, [string]$Name) {
     $destination = Join-Path $fixtures $Name
@@ -140,11 +143,59 @@ try {
 
     function Assert-InstalledPackage([string]$InstallPrefix, [string]$Launcher) {
         $command = Get-InstalledCommand $InstallPrefix
-        & $command --version
+        $actualVersion = (& $command --version | Out-String).Trim()
         if ($LASTEXITCODE -ne 0) { throw "npm launcher --version failed" }
+        $expectedVersion = "fastctx $($mainManifest.version)"
+        if ($actualVersion -ne $expectedVersion) {
+            throw "npm launcher version mismatch: expected $expectedVersion; got $actualVersion"
+        }
 
-        & node (Join-Path $PSScriptRoot "verify-launcher-lifecycle.js") $Launcher
-        if ($LASTEXITCODE -ne 0) { throw "npm launcher lifecycle verification failed" }
+        $lifecycleRoot = Join-Path $workspace ("lifecycle-" + [Guid]::NewGuid().ToString("N"))
+        $lifecycleEnvironment = [ordered]@{
+            "HOME" = (Join-Path $lifecycleRoot "home")
+            "USERPROFILE" = (Join-Path $lifecycleRoot "home")
+            "TMPDIR" = (Join-Path $lifecycleRoot "temp")
+            "TMP" = (Join-Path $lifecycleRoot "temp")
+            "TEMP" = (Join-Path $lifecycleRoot "temp")
+            "LOCALAPPDATA" = (Join-Path $lifecycleRoot "local-app-data")
+            "APPDATA" = (Join-Path $lifecycleRoot "app-data")
+            "XDG_RUNTIME_DIR" = (Join-Path $lifecycleRoot "xdg-runtime")
+            "XDG_CONFIG_HOME" = (Join-Path $lifecycleRoot "xdg-config")
+            "XDG_CACHE_HOME" = (Join-Path $lifecycleRoot "xdg-cache")
+            "XDG_DATA_HOME" = (Join-Path $lifecycleRoot "xdg-data")
+            "FASTCTX_TEST_RUNTIME_IDLE_MS" = "1000"
+        }
+        $savedEnvironment = @{}
+        foreach ($entry in $lifecycleEnvironment.GetEnumerator()) {
+            if ($entry.Key -ne "FASTCTX_TEST_RUNTIME_IDLE_MS") {
+                New-Item -ItemType Directory -Force -Path $entry.Value | Out-Null
+            }
+            $savedEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+        }
+        if (-not $isWindowsPlatform) {
+            chmod 700 $lifecycleEnvironment["XDG_RUNTIME_DIR"]
+            if ($LASTEXITCODE -ne 0) { throw "cannot protect the isolated XDG runtime directory" }
+        }
+        $savedEnvironment["CODEX_HOME"] = [Environment]::GetEnvironmentVariable("CODEX_HOME", "Process")
+        [Environment]::SetEnvironmentVariable("CODEX_HOME", $null, "Process")
+        try {
+            & node (Join-Path $PSScriptRoot "verify-launcher-lifecycle.js") $Launcher
+            if ($LASTEXITCODE -ne 0) { throw "npm launcher lifecycle verification failed" }
+        } finally {
+            foreach ($entry in $savedEnvironment.GetEnumerator()) {
+                [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+            }
+        }
+    }
+
+    function Assert-InstalledVersion([string]$InstallPrefix, [string]$Version) {
+        $command = Get-InstalledCommand $InstallPrefix
+        $actualVersion = (& $command --version | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "npm launcher --version failed" }
+        if ($actualVersion -ne "fastctx $Version") {
+            throw "npm launcher version mismatch: expected fastctx $Version; got $actualVersion"
+        }
     }
 
     npm install --global --prefix $mainPrefix --ignore-scripts --offline --include=optional $localMainTarball
@@ -160,6 +211,24 @@ try {
         npm install --global --prefix $aliasPrefix --ignore-scripts --offline --include=optional $localAliasTarball $platformTarball
         if ($LASTEXITCODE -ne 0) { throw "isolated alias-package npm install failed" }
         Assert-InstalledPackage $aliasPrefix (Get-InstalledLauncher $aliasPrefix "codex-fastctx")
+    }
+
+    # The released registry package is the independent upgrade oracle. A source-generated
+    # "old" fixture would only prove the current packer against itself (2026-08-29).
+    npm install --global --prefix $upgradeMainPrefix --ignore-scripts --include=optional --no-audit --no-fund --registry=https://registry.npmjs.org/ "fastctx@$UpgradeFromVersion"
+    if ($LASTEXITCODE -ne 0) { throw "isolated fastctx@$UpgradeFromVersion baseline install failed" }
+    Assert-InstalledVersion $upgradeMainPrefix $UpgradeFromVersion
+    npm install --global --prefix $upgradeMainPrefix --ignore-scripts --offline --include=optional $localMainTarball
+    if ($LASTEXITCODE -ne 0) { throw "isolated fastctx@$UpgradeFromVersion upgrade failed" }
+    Assert-InstalledPackage $upgradeMainPrefix (Get-InstalledLauncher $upgradeMainPrefix "fastctx")
+
+    if ($localAliasTarball) {
+        npm install --global --prefix $upgradeAliasPrefix --ignore-scripts --include=optional --no-audit --no-fund --registry=https://registry.npmjs.org/ "codex-fastctx@$UpgradeFromVersion"
+        if ($LASTEXITCODE -ne 0) { throw "isolated codex-fastctx@$UpgradeFromVersion baseline install failed" }
+        Assert-InstalledVersion $upgradeAliasPrefix $UpgradeFromVersion
+        npm install --global --prefix $upgradeAliasPrefix --ignore-scripts --offline --include=optional $localAliasTarball $platformTarball
+        if ($LASTEXITCODE -ne 0) { throw "isolated codex-fastctx@$UpgradeFromVersion upgrade failed" }
+        Assert-InstalledPackage $upgradeAliasPrefix (Get-InstalledLauncher $upgradeAliasPrefix "codex-fastctx")
     }
 } finally {
     Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue

@@ -904,6 +904,9 @@ fn validate_flat_archive_name(name: &str) -> Result<&str, String> {
 }
 
 fn validate_archive_contents(names: &BTreeSet<String>, binary_name: &str) -> Result<(), String> {
+    // This four-name contract is also the newest shape understood by the copied helpers shipped
+    // in v0.2.4-v0.2.6. The release packer composes Rust notices into the historical third-party
+    // filename instead of adding an entry those outgoing helpers would reject (2026-08-29).
     let expected = BTreeSet::from([
         binary_name.to_string(),
         "LICENSE-APACHE".to_string(),
@@ -1900,6 +1903,14 @@ mod tests {
             extract_release_binary("fastctx-test.zip", &make_zip(&missing, 0o755))
                 .unwrap_err()
                 .contains("missing: NOTICE")
+        );
+
+        let mut obsolete_split_notice = release_entries("fastctx.exe");
+        obsolete_split_notice.push(("THIRD_PARTY_LICENSES_RUST.md", b"split Rust notices"));
+        assert!(
+            extract_release_binary("fastctx-test.zip", &make_zip(&obsolete_split_notice, 0o755),)
+                .unwrap_err()
+                .contains("extra: THIRD_PARTY_LICENSES_RUST.md")
         );
 
         let tar = make_tar_gz(&release_entries("fastctx"), 0o644);

@@ -70,6 +70,14 @@ fastctx
 
 **移除** 会终止从受管 bin 目录运行的 FastCtx 进程镜像，撤销 FastCtx 管理的配置并删除受管数据。用户在接入之后修改的共享设置会保留。
 
+### 从 0.x 升级
+
+请升级当前命令实际所属的同一个 npm 根包：原来安装 `fastctx` 的，执行 `npm install --global fastctx@1.0.0`；明确使用兼容包名 `codex-fastctx` 的，执行 `npm install --global codex-fastctx@1.0.0`。不要在同一个全局 prefix 里同时安装两者：它们都会导出 `fastctx` shim，FastCtx 不把最后由哪个 launcher 占有命令定义成共存契约。0.x 的 settings 与更新请求 schema 会就地迁移；全局 npm 更新失败会精确装回原版本。
+
+GitHub Release 安装可以从任意 0.x 手工下载 1.0 归档，替换旧二进制或直接启动新二进制。TUI 内复制 helper 的自更新可从 v0.2.4、v0.2.5、v0.2.6 直接进入 1.0；v0.2.3 及更早 helper 要求的是另一套互斥的历史归档文件名，单个静态资产不可能同时满足，因此这些版本请走手工下载或 npm。FastCtx 不会把这条做不到的旧 helper 路径写成“自动兼容”。
+
+Codex 是唯一需要迁移 0.x 接入的宿主。先运行 `fastctx doctor --target codex`，再运行 `fastctx apply --target codex --yes`，记录 1.0 工具集并刷新未被改写的已知旧 guidance；用户改过或同名但没有 ownership 回执的配置会明确停止并给出修复办法。不要删除 `features.code_mode.direct_only_tool_namespaces` 里的 `mcp__fastctx`：1.0 仍用它保持工具直连，现在只会在回执能证明由 FastCtx 插入时撤销。Apply 完成后重启 Codex，让既有会话和共享控制中心都换成 1.0。
+
 ### 安装遇到 404
 
 镜像源同步官方源的新版本有延迟。新版本刚发布时，走镜像安装可能返回 `404 Not Found`——最常见的是平台二进制包：npm 把它作为可选依赖安装，失败时会静默跳过，于是 `fastctx` 装上了却起不来。
@@ -151,7 +159,7 @@ max_file_size_mib = 512
 cargo install fastctx --locked
 ```
 
-GitHub Releases 为 Windows x64 与 Windows arm64 提供 zip，为 Linux x64、macOS x64 和 macOS arm64 提供保留执行位的 tar.gz。每个归档都包含二进制与许可声明，并由 Release 的汇总 `SHA256SUMS` 校验。
+GitHub Releases 为 Windows x64 与 Windows arm64 提供 zip，为 Linux x64、macOS x64 和 macOS arm64 提供保留执行位的 tar.gz。每个归档都包含二进制与合并后的完整许可声明，并由 Release 的汇总 `SHA256SUMS` 校验。
 
 ## 工具
 

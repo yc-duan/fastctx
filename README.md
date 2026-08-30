@@ -70,6 +70,14 @@ If GitHub has published a release but npm has not exposed the matching version y
 
 **Removal** stops FastCtx process images running from the managed bin directory, removes the configuration managed by FastCtx, and deletes its managed data. Shared settings changed by the user after connecting are preserved.
 
+### Upgrading from 0.x
+
+Upgrade the same npm package that owns your command. Use `npm install --global fastctx@1.0.0` for a `fastctx` installation, or `npm install --global codex-fastctx@1.0.0` if you deliberately installed the compatibility name. Do not install both root packages into one global prefix: both export the `fastctx` shim, so their launcher ownership is intentionally not a coexistence contract. The 0.x settings and update-request schemas are migrated in place; a failed global npm update reinstalls the exact previous package version.
+
+For a GitHub Release installation, manually downloading the 1.0 archive and replacing or launching the binary works from every 0.x version. The in-app copied-helper updater can move directly from v0.2.4, v0.2.5, or v0.2.6 to 1.0. Helpers in v0.2.3 and earlier require a mutually incompatible historical archive file set, so use the manual download or npm route for those builds; FastCtx does not present that impossible static-asset transition as automatic.
+
+Codex is the only 0.x agent connection that is migrated. Run `fastctx doctor --target codex`, then `fastctx apply --target codex --yes` to record the 1.0 tool set and refresh an unchanged known legacy guidance block. User-edited or same-name unowned configuration stops with a repair instruction instead of being overwritten. Keep `mcp__fastctx` in `features.code_mode.direct_only_tool_namespaces`: 1.0 still uses that direct-tool bridge and now removes it only when the receipt proves FastCtx inserted it. Restart Codex after Apply so every session and the shared control center use 1.0.
+
 ### If the install returns 404
 
 Mirror registries copy new releases from the official registry on a delay. Right after a release, an install through a mirror can fail with `404 Not Found` — most often on the platform package, which npm installs as an optional dependency and skips silently, leaving `fastctx` installed but unable to start.
@@ -151,7 +159,7 @@ max_file_size_mib = 512
 cargo install fastctx --locked
 ```
 
-GitHub Releases provides zip archives for Windows x64 and Windows arm64, and executable-preserving tar.gz archives for Linux x64, macOS x64, and macOS arm64. Every archive includes the binary and license notices; verify it with the release's aggregate `SHA256SUMS`.
+GitHub Releases provides zip archives for Windows x64 and Windows arm64, and executable-preserving tar.gz archives for Linux x64, macOS x64, and macOS arm64. Every archive includes the binary and complete combined license notices; verify it with the release's aggregate `SHA256SUMS`.
 
 ## Tools
 

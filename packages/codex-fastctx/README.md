@@ -11,7 +11,9 @@ npx codex-fastctx
 ```
 
 Prefer installing `fastctx` directly unless you specifically need this package
-name.
+name. If this compatibility name owns an existing 0.x command, upgrade it with
+`npm install --global codex-fastctx@1.0.0`; do not co-install both root package
+names in one global prefix because each exports the same `fastctx` shim.
 
 FastCtx 1.0 publishes `inspect_local_file`, `grep`, `glob`, `replace`, and an
 optional atomic five-tool Bash group. File tools may be selected in any non-empty

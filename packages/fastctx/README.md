@@ -37,6 +37,12 @@ npm install --global fastctx
 fastctx
 ```
 
+Upgrade an existing 0.x installation with the same root package:
+`npm install --global fastctx@1.0.0`. Do not co-install `fastctx` and the
+compatibility package `codex-fastctx` in one global prefix because both export
+the same command shim. After upgrading a Codex connection, run
+`fastctx doctor --target codex`, Apply once, and restart Codex.
+
 For a one-off run, use `npx fastctx`. Scriptable examples:
 
 ```console

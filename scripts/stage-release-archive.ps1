@@ -38,8 +38,7 @@ $mapping = @{
 $licenseFiles = @(
     "LICENSE-APACHE",
     "NOTICE",
-    "THIRD_PARTY_LICENSES.md",
-    "THIRD_PARTY_LICENSES_RUST.md"
+    "THIRD_PARTY_LICENSES.md"
 )
 $tarCommand = if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
     [System.Runtime.InteropServices.OSPlatform]::Windows
@@ -63,9 +62,45 @@ New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
 
 try {
     Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $stagingDirectory $entry.Binary)
-    foreach ($name in $licenseFiles) {
+    foreach ($name in @("LICENSE-APACHE", "NOTICE")) {
         Copy-Item -LiteralPath (Join-Path $root $name) -Destination (Join-Path $stagingDirectory $name)
     }
+    # Helpers shipped by v0.2.4-v0.2.6 accept one exact four-file archive shape.
+    # Keep the historical filename while composing the complete Rust inventory into it.
+    $pdfiumNotices = [System.IO.File]::ReadAllText((Join-Path $root "THIRD_PARTY_LICENSES.md")).Replace("`r`n", "`n")
+    $rustNotices = [System.IO.File]::ReadAllText((Join-Path $root "THIRD_PARTY_LICENSES_RUST.md")).Replace("`r`n", "`n")
+    $pdfiumPointer = @(
+        'Every Rust crate linked into the executable is listed in',
+        '[`THIRD_PARTY_LICENSES_RUST.md`](./THIRD_PARTY_LICENSES_RUST.md) together with the',
+        'full text of each license that applies. That inventory is generated from',
+        '`Cargo.lock` and re-checked against it on every CI run.'
+    ) -join "`n"
+    $releasePointer = @(
+        'Every Rust crate linked into the executable is listed below together with the',
+        'full text of each applicable license. That inventory is generated from',
+        '`Cargo.lock` and re-checked against it on every CI run.'
+    ) -join "`n"
+    if (-not $pdfiumNotices.Contains($pdfiumPointer)) {
+        throw "THIRD_PARTY_LICENSES.md no longer contains the release-composition marker"
+    }
+    $rustPointer = @(
+        'The bundled Pdfium build and its own third-party notices are covered separately',
+        'in [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md).'
+    ) -join "`n"
+    $releaseRustPointer = @(
+        'The bundled Pdfium build and its own third-party notices are covered in the',
+        'preceding section of this release notice.'
+    ) -join "`n"
+    if (-not $rustNotices.Contains($rustPointer)) {
+        throw "THIRD_PARTY_LICENSES_RUST.md no longer contains the release-composition marker"
+    }
+    $combinedNotices = $pdfiumNotices.Replace($pdfiumPointer, $releasePointer).TrimEnd() +
+        "`n`n---`n`n" + $rustNotices.Replace($rustPointer, $releaseRustPointer).Trim() + "`n"
+    [System.IO.File]::WriteAllText(
+        (Join-Path $stagingDirectory "THIRD_PARTY_LICENSES.md"),
+        $combinedNotices,
+        [System.Text.UTF8Encoding]::new($false)
+    )
 
     if ($entry.Format -eq "tar.gz") {
         chmod 755 (Join-Path $stagingDirectory $entry.Binary)

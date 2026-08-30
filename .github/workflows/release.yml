@@ -395,7 +395,7 @@ jobs:
 
           Agent-native orchestration, factual head notes, and first-class connection management for nine coding agents.
 
-          **Upgrading:** launch `fastctx` after replacing the binary and review **Agent connections**. An unchanged managed Codex connection migrates automatically; user-edited configuration or guidance is preserved and reported by Doctor instead of being overwritten.
+          **Upgrading:** npm users must upgrade the same root package they installed (`fastctx` or the compatibility name `codex-fastctx`), not co-install both. GitHub Release users can replace the binary manually from any 0.x build; the in-app copied-helper path works directly from v0.2.4-v0.2.6, while older helpers require manual download or npm because they enforce a mutually incompatible archive set. Then run `fastctx doctor --target codex`, Apply once, and restart Codex. An unchanged managed Codex connection migrates automatically; user-edited or same-name unowned configuration is preserved and reported instead of being overwritten. The `mcp__fastctx` direct-only namespace remains intentional in 1.0.
 
           ### Breaking
 
@@ -417,6 +417,8 @@ jobs:
           - Finished background jobs no longer remain on every later response. A terminal transition is retired only after its full or compact status line actually reaches one response; budget omission cannot lose it.
           - A failing control center no longer ends the host's MCP session. The proxy settles the failed request, changes engines without replaying side effects, and continues on the same stdio transport.
           - Published tool schemas use the portable subset accepted across supported hosts, with all three approval annotations explicit for every enabled combination.
+          - Codex Apply now tracks the server entry and direct namespace independently. Same-name unowned entries, unknown managed fields, and duplicate namespaces stop before write; Disconnect removes only receipt-owned values. Schema-v1 receipts migrate conservatively.
+          - GitHub archives again match the strict four-name contract understood by v0.2.4-v0.2.6 helpers while carrying the complete generated Rust license inventory inside the historical `THIRD_PARTY_LICENSES.md` entry.
           - Background logs obey one frozen per-job log-plus-index ceiling, retain a directly readable prefix, and keep draining the child after the ceiling without falsifying its exit code.
           - Git Bash installed through Scoop is discovered, busy machines no longer cause false background-start failures, and FastCtx-owned non-interactive Windows children do not allocate console windows.
           EOF

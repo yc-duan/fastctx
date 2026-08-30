@@ -22,8 +22,7 @@ $releaseFiles = @($archives.Keys) + @("SHA256SUMS")
 $licenseFiles = @(
     "LICENSE-APACHE",
     "NOTICE",
-    "THIRD_PARTY_LICENSES.md",
-    "THIRD_PARTY_LICENSES_RUST.md"
+    "THIRD_PARTY_LICENSES.md"
 )
 $tarCommand = if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
     [System.Runtime.InteropServices.OSPlatform]::Windows
@@ -99,6 +98,20 @@ try {
         )
         if ((Compare-Object -ReferenceObject @($expectedContents | Sort-Object) -DifferenceObject $actualContents).Count -ne 0) {
             throw "Archive content mismatch for $($archive.Key): [$($actualContents -join ', ')]"
+        }
+        $combinedNotices = Get-Content -LiteralPath (Join-Path $destination "THIRD_PARTY_LICENSES.md") -Raw
+        foreach ($marker in @(
+            "# Third-party licenses",
+            "# Third-party Rust dependency licenses",
+            "Every crate below is statically linked into the published ``fastctx`` binaries",
+            "The bundled Pdfium build and its own third-party notices are covered in the"
+        )) {
+            if (-not $combinedNotices.Contains($marker)) {
+                throw "Release archive $($archive.Key) has an incomplete combined third-party notice: missing $marker"
+            }
+        }
+        if ($combinedNotices.Contains("THIRD_PARTY_LICENSES_RUST.md")) {
+            throw "Release archive $($archive.Key) points to an unstaged Rust license file"
         }
         $directories = @(Get-ChildItem -LiteralPath $destination -Recurse -Directory)
         if ($directories.Count -ne 0) {
