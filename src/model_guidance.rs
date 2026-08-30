@@ -29,9 +29,7 @@ const INSPECT_TOOL_DETAILS: &str = concat!(
     "shown to you visually. PDFs return the selected pages' text layer or those\n",
     "pages rendered as images; image mode defaults to 4 pages. Continue a PDF with the\n",
     "page after the last delivered page. view=\"hex\" dumps any file's raw bytes. Text\n",
-    "output is always UTF-8; when auto-detection is not confident it returns an\n",
-    "error listing candidate encodings instead of guessed text, so pass encoding\n",
-    "only then."
+    "output is always UTF-8."
 );
 
 pub(crate) fn local_path_description(context: &str) -> String {
@@ -56,7 +54,7 @@ const LOG_READER_TOOLS: [&str; 2] = ["inspect_local_file", "grep"];
 const RUN_BACKGROUND_HEAD: &str = concat!(
     "Start a bash command as a background job and return its job_id\n",
     "immediately. Use for builds, tests, servers, or anything that may outlast\n",
-    "run's four-minute maximum. Jobs survive server and agent restarts; their\n",
+    "run's 240000 ms ceiling. Jobs survive server and agent restarts; their\n",
     "output and exit code stay retrievable by job_id. Check on it with\n",
     "job_output; stop with job_kill; rediscover past jobs with job_list. There\n",
     "is no timeout: a job runs until it exits or is killed. Everything it\n",
@@ -79,8 +77,7 @@ const JOB_OUTPUT_HEAD: &str = concat!(
 const JOB_OUTPUT_TAIL: &str = concat!(
     "The call\n",
     "blocks up to wait_ms; use 0 for a snapshot, and raise it only when you have\n",
-    "nothing else to do. If output looks garbled (U+FFFD), call again with encoding\n",
-    "set to the source encoding (e.g. \"gbk\")."
+    "nothing else to do."
 );
 
 /// Names the enabled file tools that can read a job log, or nothing when none are published.

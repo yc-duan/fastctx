@@ -317,7 +317,8 @@ fn shell_and_replace_tool_descriptions_and_schemas_match_the_frozen_contract() {
             "List background jobs across all FastCtx sessions for the current user. Use\n",
             "status=\"all\" only when both lifecycles are needed. Results are newest first\n",
             "within each lifecycle. Finished records remain available until the job\n",
-            "storage limit evicts the oldest."
+            "storage limit evicts the oldest. Continue a paged result with offset equal to\n",
+            "the last covered job number."
         ))
     );
     assert!(

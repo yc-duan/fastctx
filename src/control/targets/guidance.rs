@@ -200,7 +200,7 @@ pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools) -> S
     }
     if tools.shell_enabled() {
         text.push_str(
-            "Write POSIX bash for run. Use run_background for long work, job_output to inspect it, job_list to rediscover it, and job_kill to stop it.\n",
+            "Use run for local shell work; it is POSIX bash on every platform, including Windows.\n",
         );
     }
     text.push_str(

@@ -17,7 +17,7 @@ use std::sync::Arc;
 impl FastCtxServer {
     #[tool(
         name = "run",
-        description = "Use for non-interactive local CLI work, including Git, build/test tools,\npackage managers, database CLIs, and project scripts. Commands run with bash\n(Git Bash on Windows; system bash elsewhere) and return merged stdout+stderr\nwith the exit code. Write POSIX bash — never PowerShell. There is no TTY or\nstdin; use flags like -y or --no-edit. A non-zero exit code is a normal\nresult, not an error. Oversized output is windowed; for the full output,\nredirect it to a file (command > file 2>&1) and inspect that file.\nDefault timeout 120000 ms, ceiling 240000 — start anything that may outlast\nit with run_background. If output looks garbled (U+FFFD), pass encoding\n(e.g. \"gbk\").",
+        description = "Use for non-interactive local CLI work, including Git, build/test tools,\npackage managers, database CLIs, and project scripts. Commands run with bash\n(Git Bash on Windows; system bash elsewhere) and return merged stdout+stderr\nwith the exit code. Write POSIX bash — never PowerShell. There is no TTY or\nstdin; use flags like -y or --no-edit. A non-zero exit code is a normal\nresult, not an error. Oversized output is windowed; for the full output,\nredirect it to a file (command > file 2>&1) and inspect that file.\nDefault timeout 120000 ms, ceiling 240000 — start anything that may outlast\nit with run_background.",
         annotations(
             title = "Run bash command",
             read_only_hint = false,
@@ -134,7 +134,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "job_list",
-        description = "List background jobs across all FastCtx sessions for the current user. Use\nstatus=\"all\" only when both lifecycles are needed. Results are newest first\nwithin each lifecycle. Finished records remain available until the job\nstorage limit evicts the oldest.",
+        description = "List background jobs across all FastCtx sessions for the current user. Use\nstatus=\"all\" only when both lifecycles are needed. Results are newest first\nwithin each lifecycle. Finished records remain available until the job\nstorage limit evicts the oldest. Continue a paged result with offset equal to\nthe last covered job number.",
         annotations(
             title = "List background jobs",
             read_only_hint = true,

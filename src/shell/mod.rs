@@ -49,7 +49,8 @@ pub struct RunRequest {
     #[schemars(default = "default_login_shell")]
     pub login_shell: bool,
     /// Known source encoding of the command's output, as a WHATWG label like "gbk" or
-    /// "shift_jis". The response is always UTF-8. Omit for automatic detection.
+    /// "shift_jis". The response is always UTF-8. Omit for automatic detection; set it
+    /// when the output came back garbled (U+FFFD).
     pub encoding: Option<String>,
 }
 
@@ -86,7 +87,8 @@ pub struct JobOutputRequest {
     #[schemars(range(min = 0))]
     pub after_seq: Option<u64>,
     /// Decode this job's stored output with this source encoding for this call (WHATWG label
-    /// like "gbk"). Overrides the job's default. The response is always UTF-8.
+    /// like "gbk"). Overrides the job's default. The response is always UTF-8. Set it when
+    /// the output came back garbled (U+FFFD).
     pub encoding: Option<String>,
 }
 
@@ -109,8 +111,7 @@ pub struct JobListRequest {
     /// Maximum records in this page. Omit to use `fastshell.job_list_limit` (default 20).
     #[schemars(range(min = 1, max = 100))]
     pub limit: Option<i64>,
-    /// Skip this many sorted entries before applying the limit. For the next page, use the
-    /// previous head note's final 1-based covered index.
+    /// Skip this many sorted entries before applying the limit.
     #[schemars(range(min = 0))]
     pub offset: Option<i64>,
 }

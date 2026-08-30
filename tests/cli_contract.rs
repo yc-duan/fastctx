@@ -257,7 +257,7 @@ fn apply_status_and_unapply_cover_both_shell_states() {
         let agents = std::fs::read_to_string(codex.join("AGENTS.md")).unwrap();
         assert_eq!(agents.matches("<!-- fastctx:begin -->").count(), 1);
         assert_eq!(agents.matches("<!-- fastctx:end -->").count(), 1);
-        assert_eq!(agents.contains("Write POSIX bash for run"), fastshell);
+        assert_eq!(agents.contains("Use run for local shell work"), fastshell);
         assert!(
             agents.contains("Use replace for mechanical edits"),
             "{agents}"
@@ -623,7 +623,7 @@ fn apply_migrates_owned_three_server_config_and_legacy_agents_blocks_atomically(
         agents.contains("Use replace for mechanical edits"),
         "{agents}"
     );
-    assert!(agents.contains("Write POSIX bash for run"), "{agents}");
+    assert!(agents.contains("Use run for local shell work"), "{agents}");
     assert!(!agents.contains("mcp__fastctx__copy"), "{agents}");
     assert!(!agents.contains("mcp__fastctx__paste"), "{agents}");
 }
