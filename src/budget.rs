@@ -1,10 +1,7 @@
 //! Exact o200k_base token accounting and text response assembly.
 
-use crate::operation::{WorkCheckpoint, WorkStop};
 use crate::{ToolContent, ToolResponse};
 use std::cell::RefCell;
-use std::fmt;
-use std::sync::Arc;
 
 /// Default output budget with 15% headroom below the Codex host's approximate 10k-token limit.
 pub const DEFAULT_TOKEN_BUDGET: usize = 8_500;
@@ -375,165 +372,8 @@ fn classify_error(message: &str) -> ErrorClass {
     }
 }
 
-/// Exact incremental state at one rendered-prefix boundary.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TokenCheckpoint {
-    committed_tokens: usize,
-    unresolved_tail: Arc<str>,
-}
-
-/// Failures produced while maintaining exact tokenizer checkpoints.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TokenCountError {
-    /// Request cancellation or speculative epoch retirement.
-    Stopped(WorkStop),
-    /// The platform token counter could not represent the exact result.
-    Overflow,
-    /// The locked o200k tokenizer unexpectedly enabled normalization.
-    UnsupportedNormalization,
-}
-
-impl fmt::Display for TokenCountError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Stopped(WorkStop::RequestCancelled) => formatter.write_str("Request cancelled."),
-            Self::Stopped(WorkStop::EpochRetired) => {
-                formatter.write_str("The render generation was retired.")
-            }
-            Self::Overflow => {
-                formatter.write_str("The exact token count overflowed this platform.")
-            }
-            Self::UnsupportedNormalization => formatter.write_str(
-                "The locked o200k tokenizer unexpectedly changed its normalization contract.",
-            ),
-        }
-    }
-}
-
-/// Exact o200k counter that permanently commits closed pre-token pieces and
-/// retains only the final piece that a later append can still change.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ExactPrefixCounter {
-    committed_tokens: usize,
-    unresolved_tail: String,
-}
-
-impl ExactPrefixCounter {
-    /// Restores a counter at an immutable prefix checkpoint.
-    pub(crate) fn from_checkpoint(checkpoint: &TokenCheckpoint) -> Self {
-        Self {
-            committed_tokens: checkpoint.committed_tokens,
-            unresolved_tail: checkpoint.unresolved_tail.to_string(),
-        }
-    }
-
-    /// Appends one exact output fragment.
-    pub(crate) fn append(
-        &mut self,
-        fragment: &str,
-        operation: Option<&dyn WorkCheckpoint>,
-    ) -> Result<(), TokenCountError> {
-        check_token_work(operation)?;
-        if fragment.is_empty() {
-            return Ok(());
-        }
-
-        let mut combined = String::with_capacity(self.unresolved_tail.len() + fragment.len());
-        combined.push_str(&self.unresolved_tail);
-        combined.push_str(fragment);
-        let tokenizer = bpe_openai::o200k_base();
-        let normalized = tokenizer.normalize(combined.as_str());
-        if normalized.as_str() != combined {
-            return Err(TokenCountError::UnsupportedNormalization);
-        }
-
-        let mut pending = None;
-        for piece in tokenizer.split(normalized.as_str()) {
-            check_token_work(operation)?;
-            if let Some(closed) = pending.replace(piece) {
-                self.committed_tokens = self
-                    .committed_tokens
-                    .checked_add(tokenizer.bpe.count(closed.as_bytes()))
-                    .ok_or(TokenCountError::Overflow)?;
-            }
-        }
-        self.unresolved_tail.clear();
-        if let Some(tail) = pending {
-            self.unresolved_tail.push_str(tail);
-        }
-        check_token_work(operation)
-    }
-
-    /// Saves the exact state after the current rendered prefix.
-    pub(crate) fn checkpoint(&self) -> TokenCheckpoint {
-        TokenCheckpoint {
-            committed_tokens: self.committed_tokens,
-            unresolved_tail: Arc::from(self.unresolved_tail.as_str()),
-        }
-    }
-
-    /// Counts one candidate suffix without assembling or re-tokenizing its prefix.
-    pub(crate) fn count_with_suffix(
-        &mut self,
-        checkpoint: &TokenCheckpoint,
-        suffix: &str,
-        operation: Option<&dyn WorkCheckpoint>,
-    ) -> Result<usize, TokenCountError> {
-        let mut tail = String::with_capacity(checkpoint.unresolved_tail.len() + suffix.len());
-        tail.push_str(&checkpoint.unresolved_tail);
-        tail.push_str(suffix);
-        checkpoint
-            .committed_tokens
-            .checked_add(count_exact_pieces(&tail, operation)?)
-            .ok_or(TokenCountError::Overflow)
-    }
-
-    /// Independently verifies the fully assembled response exactly once.
-    pub(crate) fn verify_full(
-        &mut self,
-        text: &str,
-        operation: Option<&dyn WorkCheckpoint>,
-    ) -> Result<usize, TokenCountError> {
-        check_token_work(operation)?;
-        let count = estimate_tokens(text);
-        check_token_work(operation)?;
-        Ok(count)
-    }
-}
-
-fn count_exact_pieces(
-    text: &str,
-    operation: Option<&dyn WorkCheckpoint>,
-) -> Result<usize, TokenCountError> {
-    check_token_work(operation)?;
-    let tokenizer = bpe_openai::o200k_base();
-    let normalized = tokenizer.normalize(text);
-    if normalized.as_str() != text {
-        return Err(TokenCountError::UnsupportedNormalization);
-    }
-    let mut total = 0_usize;
-    for piece in tokenizer.split(normalized.as_str()) {
-        check_token_work(operation)?;
-        total = total
-            .checked_add(tokenizer.bpe.count(piece.as_bytes()))
-            .ok_or(TokenCountError::Overflow)?;
-    }
-    check_token_work(operation)?;
-    Ok(total)
-}
-
-fn check_token_work(operation: Option<&dyn WorkCheckpoint>) -> Result<(), TokenCountError> {
-    match operation.map(WorkCheckpoint::check_work) {
-        Some(Err(stop)) => Err(TokenCountError::Stopped(stop)),
-        Some(Ok(())) | None => Ok(()),
-    }
-}
-
-/// Incremental line-boundary counter used while building paged responses.
-///
-/// Each logical line is encoded independently, including the separator before
-/// it. This is deliberately conservative relative to encoding the final text
-/// in one pass because BPE merges cannot cross the chosen line boundary.
+/// Cheap incremental estimate used to stop collecting a text page near its budget.
+/// The completed head-first response is always counted exactly before delivery.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LineTokenCounter {
     tokens: usize,
@@ -551,7 +391,7 @@ impl LineTokenCounter {
         self.tokens
     }
 
-    /// Returns the accumulated conservative count.
+    /// Returns the accumulated fragment estimate.
     pub fn tokens(&self) -> usize {
         self.tokens
     }
@@ -572,8 +412,7 @@ pub fn assemble_text(lines: &[String], notes: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ErrorBudgetAdapter, ErrorClass, ExactPrefixCounter, LineTokenCounter, assemble_text,
-        estimate_tokens, parse_token_budget,
+        ErrorBudgetAdapter, ErrorClass, assemble_text, estimate_tokens, parse_token_budget,
     };
     use crate::{ToolContent, ToolResponse};
 
@@ -582,75 +421,6 @@ mod tests {
         assert_eq!(estimate_tokens("hello world"), 2);
         assert_eq!(estimate_tokens("界字"), 2);
         assert_eq!(estimate_tokens("{\"a\":1}"), 5);
-    }
-
-    #[test]
-    fn incremental_counter_is_conservative_at_line_boundaries() {
-        let lines = ["alpha", "界字", "{\"a\":1}"];
-        let mut counter = LineTokenCounter::default();
-        for line in lines {
-            counter.push(line);
-        }
-        assert!(counter.tokens() >= estimate_tokens(&lines.join("\n")));
-    }
-
-    #[test]
-    fn exact_prefix_checkpoints_match_full_o200k_for_every_chunking() {
-        let text = "Alpha界 123\n\n punctuation///\r\n最后 e\u{301} tail";
-        let boundaries = std::iter::once(0)
-            .chain(text.char_indices().map(|(index, _)| index).skip(1))
-            .chain(std::iter::once(text.len()))
-            .collect::<Vec<_>>();
-
-        for split in boundaries {
-            let mut counter = ExactPrefixCounter::default();
-            counter.append(&text[..split], None).unwrap();
-            let checkpoint = counter.checkpoint();
-            let exact = counter
-                .count_with_suffix(&checkpoint, &text[split..], None)
-                .unwrap();
-            assert_eq!(exact, estimate_tokens(text), "split={split}");
-        }
-    }
-
-    #[test]
-    fn checkpoint_restore_preserves_exact_prefix_and_suffix_counts() {
-        let mut counter = ExactPrefixCounter::default();
-        counter.append("one long", None).unwrap();
-        let checkpoint = counter.checkpoint();
-        counter.append(" prefix that is discarded", None).unwrap();
-
-        let mut restored = ExactPrefixCounter::from_checkpoint(&checkpoint);
-        restored.append(" replacement", None).unwrap();
-        let restored_checkpoint = restored.checkpoint();
-        let suffix = "\n\n(end.)";
-        assert_eq!(
-            restored
-                .count_with_suffix(&restored_checkpoint, suffix, None)
-                .unwrap(),
-            estimate_tokens("one long replacement\n\n(end.)")
-        );
-    }
-
-    #[test]
-    fn exact_prefix_handles_o200k_whitespace_lookahead_across_appends() {
-        let fragments = ["a ", " ", "b", "\r", "\n", "   ", "tail"];
-        let mut expected = String::new();
-        let mut counter = ExactPrefixCounter::default();
-        for fragment in fragments {
-            expected.push_str(fragment);
-            counter.append(fragment, None).unwrap();
-            let checkpoint = counter.checkpoint();
-            assert_eq!(
-                counter.count_with_suffix(&checkpoint, "", None).unwrap(),
-                estimate_tokens(&expected)
-            );
-        }
-        let checkpoint = counter.checkpoint();
-        assert_eq!(
-            counter.count_with_suffix(&checkpoint, "", None).unwrap(),
-            estimate_tokens(&expected)
-        );
     }
 
     #[test]

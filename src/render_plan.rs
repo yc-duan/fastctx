@@ -1,10 +1,9 @@
-//! Immutable response units, exact prefix checkpoints, and one-shot final rendering.
+//! Immutable response units, exact head-first probes, and one-shot final rendering.
 
-use crate::budget::{ExactPrefixCounter, TokenCheckpoint, TokenCountError};
+use crate::budget::estimate_tokens;
 #[cfg(test)]
 use crate::operation::TestStage;
 use crate::operation::{WorkCheckpoint, WorkStop};
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -18,27 +17,32 @@ pub(crate) struct VerifiedRender {
 /// Failures that must stop output instead of risking a truncated response.
 #[derive(Debug)]
 pub(crate) enum RenderPlanError {
-    Token(TokenCountError),
+    Stopped(WorkStop),
     InvalidPrefix { shown: usize, available: usize },
+    CountMismatch { probed: usize, full: usize },
     OverBudget { tokens: usize, budget: usize },
 }
 
 impl RenderPlanError {
     pub(crate) fn is_cancelled(&self) -> bool {
-        matches!(
-            self,
-            Self::Token(TokenCountError::Stopped(WorkStop::RequestCancelled))
-        )
+        matches!(self, Self::Stopped(WorkStop::RequestCancelled))
     }
 }
 
 impl fmt::Display for RenderPlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Token(error) => error.fmt(formatter),
+            Self::Stopped(WorkStop::RequestCancelled) => formatter.write_str("Request cancelled."),
+            Self::Stopped(WorkStop::EpochRetired) => {
+                formatter.write_str("The render generation was retired.")
+            }
             Self::InvalidPrefix { shown, available } => write!(
                 formatter,
                 "The renderer selected {shown} entries from only {available} available entries."
+            ),
+            Self::CountMismatch { probed, full } => write!(
+                formatter,
+                "Internal token-count invariant failed: probed={probed}, full={full}."
             ),
             Self::OverBudget { tokens, budget } => write!(
                 formatter,
@@ -48,17 +52,10 @@ impl fmt::Display for RenderPlanError {
     }
 }
 
-impl From<TokenCountError> for RenderPlanError {
-    fn from(error: TokenCountError) -> Self {
-        Self::Token(error)
-    }
-}
-
-/// Lines rendered exactly once, with an exact tokenizer checkpoint after every prefix.
+/// Lines prepared once with a byte boundary after every selectable prefix.
 pub(crate) struct LineRenderGraph {
-    lines: Vec<Arc<str>>,
-    checkpoints: Vec<TokenCheckpoint>,
-    counter: ExactPrefixCounter,
+    body: String,
+    prefix_ends: Vec<usize>,
 }
 
 impl LineRenderGraph {
@@ -66,26 +63,22 @@ impl LineRenderGraph {
         lines: Vec<Arc<str>>,
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<Self, RenderPlanError> {
-        let mut counter = ExactPrefixCounter::default();
-        let mut checkpoints = Vec::with_capacity(lines.len().saturating_add(1));
-        checkpoints.push(counter.checkpoint());
+        let mut body = String::new();
+        let mut prefix_ends = Vec::with_capacity(lines.len().saturating_add(1));
+        prefix_ends.push(0);
         for (index, line) in lines.iter().enumerate() {
             check_render_work(operation, TestRenderStage::Unit)?;
             if index > 0 {
-                counter.append("\n", operation)?;
+                body.push('\n');
             }
-            counter.append(line, operation)?;
-            checkpoints.push(counter.checkpoint());
+            body.push_str(line);
+            prefix_ends.push(body.len());
         }
 
-        Ok(Self {
-            lines,
-            checkpoints,
-            counter,
-        })
+        Ok(Self { body, prefix_ends })
     }
 
-    /// Conservatively counts a leading head note, a body prefix, and trailing body details.
+    /// Exactly counts a leading head note, a body prefix, and trailing body details.
     pub(crate) fn probe_head<T: AsRef<str>>(
         &mut self,
         shown: usize,
@@ -93,16 +86,10 @@ impl LineRenderGraph {
         details: &[T],
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<usize, RenderPlanError> {
+        let body = self.body_prefix(shown)?;
         check_render_work(operation, TestRenderStage::TokenProbe)?;
-        let checkpoint = self
-            .checkpoints
-            .get(shown)
-            .ok_or(RenderPlanError::InvalidPrefix {
-                shown,
-                available: self.lines.len(),
-            })?;
-        let body_tokens = self.counter.count_with_suffix(checkpoint, "", operation)?;
-        conservative_head_tokens(head, shown > 0, body_tokens, details)
+        let text = render_head_first(head, body, details);
+        count_rendered_tokens(&text, operation)
     }
 
     /// Assembles a head-first response once and independently verifies its exact token count.
@@ -111,21 +98,21 @@ impl LineRenderGraph {
         shown: usize,
         head: &str,
         details: &[T],
-        conservative_tokens: usize,
+        probed_tokens: usize,
         budget: usize,
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<VerifiedRender, RenderPlanError> {
-        if shown > self.lines.len() {
-            return Err(RenderPlanError::InvalidPrefix {
-                shown,
-                available: self.lines.len(),
+        let body = self.body_prefix(shown)?;
+        check_render_work(operation, TestRenderStage::Unit)?;
+        let text = render_head_first(head, body, details);
+        check_render_work(operation, TestRenderStage::FinalVerify)?;
+        let full_tokens = count_rendered_tokens(&text, operation)?;
+        if full_tokens != probed_tokens {
+            return Err(RenderPlanError::CountMismatch {
+                probed: probed_tokens,
+                full: full_tokens,
             });
         }
-        check_render_work(operation, TestRenderStage::Unit)?;
-        let text = render_head_first(head, &self.lines[..shown], details);
-        check_render_work(operation, TestRenderStage::FinalVerify)?;
-        let full_tokens = self.counter.verify_full(&text, operation)?;
-        debug_assert!(full_tokens <= conservative_tokens);
         if full_tokens > budget {
             return Err(RenderPlanError::OverBudget {
                 tokens: full_tokens,
@@ -137,74 +124,54 @@ impl LineRenderGraph {
             tokens: full_tokens,
         })
     }
+
+    fn body_prefix(&self, shown: usize) -> Result<Option<&str>, RenderPlanError> {
+        let Some(end) = self.prefix_ends.get(shown).copied() else {
+            return Err(RenderPlanError::InvalidPrefix {
+                shown,
+                available: self.prefix_ends.len().saturating_sub(1),
+            });
+        };
+        Ok((shown > 0).then_some(&self.body[..end]))
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct LineRenderView {
-    lines: Arc<[Arc<str>]>,
-    checkpoint: TokenCheckpoint,
+    body: Arc<str>,
+    line_count: usize,
 }
 
-struct SharedPrefixNode {
-    checkpoint: TokenCheckpoint,
-    children: HashMap<Arc<str>, usize>,
-}
-
-/// A request-local prefix trie for multiple compatibility views whose line
-/// sequences overlap but are not necessarily prefixes of one maximum view.
-pub(crate) struct SharedLineRenderGraph {
-    nodes: Vec<SharedPrefixNode>,
-}
+/// Prepares multiple compatibility views that are not necessarily prefixes of one body.
+pub(crate) struct SharedLineRenderGraph;
 
 impl SharedLineRenderGraph {
     pub(crate) fn new() -> Self {
-        let counter = ExactPrefixCounter::default();
-        Self {
-            nodes: vec![SharedPrefixNode {
-                checkpoint: counter.checkpoint(),
-                children: HashMap::new(),
-            }],
-        }
+        Self
     }
 
-    /// Interns one immutable line view, tokenizing only prefix edges that no
-    /// earlier compatibility probe has already established.
+    /// Joins one immutable line view once for exact head-first probes.
     pub(crate) fn prepare_view(
         &mut self,
         lines: Vec<Arc<str>>,
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<LineRenderView, RenderPlanError> {
-        let mut node_index = 0_usize;
+        let line_count = lines.len();
+        let mut body = String::new();
         for (depth, line) in lines.iter().enumerate() {
             check_render_work(operation, TestRenderStage::Unit)?;
-            if let Some(child) = self.nodes[node_index].children.get(line).copied() {
-                node_index = child;
-                continue;
-            }
-
-            let parent_checkpoint = self.nodes[node_index].checkpoint.clone();
-            let mut counter = ExactPrefixCounter::from_checkpoint(&parent_checkpoint);
             if depth > 0 {
-                counter.append("\n", operation)?;
+                body.push('\n');
             }
-            counter.append(line, operation)?;
-            let child = self.nodes.len();
-            self.nodes.push(SharedPrefixNode {
-                checkpoint: counter.checkpoint(),
-                children: HashMap::new(),
-            });
-            self.nodes[node_index]
-                .children
-                .insert(Arc::clone(line), child);
-            node_index = child;
+            body.push_str(line);
         }
         Ok(LineRenderView {
-            lines: Arc::from(lines),
-            checkpoint: self.nodes[node_index].checkpoint.clone(),
+            body: Arc::from(body),
+            line_count,
         })
     }
 
-    /// Conservatively counts one prepared body view under a leading head note.
+    /// Exactly counts one prepared body view under a leading head note.
     pub(crate) fn probe_head<T: AsRef<str>>(
         &mut self,
         view: &LineRenderView,
@@ -213,9 +180,8 @@ impl SharedLineRenderGraph {
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<usize, RenderPlanError> {
         check_render_work(operation, TestRenderStage::TokenProbe)?;
-        let mut counter = ExactPrefixCounter::from_checkpoint(&view.checkpoint);
-        let body_tokens = counter.count_with_suffix(&view.checkpoint, "", operation)?;
-        conservative_head_tokens(head, !view.lines.is_empty(), body_tokens, details)
+        let text = render_head_first(head, view.body(), details);
+        count_rendered_tokens(&text, operation)
     }
 
     /// Assembles one prepared body view below a head note and verifies the exact result.
@@ -224,16 +190,20 @@ impl SharedLineRenderGraph {
         view: &LineRenderView,
         head: &str,
         details: &[T],
-        conservative_tokens: usize,
+        probed_tokens: usize,
         budget: usize,
         operation: Option<&dyn WorkCheckpoint>,
     ) -> Result<VerifiedRender, RenderPlanError> {
         check_render_work(operation, TestRenderStage::Unit)?;
-        let text = render_head_first(head, &view.lines, details);
+        let text = render_head_first(head, view.body(), details);
         check_render_work(operation, TestRenderStage::FinalVerify)?;
-        let full_tokens = crate::budget::estimate_tokens(&text);
-        check_render_work(operation, TestRenderStage::FinalVerify)?;
-        debug_assert!(full_tokens <= conservative_tokens);
+        let full_tokens = count_rendered_tokens(&text, operation)?;
+        if full_tokens != probed_tokens {
+            return Err(RenderPlanError::CountMismatch {
+                probed: probed_tokens,
+                full: full_tokens,
+            });
+        }
         if full_tokens > budget {
             return Err(RenderPlanError::OverBudget {
                 tokens: full_tokens,
@@ -247,39 +217,34 @@ impl SharedLineRenderGraph {
     }
 }
 
-fn conservative_head_tokens<T: AsRef<str>>(
-    head: &str,
-    has_body: bool,
-    body_tokens: usize,
-    details: &[T],
-) -> Result<usize, RenderPlanError> {
-    let mut total = crate::budget::estimate_tokens(head);
-    if has_body {
-        total = total
-            .checked_add(crate::budget::estimate_tokens("\n"))
-            .and_then(|value| value.checked_add(body_tokens))
-            .ok_or(RenderPlanError::Token(TokenCountError::Overflow))?;
+impl LineRenderView {
+    fn body(&self) -> Option<&str> {
+        (self.line_count > 0).then_some(self.body.as_ref())
     }
-    for detail in details {
-        total = total
-            .checked_add(crate::budget::estimate_tokens("\n"))
-            .and_then(|value| value.checked_add(crate::budget::estimate_tokens(detail.as_ref())))
-            .ok_or(RenderPlanError::Token(TokenCountError::Overflow))?;
-    }
-    Ok(total)
 }
 
-fn render_head_first<T: AsRef<str>>(head: &str, body: &[Arc<str>], details: &[T]) -> String {
+fn render_head_first<T: AsRef<str>>(head: &str, body: Option<&str>, details: &[T]) -> String {
     let mut text = String::from(head);
-    for line in body {
+    if let Some(body) = body {
         text.push('\n');
-        text.push_str(line);
+        text.push_str(body);
     }
     for detail in details {
         text.push('\n');
         text.push_str(detail.as_ref());
     }
     text
+}
+
+fn count_rendered_tokens(
+    text: &str,
+    operation: Option<&dyn WorkCheckpoint>,
+) -> Result<usize, RenderPlanError> {
+    let tokens = estimate_tokens(text);
+    if let Some(operation) = operation {
+        operation.check_work().map_err(RenderPlanError::Stopped)?;
+    }
+    Ok(tokens)
 }
 
 #[derive(Clone, Copy)]
@@ -294,7 +259,7 @@ fn check_render_work(
     stage: TestRenderStage,
 ) -> Result<(), RenderPlanError> {
     if let Some(operation) = operation {
-        operation.check_work().map_err(TokenCountError::Stopped)?;
+        operation.check_work().map_err(RenderPlanError::Stopped)?;
         #[cfg(test)]
         operation.stage(match stage {
             TestRenderStage::Unit => TestStage::RenderUnit,
@@ -303,7 +268,7 @@ fn check_render_work(
         });
         #[cfg(not(test))]
         let _ = stage;
-        operation.check_work().map_err(TokenCountError::Stopped)?;
+        operation.check_work().map_err(RenderPlanError::Stopped)?;
     } else {
         let _ = stage;
     }

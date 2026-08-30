@@ -159,7 +159,11 @@ fn current_fastctx_matches_the_frozen_v011_ordinary_success_corpus() {
             "{}",
             request.case_id
         );
-        assert!(response.get("error").is_none(), "{}", request.case_id);
+        assert!(
+            response.get("error").is_none(),
+            "{}: unexpected JSON-RPC error: {response}",
+            request.case_id
+        );
         let result = response
             .get("result")
             .and_then(serde_json::Value::as_object)
@@ -167,8 +171,8 @@ fn current_fastctx_matches_the_frozen_v011_ordinary_success_corpus() {
         assert_eq!(
             result.get("isError").and_then(serde_json::Value::as_bool),
             Some(false),
-            "{}",
-            request.case_id
+            "{}: tool call failed: {response}",
+            request.case_id,
         );
         let content = result
             .get("content")
