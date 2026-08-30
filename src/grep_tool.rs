@@ -64,6 +64,7 @@ pub enum OutputMode {
 
 /// Parameters for the grep tool.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GrepRequest {
     /// The regular expression to search for (Rust regex syntax; escape literal braces like `interface\{\}`).
     pub pattern: String,

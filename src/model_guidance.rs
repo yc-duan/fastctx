@@ -6,6 +6,12 @@ pub(crate) const LOCAL_FILE_ROUTE_GUIDANCE: &str = concat!(
     "local reference is URI-shaped; pass the equivalent plain absolute filesystem path."
 );
 
+/// Target-field distinction emitted into the FastCtx-owned host guidance block.
+pub(crate) const LOCAL_FILE_TARGET_FIELD_GUIDANCE: &str = concat!(
+    "Target fields are tool-specific: `inspect_local_file` uses `file_path`, while\n",
+    "`grep`, `glob`, and `replace` use `path`; never substitute these field names."
+);
+
 /// Shared path-shape contract used by every file tool's path field.
 pub(crate) const LOCAL_PATH_INPUT_GUIDANCE: &str = concat!(
     "Plain absolute local filesystem path. When the source reference is URI-shaped, ",

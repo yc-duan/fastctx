@@ -82,6 +82,7 @@ pub enum GlobOutputMode {
 
 /// Parameters for the glob tool.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GlobRequest {
     /// Globs to match files, e.g. ["**/*.rs", "!tests/**"]. A leading `!` excludes and always wins; negative-only patterns list every other file.
     // Published as a plain string array rather than the string-or-array union the type
