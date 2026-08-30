@@ -665,11 +665,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             record.tool_timeout_sec,
         )?
         .into_iter()
-        .filter(|field| {
-            field != "tool_output_token_limit"
-                && (record.codex_direct_namespace_inserted
-                    || field != codex_config::DIRECT_NAMESPACE_DRIFT)
-        })
+        .filter(|field| field != "tool_output_token_limit")
         .collect::<Vec<_>>();
         if !protected_drift.is_empty() {
             return Err(format!(
@@ -1330,15 +1326,11 @@ fn preview_apply(
                     PreviewDetail::kept("[mcp_servers.fastctx] startup_timeout_sec = 120"),
                     PreviewDetail::kept("[mcp_servers.fastctx] tool_timeout_sec = 300"),
                 ]);
-                if !codex_config::has_namespace(original, "mcp__fastctx")
-                    && codex_config::has_namespace(updated, "mcp__fastctx")
+                if codex_config::has_namespace(original, "mcp__fastctx")
+                    && !codex_config::has_namespace(updated, "mcp__fastctx")
                 {
-                    details.push(PreviewDetail::kept(
-                        "direct_only_tool_namespaces += \"mcp__fastctx\"",
-                    ));
-                } else {
-                    details.push(PreviewDetail::kept(
-                        "direct_only_tool_namespaces contains \"mcp__fastctx\"",
+                    details.push(PreviewDetail::removed(
+                        "direct_only_tool_namespaces -= \"mcp__fastctx\"",
                     ));
                 }
                 match previous_token_limit {

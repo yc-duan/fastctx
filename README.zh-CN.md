@@ -76,7 +76,7 @@ fastctx
 
 GitHub Release 安装可以从任意 0.x 手工下载 1.0 归档，替换旧二进制或直接启动新二进制。TUI 内复制 helper 的自更新可从 v0.2.4、v0.2.5、v0.2.6 直接进入 1.0；v0.2.3 及更早 helper 要求的是另一套互斥的历史归档文件名，单个静态资产不可能同时满足，因此这些版本请走手工下载或 npm。FastCtx 不会把这条做不到的旧 helper 路径写成“自动兼容”。
 
-Codex 是唯一需要迁移 0.x 接入的宿主。先运行 `fastctx doctor --target codex`，再运行 `fastctx apply --target codex --yes`，记录 1.0 工具集并刷新未被改写的已知旧 guidance；用户改过或同名但没有 ownership 回执的配置会明确停止并给出修复办法。不要删除 `features.code_mode.direct_only_tool_namespaces` 里的 `mcp__fastctx`：1.0 仍用它保持工具直连，现在只会在回执能证明由 FastCtx 插入时撤销。Apply 完成后重启 Codex，让既有会话和共享控制中心都换成 1.0。
+Codex 是唯一需要迁移 0.x 接入的宿主。先运行 `fastctx doctor --target codex`，再运行 `fastctx apply --target codex --yes`，记录 1.0 工具集并刷新未被改写的已知旧 guidance；用户改过或同名但没有 ownership 回执的配置会明确停止并给出修复办法。Apply 还会撤销 `features.code_mode.direct_only_tool_namespaces` 里的 `mcp__fastctx`——那是 0.x 为把 FastCtx 钉在 Codex 直连工具面而加的。1.0 把编排交还给智能体，这个钉子不再需要，而且 `[features.code_mode]` 属于宿主全局的工具路由，不是注册一个 server 的一部分。该数组里你自己的其它条目原样保留，撤销动作会出现在 Apply 预览里。Apply 完成后重启 Codex，让既有会话和共享控制中心都换成 1.0。
 
 ### 安装遇到 404
 

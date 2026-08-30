@@ -877,21 +877,6 @@ fn missing_receipt_keys(
             });
         }
     }
-    let has_namespace = document
-        .get("features")
-        .and_then(Item::as_table_like)
-        .and_then(|table| table.get("code_mode"))
-        .and_then(Item::as_table_like)
-        .and_then(|table| table.get("direct_only_tool_namespaces"))
-        .and_then(Item::as_array)
-        .is_some_and(|array| {
-            array
-                .iter()
-                .any(|item| item.as_str() == Some("mcp__fastctx"))
-        });
-    if !has_namespace {
-        missing.push("features.code_mode.direct_only_tool_namespaces[mcp__fastctx]");
-    }
     missing
 }
 

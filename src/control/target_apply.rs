@@ -442,16 +442,13 @@ fn plan_codex_disconnect(control: &ControlPaths) -> Result<TargetDisconnectPlan,
         tool_budgets: record.tool_budgets,
         enabled_tools: receipt.enabled_tools,
     };
-    let mut drift = codex_config::drift_applied(
+    let drift = codex_config::drift_applied(
         &config_original,
         &expected,
         record.tool_output_token_limit,
         record.fastctx_token_budget,
         record.tool_timeout_sec,
     )?;
-    if !record.codex_direct_namespace_inserted {
-        drift.retain(|field| field != codex_config::DIRECT_NAMESPACE_DRIFT);
-    }
     if !drift.is_empty() {
         return Err(format!(
             "Codex managed configuration drifted after Apply ({}); Disconnect will not remove user-changed values.",

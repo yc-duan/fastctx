@@ -10,8 +10,6 @@ const FASTCTX_NAMESPACE: &str = "mcp__fastctx";
 const LEGACY_FASTREAD_NAMESPACE: &str = "mcp__fastread";
 const LEGACY_FASTSHELL_NAMESPACE: &str = "mcp__fastshell";
 const LEGACY_FASTEDIT_NAMESPACE: &str = "mcp__fastedit";
-pub(crate) const DIRECT_NAMESPACE_DRIFT: &str =
-    "features.code_mode.direct_only_tool_namespaces[mcp__fastctx]";
 const STARTUP_TIMEOUT_SECONDS: i64 = 120;
 /// MCP tool timeout written by Apply so 240-second tool waits retain a 60-second return margin.
 pub(crate) const TOOL_TIMEOUT_SECONDS: i64 = 300;
@@ -116,48 +114,12 @@ pub fn apply(
     }
     mcp_servers.insert("fastctx", Item::Table(fastctx_table));
 
-    let direct_namespace_inserted;
-    let features = ensure_table(&mut document, "features")?;
-    let code_mode = ensure_child_table(features, "code_mode", "features.code_mode")?;
-    match code_mode.get_mut("direct_only_tool_namespaces") {
-        Some(item) => {
-            let array = item.as_array_mut().ok_or_else(|| {
-                "Codex config key features.code_mode.direct_only_tool_namespaces is not an array. Repair it manually and retry."
-                    .to_string()
-            })?;
-            if legacy.fastread {
-                reconcile_namespace(array, LEGACY_FASTREAD_NAMESPACE, false);
-            }
-            if legacy.fastshell {
-                reconcile_namespace(array, LEGACY_FASTSHELL_NAMESPACE, false);
-            }
-            if legacy.fastedit {
-                reconcile_namespace(array, LEGACY_FASTEDIT_NAMESPACE, false);
-            }
-            let count = namespace_count(array, FASTCTX_NAMESPACE);
-            if count > 1 {
-                return Err(
-                    "Codex config contains multiple mcp__fastctx direct-only namespaces. Remove the duplicates manually and retry Apply; FastCtx cannot infer which occurrence is user-owned."
-                        .to_string(),
-                );
-            }
-            if count == 0 {
-                push_preserving_array_trailing(array, FASTCTX_NAMESPACE);
-                direct_namespace_inserted = true;
-            } else {
-                direct_namespace_inserted = previous_ownership.direct_namespace_inserted;
-            }
-        }
-        None => {
-            let mut array = Array::new();
-            array.push(FASTCTX_NAMESPACE);
-            code_mode.insert(
-                "direct_only_tool_namespaces",
-                Item::Value(Value::Array(array)),
-            );
-            direct_namespace_inserted = true;
-        }
-    }
+    // 1.0 does not pin FastCtx to Codex's direct tool surface. Nested code mode is the host's
+    // own orchestration layer, which 1.0 hands back to the model, and `[features.code_mode]` is
+    // host-wide tool routing rather than part of registering one MCP server. Apply therefore
+    // retires `mcp__fastctx` the same way it retires the legacy namespaces, and never creates a
+    // table it would then have to clean up (2026-08-30).
+    retire_direct_namespaces(&mut document, legacy)?;
     set_integer(&mut document, "tool_output_token_limit", requested_limit)?;
 
     Ok(ApplyEdit {
@@ -167,9 +129,76 @@ pub fn apply(
         conflict,
         ownership: CodexConfigOwnership {
             server_entry_owned: true,
-            direct_namespace_inserted,
+            direct_namespace_inserted: false,
         },
     })
+}
+
+/// Removes every FastCtx-managed direct-only namespace from an existing array.
+///
+/// Nothing is created: a config without `features.code_mode.direct_only_tool_namespaces` is
+/// already in the target state. Tables are dropped only when this removal is what emptied
+/// them, so a user's own `[features]` content survives untouched.
+fn retire_direct_namespaces(
+    document: &mut DocumentMut,
+    legacy: LegacyRemoval,
+) -> Result<(), String> {
+    if document.get("features").is_none() {
+        return Ok(());
+    }
+    let (removed, emptied) = {
+        let features = document
+            .get_mut("features")
+            .and_then(Item::as_table_mut)
+            .ok_or_else(|| {
+                "Codex config key features is not a table. Repair it manually and retry."
+                    .to_string()
+            })?;
+        let mut removed = false;
+        let mut remove_code_mode = false;
+        if features.get("code_mode").is_some() {
+            let code_mode = features
+                .get_mut("code_mode")
+                .and_then(Item::as_table_mut)
+                .ok_or_else(|| {
+                    "Codex config key features.code_mode is not a table. Repair it manually and retry."
+                        .to_string()
+                })?;
+            if code_mode.get("direct_only_tool_namespaces").is_some() {
+                let array = code_mode
+                    .get_mut("direct_only_tool_namespaces")
+                    .and_then(Item::as_array_mut)
+                    .ok_or_else(|| {
+                        "Codex config key features.code_mode.direct_only_tool_namespaces is not an array. Repair it manually and retry."
+                            .to_string()
+                    })?;
+                let before = array.len();
+                if legacy.fastread {
+                    reconcile_namespace(array, LEGACY_FASTREAD_NAMESPACE, false);
+                }
+                if legacy.fastshell {
+                    reconcile_namespace(array, LEGACY_FASTSHELL_NAMESPACE, false);
+                }
+                if legacy.fastedit {
+                    reconcile_namespace(array, LEGACY_FASTEDIT_NAMESPACE, false);
+                }
+                reconcile_namespace(array, FASTCTX_NAMESPACE, false);
+                removed = array.len() != before;
+                if removed && array.is_empty() {
+                    code_mode.remove("direct_only_tool_namespaces");
+                }
+            }
+            remove_code_mode = removed && code_mode.is_empty();
+        }
+        if remove_code_mode {
+            features.remove("code_mode");
+        }
+        (remove_code_mode, features.is_empty())
+    };
+    if removed && emptied {
+        document.remove("features");
+    }
+    Ok(())
 }
 
 /// Removes FastCtx-owned configuration in reverse; the shared token key is restored only when explicitly allowed.
@@ -423,24 +452,6 @@ fn drift_with_limits(
         }
         None => drift.push("mcp_servers.fastctx".to_string()),
     }
-    let namespaces = document
-        .get("features")
-        .and_then(Item::as_table_like)
-        .and_then(|table| table.get("code_mode"))
-        .and_then(Item::as_table_like)
-        .and_then(|table| table.get("direct_only_tool_namespaces"))
-        .and_then(Item::as_array);
-    let count = namespaces
-        .map(|array| {
-            array
-                .iter()
-                .filter(|entry| entry.as_str() == Some(FASTCTX_NAMESPACE))
-                .count()
-        })
-        .unwrap_or(0);
-    if count != 1 {
-        drift.push(DIRECT_NAMESPACE_DRIFT.to_string());
-    }
     if document
         .get("tool_output_token_limit")
         .and_then(Item::as_integer)
@@ -525,13 +536,6 @@ fn namespace_indices(array: &Array, namespace: &str) -> Vec<usize> {
         .collect()
 }
 
-fn namespace_count(array: &Array, namespace: &str) -> usize {
-    array
-        .iter()
-        .filter(|value| value.as_str() == Some(namespace))
-        .count()
-}
-
 fn remove_array_index_preserving_trailing(array: &mut Array, index: usize) {
     let suffix = (index + 1 == array.len())
         .then(|| {
@@ -558,22 +562,6 @@ fn ensure_table<'a>(document: &'a mut DocumentMut, key: &str) -> Result<&'a mut 
         .and_then(Item::as_table_mut)
         .ok_or_else(|| {
             format!("Codex config key {key} is not a table. Repair it manually and retry.")
-        })
-}
-
-fn ensure_child_table<'a>(
-    parent: &'a mut Table,
-    key: &str,
-    display: &str,
-) -> Result<&'a mut Table, String> {
-    if parent.get(key).is_none() {
-        parent.insert(key, Item::Table(Table::new()));
-    }
-    parent
-        .get_mut(key)
-        .and_then(Item::as_table_mut)
-        .ok_or_else(|| {
-            format!("Codex config key {display} is not a table. Repair it manually and retry.")
         })
 }
 

@@ -37,7 +37,7 @@ fn micro_edit_golden_preserves_every_unowned_byte_and_writes_the_exact_private_s
         "FASTCTX_GLOB_TOKEN_BUDGET = \"13500\"\n",
         "\n",
         "[features.code_mode]\n",
-        "direct_only_tool_namespaces = [ 'alpha', 'omega', \"mcp__fastctx\" ]\n",
+        "direct_only_tool_namespaces = [ 'alpha', 'omega' ]\n",
     );
     let edit = codex_config::apply(
         original.as_bytes(),
