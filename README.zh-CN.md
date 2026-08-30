@@ -17,9 +17,9 @@ npm install --global fastctx
 fastctx
 ```
 
-`fastctx` 命令会打开控制终端。检查变更后选择 **接入 Codex**，再启动新的 ChatGPT / Codex 会话即可使用。
+`fastctx` 命令会打开控制终端。进入 **Agent 接入**，选择宿主与要发布的工具，检查变更并确认应用；接入成功后重启对应宿主即可使用。
 
-当前优先支持 ChatGPT App 与 Codex CLI。任何 MCP client 也可以直接注册 `fastctx serve`。
+FastCtx 一等支持 Codex / ChatGPT、Claude Code、Cursor、VS Code Copilot Agent、OpenCode、Antigravity、TraeCode CLI、ZCode 与 Qoder。其他 MCP client 也可以直接注册 `fastctx serve --tools <csv>`。
 
 ## FastCtx 解决什么
 
@@ -52,13 +52,13 @@ fastctx
 
 首次启动会进入全屏控制终端。界面支持 17 种语言，主要操作包括：
 
-1. 调整输出档位；
-2. 让 grep/glob 保持自动并行，或显式设置 CPU 核数上限；
-3. 按需启用 **Bash terminal**；
-4. 设置当前用户的后台任务存储、并发上限与 AI 列表分页条数；
-5. 在 **Jobs** 页面汇总查看所有 FastCtx 会话中正在运行的任务、跟随输出，并按需终止；
-6. 经过确认后把全部用户偏好恢复到出厂默认；
-7. 在接入页面检查宿主配置变更，确认接入并重启 ChatGPT / Codex 会话。
+1. 在 **Agent 接入** 中连接和诊断九种宿主；
+2. 为每个宿主选择文件四工具的任意非空子集，并把 Bash 五工具作为一个原子组启停；
+3. 调整输出档位与宿主感知的输出保护；
+4. 让 grep/glob 保持自动并行，或显式设置 CPU 核数上限；
+5. 设置当前用户的后台任务存储、并发上限与 AI 列表分页条数；
+6. 在 **Jobs** 页面汇总查看所有 FastCtx 会话中正在运行的任务、跟随输出，并按需终止；
+7. 经过确认后把全部用户偏好恢复到出厂默认。
 
 接入会把当前二进制复制到 `~/.fastctx/bin/`，并让宿主配置指向这个稳定路径。清理或升级 npm 缓存后，已经接入的配置仍然有效。
 
@@ -100,20 +100,26 @@ npx fastctx
 
 ```console
 fastctx apply --tier standard --yes
+fastctx apply --target cursor --tools inspect_local_file,grep,glob,replace --yes
 fastctx status
+fastctx doctor --target cursor
 fastctx jobs
 fastctx jobs kill j-a1b2c3
+fastctx unapply --target cursor --yes
 fastctx unapply --yes
 ```
 
-- `apply`：安装并写入配置；
-- `status`：检查配置、二进制和 MCP 握手；
+- `apply`：安装 FastCtx 并接入一个宿主；`--target` 默认为 `codex`；
+- `status` / `doctor`：检查共享安装以及全部已接入宿主，或用 `--target` 深查一个宿主；
 - `jobs`：列出运行中的后台任务；
 - `jobs kill <job_id>`：终止指定后台任务及其完整进程树；
-- `unapply`：撤销 FastCtx 管理的内容；
+- `unapply --target <id>`：只断开一个宿主，保留共享安装；
+- 不带 target 的 `unapply`：移除全部 FastCtx 接入与受管数据；
 - `lang <code>`：设置控制终端语言。
 
 `status` 使用 `[PASS]`、`[INFO]`、`[FAIL]` 三种状态，也会显示探测到的搜索 CPU 上界以及配置值/实际生效并行度。出现 `[FAIL]` 时退出码为非零。
+
+支持的 target id 为 `codex`、`claude-code`、`cursor`、`vscode-copilot`、`opencode`、`antigravity`、`trae`、`zcode`、`qoder`。接入与断开都以单个 target 为事务边界：预览会列出全部文件变更，并发修改会阻止提交，写入中途失败会回滚已经完成的变更。完整移除是独立操作，因为它还会删除共享安装和受管数据。
 
 ### 工具上限与设置重置
 
@@ -153,7 +159,7 @@ FastCtx 提供九个同级 MCP 工具：
 
 | 工具 | 用途 |
 |---|---|
-| `inspect_local_file` | 读取任意受支持的单文件，或批量读取 1–32 个文本文件 |
+| `inspect_local_file` | 读取一个文本、图片、PDF 或二进制文件 |
 | `grep` | 搜索单个文件或项目树中的内容 |
 | `glob` | 按路径模式查找文件 |
 | `replace` | 对文件或项目树执行机械批量替换 |
@@ -163,11 +169,11 @@ FastCtx 提供九个同级 MCP 工具：
 | `job_kill` | 终止后台任务的整个进程树 |
 | `job_list` | 找回运行中及已留存的终态任务 |
 
-`inspect_local_file`、`grep`、`glob`、`replace` 默认发布。其余五个工具通过控制终端中的 **Bash terminal** 开关启用；启用后，它们与文件工具同属 `mcp__fastctx` 命名空间；命名空间内单个工具的拼写方式由宿主自己决定。
+每个宿主独立保存自己的 enabled set。`inspect_local_file`、`grep`、`glob`、`replace` 可以组成任意非空子集；Bash 五工具是原子组，选择其中任意一个就发布全部五个，关闭时也一起移除。新接入默认选择文件四工具。所有已选工具同属 `mcp__fastctx` 命名空间；命名空间内单个工具的拼写方式由宿主自己决定。
 
 ### `inspect_local_file`
 
-`inspect_local_file` 读取文本时返回 1 基行号，并支持分页：
+`inspect_local_file` 每次只处理一个文件；读取文本时返回 1 基行号，并支持分页：
 
 ```json
 {
@@ -178,29 +184,13 @@ FastCtx 提供九个同级 MCP 工具：
 ```
 
 ```text
+=== V:/repo/src/main.rs (lines 120-159 of 512) ===
 120	fn main() {
 121	    ...
 159	}
-
-(Partial: lines 120-159 of 512 shown. Continue with offset=160.)
 ```
 
-终态中的续读参数可以直接用于下一次调用。上例继续传入 `offset=160` 即可读取后续内容。
-
-已经知道多个相关文本文件时，应一次批量传入，避免为每个文件额外消耗一轮智能体往返：
-
-```json
-{
-  "files": [
-    {"path": "V:/repo/src/main.rs", "offset": 120, "limit": 40},
-    {"path": "V:/repo/src/config.rs"},
-    {"path": "V:/repo/docs/legacy.txt", "encoding": "gbk"}
-  ],
-  "limit": 400
-}
-```
-
-`files` 形态接受 1–32 个文本文件，严格保持请求顺序，并在同一份 read 预算内装箱。顶层 `limit` 会作为每个未自行设置 limit 的条目的默认值；上例第一个条目用自己的值覆盖默认。某个成员不存在、为空、属于二进制或编码无法判定时，问题会留在该文件自己的段内，其余文件继续处理。预算装满后，末行 `Partial` 会给出下一次调用可原样使用的紧凑 `files=[...]` 数组，包含逐文件 offset、剩余 limit 与 encoding。图片、PDF 和 hex 视图仍使用单文件调用。
+每个成功文本结果都以一行 `=== subject (metric; facts) ===` 头注开场。头注只陈述本次响应实际覆盖的坐标，不再在末尾追加 `Complete` / `Partial`，也不回显下一次调用参数。上例下一页从第 160 行开始，因此继续传 `offset: 160`。已知多个文件时分别调用；1.0 契约不再提供旧的多文件 `files` 请求形态。
 
 `inspect_local_file` 还支持：
 
@@ -241,12 +231,11 @@ FastCtx 提供九个同级 MCP 工具：
 ```
 
 ```text
+=== grep "fn \\w+_lock" (matches 1 of 1) ===
 V:/repo/src/edit/locks.rs
 62-/// Cross-process lock keyed by file identity.
 63:pub fn acquire_path_lock(identity: &PathIdentity) -> LockGuard {
 64-    ...
-
-(Complete: all 1 result shown.)
 ```
 
 `output_mode` 有四种取值：
@@ -274,10 +263,9 @@ V:/repo/src/edit/locks.rs
 ```
 
 ```text
+=== glob (files 1-2 of 2) ===
 {"path":"V:/repo/crates/core/Cargo.toml","bytes":1842,"modified":"2026-08-23T16:42:18.123456700Z"}
 {"path":"V:/repo/Cargo.toml","bytes":2937,"modified":"2026-08-23T15:07:03.000000000Z"}
-
-(Complete: all 2 files shown.)
 ```
 
 主要参数：
@@ -307,9 +295,8 @@ V:/repo/src/edit/locks.rs
 ```
 
 ```text
+=== replace dry run (12 matches in 3 files; nothing written) ===
 ...
-
-(Complete: dry run — 12 matches in 3 files; nothing written.)
 ```
 
 `replace` 会在写入前冻结候选集并统计完整命中数。`dry_run` 用于预览，`max_replacements` 用于限制影响范围。
@@ -331,7 +318,7 @@ V:/repo/src/edit/locks.rs
 
 在 Windows 上，FastCtx 自己创建的所有非交互子进程都默认以无控制台窗口方式启动，包括 Bash 探测、前后台 Bash、分离监督进程和 doctor 探针；用户无需记住任何隐藏窗口参数。若命令本身显式启动 GUI 或新的终端窗口，该可见效果仍会按命令意图发生。
 
-输出使用有界内存缓冲。响应容量不足时，终态会说明截断范围，并给出完整输出的处理方式：将命令输出重定向到文件，再用 `inspect_local_file` 分页查看。
+输出使用有界内存缓冲。头注会明确列出响应中实际出现的行号范围，并说明更早的捕获行是否已经从内存中丢弃。完整输出重要时，应在第一次执行命令时就重定向到已知文件，再用 `inspect_local_file` 或 `grep` 读取；不要为了找回省略内容而重跑有副作用的命令。
 
 #### 命令环境
 
@@ -354,15 +341,15 @@ stdio MCP server 拿不到用户配置的环境：宿主会清空子进程环境
 
 每个任务由独立监督进程管理，不归 MCP server 所有。server 退出、ChatGPT / Codex 重启或切换会话时，任务仍会继续运行，直到命令自然结束或被 `job_kill` 终止。后台任务不提供超时参数。
 
-输出与退出状态保存在 `~/.fastctx/jobs/`，因此新的 FastCtx server 可以凭同一 job id 继续读取。对于按当前格式启动的任务，打印的一切都会追加进那里的一个纯文本日志文件——不做轮转、不丢弃——任务启动时会返回它的路径，`inspect_local_file` 与 `grep` 可以直接作用于它。
+输出与退出状态保存在 `~/.fastctx/jobs/`，因此新的 FastCtx server 可以凭同一 job id 继续读取。当前格式任务把输出追加进纯文本日志，启动时会返回路径，`inspect_local_file` 与 `grep` 可以直接作用于已保留的前缀。监督进程启动时会按当时的 `fastshell.job_storage_limit_mib` 冻结该 job 的日志与行索引硬上限；到达上限后仍会持续排水直至子进程结束，但不再持久化新增字节，并记录显式截断事实，不改动命令退出码。
 
-只要一个 FastCtx server 仍在追踪它启动或查询过的任务，该 server 的每个成功文本结果都会附带一行后台读数，列出各任务当前状态与已运行时间。读数只会在下一次工具调用时刷新；它不是通知，调用方停下来时不会收到任何推送。终态条目会一直保留，直到该 server 用 `job_output` 或 `job_kill` 处理对应任务。
+只要一个 FastCtx server 仍在追踪它启动或查询过的任务，成功文本结果就可能在头注之后附带一行后台读数。运行态可以重复；终态边沿只显示一次，并且只有完整或紧凑读数真正进入响应后才算已交付。若因预算或内容通道而省略，它会继续等待下次机会。读数只在工具调用时刷新，不会主动推送。
 
 ### `job_output`
 
 `job_output` 查询一个后台任务（也能查询此前会话启动的任务），返回 `running`、`exited` 或 `interrupted` 状态，以及调用方尚未看到的最新输出。`wait_ms`（0–240000，默认 30000）是这次查询最多可以花多久：任务结束即返回，否则等满这个窗口，中间新行不会让调用提前返回。需要立刻拍快照就传 `wait_ms=0`；只有手上没有其他事可做时才应调大它，因为这次调用会一直阻塞。当前格式的输出过长时按窗口交付——装得下的最新若干行，加上首次调用时日志开头的一段——并由一条注给出被跳过的确切行号区间和可供读取的日志路径。该日志的行号与 `after_seq` 使用的 `seq` 是同一套编号，因此在两个工具之间移动无需换算。上一版分段格式写出的记录仍可读取，也兼容旧监督进程继续追加；但它不会假装拥有直接日志坐标，旧环形窗口已经淘汰的字节也无法恢复。
 
-只有任务结束后才会出现 `Complete`；开发服务器或 watcher 可能永远不会到达该状态。当前格式后台任务的日志会保留每一行，所以响应里没展示的内容，一次 `inspect_local_file` 或 `grep` 就能取回；只有上一版格式创建的存量记录受前述兼容边界限制。
+头注始终给出当前生命周期（`running`、`exited`、`killed` 或 `interrupted`）、本次交付的行号范围，以及存在时的日志路径；末尾不再追加状态词。当前格式任务在到达磁盘上限前，响应里没展示的内容都可用 `inspect_local_file` 或 `grep` 从日志取回。到达上限后，`job_output` 与 Jobs 页面会指出最后一个已存行，并明确说明监督进程仍继续排水但不再持久化。上一版格式创建的记录只受前述兼容边界限制。
 
 ### `job_kill`
 
@@ -388,7 +375,7 @@ FastCtx MCP server 继承宿主进程的本地权限。
 | TUI 更新检查 | npm 与 GitHub Release 启动时开启 | 从 `registry.npmjs.org` 与 GitHub 的 `releases/latest` 网页重定向获取版本元数据；下载必须由用户确认 |
 | MCP runtime 网络请求 | 无 | `serve` 与工具调用不产生遥测或更新流量 |
 
-启动检查只会发送 FastCtx 版本、常规 HTTPS 请求元数据，以及 npm 的标准仓库请求；不会发送仓库路径、任务数据或文件内容。后台任务的命令、工作目录、输出与退出状态只保存在当前用户的私有目录 `~/.fastctx/jobs/` 中；当前格式任务使用完整纯文本日志。FastCtx 不会上传这些数据。Bash 命令仍可按照命令本身访问网络。预构建版本已经内嵌 PDF 引擎。
+启动检查只会发送 FastCtx 版本、常规 HTTPS 请求元数据，以及 npm 的标准仓库请求；不会发送仓库路径、任务数据或文件内容。后台任务的命令、工作目录、已保留输出前缀、截断状态与退出状态只保存在当前用户的私有目录 `~/.fastctx/jobs/` 中。FastCtx 不会上传这些数据。Bash 命令仍可按照命令本身访问网络。预构建版本已经内嵌 PDF 引擎。
 
 MCP server 位于宿主文件沙箱之外。需要逐次确认写入和命令执行时，可以配置：
 
@@ -409,12 +396,11 @@ FastCtx 使用或管理以下内容：
 - `~/.fastctx/bin/fastctx(.exe)`：稳定的自安装二进制；
 - `~/.fastctx/config.toml`：控制终端配置与接入回执；
 - `~/.fastctx/jobs/`：由 `run_background` 按需创建的持久后台任务记录与当前格式完整输出日志；
-- `~/.codex/config.toml` 中的 `[mcp_servers.fastctx]`，其中包括 `tool_timeout_sec = 300`；
-- `direct_only_tool_namespaces` 中的 `mcp__fastctx` 元素；
-- `~/.codex/AGENTS.md` 中带边界标记的 FastCtx 段；
-- 用户确认后的 `tool_output_token_limit` 档位值。
+- 每个已接入宿主的当前用户配置中各一条 `fastctx` MCP 注册，以及 guidance 文件中各一段带边界标记的受管说明；
+- 对 Codex 额外管理 `[mcp_servers.fastctx]`、`mcp__fastctx` direct-only namespace、`~/.codex/AGENTS.md` 受管段、`tool_timeout_sec = 300` 与用户确认后的 `tool_output_token_limit`；
+- schema v2 接入回执，逐宿主记录 ownership、契约 hash 与精确 enabled-tool set。
 
-FastCtx 使用 `toml_edit` 修改已有 TOML，保留注释、格式和其他配置。移除按写入所有权逐项撤销，用户后续改动会保留；删除 `~/.fastctx/` 前会先终止所有运行中的后台任务。
+FastCtx 会保留 TOML、JSON/JSONC、YAML、Markdown 与 rule 文件中的无关内容。单 target 断开只删除仍由 FastCtx 拥有的内容，并保留共享二进制、设置、job 与其他宿主；完整移除会先终止运行中的 job，再删除 `~/.fastctx/`。用户在接入后修改的内容会作为 ownership drift 显式浮出，不会被覆盖或静默删除。
 
 ## License
 

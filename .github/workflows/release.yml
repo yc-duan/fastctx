@@ -391,31 +391,34 @@ jobs:
         run: |
           notes="$RUNNER_TEMP/fastctx-release-notes.md"
           cat > "$notes" <<'EOF'
-          ## FastCtx v0.2.6
+          ## FastCtx v1.0.0
 
-          Windows on ARM builds, tool schemas every provider accepts, and MCP sessions that survive a failing control center.
+          Agent-native orchestration, factual head notes, and first-class connection management for nine coding agents.
 
-          **Upgrading:** replacing the binary is enough. This release does not require `fastctx apply`.
+          **Upgrading:** launch `fastctx` after replacing the binary and review **Agent connections**. An unchanged managed Codex connection migrates automatically; user-edited configuration or guidance is preserved and reported by Doctor instead of being overwritten.
 
           ### Breaking
 
-          - **`glob` no longer applies Git ignore rules.** `.gitignore`, `.git/info/exclude` and your global Git ignore no longer remove files from a `glob` result, and `.git` is no longer excluded automatically. A model that asked where a file was could previously be told it did not exist, purely because Git ignored it. `filter_mode` is now `ignore` (default, honours plain `.ignore` files) or `all`; the old value `project` is still accepted and behaves as `ignore`. Exclude what you do not want with a negative pattern such as `!target/**`. `grep` and `replace` are unchanged.
+          - **`inspect_local_file` is single-file.** The `files` request shape and batch-level `limit` are removed. Hosts can issue independent or parallel tool calls and can mix inspection with search or commands in one turn.
+          - **Success responses start with facts instead of ending with verdicts.** `Complete`, `Partial`, and `Killed` terminal lines are gone. Every successful text result begins with `=== subject (metric; facts) ===`, and continuation parameters are no longer echoed in responses.
+          - **Generated guidance follows the enabled tools.** New Apply output no longer uses one frozen Codex-only block. Known 0.2.x blocks migrate only on an exact ownership match.
+          - **`glob` no longer applies Git ignore rules.** `.gitignore`, `.git/info/exclude`, and global Git ignore no longer hide results; `.git` is not excluded automatically. `filter_mode` is `ignore` (plain `.ignore` only) or `all`. The legacy `project` value remains accepted as `ignore`; `grep` and `replace` are unchanged.
 
           ### Added
 
-          - **Windows on ARM.** FastCtx now ships an `aarch64-pc-windows-msvc` build with the same features as every other platform, on GitHub Releases and as `@fastctx/win32-arm64`.
-          - **`glob` can report size and modification time.** Pass `output_mode: "details"` to get each match with its byte size and UTC modification time, instead of following a search with a separate directory listing.
-          - **One `limit` for a whole batch read.** `inspect_local_file` accepts a top-level `limit` next to `files`; it applies to every entry that does not set its own, so a uniform cap no longer has to be repeated per entry.
+          - **Nine first-class agent targets.** Connect, diagnose, and disconnect Codex / ChatGPT, Claude Code, Cursor, VS Code Copilot Agent, OpenCode, Antigravity, TraeCode CLI, ZCode, and Qoder from the TUI or CLI.
+          - **Per-agent tool selection.** Choose any non-empty subset of the four file tools; the five Bash/job tools remain an atomic suite. The exact enabled set is enforced by FastCtx and recorded per target.
+          - **Target-scoped ownership and recovery.** Apply and Disconnect preview one immutable transaction, detect concurrent edits, roll back failed writes, preserve unrelated host configuration, and distinguish drift, parse errors, and permission failures in Doctor.
+          - **Windows on ARM.** FastCtx ships an `aarch64-pc-windows-msvc` GitHub archive and `@fastctx/win32-arm64` npm package with the same feature surface as the other builds.
+          - **`glob` details output.** `output_mode: "details"` returns each path with its byte size and UTC modification time.
 
           ### Fixed
 
-          - **A failing control center no longer ends your conversations.** One host process runs many conversations that share a single control center, and Codex never restarts an MCP server it has lost — so one failure took every conversation of that user down at once, with no way back except starting over. A session now settles what it owes, swaps in another engine and continues; only the host ends a session.
-          - **Tool schemas are published in a portable subset.** Schemas used `$ref` and composition, which some providers reject outright — and a rejected tool declaration fails the whole request, not one parameter. Every published schema is now a flat, single-type form.
-          - **Git Bash installed through Scoop is found.** `run` reported that no Bash was available on machines where Scoop had installed one.
-          - **Background jobs no longer report a false startup failure on a busy machine.** The supervisor's startup window was too narrow to survive load.
-          - **`run` says which local tasks it is for.** Its description now leads with non-interactive CLI work — Git, build and test tools, package managers, database CLIs, project scripts — before the Bash execution details.
-          - The search CPU limit setting states which event makes a new value take effect: it is read once when the control center starts, which now means after every Codex process has exited.
-          - The pinned Pdfium archive is cached during builds instead of being downloaded once per build unit.
+          - Finished background jobs no longer remain on every later response. A terminal transition is retired only after its full or compact status line actually reaches one response; budget omission cannot lose it.
+          - A failing control center no longer ends the host's MCP session. The proxy settles the failed request, changes engines without replaying side effects, and continues on the same stdio transport.
+          - Published tool schemas use the portable subset accepted across supported hosts, with all three approval annotations explicit for every enabled combination.
+          - Background logs obey one frozen per-job log-plus-index ceiling, retain a directly readable prefix, and keep draining the child after the ceiling without falsifying its exit code.
+          - Git Bash installed through Scoop is discovered, busy machines no longer cause false background-start failures, and FastCtx-owned non-interactive Windows children do not allocate console windows.
           EOF
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release delete "${GITHUB_REF_NAME}" --yes

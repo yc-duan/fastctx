@@ -1,97 +1,78 @@
 # FastCtx
 
-### Let Codex find the right code sooner.
+### Structured repository tools for coding agents.
 
-FastCtx gives coding agents structured repository tools — `read`, `grep`,
-`glob`, `replace`, and an optional bash terminal — served by one local Rust
-binary over MCP. `read` can pack 1–32 known text files into one request-ordered
-call with exact per-file continuation parameters, while images, PDFs, and hex
-view remain single-file reads.
+FastCtx is one local Rust MCP runtime for repository inspection, search,
+discovery, mechanical replacement, and optional Bash execution. Every
+successful text result starts with a compact coordinate line:
 
-The optional terminal publishes `run`, `run_background`, `job_output`,
-`job_kill`, and `job_list`. Background jobs have no automatic timeout and
-survive MCP server and Codex restarts. Current-format jobs keep their complete
-output log and exit status addressable by job id under `~/.fastctx/jobs/`.
-`job_output` is a query with a caller-chosen delay: it returns when the job
-ends or when `wait_ms` (0–240000 ms, default 30000) elapses, showing the newest
-output not yet seen, and names the log path and exact line numbers for anything
-it leaves out. Intermediate output does not end the wait. `Complete` appears
-only after a job ends; servers and watchers may never reach it. Records from
-the preceding segmented format remain readable but do not claim direct log
-coordinates or recover output their original rolling window evicted.
-While one server tracks jobs it started or queried, each successful text result
-also carries a one-line background readout of their current state and elapsed
-time. It refreshes only on tool calls; it is not a push notification, and
-nothing arrives if the caller stops. Finished entries remain until that server
-handles them with `job_output` or `job_kill`.
+```text
+=== V:/repo/src/main.rs (lines 120-159 of 512) ===
+```
 
-On Windows, all FastCtx-owned non-interactive children run without allocating
-a console window; no caller flag is required. Commands that explicitly launch
-a GUI or another terminal keep that visible behavior.
+The head note says exactly what the response contains. FastCtx 1.0 has no
+trailing `Complete` / `Partial` sentinel, does not repeat continuation
+parameters in results, and reads one file per `inspect_local_file` call.
 
-Finished records are retained until the current user's
-`fastshell.job_storage_limit_mib` limit evicts the oldest (default 1024 MiB);
-`fastshell.max_running_jobs` caps concurrent jobs across all FastCtx sessions
-for that user (default 128). `job_list` shows running jobs by default; explicit
-`status="finished"` exposes retained history, while `fastshell.job_list_limit`
-sets the default page size (20, valid range 1–100). All three settings take
-effect immediately when saved.
-Job commands, working directories, output logs, and exit status stay in the
-current user's private local directory and are never uploaded by FastCtx.
+FastCtx publishes nine tools. Any non-empty subset of the four file tools is
+valid: `inspect_local_file`, `grep`, `glob`, and `replace`. The five Bash tools
+are one atomic group: `run`, `run_background`, `job_output`, `job_kill`, and
+`job_list`. New agent connections default to the four file tools.
 
-grep/glob keeps its existing automatic CPU parallelism by default. The TUI can
-set an explicit `search.max_cpu_cores` value from 1 through the engine-visible
-ceiling (available parallelism capped at 16); each newly started server reads it
-directly, without Apply or a copied environment key. Invalid values fail with a
-repairable diagnostic instead of being clamped or replaced. The Config screen
-also provides a default-No confirmation that resets every user preference while
-preserving the Apply ownership receipt, installed binary, host integration, and
-running jobs. Restoring the default history quota can evict excess finished
-records through the normal retention policy.
+The control terminal can connect, diagnose, and disconnect nine user-level
+agent targets:
+
+- Codex / ChatGPT (`codex`)
+- Claude Code (`claude-code`)
+- Cursor (`cursor`)
+- VS Code Copilot Agent (`vscode-copilot`)
+- OpenCode (`opencode`)
+- Antigravity (`antigravity`)
+- TraeCode CLI (`trae`)
+- ZCode (`zcode`)
+- Qoder (`qoder`)
 
 ```console
 npm install --global fastctx
 fastctx
 ```
 
-For a one-off run without installing, `npx fastctx` opens the same control
-terminal.
-
-If your npm registry is a mirror that has not synchronized this release yet,
-the install can fail with `404 Not Found` on the platform package. Install once
-from the official registry:
+For a one-off run, use `npx fastctx`. Scriptable examples:
 
 ```console
-npm install --global fastctx --registry=https://registry.npmjs.org/
+fastctx apply --target cursor --tools inspect_local_file,grep,glob,replace --yes
+fastctx doctor --target cursor
+fastctx unapply --target cursor --yes
 ```
 
-This package is the launcher: it selects the matching scoped platform package
-(`@fastctx/win32-x64`, `@fastctx/linux-x64`, or the corresponding macOS
-package) locally and starts the complete binary. There is no postinstall script
-and no telemetry. The interactive TUI checks this exact
-npm package for updates before the main menu opens; the wait is strictly
-bounded, and a failed or timed-out check enters silently. When a newer version
-is installable, the update screen opens directly and asks whether to update or
-continue. Successful results are cached for 24 hours in machine-private
-storage. Transient failures stay quiet and remain available under Status. If
-GitHub is newer while npm is still propagating, the Update screen says so and
-offers retry. Updates require confirmation, install an exact
-version with lifecycle scripts disabled, and restart through a copied helper.
-A failed update restores and reopens the previous version with a warning.
-`fastctx serve` and MCP tool calls do not perform update traffic; commands run
-through the optional bash tools keep their normal network access.
+Target Disconnect preserves the shared installation, settings, jobs, and other
+agent connections. `fastctx unapply --yes` without `--target` performs the
+separate full uninstall. Apply and Disconnect are previewed, ownership-aware
+transactions; concurrent user edits stop the commit instead of being silently
+overwritten.
 
-Run `fastctx` in a terminal for the full-screen control UI (configuration,
-reset, preview, Apply, Jobs, doctor, Unapply), `fastctx jobs` for scriptable
-running-job management, or `fastctx serve` for the stdio MCP server. For MCP pipes
-the launcher proxies stdio, forwards termination signals and the native exit
-code, and closes the Rust server cleanly if the Node parent is killed.
+Background jobs have no automatic timeout and survive MCP server or agent
+restarts. Output, status, and a directly readable plain-text log are retained
+under `~/.fastctx/jobs/` up to the job's frozen storage ceiling. `job_output`
+returns when the job ends or `wait_ms` elapses and identifies the exact stored
+line ranges it delivers. Running background state may accompany later text
+responses; a terminal transition is acknowledged only after the full or compact
+readout actually fits in a response. This readout refreshes on tool calls and is
+not a push notification.
 
-The Jobs dashboard aggregates every currently running job from the current
-user's registry across FastCtx server and TUI instances. It groups jobs by
-honest source-session metadata, aligns ids and width-aware command ellipses,
-and shows exact start plus live elapsed time. Finished output remains available
-to the agent through `job_output`; the host does not expose conversation titles
-or ids to MCP, so FastCtx does not invent them.
+On Windows, FastCtx-owned non-interactive children do not allocate console
+windows. grep/glob automatic parallelism is bounded by the detected engine
+ceiling and can be configured explicitly. Current-user background storage,
+concurrency, page size, replace size, output budgets, and update behavior are
+managed from the TUI.
+
+This launcher selects the matching scoped package locally: Windows x64,
+Windows arm64, Linux x64, macOS x64, or macOS arm64. It has no postinstall
+script and no telemetry. The bounded startup update check only runs for the
+interactive TUI; `fastctx serve` and MCP calls perform no update traffic.
+
+Use `fastctx` for the full-screen control UI, `fastctx jobs` for scriptable
+running-job management, or `fastctx serve --tools <csv>` for a direct stdio MCP
+server.
 
 Full documentation: https://github.com/yc-duan/fastctx

@@ -2,7 +2,7 @@
 
 **English** | [简体中文](./README.zh-CN.md)
 
-### Fast, context-efficient repository tools for AI agents.
+### Fast, context-efficient repository tools for coding agents.
 
 FastCtx is a local Rust tool runtime. It provides file reading, content search, file discovery, batch replacement, and Bash command execution through MCP.
 
@@ -17,9 +17,9 @@ npm install --global fastctx
 fastctx
 ```
 
-The `fastctx` command opens the control terminal. Review the proposed changes, select **Connect to Codex**, then start a new ChatGPT / Codex session.
+The `fastctx` command opens the control terminal. Open **Agent connections**, choose an agent, select exactly the tools it should receive, review the proposed changes, and apply them. Restart that agent after the connection succeeds.
 
-FastCtx currently provides first-class setup for ChatGPT App and Codex CLI. Any MCP client can also register `fastctx serve` directly.
+FastCtx provides first-class setup for Codex / ChatGPT, Claude Code, Cursor, VS Code Copilot Agent, OpenCode, Antigravity, TraeCode CLI, ZCode, and Qoder. Any other MCP client can register `fastctx serve --tools <csv>` directly.
 
 ## What FastCtx solves
 
@@ -52,13 +52,13 @@ fastctx
 
 The first launch opens the full-screen control terminal. The interface supports 17 languages and provides these main actions:
 
-1. Adjust the output tier and provider-aware output protection;
-2. Keep grep/glob on automatic CPU parallelism or set an explicit core limit;
-3. Enable **Bash terminal** when needed;
-4. Set current-user background-job storage, concurrency, and AI list page limits;
-5. Inspect every currently running job across FastCtx sessions, follow its output, and stop it on the **Jobs** screen;
-6. Reset all user preferences to factory defaults through a confirmation screen;
-7. Review every host configuration change on the Connect to Codex screen, confirm it, and restart the ChatGPT / Codex session.
+1. Connect and diagnose nine supported coding-agent targets from **Agent connections**;
+2. Select any non-empty subset of the four file tools, plus the five Bash tools as one atomic group;
+3. Adjust the output tier and provider-aware output protection;
+4. Keep grep/glob on automatic CPU parallelism or set an explicit core limit;
+5. Set current-user background-job storage, concurrency, and AI list page limits;
+6. Inspect every currently running job across FastCtx sessions, follow its output, and stop it on the **Jobs** screen;
+7. Reset all user preferences to factory defaults through a confirmation screen.
 
 Connecting copies the current binary to `~/.fastctx/bin/` and points the host configuration at that stable path. The connected setup keeps working after npm cache cleanup or upgrades.
 
@@ -100,20 +100,26 @@ npx fastctx
 
 ```console
 fastctx apply --tier standard --yes
+fastctx apply --target cursor --tools inspect_local_file,grep,glob,replace --yes
 fastctx status
+fastctx doctor --target cursor
 fastctx jobs
 fastctx jobs kill j-a1b2c3
+fastctx unapply --target cursor --yes
 fastctx unapply --yes
 ```
 
-- `apply`: install FastCtx and write the configuration;
-- `status`: check the configuration, binary, and MCP handshake;
+- `apply`: install FastCtx and connect one agent; `--target` defaults to `codex`;
+- `status` / `doctor`: check the shared installation and either every connected target or one explicit `--target`;
 - `jobs`: list running background jobs;
 - `jobs kill <job_id>`: stop one background job and its full process tree;
-- `unapply`: remove the content managed by FastCtx;
+- `unapply --target <id>`: disconnect one agent and preserve the shared installation;
+- `unapply` without a target: remove every FastCtx integration and its managed data;
 - `lang <code>`: set the control terminal language.
 
 `status` uses three states: `[PASS]`, `[INFO]`, and `[FAIL]`. It also reports the detected search CPU ceiling and the configured/effective parallelism. A `[FAIL]` result returns a non-zero exit code.
+
+Supported target ids are `codex`, `claude-code`, `cursor`, `vscode-copilot`, `opencode`, `antigravity`, `trae`, `zcode`, and `qoder`. Apply and disconnect are target-scoped and transactional: the preview shows every file change, concurrent edits stop the commit, and a failed write rolls back changes already made. Full Unapply remains a separate operation because it also removes the shared installation and managed data.
 
 ### Tool limits and settings reset
 
@@ -153,7 +159,7 @@ FastCtx provides nine MCP tools:
 
 | Tool | Purpose |
 |---|---|
-| `inspect_local_file` | Read one file in any supported format, or batch 1–32 text files |
+| `inspect_local_file` | Read one text, image, PDF, or binary file |
 | `grep` | Search contents in a file or repository tree |
 | `glob` | Find files by path pattern |
 | `replace` | Apply mechanical batch replacements to files or a repository tree |
@@ -163,11 +169,11 @@ FastCtx provides nine MCP tools:
 | `job_kill` | Stop the full process tree of a background job |
 | `job_list` | Rediscover running and retained finished jobs |
 
-`inspect_local_file`, `grep`, `glob`, and `replace` are published by default. The other five tools are enabled with the **Bash terminal** setting in the control terminal. Once enabled, they share the `mcp__fastctx` namespace with the file tools; how a host spells an individual tool inside that namespace is the host's own convention.
+Each agent stores its own enabled set. Any non-empty combination of `inspect_local_file`, `grep`, `glob`, and `replace` is valid. The five Bash tools are atomic: selecting any one publishes all five, and clearing Bash removes all five. A new connection defaults to the four file tools. All selected tools share the `mcp__fastctx` namespace; how a host spells an individual tool inside that namespace is the host's own convention.
 
 ### `inspect_local_file`
 
-`inspect_local_file` returns 1-based line numbers for text and supports paging:
+`inspect_local_file` handles one file per call, returns 1-based line numbers for text, and supports paging:
 
 ```json
 {
@@ -178,29 +184,13 @@ FastCtx provides nine MCP tools:
 ```
 
 ```text
+=== V:/repo/src/main.rs (lines 120-159 of 512) ===
 120	fn main() {
 121	    ...
 159	}
-
-(Partial: lines 120-159 of 512 shown. Continue with offset=160.)
 ```
 
-The continuation parameters in the final status line can be used directly in the next call. In this example, pass `offset=160` to read the next section.
-
-When several known text files are relevant, batch them into one call instead of paying one agent round trip per file:
-
-```json
-{
-  "files": [
-    {"path": "V:/repo/src/main.rs", "offset": 120, "limit": 40},
-    {"path": "V:/repo/src/config.rs"},
-    {"path": "V:/repo/docs/legacy.txt", "encoding": "gbk"}
-  ],
-  "limit": 400
-}
-```
-
-The `files` form accepts 1–32 text files, preserves request order, and packs them into one shared read budget. A top-level `limit` applies to every entry that omits its own; the first entry above overrides the default. A missing, empty, binary, or undecodable member is reported inside its own segment while the remaining files continue. If the budget fills, the final `Partial` line contains the exact compact `files=[...]` array for the next call, including per-file offsets, remaining limits, and encodings. Images, PDFs, and hex view remain single-file calls.
+Every successful text result starts with one `=== subject (metric; facts) ===` head note. The head records what the response actually contains; there is no trailing `Complete`/`Partial` sentinel and no repeated call syntax. Here, the next page begins at line 160, so continue with `offset: 160`. Call known files independently; the former multi-file `files` request shape is not part of the 1.0 contract.
 
 `inspect_local_file` also supports:
 
@@ -241,12 +231,11 @@ Use the hex view for binary files:
 ```
 
 ```text
+=== grep "fn \\w+_lock" (matches 1 of 1) ===
 V:/repo/src/edit/locks.rs
 62-/// Cross-process lock keyed by file identity.
 63:pub fn acquire_path_lock(identity: &PathIdentity) -> LockGuard {
 64-    ...
-
-(Complete: all 1 result shown.)
 ```
 
 `output_mode` has four values:
@@ -262,7 +251,7 @@ Files with uncertain encodings appear in a skip report with their path, reason, 
 
 If a file changes during a directory search, `grep` reports that file as skipped and continues; a changing single-file target returns an error so partial matches never masquerade as complete results.
 
-A directory the walk cannot enter — denied permissions, a locked file, a symlink loop — never discards the results found around it. `grep`, `glob`, and `replace` return what they reached, list each unreachable path with its cause, and count them in the terminal note. An unreadable search root is still an error, because a walk that reached nothing cannot report that it found nothing.
+A directory the walk cannot enter — denied permissions, a locked file, a symlink loop — never discards the results found around it. `grep`, `glob`, and `replace` return what they reached, list each unreachable path with its cause, and count them in the head note. An unreadable search root is still an error, because a walk that reached nothing cannot report that it found nothing.
 
 ### `glob`
 
@@ -278,10 +267,9 @@ A directory the walk cannot enter — denied permissions, a locked file, a symli
 ```
 
 ```text
+=== glob (files 1-2 of 2) ===
 {"path":"V:/repo/crates/core/Cargo.toml","bytes":1842,"modified":"2026-08-23T16:42:18.123456700Z"}
 {"path":"V:/repo/Cargo.toml","bytes":2937,"modified":"2026-08-23T15:07:03.000000000Z"}
-
-(Complete: all 2 files shown.)
 ```
 
 Main parameters:
@@ -313,9 +301,8 @@ Main parameters:
 ```
 
 ```text
+=== replace dry run (12 matches in 3 files; nothing written) ===
 ...
-
-(Complete: dry run — 12 matches in 3 files; nothing written.)
 ```
 
 `replace` freezes the candidate set and counts every match before the first write. Use `dry_run` for preview and `max_replacements` to cap the change scope.
@@ -337,7 +324,7 @@ Commands run in a non-interactive environment. Installation, confirmation, and e
 
 On Windows, every FastCtx-owned non-interactive child process is created without allocating a console window, including Bash discovery, foreground/background Bash, detached supervisors, and doctor probes. There is no hidden-window parameter to remember. A command that explicitly launches a GUI or a new terminal still has that visible effect.
 
-Output uses bounded memory. When output exceeds the response capacity, the final status line reports the truncated range and gives a path to the complete result: redirect the command output to a file, then page through it with `inspect_local_file`.
+Output uses bounded memory. The head note reports the exact line ranges present in the response and whether older captured lines were dropped. For commands whose complete output matters, redirect to a known file in the original command and then inspect or search that file; do not rerun a side-effecting command merely to recover omitted output.
 
 #### Command environment
 
@@ -362,13 +349,13 @@ Each job is owned by a detached supervisor rather than by the MCP server. It kee
 
 Output and exit status are stored under `~/.fastctx/jobs/`, so another FastCtx session can resume the same job by id. For jobs started by the current format, output is appended to a plain log file whose path is returned when the job starts, so `inspect_local_file` and `grep` work on the retained prefix directly. At supervisor startup, each job freezes a hard ceiling for the combined log and line index from the current `fastshell.job_storage_limit_mib` setting. If output reaches that ceiling, FastCtx keeps draining the child process so the command can finish, stops persisting further bytes, and records an explicit truncation notice without changing the command's exit code.
 
-While one MCP session has jobs that it started or queried, every successful text result from that session carries a one-line background readout with each job's current state and elapsed time. The readout refreshes only when another tool is called; it is not a notification and nothing is pushed while the caller is idle. A finished entry remains visible until that session handles it with `job_output` or `job_kill`.
+While one MCP session has jobs that it started or queried, successful text results can carry a one-line background readout immediately after the head note. Running state may repeat. A terminal transition is shown once and acknowledged only when the full or compact readout actually fits in a response; if the line is omitted for budget or content-channel reasons, it remains pending. The readout refreshes only when another tool is called—it is not a push notification.
 
 ### `job_output`
 
 `job_output` queries a background job, including jobs started in earlier sessions, and reports `running`, `exited`, or `interrupted` together with the newest output the caller has not been shown. `wait_ms` (0–240000, default 30000) is how long the query may take: it returns as soon as the job ends and otherwise waits the window out; intermediate lines do not end the wait. Pass `wait_ms=0` for an immediate snapshot, and raise it only when there is nothing else to do because the call blocks. Long current-format output is windowed — the newest lines that fit, plus the start of the log on the first call — and a note names the exact lines that were skipped and the log path to read them from. Line numbers in that log are the same `seq` numbers `after_seq` takes, so moving between the two tools needs no translation. Records written by the preceding segmented format remain readable, including while an older supervisor is still appending, but they do not advertise direct log coordinates and cannot recover bytes that their original rolling window already evicted.
 
-`Complete` appears only after the job ends; a development server or watcher may never reach it. Before the per-job disk ceiling is reached, anything a response leaves out is still one `inspect_local_file` or `grep` away. After the ceiling is reached, `job_output` and the Jobs dashboard identify the last retained sequence and explain that the supervisor continued draining without persistence. The compatibility limitation above applies only to records created by the preceding format.
+The head note always states the current lifecycle (`running`, `exited`, `killed`, or `interrupted`), the line ranges delivered, and the log path when one exists. There is no trailing status word. Before the per-job disk ceiling is reached, anything a response leaves out is still one `inspect_local_file` or `grep` away. After the ceiling is reached, `job_output` and the Jobs dashboard identify the last stored line and explain that the supervisor continued draining without persistence. The compatibility limitation above applies only to records created by the preceding format.
 
 ### `job_kill`
 
@@ -415,12 +402,11 @@ FastCtx uses or manages these paths and settings:
 - `~/.fastctx/bin/fastctx(.exe)`: the stable self-installed binary;
 - `~/.fastctx/config.toml`: control terminal settings and the connection receipt;
 - `~/.fastctx/jobs/`: persistent background-job records and current-format full output logs, created on demand by `run_background`;
-- `[mcp_servers.fastctx]` in `~/.codex/config.toml`, including `tool_timeout_sec = 300`;
-- the `mcp__fastctx` entry in `direct_only_tool_namespaces`;
-- the marker-delimited FastCtx block in `~/.codex/AGENTS.md`;
-- the selected `tool_output_token_limit` value after user confirmation.
+- one `fastctx` MCP registration and one marker-owned guidance block for each connected target, in that target's documented current-user configuration and guidance files;
+- for Codex, `[mcp_servers.fastctx]`, the `mcp__fastctx` direct-only namespace entry, the marker-delimited block in `~/.codex/AGENTS.md`, `tool_timeout_sec = 300`, and the confirmed `tool_output_token_limit`;
+- a schema-v2 receipt that records ownership, contract hashes, and the exact enabled-tool set independently for every target.
 
-FastCtx edits existing TOML with `toml_edit`, preserving comments, formatting, and unrelated configuration. Removal removes entries according to write ownership and preserves later user changes. It stops running background jobs before removing `~/.fastctx/`.
+FastCtx preserves unrelated TOML, JSON/JSONC, YAML, Markdown, and rule-file content. Target Disconnect removes only content still owned by FastCtx and preserves the shared binary, settings, jobs, and other agents. Full Unapply stops running jobs before removing `~/.fastctx/`. User changes made after Apply are surfaced as ownership drift rather than overwritten or silently removed.
 
 ## License
 
