@@ -6,6 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 const PROCESS_DEADLINE: Duration = Duration::from_secs(30);
@@ -24,8 +25,20 @@ const EOF_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 #[cfg(windows)]
 const STARTUP_FAILURE_DEADLINE: Duration = Duration::from_secs(30);
 
+static PARENT_WATCH_SUITE_LOCK: Mutex<()> = Mutex::new(());
+
+fn parent_watch_suite_guard() -> MutexGuard<'static, ()> {
+    // These tests intentionally terminate control centers and process trees. Running their
+    // lifecycle fixtures concurrently loses owed EOF responses on Windows under ordinary suite
+    // load, while each contract is stable in isolation (observed 2026-08-29).
+    PARENT_WATCH_SUITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn parent_watch_exits_without_stdin_eof_but_preserves_live_and_opted_out_servers() {
+    let _suite = parent_watch_suite_guard();
     let temp = tempfile::tempdir().unwrap();
 
     let watched = spawn_through_short_lived_parent(temp.path(), "watched", false);
@@ -45,7 +58,9 @@ fn parent_watch_exits_without_stdin_eof_but_preserves_live_and_opted_out_servers
     let (stdin_reader, mut stdin_writer) = anonymous_pipe();
     let response = temp.path().join("live-parent-response.jsonl");
     let output = File::create(&response).unwrap();
-    let mut live = Command::new(env!("CARGO_BIN_EXE_fastctx"))
+    let mut live = Command::new(env!("CARGO_BIN_EXE_fastctx"));
+    isolate_command(&mut live, temp.path());
+    let mut live = live
         .arg("serve")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
@@ -69,6 +84,7 @@ fn parent_watch_exits_without_stdin_eof_but_preserves_live_and_opted_out_servers
 
 #[test]
 fn parent_watch_ends_foreground_work_but_preserves_detached_background_jobs() {
+    let _suite = parent_watch_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     let background_root = temp.path().join("background");
     std::fs::create_dir(&background_root).unwrap();
@@ -165,6 +181,7 @@ fn parent_watch_ends_foreground_work_but_preserves_detached_background_jobs() {
 
 #[test]
 fn stdin_eof_ends_inflight_foreground_work_promptly() {
+    let _suite = parent_watch_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let temp_dir = root.join("tmp");
@@ -175,7 +192,9 @@ fn stdin_eof_ends_inflight_foreground_work_promptly() {
     let response_path = root.join("response.jsonl");
     let output = File::create(&response_path).unwrap();
     let (stdin_reader, mut stdin_writer) = anonymous_pipe();
-    let mut server = Command::new(env!("CARGO_BIN_EXE_fastctx"))
+    let mut server = Command::new(env!("CARGO_BIN_EXE_fastctx"));
+    isolate_command(&mut server, root);
+    let mut server = server
         .args(["serve", "--enable-shell"])
         .current_dir(root)
         .env("HOME", root)
@@ -250,6 +269,7 @@ fn stdin_eof_ends_inflight_foreground_work_promptly() {
 /// still exiting successfully.
 #[test]
 fn stdin_eof_still_answers_requests_that_were_already_sent() {
+    let _suite = parent_watch_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let response_path = root.join("response.jsonl");
@@ -257,7 +277,9 @@ fn stdin_eof_still_answers_requests_that_were_already_sent() {
     let output = File::create(&response_path).unwrap();
     let diagnostics = File::create(&diagnostics_path).unwrap();
     let (stdin_reader, mut stdin_writer) = anonymous_pipe();
-    let mut server = Command::new(env!("CARGO_BIN_EXE_fastctx"))
+    let mut server = Command::new(env!("CARGO_BIN_EXE_fastctx"));
+    isolate_command(&mut server, root);
+    let mut server = server
         .arg("serve")
         .current_dir(root)
         .env("HOME", root)
@@ -314,6 +336,7 @@ fn stdin_eof_still_answers_requests_that_were_already_sent() {
 fn stdin_startup_read_error_is_not_reported_as_clean_eof() {
     use std::io::Read;
 
+    let _suite = parent_watch_suite_guard();
     let temp = tempfile::tempdir().unwrap();
     let unreadable_stdin = OpenOptions::new()
         .create(true)
@@ -321,7 +344,9 @@ fn stdin_startup_read_error_is_not_reported_as_clean_eof() {
         .write(true)
         .open(temp.path().join("write-only-stdin"))
         .unwrap();
-    let mut server = Command::new(env!("CARGO_BIN_EXE_fastctx"))
+    let mut server = Command::new(env!("CARGO_BIN_EXE_fastctx"));
+    isolate_command(&mut server, temp.path());
+    let mut server = server
         .arg("serve")
         .env("HOME", temp.path())
         .env("USERPROFILE", temp.path())
