@@ -81,10 +81,11 @@ impl Executor {
             return Err("forbidden: calls must be encrypted under the World key.".to_string());
         }
         let from = &opened.header.from;
-        let member = self.client.member(from).ok_or_else(|| {
-            format!("forbidden: \"{from}\" is not a verified member of this World.")
-        })?;
-        let _ = member;
+        if self.client.member(from).is_none() {
+            return Err(format!(
+                "forbidden: \"{from}\" is not a verified member of this World."
+            ));
+        }
         let call: Call = messages::decode(&opened.body, kind::CALL)?;
         let me = self.client.name();
         if !self

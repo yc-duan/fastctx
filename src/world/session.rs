@@ -3,7 +3,7 @@
 
 use super::client::{Inventory, LinkState, WorldClient};
 use super::crypto::{b64_array, b64_decode, b64_encode};
-use super::envelope::Envelope;
+use super::envelope::{Envelope, Header};
 use super::identity::{Fingerprint, verify};
 use super::link::{self, DialPlan, Dialed, Endpoint, Verify};
 use super::messages::{self, kind};
@@ -592,6 +592,24 @@ async fn run_connected(
     end
 }
 
+/// Whether this member is the addressee the sender named, dropping and logging when it is not.
+///
+/// The `to` field lives inside the AEAD-authenticated header, so the hub can neither forge nor
+/// rewrite it — but only if the receiver actually reads it. Without this check the hub could
+/// deliver a call one member addressed to a second to a third instead, which is exactly the
+/// execution power the hub is not supposed to have.
+fn addressed_here(client: &Arc<WorldClient>, header: &Header) -> bool {
+    let me = client.name();
+    if header.to == me {
+        return true;
+    }
+    log(format!(
+        "dropping a {} addressed to \"{}\": this member is \"{me}\"",
+        header.t, header.to
+    ));
+    false
+}
+
 /// Applies a reliable message from the hub or, through it, from another member.
 async fn handle_reliable(
     client: &Arc<WorldClient>,
@@ -614,6 +632,9 @@ async fn handle_reliable(
             "dropping a plaintext {} from \"{}\"",
             header.t, header.from
         ));
+        return;
+    }
+    if !addressed_here(client, header) {
         return;
     }
     if header.from != HUB_NAME
@@ -720,6 +741,9 @@ fn handle_request_frame(
             "dropping a plaintext {} from \"{}\"",
             header.t, header.from
         ));
+        return;
+    }
+    if !addressed_here(client, &header) {
         return;
     }
     match header.t.as_str() {
