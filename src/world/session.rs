@@ -709,29 +709,7 @@ async fn handle_reliable(
                 Err(error) => log(error),
             }
         }
-        kind::REVOKED => match messages::decode::<messages::Revoked>(&opened.body, kind::REVOKED) {
-            Ok(revoked) if revoked.name == client.name() => {
-                client.update_link(|link| {
-                    link.state = LinkState::Stopped {
-                        reason: format!(
-                            "revoked: this member was removed from the World ({})",
-                            revoked.reason
-                        ),
-                        until: None,
-                    };
-                });
-                log("this member was revoked from the World");
-            }
-            Ok(_) => {
-                let client = Arc::clone(client);
-                tokio::spawn(async move {
-                    if let Err(error) = client.refresh_members().await {
-                        log(format!("member refresh failed: {error}"));
-                    }
-                });
-            }
-            Err(error) => log(error),
-        },
+        kind::REVOKED => apply_revoked(client, &opened),
         kind::KEY_ROTATED => {
             // The rotated key is adopted only from a verified member, so the listing that
             // names the rotating member (and any revocation that motivated it) comes first.
@@ -759,6 +737,37 @@ async fn handle_reliable(
             "ignoring an unsupported reliable message \"{other}\" from \"{}\"",
             header.from
         )),
+    }
+}
+
+/// Applies the hub's word that a member is out of the World.
+///
+/// The hub cannot prove a revocation the way a member can — this is its say-so, and the worst
+/// it buys is a denial of service against the named member — but acting on it immediately is
+/// what turns a revoked member's link into an explanation instead of a reconnect loop.
+fn apply_revoked(client: &Arc<WorldClient>, opened: &crate::world::envelope::Opened) {
+    match messages::decode::<messages::Revoked>(&opened.body, kind::REVOKED) {
+        Ok(revoked) if revoked.name == client.name() => {
+            client.update_link(|link| {
+                link.state = LinkState::Stopped {
+                    reason: format!(
+                        "revoked: this member was removed from the World ({})",
+                        revoked.reason
+                    ),
+                    until: None,
+                };
+            });
+            log("this member was revoked from the World");
+        }
+        Ok(_) => {
+            let client = Arc::clone(client);
+            tokio::spawn(async move {
+                if let Err(error) = client.refresh_members().await {
+                    log(format!("member refresh failed: {error}"));
+                }
+            });
+        }
+        Err(error) => log(error),
     }
 }
 
@@ -803,6 +812,9 @@ fn handle_request_frame(
                 executor.cancel(id);
             }
         }
+        // The hub sends this the moment it cuts a revoked member loose, so it arrives outside
+        // the reliable stream that carries every other notice.
+        kind::REVOKED => apply_revoked(client, &opened),
         _ => {
             let Some(id) = id else {
                 log(format!("dropping an answer without an id ({})", header.t));
