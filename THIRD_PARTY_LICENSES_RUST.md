@@ -11,8 +11,8 @@ in [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md).
 
 ## Overview
 
-- Apache License 2.0: 270
-- MIT License: 72
+- Apache License 2.0: 282
+- MIT License: 73
 - Unicode License v3: 19
 - BSD 3-Clause "New" or "Revised" License: 5
 - ISC License: 4
@@ -478,6 +478,7 @@ Used by:
 - [tinyvec 1.12.0](https://github.com/Lokathor/tinyvec)
 - [utf8_iter 1.0.4](https://github.com/hsivonen/utf8_iter)
 - [zeroize 1.9.0](https://github.com/RustCrypto/utils)
+- [zeroize_derive 1.5.0](https://github.com/RustCrypto/utils)
 
 ```text
 
@@ -2836,14 +2837,14 @@ Used by:
 
 Used by:
 
-- [futures-channel 0.3.32](https://github.com/rust-lang/futures-rs)
-- [futures-core 0.3.32](https://github.com/rust-lang/futures-rs)
+- [futures-channel 0.3.34](https://github.com/rust-lang/futures-rs)
+- [futures-core 0.3.34](https://github.com/rust-lang/futures-rs)
 - [futures-executor 0.3.32](https://github.com/rust-lang/futures-rs)
-- [futures-io 0.3.32](https://github.com/rust-lang/futures-rs)
-- [futures-macro 0.3.32](https://github.com/rust-lang/futures-rs)
-- [futures-sink 0.3.32](https://github.com/rust-lang/futures-rs)
-- [futures-task 0.3.32](https://github.com/rust-lang/futures-rs)
-- [futures-util 0.3.32](https://github.com/rust-lang/futures-rs)
+- [futures-io 0.3.34](https://github.com/rust-lang/futures-rs)
+- [futures-macro 0.3.34](https://github.com/rust-lang/futures-rs)
+- [futures-sink 0.3.34](https://github.com/rust-lang/futures-rs)
+- [futures-task 0.3.34](https://github.com/rust-lang/futures-rs)
+- [futures-util 0.3.34](https://github.com/rust-lang/futures-rs)
 - [futures 0.3.32](https://github.com/rust-lang/futures-rs)
 
 ```text
@@ -4957,6 +4958,8 @@ limitations under the License.
 Used by:
 
 - [arbitrary 1.4.2](https://github.com/rust-fuzz/arbitrary/)
+- [asn1-rs-derive 0.6.0](https://github.com/rusticata/asn1-rs.git)
+- [asn1-rs 0.7.2](https://github.com/rusticata/asn1-rs.git)
 - [atomic-waker 1.1.2](https://github.com/smol-rs/atomic-waker)
 - [autocfg 1.5.1](https://github.com/cuviper/autocfg)
 - [base64 0.22.1](https://github.com/marshallpierce/rust-base64)
@@ -4973,6 +4976,7 @@ Used by:
 - [crossbeam-epoch 0.9.20](https://github.com/crossbeam-rs/crossbeam)
 - [crossbeam-utils 0.8.22](https://github.com/crossbeam-rs/crossbeam)
 - [curve25519-dalek-derive 0.1.1](https://github.com/dalek-cryptography/curve25519-dalek)
+- [der-parser 10.0.0](https://github.com/rusticata/der-parser.git)
 - [derive_arbitrary 1.4.2](https://github.com/rust-fuzz/arbitrary)
 - [displaydoc 0.2.6](https://github.com/yaahc/displaydoc)
 - [either 1.16.0](https://github.com/rayon-rs/either)
@@ -5000,7 +5004,10 @@ Used by:
 - [linux-raw-sys 0.12.1](https://github.com/sunfishcode/linux-raw-sys)
 - [lock_api 0.4.14](https://github.com/Amanieu/parking_lot)
 - [log 0.4.33](https://github.com/rust-lang/log)
+- [num-bigint 0.4.8](https://github.com/rust-num/num-bigint)
+- [num-integer 0.1.47](https://github.com/rust-num/num-integer)
 - [num-traits 0.2.19](https://github.com/rust-num/num-traits)
+- [oid-registry 0.8.1](https://github.com/rusticata/oid-registry.git)
 - [once_cell 1.21.4](https://github.com/matklad/once_cell)
 - [openssl-probe 0.2.1](https://github.com/rustls/openssl-probe)
 - [parking_lot 0.12.5](https://github.com/Amanieu/parking_lot)
@@ -5014,6 +5021,7 @@ Used by:
 - [regex 1.13.0](https://github.com/rust-lang/regex)
 - [ring 0.17.14](https://github.com/briansmith/ring)
 - [rustc_version 0.4.1](https://github.com/djc/rustc-version-rs)
+- [rusticata-macros 4.1.0](https://github.com/rusticata/rusticata-macros.git)
 - [rustix 1.1.4](https://github.com/bytecodealliance/rustix)
 - [rustls-native-certs 0.8.4](https://github.com/rustls/rustls-native-certs)
 - [rustls 0.23.43](https://github.com/rustls/rustls)
@@ -5045,6 +5053,7 @@ Used by:
 - [wasm-bindgen-shared 0.2.122](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared)
 - [wasm-bindgen 0.2.122](https://github.com/wasm-bindgen/wasm-bindgen)
 - [web-sys 0.3.99](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys)
+- [x509-parser 0.18.1](https://github.com/rusticata/x509-parser.git)
 - [xattr 1.6.1](https://github.com/Stebalien/xattr)
 - [yasna 0.6.0](https://github.com/qnighy/yasna.rs)
 
@@ -5469,6 +5478,7 @@ Used by:
 
 - [bit-set 0.8.0](https://github.com/contain-rs/bit-set)
 - [bit-vec 0.8.0](https://github.com/contain-rs/bit-vec)
+- [minimal-lexical 0.2.1](https://github.com/Alexhuszagh/minimal-lexical)
 
 ```text
                               Apache License
@@ -7455,6 +7465,7 @@ Used by:
 - [aneubeck-daachorse 1.1.1](https://github.com/daac-tools/daachorse)
 - [anyhow 1.0.103](https://github.com/dtolnay/anyhow)
 - [arraydeque 0.5.1](https://github.com/andylokandy/arraydeque)
+- [asn1-rs-impl 0.2.0](https://github.com/rusticata/asn1-rs.git)
 - [async-trait 0.1.89](https://github.com/dtolnay/async-trait)
 - [document-features 0.2.12](https://github.com/slint-ui/document-features)
 - [dunce 1.0.5](https://gitlab.com/kornelski/dunce)
@@ -7494,6 +7505,7 @@ Used by:
 - [serde_json 1.0.150](https://github.com/serde-rs/json)
 - [shlex 2.0.1](https://github.com/comex/rust-shlex)
 - [syn 2.0.118](https://github.com/dtolnay/syn)
+- [syn 3.0.4](https://github.com/dtolnay/syn)
 - [thiserror-impl 2.0.18](https://github.com/dtolnay/thiserror)
 - [thiserror 2.0.18](https://github.com/dtolnay/thiserror)
 - [time-core 0.1.9](https://github.com/time-rs/time)
@@ -8458,6 +8470,7 @@ THE SOFTWARE.
 
 Used by:
 
+- [nom 7.1.3](https://github.com/Geal/nom)
 - [nom 8.0.0](https://github.com/rust-bakery/nom)
 
 ```text

@@ -98,6 +98,11 @@ enum Command {
         #[command(subcommand)]
         command: Option<JobsCommand>,
     },
+    /// Run or manage a World hub on this machine.
+    Hub {
+        #[command(subcommand)]
+        command: crate::world::cli::HubCommand,
+    },
     /// Internal Unix detach bootstrap.
     #[cfg(unix)]
     #[command(hide = true)]
@@ -214,6 +219,7 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         Some(Command::Status { target, codex_home }) => run_status(target, codex_home),
         Some(Command::Lang { code }) => run_lang(&code),
         Some(Command::Jobs { command }) => run_jobs(command),
+        Some(Command::Hub { command }) => crate::world::cli::run_hub(command).await,
         #[cfg(unix)]
         Some(Command::JobBootstrap) => {
             crate::shell::jobs::run_bootstrap_entry()?;

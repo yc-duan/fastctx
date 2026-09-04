@@ -16,9 +16,11 @@
 //! - `node`, `hub`: the two long-running processes.
 //! - `surface`, `cli`: the World-mode tool surface and the control commands.
 
+pub mod cli;
 pub(crate) mod crypto;
 pub(crate) mod envelope;
 pub(crate) mod grant;
+pub(crate) mod hub;
 pub(crate) mod identity;
 pub(crate) mod invite;
 pub(crate) mod keys;
