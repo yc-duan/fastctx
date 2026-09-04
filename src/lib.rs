@@ -42,5 +42,6 @@ pub(crate) mod tool_schema;
 pub(crate) mod traversal;
 pub mod tui;
 pub(crate) mod update;
+pub(crate) mod world;
 
 pub use model::{ImageDetail, ToolContent, ToolResponse};
