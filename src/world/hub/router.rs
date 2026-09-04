@@ -4,7 +4,6 @@
 use super::session::Peer;
 use super::store::{InventoryRow, InviteRow, SealedKeyRow};
 use super::{Hub, log};
-use crate::world::crypto::b64_array;
 use crate::world::envelope::{Envelope, Header};
 use crate::world::grant::{Grant, GrantSet};
 use crate::world::identity;
@@ -609,10 +608,10 @@ impl Hub {
             if member.is_revoked() || except == Some(member.name.as_str()) {
                 continue;
             }
-            if let Some(only) = only {
-                if !only.contains(&member.name) {
-                    continue;
-                }
+            if let Some(only) = only
+                && !only.contains(&member.name)
+            {
+                continue;
             }
             match self.hub_envelope(t, &member.name, body) {
                 Ok(env) => {
@@ -669,15 +668,4 @@ impl Hub {
             log(format!("cannot append event {kind}: {error}"));
         }
     }
-}
-
-/// Reads a member's public key from its stored row.
-pub(crate) fn member_public_key(
-    hub: &Hub,
-    name: &str,
-) -> Result<Option<crate::world::crypto::Key32>, String> {
-    Ok(match hub.store.member(name)? {
-        Some(row) => Some(b64_array::<32>(&row.node_pub, "member public key")?),
-        None => None,
-    })
 }

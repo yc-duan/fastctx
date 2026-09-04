@@ -38,7 +38,6 @@ pub(crate) struct EnrollSummary {
     pub(crate) tls: TlsMode,
     pub(crate) path: String,
     pub(crate) key_epoch: u32,
-    pub(crate) members: usize,
 }
 
 enum Admission {
@@ -245,7 +244,6 @@ async fn enroll_with(
         tls,
         path: dialed.path.describe(),
         key_epoch: keys.current().epoch(),
-        members: welcome.members_version as usize,
     })
 }
 
@@ -308,13 +306,13 @@ async fn handshake(
     };
     let hub_pub = b64_array::<32>(&challenge.hub_pub, "hub public key")?;
     let hub_key = Fingerprint::of(&hub_pub);
-    if let Some(expected) = expected_hub_key {
-        if hub_key != expected {
-            return Err(format!(
-                "hub_identity_mismatch: the hub at {} presented key {hub_key}, but the invite names {expected}. Refusing to enroll.",
-                dialed.endpoint
-            ));
-        }
+    if let Some(expected) = expected_hub_key
+        && hub_key != expected
+    {
+        return Err(format!(
+            "hub_identity_mismatch: the hub at {} presented key {hub_key}, but the invite names {expected}. Refusing to enroll.",
+            dialed.endpoint
+        ));
     }
     let binding = match challenge.binding {
         BindingMode::Exporter => dialed.binding.clone(),

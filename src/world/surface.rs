@@ -173,49 +173,49 @@ pub struct Requirements {
 
 impl Requirements {
     pub(crate) fn matches(&self, node: &NodeView) -> bool {
-        if let Some(os) = self.os {
-            if !node.os.eq_ignore_ascii_case(os.as_str()) {
-                return false;
-            }
+        if let Some(os) = self.os
+            && !node.os.eq_ignore_ascii_case(os.as_str())
+        {
+            return false;
         }
-        if let Some(arch) = self.arch {
-            if !node.arch.eq_ignore_ascii_case(arch.as_str()) {
-                return false;
-            }
+        if let Some(arch) = self.arch
+            && !node.arch.eq_ignore_ascii_case(arch.as_str())
+        {
+            return false;
         }
-        if let Some(tags) = &self.tags {
-            if !tags.iter().all(|tag| node.tags.contains(tag)) {
-                return false;
-            }
+        if let Some(tags) = &self.tags
+            && !tags.iter().all(|tag| node.tags.contains(tag))
+        {
+            return false;
         }
-        if let Some(nodes) = &self.nodes {
-            if !nodes.contains(&node.name) {
-                return false;
-            }
+        if let Some(nodes) = &self.nodes
+            && !nodes.contains(&node.name)
+        {
+            return false;
         }
         let inventory = node.inventory.as_ref();
-        if let Some(cpus) = self.cpus {
-            if inventory.is_none_or(|inventory| inventory.cpus < cpus) {
-                return false;
-            }
+        if let Some(cpus) = self.cpus
+            && inventory.is_none_or(|inventory| inventory.cpus < cpus)
+        {
+            return false;
         }
-        if let Some(memory) = self.memory_gb {
-            if inventory.is_none_or(|inventory| inventory.memory_gb < memory) {
-                return false;
-            }
+        if let Some(memory) = self.memory_gb
+            && inventory.is_none_or(|inventory| inventory.memory_gb < memory)
+        {
+            return false;
         }
-        if let Some(gpus) = self.gpus {
-            if inventory.is_none_or(|inventory| (inventory.gpus.len() as u32) < gpus) {
-                return false;
-            }
+        if let Some(gpus) = self.gpus
+            && inventory.is_none_or(|inventory| (inventory.gpus.len() as u32) < gpus)
+        {
+            return false;
         }
-        if let Some(gpu_memory) = self.gpu_memory_gb {
-            if inventory.is_none_or(|inventory| {
+        if let Some(gpu_memory) = self.gpu_memory_gb
+            && inventory.is_none_or(|inventory| {
                 inventory.gpus.is_empty()
                     || inventory.gpus.iter().any(|gpu| gpu.memory_gb < gpu_memory)
-            }) {
-                return false;
-            }
+            })
+        {
+            return false;
         }
         true
     }
@@ -568,7 +568,6 @@ async fn run_on_this_machine(
     session: Arc<crate::session::SessionContext>,
     timeout: Duration,
 ) -> NodeOutcome {
-    let started = std::time::Instant::now();
     let call = Call {
         verb: verb.to_string(),
         args,
@@ -597,7 +596,6 @@ async fn run_on_this_machine(
         status: if response.is_error { "error" } else { "ok" }.to_string(),
         response: Some(response),
         message: None,
-        elapsed_ms: started.elapsed().as_millis() as u64,
     }
 }
 
@@ -1052,7 +1050,6 @@ mod tests {
             status: "ok".to_string(),
             response: Some(ToolResponse::text(text)),
             message: None,
-            elapsed_ms: 1,
         }
     }
 
@@ -1095,7 +1092,6 @@ mod tests {
                 status: "offline".to_string(),
                 response: None,
                 message: Some("last seen 2 m ago".to_string()),
-                elapsed_ms: 0,
             },
         ];
         let response = fleet_response("grep", outcomes, 8_000);

@@ -369,17 +369,16 @@ async fn run_connected(
         let client = Arc::clone(client);
         let welcome = welcome.clone();
         async move {
-            if welcome.key_epoch > client.keys.read().current().epoch() {
-                if let Err(error) = client.refresh_keys().await {
-                    log(format!("key refresh failed: {error}"));
-                }
-            }
-            if welcome.members_version != client.state_snapshot().members_version
-                || client.members.read().members.is_empty()
+            if welcome.key_epoch > client.keys.read().current().epoch()
+                && let Err(error) = client.refresh_keys().await
             {
-                if let Err(error) = client.refresh_members().await {
-                    log(format!("member refresh failed: {error}"));
-                }
+                log(format!("key refresh failed: {error}"));
+            }
+            if (welcome.members_version != client.state_snapshot().members_version
+                || client.members.read().members.is_empty())
+                && let Err(error) = client.refresh_members().await
+            {
+                log(format!("member refresh failed: {error}"));
             }
             if let Err(error) = client.refresh_inventories().await {
                 log(format!("inventory refresh failed: {error}"));
@@ -453,11 +452,10 @@ async fn run_connected(
                 if heartbeat_seq.saturating_sub(last_ack_seq) >= u64::from(HEARTBEAT_MISSES) {
                     break SessionEnd::Lost(format!("{HEARTBEAT_MISSES} heartbeats went unanswered"));
                 }
-                if let Some(deadline) = ack_deadline {
-                    if now >= deadline {
+                if let Some(deadline) = ack_deadline
+                    && now >= deadline {
                         break SessionEnd::Lost("a reliable message was not acknowledged within 15 s".to_string());
                     }
-                }
                 heartbeat_seq += 1;
                 heartbeat_sent_at = Some(now);
                 let link = client.link();
@@ -614,11 +612,11 @@ async fn handle_reliable(
         ));
         return;
     }
-    if header.from != HUB_NAME {
-        if let Err(error) = client.accept_counter(&header.from, header.n) {
-            log(format!("dropping {}: {error}", header.t));
-            return;
-        }
+    if header.from != HUB_NAME
+        && let Err(error) = client.accept_counter(&header.from, header.n)
+    {
+        log(format!("dropping {}: {error}", header.t));
+        return;
     }
     // Anything that asks the hub a question runs off the read loop: the answer arrives
     // through this very loop, so awaiting it here would deadlock until the request timed out.

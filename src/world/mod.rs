@@ -97,15 +97,6 @@ impl NetworkMode {
             Self::System => "system",
         }
     }
-
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "auto" => Some(Self::Auto),
-            "direct" => Some(Self::Direct),
-            "system" => Some(Self::System),
-            _ => None,
-        }
-    }
 }
 
 /// `~/.fastctx/world.toml`: this machine's enrollment. Its existence is what puts the local

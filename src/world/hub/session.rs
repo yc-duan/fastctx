@@ -279,27 +279,27 @@ fn enroll(
     }
     crate::world::validate_node_name(&enrollment.name)
         .map_err(|error| reject("invalid_name", error))?;
-    if let Some(existing) = hub.store.member(&enrollment.name)? {
-        if existing.node_pub != node_pub_b64 {
-            return Err(reject(
-                "node_name_taken",
-                format!(
-                    "The name \"{}\" already belongs to another member.",
-                    enrollment.name
-                ),
-            ));
-        }
+    if let Some(existing) = hub.store.member(&enrollment.name)?
+        && existing.node_pub != node_pub_b64
+    {
+        return Err(reject(
+            "node_name_taken",
+            format!(
+                "The name \"{}\" already belongs to another member.",
+                enrollment.name
+            ),
+        ));
     }
-    if let Some(existing) = hub.store.member_by_key(node_pub_b64)? {
-        if existing.name != enrollment.name {
-            return Err(reject(
-                "already_enrolled",
-                format!(
-                    "This machine's key is already enrolled as \"{}\". Run 'fastctx node unenroll' there first.",
-                    existing.name
-                ),
-            ));
-        }
+    if let Some(existing) = hub.store.member_by_key(node_pub_b64)?
+        && existing.name != enrollment.name
+    {
+        return Err(reject(
+            "already_enrolled",
+            format!(
+                "This machine's key is already enrolled as \"{}\". Run 'fastctx node unenroll' there first.",
+                existing.name
+            ),
+        ));
     }
     let now = crate::world::now_rfc3339();
     hub.store.put_member(&MemberRow {
@@ -414,7 +414,6 @@ where
             generation: peer.generation,
             tx: tx.clone(),
             cancel: cancel.clone(),
-            since: Instant::now(),
         },
     );
     if replaced {

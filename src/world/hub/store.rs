@@ -307,17 +307,6 @@ impl Store {
         })
     }
 
-    pub(crate) fn bump_meta_u64(&self, key: &str) -> Result<u64, String> {
-        self.write(|txn| {
-            let mut table = txn
-                .open_table(META)
-                .map_err(|error| store_error("cannot open meta", error))?;
-            let next = get_u64(&table, key)? + 1;
-            put_u64(&mut table, key, next)?;
-            Ok(next)
-        })
-    }
-
     // ----- members -----
 
     pub(crate) fn member(&self, name: &str) -> Result<Option<MemberRow>, String> {
@@ -728,15 +717,6 @@ impl Store {
     }
 
     // ----- inventory -----
-
-    pub(crate) fn inventory(&self, name: &str) -> Result<Option<InventoryRow>, String> {
-        self.read(|txn| {
-            let table = txn
-                .open_table(INVENTORY)
-                .map_err(|error| store_error("cannot open inventory", error))?;
-            get_json(&table, name)
-        })
-    }
 
     pub(crate) fn inventories(&self) -> Result<Vec<(String, InventoryRow)>, String> {
         self.read(|txn| {

@@ -78,12 +78,6 @@ impl Header {
         self.targets = Some(targets);
         self
     }
-
-    pub(crate) fn with_task(mut self, task: &str, step: Option<u64>) -> Self {
-        self.task = Some(task.to_string());
-        self.step = step;
-        self
-    }
 }
 
 /// One sealed message.
@@ -208,11 +202,6 @@ impl Envelope {
             .ok_or_else(|| format!("The {} message carries no signature.", header.t))?;
         let signature: Signature64 = crypto::b64_array(signature, "envelope signature")?;
         identity::verify(public_key, &header.t, &self.signed_bytes()?, &signature)
-    }
-
-    /// Serialized size in bytes, for the control-message limit.
-    pub(crate) fn wire_len(&self) -> usize {
-        self.hdr.len() + self.body.len() + self.sig.as_ref().map_or(0, String::len) + 32
     }
 
     fn signed_bytes(&self) -> Result<Vec<u8>, String> {

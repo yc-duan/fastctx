@@ -249,10 +249,11 @@ mod platform {
             let mut server = adapter.FirstDnsServerAddress;
             while !server.is_null() {
                 let entry = unsafe { &*server };
-                if let Some(address) = socket_address(entry.Address.lpSockaddr) {
-                    if !is_fake_ip(address) && !address.is_loopback() {
-                        dns.push(address);
-                    }
+                if let Some(address) = socket_address(entry.Address.lpSockaddr)
+                    && !is_fake_ip(address)
+                    && !address.is_loopback()
+                {
+                    dns.push(address);
                 }
                 server = entry.Next;
             }

@@ -17,7 +17,6 @@ use crate::world::wire::{BindingMode, Frame, Load};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -80,7 +79,6 @@ pub(crate) struct Connected {
     pub(crate) generation: u64,
     pub(crate) tx: mpsc::UnboundedSender<Frame>,
     pub(crate) cancel: CancellationToken,
-    pub(crate) since: Instant,
 }
 
 struct Pending {
@@ -99,7 +97,6 @@ pub(crate) struct Hub {
     pub(crate) data_dir: PathBuf,
     listen: String,
     tls_description: String,
-    started: Instant,
     started_at: String,
     sessions: Mutex<HashMap<String, Connected>>,
     generations: Mutex<HashMap<String, u64>>,
@@ -170,7 +167,6 @@ pub(crate) async fn run(options: HubOptions) -> Result<(), String> {
             || "plain HTTP behind a reverse proxy".to_string(),
             tls::ServerTls::describe,
         ),
-        started: Instant::now(),
         started_at: crate::world::now_rfc3339(),
         sessions: Mutex::new(HashMap::new()),
         generations: Mutex::new(HashMap::new()),
@@ -684,7 +680,6 @@ impl Hub {
         if let Ok(json) = serde_json::to_vec_pretty(&status) {
             let _ = crate::world::write_atomic(&self.data_dir.join("status.json"), &json);
         }
-        let _ = self.started;
     }
 }
 

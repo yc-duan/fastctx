@@ -9,7 +9,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 const TYPE_A: u16 = 1;
 const TYPE_AAAA: u16 = 28;
-const TYPE_CNAME: u16 = 5;
 const CLASS_IN: u16 = 1;
 
 /// Resolves `host` through `interface`'s resolvers. IPv4 answers come first; IPv6 is used
@@ -247,7 +246,7 @@ fn parse_response(packet: &[u8], expected_id: u16) -> Result<Parsed, String> {
                 bytes.copy_from_slice(data);
                 addresses.push(IpAddr::V6(Ipv6Addr::from(bytes)));
             }
-            TYPE_CNAME | _ => {}
+            _ => {}
         }
         offset += data_length;
     }

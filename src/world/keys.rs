@@ -39,6 +39,7 @@ impl WorldKey {
         SubKeys::derive(&self.key)
     }
 
+    #[cfg(test)]
     pub(crate) fn bytes(&self) -> &Key32 {
         &self.key
     }
@@ -85,10 +86,6 @@ impl KeyRing {
         Ok(Self { keys })
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-
     /// The newest epoch, used for everything sent from now on.
     pub(crate) fn current(&self) -> &WorldKey {
         self.keys.last().expect("a key ring is never empty")
@@ -104,10 +101,6 @@ impl KeyRing {
 
     pub(crate) fn epochs(&self) -> Vec<u32> {
         self.keys.iter().map(WorldKey::epoch).collect()
-    }
-
-    pub(crate) fn keys(&self) -> &[WorldKey] {
-        &self.keys
     }
 
     /// Adds an epoch learned from another member; an epoch already present must match.

@@ -50,13 +50,13 @@ impl Outbox {
         for (queued, _) in self.entries()? {
             if queued <= seq {
                 let path = self.path(queued);
-                if let Err(error) = std::fs::remove_file(&path) {
-                    if error.kind() != std::io::ErrorKind::NotFound {
-                        return Err(format!(
-                            "Cannot remove {}: {error}",
-                            crate::paths::display_path(&path)
-                        ));
-                    }
+                if let Err(error) = std::fs::remove_file(&path)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    return Err(format!(
+                        "Cannot remove {}: {error}",
+                        crate::paths::display_path(&path)
+                    ));
                 }
             }
         }

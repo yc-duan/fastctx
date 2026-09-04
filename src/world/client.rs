@@ -152,7 +152,6 @@ pub(crate) struct NodeOutcome {
     pub(crate) status: String,
     pub(crate) response: Option<ToolResponse>,
     pub(crate) message: Option<String>,
-    pub(crate) elapsed_ms: u64,
 }
 
 struct PendingRequest {
@@ -874,7 +873,6 @@ impl WorldClient {
             cwd,
             timeout_ms: tool_timeout.as_millis() as u64,
         };
-        let started = Instant::now();
         let answers = self
             .request(
                 header,
@@ -906,7 +904,6 @@ impl WorldClient {
                             .to_string(),
                             response: Some(result.response.into()),
                             message: None,
-                            elapsed_ms: result.elapsed_ms,
                         });
                     }
                 }
@@ -920,7 +917,6 @@ impl WorldClient {
                             status: status.status,
                             response: None,
                             message: Some(status.message),
-                            elapsed_ms: started.elapsed().as_millis() as u64,
                         });
                     }
                 }
@@ -937,7 +933,6 @@ impl WorldClient {
                         "Node \"{target}\" did not answer within {} s.",
                         (tool_timeout + LINK_MARGIN).as_secs()
                     )),
-                    elapsed_ms: started.elapsed().as_millis() as u64,
                 });
             }
         }

@@ -1,6 +1,5 @@
 //! HTTP CONNECT through the system or environment proxy, for the `system` network mode.
 
-use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -93,16 +92,16 @@ fn percent_decode(text: &str) -> String {
     let mut output = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() + 1 {
-            if let Some(value) = bytes
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len() + 1
+            && let Some(value) = bytes
                 .get(index + 1..index + 3)
                 .and_then(|pair| std::str::from_utf8(pair).ok())
                 .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-            {
-                output.push(value);
-                index += 3;
-                continue;
-            }
+        {
+            output.push(value);
+            index += 3;
+            continue;
         }
         output.push(bytes[index]);
         index += 1;
@@ -263,11 +262,6 @@ pub(crate) async fn connect_through(
         return Err(format!("the proxy refused CONNECT: {status_line}"));
     }
     Ok(stream)
-}
-
-/// The peer address of a proxied stream, for status lines.
-pub(crate) fn local_address(stream: &TcpStream) -> Option<SocketAddr> {
-    stream.local_addr().ok()
 }
 
 #[cfg(test)]

@@ -14,8 +14,6 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Prefix of every invite string; the digit is the invite format version.
 pub(crate) const INVITE_PREFIX: &str = "fxw1.";
-/// Default lifetime of an invite.
-pub(crate) const DEFAULT_INVITE_TTL: time::Duration = time::Duration::hours(24);
 const INVITE_FORMAT_VERSION: u32 = 1;
 
 /// A decoded invite.
@@ -177,7 +175,9 @@ impl std::fmt::Debug for Invite {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_INVITE_TTL, Invite};
+    use super::Invite;
+
+    const DEFAULT_INVITE_TTL: time::Duration = time::Duration::hours(24);
     use crate::world::identity::Fingerprint;
     use crate::world::keys::KeyRing;
 

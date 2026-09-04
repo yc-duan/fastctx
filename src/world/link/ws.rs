@@ -3,13 +3,12 @@
 
 use super::netpath::{Interface, NetworkView, pin_socket};
 use super::proxy::ProxyConfig;
-use super::tls::{Learned, Verify};
+use super::tls::Verify;
 use crate::world::wire::{BINDING_LEN, EXPORTER_LABEL, Frame};
 use crate::world::{NetworkMode, WS_PATH};
 use futures_util::{SinkExt, StreamExt};
 use rustls::pki_types::ServerName;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -78,10 +77,6 @@ impl Endpoint {
         }
     }
 
-    pub(crate) fn ip_literal(&self) -> Option<IpAddr> {
-        self.host.parse().ok()
-    }
-
     pub(crate) fn server_name(&self) -> Result<ServerName<'static>, String> {
         ServerName::try_from(self.host.clone())
             .map_err(|_| format!("\"{}\" is not a valid TLS server name.", self.host))
@@ -104,14 +99,12 @@ pub(crate) enum Path {
     Direct {
         interface: String,
         local: SocketAddr,
-        remote: SocketAddr,
         resolvers: Vec<IpAddr>,
         tunnels: Vec<String>,
     },
     System {
         proxy: Option<String>,
         local: Option<SocketAddr>,
-        remote: Option<SocketAddr>,
     },
 }
 
@@ -163,7 +156,6 @@ pub(crate) struct Dialed {
     pub(crate) socket: Socket,
     pub(crate) binding: Vec<u8>,
     pub(crate) path: Path,
-    pub(crate) learned: Option<Learned>,
     pub(crate) endpoint: Endpoint,
 }
 
@@ -252,7 +244,6 @@ pub(crate) async fn dial_direct(
         let path = Path::Direct {
             interface: interface.name.clone(),
             local,
-            remote,
             resolvers: interface.resolvers(),
             tunnels: view.tunnels(),
         };
@@ -303,7 +294,6 @@ pub(crate) async fn dial_system(
     let path = Path::System {
         proxy: proxy_text,
         local: stream.local_addr().ok(),
-        remote: stream.peer_addr().ok(),
     };
     upgrade(endpoint, verify, stream, path).await
 }
@@ -314,10 +304,6 @@ async fn upgrade(
     stream: TcpStream,
     path: Path,
 ) -> Result<Dialed, String> {
-    let learned_slot = match verify {
-        Verify::Learn(slot) => Some(Arc::clone(slot)),
-        _ => None,
-    };
     let config = super::tls::client_config(verify)?;
     let connector = TlsConnector::from(config);
     let tls = tokio::time::timeout(
@@ -344,12 +330,10 @@ async fn upgrade(
     .map_err(|error| {
         format!("the hub at {endpoint} did not accept the WebSocket upgrade: {error}")
     })?;
-    let learned = learned_slot.and_then(|slot| slot.lock().clone());
     Ok(Dialed {
         socket,
         binding,
         path,
-        learned,
         endpoint: endpoint.clone(),
     })
 }
