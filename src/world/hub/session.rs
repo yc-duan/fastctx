@@ -544,7 +544,7 @@ where
                                 Ok(()) => {}
                                 Err(error) => {
                                     log(format!("\"{name}\": reliable message {seq} rejected: {error}"));
-                                    hub.send_hub_error(&name, None, "rejected", &error);
+                                    hub.send_hub_error(&name, id, "rejected", &error);
                                 }
                             }
                             recv_seq = seq;
