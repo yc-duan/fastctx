@@ -505,7 +505,12 @@ where
         let deadline = tokio::time::sleep_until((last_heartbeat + HEARTBEAT_TIMEOUT).into());
         tokio::pin!(deadline);
         tokio::select! {
-            () = cancel.cancelled() => break "replaced".to_string(),
+            // The same token cuts a connection that a newer one replaced and one whose member
+            // was just revoked; the member row says which of the two the audit log should read.
+            () = cancel.cancelled() => break match hub.store.member(&name) {
+                Ok(Some(row)) if row.is_revoked() => "revoked".to_string(),
+                _ => "replaced".to_string(),
+            },
             () = hub.shutdown.cancelled() => {
                 let _ = link.send(&Frame::Bye { reason: "hub shutting down".to_string() }).await;
                 break "hub_shutdown".to_string();
