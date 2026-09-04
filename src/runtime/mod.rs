@@ -209,7 +209,7 @@ fn endpoint_named(environment: &SessionEnvironment, prefix: &str) -> Result<Loca
             "Cannot determine the user home directory for the FastCtx control center. Set HOME or USERPROFILE and retry."
                 .to_string()
         })?;
-    let home_hash = short_hash(&crate::session::native_bytes(&home), 12);
+    let home_hash = short_hash(&endpoint_home_key(&home), 12);
     let build_id = effective_build_id(environment);
     let id = format!("{prefix}-{home_hash}-{build_id}");
     let preferred_runtime_directory = crate::edit::private_storage::control_center_directory();
@@ -253,6 +253,44 @@ fn select_unix_runtime_directory(
         "The private control-center socket path is too long ({fallback_length} bytes): {}",
         crate::paths::display_path(&fallback.join(format!("{id}.sock")))
     ))
+}
+
+/// The bytes that identify a home directory in an endpoint name.
+///
+/// Shells hand the same directory over in different spellings — Git Bash `C:/Users/x`,
+/// PowerShell `C:\Users\x`, a trailing separator from a profile script — and hashing the raw
+/// value would give each spelling its own control center, so a node daemon started from one
+/// shell would be invisible to a session started from another. The canonical path is the
+/// directory's identity; the lexical form is the fallback when it cannot be resolved.
+fn endpoint_home_key(home: &std::ffi::OsStr) -> Vec<u8> {
+    match std::fs::canonicalize(home) {
+        Ok(path) => crate::session::native_bytes(path.as_os_str()),
+        Err(_) => crate::session::native_bytes(&lexical_home(home)),
+    }
+}
+
+fn lexical_home(home: &std::ffi::OsStr) -> std::ffi::OsString {
+    let Some(text) = home.to_str() else {
+        return home.to_os_string();
+    };
+    let mut normalized: String = if cfg!(windows) {
+        text.replace('/', "\\")
+    } else {
+        text.to_string()
+    };
+    let separator = if cfg!(windows) { '\\' } else { '/' };
+    while normalized.len() > 1 && normalized.ends_with(separator) {
+        normalized.pop();
+    }
+    if cfg!(windows) {
+        let mut characters = normalized.chars();
+        if let (Some(drive), Some(':')) = (characters.next(), characters.next())
+            && drive.is_ascii_alphabetic()
+        {
+            normalized.replace_range(..1, &drive.to_ascii_uppercase().to_string());
+        }
+    }
+    std::ffi::OsString::from(normalized)
 }
 
 fn short_hash(bytes: &[u8], characters: usize) -> String {
@@ -857,6 +895,35 @@ mod tests {
     fn endpoint_hashes_are_stable_and_separate_inputs() {
         assert_eq!(short_hash(b"home-a", 12), short_hash(b"home-a", 12));
         assert_ne!(short_hash(b"home-a", 12), short_hash(b"home-b", 12));
+    }
+
+    #[test]
+    fn one_home_directory_has_one_endpoint_whatever_spelling_the_shell_uses() {
+        use super::{endpoint_home_key, lexical_home};
+        use std::ffi::OsStr;
+
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().to_str().unwrap().to_string();
+        let mut spellings = vec![real.clone(), format!("{real}{}", std::path::MAIN_SEPARATOR)];
+        if cfg!(windows) {
+            spellings.push(real.replace('\\', "/"));
+            let mut lowered = real.clone();
+            lowered.replace_range(..1, &real[..1].to_ascii_lowercase());
+            spellings.push(lowered);
+        }
+        let keys = spellings
+            .iter()
+            .map(|spelling| endpoint_home_key(OsStr::new(spelling)))
+            .collect::<Vec<_>>();
+        assert!(keys.iter().all(|key| *key == keys[0]), "{spellings:?}");
+
+        // A directory that does not exist still normalizes lexically.
+        let missing = if cfg!(windows) {
+            ("c:/no/such/dir/", "C:\\no\\such\\dir")
+        } else {
+            ("/no/such/dir/", "/no/such/dir")
+        };
+        assert_eq!(lexical_home(OsStr::new(missing.0)), OsStr::new(missing.1));
     }
 
     #[cfg(unix)]
