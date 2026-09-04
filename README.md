@@ -391,6 +391,8 @@ The FastCtx MCP server inherits the local permissions of the host process.
 
 The startup check sends the FastCtx version, normal HTTPS request metadata, and npm's standard registry request; it never sends repository paths, job data, or file contents. Background jobs persist their command, working directory, retained output prefix, truncation state, and exit status only in the current user's private `~/.fastctx/jobs/` directory. Proxy-to-control-center traffic stays on an owner-private Unix-domain socket or Windows named pipe. FastCtx does not upload this data. Bash commands can access the network according to the command itself. Prebuilt binaries include the PDF engine.
 
+The table above describes a machine that has not been enrolled in a World, which is every machine until you enroll one yourself. Enrolling is a deliberate act — `fastctx node enroll` with an invite you created — and it adds exactly one outbound connection, made by the `fastctx node` daemon to a hub you run and own. `fastctx serve` still makes no network requests of its own. The hub routes on plaintext headers and cannot read what members send each other: message bodies are encrypted under a World key the hub never holds. There is no FastCtx server and no vendor server anywhere on this path, and nothing is uploaded that you did not ask for — a remote tool call carries the arguments you passed and returns the output that call produced.
+
 The MCP server runs outside the host filesystem sandbox. Use an approval mode when every write and command execution should be reviewed:
 
 ```toml
