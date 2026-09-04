@@ -32,6 +32,7 @@ pub(crate) mod kind {
     pub(crate) const EVENTS_RESULT: &str = "events_result";
     pub(crate) const KEYS_GET: &str = "keys_get";
     pub(crate) const KEYS_RESULT: &str = "keys_result";
+    pub(crate) const GRANTS_GET: &str = "grants_get";
     pub(crate) const REVOKE: &str = "revoke";
     pub(crate) const HUB_RESULT: &str = "hub_result";
     pub(crate) const HUB_ERROR: &str = "hub_error";
@@ -63,6 +64,7 @@ pub(crate) fn plaintext_allowed(t: &str, from: &str) -> bool {
             | kind::MEMBERS_GET
             | kind::EVENTS_GET
             | kind::KEYS_GET
+            | kind::GRANTS_GET
             | kind::REVOKE
             | kind::CANCEL
     )

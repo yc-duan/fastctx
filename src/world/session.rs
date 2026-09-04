@@ -384,6 +384,16 @@ async fn run_connected(
             {
                 log(format!("member refresh failed: {error}"));
             }
+            if welcome.grant_version != client.state_snapshot().grant_version {
+                match client.refresh_grants().await {
+                    Ok(rejected) if rejected.is_empty() => {}
+                    Ok(rejected) => log(format!(
+                        "grants ignored because they did not verify: {}",
+                        rejected.join("; ")
+                    )),
+                    Err(error) => log(format!("grant refresh failed: {error}")),
+                }
+            }
             if let Err(error) = client.refresh_inventories().await {
                 log(format!("inventory refresh failed: {error}"));
             }

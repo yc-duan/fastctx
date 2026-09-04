@@ -298,6 +298,18 @@ fn answer_hub_request(
                 &messages::EventsResult { events, latest },
             );
         }
+        kind::GRANTS_GET => {
+            // The grant set also arrives unasked as a broadcast; this answers a member that
+            // noticed it is behind, so a broadcast lost to a full outbox repairs itself.
+            let version = hub.store.meta_u64(super::store::meta::GRANT_VERSION)?;
+            let grants = hub.store.grants().unwrap_or_default();
+            hub.answer(
+                &peer.name,
+                id,
+                kind::GRANT_SYNC,
+                &messages::GrantSync { version, grants },
+            );
+        }
         kind::KEYS_GET => {
             let opened = env.open(None)?;
             let body: messages::KeysGet = messages::decode(&opened.body, &header.t)?;

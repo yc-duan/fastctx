@@ -652,6 +652,33 @@ impl WorldClient {
         messages::decode(&answer.body, kind::EVENTS_RESULT)
     }
 
+    /// Asks the hub for the grant set in force and applies it.
+    ///
+    /// Grants also arrive unasked, as a reliable broadcast. This is the repair path for the two
+    /// ways that can fail to land: a member whose outbox filled while it was away, and a member
+    /// that reconnects to a hub whose grant version has moved on. Without it a narrowed grant can
+    /// stay unapplied on exactly the machine most likely to need it — the one that was gone.
+    pub(crate) async fn refresh_grants(&self) -> Result<Vec<String>, String> {
+        let header = Header::new(kind::GRANTS_GET, &self.name(), HUB_NAME, 0);
+        let answers = self
+            .request(
+                header,
+                &serde_json::json!({}),
+                false,
+                false,
+                1,
+                HUB_REQUEST_TIMEOUT,
+            )
+            .await?;
+        let answer = answers
+            .into_iter()
+            .next()
+            .ok_or_else(|| "the hub did not answer grants_get".to_string())?;
+        expect_kind(&answer, kind::GRANT_SYNC)?;
+        let sync: messages::GrantSync = messages::decode(&answer.body, kind::GRANT_SYNC)?;
+        self.apply_grant_sync(sync)
+    }
+
     /// Applies a `grant_sync` from the hub after verifying every grant.
     pub(crate) fn apply_grant_sync(
         &self,
