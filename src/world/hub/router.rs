@@ -36,6 +36,13 @@ pub(crate) fn handle_request(
 ) -> Result<(), String> {
     let header = env.header()?;
     check_author(peer, &header)?;
+    // A cancel withdraws a request the hub already holds, and it names that request inside its
+    // own header, so it carries no transport id of its own: demanding one here would reject
+    // every cancel and leave the call running on the target long after the caller gave up.
+    if header.t == kind::CANCEL {
+        hub.cancel_pending(&peer.name, header.id);
+        return Ok(());
+    }
     if header.to == HUB_NAME {
         let id =
             id.ok_or_else(|| format!("A {} request to the hub needs a transport id.", header.t))?;
@@ -46,10 +53,6 @@ pub(crate) fn handle_request(
             let id =
                 id.ok_or_else(|| "A call_result needs the transport id it answers.".to_string())?;
             hub.complete_pending(id, &peer.name, env);
-            Ok(())
-        }
-        kind::CANCEL => {
-            hub.cancel_pending(&peer.name, header.id);
             Ok(())
         }
         _ => {
