@@ -30,18 +30,27 @@ pdf = ["dep:pdfium-render"]
 [dependencies]
 base64 = "0.22.1"
 bpe-openai = "0.3.0"
+bytes = "1.12.1"
+chacha20poly1305 = "0.11.0"
 chardetng = "1.0.0"
 clap = { version = "4.5.53", features = ["derive"] }
 crossterm = "0.29.0"
 dunce = "1.0.5"
+ed25519-dalek = "3.0.0"
 encoding_rs = "0.8.35"
 flate2 = "1.1.5"
 fs2 = "0.4.3"
+getrandom = "0.4.3"
 globset = "0.4.18"
 grep-matcher = "0.1.8"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.16"
 hex = "0.4.3"
+hkdf = "0.12"
+hmac = "0.12"
+http-body-util = "0.1.5"
+hyper = { version = "1.11.1", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1.20", default-features = false, features = ["tokio"] }
 ignore = "0.4.28"
 image = { version = "0.25.8", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 jsonc-parser = { version = "0.33.1", features = ["serde_json"] }
@@ -50,25 +59,38 @@ pdfium-render = { version = "=0.9.2", optional = true, default-features = false,
 process-wrap = { version = "9.1.0", default-features = false, features = ["std", "job-object", "process-session"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29"] }
 rayon = "1.11.0"
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
+redb = "2.6.3"
 regex = "1.12.2"
 regex-syntax = "0.8.11"
 rmcp = { version = "=2.2.0", features = ["transport-io"] }
+# The TLS stack stays on the `ring` provider: aws-lc-rs needs cmake and NASM, which the only
+# local compile gate (x64 Windows) does not have. Every rustls-family crate below opts out of
+# its default provider for the same reason.
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "logging", "std"] }
+rustls-native-certs = "0.8.4"
+rustls-pki-types = "1.15.1"
 schemars = "1.2.1"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
+socket2 = { version = "0.6.5", features = ["all"] }
 strsim = "0.11.1"
 sys-locale = "0.3.2"
 tar = "0.4.44"
 time = { version = "0.3.53", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1.48.0", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "logging"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
 toml_edit = { version = "0.22.27", features = ["serde"] }
 tempfile = "3.23.0"
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
 url = "2.5.8"
 walkdir = "2.5.0"
+webpki-roots = "1.0.9"
+x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 yaml-rust2 = "0.11.0"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 
@@ -76,7 +98,7 @@ zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 libc = "0.2.186"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Threading"] }
 
 [build-dependencies]
 flate2 = "1.1.5"
