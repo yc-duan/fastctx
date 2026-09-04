@@ -14,9 +14,13 @@ use std::time::{Duration, Instant};
 /// No promise is bounded here — every promptness claim in this file has its own constant —
 /// so widening this only delays a failure report, while narrowing it reports a busy machine
 /// as a defect. The chain it waits on is long: a cold control center from an empty HOME, then
-/// a shell fixture that publishes its own PID. On the Windows ARM64 runner, under the suite's
-/// own parallel load, 30 s was not enough for that (observed 2026-09-04 in CI).
-const PROCESS_DEADLINE: Duration = Duration::from_secs(45);
+/// a shell fixture that starts Windows PowerShell to publish its own PID.
+///
+/// The Windows ARM64 runner missed 30 s and then 45 s (observed 2026-09-04 in CI); no other
+/// target has ever come close. Whether that machine is merely that slow to start PowerShell
+/// cold is not yet settled — `wait_for_pid_file` now reports what the server had answered and
+/// what the fixture directory held, so the next miss says which it is.
+const PROCESS_DEADLINE: Duration = Duration::from_secs(90);
 const IDLE_PROBE: Duration = Duration::from_millis(1_500);
 /// Upper bound on the promptness this suite claims for an EOF-triggered shutdown.
 ///
@@ -176,7 +180,8 @@ fn parent_watch_ends_foreground_work_but_preserves_detached_background_jobs() {
             }
         }),
     );
-    let foreground_pid = wait_for_pid_file(&pid_path, PROCESS_DEADLINE);
+    let foreground_pid =
+        wait_for_pid_file(&pid_path, PROCESS_DEADLINE, Some(&foreground.response_path));
     let foreground_process = ProcessProbe::capture(foreground_pid);
     release_parent_and_wait_for_server(&mut foreground);
     wait_for_process_exit(&foreground_process, PROCESS_DEADLINE);
@@ -243,7 +248,7 @@ fn stdin_eof_ends_inflight_foreground_work_promptly() {
             }
         }),
     );
-    let foreground_pid = wait_for_pid_file(&pid_path, PROCESS_DEADLINE);
+    let foreground_pid = wait_for_pid_file(&pid_path, PROCESS_DEADLINE, Some(&response_path));
     let foreground = ProcessProbe::capture(foreground_pid);
 
     let eof_started = Instant::now();
@@ -438,7 +443,7 @@ fn spawn_controlled_parent(root: &Path, label: &str, enable_shell: bool) -> Cont
         .stderr(Stdio::null());
     let helper = helper.spawn().unwrap();
     let helper_pid = helper.id();
-    let pid = wait_for_pid_file(&pid_path, PROCESS_DEADLINE);
+    let pid = wait_for_pid_file(&pid_path, PROCESS_DEADLINE, None);
     assert_eq!(
         direct_parent_pid(pid),
         Some(helper_pid),
@@ -585,7 +590,7 @@ fn spawn_through_short_lived_parent(
     }
     let mut helper = helper.spawn().unwrap();
     let helper_pid = helper.id();
-    let pid = wait_for_pid_file(&pid_path, PROCESS_DEADLINE);
+    let pid = wait_for_pid_file(&pid_path, PROCESS_DEADLINE, None);
     assert_eq!(
         direct_parent_pid(pid),
         Some(helper_pid),
@@ -692,7 +697,12 @@ fn write_initialize(writer: &mut File) {
     writer.flush().unwrap();
 }
 
-fn wait_for_pid_file(path: &Path, timeout: Duration) -> u32 {
+/// Waits for a process this suite started to publish its PID.
+///
+/// `transcript` is the file the server's answers were written to, when the caller kept one. A
+/// timeout here is otherwise mute — it cannot distinguish "the machine is slow" from "the call
+/// came back as an error" — and this suite runs on runners no developer can reproduce.
+fn wait_for_pid_file(path: &Path, timeout: Duration, transcript: Option<&Path>) -> u32 {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if let Ok(value) = std::fs::read_to_string(path)
@@ -702,7 +712,27 @@ fn wait_for_pid_file(path: &Path, timeout: Duration) -> u32 {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    panic!("fixture parent did not publish a server PID");
+    let answers = transcript
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|text| text.chars().take(4000).collect::<String>())
+        .unwrap_or_else(|| "<no transcript kept>".to_string());
+    // The listing separates "the command never started" from "it started and wrote nothing":
+    // the fixture script is written before the call, its output file only by the command.
+    let listing = path
+        .parent()
+        .and_then(|parent| std::fs::read_dir(parent).ok())
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|| "<unreadable>".to_string());
+    panic!(
+        "no PID at {} within {timeout:?}; that directory holds [{listing}]; the server answered:\n{answers}",
+        path.display()
+    );
 }
 
 fn wait_for_nonempty_file(path: &Path, timeout: Duration) {
