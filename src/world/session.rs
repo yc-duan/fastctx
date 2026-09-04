@@ -204,12 +204,16 @@ async fn connect_once(
         link.last_error = None;
         link.last_contact = Some(Instant::now());
         if let link::Path::Direct {
-            interface, tunnels, ..
+            interface,
+            pinned,
+            tunnels,
+            ..
         } = &path
         {
-            link.interface = Some(interface.clone());
+            link.interface = pinned.then(|| interface.clone());
             link.tunnels = tunnels.clone();
         } else {
+            link.interface = None;
             link.tunnels = Vec::new();
         }
         if let Ok(offset) = super::parse_rfc3339(&welcome.hub_time) {

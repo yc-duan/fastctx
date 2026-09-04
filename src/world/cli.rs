@@ -793,13 +793,10 @@ fn print_node_status(status: &super::node::admin::NodeStatus, source: &str) {
     if let Some(path) = &link.path {
         println!("Network: {path}");
     }
-    if !link.tunnels.is_empty() {
+    if let (false, Some(interface)) = (link.tunnels.is_empty(), link.interface.as_deref()) {
         println!(
-            "A TUN adapter is active ({}); the hub link is pinned to {} and bypasses it.",
-            link.tunnels.join(", "),
-            link.interface
-                .as_deref()
-                .unwrap_or("the physical interface")
+            "A TUN adapter is active ({}); the hub link is pinned to {interface} and bypasses it.",
+            link.tunnels.join(", ")
         );
     }
     println!(

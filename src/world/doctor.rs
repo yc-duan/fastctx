@@ -178,15 +178,12 @@ fn link_checks(status: &NodeStatus) -> Vec<DoctorCheck> {
             },
         ),
     });
-    if !link.tunnels.is_empty() {
+    if let (false, Some(interface)) = (link.tunnels.is_empty(), link.interface.as_deref()) {
         checks.push(DoctorCheck::info(
             "World network path",
             format!(
-                "A TUN adapter is active ({}); the hub link is pinned to {} and bypasses it.",
-                link.tunnels.join(", "),
-                link.interface
-                    .as_deref()
-                    .unwrap_or("the physical interface")
+                "A TUN adapter is active ({}); the hub link is pinned to {interface} and bypasses it.",
+                link.tunnels.join(", ")
             ),
         ));
     } else if let Some(path) = &link.path {

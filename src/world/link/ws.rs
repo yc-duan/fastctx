@@ -98,6 +98,9 @@ impl std::fmt::Display for Endpoint {
 pub(crate) enum Path {
     Direct {
         interface: String,
+        /// Whether the socket was actually pinned to `interface`. A loopback hub is dialled
+        /// unpinned; see `dial_direct`.
+        pinned: bool,
         local: SocketAddr,
         resolvers: Vec<IpAddr>,
         tunnels: Vec<String>,
@@ -118,6 +121,11 @@ impl Path {
 
     pub(crate) fn describe(&self) -> String {
         match self {
+            Self::Direct {
+                pinned: false,
+                local,
+                ..
+            } => format!("direct to loopback ({})", local.ip()),
             Self::Direct {
                 interface,
                 local,
@@ -211,7 +219,11 @@ pub(crate) async fn dial_direct(
     let mut last_error = String::new();
     for address in addresses {
         let ipv6 = address.is_ipv6();
-        if interface.local_address(ipv6).is_none() {
+        // A hub on this machine's loopback cannot be reached through a physical interface, and
+        // no tunnel or proxy can capture loopback traffic in the first place, so `direct` dials
+        // it unpinned instead of failing with "the requested address is not valid".
+        let pinned = !address.is_loopback();
+        if pinned && interface.local_address(ipv6).is_none() {
             continue;
         }
         let socket = if ipv6 {
@@ -220,7 +232,9 @@ pub(crate) async fn dial_direct(
             tokio::net::TcpSocket::new_v4()
         }
         .map_err(|error| format!("cannot create a socket: {error}"))?;
-        pin_socket(&socket2::SockRef::from(&socket), interface, ipv6)?;
+        if pinned {
+            pin_socket(&socket2::SockRef::from(&socket), interface, ipv6)?;
+        }
         let remote = SocketAddr::new(address, endpoint.port);
         let stream = match tokio::time::timeout(CONNECT_TIMEOUT, socket.connect(remote)).await {
             Ok(Ok(stream)) => stream,
@@ -243,6 +257,7 @@ pub(crate) async fn dial_direct(
         let local = stream.local_addr().map_err(|error| error.to_string())?;
         let path = Path::Direct {
             interface: interface.name.clone(),
+            pinned,
             local,
             resolvers: interface.resolvers(),
             tunnels: view.tunnels(),
