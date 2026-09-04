@@ -29,6 +29,11 @@ const MAX_REPLACE_OPERATIONS: usize = 8;
 pub struct ServerOptions {
     /// Validated tool names to publish.
     pub tools: EnabledTools,
+    /// Publish the World-mode surface: this machine is enrolled in a World, so file tools and
+    /// `run` take a `node` and the machine map is published. Decided by the proxy from the
+    /// existence of `~/.fastctx/world.toml`, never from the network.
+    #[serde(default)]
+    pub world: bool,
 }
 
 impl ServerOptions {
@@ -36,6 +41,15 @@ impl ServerOptions {
     pub const fn all() -> Self {
         Self {
             tools: EnabledTools::all(),
+            world: false,
+        }
+    }
+
+    /// The local, non-World surface for one enabled set.
+    pub const fn local(tools: EnabledTools) -> Self {
+        Self {
+            tools,
+            world: false,
         }
     }
 }
@@ -53,6 +67,9 @@ pub struct FastCtxServer {
     pub(crate) replace_permits: Arc<Semaphore>,
     pub(crate) session: Arc<SessionContext>,
     pub(crate) activity: Arc<crate::runtime::activity::RuntimeActivity>,
+    /// The World client when this engine runs inside an enrolled node daemon; `None` on an
+    /// unenrolled machine or in the degraded plain control center.
+    pub(crate) world: Option<Arc<crate::world::client::WorldClient>>,
 }
 
 /// Expensive executors and process-wide admission gates shared by every control-center session.
@@ -64,6 +81,7 @@ pub struct SharedRuntime {
     replace: ReplaceService,
     replace_permits: Arc<Semaphore>,
     activity: Arc<crate::runtime::activity::RuntimeActivity>,
+    world: Option<Arc<crate::world::client::WorldClient>>,
 }
 
 impl SharedRuntime {
@@ -72,12 +90,14 @@ impl SharedRuntime {
         Self::with_activity(
             grep_glob_executor,
             crate::runtime::activity::RuntimeActivity::new(),
+            None,
         )
     }
 
     pub(crate) fn with_activity(
         grep_glob_executor: Arc<GrepGlobExecutor>,
         activity: Arc<crate::runtime::activity::RuntimeActivity>,
+        world: Option<Arc<crate::world::client::WorldClient>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             file_permits: Arc::new(Semaphore::new(MAX_FILE_OPERATIONS)),
@@ -86,6 +106,7 @@ impl SharedRuntime {
             replace: ReplaceService::new(),
             replace_permits: Arc::new(Semaphore::new(MAX_REPLACE_OPERATIONS)),
             activity,
+            world,
         })
     }
 }
@@ -182,6 +203,7 @@ impl FastCtxServer {
             shell_permits: Arc::clone(&runtime.shell_permits),
             replace_permits: Arc::clone(&runtime.replace_permits),
             activity: Arc::clone(&runtime.activity),
+            world: runtime.world.clone(),
             session,
         }
     }

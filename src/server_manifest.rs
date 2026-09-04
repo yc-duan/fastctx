@@ -383,8 +383,8 @@ mod tests {
                     })
                     .collect::<Vec<_>>();
                 let enabled = EnabledTools::from_names(names.clone()).unwrap();
-                let tools = FastCtxServer::with_options(ServerOptions { tools: enabled })
-                    .tool_definitions();
+                let tools =
+                    FastCtxServer::with_options(ServerOptions::local(enabled)).tool_definitions();
                 ToolManifest::validate(&tools, enabled).unwrap();
                 assert_eq!(
                     tools
@@ -510,7 +510,7 @@ mod tests {
     }
 
     fn published_tools(enabled: EnabledTools) -> Vec<rmcp::model::Tool> {
-        FastCtxServer::with_options(ServerOptions { tools: enabled }).tool_definitions()
+        FastCtxServer::with_options(ServerOptions::local(enabled)).tool_definitions()
     }
 
     /// One legal enabled set with the model-visible prose and identifier vocabulary it

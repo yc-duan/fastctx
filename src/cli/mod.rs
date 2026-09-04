@@ -103,6 +103,16 @@ enum Command {
         #[command(subcommand)]
         command: crate::world::cli::HubCommand,
     },
+    /// Create a World, invite machines, and look at it.
+    World {
+        #[command(subcommand)]
+        command: crate::world::cli::WorldCommand,
+    },
+    /// Enroll this machine in a World and manage its node service.
+    Node {
+        #[command(subcommand)]
+        command: crate::world::cli::NodeCommand,
+    },
     /// Internal Unix detach bootstrap.
     #[cfg(unix)]
     #[command(hide = true)]
@@ -197,7 +207,12 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
                 None if enable_shell => EnabledTools::all(),
                 None => EnabledTools::files(),
             };
-            run_server_with_options(ServerOptions { tools }).await
+            // World mode is a file-existence check on this machine's enrollment, never a
+            // network probe: an unenrolled machine's proxy stays byte-for-byte the 1.0 one.
+            let world = ControlPaths::discover()
+                .map(|paths| crate::world::is_enrolled(&paths))
+                .unwrap_or(false);
+            run_server_with_options(ServerOptions { tools, world }).await
         }
         Some(Command::Ui) => {
             require_tty()?;
@@ -220,6 +235,8 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         Some(Command::Lang { code }) => run_lang(&code),
         Some(Command::Jobs { command }) => run_jobs(command),
         Some(Command::Hub { command }) => crate::world::cli::run_hub(command).await,
+        Some(Command::World { command }) => crate::world::cli::run_world(command).await,
+        Some(Command::Node { command }) => crate::world::cli::run_node(command).await,
         #[cfg(unix)]
         Some(Command::JobBootstrap) => {
             crate::shell::jobs::run_bootstrap_entry()?;

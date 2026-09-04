@@ -20,6 +20,10 @@ pub(crate) struct Handshake {
     /// The host application this session belongs to, when the proxy could identify it. The control
     /// center keeps its runtime warm while any named host is still running.
     pub(crate) host: Option<ProcessIdentity>,
+    /// Not a session: the node daemon asking a plain control center to shut down so it can host
+    /// the endpoint itself. Sessions on the retiring center reconnect and land on the daemon.
+    #[serde(default)]
+    pub(crate) retire: bool,
 }
 
 impl Handshake {
@@ -33,6 +37,17 @@ impl Handshake {
             options,
             environment,
             host,
+            retire: false,
+        }
+    }
+
+    pub(crate) fn retire(environment: SessionEnvironment) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            options: ServerOptions::default(),
+            environment,
+            host: None,
+            retire: true,
         }
     }
 
@@ -273,9 +288,7 @@ mod tests {
     async fn handshake_is_framed_without_consuming_following_mcp_bytes() {
         let (mut client, mut server) = tokio::io::duplex(64 * 1024);
         let handshake = Handshake::new(
-            ServerOptions {
-                tools: EnabledTools::all(),
-            },
+            ServerOptions::local(EnabledTools::all()),
             SessionEnvironment::new(
                 std::env::current_dir().unwrap(),
                 vec![(OsString::from("PATH"), OsString::from("sentinel"))],

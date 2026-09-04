@@ -17,15 +17,22 @@
 //! - `surface`, `cli`: the World-mode tool surface and the control commands.
 
 pub mod cli;
+pub(crate) mod client;
 pub(crate) mod crypto;
+pub(crate) mod enroll;
 pub(crate) mod envelope;
 pub(crate) mod grant;
 pub(crate) mod hub;
 pub(crate) mod identity;
 pub(crate) mod invite;
 pub(crate) mod keys;
+pub(crate) mod link;
 pub(crate) mod members;
 pub(crate) mod messages;
+pub(crate) mod node;
+pub(crate) mod outbox;
+pub(crate) mod session;
+pub(crate) mod state;
 pub(crate) mod wire;
 
 use crate::control::paths::ControlPaths;

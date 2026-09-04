@@ -3,7 +3,7 @@
 pub(crate) mod activity;
 mod hosts;
 mod journal;
-mod local_ipc;
+pub(crate) mod local_ipc;
 mod protocol;
 mod session;
 #[cfg(windows)]
@@ -41,6 +41,8 @@ const ACCEPT_RETRY: Duration = Duration::from_secs(1);
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60);
 const SERVICE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long a node daemon waits for a retiring control center to release the endpoint.
+const TAKEOVER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Backstop for a closing proxy waiting on answers the control center already owes. A session that
 /// ends normally never reaches it: the control center closes the connection once it has answered.
 const RESPONSE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -120,7 +122,7 @@ async fn start_in_process(
     host: Option<ProcessIdentity>,
 ) -> Result<BoxedStream, String> {
     let (proxy_side, engine_side) = tokio::io::duplex(IN_PROCESS_BUFFER_BYTES);
-    let state = HostState::new();
+    let state = HostState::new(None, false);
     let connection = state
         .activity
         .try_connection()
@@ -184,6 +186,17 @@ async fn acquire_startup_lock(file: &File, path: &Path) -> Result<(), String> {
 }
 
 fn endpoint_for(environment: &SessionEnvironment) -> Result<LocalEndpoint, String> {
+    endpoint_named(environment, "fastctx-engine")
+}
+
+/// The node daemon's local admin endpoint for the same user and build.
+pub(crate) fn node_admin_endpoint(
+    environment: &SessionEnvironment,
+) -> Result<LocalEndpoint, String> {
+    endpoint_named(environment, "fastctx-node")
+}
+
+fn endpoint_named(environment: &SessionEnvironment, prefix: &str) -> Result<LocalEndpoint, String> {
     let home = environment
         .var_os("HOME")
         .filter(|value| !value.is_empty())
@@ -198,7 +211,7 @@ fn endpoint_for(environment: &SessionEnvironment) -> Result<LocalEndpoint, Strin
         })?;
     let home_hash = short_hash(&crate::session::native_bytes(&home), 12);
     let build_id = effective_build_id(environment);
-    let id = format!("fastctx-engine-{home_hash}-{build_id}");
+    let id = format!("{prefix}-{home_hash}-{build_id}");
     let preferred_runtime_directory = crate::edit::private_storage::control_center_directory();
     #[cfg(unix)]
     let runtime_directory = select_unix_runtime_directory(
@@ -343,15 +356,22 @@ struct HostState {
     control_paths: OnceCell<ControlPaths>,
     activity: Arc<activity::RuntimeActivity>,
     hosts: Arc<HostRegistry>,
+    /// The World client when the node daemon hosts this control center.
+    world: Option<Arc<crate::world::client::WorldClient>>,
+    /// Whether a `retire` handshake may shut this host down. The node daemon's engine is
+    /// managed by the service manager and never steps aside on request.
+    retirable: bool,
 }
 
 impl HostState {
-    fn new() -> Arc<Self> {
+    fn new(world: Option<Arc<crate::world::client::WorldClient>>, retirable: bool) -> Arc<Self> {
         Arc::new(Self {
             runtime: OnceCell::new(),
             control_paths: OnceCell::new(),
             activity: activity::RuntimeActivity::new(),
             hosts: Arc::new(HostRegistry::new()),
+            world,
+            retirable,
         })
     }
 
@@ -372,6 +392,7 @@ impl HostState {
                 Ok::<_, String>(SharedRuntime::with_activity(
                     executor,
                     Arc::clone(&self.activity),
+                    self.world.clone(),
                 ))
             })
             .await?;
@@ -380,12 +401,53 @@ impl HostState {
     }
 }
 
+/// How a control center is hosted: as the ordinary detached process, or inside the node daemon.
+pub(crate) struct EngineHostOptions {
+    pub(crate) environment: SessionEnvironment,
+    pub(crate) world: Option<Arc<crate::world::client::WorldClient>>,
+    pub(crate) shutdown: CancellationToken,
+    /// Ask a control center already holding the endpoint to retire, then take its place.
+    pub(crate) take_over: bool,
+    /// Exit after this much idleness; `None` never exits on idleness.
+    pub(crate) idle_timeout: Option<Duration>,
+    pub(crate) maintenance_interval: Option<Duration>,
+}
+
 /// Final detached control-center entry point.
 pub(crate) async fn run_host_entry(
     idle_timeout_ms: Option<u64>,
     maintenance_interval_ms: Option<u64>,
 ) -> Result<(), String> {
     let environment = SessionEnvironment::capture()?;
+    let idle_timeout = idle_timeout_ms
+        .or_else(|| duration_override(&environment, "FASTCTX_TEST_RUNTIME_IDLE_MS"))
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_IDLE_TIMEOUT);
+    let maintenance_interval = maintenance_interval_ms
+        .or_else(|| duration_override(&environment, "FASTCTX_TEST_RUNTIME_MAINTENANCE_MS"))
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_MAINTENANCE_INTERVAL);
+    host_engine(EngineHostOptions {
+        environment,
+        world: None,
+        shutdown: CancellationToken::new(),
+        take_over: false,
+        idle_timeout: Some(idle_timeout),
+        maintenance_interval: Some(maintenance_interval),
+    })
+    .await
+}
+
+/// Hosts the per-user control center on its endpoint until shutdown or idleness.
+pub(crate) async fn host_engine(options: EngineHostOptions) -> Result<(), String> {
+    let EngineHostOptions {
+        environment,
+        world,
+        shutdown,
+        take_over,
+        idle_timeout,
+        maintenance_interval,
+    } = options;
     let endpoint = endpoint_for(&environment)?;
     crate::edit::private_storage::ensure_private_directory(
         endpoint.runtime_directory(),
@@ -395,9 +457,44 @@ pub(crate) async fn run_host_entry(
         &endpoint.instance_lock_path(),
         "control-center instance lock",
     )?;
+    // A takeover holds the startup gate so proxies that lose the retiring center wait for
+    // this one instead of bootstrapping another plain control center in the gap.
+    let startup_lock = if take_over {
+        let lock = crate::edit::private_storage::open_lock_file(
+            &endpoint.startup_lock_path(),
+            "control-center startup lock",
+        )?;
+        acquire_startup_lock(&lock, &endpoint.startup_lock_path()).await?;
+        Some(lock)
+    } else {
+        None
+    };
     match instance_lock.try_lock_exclusive() {
         Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            if !take_over {
+                return Ok(());
+            }
+            retire_existing(&endpoint, &environment).await?;
+            let deadline = Instant::now() + TAKEOVER_TIMEOUT;
+            loop {
+                match instance_lock.try_lock_exclusive() {
+                    Ok(()) => break,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "The running FastCtx control center did not release the endpoint within {} s: {error}",
+                            TAKEOVER_TIMEOUT.as_secs()
+                        ));
+                    }
+                }
+            }
+        }
         Err(error) => {
             return Err(format!(
                 "Cannot lock the control-center instance gate: {error}"
@@ -405,28 +502,23 @@ pub(crate) async fn run_host_entry(
         }
     }
     let mut listener = Listener::bind(&endpoint)?;
+    drop(startup_lock);
     #[cfg(debug_assertions)]
     record_test_host_start(&environment);
-    let state = HostState::new();
-    let shutdown = CancellationToken::new();
-    let idle_timeout = idle_timeout_ms
-        .or_else(|| duration_override(&environment, "FASTCTX_TEST_RUNTIME_IDLE_MS"))
-        .map(Duration::from_millis)
-        .unwrap_or(DEFAULT_IDLE_TIMEOUT);
+    let state = HostState::new(world, !take_over);
     let (idle_candidate_tx, mut idle_candidate_rx) = tokio::sync::mpsc::channel(1);
-    let monitor = tokio::spawn(monitor_idle(
-        Arc::clone(&state),
-        shutdown.clone(),
-        idle_timeout,
-        idle_candidate_tx,
-    ));
+    let monitor = idle_timeout.map(|idle_timeout| {
+        tokio::spawn(monitor_idle(
+            Arc::clone(&state),
+            shutdown.clone(),
+            idle_timeout,
+            idle_candidate_tx,
+        ))
+    });
     let maintenance = tokio::spawn(monitor_maintenance(
         Arc::clone(&state),
         shutdown.clone(),
-        maintenance_interval_ms
-            .or_else(|| duration_override(&environment, "FASTCTX_TEST_RUNTIME_MAINTENANCE_MS"))
-            .map(Duration::from_millis)
-            .unwrap_or(DEFAULT_MAINTENANCE_INTERVAL),
+        maintenance_interval.unwrap_or(DEFAULT_MAINTENANCE_INTERVAL),
     ));
     let mut connections = tokio::task::JoinSet::new();
 
@@ -456,7 +548,9 @@ pub(crate) async fn run_host_entry(
                 }
             }
             Some(()) = idle_candidate_rx.recv() => {
-                if state.activity.try_begin_shutdown(idle_timeout) {
+                if let Some(idle_timeout) = idle_timeout
+                    && state.activity.try_begin_shutdown(idle_timeout)
+                {
                     shutdown.cancel();
                     break;
                 }
@@ -490,12 +584,36 @@ pub(crate) async fn run_host_entry(
             }
         }
     }
-    monitor.abort();
-    let _ = monitor.await;
+    if let Some(monitor) = monitor {
+        monitor.abort();
+        let _ = monitor.await;
+    }
     maintenance.abort();
     let _ = maintenance.await;
     drop(instance_lock);
     Ok(())
+}
+
+/// Asks the control center holding the endpoint to shut down so a node daemon can host it.
+async fn retire_existing(
+    endpoint: &LocalEndpoint,
+    environment: &SessionEnvironment,
+) -> Result<(), String> {
+    let mut stream = match local_ipc::connect(endpoint).await {
+        Ok(stream) => stream,
+        // The lock holder is not listening: it is starting or dying, and the lock wait covers both.
+        Err(_) => return Ok(()),
+    };
+    tokio::time::timeout(STARTUP_TIMEOUT, async {
+        protocol::write_handshake(
+            &mut stream,
+            &protocol::Handshake::retire(environment.clone()),
+        )
+        .await?;
+        protocol::read_handshake_response(&mut stream).await
+    })
+    .await
+    .map_err(|_| "Timed out asking the running FastCtx control center to step aside.".to_string())?
 }
 
 /// Reads a millisecond timer override for the control center's own loops.
@@ -565,6 +683,20 @@ async fn serve_connection(
             return;
         }
     };
+    if handshake.retire {
+        if state.retirable {
+            let _ = protocol::write_handshake_success(&mut stream).await;
+            shutdown.cancel();
+        } else {
+            let _ = protocol::write_handshake_error(
+                &mut stream,
+                "This control center is hosted by the FastCtx node service and does not step aside; stop the service instead."
+                    .to_string(),
+            )
+            .await;
+        }
+        return;
+    }
     let session = match SessionContext::from_environment(handshake.environment) {
         Ok(session) => session,
         Err(error) => {

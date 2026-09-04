@@ -294,9 +294,7 @@ pub fn run_target(
     if status.state == TargetConnectionState::Connected {
         checks.push(match probe_mcp(
             &paths.installed_binary,
-            ServerOptions {
-                tools: status.enabled_tools,
-            },
+            ServerOptions::local(status.enabled_tools),
         ) {
             Ok(()) => DoctorCheck::pass(
                 "Target MCP contract",
@@ -1166,8 +1164,8 @@ fn check_mcp(executable: &Path, applied: Option<&settings::AppliedRecord>) -> Do
             "Not run before Apply installs the stable fastctx binary.",
         );
     }
-    let options = applied.map_or_else(ServerOptions::default, |record| ServerOptions {
-        tools: applied_tools(record),
+    let options = applied.map_or_else(ServerOptions::default, |record| {
+        ServerOptions::local(applied_tools(record))
     });
     match probe_mcp(executable, options) {
         Ok(()) => DoctorCheck::pass(

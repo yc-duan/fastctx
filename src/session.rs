@@ -333,6 +333,42 @@ impl SessionContext {
         })
     }
 
+    /// Derives the context a World call from another member runs under on this machine: this
+    /// machine's own environment and settings, the caller's working directory, and the
+    /// caller's response budgets in place of whatever this machine's host would have set.
+    pub(crate) fn for_remote_call(
+        base: &SessionContext,
+        cwd: PathBuf,
+        budget_overrides: Vec<(String, String)>,
+    ) -> Arc<Self> {
+        let mut variables = base
+            .environment
+            .variables()
+            .iter()
+            .filter(|(name, _)| !is_budget_variable(name))
+            .cloned()
+            .collect::<Vec<_>>();
+        variables.extend(
+            budget_overrides
+                .into_iter()
+                .map(|(name, value)| (OsString::from(name), OsString::from(value))),
+        );
+        let environment = SessionEnvironment::new(cwd.clone(), variables);
+        let command_environment = Arc::new(SessionEnvironment::new(
+            cwd,
+            base.command_environment.variables().to_vec(),
+        ));
+        Arc::new(Self {
+            tool_environment: Arc::new(environment.clone()),
+            environment: Arc::new(environment),
+            command_environment,
+            control_paths: base.control_paths.clone(),
+            settings: base.settings.clone(),
+            provider: base.provider.clone(),
+            effective_output: base.effective_output,
+        })
+    }
+
     /// Runs synchronous FastCtx work with this connection's cwd and effective response budgets.
     pub(crate) fn activate<R>(&self, operation: impl FnOnce() -> R) -> R {
         self.tool_environment.activate(operation)
