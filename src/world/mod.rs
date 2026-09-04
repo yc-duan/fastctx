@@ -19,6 +19,7 @@
 pub mod cli;
 pub(crate) mod client;
 pub(crate) mod crypto;
+pub(crate) mod doctor;
 pub(crate) mod enroll;
 pub(crate) mod envelope;
 pub(crate) mod grant;

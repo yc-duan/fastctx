@@ -57,7 +57,7 @@ pub struct DoctorCheck {
 }
 
 impl DoctorCheck {
-    fn pass(name: &'static str, detail: impl Into<String>) -> Self {
+    pub(crate) fn pass(name: &'static str, detail: impl Into<String>) -> Self {
         Self {
             name,
             status: DoctorCheckStatus::Pass,
@@ -66,7 +66,7 @@ impl DoctorCheck {
         }
     }
 
-    fn info(name: &'static str, detail: impl Into<String>) -> Self {
+    pub(crate) fn info(name: &'static str, detail: impl Into<String>) -> Self {
         Self {
             name,
             status: DoctorCheckStatus::Info,
@@ -75,7 +75,11 @@ impl DoctorCheck {
         }
     }
 
-    fn fail(name: &'static str, detail: impl Into<String>, remedy: impl Into<String>) -> Self {
+    pub(crate) fn fail(
+        name: &'static str,
+        detail: impl Into<String>,
+        remedy: impl Into<String>,
+    ) -> Self {
         Self {
             name,
             status: DoctorCheckStatus::Fail,
@@ -207,6 +211,7 @@ pub fn run(paths: &ControlPaths) -> DoctorReport {
         checks.push(check_job_limits(paths));
     }
     checks.push(check_search_parallelism(paths));
+    checks.extend(crate::world::doctor::checks(paths));
     checks.push(DoctorCheck::info(
         "Last update check",
         crate::update::last_check_status(paths).detail,
