@@ -728,6 +728,40 @@ impl WorldClient {
         Ok(invite.encode())
     }
 
+    /// Publishes a grant as this member, or removes the grant with `id` when `grant` is `None`.
+    /// The hub answers every member (this one included) with a `grant_sync`.
+    pub(crate) fn publish_grant(
+        &self,
+        id: &str,
+        grant: Option<&super::grant::Grant>,
+    ) -> Result<(), String> {
+        let me = self.name();
+        let signed = match grant {
+            Some(grant) => {
+                super::grant::publish_grant(&self.identity, &self.keys.read(), &me, id, grant)?
+            }
+            None => messages::SignedGrant {
+                id: id.to_string(),
+                grant: String::new(),
+                mac: String::new(),
+                mac_epoch: 0,
+                sig: String::new(),
+                published_by: me.clone(),
+            },
+        };
+        let header = Header::new(kind::GRANT_PUBLISH, &me, HUB_NAME, 0);
+        self.send_reliable(
+            header,
+            &messages::GrantPublish {
+                grant: signed,
+                delete: grant.is_none(),
+            },
+            false,
+            true,
+        )?;
+        Ok(())
+    }
+
     /// Asks the hub to revoke `name`, then rotates the World key for everyone who remains.
     pub(crate) async fn revoke(&self, name: &str) -> Result<u32, String> {
         if name == self.name() {

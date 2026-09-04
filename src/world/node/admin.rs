@@ -31,6 +31,15 @@ pub(crate) enum AdminRequest {
     Refresh,
     Reconnect,
     Leave,
+    /// Publishes a grant, or removes the one named by `id` when `delete` is set.
+    Grant {
+        id: Option<String>,
+        principal: String,
+        nodes: Vec<String>,
+        verbs: Vec<String>,
+        expires: Option<String>,
+        delete: bool,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -207,6 +216,35 @@ impl AdminServer {
             AdminRequest::Reconnect => {
                 self.client.wake.notify_one();
                 Ok(serde_json::Value::Null)
+            }
+            AdminRequest::Grant {
+                id,
+                principal,
+                nodes,
+                verbs,
+                expires,
+                delete,
+            } => {
+                let id = match id {
+                    Some(id) => id,
+                    None => crate::world::crypto::random_bytes::<3>()
+                        .map(|bytes| format!("g-{}", hex::encode(bytes)))
+                        .unwrap_or_else(|_| "g-000000".to_string()),
+                };
+                let result = if delete {
+                    self.client.publish_grant(&id, None)
+                } else {
+                    self.client.publish_grant(
+                        &id,
+                        Some(&crate::world::grant::Grant {
+                            principal,
+                            nodes,
+                            verbs,
+                            expires,
+                        }),
+                    )
+                };
+                result.map(|()| serde_json::Value::String(id))
             }
             AdminRequest::Leave => {
                 let header = crate::world::envelope::Header::new(

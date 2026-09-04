@@ -116,8 +116,11 @@ pub enum WorldCommand {
         /// Member name.
         name: String,
     },
-    /// Show the grants in force on this member.
-    Grants,
+    /// Show or change the grants that decide who may use which verbs on which machines.
+    Grants {
+        #[command(subcommand)]
+        command: Option<GrantsCommand>,
+    },
     /// Show the machines in the World.
     Nodes {
         /// Print JSON instead of the table.
@@ -132,6 +135,33 @@ pub enum WorldCommand {
         /// Maximum events to print.
         #[arg(long, default_value_t = 50)]
         limit: u32,
+    },
+}
+
+/// Grant changes; publishing any grant replaces the "everyone may do everything" default.
+#[derive(Debug, Subcommand)]
+pub enum GrantsCommand {
+    /// Allow a member (or `*` for every member) some verbs on some machines.
+    Allow {
+        /// Member name, or `*`.
+        principal: String,
+        /// Target machines: names, `tag:<tag>`, or `all`; repeatable.
+        #[arg(long = "node", value_name = "SELECTOR", required = true)]
+        nodes: Vec<String>,
+        /// Verbs to allow, or `*`; repeatable.
+        #[arg(long = "verb", value_name = "VERB", required = true)]
+        verbs: Vec<String>,
+        /// Expiry, RFC 3339 UTC.
+        #[arg(long, value_name = "TIME")]
+        expires: Option<String>,
+        /// Replace the grant with this id instead of adding a new one.
+        #[arg(long, value_name = "ID")]
+        id: Option<String>,
+    },
+    /// Remove one grant by id.
+    Remove {
+        /// Grant id as shown by `fastctx world grants`.
+        id: String,
     },
 }
 
@@ -348,7 +378,61 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
             println!("\"{name}\" was revoked; the World key rotated to epoch {epoch}.");
             Ok(ExitCode::SUCCESS)
         }
-        WorldCommand::Grants => {
+        WorldCommand::Grants {
+            command:
+                Some(GrantsCommand::Allow {
+                    principal,
+                    nodes,
+                    verbs,
+                    expires,
+                    id,
+                }),
+        } => {
+            if principal != "*" {
+                super::validate_node_name(&principal)?;
+            }
+            for verb in &verbs {
+                if verb != "*" && !super::grant::ALL_VERBS.contains(&verb.as_str()) {
+                    return Err(format!(
+                        "Unknown verb \"{verb}\". Verbs: {} or *.",
+                        super::grant::ALL_VERBS.join(", ")
+                    ));
+                }
+            }
+            if let Some(expires) = &expires {
+                super::parse_rfc3339(expires)?;
+            }
+            let response = ask_daemon(&AdminRequest::Grant {
+                id,
+                principal,
+                nodes,
+                verbs,
+                expires,
+                delete: false,
+            })
+            .await?;
+            println!(
+                "Published grant {}. Members apply it as soon as the hub relays it.",
+                response.data.as_str().unwrap_or("?")
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        WorldCommand::Grants {
+            command: Some(GrantsCommand::Remove { id }),
+        } => {
+            ask_daemon(&AdminRequest::Grant {
+                id: Some(id.clone()),
+                principal: String::new(),
+                nodes: Vec::new(),
+                verbs: Vec::new(),
+                expires: None,
+                delete: true,
+            })
+            .await?;
+            println!("Removed grant {id}.");
+            Ok(ExitCode::SUCCESS)
+        }
+        WorldCommand::Grants { command: None } => {
             let world_paths = super::WorldPaths::from_control(&paths);
             if !super::is_enrolled(&paths) {
                 return Err(not_enrolled(&world_paths));
@@ -507,9 +591,8 @@ pub async fn run_node(command: NodeCommand) -> Result<ExitCode, String> {
                 ),
             }
             if !keep_service {
-                match super::node::service::stop(&paths) {
-                    Ok(message) => println!("{message}"),
-                    Err(_) => {}
+                if let Ok(message) = super::node::service::stop(&paths) {
+                    println!("{message}")
                 }
                 match super::node::service::uninstall(&paths) {
                     Ok(message) => println!("{message}"),
@@ -519,13 +602,13 @@ pub async fn run_node(command: NodeCommand) -> Result<ExitCode, String> {
                 let _ = super::node::service::stop(&paths);
             }
             super::remove_config(&world_paths)?;
-            if let Err(error) = std::fs::remove_dir_all(&world_paths.dir) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    return Err(format!(
-                        "Removed world.toml but cannot delete {}: {error}",
-                        crate::paths::display_path(&world_paths.dir)
-                    ));
-                }
+            if let Err(error) = std::fs::remove_dir_all(&world_paths.dir)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(format!(
+                    "Removed world.toml but cannot delete {}: {error}",
+                    crate::paths::display_path(&world_paths.dir)
+                ));
             }
             println!(
                 "This machine left the World. Restart your agent sessions to return to the local tool surface."
