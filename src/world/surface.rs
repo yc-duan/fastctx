@@ -962,7 +962,13 @@ async fn list_nodes(client: &Arc<WorldClient>, request: NodesRequest) -> ToolRes
     } else {
         HeadNote::new("nodes", HeadMetric::count(filtered.len(), "node", "nodes"))
     };
-    note = note.fact(format!("{online} online"));
+    // With the hub unreachable this member cannot know who is online now, only who was. The
+    // count says which of the two it is, because a bare "2 online" reads as a live fact even
+    // when a later fact calls the whole answer cached.
+    note = match &stale {
+        Some(_) => note.fact(format!("{online} last known online")),
+        None => note.fact(format!("{online} online")),
+    };
     if let Some(stale) = stale {
         note = note.fact(format!("cached facts; {stale}"));
     }
