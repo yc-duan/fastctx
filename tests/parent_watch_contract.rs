@@ -9,7 +9,14 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-const PROCESS_DEADLINE: Duration = Duration::from_secs(30);
+/// Poll-until budget for "a process this suite started has reached the state we need".
+///
+/// No promise is bounded here — every promptness claim in this file has its own constant —
+/// so widening this only delays a failure report, while narrowing it reports a busy machine
+/// as a defect. The chain it waits on is long: a cold control center from an empty HOME, then
+/// a shell fixture that publishes its own PID. On the Windows ARM64 runner, under the suite's
+/// own parallel load, 30 s was not enough for that (observed 2026-09-04 in CI).
+const PROCESS_DEADLINE: Duration = Duration::from_secs(45);
 const IDLE_PROBE: Duration = Duration::from_millis(1_500);
 /// Upper bound on the promptness this suite claims for an EOF-triggered shutdown.
 ///
