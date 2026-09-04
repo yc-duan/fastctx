@@ -672,26 +672,18 @@ impl Hub {
                 ("reason", serde_json::Value::String(reason.to_string())),
             ],
         );
+        // The same refusal the next handshake would give, said now: a plain `bye` would read
+        // as an ordinary disconnect and send the member round the reconnect loop to find out
+        // what happened, and its own connection being cancelled underneath would explain the
+        // link as "replaced by another process".
         if let Some(connection) = self.connection(name) {
-            let env = self.hub_envelope(
-                kind::REVOKED,
-                name,
-                None,
-                &messages::Revoked {
-                    name: name.to_string(),
-                    reason: reason.to_string(),
+            let _ = connection.tx.send(crate::world::wire::Frame::Rejected(
+                crate::world::wire::Rejected {
+                    code: "revoked".to_string(),
+                    message: format!("The member \"{name}\" was revoked from this World."),
+                    protocol: None,
                 },
-            );
-            if let Ok(env) = env {
-                let _ = connection.tx.send(crate::world::wire::Frame::Msg {
-                    seq: None,
-                    id: None,
-                    env,
-                });
-            }
-            let _ = connection.tx.send(crate::world::wire::Frame::Bye {
-                reason: "revoked".to_string(),
-            });
+            ));
             connection.cancel.cancel();
         }
         self.broadcast_members_changed(version, Some(name));

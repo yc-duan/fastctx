@@ -19,7 +19,6 @@ pub(crate) mod kind {
     pub(crate) const LEAVE: &str = "leave";
     // Hub → member, reliable.
     pub(crate) const GRANT_SYNC: &str = "grant_sync";
-    pub(crate) const REVOKED: &str = "revoked";
     pub(crate) const MEMBERS_CHANGED: &str = "members_changed";
     pub(crate) const KEY_ROTATED: &str = "key_rotated";
     // Requests to the hub and their answers.
@@ -193,16 +192,10 @@ pub(crate) struct KeysResult {
     pub(crate) newest_epoch: u32,
 }
 
-/// Body of `key_rotated` (hub → every online member) and `revoked`.
+/// Body of `key_rotated` (hub → every online member).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct KeyRotated {
     pub(crate) epoch: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct Revoked {
-    pub(crate) name: String,
-    pub(crate) reason: String,
 }
 
 /// Body of `revoke` (member → hub, a signed request) and of `leave`: the signed revocation the
