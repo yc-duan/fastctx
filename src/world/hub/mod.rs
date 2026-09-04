@@ -120,7 +120,7 @@ pub(crate) async fn run(options: HubOptions) -> Result<(), String> {
     let world_id = match store.meta_string(store::meta::WORLD_ID)? {
         Some(id) => id,
         None => {
-            let id = format!("w-{}", &hex::encode(crypto::random_bytes::<4>()?));
+            let id = format!("w-{}", hex::encode(crypto::random_bytes::<4>()?));
             store.set_meta_string(store::meta::WORLD_ID, &id)?;
             id
         }

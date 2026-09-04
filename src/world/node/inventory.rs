@@ -89,7 +89,6 @@ fn memory_gb() -> f32 {
             for line in text.lines() {
                 if let Some(rest) = line.strip_prefix("MemTotal:") {
                     let kib = rest
-                        .trim()
                         .split_whitespace()
                         .next()
                         .and_then(|value| value.parse::<u64>().ok())
@@ -219,8 +218,10 @@ fn wsl2() -> Option<bool> {
     let text = String::from_utf16_lossy(
         &output
             .stdout
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect::<Vec<_>>(),
     );
     Some(output.status.success() && text.lines().any(|line| !line.trim().is_empty()))
