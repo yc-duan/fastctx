@@ -218,13 +218,19 @@ fn link_checks(status: &NodeStatus) -> Vec<DoctorCheck> {
             DoctorCheck::pass("World link health", detail)
         });
     }
-    checks.push(DoctorCheck::info(
-        "World members",
-        format!(
-            "{} known, {} online; grants version {}; {} running remote call(s).",
-            status.members, status.members_online, status.grant_version, status.running_calls
-        ),
-    ));
+    let members_detail = format!(
+        "{} known, {} online; grant revision {}; {} running remote call(s).",
+        status.members, status.members_online, status.grant_revision, status.running_calls
+    );
+    checks.push(if status.grant_stale {
+        DoctorCheck::fail(
+            "World members",
+            members_detail,
+            "A newer grant revision exists than this node holds; calls from other members are refused as grant_stale until the hub delivers it.",
+        )
+    } else {
+        DoctorCheck::info("World members", members_detail)
+    });
     checks.push(if status.engine_hosted {
         DoctorCheck::pass(
             "World control center",

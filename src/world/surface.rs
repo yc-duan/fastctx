@@ -488,7 +488,7 @@ impl FastCtxServer {
         };
         if targets.is_empty() {
             return into_mcp_result(ToolResponse::error(format!(
-                "No online machine matches \"{}\". List machines with nodes.",
+                "No machine matches \"{}\". List machines with nodes.",
                 selector.describe()
             )));
         }
@@ -574,6 +574,7 @@ async fn run_on_this_machine(
         budget: CallBudget::default(),
         cwd: None,
         timeout_ms: timeout.as_millis() as u64,
+        grant_revision: 0,
     };
     let token = CancellationToken::new();
     let work_token = token.clone();

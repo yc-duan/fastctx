@@ -66,7 +66,10 @@ pub(crate) struct NodeStatus {
     pub(crate) link: LinkStatus,
     pub(crate) members: usize,
     pub(crate) members_online: usize,
-    pub(crate) grant_version: u64,
+    /// Revision of the grant snapshot in force; 0 when none was ever published.
+    pub(crate) grant_revision: u64,
+    /// A newer snapshot is known to exist; calls from other members are refused until it lands.
+    pub(crate) grant_stale: bool,
     pub(crate) running_calls: usize,
     pub(crate) engine_hosted: bool,
 }
@@ -104,13 +107,18 @@ impl AdminServer {
             started_at: self.client.started_at.clone(),
             written_at: crate::world::now_rfc3339(),
             link: self.client.link(),
-            members: members.members.len(),
+            members: members
+                .members
+                .values()
+                .filter(|member| member.is_current())
+                .count(),
             members_online: members
                 .members
                 .values()
                 .filter(|member| member.is_online())
                 .count(),
-            grant_version: self.client.grants.read().version,
+            grant_revision: self.client.grant_revision(),
+            grant_stale: self.client.is_grant_stale(),
             running_calls: self.executor.running_calls(),
             engine_hosted: self
                 .engine_hosted
@@ -231,32 +239,25 @@ impl AdminServer {
                         .map(|bytes| format!("g-{}", hex::encode(bytes)))
                         .unwrap_or_else(|_| "g-000000".to_string()),
                 };
-                let result = if delete {
-                    self.client.publish_grant(&id, None)
+                let change = if delete {
+                    crate::world::grant::GrantChange::Remove(id.clone())
                 } else {
-                    self.client.publish_grant(
-                        &id,
-                        Some(&crate::world::grant::Grant {
+                    crate::world::grant::GrantChange::Set(crate::world::grant::GrantEntry {
+                        id: id.clone(),
+                        grant: crate::world::grant::Grant {
                             principal,
                             nodes,
                             verbs,
                             expires,
-                        }),
-                    )
+                        },
+                    })
                 };
-                result.map(|()| serde_json::Value::String(id))
-            }
-            AdminRequest::Leave => {
-                let header = crate::world::envelope::Header::new(
-                    crate::world::messages::kind::LEAVE,
-                    &self.client.name(),
-                    crate::world::HUB_NAME,
-                    0,
-                );
                 self.client
-                    .send_reliable(header, &serde_json::json!({}), false, false)
-                    .map(|_| serde_json::Value::Null)
+                    .change_grants(change)
+                    .await
+                    .map(|revision| serde_json::json!({ "id": id, "revision": revision }))
             }
+            AdminRequest::Leave => self.client.leave().map(|()| serde_json::Value::Null),
         };
         match result {
             Ok(data) => AdminResponse {

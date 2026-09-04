@@ -15,7 +15,6 @@ pub(crate) mod kind {
     pub(crate) const MEMBER_PUBLISH: &str = "member_publish";
     pub(crate) const INVITE_CREATE: &str = "invite_create";
     pub(crate) const KEY_PUBLISH: &str = "key_publish";
-    pub(crate) const GRANT_PUBLISH: &str = "grant_publish";
     pub(crate) const INVENTORY: &str = "inventory";
     pub(crate) const LEAVE: &str = "leave";
     // Hub → member, reliable.
@@ -33,6 +32,9 @@ pub(crate) mod kind {
     pub(crate) const KEYS_GET: &str = "keys_get";
     pub(crate) const KEYS_RESULT: &str = "keys_result";
     pub(crate) const GRANTS_GET: &str = "grants_get";
+    /// A request rather than a reliable message: the hub accepts a snapshot only when its
+    /// revision follows the stored one, and the publisher needs to hear a refusal.
+    pub(crate) const GRANT_PUBLISH: &str = "grant_publish";
     pub(crate) const REVOKE: &str = "revoke";
     pub(crate) const HUB_RESULT: &str = "hub_result";
     pub(crate) const HUB_ERROR: &str = "hub_error";
@@ -79,7 +81,39 @@ pub(crate) fn signature_required(t: &str) -> bool {
             | kind::KEY_PUBLISH
             | kind::GRANT_PUBLISH
             | kind::REVOKE
+            | kind::LEAVE
     )
+}
+
+/// The fields a revocation signs: which key, under which name, is out of the World.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct RevocationStatement {
+    pub(crate) name: String,
+    /// The revoked member's Ed25519 public key, base64; a revocation follows the key, so the
+    /// hub cannot readmit it under another name.
+    pub(crate) node_pub: String,
+    /// The member that revoked; a member leaving revokes itself.
+    pub(crate) by: String,
+    pub(crate) at: String,
+    /// `revoked` or `left`.
+    pub(crate) reason: String,
+}
+
+/// A revocation as the hub stores and relays it. Members keep these forever: a revoked key is
+/// never trusted again, whatever the hub later lists.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct SignedRevocation {
+    /// JSON text of a `RevocationStatement`, byte-exact.
+    pub(crate) statement: String,
+    /// Ed25519 signature by `by` over `statement` bytes (domain `revocation`), base64.
+    pub(crate) sig: String,
+}
+
+impl SignedRevocation {
+    pub(crate) fn parse(&self) -> Result<RevocationStatement, String> {
+        serde_json::from_str(&self.statement)
+            .map_err(|error| format!("the revocation is not valid JSON: {error}"))
+    }
 }
 
 /// The record a member publishes about itself; MAC'd under `K_mac`, signed by the member.
@@ -171,10 +205,11 @@ pub(crate) struct Revoked {
     pub(crate) reason: String,
 }
 
-/// Body of `revoke` (member → hub, signed).
+/// Body of `revoke` (member → hub, a signed request) and of `leave`: the signed revocation the
+/// hub stores and relays.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Revoke {
-    pub(crate) name: String,
+    pub(crate) revocation: SignedRevocation,
 }
 
 /// Body of `members_changed` and the version carried by `members_result`.
@@ -183,11 +218,20 @@ pub(crate) struct MembersChanged {
     pub(crate) version: u64,
 }
 
-/// Body of `members_result`.
+/// Body of `members_result`. Revoked members are listed too (state `revoked`), because a
+/// member must learn of a revocation and must be able to countersign one the hub operator
+/// made without a World key.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct MembersResult {
     pub(crate) version: u64,
     pub(crate) members: Vec<MemberEntry>,
+    /// Admitted members that hold no sealed copy of the newest World key epoch; any member
+    /// holding it seals one for them.
+    #[serde(default)]
+    pub(crate) missing_key: Vec<String>,
+    /// Newest World key epoch any member has published to the hub; 0 before any rotation.
+    #[serde(default)]
+    pub(crate) key_epoch: u32,
 }
 
 /// One member as the hub reports it: the signed record plus hub-side presence facts.
@@ -195,6 +239,7 @@ pub(crate) struct MembersResult {
 pub(crate) struct MemberEntry {
     pub(crate) name: String,
     pub(crate) signed: Option<SignedRecord>,
+    /// `online`, `offline`, or `revoked`.
     pub(crate) state: String,
     pub(crate) last_seen: String,
     #[serde(default)]
@@ -207,6 +252,9 @@ pub(crate) struct MemberEntry {
     pub(crate) version: Option<String>,
     #[serde(default)]
     pub(crate) inventory_version: u64,
+    /// The signed revocation, when a member (rather than the hub operator) revoked this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) revocation: Option<SignedRevocation>,
 }
 
 /// Body of `inventory_get`.
@@ -299,6 +347,10 @@ pub(crate) struct Call {
     pub(crate) cwd: Option<String>,
     /// Caller-side deadline in milliseconds; the target stops work after it.
     pub(crate) timeout_ms: u64,
+    /// The grant snapshot revision the caller holds. It travels inside the ciphertext, so a
+    /// target that is behind learns it from a source the hub cannot lower.
+    #[serde(default)]
+    pub(crate) grant_revision: u64,
 }
 
 /// Body of `call_result` (encrypted): the target's rendered response.
@@ -307,6 +359,9 @@ pub(crate) struct CallResult {
     pub(crate) node: String,
     pub(crate) response: WireResponse,
     pub(crate) elapsed_ms: u64,
+    /// The grant snapshot revision the target holds (see `Call::grant_revision`).
+    #[serde(default)]
+    pub(crate) grant_revision: u64,
 }
 
 /// A `ToolResponse` on the wire.
@@ -380,42 +435,31 @@ impl From<WireResponse> for crate::model::ToolResponse {
     }
 }
 
-/// Body of `call_status` (hub → caller, plaintext): why one target produced no answer.
+/// Body of `call_status` (hub → caller, plaintext): what happened to one target's leg.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct CallStatus {
     pub(crate) node: String,
-    /// `offline`, `unknown`, `forbidden`, `revoked`, or `disconnected`.
+    /// `delivered` (the hub handed the call to an online target; an answer follows), or a
+    /// terminal `offline`, `unknown`, `forbidden`, `revoked`, or `disconnected`.
     pub(crate) status: String,
     pub(crate) message: String,
 }
 
-/// Body of `grant_publish` and entries of `grant_sync`.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) struct SignedGrant {
-    pub(crate) id: String,
-    /// JSON text of a `Grant`, byte-exact.
-    pub(crate) grant: String,
-    pub(crate) mac: String,
-    pub(crate) mac_epoch: u32,
-    /// Signature by the publishing member over `grant` bytes (domain `grant`).
-    pub(crate) sig: String,
-    pub(crate) published_by: String,
-}
+/// Status a `call_status` carries when the leg is under way rather than finished.
+pub(crate) const CALL_DELIVERED: &str = "delivered";
 
-/// Body of `grant_sync`.
+/// Body of `grant_sync` (hub → member, and the answer to `grants_get`): the snapshot in
+/// force, or none when no member has published one.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct GrantSync {
-    pub(crate) version: u64,
-    pub(crate) grants: Vec<SignedGrant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) set: Option<super::grant::SignedGrantSet>,
 }
 
-/// Body of `grant_publish`.
+/// Body of `grant_publish` (member → hub, a signed request).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct GrantPublish {
-    pub(crate) grant: SignedGrant,
-    /// Remove the grant with this id instead of adding one.
-    #[serde(default)]
-    pub(crate) delete: bool,
+    pub(crate) set: super::grant::SignedGrantSet,
 }
 
 pub(crate) fn encode<T: Serialize>(body: &T) -> Result<Vec<u8>, String> {

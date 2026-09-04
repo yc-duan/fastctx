@@ -35,8 +35,14 @@ pub(crate) struct NodeState {
     pub(crate) last_network: Option<NetworkMode>,
     #[serde(default)]
     pub(crate) members_version: u64,
+    /// Revision of the grant snapshot in force here (`grant.rs`).
+    #[serde(default, alias = "grant_version")]
+    pub(crate) grant_revision: u64,
+    /// The highest grant revision this member has learned exists from a source the hub does
+    /// not control: the invite that enrolled it, or a peer's encrypted call. While it is above
+    /// `grant_revision`, calls from other members are refused as `grant_stale`.
     #[serde(default)]
-    pub(crate) grant_version: u64,
+    pub(crate) grant_floor: u64,
     /// Version of the last inventory this member published.
     #[serde(default)]
     pub(crate) inventory_version: u64,

@@ -4,12 +4,18 @@
 //! channel, status) goes through this handle: reliable sends land in the outbox first,
 //! requests get a correlation id and a timeout, caches of members, grants, keys, and
 //! inventories are refreshed from the hub and verified locally.
+//!
+//! Every fact that reaches this member through the hub is checked against something the hub
+//! does not control before it is acted on: a member record against the World key and its
+//! own signature, a revocation against a member already trusted, a rotated key against the
+//! member that sealed it, a grant snapshot against its publisher and the revision already
+//! held, and an answer against the id of the request it claims to answer.
 
 use super::envelope::{Envelope, Header, Opened};
-use super::grant::GrantSet;
+use super::grant::{self, GrantChange, GrantSet, GrantSnapshot};
 use super::identity::Identity;
 use super::keys::{KeyRing, SealedKey};
-use super::members::{MemberTable, Selector, VerifiedMember};
+use super::members::{self, MemberTable, Selector, VerifiedMember};
 use super::messages::{self, Call, CallBudget, CallResult, CallStatus, kind};
 use super::outbox::{Outbox, OutboxEntry};
 use super::state::{Counters, NodeState};
@@ -18,8 +24,9 @@ use super::{HUB_NAME, NetworkMode, TlsMode, WorldConfig, WorldPaths};
 use crate::model::ToolResponse;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -154,8 +161,31 @@ pub(crate) struct NodeOutcome {
     pub(crate) message: Option<String>,
 }
 
+/// What a request collected before it returned.
+pub(crate) struct Answers {
+    /// Terminal answers: results, hub errors, and terminal call statuses.
+    pub(crate) answers: Vec<Opened>,
+    /// Targets the hub reported it handed the call to.
+    pub(crate) delivered: BTreeSet<String>,
+    /// The hub link dropped at least once while the request was waiting.
+    pub(crate) link_lost: bool,
+}
+
+impl Answers {
+    /// The one answer a hub request expects.
+    fn single(self, what: &str) -> Result<Opened, String> {
+        self.answers
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("the hub did not answer {what}"))
+    }
+}
+
 struct PendingRequest {
     tx: mpsc::UnboundedSender<Opened>,
+    /// Hub-terminated requests fail as soon as the link drops; member-terminated calls keep
+    /// waiting, because the hub delivers their answers on the next connection.
+    to_hub: bool,
 }
 
 struct Persistent {
@@ -172,14 +202,21 @@ pub(crate) struct WorldClient {
     pub(crate) grants: RwLock<GrantSet>,
     pub(crate) inventories: RwLock<BTreeMap<String, (u64, Inventory)>>,
     pub(crate) own_inventory: RwLock<Option<Inventory>>,
+    /// The hub's last member listing, kept raw so the table can be re-verified when the key
+    /// ring grows without another round trip.
+    members_raw: RwLock<Option<messages::MembersResult>>,
     persistent: Mutex<Persistent>,
     outbox: Outbox,
     link: RwLock<LinkStatus>,
     sender: Mutex<Option<mpsc::UnboundedSender<Frame>>>,
     pending: Mutex<HashMap<u64, PendingRequest>>,
+    /// Bumped whenever the connection goes away, so a waiting request can tell.
+    link_generation: AtomicU64,
     pub(crate) shutdown: CancellationToken,
     /// Poked to make the session act now (reconnect, publish).
     pub(crate) wake: Notify,
+    /// Poked when this member learns a newer grant snapshot exists than the one it holds.
+    pub(crate) grants_wanted: Notify,
     pub(crate) started_at: String,
 }
 
@@ -238,13 +275,16 @@ impl WorldClient {
             grants: RwLock::new(grants),
             inventories: RwLock::new(BTreeMap::new()),
             own_inventory: RwLock::new(None),
+            members_raw: RwLock::new(None),
             persistent: Mutex::new(Persistent { state, counters }),
             outbox,
             link: RwLock::new(link),
             sender: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
+            link_generation: AtomicU64::new(0),
             shutdown: CancellationToken::new(),
             wake: Notify::new(),
+            grants_wanted: Notify::new(),
             started_at: super::now_rfc3339(),
         })))
     }
@@ -283,10 +323,13 @@ impl WorldClient {
         *self.sender.lock() = Some(sender);
     }
 
+    /// Forgets the connection. Hub-bound requests fail now; calls to members keep their
+    /// place, because the hub answers them on whichever connection this member has next.
     pub(crate) fn detach_sender(&self) {
         *self.sender.lock() = None;
-        let stale = std::mem::take(&mut *self.pending.lock());
-        drop(stale);
+        self.link_generation.fetch_add(1, Ordering::SeqCst);
+        let mut pending = self.pending.lock();
+        pending.retain(|_, request| !request.to_hub);
     }
 
     pub(crate) fn send_frame(&self, frame: Frame) -> bool {
@@ -365,6 +408,40 @@ impl WorldClient {
         persistent.state.save(&self.paths)
     }
 
+    // ----- grants: revision, floor, staleness -----
+
+    /// Revision of the grant snapshot in force here; 0 when none was ever received.
+    pub(crate) fn grant_revision(&self) -> u64 {
+        self.grants.read().revision
+    }
+
+    /// Whether a newer grant snapshot is known to exist than the one held. While true, calls
+    /// from other members are refused as `grant_stale`: executing on an older set could honour
+    /// a permission that has since been withdrawn.
+    pub(crate) fn is_grant_stale(&self) -> bool {
+        self.persistent.lock().state.grant_floor > self.grant_revision()
+    }
+
+    /// Records that a source the hub cannot edit says `revision` exists. Returns whether this
+    /// member is now behind, in which case the caller wakes the session to fetch.
+    pub(crate) fn raise_grant_floor(&self, revision: u64) -> bool {
+        let raised = self
+            .with_state(|state| {
+                if revision > state.grant_floor {
+                    state.grant_floor = revision;
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        let behind = self.is_grant_stale();
+        if raised && behind {
+            self.grants_wanted.notify_one();
+        }
+        behind
+    }
+
     // ----- envelopes -----
 
     fn build_envelope<T: Serialize>(
@@ -427,8 +504,9 @@ impl WorldClient {
         self.outbox.ack(seq)
     }
 
-    /// Sends a request expecting `expected` answers within `timeout`; fails fast when the
-    /// link is down. Answers are delivered as opened envelopes, hub status answers included.
+    /// Sends a request expecting `expected` terminal answers within `timeout`; fails fast
+    /// when the link is down. Hub status answers count, `delivered` notices do not: they are
+    /// recorded so the caller can tell an undelivered leg from one whose outcome is unknown.
     pub(crate) async fn request<T: Serialize>(
         &self,
         header: Header,
@@ -437,23 +515,33 @@ impl WorldClient {
         sign: bool,
         expected: usize,
         timeout: Duration,
-    ) -> Result<Vec<Opened>, String> {
+    ) -> Result<Answers, String> {
         if !self.is_connected() {
             return Err(format!("hub_unreachable: {}", self.unreachable_error()));
         }
+        let to_hub = header.to == HUB_NAME;
         let id = self.next_request_id()?;
         let env = self.build_envelope(header.with_id(id), body, encrypt, sign)?;
         let (tx, mut rx) = mpsc::unbounded_channel();
-        self.pending.lock().insert(id, PendingRequest { tx });
+        self.pending
+            .lock()
+            .insert(id, PendingRequest { tx, to_hub });
+        let generation = self.link_generation.load(Ordering::SeqCst);
         if !self.send_frame(Frame::request(id, env)) {
             self.pending.lock().remove(&id);
             return Err(format!("hub_unreachable: {}", self.unreachable_error()));
         }
         let mut answers = Vec::with_capacity(expected);
+        let mut delivered = BTreeSet::new();
         let deadline = tokio::time::Instant::now() + timeout;
         while answers.len() < expected {
             match tokio::time::timeout_at(deadline, rx.recv()).await {
-                Ok(Some(answer)) => answers.push(answer),
+                Ok(Some(answer)) => match delivered_to(&answer) {
+                    Some(node) => {
+                        delivered.insert(node);
+                    }
+                    None => answers.push(answer),
+                },
                 Ok(None) => break,
                 Err(_) => {
                     self.send_cancel(id);
@@ -462,10 +550,15 @@ impl WorldClient {
             }
         }
         self.pending.lock().remove(&id);
-        if answers.is_empty() && !self.is_connected() {
+        let link_lost = self.link_generation.load(Ordering::SeqCst) != generation;
+        if to_hub && answers.is_empty() && (link_lost || !self.is_connected()) {
             return Err(format!("hub_unreachable: {}", self.unreachable_error()));
         }
-        Ok(answers)
+        Ok(Answers {
+            answers,
+            delivered,
+            link_lost,
+        })
     }
 
     fn send_cancel(&self, id: u64) {
@@ -480,11 +573,23 @@ impl WorldClient {
         }
     }
 
-    /// Hands an answer to whoever is waiting on `id`.
-    pub(crate) fn deliver_answer(&self, id: u64, answer: Opened) -> bool {
+    /// Hands an answer to whoever is waiting on `id`. The envelope's own `id` — inside the
+    /// AEAD-authenticated header, so the hub cannot change it — must name the same request:
+    /// the transport id alone is the hub's to assign, and a hub that could match answers to
+    /// requests freely could hand one member's result to another member's question.
+    pub(crate) fn deliver_answer(&self, id: u64, answer: Opened) -> Result<(), String> {
+        if answer.header.id != Some(id) {
+            return Err(format!(
+                "answer {id} from \"{}\" names request {:?} in its header; dropped",
+                answer.header.from, answer.header.id
+            ));
+        }
         match self.pending.lock().get(&id) {
-            Some(pending) => pending.tx.send(answer).is_ok(),
-            None => false,
+            Some(pending) => pending
+                .tx
+                .send(answer)
+                .map_err(|_| format!("request {id} is no longer waiting")),
+            None => Err(format!("no request is waiting for answer {id}")),
         }
     }
 
@@ -506,9 +611,11 @@ impl WorldClient {
 
     // ----- hub-backed caches -----
 
+    /// Fetches the hub's member listing and rebuilds the verified table on top of the one
+    /// held. Also reseals the newest World key for listed members that lack it.
     pub(crate) async fn refresh_members(&self) -> Result<u64, String> {
         let header = Header::new(kind::MEMBERS_GET, &self.name(), HUB_NAME, 0);
-        let answers = self
+        let answer = self
             .request(
                 header,
                 &serde_json::json!({}),
@@ -517,19 +624,86 @@ impl WorldClient {
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
-            .await?;
-        let answer = answers
-            .into_iter()
-            .next()
-            .ok_or_else(|| "the hub did not answer members_get".to_string())?;
+            .await?
+            .single(kind::MEMBERS_GET)?;
         expect_kind(&answer, kind::MEMBERS_RESULT)?;
         let result: messages::MembersResult = messages::decode(&answer.body, kind::MEMBERS_RESULT)?;
-        let table = MemberTable::from_entries(result.version, &result.members, &self.keys.read());
+        let version = self.install_members(&result)?;
+        *self.members_raw.write() = Some(result.clone());
+        self.reseal_missing(&result);
+        Ok(version)
+    }
+
+    fn install_members(&self, result: &messages::MembersResult) -> Result<u64, String> {
+        let previous = self.members.read().clone();
+        let table = {
+            let keys = self.keys.read();
+            MemberTable::from_entries(result.version, &result.members, &keys, &previous)
+        };
         table.save(&self.paths)?;
         let version = table.version;
         *self.members.write() = table;
         self.with_state(|state| state.members_version = version)?;
         Ok(version)
+    }
+
+    /// Re-verifies the last listing with the current key ring; called after the ring grows,
+    /// because records MAC'd under a newly adopted epoch verify only now.
+    pub(crate) fn reverify_members(&self) -> Result<(), String> {
+        let raw = self.members_raw.read().clone();
+        if let Some(result) = raw {
+            self.install_members(&result)?;
+        }
+        Ok(())
+    }
+
+    /// Seals the newest epoch for members the hub reports without a copy, when this member
+    /// holds that epoch. Any holder may do this; the hub keeps the last copy per member.
+    fn reseal_missing(&self, result: &messages::MembersResult) {
+        if result.missing_key.is_empty() || result.key_epoch == 0 {
+            return;
+        }
+        let me = self.name();
+        let (epoch, sealed) = {
+            let keys = self.keys.read();
+            let current = keys.current();
+            if current.epoch() != result.key_epoch {
+                return;
+            }
+            let members = self.members.read();
+            let mut sealed = Vec::new();
+            for name in &result.missing_key {
+                let Some(member) = members.get(name) else {
+                    continue;
+                };
+                match member
+                    .wrap_public()
+                    .and_then(|wrap| SealedKey::seal(current, &wrap, &self.identity, &me))
+                {
+                    Ok(key) => sealed.push(messages::SealedKeyFor {
+                        name: name.clone(),
+                        key,
+                    }),
+                    Err(error) => super::node::log(format!(
+                        "cannot seal the World key for \"{name}\": {error}"
+                    )),
+                }
+            }
+            (current.epoch(), sealed)
+        };
+        if sealed.is_empty() {
+            return;
+        }
+        let names = sealed
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let header = Header::new(kind::KEY_PUBLISH, &me, HUB_NAME, 0);
+        match self.send_reliable(header, &messages::KeyPublish { epoch, sealed }, false, true) {
+            Ok(_) => super::node::log(format!("sealed World key epoch {epoch} for {names}")),
+            Err(error) => super::node::log(format!("cannot publish sealed keys: {error}")),
+        }
     }
 
     pub(crate) async fn refresh_inventories(&self) -> Result<usize, String> {
@@ -540,7 +714,7 @@ impl WorldClient {
             .map(|(name, (version, _))| (name.clone(), *version))
             .collect::<BTreeMap<_, _>>();
         let header = Header::new(kind::INVENTORY_GET, &self.name(), HUB_NAME, 0);
-        let answers = self
+        let answer = self
             .request(
                 header,
                 &messages::InventoryGet {
@@ -552,11 +726,8 @@ impl WorldClient {
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
-            .await?;
-        let answer = answers
-            .into_iter()
-            .next()
-            .ok_or_else(|| "the hub did not answer inventory_get".to_string())?;
+            .await?
+            .single(kind::INVENTORY_GET)?;
         expect_kind(&answer, kind::INVENTORY_RESULT)?;
         let result: messages::InventoryResult =
             messages::decode(&answer.body, kind::INVENTORY_RESULT)?;
@@ -567,6 +738,9 @@ impl WorldClient {
                 Ok(_) => continue,
                 Err(_) => continue,
             };
+            if self.members.read().get(&entry.name).is_none() {
+                continue;
+            }
             if let Ok(inventory) = messages::decode::<Inventory>(&opened.body, kind::INVENTORY) {
                 self.inventories
                     .write()
@@ -577,10 +751,16 @@ impl WorldClient {
         Ok(updated)
     }
 
+    /// Fetches the World key epochs this member lacks and adopts those a verified member
+    /// sealed for it.
+    ///
+    /// Adoption is a fixed point: an epoch signed by a member whose record is MAC'd under a
+    /// newer epoch verifies only after that newer epoch is held, so after every adoption the
+    /// member table is re-verified and the remaining keys tried again.
     pub(crate) async fn refresh_keys(&self) -> Result<u32, String> {
         let have = self.keys.read().epochs();
         let header = Header::new(kind::KEYS_GET, &self.name(), HUB_NAME, 0);
-        let answers = self
+        let answer = self
             .request(
                 header,
                 &messages::KeysGet { have },
@@ -589,36 +769,71 @@ impl WorldClient {
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
-            .await?;
-        let answer = answers
-            .into_iter()
-            .next()
-            .ok_or_else(|| "the hub did not answer keys_get".to_string())?;
+            .await?
+            .single(kind::KEYS_GET)?;
         expect_kind(&answer, kind::KEYS_RESULT)?;
         let result: messages::KeysResult = messages::decode(&answer.body, kind::KEYS_RESULT)?;
+        let my_wrap = self.identity.wrap_public();
+        let mut remaining = result.sealed;
+        remaining.sort_by_key(|sealed| sealed.epoch);
         let mut added = 0;
-        {
-            let mut keys = self.keys.write();
-            for sealed in result.sealed {
+        loop {
+            let mut progress = false;
+            let mut kept = Vec::new();
+            for sealed in remaining.drain(..) {
+                if self.keys.read().get(sealed.epoch).is_some() {
+                    continue;
+                }
+                let Some(publisher_key) = self.members.read().trusted_key(&sealed.published_by)
+                else {
+                    kept.push(sealed);
+                    continue;
+                };
+                if let Err(error) = sealed.verify_publisher(&my_wrap, &publisher_key) {
+                    super::node::log(format!("refusing a sealed World key: {error}"));
+                    continue;
+                }
                 match sealed.open(&self.identity) {
-                    Ok(key) => {
-                        if keys.add(key).is_ok() {
+                    Ok(key) => match self.keys.write().add(key) {
+                        Ok(()) => {
                             added += 1;
+                            progress = true;
                         }
-                    }
+                        Err(error) => super::node::log(format!(
+                            "refusing a sealed World key from \"{}\": {error}",
+                            sealed.published_by
+                        )),
+                    },
                     Err(error) => {
                         super::node::log(format!("cannot open a sealed World key: {error}"))
                     }
                 }
             }
-            if added > 0 {
-                keys.save(&self.paths)?;
+            remaining = kept;
+            if !progress || remaining.is_empty() {
+                break;
             }
+            self.reverify_members()?;
+        }
+        if added > 0 {
+            self.keys.read().save(&self.paths)?;
+            self.reverify_members()?;
+            let epoch = self.keys.read().current().epoch();
+            self.update_link(|link| link.key_epoch = epoch);
+            if self.is_grant_stale() {
+                self.grants_wanted.notify_one();
+            }
+        }
+        for sealed in &remaining {
+            super::node::log(format!(
+                "a sealed World key for epoch {} was not adopted: its publisher \"{}\" is not a verified member",
+                sealed.epoch, sealed.published_by
+            ));
         }
         let current = self.keys.read().current().epoch();
         if result.newest_epoch > current {
             return Err(format!(
-                "key_epoch_unknown: the World is on key epoch {} but this member only has epoch {current}; no sealed copy for it exists yet.",
+                "key_epoch_unknown: the World is on key epoch {} but this member only has epoch {current}; no copy it can trust exists yet.",
                 result.newest_epoch
             ));
         }
@@ -631,7 +846,7 @@ impl WorldClient {
         limit: u32,
     ) -> Result<messages::EventsResult, String> {
         let header = Header::new(kind::EVENTS_GET, &self.name(), HUB_NAME, 0);
-        let answers = self
+        let answer = self
             .request(
                 header,
                 &messages::EventsGet {
@@ -643,24 +858,22 @@ impl WorldClient {
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
-            .await?;
-        let answer = answers
-            .into_iter()
-            .next()
-            .ok_or_else(|| "the hub did not answer events_get".to_string())?;
+            .await?
+            .single(kind::EVENTS_GET)?;
         expect_kind(&answer, kind::EVENTS_RESULT)?;
         messages::decode(&answer.body, kind::EVENTS_RESULT)
     }
 
-    /// Asks the hub for the grant set in force and applies it.
+    /// Asks the hub for the grant snapshot in force and applies it. Returns whether the set
+    /// changed.
     ///
-    /// Grants also arrive unasked, as a reliable broadcast. This is the repair path for the two
-    /// ways that can fail to land: a member whose outbox filled while it was away, and a member
-    /// that reconnects to a hub whose grant version has moved on. Without it a narrowed grant can
-    /// stay unapplied on exactly the machine most likely to need it — the one that was gone.
-    pub(crate) async fn refresh_grants(&self) -> Result<Vec<String>, String> {
+    /// The snapshot also arrives unasked, as a reliable broadcast. This is the repair path
+    /// for the ways that can fail to land: a member whose outbox filled while it was away, a
+    /// member that reconnects to a hub whose revision has moved on, and a member that learned
+    /// from a peer's call that it is behind.
+    pub(crate) async fn refresh_grants(&self) -> Result<bool, String> {
         let header = Header::new(kind::GRANTS_GET, &self.name(), HUB_NAME, 0);
-        let answers = self
+        let answer = self
             .request(
                 header,
                 &serde_json::json!({}),
@@ -669,34 +882,121 @@ impl WorldClient {
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
-            .await?;
-        let answer = answers
-            .into_iter()
-            .next()
-            .ok_or_else(|| "the hub did not answer grants_get".to_string())?;
+            .await?
+            .single(kind::GRANTS_GET)?;
         expect_kind(&answer, kind::GRANT_SYNC)?;
         let sync: messages::GrantSync = messages::decode(&answer.body, kind::GRANT_SYNC)?;
         self.apply_grant_sync(sync)
     }
 
-    /// Applies a `grant_sync` from the hub after verifying every grant.
-    pub(crate) fn apply_grant_sync(
-        &self,
-        sync: messages::GrantSync,
-    ) -> Result<Vec<String>, String> {
-        let members = self.members.read();
-        let lookup = |name: &str| {
-            members
-                .get(name)
-                .and_then(|member| member.public_key().ok())
+    /// Applies a `grant_sync` after verifying it, never moving backwards. Returns whether the
+    /// set changed; every refusal is an error and leaves the set in force untouched.
+    pub(crate) fn apply_grant_sync(&self, sync: messages::GrantSync) -> Result<bool, String> {
+        let current = self.grants.read().clone();
+        let Some(signed) = sync.set else {
+            if current.revision == 0 {
+                return Ok(false);
+            }
+            return Err(format!(
+                "the hub reports no grant snapshot while revision {} is in force here; keeping it",
+                current.revision
+            ));
         };
-        let (set, rejected) =
-            GrantSet::from_signed(sync.version, &sync.grants, &self.keys.read(), lookup);
-        drop(members);
+        let snapshot = {
+            let members = self.members.read();
+            let keys = self.keys.read();
+            grant::verify_snapshot(&signed, &keys, |name| members.trusted_key(name))?
+        };
+        if snapshot.revision < current.revision {
+            return Err(format!(
+                "the hub sent grant revision {} while revision {} is in force here; keeping it",
+                snapshot.revision, current.revision
+            ));
+        }
+        if snapshot.revision == current.revision {
+            if current
+                .signed
+                .as_ref()
+                .is_some_and(|mine| mine.snapshot == signed.snapshot)
+            {
+                return Ok(false);
+            }
+            return Err(format!(
+                "the hub sent a different grant snapshot at revision {}; keeping the one in force",
+                snapshot.revision
+            ));
+        }
+        self.install_grants(snapshot, signed)?;
+        Ok(true)
+    }
+
+    fn install_grants(
+        &self,
+        snapshot: GrantSnapshot,
+        signed: grant::SignedGrantSet,
+    ) -> Result<(), String> {
+        let set = GrantSet::from_verified(snapshot, signed);
         set.save(&self.paths)?;
+        let revision = set.revision;
         *self.grants.write() = set;
-        self.with_state(|state| state.grant_version = sync.version)?;
-        Ok(rejected)
+        self.with_state(|state| state.grant_revision = revision)?;
+        Ok(())
+    }
+
+    /// Publishes the set in force plus `change` as the next revision. The hub refuses a
+    /// revision that does not follow its own, in which case the set is refreshed and the
+    /// change retried once on top of it.
+    pub(crate) async fn change_grants(&self, change: GrantChange) -> Result<u64, String> {
+        let me = self.name();
+        for attempt in 0..2 {
+            let current = self.grants.read().clone();
+            let snapshot = GrantSnapshot {
+                revision: current.revision + 1,
+                grants: current.entries_after(&change)?,
+                published_by: me.clone(),
+                published_at: super::now_rfc3339(),
+            };
+            let signed = grant::sign_snapshot(&self.identity, &self.keys.read(), &snapshot)?;
+            let header = Header::new(kind::GRANT_PUBLISH, &me, HUB_NAME, 0);
+            let answer = self
+                .request(
+                    header,
+                    &messages::GrantPublish {
+                        set: signed.clone(),
+                    },
+                    false,
+                    true,
+                    1,
+                    HUB_REQUEST_TIMEOUT,
+                )
+                .await?
+                .single(kind::GRANT_PUBLISH)?;
+            match answer.header.t.as_str() {
+                kind::HUB_RESULT => {
+                    let revision = snapshot.revision;
+                    self.install_grants(snapshot, signed)?;
+                    return Ok(revision);
+                }
+                kind::HUB_ERROR => {
+                    let error: messages::HubError =
+                        messages::decode(&answer.body, kind::HUB_ERROR)?;
+                    if error.code == "grant_conflict" && attempt == 0 {
+                        self.refresh_grants().await?;
+                        continue;
+                    }
+                    return Err(format!("{}: {}", error.code, error.message));
+                }
+                other => {
+                    return Err(format!(
+                        "the hub answered {other} where hub_result was expected"
+                    ));
+                }
+            }
+        }
+        Err(
+            "The grant set changed twice while this change was being published; try again."
+                .to_string(),
+        )
     }
 
     /// Publishes this member's own record; done on every connect so the hub always holds one.
@@ -713,7 +1013,7 @@ impl WorldClient {
             version: env!("CARGO_PKG_VERSION").to_string(),
             enrolled_at: config.enrolled_at.clone(),
         };
-        let signed = super::members::publish_record(&self.identity, &self.keys.read(), &record)?;
+        let signed = members::publish_record(&self.identity, &self.keys.read(), &record)?;
         let header = Header::new(kind::MEMBER_PUBLISH, &config.name, HUB_NAME, 0);
         self.send_reliable(header, &messages::MemberPublish { signed }, false, true)?;
         Ok(())
@@ -746,7 +1046,7 @@ impl WorldClient {
         let body = messages::InviteCreate {
             code_id: invite.code_id(),
             admission: invite.admission(),
-            wrapped_keys: invite.wrap_keys(&self.keys.read())?,
+            wrapped_keys: invite.wrap_keys(&self.keys.read(), self.grant_revision())?,
             name,
             exp: invite.exp.clone(),
         };
@@ -755,90 +1055,130 @@ impl WorldClient {
         Ok(invite.encode())
     }
 
-    /// Publishes a grant as this member, or removes the grant with `id` when `grant` is `None`.
-    /// The hub answers every member (this one included) with a `grant_sync`.
-    pub(crate) fn publish_grant(
-        &self,
-        id: &str,
-        grant: Option<&super::grant::Grant>,
-    ) -> Result<(), String> {
+    /// Tells the hub this member is leaving, as a revocation signed by the member itself, so
+    /// no later listing can bring the key back.
+    pub(crate) fn leave(&self) -> Result<(), String> {
         let me = self.name();
-        let signed = match grant {
-            Some(grant) => {
-                super::grant::publish_grant(&self.identity, &self.keys.read(), &me, id, grant)?
-            }
-            None => messages::SignedGrant {
-                id: id.to_string(),
-                grant: String::new(),
-                mac: String::new(),
-                mac_epoch: 0,
-                sig: String::new(),
-                published_by: me.clone(),
-            },
+        let statement = messages::RevocationStatement {
+            name: me.clone(),
+            node_pub: super::crypto::b64_encode(&self.identity.public_key()),
+            by: me.clone(),
+            at: super::now_rfc3339(),
+            reason: "left".to_string(),
         };
-        let header = Header::new(kind::GRANT_PUBLISH, &me, HUB_NAME, 0);
-        self.send_reliable(
-            header,
-            &messages::GrantPublish {
-                grant: signed,
-                delete: grant.is_none(),
-            },
-            false,
-            true,
-        )?;
+        let revocation = members::sign_revocation(&self.identity, &statement)?;
+        let header = Header::new(kind::LEAVE, &me, HUB_NAME, 0);
+        self.send_reliable(header, &messages::Revoke { revocation }, false, true)?;
         Ok(())
     }
 
-    /// Asks the hub to revoke `name`, then rotates the World key for everyone who remains.
+    /// Sends a signed revocation of `name` and waits for the hub to record it.
+    async fn send_revocation(&self, name: &str, reason: &str) -> Result<(), String> {
+        let me = self.name();
+        let node_pub = self
+            .members
+            .read()
+            .identity(name)
+            .map(|member| member.record.node_pub.clone())
+            .ok_or_else(|| {
+                format!("No verified member is named \"{name}\"; list machines with 'fastctx world nodes'.")
+            })?;
+        let statement = messages::RevocationStatement {
+            name: name.to_string(),
+            node_pub,
+            by: me.clone(),
+            at: super::now_rfc3339(),
+            reason: reason.to_string(),
+        };
+        let revocation = members::sign_revocation(&self.identity, &statement)?;
+        let header = Header::new(kind::REVOKE, &me, HUB_NAME, 0);
+        let answer = self
+            .request(
+                header,
+                &messages::Revoke { revocation },
+                false,
+                true,
+                1,
+                HUB_REQUEST_TIMEOUT,
+            )
+            .await?
+            .single(kind::REVOKE)?;
+        expect_kind(&answer, kind::HUB_RESULT)
+    }
+
+    /// Revokes `name` with a signed statement, then rotates the World key for everyone who
+    /// remains.
     pub(crate) async fn revoke(&self, name: &str) -> Result<u32, String> {
         if name == self.name() {
             return Err(
                 "A member cannot revoke itself; run 'fastctx node unenroll' instead.".to_string(),
             );
         }
-        let header = Header::new(kind::REVOKE, &self.name(), HUB_NAME, 0);
-        let answers = self
-            .request(
-                header,
-                &messages::Revoke {
-                    name: name.to_string(),
-                },
-                false,
-                true,
-                1,
-                HUB_REQUEST_TIMEOUT,
-            )
-            .await?;
-        let answer = answers
-            .into_iter()
-            .next()
-            .ok_or_else(|| "the hub did not answer the revoke request".to_string())?;
-        if answer.header.t == kind::HUB_ERROR {
-            let error: messages::HubError = messages::decode(&answer.body, kind::HUB_ERROR)?;
-            return Err(error.message);
-        }
+        self.send_revocation(name, "revoked").await?;
         self.complete_rotation().await
     }
 
     /// Creates the next key epoch and seals it to every remaining member.
+    ///
+    /// A revocation the hub operator made without a World key is countersigned first: the
+    /// members left out of the new epoch should be out by a member's signature, which every
+    /// other member can verify, not by the hub's word.
     pub(crate) async fn complete_rotation(&self) -> Result<u32, String> {
         self.refresh_members().await?;
+        let unsigned = {
+            let members = self.members.read();
+            self.members_raw
+                .read()
+                .as_ref()
+                .map(|result| {
+                    result
+                        .members
+                        .iter()
+                        .filter(|entry| {
+                            entry.state == members::STATE_REVOKED
+                                && entry.revocation.is_none()
+                                && !members.revoked.contains_key(&entry.name)
+                                && members.identity(&entry.name).is_some()
+                        })
+                        .map(|entry| entry.name.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        for name in &unsigned {
+            match self.send_revocation(name, "revoked").await {
+                Ok(()) => {
+                    super::node::log(format!("countersigned the hub's revocation of \"{name}\""))
+                }
+                Err(error) => super::node::log(format!(
+                    "cannot countersign the hub's revocation of \"{name}\": {error}"
+                )),
+            }
+        }
+        if !unsigned.is_empty() {
+            self.refresh_members().await?;
+        }
+        let me = self.name();
         let members = self.members.read().clone();
         let (epoch, sealed) = {
             let mut keys = self.keys.write();
             let key = keys.rotate()?.clone();
             let mut sealed = Vec::new();
-            for member in members.members.values() {
+            for member in members
+                .members
+                .values()
+                .filter(|member| member.is_current())
+            {
                 let wrap = member.wrap_public()?;
                 sealed.push(messages::SealedKeyFor {
                     name: member.record.name.clone(),
-                    key: SealedKey::seal(&key, &wrap)?,
+                    key: SealedKey::seal(&key, &wrap, &self.identity, &me)?,
                 });
             }
             keys.save(&self.paths)?;
             (key.epoch(), sealed)
         };
-        let header = Header::new(kind::KEY_PUBLISH, &self.name(), HUB_NAME, 0);
+        let header = Header::new(kind::KEY_PUBLISH, &me, HUB_NAME, 0);
         self.send_reliable(header, &messages::KeyPublish { epoch, sealed }, false, true)?;
         self.update_link(|link| link.key_epoch = epoch);
         Ok(epoch)
@@ -854,6 +1194,7 @@ impl WorldClient {
         let mut views = members
             .members
             .values()
+            .filter(|member| member.is_current())
             .map(|member| {
                 let inventory = if member.record.name == me {
                     own.clone()
@@ -908,22 +1249,15 @@ impl WorldClient {
         tool_timeout: Duration,
     ) -> Result<Vec<NodeOutcome>, String> {
         let me = self.name();
-        let targets = self.expand(selector)?;
-        if targets.is_empty() {
+        let remote = self.expand(selector)?;
+        if remote.is_empty() {
             return Ok(Vec::new());
-        }
-        let mut outcomes = Vec::new();
-        let mut remote = Vec::new();
-        for target in targets {
-            if target == me {
-                remote.push(target);
-                continue;
-            }
-            remote.push(target);
         }
         if !self.is_connected() {
             return Err(format!("hub_unreachable: {}", self.unreachable_error()));
         }
+        // The hub routes a fan-out by `targets`; `to` carries the first of them so a hub that
+        // understands only single-target routing still delivers one leg rather than none.
         let header = Header::new(kind::CALL, &me, &remote[0], 0)
             .with_verb(verb)
             .with_targets(remote.clone());
@@ -933,29 +1267,37 @@ impl WorldClient {
             budget,
             cwd,
             timeout_ms: tool_timeout.as_millis() as u64,
+            grant_revision: self.grant_revision(),
         };
-        let answers = self
-            .request(
-                header,
-                &body,
-                true,
-                false,
-                remote.len(),
-                tool_timeout + LINK_MARGIN,
-            )
+        let window = tool_timeout + LINK_MARGIN;
+        let Answers {
+            answers,
+            delivered,
+            link_lost,
+        } = self
+            .request(header, &body, true, false, remote.len(), window)
             .await?;
-        let mut answered = std::collections::BTreeSet::new();
+        let mut outcomes: BTreeMap<String, NodeOutcome> = BTreeMap::new();
         for answer in answers {
             match answer.header.t.as_str() {
                 kind::CALL_RESULT if answer.encrypted => {
-                    if let Ok(result) =
+                    let Ok(result) =
                         messages::decode::<CallResult>(&answer.body, kind::CALL_RESULT)
+                    else {
+                        continue;
+                    };
+                    // A result answers for the member that sent it, and only for one this call
+                    // was addressed to; both fields sit inside the ciphertext.
+                    if result.node != answer.header.from
+                        || !remote.contains(&result.node)
+                        || outcomes.contains_key(&result.node)
                     {
-                        if result.node != answer.header.from {
-                            continue;
-                        }
-                        answered.insert(result.node.clone());
-                        outcomes.push(NodeOutcome {
+                        continue;
+                    }
+                    self.raise_grant_floor(result.grant_revision);
+                    outcomes.insert(
+                        result.node.clone(),
+                        NodeOutcome {
                             node: result.node,
                             status: if result.response.is_error {
                                 "error"
@@ -965,41 +1307,80 @@ impl WorldClient {
                             .to_string(),
                             response: Some(result.response.into()),
                             message: None,
-                        });
-                    }
+                        },
+                    );
                 }
                 kind::CALL_STATUS if answer.header.from == HUB_NAME => {
-                    if let Ok(status) =
+                    let Ok(status) =
                         messages::decode::<CallStatus>(&answer.body, kind::CALL_STATUS)
-                    {
-                        answered.insert(status.node.clone());
-                        outcomes.push(NodeOutcome {
+                    else {
+                        continue;
+                    };
+                    if !remote.contains(&status.node) || outcomes.contains_key(&status.node) {
+                        continue;
+                    }
+                    outcomes.insert(
+                        status.node.clone(),
+                        NodeOutcome {
                             node: status.node,
                             status: status.status,
                             response: None,
                             message: Some(status.message),
-                        });
-                    }
+                        },
+                    );
                 }
                 _ => {}
             }
         }
-        for target in remote {
-            if !answered.contains(&target) {
-                outcomes.push(NodeOutcome {
-                    node: target.clone(),
-                    status: "timeout".to_string(),
-                    response: None,
-                    message: Some(format!(
-                        "Node \"{target}\" did not answer within {} s.",
-                        (tool_timeout + LINK_MARGIN).as_secs()
-                    )),
-                });
+        for target in &remote {
+            if outcomes.contains_key(target) {
+                continue;
             }
+            let (status, message) = if !link_lost {
+                (
+                    "timeout",
+                    format!(
+                        "Node \"{target}\" did not answer within {} s.",
+                        window.as_secs()
+                    ),
+                )
+            } else if delivered.contains(target) {
+                (
+                    "unknown",
+                    format!(
+                        "The hub handed this call to \"{target}\" before the hub link dropped; no answer arrived within {} s, so it may have run.",
+                        window.as_secs()
+                    ),
+                )
+            } else {
+                (
+                    "unreachable",
+                    format!(
+                        "The hub link dropped before \"{target}\" received this call; nothing ran there."
+                    ),
+                )
+            };
+            outcomes.insert(
+                target.clone(),
+                NodeOutcome {
+                    node: target.clone(),
+                    status: status.to_string(),
+                    response: None,
+                    message: Some(message),
+                },
+            );
         }
-        outcomes.sort_by(|left, right| left.node.cmp(&right.node));
-        Ok(outcomes)
+        Ok(outcomes.into_values().collect())
     }
+}
+
+/// The target a `delivered` call status names, if the answer is one.
+fn delivered_to(answer: &Opened) -> Option<String> {
+    if answer.header.t != kind::CALL_STATUS || answer.header.from != HUB_NAME {
+        return None;
+    }
+    let status: CallStatus = messages::decode(&answer.body, kind::CALL_STATUS).ok()?;
+    (status.status == messages::CALL_DELIVERED).then_some(status.node)
 }
 
 fn expect_kind(answer: &Opened, expected: &str) -> Result<(), String> {

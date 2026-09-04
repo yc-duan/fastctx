@@ -501,7 +501,7 @@ impl Hub {
             .collect::<Vec<_>>();
         for (hub_id, target) in targets {
             if let Ok(cancel) =
-                self.hub_envelope(kind::CANCEL, &target, &messages::HubResult::default())
+                self.hub_envelope(kind::CANCEL, &target, None, &messages::HubResult::default())
             {
                 self.send_to_online(
                     &target,
@@ -612,7 +612,7 @@ impl Hub {
                         .map_err(|error| error.to_string())
                 }) {
                 Ok(ControlRequest::Revoke { name }) => self
-                    .revoke(&name, "operator", "revoked")
+                    .revoke(&name, "operator", "revoked", None)
                     .map(|()| format!("\"{name}\" revoked.")),
                 Err(error) => Err(format!("unreadable control request: {error}")),
             };

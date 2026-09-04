@@ -311,6 +311,7 @@ fn enroll(
         signed: None,
         revoked_at: None,
         revoke_reason: None,
+        revocation: None,
     })?;
     hub.store.remove_invite(&enrollment.code_id)?;
     hub.append_event(
@@ -381,6 +382,7 @@ fn bootstrap(
         signed: None,
         revoked_at: None,
         revoke_reason: None,
+        revocation: None,
     })?;
     hub.store
         .set_meta_string(super::store::meta::BOOTSTRAP_USED, "1")?;

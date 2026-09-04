@@ -52,6 +52,12 @@ impl Executor {
             super::log("a call arrived without a request id; nothing to answer");
             return;
         };
+        // The caller's own request id sits in the authenticated header; the answer echoes it
+        // there so the caller can refuse an answer the hub matched to the wrong request.
+        let Some(request_id) = opened.header.id else {
+            super::log("a call arrived without a caller request id; nothing to answer");
+            return;
+        };
         let from = opened.header.from.clone();
         let started = Instant::now();
         let response = match self.prepare(&opened) {
@@ -68,8 +74,10 @@ impl Executor {
             node: self.client.name(),
             response: WireResponse::from(&response),
             elapsed_ms: started.elapsed().as_millis() as u64,
+            grant_revision: self.client.grant_revision(),
         };
-        let header = Header::new(kind::CALL_RESULT, &self.client.name(), &from, 0);
+        let header =
+            Header::new(kind::CALL_RESULT, &self.client.name(), &from, 0).with_id(request_id);
         if let Err(error) = self.client.send_answer(hub_id, header, &result, true) {
             super::log(format!("cannot answer the call from \"{from}\": {error}"));
         }
@@ -88,6 +96,16 @@ impl Executor {
         }
         let call: Call = messages::decode(&opened.body, kind::CALL)?;
         let me = self.client.name();
+        // The caller's revision arrived inside the ciphertext; if it is newer than this node's,
+        // a narrowing may exist that this node has not seen, and honouring the older set could
+        // execute something already withdrawn.
+        if self.client.raise_grant_floor(call.grant_revision) {
+            return Err(format!(
+                "grant_stale: node \"{me}\" holds grant revision {} but revision {} is in force; it is fetching the newer set, retry shortly.",
+                self.client.grant_revision(),
+                self.client.state_snapshot().grant_floor
+            ));
+        }
         if !self
             .client
             .grants

@@ -155,14 +155,14 @@ async fn enroll_with(
         .clone()
         .ok_or_else(|| "The TLS handshake recorded no certificate.".to_string())?;
     let tls = decide_tls(&learned, &welcome_binding_mode(&dialed))?;
-    let keys = match (
+    let (keys, grant_floor) = match (
         &admission,
         welcome
             .enrolled
             .as_ref()
             .and_then(|enrolled| enrolled.wrapped_keys.as_ref()),
     ) {
-        (Admission::Bootstrap { .. }, _) => KeyRing::new_initial()?,
+        (Admission::Bootstrap { .. }, _) => (KeyRing::new_initial()?, 0),
         (Admission::Invite(invite), Some(wrapped)) => invite.unwrap_keys(wrapped)?,
         (Admission::Invite(_), None) => {
             dialed.close().await;
@@ -185,6 +185,9 @@ async fn enroll_with(
     keys.save(&world_paths)?;
     let mut state = super::state::NodeState::load(&world_paths)?;
     state.last_network = Some(dialed.path.mode());
+    // The inviter's grant revision: until a snapshot at least this new is verified, this
+    // member refuses calls from others rather than run on the permissive default.
+    state.grant_floor = grant_floor;
     state.save(&world_paths)?;
     super::save_config(&world_paths, &config)?;
 

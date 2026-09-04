@@ -4,11 +4,11 @@
 use super::session::Peer;
 use super::store::{InventoryRow, InviteRow, SealedKeyRow};
 use super::{Hub, log};
+use crate::world::crypto::b64_array;
 use crate::world::envelope::{Envelope, Header};
-use crate::world::grant::{Grant, GrantSet};
-use crate::world::identity;
-use crate::world::messages::{self, kind};
-use crate::world::{HUB_NAME, validate_node_name};
+use crate::world::grant::GrantSet;
+use crate::world::messages::{self, SignedRevocation, kind};
+use crate::world::{HUB_NAME, members, validate_node_name};
 use std::collections::BTreeMap;
 
 /// Handles a reliable message from `peer`. The caller acks whether or not this succeeds:
@@ -77,6 +77,23 @@ fn require_signature(peer: &Peer, env: &Envelope, header: &Header) -> Result<(),
     Ok(())
 }
 
+/// A revocation the connected member signed: its statement names the member as the revoker
+/// and the signature verifies against the connection's key.
+fn verify_peer_revocation(
+    peer: &Peer,
+    signed: &SignedRevocation,
+) -> Result<messages::RevocationStatement, String> {
+    let statement =
+        members::verify_revocation(signed, |name| (name == peer.name).then_some(peer.node_pub))?;
+    if statement.by != peer.name {
+        return Err(format!(
+            "the revocation names \"{}\" as the revoker but the connection belongs to \"{}\"",
+            statement.by, peer.name
+        ));
+    }
+    Ok(statement)
+}
+
 fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> Result<(), String> {
     require_signature(peer, env, header)?;
     match header.t.as_str() {
@@ -142,10 +159,29 @@ fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> 
                 return Err("key_publish needs an epoch above zero.".to_string());
             }
             let now = crate::world::now_rfc3339();
+            // Each sealed key names its publisher and carries that publisher's signature;
+            // the hub checks both against the connection so a member cannot publish keys in
+            // another member's name, and members re-check the signature on receipt.
             for entry in &body.sealed {
                 if entry.key.epoch != body.epoch {
                     return Err("key_publish mixes epochs.".to_string());
                 }
+                if entry.key.published_by != peer.name {
+                    return Err(format!(
+                        "key_publish names \"{}\" as the publisher but the connection belongs to \"{}\".",
+                        entry.key.published_by, peer.name
+                    ));
+                }
+                let Some(recipient) = hub.store.member(&entry.name)? else {
+                    return Err(format!(
+                        "key_publish seals a key for \"{}\", which is not a member.",
+                        entry.name
+                    ));
+                };
+                let wrap = b64_array::<32>(&recipient.wrap_pub, "member wrap key")?;
+                entry.key.verify_publisher(&wrap, &peer.node_pub)?;
+            }
+            for entry in &body.sealed {
                 hub.store.put_sealed_key(
                     body.epoch,
                     &entry.name,
@@ -184,42 +220,6 @@ fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> 
             }
             Ok(())
         }
-        kind::GRANT_PUBLISH => {
-            let opened = env.open(None)?;
-            let body: messages::GrantPublish = messages::decode(&opened.body, &header.t)?;
-            if body.grant.published_by != peer.name {
-                return Err("grant_publish must be published by the connected member.".to_string());
-            }
-            let version = if body.delete {
-                hub.store.put_grant(&body.grant.id, None)?
-            } else {
-                let signature = crate::world::crypto::b64_decode(&body.grant.sig)?;
-                identity::verify(
-                    &peer.node_pub,
-                    crate::world::grant::GRANT_DOMAIN,
-                    body.grant.grant.as_bytes(),
-                    &signature,
-                )
-                .map_err(|_| {
-                    "the grant's signature does not verify against its publisher".to_string()
-                })?;
-                let _: Grant = serde_json::from_str(&body.grant.grant).map_err(|error| {
-                    format!("grant_publish carries an unreadable grant: {error}")
-                })?;
-                hub.store.put_grant(&body.grant.id, Some(&body.grant))?
-            };
-            hub.reload_grants();
-            hub.append_event(
-                &peer.name,
-                "grant.changed",
-                [
-                    ("id", serde_json::Value::String(body.grant.id.clone())),
-                    ("deleted", serde_json::Value::Bool(body.delete)),
-                ],
-            );
-            hub.broadcast_grant_sync(version, None);
-            Ok(())
-        }
         kind::INVENTORY => {
             if header.epoch == 0 {
                 return Err("inventory must be encrypted.".to_string());
@@ -235,7 +235,16 @@ fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> 
             Ok(())
         }
         kind::LEAVE => {
-            hub.revoke(&peer.name, &peer.name, "left")?;
+            let opened = env.open(None)?;
+            let body: messages::Revoke = messages::decode(&opened.body, &header.t)?;
+            let statement = verify_peer_revocation(peer, &body.revocation)?;
+            if statement.name != peer.name {
+                return Err(format!(
+                    "leave must revoke the leaving member, not \"{}\".",
+                    statement.name
+                ));
+            }
+            hub.revoke(&peer.name, &peer.name, "left", Some(body.revocation))?;
             Ok(())
         }
         other => Err(format!(
@@ -299,15 +308,61 @@ fn answer_hub_request(
             );
         }
         kind::GRANTS_GET => {
-            // The grant set also arrives unasked as a broadcast; this answers a member that
+            // The snapshot also arrives unasked as a broadcast; this answers a member that
             // noticed it is behind, so a broadcast lost to a full outbox repairs itself.
-            let version = hub.store.meta_u64(super::store::meta::GRANT_VERSION)?;
-            let grants = hub.store.grants().unwrap_or_default();
             hub.answer(
                 &peer.name,
                 id,
                 kind::GRANT_SYNC,
-                &messages::GrantSync { version, grants },
+                &messages::GrantSync {
+                    set: hub.store.grant_snapshot()?,
+                },
+            );
+        }
+        kind::GRANT_PUBLISH => {
+            let opened = env.open(None)?;
+            let body: messages::GrantPublish = messages::decode(&opened.body, &header.t)?;
+            let snapshot = body.set.parse()?;
+            if snapshot.published_by != peer.name {
+                return Err(format!(
+                    "the grant snapshot names \"{}\" as its publisher but the connection belongs to \"{}\".",
+                    snapshot.published_by, peer.name
+                ));
+            }
+            body.set.verify_signature(&peer.node_pub)?;
+            match hub.store.put_grant_snapshot(&body.set, snapshot.revision) {
+                Ok(()) => {}
+                Err(error) if error.starts_with("grant_conflict:") => {
+                    hub.send_hub_error(
+                        &peer.name,
+                        Some(id),
+                        "grant_conflict",
+                        error.trim_start_matches("grant_conflict: "),
+                    );
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            }
+            hub.reload_grants();
+            hub.append_event(
+                &peer.name,
+                "grant.changed",
+                [
+                    ("revision", serde_json::Value::from(snapshot.revision)),
+                    ("grants", serde_json::Value::from(snapshot.grants.len())),
+                ],
+            );
+            hub.broadcast_grant_sync(Some(&peer.name));
+            let mut facts = BTreeMap::new();
+            facts.insert(
+                "revision".to_string(),
+                serde_json::Value::from(snapshot.revision),
+            );
+            hub.answer(
+                &peer.name,
+                id,
+                kind::HUB_RESULT,
+                &messages::HubResult { facts },
             );
         }
         kind::KEYS_GET => {
@@ -334,8 +389,23 @@ fn answer_hub_request(
         kind::REVOKE => {
             let opened = env.open(None)?;
             let body: messages::Revoke = messages::decode(&opened.body, &header.t)?;
-            validate_node_name(&body.name)?;
-            hub.revoke(&body.name, &peer.name, "revoked")?;
+            let statement = verify_peer_revocation(peer, &body.revocation)?;
+            validate_node_name(&statement.name)?;
+            let Some(row) = hub.store.member(&statement.name)? else {
+                return Err(format!("No member named \"{}\".", statement.name));
+            };
+            if row.node_pub != statement.node_pub {
+                return Err(format!(
+                    "The revocation names a key that is not \"{}\"'s enrolled key.",
+                    statement.name
+                ));
+            }
+            hub.revoke(
+                &statement.name,
+                &peer.name,
+                &statement.reason,
+                Some(body.revocation),
+            )?;
             hub.answer(
                 &peer.name,
                 id,
@@ -371,7 +441,8 @@ fn forward_reliable(
 }
 
 /// Forwards a request to every target, answering on the hub's behalf where a target cannot
-/// receive it.
+/// receive it, and telling the caller which legs were handed over so it can later tell an
+/// undelivered leg from one whose outcome is unknown.
 fn forward_request(
     hub: &Hub,
     peer: &Peer,
@@ -386,19 +457,26 @@ fn forward_request(
         ));
     }
     for target in targets_of(header) {
+        // Each message completes "<node>: <status> (…)" on the caller, so it names neither the
+        // node nor the status again.
         let status = match hub.check_grant(&peer.name, header.verb.as_deref(), &target) {
-            Err(error) => Some(("forbidden", error)),
+            Err(_) => Some((
+                "forbidden",
+                match header.verb.as_deref() {
+                    Some(verb) => {
+                        format!("no grant allows {verb} here for \"{}\"", peer.name)
+                    }
+                    None => format!("no grant allows this call from \"{}\"", peer.name),
+                },
+            )),
             Ok(()) => match hub.store.member(&target)? {
-                None => Some(("unknown", format!("No member named \"{target}\"."))),
+                None => Some(("unknown", "no member with this name".to_string())),
                 Some(row) if row.is_revoked() => {
-                    Some(("revoked", format!("The member \"{target}\" was revoked.")))
+                    Some(("revoked", "this member was revoked".to_string()))
                 }
                 Some(_) if !hub.is_online(&target) => Some((
                     "offline",
-                    format!(
-                        "Node \"{target}\" is offline (last seen {}).",
-                        hub.last_seen_text(&target)
-                    ),
+                    format!("last seen {}", hub.last_seen_text(&target)),
                 )),
                 Some(_) => None,
             },
@@ -416,10 +494,21 @@ fn forward_request(
             ),
             None => {
                 let hub_id = hub.register_pending(&peer.name, id, &target);
-                if !hub.send_to_online(
+                if hub.send_to_online(
                     &target,
                     crate::world::wire::Frame::request(hub_id, env.clone()),
                 ) {
+                    hub.answer(
+                        &peer.name,
+                        id,
+                        kind::CALL_STATUS,
+                        &messages::CallStatus {
+                            node: target.clone(),
+                            status: messages::CALL_DELIVERED.to_string(),
+                            message: String::new(),
+                        },
+                    );
+                } else {
                     hub.forget_pending(hub_id);
                     hub.answer(
                         &peer.name,
@@ -446,32 +535,32 @@ fn targets_of(header: &Header) -> Vec<String> {
 }
 
 impl Hub {
-    /// Grant shapes the hub enforces: the publisher's signature is checked, the MAC is not
-    /// (the hub has no World key); members re-check both on their copies.
+    /// Grant shapes the hub enforces, from the snapshot in force: the publisher's signature
+    /// was checked when it was stored, the MAC is not (the hub has no World key); members
+    /// re-check both on their copies.
     pub(crate) fn reload_grants(&self) {
-        let rows = match self.store.grants() {
-            Ok(rows) => rows,
+        let set = match self.store.grant_snapshot() {
+            Ok(Some(signed)) => match signed.parse() {
+                Ok(snapshot) => GrantSet {
+                    revision: snapshot.revision,
+                    grants: snapshot.grants,
+                    published_by: snapshot.published_by,
+                    published_at: snapshot.published_at,
+                    signed: Some(signed),
+                },
+                Err(error) => {
+                    log(format!(
+                        "the stored grant snapshot is unreadable and is ignored: {error}"
+                    ));
+                    GrantSet::default()
+                }
+            },
+            Ok(None) => GrantSet::default(),
             Err(error) => {
                 log(format!("cannot load grants: {error}"));
                 return;
             }
         };
-        let mut set = GrantSet {
-            version: self
-                .store
-                .meta_u64(super::store::meta::GRANT_VERSION)
-                .unwrap_or(0),
-            grants: Vec::new(),
-        };
-        for row in rows {
-            match serde_json::from_str::<Grant>(&row.grant) {
-                Ok(grant) => set.grants.push((row.id, grant)),
-                Err(error) => log(format!(
-                    "grant {} is unreadable and is ignored: {error}",
-                    row.id
-                )),
-            }
-        }
         *self.grants.lock() = set;
     }
 
@@ -498,16 +587,16 @@ impl Hub {
         }
     }
 
+    /// Every member the hub knows, revoked ones included, plus who lacks the newest key.
     pub(crate) fn members_result(&self) -> Result<messages::MembersResult, String> {
         let sessions = self.store.sessions()?;
         let mut members = Vec::new();
         for row in self.store.members()? {
-            if row.is_revoked() {
-                continue;
-            }
             let session = sessions.get(&row.name).cloned().unwrap_or_default();
             members.push(messages::MemberEntry {
-                state: if self.is_online(&row.name) {
+                state: if row.is_revoked() {
+                    members::STATE_REVOKED
+                } else if self.is_online(&row.name) {
                     "online"
                 } else {
                     "offline"
@@ -521,25 +610,49 @@ impl Hub {
                 network: session.network,
                 version: (!session.version.is_empty()).then_some(session.version),
                 inventory_version: session.inventory_version,
+                revocation: row.revocation,
             });
         }
+        let key_epoch = self.store.meta_u64(super::store::meta::KEY_EPOCH)? as u32;
+        let missing_key = if key_epoch > 0 {
+            self.store.members_missing_epoch(key_epoch)?
+        } else {
+            Vec::new()
+        };
         Ok(messages::MembersResult {
             version: self.store.meta_u64(super::store::meta::MEMBERS_VERSION)?,
             members,
+            missing_key,
+            key_epoch,
         })
     }
 
     /// Revokes a member: admission removed, keys and inventory dropped, connection closed,
-    /// rotation flagged for the next member able to rotate.
-    pub(crate) fn revoke(&self, name: &str, by: &str, reason: &str) -> Result<(), String> {
+    /// rotation flagged for the next member able to rotate. `revocation` is the member-signed
+    /// statement when a member asked; the hub operator has none, and the next member to
+    /// rotate countersigns for them.
+    pub(crate) fn revoke(
+        &self,
+        name: &str,
+        by: &str,
+        reason: &str,
+        revocation: Option<SignedRevocation>,
+    ) -> Result<(), String> {
         let Some(mut row) = self.store.member(name)? else {
             return Err(format!("No member named \"{name}\"."));
         };
         if row.is_revoked() {
+            if row.revocation.is_none() && revocation.is_some() {
+                row.revocation = revocation;
+                let version = self.store.put_member(&row)?;
+                self.broadcast_members_changed(version, None);
+                log(format!("\"{name}\": revocation countersigned by {by}"));
+            }
             return Ok(());
         }
         row.revoked_at = Some(crate::world::now_rfc3339());
         row.revoke_reason = Some(reason.to_string());
+        row.revocation = revocation;
         let version = self.store.put_member(&row)?;
         self.store.remove_sealed_keys_for(name)?;
         self.store.remove_inventory(name)?;
@@ -560,6 +673,7 @@ impl Hub {
             let env = self.hub_envelope(
                 kind::REVOKED,
                 name,
+                None,
                 &messages::Revoked {
                     name: name.to_string(),
                     reason: reason.to_string(),
@@ -591,14 +705,15 @@ impl Hub {
         );
     }
 
-    pub(crate) fn broadcast_grant_sync(&self, version: u64, except: Option<&str>) {
-        let grants = self.store.grants().unwrap_or_default();
-        self.broadcast_reliable(
-            kind::GRANT_SYNC,
-            &messages::GrantSync { version, grants },
-            None,
-            except,
-        );
+    pub(crate) fn broadcast_grant_sync(&self, except: Option<&str>) {
+        let set = match self.store.grant_snapshot() {
+            Ok(set) => set,
+            Err(error) => {
+                log(format!("cannot broadcast grants: {error}"));
+                return;
+            }
+        };
+        self.broadcast_reliable(kind::GRANT_SYNC, &messages::GrantSync { set }, None, except);
     }
 
     /// Queues one reliable hub message for every enrolled member (or the named subset).
@@ -625,7 +740,7 @@ impl Hub {
             {
                 continue;
             }
-            match self.hub_envelope(t, &member.name, body) {
+            match self.hub_envelope(t, &member.name, None, body) {
                 Ok(env) => {
                     if let Err(error) = self.queue_reliable(&member.name, env, None) {
                         log(format!("cannot queue {t} for \"{}\": {error}", member.name));
@@ -636,9 +751,10 @@ impl Hub {
         }
     }
 
-    /// Answers a request from `to` with a hub-originated envelope.
+    /// Answers request `id` from `to` with a hub-originated envelope whose header carries the
+    /// same id, so the recipient can hold the hub to the request it is answering.
     pub(crate) fn answer<T: serde::Serialize>(&self, to: &str, id: u64, t: &str, body: &T) {
-        match self.hub_envelope(t, to, body) {
+        match self.hub_envelope(t, to, Some(id), body) {
             Ok(env) => {
                 self.send_to_online(to, crate::world::wire::Frame::request(id, env));
             }
@@ -651,7 +767,7 @@ impl Hub {
             code: code.to_string(),
             message: message.to_string(),
         };
-        if let Ok(env) = self.hub_envelope(kind::HUB_ERROR, to, &body) {
+        if let Ok(env) = self.hub_envelope(kind::HUB_ERROR, to, id, &body) {
             self.send_to_online(to, crate::world::wire::Frame::Msg { seq: None, id, env });
         }
     }
@@ -660,9 +776,13 @@ impl Hub {
         &self,
         t: &str,
         to: &str,
+        id: Option<u64>,
         body: &T,
     ) -> Result<Envelope, String> {
-        let header = Header::new(t, HUB_NAME, to, self.next_n());
+        let mut header = Header::new(t, HUB_NAME, to, self.next_n());
+        if let Some(id) = id {
+            header = header.with_id(id);
+        }
         Envelope::seal_plain(header, &messages::encode(body)?)
     }
 

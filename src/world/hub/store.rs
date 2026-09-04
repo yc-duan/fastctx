@@ -3,8 +3,9 @@
 //! has to reason about interleaved updates.
 
 use crate::world::envelope::Envelope;
+use crate::world::grant::SignedGrantSet;
 use crate::world::keys::SealedKey;
-use crate::world::messages::{Event, SignedGrant, SignedRecord};
+use crate::world::messages::{Event, SignedRecord, SignedRevocation};
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -22,8 +23,11 @@ const GRANTS: TableDefinition<&str, &[u8]> = TableDefinition::new("grants");
 const INVENTORY: TableDefinition<&str, &[u8]> = TableDefinition::new("inventory");
 const EVENTS: TableDefinition<u64, &[u8]> = TableDefinition::new("events");
 
-/// Format version of the whole database; readers refuse a newer one.
-const STORE_FORMAT: u64 = 1;
+/// Format version of the whole database; readers refuse a newer one. Format 2 stores the
+/// grant set as one signed snapshot and sealed keys with their publisher's signature.
+const STORE_FORMAT: u64 = 2;
+/// The single row of the grants table.
+const GRANT_SNAPSHOT_KEY: &str = "snapshot";
 /// Events kept before the oldest are dropped.
 pub(crate) const EVENT_RETENTION: u64 = 100_000;
 /// Reliable messages queued per member before new ones are refused.
@@ -59,6 +63,9 @@ pub(crate) struct MemberRow {
     pub(crate) revoked_at: Option<String>,
     #[serde(default)]
     pub(crate) revoke_reason: Option<String>,
+    /// The member-signed revocation, when a member (not the hub operator) revoked this one.
+    #[serde(default)]
+    pub(crate) revocation: Option<SignedRevocation>,
 }
 
 impl MemberRow {
@@ -210,13 +217,25 @@ impl Store {
             txn.open_table(EVENTS).map_err(|error| store_error("cannot open events", error))?;
             let mut meta = txn.open_table(META).map_err(|error| store_error("cannot open meta", error))?;
             let format = get_u64(&meta, meta::FORMAT)?;
-            if format == 0 {
-                put_u64(&mut meta, meta::FORMAT, STORE_FORMAT)?;
-            } else if format > STORE_FORMAT {
+            if format > STORE_FORMAT {
                 return Err(format!(
                     "The hub database {} was written by a newer fastctx (format {format}); this build reads format {STORE_FORMAT} at most.",
                     crate::paths::display_path(path)
                 ));
+            }
+            if format == 1 {
+                // Format 1 held per-grant rows and unsigned sealed keys, neither of which a
+                // format-2 member accepts. Members re-publish grants; any holder of the newest
+                // epoch reseals it for whoever lacks it (`members_result.missing_key`).
+                let mut keys = txn.open_table(KEYS).map_err(|error| store_error("cannot open keys", error))?;
+                keys.retain(|_, _| false).map_err(|error| store_error("cannot clear keys", error))?;
+                let mut grants = txn.open_table(GRANTS).map_err(|error| store_error("cannot open grants", error))?;
+                grants.retain(|_, _| false).map_err(|error| store_error("cannot clear grants", error))?;
+                put_u64(&mut meta, meta::GRANT_VERSION, 0)?;
+                super::log("migrated the hub database from format 1: grants and sealed keys were cleared");
+            }
+            if format != STORE_FORMAT {
+                put_u64(&mut meta, meta::FORMAT, STORE_FORMAT)?;
             }
             Ok(())
         })?;
@@ -666,53 +685,78 @@ impl Store {
         })
     }
 
+    /// Admitted, unrevoked members with no sealed copy of `epoch`.
+    pub(crate) fn members_missing_epoch(&self, epoch: u32) -> Result<Vec<String>, String> {
+        self.read(|txn| {
+            let keys = txn
+                .open_table(KEYS)
+                .map_err(|error| store_error("cannot open keys", error))?;
+            let mut holders = std::collections::BTreeSet::new();
+            for entry in keys
+                .range::<(u32, &str)>((epoch, "")..=(epoch, "\u{10ffff}"))
+                .map_err(|error| store_error("cannot scan keys", error))?
+            {
+                let (key, _) = entry.map_err(|error| store_error("cannot scan keys", error))?;
+                holders.insert(key.value().1.to_string());
+            }
+            let members = txn
+                .open_table(MEMBERS)
+                .map_err(|error| store_error("cannot open members", error))?;
+            let mut missing = Vec::new();
+            for entry in members
+                .iter()
+                .map_err(|error| store_error("cannot iterate members", error))?
+            {
+                let (_, value) =
+                    entry.map_err(|error| store_error("cannot iterate members", error))?;
+                let row = decode::<MemberRow>(value.value())?;
+                if !row.is_revoked() && !holders.contains(&row.name) {
+                    missing.push(row.name);
+                }
+            }
+            Ok(missing)
+        })
+    }
+
     // ----- grants -----
 
-    pub(crate) fn grants(&self) -> Result<Vec<SignedGrant>, String> {
+    /// The signed grant snapshot in force; `None` when no member has published one.
+    pub(crate) fn grant_snapshot(&self) -> Result<Option<SignedGrantSet>, String> {
         self.read(|txn| {
             let table = txn
                 .open_table(GRANTS)
                 .map_err(|error| store_error("cannot open grants", error))?;
-            let mut rows = Vec::new();
-            for entry in table
-                .iter()
-                .map_err(|error| store_error("cannot iterate grants", error))?
-            {
-                let (_, value) =
-                    entry.map_err(|error| store_error("cannot iterate grants", error))?;
-                rows.push(decode::<SignedGrant>(value.value())?);
-            }
-            Ok(rows)
+            get_json(&table, GRANT_SNAPSHOT_KEY)
         })
     }
 
-    /// Adds, replaces, or (with `None`) removes a grant, returning the new grant version.
-    pub(crate) fn put_grant(&self, id: &str, grant: Option<&SignedGrant>) -> Result<u64, String> {
-        let bytes = grant.map(encode).transpose()?;
+    /// Stores a snapshot whose revision must follow the stored one, in one transaction, so
+    /// two members publishing at once cannot silently overwrite each other.
+    pub(crate) fn put_grant_snapshot(
+        &self,
+        signed: &SignedGrantSet,
+        revision: u64,
+    ) -> Result<(), String> {
+        let bytes = encode(signed)?;
         self.write(|txn| {
-            {
-                let mut table = txn
-                    .open_table(GRANTS)
-                    .map_err(|error| store_error("cannot open grants", error))?;
-                match &bytes {
-                    Some(bytes) => {
-                        table
-                            .insert(id, bytes.as_slice())
-                            .map_err(|error| store_error("cannot write a grant", error))?;
-                    }
-                    None => {
-                        table
-                            .remove(id)
-                            .map_err(|error| store_error("cannot remove a grant", error))?;
-                    }
-                }
-            }
             let mut meta = txn
                 .open_table(META)
                 .map_err(|error| store_error("cannot open meta", error))?;
-            let version = get_u64(&meta, meta::GRANT_VERSION)? + 1;
-            put_u64(&mut meta, meta::GRANT_VERSION, version)?;
-            Ok(version)
+            let current = get_u64(&meta, meta::GRANT_VERSION)?;
+            if revision != current + 1 {
+                return Err(format!(
+                    "grant_conflict: the hub holds grant revision {current}; a new snapshot must be revision {}, not {revision}.",
+                    current + 1
+                ));
+            }
+            let mut table = txn
+                .open_table(GRANTS)
+                .map_err(|error| store_error("cannot open grants", error))?;
+            table
+                .insert(GRANT_SNAPSHOT_KEY, bytes.as_slice())
+                .map_err(|error| store_error("cannot write the grant snapshot", error))?;
+            put_u64(&mut meta, meta::GRANT_VERSION, revision)?;
+            Ok(())
         })
     }
 

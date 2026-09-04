@@ -373,26 +373,29 @@ async fn run_connected(
         let client = Arc::clone(client);
         let welcome = welcome.clone();
         async move {
-            if welcome.key_epoch > client.keys.read().current().epoch()
-                && let Err(error) = client.refresh_keys().await
-            {
-                log(format!("key refresh failed: {error}"));
-            }
+            // Members first: a rotated key is adopted only from a member already verified, and
+            // a grant snapshot only from its verified publisher.
+            let behind_on_keys = welcome.key_epoch > client.keys.read().current().epoch();
             if (welcome.members_version != client.state_snapshot().members_version
-                || client.members.read().members.is_empty())
+                || client.members.read().members.is_empty()
+                || behind_on_keys)
                 && let Err(error) = client.refresh_members().await
             {
                 log(format!("member refresh failed: {error}"));
             }
-            if welcome.grant_version != client.state_snapshot().grant_version {
-                match client.refresh_grants().await {
-                    Ok(rejected) if rejected.is_empty() => {}
-                    Ok(rejected) => log(format!(
-                        "grants ignored because they did not verify: {}",
-                        rejected.join("; ")
-                    )),
-                    Err(error) => log(format!("grant refresh failed: {error}")),
+            if behind_on_keys && let Err(error) = client.refresh_keys().await {
+                log(format!("key refresh failed: {error}"));
+            }
+            let revision = client.grant_revision();
+            if welcome.grant_version > revision || client.is_grant_stale() {
+                if let Err(error) = client.refresh_grants().await {
+                    log(format!("grant refresh failed: {error}"));
                 }
+            } else if welcome.grant_version < revision {
+                log(format!(
+                    "the hub reports grant revision {} while revision {revision} is in force here; keeping it",
+                    welcome.grant_version
+                ));
             }
             if let Err(error) = client.refresh_inventories().await {
                 log(format!("inventory refresh failed: {error}"));
@@ -438,6 +441,14 @@ async fn run_connected(
             () = &mut after_welcome, if !after_welcome_done => {
                 after_welcome_done = true;
             }
+            () = client.grants_wanted.notified() => {
+                let client = Arc::clone(client);
+                tokio::spawn(async move {
+                    if let Err(error) = client.refresh_grants().await {
+                        log(format!("grant refresh failed: {error}"));
+                    }
+                });
+            }
             outbound = rx.recv() => match outbound {
                 Some(frame) => {
                     if matches!(frame, Frame::Msg { seq: Some(_), .. }) && ack_deadline.is_none() {
@@ -472,6 +483,16 @@ async fn run_connected(
                     }
                 heartbeat_seq += 1;
                 heartbeat_sent_at = Some(now);
+                if after_welcome_done && client.is_grant_stale() {
+                    // A newer snapshot is known to exist and every fetch so far failed; keep
+                    // asking, because until it lands this member refuses calls as grant_stale.
+                    let client = Arc::clone(client);
+                    tokio::spawn(async move {
+                        if let Err(error) = client.refresh_grants().await {
+                            log(format!("grant refresh failed: {error}"));
+                        }
+                    });
+                }
                 let link = client.link();
                 let load = Load {
                     outbox_depth: link.outbox_depth as u32,
@@ -602,15 +623,23 @@ async fn run_connected(
     end
 }
 
-/// Whether this member is the addressee the sender named, dropping and logging when it is not.
+/// Whether this member is one of the addressees the sender named, dropping and logging when it
+/// is not.
 ///
-/// The `to` field lives inside the AEAD-authenticated header, so the hub can neither forge nor
-/// rewrite it — but only if the receiver actually reads it. Without this check the hub could
-/// deliver a call one member addressed to a second to a third instead, which is exactly the
-/// execution power the hub is not supposed to have.
+/// A single-target message names its addressee in `to`. A fan-out call or step names every
+/// addressee in `targets` and carries only the first in `to`, because the hub routes by
+/// `targets` when it is present. Both fields live inside the AEAD-authenticated header, so the
+/// hub can neither forge nor widen them — but only if the receiver actually reads them. Without
+/// this check the hub could deliver a call one member addressed to a second to a third instead,
+/// which is exactly the execution power the hub is not supposed to have.
 fn addressed_here(client: &Arc<WorldClient>, header: &Header) -> bool {
     let me = client.name();
-    if header.to == me {
+    if header.to == me
+        || header
+            .targets
+            .as_deref()
+            .is_some_and(|targets| targets.contains(&me))
+    {
         return true;
     }
     log(format!(
@@ -670,12 +699,12 @@ async fn handle_reliable(
         kind::GRANT_SYNC => {
             match messages::decode::<messages::GrantSync>(&opened.body, kind::GRANT_SYNC) {
                 Ok(sync) => match client.apply_grant_sync(sync) {
-                    Ok(rejected) if rejected.is_empty() => {}
-                    Ok(rejected) => log(format!(
-                        "grants ignored because they did not verify: {}",
-                        rejected.join("; ")
+                    Ok(true) => log(format!(
+                        "grant revision {} is in force",
+                        client.grant_revision()
                     )),
-                    Err(error) => log(format!("cannot apply grants: {error}")),
+                    Ok(false) => {}
+                    Err(error) => log(format!("grant sync refused: {error}")),
                 },
                 Err(error) => log(error),
             }
@@ -704,8 +733,13 @@ async fn handle_reliable(
             Err(error) => log(error),
         },
         kind::KEY_ROTATED => {
+            // The rotated key is adopted only from a verified member, so the listing that
+            // names the rotating member (and any revocation that motivated it) comes first.
             let client = Arc::clone(client);
             tokio::spawn(async move {
+                if let Err(error) = client.refresh_members().await {
+                    log(format!("member refresh failed: {error}"));
+                }
                 if let Err(error) = client.refresh_keys().await {
                     log(format!("key refresh failed: {error}"));
                 }
@@ -774,11 +808,8 @@ fn handle_request_frame(
                 log(format!("dropping an answer without an id ({})", header.t));
                 return;
             };
-            if !client.deliver_answer(id, opened) {
-                log(format!(
-                    "no request is waiting for answer {id} ({})",
-                    header.t
-                ));
+            if let Err(error) = client.deliver_answer(id, opened) {
+                log(format!("{error} ({})", header.t));
             }
         }
     }

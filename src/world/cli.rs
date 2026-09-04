@@ -412,15 +412,24 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
             })
             .await?;
             println!(
-                "Published grant {}. Members apply it as soon as the hub relays it.",
-                response.data.as_str().unwrap_or("?")
+                "Published grant {} as revision {}. Members apply it as the hub relays it.",
+                response
+                    .data
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?"),
+                response
+                    .data
+                    .get("revision")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
             );
             Ok(ExitCode::SUCCESS)
         }
         WorldCommand::Grants {
             command: Some(GrantsCommand::Remove { id }),
         } => {
-            ask_daemon(&AdminRequest::Grant {
+            let response = ask_daemon(&AdminRequest::Grant {
                 id: Some(id.clone()),
                 principal: String::new(),
                 nodes: Vec::new(),
@@ -429,7 +438,14 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
                 delete: true,
             })
             .await?;
-            println!("Removed grant {id}.");
+            println!(
+                "Removed grant {id} as revision {}.",
+                response
+                    .data
+                    .get("revision")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+            );
             Ok(ExitCode::SUCCESS)
         }
         WorldCommand::Grants { command: None } => {
@@ -438,25 +454,42 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
                 return Err(not_enrolled(&world_paths));
             }
             let grants = super::grant::GrantSet::load(&world_paths)?.unwrap_or_default();
-            if grants.grants.is_empty() {
+            if grants.revision == 0 {
                 println!(
                     "No grant has been published; the default applies: every member may use every verb on every member."
                 );
+            } else if grants.grants.is_empty() {
+                println!(
+                    "Revision {} (published by {} at {}) holds no grant; the default applies: every member may use every verb on every member.",
+                    grants.revision, grants.published_by, grants.published_at
+                );
             } else {
-                println!("Grants in force (version {}):", grants.version);
-                for (id, grant) in &grants.grants {
+                println!(
+                    "Grants in force (revision {}, published by {} at {}):",
+                    grants.revision, grants.published_by, grants.published_at
+                );
+                for entry in &grants.grants {
                     println!(
-                        "  {id}: {} may {} on {}{}",
-                        grant.principal,
-                        grant.verbs.join(", "),
-                        grant.nodes.join(", "),
-                        grant
+                        "  {}: {} may {} on {}{}",
+                        entry.id,
+                        entry.grant.principal,
+                        entry.grant.verbs.join(", "),
+                        entry.grant.nodes.join(", "),
+                        entry
+                            .grant
                             .expires
                             .as_deref()
                             .map(|expires| format!(" until {expires}"))
                             .unwrap_or_default()
                     );
                 }
+            }
+            let state = super::state::NodeState::load(&world_paths)?;
+            if state.grant_floor > grants.revision {
+                println!(
+                    "Revision {} is known to exist but has not reached this node; calls from other members are refused as grant_stale until it does.",
+                    state.grant_floor
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -815,10 +848,15 @@ fn print_node_status(status: &super::node::admin::NodeStatus, source: &str) {
             .unwrap_or_else(|| "?".to_string())
     );
     println!(
-        "Members: {} known, {} online; grants version {}; running calls {}; control center {}",
+        "Members: {} known, {} online; grant revision {}{}; running calls {}; control center {}",
         status.members,
         status.members_online,
-        status.grant_version,
+        status.grant_revision,
+        if status.grant_stale {
+            " (a newer revision is pending; remote calls refused as grant_stale)"
+        } else {
+            ""
+        },
         status.running_calls,
         if status.engine_hosted {
             "hosted by this node"

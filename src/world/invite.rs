@@ -46,6 +46,19 @@ struct InviteWire {
     exp: String,
 }
 
+const WRAPPED_FORMAT_VERSION: u32 = 1;
+
+/// The plaintext the invite secret wraps: what a new member receives from the inviter alone.
+#[derive(Deserialize, Serialize)]
+struct WrappedEnrollment {
+    v: u32,
+    /// `[{ epoch, key }]`, every epoch the inviter holds.
+    keys: serde_json::Value,
+    /// Grant snapshot revision in force when the invite was made; 0 when none exists.
+    #[serde(default)]
+    grant_revision: u64,
+}
+
 impl Invite {
     /// Creates a fresh invite expiring `ttl` from now.
     pub(crate) fn new(
@@ -140,20 +153,40 @@ impl Invite {
         hex::encode(sha256(token))
     }
 
-    /// Wraps every World key epoch under `HKDF(secret, "wrap")`, bound to the code id.
-    pub(crate) fn wrap_keys(&self, ring: &KeyRing) -> Result<String, String> {
-        super::keys::seal_blob(
-            &self.wrap_key(),
-            self.code_id().as_bytes(),
-            &ring.to_plain_json(),
-        )
+    /// Wraps every World key epoch and the grant revision in force under
+    /// `HKDF(secret, "wrap")`, bound to the code id.
+    ///
+    /// The grant revision rides along so the new member knows, from a source the hub cannot
+    /// edit, that a grant snapshot exists and how new it must be before the member trusts its
+    /// own copy.
+    pub(crate) fn wrap_keys(&self, ring: &KeyRing, grant_revision: u64) -> Result<String, String> {
+        let payload = WrappedEnrollment {
+            v: WRAPPED_FORMAT_VERSION,
+            keys: ring.to_entries_json(),
+            grant_revision,
+        };
+        let plain = serde_json::to_vec(&payload)
+            .map_err(|error| format!("Cannot encode the wrapped enrollment: {error}"))?;
+        super::keys::seal_blob(&self.wrap_key(), self.code_id().as_bytes(), &plain)
     }
 
-    /// Unwraps the keys the hub handed back at enrollment.
-    pub(crate) fn unwrap_keys(&self, wrapped: &str) -> Result<KeyRing, String> {
+    /// Unwraps what the hub handed back at enrollment: the key ring and the grant revision
+    /// the inviter held.
+    pub(crate) fn unwrap_keys(&self, wrapped: &str) -> Result<(KeyRing, u64), String> {
         let plain = super::keys::open_blob(&self.wrap_key(), self.code_id().as_bytes(), wrapped)
             .map_err(|_| "The World keys in the hub's answer do not unwrap with this invite; the invite and the hub disagree.".to_string())?;
-        KeyRing::from_plain_json(&plain)
+        let payload: WrappedEnrollment = serde_json::from_slice(&plain)
+            .map_err(|error| format!("Cannot parse the wrapped enrollment: {error}"))?;
+        if payload.v > WRAPPED_FORMAT_VERSION {
+            return Err(format!(
+                "The invite was created by a newer fastctx (wrapped format {}); this build reads format {WRAPPED_FORMAT_VERSION} at most.",
+                payload.v
+            ));
+        }
+        Ok((
+            KeyRing::from_entries_json(payload.keys)?,
+            payload.grant_revision,
+        ))
     }
 
     fn wrap_key(&self) -> Key32 {
@@ -206,8 +239,10 @@ mod tests {
         assert!(!parsed.is_expired_at(time::OffsetDateTime::now_utc()));
 
         let ring = KeyRing::new_initial().unwrap();
-        let wrapped = invite.wrap_keys(&ring).unwrap();
-        assert_eq!(parsed.unwrap_keys(&wrapped).unwrap().epochs(), vec![1]);
+        let wrapped = invite.wrap_keys(&ring, 7).unwrap();
+        let (unwrapped, grant_revision) = parsed.unwrap_keys(&wrapped).unwrap();
+        assert_eq!(unwrapped.epochs(), vec![1]);
+        assert_eq!(grant_revision, 7);
         let other = Invite::new(
             vec!["hub.example:443".to_string()],
             hub_key,
