@@ -207,12 +207,11 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
                 None if enable_shell => EnabledTools::all(),
                 None => EnabledTools::files(),
             };
-            // World mode is a file-existence check on this machine's enrollment, never a
-            // network probe: an unenrolled machine's proxy stays byte-for-byte the 1.0 one.
-            let world = ControlPaths::discover()
-                .map(|paths| crate::world::is_enrolled(&paths))
-                .unwrap_or(false);
-            run_server_with_options(ServerOptions { tools, world }).await
+            run_server_with_options(ServerOptions {
+                tools,
+                world: world_mode(),
+            })
+            .await
         }
         Some(Command::Ui) => {
             require_tty()?;
@@ -386,9 +385,26 @@ fn one_line(value: &str) -> String {
         .collect()
 }
 
+/// Whether this machine's proxy publishes the World surface.
+///
+/// A file-existence check on the enrollment, never a network probe: an unenrolled machine's
+/// surface stays byte-for-byte the 1.0 one, and an enrolled one does not depend on a reachable
+/// hub to describe itself. Both stdio entry points must answer this the same way — a host that
+/// starts the binary with no subcommand would otherwise get a different tool surface on the same
+/// enrolled machine than one that spells out `serve`.
+fn world_mode() -> bool {
+    ControlPaths::discover()
+        .map(|paths| crate::world::is_enrolled(&paths))
+        .unwrap_or(false)
+}
+
 /// Forces stdio MCP server startup for reuse by the entry point and doctor.
 pub async fn run_server() -> Result<ExitCode, String> {
-    run_server_with_options(ServerOptions::default()).await
+    run_server_with_options(ServerOptions {
+        world: world_mode(),
+        ..ServerOptions::default()
+    })
+    .await
 }
 
 /// Starts the single server with the requested optional tool groups.

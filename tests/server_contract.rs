@@ -749,6 +749,93 @@ fn no_pdf_build_rejects_pdf_without_affecting_the_public_read_schema() {
     );
 }
 
+/// The published surface must carry no trace of a World until this machine is enrolled.
+///
+/// This is the one promise every future World change can break silently: a `node` property or a
+/// `nodes` tool that leaks into the ordinary surface reaches every user who never asked for any
+/// of it. The check runs against the real `tools/list`, not the manifest, because the leak would
+/// happen where the World router is assembled on top of the local one.
+#[test]
+fn a_world_appears_in_the_published_surface_only_after_this_machine_is_enrolled() {
+    let unenrolled = tempfile::tempdir().unwrap();
+    let tools = published_tools(unenrolled.path());
+    assert!(
+        tools.iter().all(|tool| tool["name"] != "nodes"),
+        "an unenrolled machine published the nodes tool"
+    );
+    for tool in &tools {
+        assert!(
+            tool["inputSchema"]["properties"].get("node").is_none(),
+            "an unenrolled machine published a node selector on {}",
+            tool["name"]
+        );
+    }
+
+    let enrolled = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(enrolled.path().join(".fastctx")).unwrap();
+    // Enrollment is a file-existence check; the surface must not need a reachable hub to change.
+    std::fs::write(enrolled.path().join(".fastctx/world.toml"), "version = 1\n").unwrap();
+    let tools = published_tools(enrolled.path());
+    assert!(
+        tools.iter().any(|tool| tool["name"] == "nodes"),
+        "an enrolled machine did not publish the nodes tool; it published {:?}",
+        tools.iter().map(|tool| &tool["name"]).collect::<Vec<_>>()
+    );
+    for name in ["inspect_local_file", "grep", "glob", "replace", "run"] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} should be published"));
+        assert!(
+            tool["inputSchema"]["properties"]["node"].is_object(),
+            "an enrolled machine published {name} without a node selector"
+        );
+    }
+}
+
+/// Every tool the server publishes to a client whose profile is `home`, with all nine enabled.
+fn published_tools(home: &std::path::Path) -> Vec<Value> {
+    let mut child = fastctx_command_for_home(home)
+        .args([
+            "serve",
+            "--tools",
+            "inspect_local_file,grep,glob,replace,run,run_background,job_output,job_kill,job_list",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    send(
+        &mut stdin,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "contract-test", "version": "1.0"}
+            }
+        }),
+    );
+    read_response(&mut stdout);
+    send(
+        &mut stdin,
+        serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}),
+    );
+    send(
+        &mut stdin,
+        serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+    );
+    let listed = read_response(&mut stdout);
+    drop(stdin);
+    let _ = child.wait();
+    listed["result"]["tools"].as_array().unwrap().clone()
+}
+
 fn send(stdin: &mut impl Write, value: Value) {
     writeln!(stdin, "{}", serde_json::to_string(&value).unwrap()).unwrap();
     stdin.flush().unwrap();
