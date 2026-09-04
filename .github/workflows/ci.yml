@@ -262,6 +262,19 @@ jobs:
             -MainTarball "dist/npm/fastctx-$version.tgz" `
             -AliasTarball "dist/npm/codex-fastctx-$version.tgz"
 
+      # Machines that cannot build fastctx themselves (a small VPS acting as a World hub or
+      # member) take the release binary from here instead of from a tagged release. Short
+      # retention: these are branch builds, not distribution artifacts.
+      - name: Upload the release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: fastctx-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/fastctx
+            target/${{ matrix.target }}/release/fastctx.exe
+          if-no-files-found: error
+          retention-days: 7
+
   package:
     name: Package dry run
     runs-on: ubuntu-latest
