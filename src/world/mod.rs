@@ -33,6 +33,7 @@ pub(crate) mod node;
 pub(crate) mod outbox;
 pub(crate) mod session;
 pub(crate) mod state;
+pub(crate) mod surface;
 pub(crate) mod wire;
 
 use crate::control::paths::ControlPaths;

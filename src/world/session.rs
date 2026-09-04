@@ -460,9 +460,13 @@ async fn run_connected(
                 }
                 heartbeat_seq += 1;
                 heartbeat_sent_at = Some(now);
+                let link = client.link();
                 let load = Load {
-                    outbox_depth: client.link().outbox_depth as u32,
+                    outbox_depth: link.outbox_depth as u32,
                     facts_version: client.state_snapshot().inventory_version,
+                    rtt_ms: link.rtt_ms,
+                    network: Some(mode.as_str().to_string()),
+                    tls: Some(link.tls.as_str().to_string()),
                     ..Load::default()
                 };
                 let _ = tx.send(Frame::Heartbeat { seq: heartbeat_seq, load });
@@ -478,10 +482,13 @@ async fn run_connected(
                 }
                 if inventory_at.elapsed() >= INVENTORY_INTERVAL {
                     inventory_at = now;
-                    let inventory: Inventory = super::node::inventory::collect(client).await;
-                    if let Err(error) = client.publish_inventory(&inventory) {
-                        log(format!("cannot publish the inventory: {error}"));
-                    }
+                    let client = Arc::clone(client);
+                    tokio::spawn(async move {
+                        let inventory: Inventory = super::node::inventory::collect(&client).await;
+                        if let Err(error) = client.publish_inventory(&inventory) {
+                            log(format!("cannot publish the inventory: {error}"));
+                        }
+                    });
                 }
                 if mode == NetworkMode::System
                     && client.config.read().network == NetworkMode::Auto
@@ -613,14 +620,19 @@ async fn handle_reliable(
             return;
         }
     }
+    // Anything that asks the hub a question runs off the read loop: the answer arrives
+    // through this very loop, so awaiting it here would deadlock until the request timed out.
     match header.t.as_str() {
         kind::MEMBERS_CHANGED => {
-            if let Err(error) = client.refresh_members().await {
-                log(format!("member refresh failed: {error}"));
-            }
-            if let Err(error) = client.refresh_inventories().await {
-                log(format!("inventory refresh failed: {error}"));
-            }
+            let client = Arc::clone(client);
+            tokio::spawn(async move {
+                if let Err(error) = client.refresh_members().await {
+                    log(format!("member refresh failed: {error}"));
+                }
+                if let Err(error) = client.refresh_inventories().await {
+                    log(format!("inventory refresh failed: {error}"));
+                }
+            });
         }
         kind::GRANT_SYNC => {
             match messages::decode::<messages::GrantSync>(&opened.body, kind::GRANT_SYNC) {
@@ -649,16 +661,22 @@ async fn handle_reliable(
                 log("this member was revoked from the World");
             }
             Ok(_) => {
-                if let Err(error) = client.refresh_members().await {
-                    log(format!("member refresh failed: {error}"));
-                }
+                let client = Arc::clone(client);
+                tokio::spawn(async move {
+                    if let Err(error) = client.refresh_members().await {
+                        log(format!("member refresh failed: {error}"));
+                    }
+                });
             }
             Err(error) => log(error),
         },
         kind::KEY_ROTATED => {
-            if let Err(error) = client.refresh_keys().await {
-                log(format!("key refresh failed: {error}"));
-            }
+            let client = Arc::clone(client);
+            tokio::spawn(async move {
+                if let Err(error) = client.refresh_keys().await {
+                    log(format!("key refresh failed: {error}"));
+                }
+            });
         }
         kind::HUB_ERROR => {
             match messages::decode::<messages::HubError>(&opened.body, kind::HUB_ERROR) {

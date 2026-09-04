@@ -147,6 +147,15 @@ pub(crate) struct Load {
     /// The member's inventory version, so the hub can notice a stale copy.
     #[serde(default)]
     pub(crate) facts_version: u64,
+    /// The member's measured round trip to the hub, for the machine map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) rtt_ms: Option<u32>,
+    /// `direct` or `system`: which path this connection took.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) network: Option<String>,
+    /// `webpki`, `pinned`, or `fronted`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tls: Option<String>,
 }
 
 /// One WebSocket message.

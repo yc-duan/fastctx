@@ -13,6 +13,8 @@ pub enum ToolGroup {
     File,
     /// Optional bash execution and background-job tools.
     Shell,
+    /// Tools that exist only on a machine enrolled in a World; never user-selectable.
+    World,
 }
 
 impl ToolGroup {
@@ -79,6 +81,12 @@ const TOOL_ENTRIES: [ToolManifestEntry; 9] = [
         group: ToolGroup::Shell,
     },
 ];
+
+/// Published whenever the proxy runs in World mode, regardless of the enabled set.
+const WORLD_ENTRIES: [ToolManifestEntry; 1] = [ToolManifestEntry {
+    name: "nodes",
+    group: ToolGroup::World,
+}];
 
 const FILE_MASK: u16 = 0b0000_1111;
 const SHELL_MASK: u16 = 0b1_1111_0000;
@@ -229,13 +237,35 @@ impl ToolManifest {
         &TOOL_ENTRIES
     }
 
+    /// The World-only entries, published on an enrolled machine on top of the enabled set.
+    pub const fn world_entries() -> &'static [ToolManifestEntry] {
+        &WORLD_ENTRIES
+    }
+
     /// Returns expected names for one startup flag combination.
     pub fn expected_names(enabled: EnabledTools) -> Vec<&'static str> {
         enabled.names()
     }
 
+    /// Returns expected names for one complete server configuration.
+    pub fn expected_names_for(options: crate::server::ServerOptions) -> Vec<&'static str> {
+        let mut names = options.tools.names();
+        if options.world {
+            names.extend(WORLD_ENTRIES.iter().map(|entry| entry.name));
+        }
+        names
+    }
+
     /// Validates names and explicit permission annotations against the manifest.
     pub fn validate(tools: &[Tool], enabled: EnabledTools) -> Result<(), String> {
+        Self::validate_options(tools, crate::server::ServerOptions::local(enabled))
+    }
+
+    /// Validates a complete configuration, World entries included.
+    pub fn validate_options(
+        tools: &[Tool],
+        options: crate::server::ServerOptions,
+    ) -> Result<(), String> {
         let mut name_counts = BTreeMap::<&str, usize>::new();
         for tool in tools {
             *name_counts.entry(tool.name.as_ref()).or_default() += 1;
@@ -251,7 +281,7 @@ impl ToolManifest {
             ));
         }
 
-        let expected = Self::expected_names(enabled)
+        let expected = Self::expected_names_for(options)
             .into_iter()
             .collect::<BTreeSet<_>>();
         let actual = tools
@@ -279,7 +309,7 @@ impl ToolManifest {
             }
             let expected_read_only = matches!(
                 tool.name.as_ref(),
-                "inspect_local_file" | "grep" | "glob" | "job_output" | "job_list"
+                "inspect_local_file" | "grep" | "glob" | "job_output" | "job_list" | "nodes"
             );
             if annotations.read_only_hint != Some(expected_read_only)
                 || annotations.destructive_hint != Some(false)
@@ -298,6 +328,7 @@ impl ToolManifest {
     pub fn contracts(tools: &[Tool]) -> Result<Vec<ToolContract>, String> {
         let groups = TOOL_ENTRIES
             .iter()
+            .chain(WORLD_ENTRIES.iter())
             .map(|entry| (entry.name, entry.group))
             .collect::<BTreeMap<_, _>>();
         let mut seen = BTreeSet::new();
@@ -378,6 +409,7 @@ mod tests {
                         let enabled = match entry.group {
                             ToolGroup::File => file_mask & (1 << index) != 0,
                             ToolGroup::Shell => shell,
+                            ToolGroup::World => false,
                         };
                         enabled.then_some(entry.name)
                     })
@@ -499,6 +531,7 @@ mod tests {
                         let enabled = match entry.group {
                             ToolGroup::File => file_mask & (1 << index) != 0,
                             ToolGroup::Shell => shell,
+                            ToolGroup::World => false,
                         };
                         enabled.then_some(entry.name)
                     })
@@ -509,29 +542,42 @@ mod tests {
         sets
     }
 
-    fn published_tools(enabled: EnabledTools) -> Vec<rmcp::model::Tool> {
-        FastCtxServer::with_options(ServerOptions::local(enabled)).tool_definitions()
+    /// Every legal server configuration: each enabled set, local and in World mode.
+    fn legal_configurations() -> Vec<ServerOptions> {
+        legal_tool_sets()
+            .into_iter()
+            .flat_map(|tools| {
+                [
+                    ServerOptions::local(tools),
+                    ServerOptions { tools, world: true },
+                ]
+            })
+            .collect()
     }
 
-    /// One legal enabled set with the model-visible prose and identifier vocabulary it
+    fn published_tools(options: ServerOptions) -> Vec<rmcp::model::Tool> {
+        FastCtxServer::with_options(options).tool_definitions()
+    }
+
+    /// One legal configuration with the model-visible prose and identifier vocabulary it
     /// publishes.
     struct ToolSetProse {
-        enabled: EnabledTools,
+        options: ServerOptions,
         prose: Vec<(String, String)>,
         vocabulary: BTreeSet<String>,
     }
 
-    /// Prose and vocabulary for every legal set, built once. Assembling a server per set is
-    /// the expensive half, and both prose gates need the same sets.
+    /// Prose and vocabulary for every legal configuration, built once. Assembling a server
+    /// per configuration is the expensive half, and both prose gates need the same ones.
     fn prose_by_tool_set() -> &'static [ToolSetProse] {
         static CACHE: std::sync::OnceLock<Vec<ToolSetProse>> = std::sync::OnceLock::new();
         CACHE.get_or_init(|| {
-            legal_tool_sets()
+            legal_configurations()
                 .into_iter()
-                .map(|enabled| {
-                    let (prose, vocabulary) = model_visible_prose_and_vocabulary(enabled);
+                .map(|options| {
+                    let (prose, vocabulary) = model_visible_prose_and_vocabulary(options);
                     ToolSetProse {
-                        enabled,
+                        options,
                         prose,
                         vocabulary,
                     }
@@ -541,14 +587,13 @@ mod tests {
     }
 
     /// Labelled model-visible prose plus the identifier vocabulary the same surface
-    /// publishes: the enabled tool names, every schema property name, and every schema
-    /// enum value. The vocabulary follows the enabled set rather than the whole manifest,
-    /// so prose can never cite a tool this target does not publish.
+    /// publishes: the published tool names, every schema property name, and every schema
+    /// enum value. The vocabulary follows the published surface rather than the whole
+    /// manifest, so prose can never cite a tool this configuration does not publish.
     fn model_visible_prose_and_vocabulary(
-        enabled: EnabledTools,
+        options: ServerOptions,
     ) -> (Vec<(String, String)>, BTreeSet<String>) {
-        let mut vocabulary: BTreeSet<String> = enabled
-            .names()
+        let mut vocabulary: BTreeSet<String> = ToolManifest::expected_names_for(options)
             .into_iter()
             .map(|name| name.to_string())
             .collect();
@@ -559,9 +604,9 @@ mod tests {
         );
         let mut prose = vec![(
             "server instructions".to_string(),
-            crate::model_guidance::server_instructions(enabled),
+            crate::model_guidance::server_instructions(options.tools),
         )];
-        for tool in published_tools(enabled) {
+        for tool in published_tools(options) {
             if let Some(description) = tool.description.as_deref() {
                 prose.push((
                     format!("{} description", tool.name),
@@ -668,8 +713,8 @@ mod tests {
                 for token in identifier_tokens(&text.to_lowercase()) {
                     assert!(
                         entry.vocabulary.contains(&token),
-                        "with {:?} enabled, {context} cites `{token}`, which no published tool, parameter, or documented value resolves; full text: {text}",
-                        entry.enabled.names()
+                        "with {:?} published, {context} cites `{token}`, which no published tool, parameter, or documented value resolves; full text: {text}",
+                        ToolManifest::expected_names_for(entry.options)
                     );
                 }
             }

@@ -30,18 +30,7 @@ impl FastCtxServer {
         Parameters(request): Parameters<RunRequest>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
-        let _activity = self.activity.request();
-        let shell = self.shell.clone();
-        let status_shell = self.shell.clone();
-        run_blocking(
-            Arc::clone(&self.session),
-            Arc::clone(&self.shell_permits),
-            RUN_TOKEN_BUDGET_ENV,
-            move || status_shell.background_status(None),
-            BudgetRetry::Never,
-            move || shell.run_until_cancelled(request.clone(), || context.ct.is_cancelled()),
-        )
-        .await
+        self.local_run(request, context).await
     }
 
     #[tool(
@@ -153,6 +142,28 @@ impl FastCtxServer {
             move || status_shell.background_status(None),
             BudgetRetry::Never,
             move || shell.job_list(request.clone()),
+        )
+        .await
+    }
+}
+
+impl FastCtxServer {
+    /// The local `run`, shared by the 1.0 route and the World route without `node`.
+    pub(crate) async fn local_run(
+        &self,
+        request: RunRequest,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        let _activity = self.activity.request();
+        let shell = self.shell.clone();
+        let status_shell = self.shell.clone();
+        run_blocking(
+            Arc::clone(&self.session),
+            Arc::clone(&self.shell_permits),
+            RUN_TOKEN_BUDGET_ENV,
+            move || status_shell.background_status(None),
+            BudgetRetry::Never,
+            move || shell.run_until_cancelled(request.clone(), || context.ct.is_cancelled()),
         )
         .await
     }

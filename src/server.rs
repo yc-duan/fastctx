@@ -175,6 +175,41 @@ impl FastCtxServer {
                 .attr
                 .description = Some(description.into());
         }
+        if options.world {
+            // World mode replaces the five node-taking tools with their World routes and adds
+            // the machine map. Descriptions and schemas come from the local routes so the two
+            // surfaces cannot drift apart; only the `node` property is added.
+            let mut world_router = Self::world_tool_router();
+            for (name, multi) in [
+                ("inspect_local_file", true),
+                ("grep", true),
+                ("glob", true),
+                ("replace", false),
+                ("run", false),
+            ] {
+                let base = tool_router
+                    .map
+                    .get(name)
+                    .expect("the compiled router must contain every node-taking tool");
+                let description = base.attr.description.clone();
+                let schema = crate::world::surface::add_node_property(
+                    &base.attr.input_schema,
+                    if multi {
+                        crate::world::surface::NODE_PARAMETER_MULTI
+                    } else {
+                        crate::world::surface::NODE_PARAMETER_SINGLE
+                    },
+                );
+                let route = world_router
+                    .map
+                    .get_mut(name)
+                    .expect("the compiled World router must contain every node-taking tool");
+                route.attr.description = description;
+                route.attr.input_schema = Arc::new(schema);
+                tool_router.remove_route(name);
+            }
+            tool_router.merge(world_router);
+        }
         for entry in ToolManifest::entries() {
             if !options.tools.contains(entry.name) {
                 tool_router.remove_route(entry.name);
@@ -191,7 +226,7 @@ impl FastCtxServer {
             ));
         }
         let definitions = tool_router.list_all();
-        ToolManifest::validate(&definitions, options.tools)
+        ToolManifest::validate_options(&definitions, options)
             .expect("the compiled tool router must match ToolManifest");
         Self {
             tool_router,
@@ -247,17 +282,7 @@ impl FastCtxServer {
         &self,
         Parameters(request): Parameters<ReadRequest>,
     ) -> CallToolResult {
-        let _activity = self.activity.request();
-        let status_shell = self.shell.clone();
-        run_blocking(
-            Arc::clone(&self.session),
-            Arc::clone(&self.file_permits),
-            READ_TOKEN_BUDGET_ENV,
-            move || status_shell.background_status(None),
-            BudgetRetry::Safe,
-            move || read_file(request.clone()),
-        )
-        .await
+        self.local_inspect_local_file(request).await
     }
 
     #[tool(
@@ -273,6 +298,50 @@ impl FastCtxServer {
     async fn grep(
         &self,
         Parameters(request): Parameters<GrepRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        self.local_grep(request, context).await
+    }
+
+    #[tool(
+        name = "glob",
+        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Matches files\nonly, never directories. Returns absolute paths sorted by path (or newest first\nwith sort=\"modified\"), 100 per page by default. filter_mode defaults to\n\"ignore\" (plain .ignore files only); \"all\" disables that filtering. Hidden\nfiles and .git are always visible unless a negative pattern excludes them.\noutput_mode defaults to \"paths\"; \"details\" returns compact JSON lines with\npath, byte size, and UTC modification time. Omit `path` entirely for the session\nworking directory — never pass \"null\" or \"undefined\". A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and do\nnot decode or rewrite it. Continue a paged result with offset equal to the last\ncovered file number.",
+        annotations(
+            title = "Match file paths",
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn glob(
+        &self,
+        Parameters(request): Parameters<GlobRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        self.local_glob(request, context).await
+    }
+}
+
+/// The local execution of each file tool, shared by the 1.0 routes and the World routes
+/// (which take the same path whenever `node` is absent).
+impl FastCtxServer {
+    pub(crate) async fn local_inspect_local_file(&self, request: ReadRequest) -> CallToolResult {
+        let _activity = self.activity.request();
+        let status_shell = self.shell.clone();
+        run_blocking(
+            Arc::clone(&self.session),
+            Arc::clone(&self.file_permits),
+            READ_TOKEN_BUDGET_ENV,
+            move || status_shell.background_status(None),
+            BudgetRetry::Safe,
+            move || read_file(request.clone()),
+        )
+        .await
+    }
+
+    pub(crate) async fn local_grep(
+        &self,
+        request: GrepRequest,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         let _activity = self.activity.request();
@@ -294,19 +363,9 @@ impl FastCtxServer {
         .await
     }
 
-    #[tool(
-        name = "glob",
-        description = "Find files by glob pattern, e.g. \"**/*.rs\" or \"src/**/*.ts\". Matches files\nonly, never directories. Returns absolute paths sorted by path (or newest first\nwith sort=\"modified\"), 100 per page by default. filter_mode defaults to\n\"ignore\" (plain .ignore files only); \"all\" disables that filtering. Hidden\nfiles and .git are always visible unless a negative pattern excludes them.\noutput_mode defaults to \"paths\"; \"details\" returns compact JSON lines with\npath, byte size, and UTC modification time. Omit `path` entirely for the session\nworking directory — never pass \"null\" or \"undefined\". A path component of the\nform ~fastctx~b...~ (reversible bytes/UTF-8) or ~fastctx~w...~ (Windows UTF-16)\nis a filename escape; copy that whole component verbatim in later calls and do\nnot decode or rewrite it. Continue a paged result with offset equal to the last\ncovered file number.",
-        annotations(
-            title = "Match file paths",
-            read_only_hint = true,
-            destructive_hint = false,
-            open_world_hint = false
-        )
-    )]
-    async fn glob(
+    pub(crate) async fn local_glob(
         &self,
-        Parameters(request): Parameters<GlobRequest>,
+        request: GlobRequest,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         let _activity = self.activity.request();

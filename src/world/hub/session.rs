@@ -32,6 +32,9 @@ pub(crate) struct Peer {
     pub(crate) name: String,
     pub(crate) node_pub: crypto::Key32,
     pub(crate) generation: u64,
+    /// fastctx version the member announced.
+    pub(crate) version: String,
+    pub(crate) protocol: u32,
 }
 
 pub(crate) struct Link<S> {
@@ -224,6 +227,8 @@ where
             name,
             node_pub,
             generation,
+            version: hello.version.clone(),
+            protocol: hello.protocol,
         },
         auth,
     ))
@@ -421,6 +426,8 @@ where
     let session_row = match hub.store.update_session(&name, |row| {
         row.generation = peer.generation;
         row.last_seen = crate::world::now_rfc3339();
+        row.version = peer.version.clone();
+        row.protocol = peer.protocol;
     }) {
         Ok(row) => row,
         Err(error) => {

@@ -188,7 +188,11 @@ pub fn run(paths: &ControlPaths) -> DoctorReport {
     });
     checks.push(check_binary(paths, all_applied));
     checks.push(check_running_instances(paths));
-    let mcp_contract = check_mcp(&paths.installed_binary, profile_applied);
+    let mcp_contract = check_mcp(
+        &paths.installed_binary,
+        profile_applied,
+        crate::world::is_enrolled(paths),
+    );
     checks.push(mcp_contract.clone());
     checks.push(check_model_tool_surface(&mcp_contract));
     checks.push(check_agents(paths, profile_applied));
@@ -294,7 +298,10 @@ pub fn run_target(
     if status.state == TargetConnectionState::Connected {
         checks.push(match probe_mcp(
             &paths.installed_binary,
-            ServerOptions::local(status.enabled_tools),
+            ServerOptions {
+                tools: status.enabled_tools,
+                world: crate::world::is_enrolled(paths),
+            },
         ) {
             Ok(()) => DoctorCheck::pass(
                 "Target MCP contract",
@@ -1157,16 +1164,23 @@ fn check_recorded_path(
     }
 }
 
-fn check_mcp(executable: &Path, applied: Option<&settings::AppliedRecord>) -> DoctorCheck {
+fn check_mcp(
+    executable: &Path,
+    applied: Option<&settings::AppliedRecord>,
+    world: bool,
+) -> DoctorCheck {
     if !executable.is_file() && applied.is_none() {
         return DoctorCheck::info(
             "MCP server contract",
             "Not run before Apply installs the stable fastctx binary.",
         );
     }
-    let options = applied.map_or_else(ServerOptions::default, |record| {
-        ServerOptions::local(applied_tools(record))
-    });
+    // The probed proxy decides World mode from this machine's enrollment file, so the
+    // expectation has to be computed the same way or an enrolled machine fails its own doctor.
+    let options = ServerOptions {
+        tools: applied.map_or_else(EnabledTools::default, applied_tools),
+        world,
+    };
     match probe_mcp(executable, options) {
         Ok(()) => DoctorCheck::pass(
             "MCP server contract",

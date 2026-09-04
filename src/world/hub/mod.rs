@@ -422,11 +422,16 @@ impl Hub {
     }
 
     pub(crate) fn note_heartbeat(&self, name: &str, load: &Load) {
-        let _ = load;
-        if let Err(error) = self
-            .store
-            .update_session(name, |row| row.last_seen = crate::world::now_rfc3339())
-        {
+        if let Err(error) = self.store.update_session(name, |row| {
+            row.last_seen = crate::world::now_rfc3339();
+            row.rtt_ms = load.rtt_ms;
+            if load.network.is_some() {
+                row.network = load.network.clone();
+            }
+            if load.tls.is_some() {
+                row.tls = load.tls.clone();
+            }
+        }) {
             log(format!("\"{name}\": cannot record a heartbeat: {error}"));
         }
     }

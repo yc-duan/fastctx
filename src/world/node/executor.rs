@@ -185,7 +185,7 @@ async fn execute(
     let timeout = Duration::from_millis(call.timeout_ms.clamp(1_000, 600_000));
     let verb = call.verb.clone();
     let work_token = token.clone();
-    let work = tokio::task::spawn_blocking(move || run_tool(&call, &session, &work_token));
+    let work = tokio::task::spawn_blocking(move || run_verb(&call, &session, &work_token));
     match tokio::time::timeout(timeout, work).await {
         Ok(Ok(response)) => response,
         Ok(Err(error)) => {
@@ -201,7 +201,13 @@ async fn execute(
     }
 }
 
-fn run_tool(call: &Call, session: &Arc<SessionContext>, token: &CancellationToken) -> ToolResponse {
+/// Runs one verb with the given session's working directory and budgets; the same code path
+/// serves calls from other members and World calls that target this machine.
+pub(crate) fn run_verb(
+    call: &Call,
+    session: &Arc<SessionContext>,
+    token: &CancellationToken,
+) -> ToolResponse {
     let args = call.args.clone();
     session.activate(|| match call.verb.as_str() {
         "inspect_local_file" => match serde_json::from_value::<crate::read_tool::ReadRequest>(args)

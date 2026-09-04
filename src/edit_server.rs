@@ -26,6 +26,13 @@ impl FastCtxServer {
         )
     )]
     async fn replace(&self, Parameters(request): Parameters<ReplaceRequest>) -> CallToolResult {
+        self.local_replace(request).await
+    }
+}
+
+impl FastCtxServer {
+    /// The local `replace`, shared by the 1.0 route and the World route without `node`.
+    pub(crate) async fn local_replace(&self, request: ReplaceRequest) -> CallToolResult {
         let _activity = self.activity.request();
         let replace = self.replace.clone();
         let control_paths = self.session.control_paths.clone();
