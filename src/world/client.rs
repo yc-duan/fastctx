@@ -1058,6 +1058,12 @@ impl WorldClient {
     /// Tells the hub this member is leaving, as a revocation signed by the member itself, so
     /// no later listing can bring the key back.
     pub(crate) fn leave(&self) -> Result<(), String> {
+        // The outbox would take this happily and hold it forever: the enrollment is deleted
+        // moments later and the daemon with it, so a leave queued on a link that is down never
+        // reaches anyone. Say so instead of reporting that the hub was told.
+        if !self.is_connected() {
+            return Err(self.unreachable_error());
+        }
         let me = self.name();
         let statement = messages::RevocationStatement {
             name: me.clone(),
