@@ -218,6 +218,14 @@ function canonicalTempWorkspace(prefix) {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function removeWorkspace(workspace) {
+  // These fixtures run node out of the very tree they then delete, and Windows keeps the image
+  // locked until the last handle to an exiting process closes -- long enough on a loaded ARM64
+  // runner to fail the delete with EBUSY. Retrying is the wait that exit needs; a failure that
+  // outlives the retries is still reported (2026-09-05).
+  fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 12, retryDelay: 150 });
+}
+
 function linkOrCopyExecutable(source, target) {
   if (process.platform !== 'win32') {
     fs.copyFileSync(source, target);
@@ -486,7 +494,7 @@ require(${JSON.stringify(fixtureLauncher)});
       );
     }
   } finally {
-    fs.rmSync(workspace, { recursive: true, force: true });
+    removeWorkspace(workspace);
   }
 }
 
@@ -562,7 +570,7 @@ function assertMissingPlatformPackageUsesStableCopyOrGivesAnActionableExit() {
       }
     }
   } finally {
-    fs.rmSync(workspace, { recursive: true, force: true });
+    removeWorkspace(workspace);
   }
 }
 
@@ -762,7 +770,7 @@ require(${JSON.stringify(fixtureLauncher)});
       }
     }
   } finally {
-    fs.rmSync(workspace, { recursive: true, force: true });
+    removeWorkspace(workspace);
   }
 }
 
