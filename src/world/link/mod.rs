@@ -15,6 +15,26 @@ pub(crate) use ws::{Dialed, Endpoint, Path};
 /// How often `auto` re-probes the direct path while running on the system path.
 pub(crate) const DIRECT_REPROBE_INTERVAL: Duration = Duration::from_secs(600);
 
+/// Which hub endpoint a dial upgrades to, and the message size that endpoint allows.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WsTarget {
+    pub(crate) path: &'static str,
+    pub(crate) max_message_bytes: usize,
+}
+
+impl WsTarget {
+    /// The control connection: sessions, calls, heartbeats.
+    pub(crate) const CONTROL: Self = Self {
+        path: crate::world::WS_PATH,
+        max_message_bytes: crate::world::wire::MAX_FRAME_BYTES,
+    };
+    /// One end of a `copy` data connection.
+    pub(crate) const STREAM: Self = Self {
+        path: crate::world::stream::STREAM_PATH,
+        max_message_bytes: crate::world::stream::MAX_MESSAGE_BYTES,
+    };
+}
+
 /// What the link layer needs to dial.
 #[derive(Clone, Debug)]
 pub(crate) struct DialPlan {
@@ -51,7 +71,11 @@ impl std::fmt::Display for DialFailure {
 }
 
 /// Dials the hub over the first path that works, in the order the plan prescribes.
-pub(crate) async fn dial(plan: &DialPlan, verify: &Verify) -> Result<Dialed, DialFailure> {
+pub(crate) async fn dial(
+    plan: &DialPlan,
+    verify: &Verify,
+    target: WsTarget,
+) -> Result<Dialed, DialFailure> {
     let order: Vec<NetworkMode> = match plan.mode {
         NetworkMode::Direct => vec![NetworkMode::Direct],
         NetworkMode::System => vec![NetworkMode::System],
@@ -63,11 +87,11 @@ pub(crate) async fn dial(plan: &DialPlan, verify: &Verify) -> Result<Dialed, Dia
     let mut failure = DialFailure::default();
     for mode in order {
         match mode {
-            NetworkMode::Direct => match dial_direct(plan, verify).await {
+            NetworkMode::Direct => match dial_direct(plan, verify, target).await {
                 Ok(dialed) => return Ok(dialed),
                 Err(error) => failure.direct = Some(error),
             },
-            NetworkMode::System => match dial_system(plan, verify).await {
+            NetworkMode::System => match dial_system(plan, verify, target).await {
                 Ok(dialed) => return Ok(dialed),
                 Err(error) => failure.system = Some(error),
             },
@@ -78,12 +102,16 @@ pub(crate) async fn dial(plan: &DialPlan, verify: &Verify) -> Result<Dialed, Dia
 }
 
 /// Dials only the direct path; used by `auto`'s background re-probe.
-pub(crate) async fn dial_direct(plan: &DialPlan, verify: &Verify) -> Result<Dialed, String> {
+pub(crate) async fn dial_direct(
+    plan: &DialPlan,
+    verify: &Verify,
+    target: WsTarget,
+) -> Result<Dialed, String> {
     let view = netpath::scan()?;
     let interface = view.choose_physical(plan.interface.as_deref())?.clone();
     let mut last_error = String::new();
     for endpoint in &plan.endpoints {
-        match ws::dial_direct(endpoint, verify, &view, &interface).await {
+        match ws::dial_direct(endpoint, verify, &view, &interface, target).await {
             Ok(dialed) => return Ok(dialed),
             Err(error) => last_error = format!("{endpoint}: {error}"),
         }
@@ -91,11 +119,11 @@ pub(crate) async fn dial_direct(plan: &DialPlan, verify: &Verify) -> Result<Dial
     Err(last_error)
 }
 
-async fn dial_system(plan: &DialPlan, verify: &Verify) -> Result<Dialed, String> {
+async fn dial_system(plan: &DialPlan, verify: &Verify, target: WsTarget) -> Result<Dialed, String> {
     let mut last_error = String::new();
     for endpoint in &plan.endpoints {
         let proxy = proxy::discover(&endpoint.host);
-        match ws::dial_system(endpoint, verify, proxy.as_ref()).await {
+        match ws::dial_system(endpoint, verify, proxy.as_ref(), target).await {
             Ok(dialed) => return Ok(dialed),
             Err(error) => last_error = format!("{endpoint}: {error}"),
         }

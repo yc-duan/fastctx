@@ -1,6 +1,6 @@
 //! Byte-preserving batch replacement with optimistic and cross-process write protection.
 
-mod document;
+pub(crate) mod document;
 mod locks;
 pub(crate) mod private_storage;
 mod replace;

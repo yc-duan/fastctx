@@ -13,6 +13,7 @@
 
 use crate::session::SessionEnvironment;
 use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
 
 /// Name of the search-path variable rebuilt by union instead of replacement.
 const SEARCH_PATH: &str = "PATH";
@@ -42,6 +43,67 @@ pub(crate) fn command_environment(host: &SessionEnvironment) -> SessionEnvironme
         return host.clone();
     }
     SessionEnvironment::new(host.cwd().to_path_buf(), merged)
+}
+
+/// Puts `fastctx` first on the command search path, so a script the model starts finds it by
+/// name whatever the user's own PATH says: the Git Bash shim directory when there is one
+/// (`shell::msys_shim`), then the directory this process runs from. The node daemon, the
+/// control center, and the proxy are all the same binary, so a command started from any of
+/// them reaches the build that started it.
+pub(crate) fn with_fastctx_on_path(
+    environment: SessionEnvironment,
+    shim_directory: Option<PathBuf>,
+) -> SessionEnvironment {
+    let Some(directory) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+    else {
+        return environment;
+    };
+    let wanted = shim_directory
+        .into_iter()
+        .chain(std::iter::once(directory))
+        .map(PathBuf::into_os_string)
+        .collect::<Vec<_>>();
+    let mut variables = environment.variables().to_vec();
+    match variables
+        .iter_mut()
+        .find(|(name, _)| crate::session::environment_name_eq(name, SEARCH_PATH))
+    {
+        Some(entry) => {
+            let leading = split_search_path(&entry.1)
+                .take(wanted.len())
+                .map(comparable_entry)
+                .collect::<Vec<_>>();
+            if leading
+                == wanted
+                    .iter()
+                    .map(|dir| comparable_entry(dir))
+                    .collect::<Vec<_>>()
+            {
+                return environment;
+            }
+            let mut merged = join_search_path(&wanted);
+            if !entry.1.is_empty() {
+                merged.push(PATH_LIST_SEPARATOR.to_string());
+                merged.push(&entry.1);
+            }
+            entry.1 = merged;
+        }
+        None => variables.push((OsString::from(SEARCH_PATH), join_search_path(&wanted))),
+    }
+    SessionEnvironment::new(environment.cwd().to_path_buf(), variables)
+}
+
+fn join_search_path(entries: &[OsString]) -> OsString {
+    let mut joined = OsString::new();
+    for (index, entry) in entries.iter().enumerate() {
+        if index > 0 {
+            joined.push(PATH_LIST_SEPARATOR.to_string());
+        }
+        joined.push(entry);
+    }
+    joined
 }
 
 /// Reports whether the persisted environment should be restored for this session.

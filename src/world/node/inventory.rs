@@ -47,7 +47,28 @@ fn collect_blocking(tags: Vec<String>, home: Option<std::path::PathBuf>) -> Inve
         addresses: addresses(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         collected_at: crate::world::now_rfc3339(),
+        home: home
+            .as_deref()
+            .map(crate::paths::display_path)
+            .unwrap_or_default(),
+        user: user_name(),
     }
+}
+
+fn user_name() -> String {
+    std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .or_else(|_| std::env::var("LOGNAME"))
+        .ok()
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            Command::new("whoami")
+                .output()
+                .ok()
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|name| !name.is_empty())
+        })
+        .unwrap_or_default()
 }
 
 fn hostname() -> String {

@@ -18,8 +18,24 @@ pub(crate) struct ForegroundCommand<'a> {
     pub(crate) utf8_locale: &'a str,
 }
 
+/// The rendered response of a foreground command plus the exit code it ended with, when it
+/// got as far as ending.
+pub(crate) struct ForegroundOutcome {
+    pub(crate) response: ToolResponse,
+    pub(crate) exit_code: Option<i32>,
+}
+
+impl From<ToolResponse> for ForegroundOutcome {
+    fn from(response: ToolResponse) -> Self {
+        Self {
+            response,
+            exit_code: None,
+        }
+    }
+}
+
 /// Runs one command while reserving enough time for MCP response serialization.
-pub(crate) fn run(spec: ForegroundCommand<'_>, cancelled: impl Fn() -> bool) -> ToolResponse {
+pub(crate) fn run(spec: ForegroundCommand<'_>, cancelled: impl Fn() -> bool) -> ForegroundOutcome {
     let ForegroundCommand {
         bash,
         command,
@@ -32,7 +48,9 @@ pub(crate) fn run(spec: ForegroundCommand<'_>, cancelled: impl Fn() -> bool) -> 
     } = spec;
     let mut process = match spawn_bash(bash, command, cwd, login_shell, environment, utf8_locale) {
         Ok(process) => process,
-        Err(error) => return ToolResponse::error(format!("Cannot start the command: {error}.")),
+        Err(error) => {
+            return ToolResponse::error(format!("Cannot start the command: {error}.")).into();
+        }
     };
     let reader = process.take_output();
     let reader_thread = std::thread::spawn(move || capture_foreground(reader));
@@ -47,7 +65,7 @@ pub(crate) fn run(spec: ForegroundCommand<'_>, cancelled: impl Fn() -> bool) -> 
                     drop(reader_thread);
                     return ToolResponse::error(format!(
                         "The command exited, but its remaining process tree could not be terminated: {error}. Stop the descendants manually before retrying."
-                    ));
+                    )).into();
                 }
                 break status;
             }
@@ -57,12 +75,13 @@ pub(crate) fn run(spec: ForegroundCommand<'_>, cancelled: impl Fn() -> bool) -> 
                     drop(reader_thread);
                     return ToolResponse::error(format!(
                         "Cannot monitor the command process ({error}), and its process tree could not be terminated ({kill_error}). Stop it manually and retry."
-                    ));
+                    )).into();
                 }
                 let _ = reader_thread.join();
                 return ToolResponse::error(format!(
                     "Cannot monitor the command process: {error}. Retry the command."
-                ));
+                ))
+                .into();
             }
         }
         if cancelled() {
@@ -70,12 +89,13 @@ pub(crate) fn run(spec: ForegroundCommand<'_>, cancelled: impl Fn() -> bool) -> 
                 drop(reader_thread);
                 return ToolResponse::error(format!(
                     "The command was cancelled, but its process tree could not be terminated: {error}. Stop it manually before retrying."
-                ));
+                )).into();
             }
             let _ = reader_thread.join();
             return ToolResponse::error(
                 "The command was cancelled and its process tree was terminated.".to_string(),
-            );
+            )
+            .into();
         }
         if started.elapsed() >= Duration::from_millis(timeout_ms) {
             timed_out = true;
@@ -85,7 +105,7 @@ pub(crate) fn run(spec: ForegroundCommand<'_>, cancelled: impl Fn() -> bool) -> 
                     drop(reader_thread);
                     return ToolResponse::error(format!(
                         "The command timed out after {timeout_ms} ms, but its process tree could not be terminated: {error}. Stop it manually and retry."
-                    ));
+                    )).into();
                 }
             }
         }
@@ -97,19 +117,25 @@ pub(crate) fn run(spec: ForegroundCommand<'_>, cancelled: impl Fn() -> bool) -> 
         Ok(Err(error)) => {
             return ToolResponse::error(format!(
                 "Cannot read command output: {error}. Retry the command or redirect output to a file."
-            ));
+            ))
+            .into();
         }
         Err(_) => {
             return ToolResponse::error(
                 "Internal tool failure: the command-output reader panicked.".to_string(),
-            );
+            )
+            .into();
         }
     };
-    format_foreground(
-        &captured,
-        command,
-        exit_code(status),
-        timed_out.then_some(timeout_ms),
-        encoding,
-    )
+    let code = exit_code(status);
+    ForegroundOutcome {
+        response: format_foreground(
+            &captured,
+            command,
+            code,
+            timed_out.then_some(timeout_ms),
+            encoding,
+        ),
+        exit_code: (!timed_out).then_some(code),
+    }
 }

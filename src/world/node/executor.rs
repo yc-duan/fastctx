@@ -1,17 +1,52 @@
 //! Executes direct calls that arrive from other members on this machine, with this member's
 //! own environment, budgets carried by the caller, and a cancel path from the hub.
+//!
+//! The same `execute` serves a World call that names this very machine (`dispatch.rs`), so a
+//! verb behaves identically whether it was asked for from here or from another member.
 
 use crate::model::ToolResponse;
 use crate::session::SessionContext;
 use crate::world::client::WorldClient;
 use crate::world::envelope::{Header, Opened};
-use crate::world::messages::{self, Call, CallResult, WireResponse, kind};
+use crate::world::messages::{self, Call, CallOrigin, CallResult, WireResponse, kind};
 use parking_lot::Mutex;
-use std::collections::HashMap;
-
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
+
+/// The longest a tool-originated call may run on this node; the host stopped waiting long
+/// before this, so the ceiling only bounds a runaway.
+const TOOL_CALL_CEILING_MS: u64 = 600_000;
+/// Added to a verb's own timeout before this node gives up on it: a `run` that stops its
+/// command at the timeout still has to terminate the process tree and render what it captured,
+/// and that rendering, not this node's sentence, is what the caller should get.
+pub(crate) const VERB_TIMEOUT_MARGIN: Duration = Duration::from_secs(10);
+
+/// What one verb produced: the rendered response, plus facts the caller's session or a script
+/// reads without parsing the head note.
+pub(crate) struct VerbOutcome {
+    pub(crate) response: ToolResponse,
+    pub(crate) facts: BTreeMap<String, serde_json::Value>,
+}
+
+impl VerbOutcome {
+    pub(crate) fn plain(response: ToolResponse) -> Self {
+        Self {
+            response,
+            facts: BTreeMap::new(),
+        }
+    }
+
+    fn error(message: impl Into<String>) -> Self {
+        Self::plain(ToolResponse::error(message.into()))
+    }
+
+    /// An error whose sentence reaches the caller's model as `<node>: <sentence>`.
+    pub(crate) fn error_text(message: impl Into<String>) -> Self {
+        Self::error(message)
+    }
+}
 
 /// Runs one call at a time per hub request id and answers on the same id.
 pub(crate) struct Executor {
@@ -31,6 +66,11 @@ impl Executor {
 
     pub(crate) fn running_calls(&self) -> usize {
         self.running.lock().len()
+    }
+
+    /// The daemon's own session: this machine's environment, settings, and home directory.
+    pub(crate) fn session(&self) -> Arc<SessionContext> {
+        Arc::clone(&self.session)
     }
 
     /// Starts a call in the background; the answer goes back through the client.
@@ -60,28 +100,29 @@ impl Executor {
         };
         let from = opened.header.from.clone();
         let started = Instant::now();
-        let response = match self.prepare(&opened) {
+        let outcome = match self.prepare(&opened) {
             Ok((call, session)) => {
                 let token = CancellationToken::new();
                 self.running.lock().insert(hub_id, token.clone());
-                let response = execute(call, session, token.clone()).await;
+                let outcome = execute(&self.client, call, session, token.clone()).await;
                 self.running.lock().remove(&hub_id);
-                response
+                outcome
             }
-            Err(error) => ToolResponse::error(error),
+            Err(error) => VerbOutcome::error(error),
         };
         let result = CallResult {
             node: self.client.name(),
-            response: WireResponse::from(&response),
+            response: WireResponse::from(&outcome.response),
             elapsed_ms: started.elapsed().as_millis() as u64,
             grant_revision: self.client.grant_revision(),
+            facts: outcome.facts,
         };
         let header =
             Header::new(kind::CALL_RESULT, &self.client.name(), &from, 0).with_id(request_id);
         if let Err(error) = self.client.send_answer(hub_id, header, &result, true) {
             super::log(format!("cannot answer the call from \"{from}\": {error}"));
         }
-        self.audit(&from, &opened, &response, started.elapsed());
+        self.audit(&from, &opened, &outcome.response, started.elapsed());
     }
 
     fn prepare(&self, opened: &Opened) -> Result<(Call, Arc<SessionContext>), String> {
@@ -108,15 +149,15 @@ impl Executor {
                 self.client.state_snapshot().grant_floor
             ));
         }
+        let grant_verb = grant_verb(&call.verb);
         if !self
             .client
             .grants
             .read()
-            .allows(from, &call.verb, &me, &self.client.own_tags())
+            .allows(from, grant_verb, &me, &self.client.own_tags())
         {
             return Err(format!(
-                "Node \"{me}\" does not allow {} for \"{from}\".",
-                call.verb
+                "Node \"{me}\" does not allow {grant_verb} for \"{from}\"."
             ));
         }
         let cwd = match &call.cwd {
@@ -198,23 +239,50 @@ impl Executor {
     }
 }
 
-async fn execute(
+/// The grant verb a wire verb is judged by. The receiving side of a copy is still `copy`: the
+/// bytes a member writes are the bytes another member sends it.
+pub(crate) fn grant_verb(verb: &str) -> &str {
+    match verb {
+        "copy_receive" => "copy",
+        other => other,
+    }
+}
+
+/// Runs one call under its deadline and cancel token. Blocking verbs run on the blocking pool;
+/// `copy` is asynchronous because it drives a data connection while it runs.
+pub(crate) async fn execute(
+    client: &Arc<WorldClient>,
     call: Call,
     session: Arc<SessionContext>,
     token: CancellationToken,
-) -> ToolResponse {
-    let timeout = Duration::from_millis(call.timeout_ms.clamp(1_000, 600_000));
+) -> VerbOutcome {
+    let ceiling = match call.origin {
+        CallOrigin::Tool => TOOL_CALL_CEILING_MS,
+        CallOrigin::Script => crate::shell::MAX_SCRIPT_CALL_MS,
+    };
+    let timeout = Duration::from_millis(call.timeout_ms.clamp(1_000, ceiling));
     let verb = call.verb.clone();
     let work_token = token.clone();
-    let work = tokio::task::spawn_blocking(move || run_verb(&call, &session, &work_token));
-    match tokio::time::timeout(timeout, work).await {
-        Ok(Ok(response)) => response,
-        Ok(Err(error)) => {
-            ToolResponse::error(format!("Internal tool failure on this node: {error}"))
+    let work = async move {
+        match call.verb.as_str() {
+            "copy" | "copy_receive" => {
+                crate::world::copy::execute(client, &call, &session, &work_token, timeout).await
+            }
+            _ => match tokio::task::spawn_blocking(move || run_verb(&call, &session, &work_token))
+                .await
+            {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    VerbOutcome::error(format!("Internal tool failure on this node: {error}"))
+                }
+            },
         }
+    };
+    match tokio::time::timeout(timeout + VERB_TIMEOUT_MARGIN, work).await {
+        Ok(outcome) => outcome,
         Err(_) => {
             token.cancel();
-            ToolResponse::error(format!(
+            VerbOutcome::error(format!(
                 "{verb} did not finish within {} s on this node and was stopped.",
                 timeout.as_secs()
             ))
@@ -222,29 +290,33 @@ async fn execute(
     }
 }
 
-/// Runs one verb with the given session's working directory and budgets; the same code path
-/// serves calls from other members and World calls that target this machine.
-pub(crate) fn run_verb(
-    call: &Call,
-    session: &Arc<SessionContext>,
-    token: &CancellationToken,
-) -> ToolResponse {
+/// Runs one blocking verb with the given session's working directory and budgets.
+fn run_verb(call: &Call, session: &Arc<SessionContext>, token: &CancellationToken) -> VerbOutcome {
     let args = call.args.clone();
     session.activate(|| match call.verb.as_str() {
         "inspect_local_file" => match serde_json::from_value::<crate::read_tool::ReadRequest>(args)
         {
-            Ok(request) => crate::read_tool::read_file(request),
+            Ok(request) => {
+                let path = request.file_path.clone();
+                let response = crate::read_tool::read_file(request);
+                let facts = if response.is_error {
+                    BTreeMap::new()
+                } else {
+                    crate::world::remote_edit::file_facts(&path)
+                };
+                VerbOutcome { response, facts }
+            }
             Err(error) => {
-                ToolResponse::error(format!("Invalid inspect_local_file arguments: {error}"))
+                VerbOutcome::error(format!("Invalid inspect_local_file arguments: {error}"))
             }
         },
         "grep" => match serde_json::from_value::<crate::grep_tool::GrepRequest>(args) {
-            Ok(request) => crate::grep_tool::grep_files(request, token.clone()),
-            Err(error) => ToolResponse::error(format!("Invalid grep arguments: {error}")),
+            Ok(request) => VerbOutcome::plain(crate::grep_tool::grep_files(request, token.clone())),
+            Err(error) => VerbOutcome::error(format!("Invalid grep arguments: {error}")),
         },
         "glob" => match serde_json::from_value::<crate::glob_tool::GlobRequest>(args) {
-            Ok(request) => crate::glob_tool::glob_files(request, token.clone()),
-            Err(error) => ToolResponse::error(format!("Invalid glob arguments: {error}")),
+            Ok(request) => VerbOutcome::plain(crate::glob_tool::glob_files(request, token.clone())),
+            Err(error) => VerbOutcome::error(format!("Invalid glob arguments: {error}")),
         },
         "replace" => match serde_json::from_value::<crate::edit::ReplaceRequest>(args) {
             Ok(request) => {
@@ -253,20 +325,50 @@ pub(crate) fn run_verb(
                 {
                     Ok(limit) => limit,
                     Err(error) => {
-                        return ToolResponse::error(format!(
+                        return VerbOutcome::error(format!(
                             "Cannot use replace settings on this node: {error}."
                         ));
                     }
                 };
-                crate::edit::ReplaceService::new().replace_with_limit(request, limit)
+                VerbOutcome::plain(
+                    crate::edit::ReplaceService::new().replace_with_limit(request, limit),
+                )
             }
-            Err(error) => ToolResponse::error(format!("Invalid replace arguments: {error}")),
+            Err(error) => VerbOutcome::error(format!("Invalid replace arguments: {error}")),
         },
         "run" => match serde_json::from_value::<crate::shell::RunRequest>(args) {
-            Ok(request) => crate::shell::FastShell::with_session(Arc::clone(session))
-                .run_until_cancelled(request, || token.is_cancelled()),
-            Err(error) => ToolResponse::error(format!("Invalid run arguments: {error}")),
+            Ok(request) => {
+                let ceiling = match call.origin {
+                    CallOrigin::Tool => crate::shell::MAX_BLOCKING_CALL_MS,
+                    CallOrigin::Script => crate::shell::MAX_SCRIPT_CALL_MS,
+                };
+                let explicit_cwd = request.cwd.is_some();
+                let outcome = crate::shell::FastShell::with_session(Arc::clone(session))
+                    .run_bounded(request, ceiling, || token.is_cancelled());
+                let mut facts = BTreeMap::new();
+                if let Some(code) = outcome.exit_code {
+                    facts.insert("exit_code".to_string(), serde_json::json!(code));
+                }
+                let mut response = outcome.response;
+                // A remote command without cwd ran in this machine's home directory, and the
+                // caller has no other way to learn where that is.
+                if !explicit_cwd && !response.is_error {
+                    let cwd = crate::paths::display_path(session.environment.cwd());
+                    crate::head_note::append_fact(&mut response, &format!("in {cwd}"));
+                    facts.insert("cwd".to_string(), serde_json::json!(cwd));
+                }
+                VerbOutcome { response, facts }
+            }
+            Err(error) => VerbOutcome::error(format!("Invalid run arguments: {error}")),
         },
-        other => ToolResponse::error(format!("This node does not execute \"{other}\".")),
+        "remote_write" => match serde_json::from_value(args) {
+            Ok(request) => crate::world::remote_edit::write(request),
+            Err(error) => VerbOutcome::error(format!("Invalid remote_write arguments: {error}")),
+        },
+        "remote_edit" => match serde_json::from_value(args) {
+            Ok(request) => crate::world::remote_edit::edit(request, &session.control_paths),
+            Err(error) => VerbOutcome::error(format!("Invalid remote_edit arguments: {error}")),
+        },
+        other => VerbOutcome::error(format!("This node does not execute \"{other}\".")),
     })
 }

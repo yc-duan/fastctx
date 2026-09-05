@@ -496,7 +496,12 @@ fn forward_request(
                 },
             ),
             None => {
-                let hub_id = hub.register_pending(&peer.name, id, &target);
+                let hub_id = hub.register_pending(
+                    &peer.name,
+                    id,
+                    &target,
+                    header.wait_s.map(std::time::Duration::from_secs),
+                );
                 if hub.send_to_online(
                     &target,
                     crate::world::wire::Frame::request(hub_id, env.clone()),

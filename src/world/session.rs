@@ -156,10 +156,11 @@ fn verify_mode(config: &super::WorldConfig) -> Verify {
     }
 }
 
-async fn connect_once(
-    client: &Arc<WorldClient>,
-    executor: &Arc<Executor>,
-) -> Result<SessionEnd, String> {
+/// How this member reaches its hub right now: the dial plan, the certificate check, and the
+/// enrollment it authenticates with. Shared by the control connection and data connections.
+pub(crate) fn dial_plan(
+    client: &WorldClient,
+) -> Result<(DialPlan, Verify, super::WorldConfig), String> {
     let config = client.config.read().clone();
     let state = client.state_snapshot();
     let plan = DialPlan {
@@ -173,16 +174,33 @@ async fn connect_once(
         preferred: state.last_network,
     };
     let verify = verify_mode(&config);
-    let mut dialed = link::dial(&plan, &verify)
+    Ok((plan, verify, config))
+}
+
+async fn connect_once(
+    client: &Arc<WorldClient>,
+    executor: &Arc<Executor>,
+) -> Result<SessionEnd, String> {
+    let (plan, verify, config) = dial_plan(client)?;
+    let state = client.state_snapshot();
+    let mut dialed = link::dial(&plan, &verify, link::WsTarget::CONTROL)
         .await
         .map_err(|failure| failure.to_string())?;
     let welcome = match tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
-        authenticate(client, &mut dialed, &config, state.recv_seq),
+        authenticate(client, &mut dialed, &config, state.recv_seq, Intent::Auth),
     )
     .await
     {
-        Ok(Ok(welcome)) => welcome,
+        Ok(Ok(Frame::Welcome(welcome))) => welcome,
+        Ok(Ok(Frame::Bye { reason })) => {
+            dialed.close().await;
+            return Err(format!("the hub said bye during the handshake: {reason}"));
+        }
+        Ok(Ok(_)) => {
+            dialed.close().await;
+            return Err("the hub answered auth with something other than welcome".to_string());
+        }
         Ok(Err(Handshake::Stopped(reason))) => {
             dialed.close().await;
             return Ok(SessionEnd::Stopped(reason));
@@ -244,9 +262,19 @@ async fn connect_once(
     Ok(outcome)
 }
 
-enum Handshake {
+/// Why a handshake did not end in an admission: `Stopped` means the link must not retry
+/// until something changes (revoked, wrong hub); `Failed` is transient.
+pub(crate) enum Handshake {
     Stopped(String),
     Failed(String),
+}
+
+impl Handshake {
+    pub(crate) fn into_message(self) -> String {
+        match self {
+            Self::Stopped(reason) | Self::Failed(reason) => reason,
+        }
+    }
 }
 
 impl From<String> for Handshake {
@@ -255,12 +283,16 @@ impl From<String> for Handshake {
     }
 }
 
-async fn authenticate(
+/// Authenticates a dialed connection as this member with the given intent and returns the
+/// hub's admission frame: `welcome` for a session, `attached` for a data connection, or `bye`
+/// when the hub declined after authenticating.
+pub(crate) async fn authenticate(
     client: &WorldClient,
     dialed: &mut Dialed,
     config: &super::WorldConfig,
     recv_seq: u64,
-) -> Result<Welcome, Handshake> {
+    intent: Intent,
+) -> Result<Frame, Handshake> {
     let node_nonce = super::crypto::random_bytes::<32>()?;
     let hello = Hello {
         protocol: PROTOCOL_VERSION,
@@ -269,7 +301,7 @@ async fn authenticate(
         nonce: b64_encode(&node_nonce),
         node_pub: b64_encode(&client.identity.public_key()),
         wrap_pub: b64_encode(&client.identity.wrap_public()),
-        intent: Intent::Auth,
+        intent,
     };
     dialed.send(&Frame::Hello(hello)).await?;
     let challenge = match dialed.recv().await? {
@@ -330,10 +362,10 @@ async fn authenticate(
     };
     dialed.send(&Frame::Auth(auth)).await?;
     match dialed.recv().await? {
-        Some(Frame::Welcome(welcome)) => Ok(welcome),
+        Some(frame @ (Frame::Welcome(_) | Frame::Attached { .. } | Frame::Bye { .. })) => Ok(frame),
         Some(Frame::Rejected(rejected)) => Err(rejection(rejected)),
         Some(_) => Err(Handshake::Failed(
-            "the hub answered auth with something other than welcome".to_string(),
+            "the hub answered auth with something other than an admission".to_string(),
         )),
         None => Err(Handshake::Failed(
             "the hub closed the connection after auth".to_string(),
@@ -541,7 +573,7 @@ async fn run_connected(
                         interface: config.interface.clone(),
                         preferred: None,
                     };
-                    if let Ok(mut probe) = link::dial_direct(&plan, &verify_mode(&config)).await {
+                    if let Ok(mut probe) = link::dial_direct(&plan, &verify_mode(&config), link::WsTarget::CONTROL).await {
                         probe.close().await;
                         let _ = client.with_state(|state| state.last_network = Some(NetworkMode::Direct));
                         log("the direct path is available again; the next reconnect will use it");
@@ -620,7 +652,7 @@ async fn run_connected(
                     Frame::Replaced => break SessionEnd::Replaced,
                     Frame::Bye { reason } => break SessionEnd::Lost(format!("the hub said bye: {reason}")),
                     Frame::Rejected(rejected) => break SessionEnd::Stopped(format!("{}: {}", rejected.code, rejected.message)),
-                    Frame::Hello(_) | Frame::Challenge(_) | Frame::Auth(_) | Frame::Welcome(_) | Frame::Heartbeat { .. } => {
+                    Frame::Hello(_) | Frame::Challenge(_) | Frame::Auth(_) | Frame::Welcome(_) | Frame::Attached { .. } | Frame::Heartbeat { .. } => {
                         log("the hub sent a handshake frame after welcome; ignoring it");
                     }
                 }

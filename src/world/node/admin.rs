@@ -4,18 +4,32 @@
 
 use crate::runtime::local_ipc::{self, BoxedStream, Listener, LocalEndpoint};
 use crate::world::client::{LinkStatus, NodeView, WorldClient};
+use crate::world::dispatch::{NodeCall, call_node};
+use crate::world::messages::{CallBudget, CallOrigin, WireResponse};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 const MAX_ADMIN_FRAME: usize = 16 * 1024 * 1024;
+/// How long a control command waits for the daemon's answer.
+pub(crate) const ADMIN_TIMEOUT: Duration = Duration::from_secs(40);
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum AdminRequest {
     Status,
     Nodes,
+    /// Runs one verb on one machine on behalf of `fastctx world run` / `copy`: the script door.
+    /// The answer is the outcome as the tool surface would see it, plus its facts.
+    Call {
+        verb: String,
+        node: String,
+        args: serde_json::Value,
+        timeout_ms: u64,
+    },
     Invite {
         name: Option<String>,
         ttl_hours: u32,
@@ -49,6 +63,19 @@ pub(crate) struct AdminResponse {
     pub(crate) error: Option<String>,
     #[serde(default)]
     pub(crate) data: serde_json::Value,
+}
+
+/// What `AdminRequest::Call` answers with: a `NodeOutcome` on the wire.
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct CallOutcome {
+    pub(crate) node: String,
+    pub(crate) status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) response: Option<WireResponse>,
+    #[serde(default)]
+    pub(crate) facts: BTreeMap<String, serde_json::Value>,
 }
 
 /// What `status` returns: link plus identity facts.
@@ -184,6 +211,35 @@ impl AdminServer {
                 let _ = self.client.refresh_inventories().await;
                 serde_json::to_value(self.client.nodes()).map_err(|error| error.to_string())
             }
+            AdminRequest::Call {
+                verb,
+                node,
+                args,
+                timeout_ms,
+            } => {
+                let call = NodeCall {
+                    verb,
+                    node,
+                    args,
+                    budget: CallBudget::default(),
+                    timeout: Duration::from_millis(
+                        timeout_ms.clamp(1_000, crate::shell::MAX_SCRIPT_CALL_MS),
+                    ),
+                    origin: CallOrigin::Script,
+                };
+                call_node(&self.client, self.executor.session(), call)
+                    .await
+                    .and_then(|outcome| {
+                        serde_json::to_value(CallOutcome {
+                            node: outcome.node,
+                            status: outcome.status,
+                            message: outcome.message,
+                            response: outcome.response.as_ref().map(WireResponse::from),
+                            facts: outcome.facts,
+                        })
+                        .map_err(|error| error.to_string())
+                    })
+            }
             AdminRequest::Invite {
                 name,
                 ttl_hours,
@@ -310,10 +366,12 @@ async fn write_frame(stream: &mut BoxedStream, bytes: &[u8]) -> Result<(), Strin
         .map_err(|error| format!("cannot flush the admin frame: {error}"))
 }
 
-/// Sends one request to the running daemon; `Ok(None)` when no daemon answers.
+/// Sends one request to the running daemon and waits up to `timeout` for its answer;
+/// `Ok(None)` when no daemon answers the endpoint at all.
 pub(crate) async fn call(
     endpoint: &LocalEndpoint,
     request: &AdminRequest,
+    timeout: Duration,
 ) -> Result<Option<AdminResponse>, String> {
     let mut stream = match local_ipc::connect(endpoint).await {
         Ok(stream) => stream,
@@ -321,10 +379,14 @@ pub(crate) async fn call(
     };
     let bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;
     write_frame(&mut stream, &bytes).await?;
-    let response =
-        tokio::time::timeout(std::time::Duration::from_secs(40), read_frame(&mut stream))
-            .await
-            .map_err(|_| "The node service did not answer within 40 seconds.".to_string())??;
+    let response = tokio::time::timeout(timeout, read_frame(&mut stream))
+        .await
+        .map_err(|_| {
+            format!(
+                "The node service did not answer within {} seconds.",
+                timeout.as_secs()
+            )
+        })??;
     serde_json::from_slice(&response)
         .map(Some)
         .map_err(|error| format!("Unreadable answer from the node service: {error}"))

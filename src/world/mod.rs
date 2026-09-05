@@ -18,7 +18,9 @@
 
 pub mod cli;
 pub(crate) mod client;
+pub(crate) mod copy;
 pub(crate) mod crypto;
+pub(crate) mod dispatch;
 pub(crate) mod doctor;
 pub(crate) mod enroll;
 pub(crate) mod envelope;
@@ -32,8 +34,10 @@ pub(crate) mod members;
 pub(crate) mod messages;
 pub(crate) mod node;
 pub(crate) mod outbox;
+pub(crate) mod remote_edit;
 pub(crate) mod session;
 pub(crate) mod state;
+pub(crate) mod stream;
 pub(crate) mod surface;
 pub(crate) mod wire;
 

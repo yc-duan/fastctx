@@ -16,7 +16,7 @@ use super::grant::{self, GrantChange, GrantSet, GrantSnapshot};
 use super::identity::Identity;
 use super::keys::{KeyRing, SealedKey};
 use super::members::{self, MemberTable, VerifiedMember};
-use super::messages::{self, Call, CallBudget, CallResult, CallStatus, kind};
+use super::messages::{self, Call, CallBudget, CallOrigin, CallResult, CallStatus, kind};
 use super::outbox::{Outbox, OutboxEntry};
 use super::state::{Counters, NodeState};
 use super::wire::Frame;
@@ -33,8 +33,9 @@ use tokio_util::sync::CancellationToken;
 
 /// Default answer window for hub requests (`inventory_get`, `members_get`, `events_get`).
 pub(crate) const HUB_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// Added to a tool's own timeout for the round trip through the hub.
-pub(crate) const LINK_MARGIN: Duration = Duration::from_secs(5);
+/// Added to a tool's own timeout for the round trip through the hub and for the node's own
+/// margin (`executor::VERB_TIMEOUT_MARGIN`): a command stopped at its timeout still reports.
+pub(crate) const LINK_MARGIN: Duration = Duration::from_secs(15);
 /// Reliable message ack window before the link is treated as dead.
 pub(crate) const ACK_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -56,6 +57,13 @@ pub(crate) struct Inventory {
     pub(crate) addresses: Vec<String>,
     pub(crate) version: String,
     pub(crate) collected_at: String,
+    /// The home directory of the user the node runs as, in that machine's native spelling;
+    /// where a remote `run` without `cwd` starts.
+    #[serde(default)]
+    pub(crate) home: String,
+    /// The user the node runs as.
+    #[serde(default)]
+    pub(crate) user: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -159,6 +167,21 @@ pub(crate) struct NodeOutcome {
     pub(crate) status: String,
     pub(crate) response: Option<ToolResponse>,
     pub(crate) message: Option<String>,
+    /// Structured facts the target attached (`CallResult::facts`).
+    pub(crate) facts: BTreeMap<String, serde_json::Value>,
+}
+
+impl NodeOutcome {
+    /// A terminal status the hub or this member decided without the target answering.
+    pub(crate) fn status(node: &str, status: &str, message: String) -> Self {
+        Self {
+            node: node.to_string(),
+            status: status.to_string(),
+            response: None,
+            message: Some(message),
+            facts: BTreeMap::new(),
+        }
+    }
 }
 
 /// What a request collected before it returned.
@@ -1245,30 +1268,36 @@ impl WorldClient {
     // ----- direct calls -----
 
     /// Runs `verb` with `args` on `target` and returns its outcome. A target that is offline,
-    /// forbidden, or silent produces a status outcome, not an error.
+    /// forbidden, or silent produces a status outcome, not an error. The working directory
+    /// of a `run` travels inside `args`; the envelope's own `cwd` is left unset.
     pub(crate) async fn call(
         &self,
         verb: &str,
         target: &str,
         args: serde_json::Value,
         budget: CallBudget,
-        cwd: Option<String>,
         tool_timeout: Duration,
+        origin: CallOrigin,
     ) -> Result<NodeOutcome, String> {
         if !self.is_connected() {
             return Err(self.unreachable_error());
         }
         let me = self.name();
-        let header = Header::new(kind::CALL, &me, target, 0).with_verb(verb);
+        let window = tool_timeout + LINK_MARGIN;
+        // The hub judges grants by the verb in the header; the receiving side of a copy is
+        // authorized as `copy`, whatever the wire verb says.
+        let header = Header::new(kind::CALL, &me, target, 0)
+            .with_verb(super::node::executor::grant_verb(verb))
+            .with_wait(window.as_secs());
         let body = Call {
             verb: verb.to_string(),
             args,
             budget,
-            cwd,
+            cwd: None,
             timeout_ms: tool_timeout.as_millis() as u64,
             grant_revision: self.grant_revision(),
+            origin,
         };
-        let window = tool_timeout + LINK_MARGIN;
         let Answers {
             answers,
             delivered,
@@ -1298,6 +1327,7 @@ impl WorldClient {
                         .to_string(),
                         response: Some(result.response.into()),
                         message: None,
+                        facts: result.facts,
                     });
                 }
                 kind::CALL_STATUS if answer.header.from == HUB_NAME => {
@@ -1309,12 +1339,11 @@ impl WorldClient {
                     if status.node != target {
                         continue;
                     }
-                    return Ok(NodeOutcome {
-                        node: status.node,
-                        status: status.status,
-                        response: None,
-                        message: Some(status.message),
-                    });
+                    return Ok(NodeOutcome::status(
+                        &status.node,
+                        &status.status,
+                        status.message,
+                    ));
                 }
                 _ => {}
             }
@@ -1343,12 +1372,7 @@ impl WorldClient {
                 ),
             )
         };
-        Ok(NodeOutcome {
-            node: target.to_string(),
-            status: status.to_string(),
-            response: None,
-            message: Some(message),
-        })
+        Ok(NodeOutcome::status(target, status, message))
     }
 }
 

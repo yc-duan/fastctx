@@ -197,6 +197,37 @@ impl HeadNote {
     }
 }
 
+/// Splits a rendered head note into its subject and its clause text, or `None` when the line is
+/// not one.
+pub(crate) fn split_rendered(line: &str) -> Option<(&str, &str)> {
+    let inner = line.strip_prefix("=== ")?.strip_suffix(" ===")?;
+    let inner = inner.strip_suffix(')')?;
+    let split = inner.rfind(" (")?;
+    Some((&inner[..split], &inner[split + 2..]))
+}
+
+/// Adds one fact to the head note of an already rendered text response. A response without a
+/// head note on its first line is left alone.
+pub(crate) fn append_fact(response: &mut ToolResponse, fact: &str) {
+    let Some(crate::model::ToolContent::Text(text)) = response.content.first_mut() else {
+        return;
+    };
+    let updated = {
+        let (first, rest) = text
+            .split_once('\n')
+            .map_or((text.as_str(), None), |(first, rest)| (first, Some(rest)));
+        let Some((subject, clauses)) = split_rendered(first) else {
+            return;
+        };
+        let head = format!("=== {subject} ({clauses}; {}) ===", single_line(fact));
+        match rest {
+            Some(rest) => format!("{head}\n{rest}"),
+            None => head,
+        }
+    };
+    *text = updated;
+}
+
 fn noun<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
 }

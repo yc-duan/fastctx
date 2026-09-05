@@ -128,9 +128,13 @@ async fn enroll_with(
         interface: options.interface.clone(),
         preferred: None,
     };
-    let mut dialed = link::dial(&plan, &Verify::Learn(Arc::clone(&learned)))
-        .await
-        .map_err(|failure| format!("Cannot reach the hub: {failure}"))?;
+    let mut dialed = link::dial(
+        &plan,
+        &Verify::Learn(Arc::clone(&learned)),
+        link::WsTarget::CONTROL,
+    )
+    .await
+    .map_err(|failure| format!("Cannot reach the hub: {failure}"))?;
     let outcome = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
         handshake(

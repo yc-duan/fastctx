@@ -9,8 +9,22 @@ pub fn parse_input_path(input: &str) -> PathBuf {
     if std::path::MAIN_SEPARATOR == '/' {
         PathBuf::from(input.replace('\\', "/"))
     } else {
-        PathBuf::from(input)
+        PathBuf::from(msys_drive_path(input).unwrap_or_else(|| input.to_string()))
     }
+}
+
+/// `/c/Users/x` as Git Bash spells `C:/Users/x`. Bash converts that spelling itself before it
+/// starts a native program, except through the launcher that turns conversion off so paths on
+/// other machines survive (`shell::msys_shim`); the drive form is then read here instead.
+fn msys_drive_path(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let drive = match bytes {
+        [b'/', drive] if drive.is_ascii_alphabetic() => *drive,
+        [b'/', drive, b'/', ..] if drive.is_ascii_alphabetic() => *drive,
+        _ => return None,
+    };
+    let rest = if bytes.len() == 2 { "/" } else { &input[2..] };
+    Some(format!("{}:{rest}", drive.to_ascii_uppercase() as char))
 }
 
 /// Accepts either a plain path or a strictly local file URI and returns a native path.

@@ -22,9 +22,18 @@ const LANDING_PAGE: &str = "<!doctype html><html><head><meta charset=\"utf-8\"><
 
 /// WebSocket limits for the control connection.
 pub(crate) fn websocket_config() -> WebSocketConfig {
+    limits(crate::world::wire::MAX_FRAME_BYTES)
+}
+
+/// WebSocket limits for a data connection: one record per message.
+fn stream_config() -> WebSocketConfig {
+    limits(crate::world::stream::MAX_MESSAGE_BYTES)
+}
+
+fn limits(bytes: usize) -> WebSocketConfig {
     WebSocketConfig::default()
-        .max_message_size(Some(crate::world::wire::MAX_FRAME_BYTES))
-        .max_frame_size(Some(crate::world::wire::MAX_FRAME_BYTES))
+        .max_message_size(Some(bytes))
+        .max_frame_size(Some(bytes))
 }
 
 /// Serves one accepted connection until the peer closes it or a WebSocket takes it over.
@@ -60,7 +69,8 @@ fn handle(
     peer: SocketAddr,
     mut request: Request<Incoming>,
 ) -> Response<Full<Bytes>> {
-    if request.uri().path() == crate::world::WS_PATH {
+    let data = request.uri().path() == crate::world::stream::STREAM_PATH;
+    if data || request.uri().path() == crate::world::WS_PATH {
         return match websocket_accept_key(&request) {
             Ok(accept) => {
                 let on_upgrade = hyper::upgrade::on(&mut request);
@@ -70,10 +80,14 @@ fn handle(
                             let socket = WebSocketStream::from_raw_socket(
                                 TokioIo::new(upgraded),
                                 Role::Server,
-                                Some(websocket_config()),
+                                Some(if data {
+                                    stream_config()
+                                } else {
+                                    websocket_config()
+                                }),
                             )
                             .await;
-                            super::session::serve(hub, socket, binding, peer).await;
+                            super::session::serve(hub, socket, binding, peer, data).await;
                         }
                         Err(error) => {
                             super::log(format!("{peer}: websocket upgrade failed: {error}"))

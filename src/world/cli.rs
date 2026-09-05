@@ -81,7 +81,7 @@ pub enum WorldCommand {
         /// Hub address, `host:port` (port 443 when omitted).
         hub: String,
         /// The one-time bootstrap password the hub printed at first start.
-        #[arg(long, value_name = "PASSWORD")]
+        #[arg(long, value_name = "PASSWORD", allow_hyphen_values = true)]
         bootstrap: String,
         /// This machine's name in the World: lowercase letters, digits, hyphens.
         #[arg(long, value_name = "NAME")]
@@ -126,6 +126,60 @@ pub enum WorldCommand {
         /// Print JSON instead of the table.
         #[arg(long)]
         json: bool,
+        /// Print one machine name per line, for scripts.
+        #[arg(long, conflicts_with = "json")]
+        names: bool,
+        /// Only machines that are online now.
+        #[arg(long)]
+        online: bool,
+        /// Only machines running this operating system: linux, macos, or windows.
+        #[arg(long, value_name = "OS")]
+        os: Option<String>,
+        /// Only machines carrying this tag; repeatable, every tag must match.
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
+    },
+    /// Run a bash command on one machine and wait for it: the door scripts use.
+    Run {
+        /// The machine, as listed by `fastctx world nodes`.
+        #[arg(long, value_name = "MACHINE")]
+        node: String,
+        /// Working directory on that machine. Omitted: its home directory, or the current
+        /// directory when the machine is this one.
+        #[arg(long, value_name = "DIR")]
+        cwd: Option<String>,
+        /// How long to wait, like `90s`, `10m`, or `2h`; 24h at most.
+        #[arg(long, value_name = "DURATION", default_value = "1h")]
+        timeout: String,
+        /// Print `{node, status, exit_code, text}` as JSON instead of the tool's text.
+        #[arg(long)]
+        json: bool,
+        /// The bash command line; put `--` before it when it starts with a dash.
+        #[arg(required = true, trailing_var_arg = true, value_name = "COMMAND")]
+        command: Vec<String>,
+    },
+    /// Copy a file or a directory tree between two machines: identical files are skipped,
+    /// differing ones replaced, nothing is deleted.
+    Copy {
+        /// Machine holding FROM; this machine when omitted.
+        #[arg(long, value_name = "MACHINE")]
+        from_node: Option<String>,
+        /// Machine receiving the copy; this machine when omitted.
+        #[arg(long, value_name = "MACHINE")]
+        to_node: Option<String>,
+        /// How long to wait, like `10m` or `2h`; 24h at most.
+        #[arg(long, value_name = "DURATION", default_value = "1h")]
+        timeout: String,
+        /// Print the outcome as JSON instead of the tool's text.
+        #[arg(long)]
+        json: bool,
+        /// Path of the file or directory on FROM_NODE.
+        #[arg(value_name = "FROM")]
+        from: String,
+        /// Path the copy will have on TO_NODE: the file itself, or the directory that receives
+        /// the tree.
+        #[arg(value_name = "TO")]
+        to: String,
     },
     /// Show the World's event log.
     Events {
@@ -271,7 +325,7 @@ pub async fn run_hub(command: HubCommand) -> Result<ExitCode, String> {
                         status.binding, status.started_at, status.written_at
                     );
                     println!(
-                        "Members: {} ({} online), open invites {}, events {}{}{}",
+                        "Members: {} ({} online), open invites {}, data connections {}, events {}{}{}",
                         status.members.len(),
                         status
                             .members
@@ -279,6 +333,7 @@ pub async fn run_hub(command: HubCommand) -> Result<ExitCode, String> {
                             .filter(|member| member.state == "online")
                             .count(),
                         status.open_invites,
+                        status.data_connections,
                         status.events,
                         if status.rotation_pending {
                             ", key rotation pending"
@@ -493,18 +548,140 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        WorldCommand::Nodes { json } => {
+        WorldCommand::Nodes {
+            json,
+            names,
+            online,
+            os,
+            tags,
+        } => {
             let response = ask_daemon(&AdminRequest::Nodes).await?;
+            let mut nodes = super::node::admin::node_views_from(response.data)?;
+            nodes.retain(|node| {
+                (!online || node.state == "online")
+                    && os
+                        .as_deref()
+                        .is_none_or(|os| node.os.eq_ignore_ascii_case(os))
+                    && tags.iter().all(|tag| node.tags.contains(tag))
+            });
             if json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&response.data).unwrap_or_default()
+                    serde_json::to_string_pretty(&nodes).unwrap_or_default()
                 );
-                return Ok(ExitCode::SUCCESS);
+            } else if names {
+                for node in &nodes {
+                    println!("{}", node.name);
+                }
+            } else {
+                print_nodes(&nodes);
             }
-            let nodes = super::node::admin::node_views_from(response.data)?;
-            print_nodes(&nodes);
             Ok(ExitCode::SUCCESS)
+        }
+        WorldCommand::Run {
+            node,
+            cwd,
+            timeout,
+            json,
+            command,
+        } => {
+            let timeout = parse_duration(&timeout)?;
+            let me = match self_name().await {
+                Ok(me) => me,
+                Err(error) => return Ok(world_failure(&node, &error, json)),
+            };
+            let cwd = match cwd {
+                Some(cwd) => Some(cwd),
+                None if node == me => std::env::current_dir()
+                    .ok()
+                    .map(|directory| crate::paths::display_path(&directory)),
+                None => None,
+            };
+            let args = serde_json::json!({
+                "command": command.join(" "),
+                "cwd": cwd,
+                "timeout_ms": timeout.as_millis() as u64,
+            });
+            let outcome = match call_daemon("run", node.clone(), args, timeout).await {
+                Ok(outcome) => outcome,
+                Err(error) => return Ok(world_failure(&node, &error, json)),
+            };
+            let code = exit_code_of(&outcome);
+            if json {
+                print_outcome_json(&outcome, code);
+            } else {
+                print_outcome_text(&outcome, code);
+            }
+            Ok(ExitCode::from(code))
+        }
+        WorldCommand::Copy {
+            from_node,
+            to_node,
+            timeout,
+            json,
+            from,
+            to,
+        } => {
+            let timeout = parse_duration(&timeout)?;
+            if from_node.is_none() && to_node.is_none() {
+                return Err(
+                    "copy moves a file or directory between two machines; give --from-node or --to-node."
+                        .to_string(),
+                );
+            }
+            let me = match self_name().await {
+                Ok(me) => me,
+                Err(error) => {
+                    let named = from_node
+                        .as_deref()
+                        .or(to_node.as_deref())
+                        .unwrap_or_default();
+                    return Ok(world_failure(named, &error, json));
+                }
+            };
+            let from_node = from_node.unwrap_or_else(|| me.clone());
+            let to_node = to_node.unwrap_or_else(|| me.clone());
+            if from_node == to_node {
+                return Err(
+                    "--from-node and --to-node name the same machine; copy works between two machines."
+                        .to_string(),
+                );
+            }
+            let args = serde_json::to_value(super::copy::CopyArgs {
+                from,
+                to,
+                to_node,
+                caller: me,
+                timeout_ms: Some(timeout.as_millis() as u64),
+            })
+            .map_err(|error| error.to_string())?;
+            let outcome = match call_daemon("copy", from_node.clone(), args, timeout).await {
+                Ok(outcome) => outcome,
+                Err(error) => return Ok(world_failure(&from_node, &error, json)),
+            };
+            let code = match &outcome.response {
+                Some(response) if response.is_error => 1,
+                Some(_) => {
+                    if outcome
+                        .facts
+                        .get("failed")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0)
+                        > 0
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                None => WORLD_FAILURE_EXIT,
+            };
+            if json {
+                print_outcome_json(&outcome, code);
+            } else {
+                print_outcome_text(&outcome, code);
+            }
+            Ok(ExitCode::from(code))
         }
         WorldCommand::Events { since, limit } => {
             let response = ask_daemon(&AdminRequest::Events { since, limit }).await?;
@@ -644,7 +821,7 @@ pub async fn run_node(command: NodeCommand) -> Result<ExitCode, String> {
                 ));
             }
             println!(
-                "This machine left the World. Restart your agent sessions to return to the local tool surface."
+                "This machine left the World. Restart your agent sessions to return to the local tool surface, and run 'fastctx apply' to drop the World section from agent guidance."
             );
             Ok(ExitCode::SUCCESS)
         }
@@ -755,6 +932,12 @@ fn print_nodes(nodes: &[super::client::NodeView]) {
                 if inventory.wsl2 == Some(true) {
                     parts.push("wsl2".to_string());
                 }
+                if !inventory.home.is_empty() {
+                    parts.push(format!("home {}", inventory.home));
+                }
+                if !inventory.user.is_empty() {
+                    parts.push(format!("user {}", inventory.user));
+                }
                 parts.join("  ")
             })
             .unwrap_or_default();
@@ -768,11 +951,7 @@ fn print_nodes(nodes: &[super::client::NodeView]) {
             (Some(network), None) => network.to_string(),
             _ => String::new(),
         };
-        println!(
-            "{:<16} {:<16} {:<8} {:<28} {:<20} {}{}",
-            node.name,
-            format!("{}/{}", node.os, node.arch),
-            node.state,
+        let tail = [
             if node.state == "online" {
                 facts
             } else {
@@ -780,6 +959,16 @@ fn print_nodes(nodes: &[super::client::NodeView]) {
             },
             tags,
             link,
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("  ");
+        println!(
+            "{:<16} {:<16} {:<8} {tail}{}",
+            node.name,
+            format!("{}/{}", node.os, node.arch),
+            node.state,
             if node.is_self { "  (this machine)" } else { "" }
         );
     }
@@ -869,16 +1058,45 @@ fn print_node_status(status: &super::node::admin::NodeStatus, source: &str) {
     }
 }
 
+/// Exit code of `fastctx world run` / `copy` when the World layer, not the command, failed:
+/// the machine was offline, forbidden, silent, or this machine is not enrolled. The same
+/// number `ssh` uses for its own failures, so a script can tell "failed there" from "never
+/// got there".
+const WORLD_FAILURE_EXIT: u8 = 255;
+/// Exit code when the remote command was stopped at the timeout, as `timeout(1)` reports it.
+const TIMEOUT_EXIT: u8 = 124;
+
 /// Sends one admin request to the running daemon; `Ok(None)` when it is not running.
 async fn daemon(request: &AdminRequest) -> Result<Option<AdminResponse>, String> {
+    daemon_within(request, super::node::admin::ADMIN_TIMEOUT).await
+}
+
+async fn daemon_within(
+    request: &AdminRequest,
+    timeout: std::time::Duration,
+) -> Result<Option<AdminResponse>, String> {
+    let paths = ControlPaths::discover()?;
+    if !super::is_enrolled(&paths) {
+        return Err(format!(
+            "not_enrolled: this machine is not enrolled in a World ({} does not exist). Run 'fastctx node enroll <invite>' or 'fastctx world init'.",
+            crate::paths::display_path(&paths.fastctx_dir.join("world.toml"))
+        ));
+    }
     let environment = crate::session::SessionEnvironment::capture()?;
     let endpoint = crate::runtime::node_admin_endpoint(&environment)?;
-    super::node::admin::call(&endpoint, request).await
+    super::node::admin::call(&endpoint, request, timeout).await
 }
 
 /// Like `daemon`, but the daemon must be running and must succeed.
 async fn ask_daemon(request: &AdminRequest) -> Result<AdminResponse, String> {
-    match daemon(request).await? {
+    ask_daemon_within(request, super::node::admin::ADMIN_TIMEOUT).await
+}
+
+async fn ask_daemon_within(
+    request: &AdminRequest,
+    timeout: std::time::Duration,
+) -> Result<AdminResponse, String> {
+    match daemon_within(request, timeout).await? {
         Some(response) if response.ok => Ok(response),
         Some(response) => Err(response
             .error
@@ -888,6 +1106,159 @@ async fn ask_daemon(request: &AdminRequest) -> Result<AdminResponse, String> {
                 .to_string(),
         ),
     }
+}
+
+/// This machine's name in the World, from the running daemon.
+async fn self_name() -> Result<String, String> {
+    let response = ask_daemon(&AdminRequest::Status).await?;
+    let status: super::node::admin::NodeStatus = serde_json::from_value(response.data)
+        .map_err(|error| format!("Unreadable node status: {error}"))?;
+    Ok(status.name)
+}
+
+/// Runs one verb on one machine through the daemon and returns the outcome; a World-layer
+/// failure is an `Err` the caller turns into exit 255.
+async fn call_daemon(
+    verb: &str,
+    node: String,
+    args: serde_json::Value,
+    timeout: std::time::Duration,
+) -> Result<super::node::admin::CallOutcome, String> {
+    let request = AdminRequest::Call {
+        verb: verb.to_string(),
+        node,
+        args,
+        timeout_ms: timeout.as_millis() as u64,
+    };
+    let response = ask_daemon_within(&request, timeout + super::node::admin::ADMIN_TIMEOUT).await?;
+    serde_json::from_value(response.data)
+        .map_err(|error| format!("Unreadable answer from the node service: {error}"))
+}
+
+/// Parses `90`, `90s`, `10m`, `2h`, or `1d`; at least a second, at most a day.
+fn parse_duration(text: &str) -> Result<std::time::Duration, String> {
+    let text = text.trim();
+    let (digits, unit) = match text.find(|character: char| !character.is_ascii_digit()) {
+        Some(split) => text.split_at(split),
+        None => (text, "s"),
+    };
+    let amount = digits
+        .parse::<u64>()
+        .map_err(|_| format!("Invalid duration \"{text}\": use a number with s, m, h, or d."))?;
+    let seconds = match unit.trim() {
+        "s" | "sec" | "secs" => amount,
+        "m" | "min" | "mins" => amount * 60,
+        "h" | "hr" | "hrs" => amount * 3600,
+        "d" => amount * 86_400,
+        _ => {
+            return Err(format!(
+                "Invalid duration \"{text}\": use a number with s, m, h, or d."
+            ));
+        }
+    };
+    let ceiling = crate::shell::MAX_SCRIPT_CALL_MS / 1000;
+    if seconds == 0 || seconds > ceiling {
+        return Err(format!("Invalid duration \"{text}\": between 1s and 24h."));
+    }
+    Ok(std::time::Duration::from_secs(seconds))
+}
+
+/// The exit code a `run` outcome maps to: the command's own, 124 at the timeout, 255 when the
+/// World layer or the tool itself failed.
+fn exit_code_of(outcome: &super::node::admin::CallOutcome) -> u8 {
+    match &outcome.response {
+        Some(response) => match outcome
+            .facts
+            .get("exit_code")
+            .and_then(serde_json::Value::as_i64)
+        {
+            Some(code) => code.clamp(0, 255) as u8,
+            None if response.is_error => WORLD_FAILURE_EXIT,
+            None => TIMEOUT_EXIT,
+        },
+        None => WORLD_FAILURE_EXIT,
+    }
+}
+
+fn outcome_text(outcome: &super::node::admin::CallOutcome) -> String {
+    outcome
+        .response
+        .as_ref()
+        .map(|response| {
+            response
+                .content
+                .iter()
+                .filter_map(|block| match block {
+                    super::messages::WireContent::Text { text } => Some(text.as_str()),
+                    super::messages::WireContent::Image { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+/// Prints the tool's text to stdout, or the World layer's sentence to stderr.
+fn print_outcome_text(outcome: &super::node::admin::CallOutcome, code: u8) {
+    match &outcome.response {
+        Some(response) => {
+            let text = outcome_text(outcome);
+            if response.is_error && code == WORLD_FAILURE_EXIT {
+                eprintln!("{}: {text}", outcome.node);
+            } else {
+                println!("{text}");
+            }
+        }
+        None => eprintln!(
+            "{}: {}{}",
+            outcome.node,
+            outcome.status,
+            outcome
+                .message
+                .as_deref()
+                .map(|message| format!(" ({message})"))
+                .unwrap_or_default()
+        ),
+    }
+}
+
+/// Prints the outcome as one JSON object; `exit_code` is the number the process exits with.
+fn print_outcome_json(outcome: &super::node::admin::CallOutcome, code: u8) {
+    let value = serde_json::json!({
+        "node": outcome.node,
+        "status": outcome.status,
+        "message": outcome.message,
+        "exit_code": code,
+        "facts": outcome.facts,
+        "text": outcome_text(outcome),
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value).unwrap_or_default()
+    );
+}
+
+/// A failure before any machine answered: this machine is not enrolled, its node service is
+/// not running, or the named machine is unknown. Printed the way an unreachable machine's
+/// outcome is, and exiting with the code scripts read as "never got there".
+fn world_failure(node: &str, error: &str, json: bool) -> ExitCode {
+    if json {
+        let value = serde_json::json!({
+            "node": node,
+            "status": "failed",
+            "message": error,
+            "exit_code": WORLD_FAILURE_EXIT,
+            "facts": {},
+            "text": "",
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+    } else {
+        eprintln!("fastctx: {error}");
+    }
+    ExitCode::from(WORLD_FAILURE_EXIT)
 }
 
 /// Runs a long-lived server on its own multi-threaded runtime, outside the CLI's

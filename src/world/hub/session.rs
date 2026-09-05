@@ -43,15 +43,15 @@ pub(crate) struct Peer {
 }
 
 pub(crate) struct Link<S> {
-    socket: WebSocketStream<S>,
-    peer: SocketAddr,
+    pub(super) socket: WebSocketStream<S>,
+    pub(super) peer: SocketAddr,
 }
 
 impl<S> Link<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    async fn send(&mut self, frame: &Frame) -> Result<(), String> {
+    pub(super) async fn send(&mut self, frame: &Frame) -> Result<(), String> {
         let bytes = frame.encode()?;
         match tokio::time::timeout(
             SEND_TIMEOUT,
@@ -82,22 +82,25 @@ where
         }
     }
 
-    async fn close(&mut self) {
+    pub(super) async fn close(&mut self) {
         let _ = tokio::time::timeout(CLOSE_TIMEOUT, self.socket.close(None)).await;
     }
 }
 
-/// Runs a connection from upgrade to close.
+/// Runs a connection from upgrade to close. `data` says which endpoint it arrived on: the
+/// control path carries sessions, the stream path carries one end of a `copy`; a hello whose
+/// intent does not match the path is refused, because the two paths have different limits.
 pub(crate) async fn serve<S>(
     hub: Arc<Hub>,
     socket: WebSocketStream<S>,
     binding: Vec<u8>,
     peer: SocketAddr,
+    data: bool,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let mut link = Link { socket, peer };
-    let (peer_identity, auth) =
+    let (peer_identity, auth, intent) =
         match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(&hub, &mut link, &binding)).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(HandshakeFailure::Rejected(rejected))) => {
@@ -120,7 +123,40 @@ pub(crate) async fn serve<S>(
                 return;
             }
         };
-    run_session(hub, link, peer_identity, auth).await;
+    match intent {
+        Intent::Stream { stream, role } if data => {
+            super::stream::attach(hub, link, peer_identity, stream, role).await;
+        }
+        Intent::Stream { .. } => {
+            log(format!(
+                "{peer}: \"{}\" offered a data connection on the control path; refused",
+                peer_identity.name
+            ));
+            let _ = link
+                .send(&Frame::Rejected(Rejected {
+                    code: "invalid_handshake".to_string(),
+                    message: "Data connections use the stream path.".to_string(),
+                    protocol: None,
+                }))
+                .await;
+            link.close().await;
+        }
+        _ if data => {
+            log(format!(
+                "{peer}: \"{}\" opened a session on the stream path; refused",
+                peer_identity.name
+            ));
+            let _ = link
+                .send(&Frame::Rejected(Rejected {
+                    code: "invalid_handshake".to_string(),
+                    message: "Sessions use the control path.".to_string(),
+                    protocol: None,
+                }))
+                .await;
+            link.close().await;
+        }
+        _ => run_session(hub, link, peer_identity, auth).await,
+    }
 }
 
 enum HandshakeFailure {
@@ -146,7 +182,7 @@ async fn handshake<S>(
     hub: &Arc<Hub>,
     link: &mut Link<S>,
     binding: &[u8],
-) -> Result<(Peer, Auth), HandshakeFailure>
+) -> Result<(Peer, Auth, Intent), HandshakeFailure>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -217,7 +253,7 @@ where
 
     let node_pub_b64 = hello.node_pub.clone();
     let name = match hello.intent {
-        Intent::Auth => {
+        Intent::Auth | Intent::Stream { .. } => {
             let Some(row) = hub.store.member_by_key(&node_pub_b64)? else {
                 return Err(reject(
                     "not_enrolled",
@@ -235,7 +271,11 @@ where
         Intent::Enroll => enroll(hub, &hello, &auth, &node_pub_b64, &wrap_pub)?,
         Intent::Bootstrap => bootstrap(hub, &hello, &auth, &node_pub_b64, &wrap_pub)?,
     };
-    let generation = hub.next_generation(&name);
+    // A data connection is not a session: it takes no generation and replaces nothing.
+    let generation = match hello.intent {
+        Intent::Stream { .. } => 0,
+        _ => hub.next_generation(&name),
+    };
     Ok((
         Peer {
             name,
@@ -245,6 +285,7 @@ where
             protocol: hello.protocol,
         },
         auth,
+        hello.intent,
     ))
 }
 
@@ -586,7 +627,7 @@ where
                         }
                     }
                     Frame::Bye { reason } => break format!("member said bye: {reason}"),
-                    Frame::Hello(_) | Frame::Auth(_) => {
+                    Frame::Hello(_) | Frame::Auth(_) | Frame::Attached { .. } => {
                         let _ = link.send(&Frame::Bye { reason: "handshake frame after authentication".to_string() }).await;
                         break "protocol_error".to_string();
                     }

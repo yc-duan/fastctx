@@ -12,7 +12,8 @@ use crate::model::{ToolContent, ToolResponse};
 use crate::server::FastCtxServer;
 use crate::server_support::into_mcp_result;
 use crate::world::client::{NodeOutcome, NodeView, WorldClient};
-use crate::world::messages::{Call, CallBudget};
+use crate::world::dispatch::{NodeCall, call_node};
+use crate::world::messages::{CallBudget, CallOrigin};
 use rmcp::RoleServer;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -22,7 +23,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio_util::sync::CancellationToken;
 
 /// The `node` parameter on the five node-taking tools.
 pub(crate) const NODE_PARAMETER: &str =
@@ -37,6 +37,17 @@ pub(crate) const NODE_SERVICE_NOT_RUNNING: &str =
     "The FastCtx node service is not running on this machine; run 'fastctx node status'.";
 /// Default deadline for a remote read when the tool itself has no timeout parameter.
 const DEFAULT_REMOTE_TIMEOUT: Duration = Duration::from_secs(120);
+/// `copy`'s default when `timeout_ms` is omitted: the host's own ceiling for a tool call.
+const DEFAULT_COPY_TIMEOUT_MS: u64 = 240_000;
+/// What `remote_write` accepts in one call; the control message it travels in is capped
+/// (`design-transport.md` §14), and larger content is what `copy` is for.
+const MAX_REMOTE_WRITE_BYTES: usize = 180_000;
+const REMOTE_WRITE_TOO_LARGE: &str =
+    "content is too large for remote_write; write it on this machine and copy it there.";
+const COPY_NEEDS_TWO_MACHINES: &str =
+    "copy moves a file or directory between two machines; name from_node or to_node.";
+const COPY_SAME_MACHINE: &str =
+    "from_node and to_node name the same machine; copy works between two machines.";
 
 /// The arguments of a World-mode tool call: the base tool's own object plus the optional
 /// `node`. The published schema is the base schema with `node` added, so this type only needs
@@ -281,11 +292,17 @@ impl FastCtxServer {
                 Err(error) => invalid_arguments("inspect_local_file", error),
             },
             Some(node) => {
-                self.world_call(
+                let given_path = value
+                    .get("file_path")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                self.world_file_call(
                     "inspect_local_file",
                     node,
                     value,
                     crate::budget::READ_TOKEN_BUDGET_ENV,
+                    &given_path,
                 )
                 .await
             }
@@ -417,7 +434,7 @@ impl FastCtxServer {
 
     #[tool(
         name = "nodes",
-        description = "List the machines in this World: name, OS and architecture, online state, CPUs, memory, GPUs, tags, and how each is linked to the hub. Pass need to keep only machines that meet requirements (os, arch, cpus, memory_gb, gpus, gpu_memory_gb, tags, nodes); the first line reports how many matched out of how many exist. Machine names are the values other tools accept in node.",
+        description = "List the machines in this World: name, OS and architecture, online state, CPUs, memory, GPUs, tags, home directory and user, and how each is linked to the hub. Pass need to keep only machines that meet requirements (os, arch, cpus, memory_gb, gpus, gpu_memory_gb, tags, nodes); the first line reports how many matched out of how many exist. Machine names are the values other tools accept in node.",
         annotations(
             title = "List World machines",
             read_only_hint = true,
@@ -447,6 +464,176 @@ impl FastCtxServer {
             .unwrap_or_else(|error| ToolResponse::error(format!("Internal tool failure: {error}"))),
         )
     }
+
+    #[tool(
+        name = "copy",
+        description = "Copy a file or a directory tree between two machines in this World. Files already identical at to are skipped, differing ones replaced, directories merged, nothing at to deleted. The response reports counts, bytes and the SHA-256 of a single file, never contents.",
+        annotations(
+            title = "Copy between machines",
+            read_only_hint = false,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn copy(&self, Parameters(request): Parameters<CopyRequest>) -> CallToolResult {
+        let Some(client) = self.world.clone() else {
+            return into_mcp_result(ToolResponse::error(NODE_SERVICE_NOT_RUNNING));
+        };
+        let me = client.name();
+        let named = |value: Option<String>| value.map(|name| one_machine(&name)).transpose();
+        let (from_node, to_node) = match (named(request.from_node), named(request.to_node)) {
+            (Ok(from_node), Ok(to_node)) => (from_node, to_node),
+            (Err(error), _) | (_, Err(error)) => {
+                return into_mcp_result(ToolResponse::error(error));
+            }
+        };
+        if from_node.is_none() && to_node.is_none() {
+            return into_mcp_result(ToolResponse::error(COPY_NEEDS_TWO_MACHINES));
+        }
+        let from_node = from_node.unwrap_or_else(|| me.clone());
+        let to_node = to_node.unwrap_or_else(|| me.clone());
+        if from_node == to_node {
+            return into_mcp_result(ToolResponse::error(COPY_SAME_MACHINE));
+        }
+        let args = match serde_json::to_value(crate::world::copy::CopyArgs {
+            from: request.from,
+            to: request.to,
+            to_node,
+            caller: me,
+            timeout_ms: Some(request.timeout_ms.unwrap_or(DEFAULT_COPY_TIMEOUT_MS)),
+        }) {
+            Ok(args) => args,
+            Err(error) => {
+                return into_mcp_result(ToolResponse::error(format!(
+                    "Internal tool failure: {error}"
+                )));
+            }
+        };
+        self.world_call("copy", from_node, args, GLOBAL_TOKEN_BUDGET_ENV)
+            .await
+    }
+
+    #[tool(
+        name = "remote_write",
+        description = "Write a file on another machine in this World, creating it or replacing its whole content. Replacing an existing file requires having inspected it with inspect_local_file on that machine in this session and fails if it changed since. Prefer remote_edit for changes to an existing file.",
+        annotations(
+            title = "Write a file on another machine",
+            read_only_hint = false,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn remote_write(
+        &self,
+        Parameters(request): Parameters<RemoteWriteRequest>,
+    ) -> CallToolResult {
+        let node = match one_machine(&request.node) {
+            Ok(node) => node,
+            Err(error) => return into_mcp_result(ToolResponse::error(error)),
+        };
+        if request.content.len() > MAX_REMOTE_WRITE_BYTES {
+            return into_mcp_result(ToolResponse::error(REMOTE_WRITE_TOO_LARGE));
+        }
+        let expected = self.session.world_file_seen(&node, &request.path);
+        let given_path = request.path.clone();
+        let args = serde_json::json!({
+            "path": request.path,
+            "content": request.content,
+            "expected_sha256": expected,
+        });
+        self.world_file_call(
+            "remote_write",
+            node,
+            args,
+            GLOBAL_TOKEN_BUDGET_ENV,
+            &given_path,
+        )
+        .await
+    }
+
+    #[tool(
+        name = "remote_edit",
+        description = "Replace an exact string in a file on another machine in this World. old_string must match exactly once; set replace_all to change every occurrence, or include more surrounding lines when it is ambiguous. Requires having inspected the file with inspect_local_file on that machine in this session and fails if it changed since. Indentation, encoding and line endings stay as the file has them.",
+        annotations(
+            title = "Edit a file on another machine",
+            read_only_hint = false,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn remote_edit(
+        &self,
+        Parameters(request): Parameters<RemoteEditRequest>,
+    ) -> CallToolResult {
+        let node = match one_machine(&request.node) {
+            Ok(node) => node,
+            Err(error) => return into_mcp_result(ToolResponse::error(error)),
+        };
+        let expected = self.session.world_file_seen(&node, &request.path);
+        let given_path = request.path.clone();
+        let args = serde_json::json!({
+            "path": request.path,
+            "old_string": request.old_string,
+            "new_string": request.new_string,
+            "replace_all": request.replace_all,
+            "expected_sha256": expected,
+        });
+        self.world_file_call(
+            "remote_edit",
+            node,
+            args,
+            GLOBAL_TOKEN_BUDGET_ENV,
+            &given_path,
+        )
+        .await
+    }
+}
+
+/// Parameters of `copy`.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CopyRequest {
+    /// Path of the file or directory to copy, on from_node.
+    pub from: String,
+    /// Path the copy will have on to_node: the file itself, or the directory that receives the tree. Missing parent directories are created.
+    pub to: String,
+    /// Machine holding from, as named by nodes. Omit for this machine.
+    pub from_node: Option<String>,
+    /// Machine receiving the copy, as named by nodes. Omit for this machine.
+    pub to_node: Option<String>,
+    /// Stop after this many milliseconds; finished files stay and the unfinished one is discarded, so running the same copy again continues it. Default 240000.
+    #[schemars(range(min = 1, max = 240_000))]
+    pub timeout_ms: Option<u64>,
+}
+
+/// Parameters of `remote_write`.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteWriteRequest {
+    /// The machine holding the file, as named by nodes.
+    pub node: String,
+    /// Absolute path of the file on that machine.
+    pub path: String,
+    /// The whole content the file will have.
+    pub content: String,
+}
+
+/// Parameters of `remote_edit`.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteEditRequest {
+    /// The machine holding the file, as named by nodes.
+    pub node: String,
+    /// Absolute path of the file on that machine.
+    pub path: String,
+    /// The exact text to replace.
+    pub old_string: String,
+    /// The text that replaces it.
+    pub new_string: String,
+    /// Replace every occurrence instead of requiring exactly one.
+    #[serde(default)]
+    #[schemars(default)]
+    pub replace_all: bool,
 }
 
 fn invalid_arguments(tool: &str, error: serde_json::Error) -> CallToolResult {
@@ -464,9 +651,58 @@ impl FastCtxServer {
         args: serde_json::Value,
         budget_variable: &'static str,
     ) -> CallToolResult {
+        match self.world_outcome(verb, node, args, budget_variable).await {
+            Ok(outcome) => self.world_finish(verb, outcome, budget_variable).await,
+            Err(failure) => failure,
+        }
+    }
+
+    /// Like `world_call` for a verb that reads or writes one file: the hash the machine reports
+    /// is remembered for this session, so a later `remote_edit` can prove it saw the file.
+    async fn world_file_call(
+        &self,
+        verb: &str,
+        node: String,
+        args: serde_json::Value,
+        budget_variable: &'static str,
+        given_path: &str,
+    ) -> CallToolResult {
+        match self
+            .world_outcome(verb, node.clone(), args, budget_variable)
+            .await
+        {
+            Ok(outcome) => {
+                if let (Some(sha256), Some(canonical)) = (
+                    outcome
+                        .facts
+                        .get("sha256")
+                        .and_then(serde_json::Value::as_str),
+                    outcome
+                        .facts
+                        .get("path")
+                        .and_then(serde_json::Value::as_str),
+                ) {
+                    self.session
+                        .remember_world_file(&node, given_path, canonical, sha256);
+                }
+                self.world_finish(verb, outcome, budget_variable).await
+            }
+            Err(failure) => failure,
+        }
+    }
+
+    async fn world_outcome(
+        &self,
+        verb: &str,
+        node: String,
+        args: serde_json::Value,
+        budget_variable: &'static str,
+    ) -> Result<NodeOutcome, CallToolResult> {
         let _activity = self.activity.request();
         let Some(client) = self.world.clone() else {
-            return into_mcp_result(ToolResponse::error(NODE_SERVICE_NOT_RUNNING));
+            return Err(into_mcp_result(ToolResponse::error(
+                NODE_SERVICE_NOT_RUNNING,
+            )));
         };
         let session = Arc::clone(&self.session);
         let budget = {
@@ -483,7 +719,7 @@ impl FastCtxServer {
             .await
             .unwrap_or_default()
         };
-        let timeout = if verb == "run" {
+        let timeout = if verb == "run" || verb == "copy" {
             args.get("timeout_ms")
                 .and_then(serde_json::Value::as_u64)
                 .map(Duration::from_millis)
@@ -491,19 +727,26 @@ impl FastCtxServer {
         } else {
             DEFAULT_REMOTE_TIMEOUT
         };
-        // This machine is a valid target even before the hub has ever listed it, so the member
-        // table is only consulted for other machines.
-        let outcome = if node == client.name() {
-            run_on_this_machine(&node, verb, args, Arc::clone(&session), timeout).await
-        } else {
-            if let Err(error) = client.resolve_target(&node) {
-                return into_mcp_result(ToolResponse::error(error));
-            }
-            match client.call(verb, &node, args, budget, None, timeout).await {
-                Ok(outcome) => outcome,
-                Err(error) => return into_mcp_result(ToolResponse::error(error)),
-            }
+        let call = NodeCall {
+            verb: verb.to_string(),
+            node,
+            args,
+            budget,
+            timeout,
+            origin: CallOrigin::Tool,
         };
+        call_node(&client, session, call)
+            .await
+            .map_err(|error| into_mcp_result(ToolResponse::error(error)))
+    }
+
+    async fn world_finish(
+        &self,
+        verb: &str,
+        outcome: NodeOutcome,
+        budget_variable: &'static str,
+    ) -> CallToolResult {
+        let session = Arc::clone(&self.session);
         let verb = verb.to_string();
         let status_shell = self.shell.clone();
         let response = tokio::task::spawn_blocking(move || {
@@ -521,91 +764,40 @@ impl FastCtxServer {
     }
 }
 
-/// Executes a World call whose target is this very machine, with the caller's own session.
-async fn run_on_this_machine(
-    me: &str,
-    verb: &str,
-    args: serde_json::Value,
-    session: Arc<crate::session::SessionContext>,
-    timeout: Duration,
-) -> NodeOutcome {
-    let call = Call {
-        verb: verb.to_string(),
-        args,
-        budget: CallBudget::default(),
-        cwd: None,
-        timeout_ms: timeout.as_millis() as u64,
-        grant_revision: 0,
-    };
-    let token = CancellationToken::new();
-    let work_token = token.clone();
-    let work = tokio::task::spawn_blocking(move || {
-        crate::world::node::executor::run_verb(&call, &session, &work_token)
-    });
-    let response = match tokio::time::timeout(timeout, work).await {
-        Ok(Ok(response)) => response,
-        Ok(Err(error)) => ToolResponse::error(format!("Internal tool failure: {error}")),
-        Err(_) => {
-            token.cancel();
-            ToolResponse::error(format!(
-                "{verb} did not finish within {} s on this machine and was stopped.",
-                timeout.as_secs()
-            ))
-        }
-    };
-    NodeOutcome {
-        node: me.to_string(),
-        status: if response.is_error { "error" } else { "ok" }.to_string(),
-        response: Some(response),
-        message: None,
-    }
-}
-
-/// A parsed 1.0 head note: `=== subject (clauses) ===`.
-struct ParsedHead {
-    subject: String,
-    clauses: String,
-}
-
-fn parse_head(line: &str) -> Option<ParsedHead> {
-    let inner = line.strip_prefix("=== ")?.strip_suffix(" ===")?;
-    let inner = inner.strip_suffix(')')?;
-    let split = inner.rfind(" (")?;
-    Some(ParsedHead {
-        subject: inner[..split].to_string(),
-        clauses: inner[split + 2..].to_string(),
-    })
-}
-
 /// The subject a World response shows for one machine.
 fn node_subject(verb: &str, subject: &str, node: &str) -> String {
-    if verb == "inspect_local_file" {
-        format!("{node}:{subject}")
-    } else {
-        format!("{subject} on {node}")
+    match verb {
+        "inspect_local_file" | "remote_write" | "remote_edit" => {
+            // These subjects are paths; `copy` renders both of its endpoints itself.
+            format!("{node}:{subject}")
+        }
+        "copy" => subject.to_string(),
+        _ => format!("{subject} on {node}"),
     }
 }
 
 /// Renders one machine's outcome as a World response whose head note names the machine.
-fn single_node_response(verb: &str, outcome: NodeOutcome) -> ToolResponse {
+pub(crate) fn single_node_response(verb: &str, outcome: NodeOutcome) -> ToolResponse {
     match outcome.response {
         Some(mut response) if !response.is_error => {
             if let Some(ToolContent::Text(text)) = response.content.first_mut() {
-                let (first, rest) = text
-                    .split_once('\n')
-                    .map_or((text.as_str(), None), |(first, rest)| (first, Some(rest)));
-                let head = match parse_head(first) {
-                    Some(parsed) => format!(
-                        "=== {} ({}) ===",
-                        node_subject(verb, &parsed.subject, &outcome.node),
-                        parsed.clauses
-                    ),
-                    None => format!("[{}] {first}", outcome.node),
+                let updated = {
+                    let (first, rest) = text
+                        .split_once('\n')
+                        .map_or((text.as_str(), None), |(first, rest)| (first, Some(rest)));
+                    let head = match crate::head_note::split_rendered(first) {
+                        Some((subject, clauses)) => format!(
+                            "=== {} ({clauses}) ===",
+                            node_subject(verb, subject, &outcome.node)
+                        ),
+                        None => format!("[{}] {first}", outcome.node),
+                    };
+                    match rest {
+                        Some(rest) => format!("{head}\n{rest}"),
+                        None => head,
+                    }
                 };
-                *text = match rest {
-                    Some(rest) => format!("{head}\n{rest}"),
-                    None => head,
-                };
+                *text = updated;
             }
             response
         }
@@ -736,6 +928,14 @@ fn render_node(node: &NodeView) -> String {
     }
     if !node.tags.is_empty() {
         columns.push(format!("tags {}", node.tags.join(",")));
+    }
+    if let Some(inventory) = &node.inventory {
+        if !inventory.home.is_empty() {
+            columns.push(format!("home {}", inventory.home));
+        }
+        if !inventory.user.is_empty() {
+            columns.push(format!("user {}", inventory.user));
+        }
     }
     let mut link = Vec::new();
     if let Some(network) = &node.network {

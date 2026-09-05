@@ -38,6 +38,11 @@ pub(crate) struct Header {
     /// multi-machine by nature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) targets: Option<Vec<String>>,
+    /// Seconds the caller of a request keeps waiting for its answer; the hub keeps the pending
+    /// entry that long. A script behind the command line may wait hours where a host waits
+    /// minutes, and the hub cannot read that from the sealed body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) wait_s: Option<u64>,
     /// World key epoch the body is sealed under; 0 means the body is plaintext.
     pub(crate) epoch: u32,
     /// Random 24-byte nonce, base64.
@@ -55,6 +60,7 @@ impl Header {
             id: None,
             verb: None,
             targets: None,
+            wait_s: None,
             epoch: 0,
             nonce: String::new(),
         }
@@ -67,6 +73,11 @@ impl Header {
 
     pub(crate) fn with_verb(mut self, verb: &str) -> Self {
         self.verb = Some(verb.to_string());
+        self
+    }
+
+    pub(crate) fn with_wait(mut self, seconds: u64) -> Self {
+        self.wait_s = Some(seconds);
         self
     }
 }

@@ -326,6 +326,17 @@ pub(crate) struct CallBudget {
     pub(crate) tool: Option<usize>,
 }
 
+/// Who waits for a call: a host's tool call, bounded by the host's own tool timeout, or a
+/// script behind `fastctx world run` / `copy`, which may wait hours. The target relaxes its
+/// per-call ceilings for the second (`design-transport.md` §8).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CallOrigin {
+    #[default]
+    Tool,
+    Script,
+}
+
 /// Body of `call` (encrypted): a direct tool invocation on the target member.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Call {
@@ -342,6 +353,8 @@ pub(crate) struct Call {
     /// target that is behind learns it from a source the hub cannot lower.
     #[serde(default)]
     pub(crate) grant_revision: u64,
+    #[serde(default)]
+    pub(crate) origin: CallOrigin,
 }
 
 /// Body of `call_result` (encrypted): the target's rendered response.
@@ -353,6 +366,11 @@ pub(crate) struct CallResult {
     /// The grant snapshot revision the target holds (see `Call::grant_revision`).
     #[serde(default)]
     pub(crate) grant_revision: u64,
+    /// Structured facts beside the rendered response: `exit_code` and `cwd` of a `run`, the
+    /// `sha256` and canonical `path` of a file an inspect or a write touched. Scripts and the
+    /// caller's session read these; the model reads the head note.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) facts: BTreeMap<String, serde_json::Value>,
 }
 
 /// A `ToolResponse` on the wire.

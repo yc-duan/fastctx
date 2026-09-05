@@ -1,11 +1,12 @@
 //! Dialing the hub: TCP on a chosen path, TLS 1.3, the WebSocket upgrade, and the channel
 //! binding exported from the TLS connection.
 
+use super::WsTarget;
 use super::netpath::{Interface, NetworkView, pin_socket};
 use super::proxy::ProxyConfig;
 use super::tls::Verify;
+use crate::world::NetworkMode;
 use crate::world::wire::{BINDING_LEN, EXPORTER_LABEL, Frame};
-use crate::world::{NetworkMode, WS_PATH};
 use futures_util::{SinkExt, StreamExt};
 use rustls::pki_types::ServerName;
 use std::net::{IpAddr, SocketAddr};
@@ -195,10 +196,10 @@ impl Dialed {
     }
 }
 
-fn websocket_config() -> WebSocketConfig {
+fn websocket_config(target: WsTarget) -> WebSocketConfig {
     WebSocketConfig::default()
-        .max_message_size(Some(crate::world::wire::MAX_FRAME_BYTES))
-        .max_frame_size(Some(crate::world::wire::MAX_FRAME_BYTES))
+        .max_message_size(Some(target.max_message_bytes))
+        .max_frame_size(Some(target.max_message_bytes))
 }
 
 fn configure_tcp(stream: &TcpStream) {
@@ -214,6 +215,7 @@ pub(crate) async fn dial_direct(
     verify: &Verify,
     view: &NetworkView,
     interface: &Interface,
+    target: WsTarget,
 ) -> Result<Dialed, String> {
     let addresses = super::dns::resolve(&endpoint.host, interface).await?;
     let mut last_error = String::new();
@@ -262,7 +264,7 @@ pub(crate) async fn dial_direct(
             resolvers: interface.resolvers(),
             tunnels: view.tunnels(),
         };
-        return upgrade(endpoint, verify, stream, path).await;
+        return upgrade(endpoint, verify, stream, path, target).await;
     }
     if last_error.is_empty() {
         last_error = format!(
@@ -278,6 +280,7 @@ pub(crate) async fn dial_system(
     endpoint: &Endpoint,
     verify: &Verify,
     proxy: Option<&ProxyConfig>,
+    target: WsTarget,
 ) -> Result<Dialed, String> {
     let (stream, proxy_text) = match proxy {
         Some(proxy) => (
@@ -310,7 +313,7 @@ pub(crate) async fn dial_system(
         proxy: proxy_text,
         local: stream.local_addr().ok(),
     };
-    upgrade(endpoint, verify, stream, path).await
+    upgrade(endpoint, verify, stream, path, target).await
 }
 
 async fn upgrade(
@@ -318,6 +321,7 @@ async fn upgrade(
     verify: &Verify,
     stream: TcpStream,
     path: Path,
+    target: WsTarget,
 ) -> Result<Dialed, String> {
     let config = super::tls::client_config(verify)?;
     let connector = TlsConnector::from(config);
@@ -333,12 +337,12 @@ async fn upgrade(
         .1
         .export_keying_material(vec![0_u8; BINDING_LEN], EXPORTER_LABEL, None)
         .map_err(|error| format!("cannot export the TLS channel binding: {error}"))?;
-    let request = format!("wss://{endpoint}{WS_PATH}")
+    let request = format!("wss://{endpoint}{}", target.path)
         .into_client_request()
         .map_err(|error| format!("cannot build the upgrade request: {error}"))?;
     let (socket, _response) = tokio::time::timeout(
         CONNECT_TIMEOUT,
-        tokio_tungstenite::client_async_with_config(request, tls, Some(websocket_config())),
+        tokio_tungstenite::client_async_with_config(request, tls, Some(websocket_config(target))),
     )
     .await
     .map_err(|_| format!("the WebSocket upgrade with {endpoint} timed out"))?

@@ -6,6 +6,7 @@ pub(crate) mod http;
 pub(crate) mod router;
 pub(crate) mod session;
 pub(crate) mod store;
+pub(crate) mod stream;
 pub(crate) mod tls;
 
 use crate::world::crypto;
@@ -28,8 +29,13 @@ use tokio_util::sync::CancellationToken;
 /// Reserved `n` counter block written to the store at once; the hub burns at most this many
 /// values on a crash.
 const N_RESERVATION: u64 = 1_000;
-/// A pending request older than this is dropped; its caller timed out long ago.
-const PENDING_MAX_AGE: Duration = Duration::from_secs(600);
+/// How long a pending request lives when its header does not say how long the caller waits.
+const PENDING_DEFAULT_WAIT: Duration = Duration::from_secs(600);
+/// Added to the caller's declared wait before a pending request is dropped, so an answer
+/// that arrives at the last second still finds its caller.
+const PENDING_MARGIN: Duration = Duration::from_secs(60);
+/// The longest wait a header may declare: a script's 24-hour call plus the margin.
+const PENDING_MAX_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
 const TLS_ACCEPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A connection that has not upgraded to the World protocol by then is closed. The hub is not
 /// a web server: a member upgrades on its first request, and anything else on this port is a
@@ -72,6 +78,9 @@ pub(crate) struct HubStatus {
     pub(crate) events: u64,
     pub(crate) rotation_pending: bool,
     pub(crate) bootstrap_used: bool,
+    /// Data connections being pumped right now.
+    #[serde(default)]
+    pub(crate) data_connections: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -93,7 +102,7 @@ struct Pending {
     caller: String,
     caller_id: u64,
     target: String,
-    created: Instant,
+    expires: Instant,
 }
 
 pub(crate) struct Hub {
@@ -114,6 +123,8 @@ pub(crate) struct Hub {
     next_n: AtomicU64,
     n_reserved_until: Mutex<u64>,
     grants: Mutex<GrantSet>,
+    /// Data connections waiting for or pumping their other end.
+    pub(crate) streams: stream::Registry,
 }
 
 pub(crate) fn log(message: impl std::fmt::Display) {
@@ -184,6 +195,7 @@ pub(crate) async fn run(options: HubOptions) -> Result<(), String> {
         next_n: AtomicU64::new(n_start + 1),
         n_reserved_until: Mutex::new(n_start + N_RESERVATION),
         grants: Mutex::new(GrantSet::default()),
+        streams: stream::Registry::default(),
     });
     hub.reload_grants();
 
@@ -371,14 +383,36 @@ fn prepare_bootstrap(store: &Store, reset: bool) -> Result<Option<String>, Strin
         );
         return Ok(None);
     }
-    let secret = crypto::random_bytes::<24>()?;
-    let password = crypto::b64url_encode(&secret);
+    let password = bootstrap_password()?;
     let token = crypto::hmac_sha256(password.as_bytes(), b"admission");
     store.set_meta_string(
         store::meta::BOOTSTRAP_ADMISSION,
         &hex::encode(crypto::sha256(&token)),
     )?;
     Ok(Some(password))
+}
+
+/// Length of the bootstrap password in characters; about 186 bits over the alphabet below.
+const BOOTSTRAP_PASSWORD_CHARS: usize = 32;
+
+/// A password that is typed on a command line: letters and digits only, so no argument
+/// parser reads a leading `-` as a flag and no shell needs it quoted. Ambiguous glyphs
+/// (0/O, 1/l/I) are left out for the user who types it from a screen.
+fn bootstrap_password() -> Result<String, String> {
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let unbiased = 256 - 256 % ALPHABET.len();
+    let mut password = String::with_capacity(BOOTSTRAP_PASSWORD_CHARS);
+    while password.len() < BOOTSTRAP_PASSWORD_CHARS {
+        for byte in crypto::random_bytes::<64>()? {
+            if password.len() == BOOTSTRAP_PASSWORD_CHARS {
+                break;
+            }
+            if usize::from(byte) < unbiased {
+                password.push(ALPHABET[usize::from(byte) % ALPHABET.len()] as char);
+            }
+        }
+    }
+    Ok(password)
 }
 
 impl Hub {
@@ -479,15 +513,24 @@ impl Hub {
         Ok(seq)
     }
 
-    pub(crate) fn register_pending(&self, caller: &str, caller_id: u64, target: &str) -> u64 {
+    /// Records a request in flight to `target`; `wait` is what the caller declared in its
+    /// header, capped so no member can pin an entry forever.
+    pub(crate) fn register_pending(
+        &self,
+        caller: &str,
+        caller_id: u64,
+        target: &str,
+        wait: Option<Duration>,
+    ) -> u64 {
         let hub_id = self.next_hub_id.fetch_add(1, Ordering::Relaxed);
+        let wait = wait.unwrap_or(PENDING_DEFAULT_WAIT).min(PENDING_MAX_WAIT);
         self.pending.lock().insert(
             hub_id,
             Pending {
                 caller: caller.to_string(),
                 caller_id,
                 target: target.to_string(),
-                created: Instant::now(),
+                expires: Instant::now() + wait + PENDING_MARGIN,
             },
         );
         hub_id
@@ -604,9 +647,10 @@ impl Hub {
         }
         let stale = {
             let mut pending = self.pending.lock();
+            let now_instant = Instant::now();
             let ids = pending
                 .iter()
-                .filter(|(_, entry)| entry.created.elapsed() > PENDING_MAX_AGE)
+                .filter(|(_, entry)| entry.expires <= now_instant)
                 .map(|(id, _)| *id)
                 .collect::<Vec<_>>();
             ids.into_iter().filter_map(|id| pending.remove(&id)).count()
@@ -690,6 +734,7 @@ impl Hub {
             binding: self.binding_mode.as_str().to_string(),
             members,
             open_invites: self.store.invite_count().unwrap_or(0),
+            data_connections: self.streams.active_count(),
             events: self.store.event_count().unwrap_or(0),
             rotation_pending: self
                 .store

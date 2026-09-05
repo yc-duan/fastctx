@@ -6,6 +6,7 @@ mod buffer;
 mod encoding;
 mod foreground;
 pub(crate) mod jobs;
+pub(crate) mod msys_shim;
 mod normalize;
 mod output;
 mod process;
@@ -22,7 +23,16 @@ use std::time::SystemTime;
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 pub(crate) const MAX_BLOCKING_CALL_MS: u64 = 240_000;
+/// The ceiling for a foreground command a script started through `fastctx world run`: a
+/// script, unlike a host, can wait for an installer.
+pub(crate) const MAX_SCRIPT_CALL_MS: u64 = 24 * 60 * 60 * 1000;
 const DEFAULT_WAIT_MS: u64 = 30_000;
+
+/// A foreground command's rendered response plus its exit code when it ran to an end.
+pub(crate) struct RunOutcome {
+    pub(crate) response: ToolResponse,
+    pub(crate) exit_code: Option<i32>,
+}
 
 fn default_login_shell() -> bool {
     true
@@ -162,35 +172,61 @@ impl FastShell {
         request: RunRequest,
         cancelled: impl Fn() -> bool,
     ) -> ToolResponse {
+        self.run_bounded(request, MAX_BLOCKING_CALL_MS, cancelled)
+            .response
+    }
+
+    /// Executes a foreground command whose `timeout_ms` may go up to `ceiling_ms`: the host's
+    /// ceiling for a tool call, a script's for a World call from the command line.
+    pub(crate) fn run_bounded(
+        &self,
+        request: RunRequest,
+        ceiling_ms: u64,
+        cancelled: impl Fn() -> bool,
+    ) -> RunOutcome {
+        let response = self.start_foreground(request, ceiling_ms, cancelled);
+        match response {
+            Ok(outcome) => RunOutcome {
+                response: outcome.response,
+                exit_code: outcome.exit_code,
+            },
+            Err(response) => RunOutcome {
+                response,
+                exit_code: None,
+            },
+        }
+    }
+
+    fn start_foreground(
+        &self,
+        request: RunRequest,
+        ceiling_ms: u64,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<foreground::ForegroundOutcome, ToolResponse> {
         if request.command.trim().is_empty() {
-            return ToolResponse::error("Invalid command: it must be a non-empty string.");
+            return Err(ToolResponse::error(
+                "Invalid command: it must be a non-empty string.",
+            ));
         }
         let timeout_ms = request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-        if !(1..=MAX_BLOCKING_CALL_MS).contains(&timeout_ms) {
-            return invalid_timeout(timeout_ms);
+        if !(1..=ceiling_ms).contains(&timeout_ms) {
+            return Err(invalid_timeout(timeout_ms, ceiling_ms));
         }
-        if let Err(error) = output::validate_run_budget(timeout_ms) {
-            return ToolResponse::error(error);
-        }
-        let encoding = match request
+        output::validate_run_budget(timeout_ms).map_err(ToolResponse::error)?;
+        let encoding = request
             .encoding
             .as_deref()
             .map(encoding::validate_output_encoding)
             .transpose()
-        {
-            Ok(encoding) => encoding,
-            Err(error) => return ToolResponse::error(error),
-        };
-        let cwd = match resolve_cwd(request.cwd.as_deref(), self.session.environment.cwd()) {
-            Ok(cwd) => cwd,
-            Err(error) => return ToolResponse::error(error),
-        };
+            .map_err(ToolResponse::error)?;
+        let cwd = resolve_cwd(request.cwd.as_deref(), self.session.environment.cwd())
+            .map_err(ToolResponse::error)?;
         let environment = &self.session.command_environment;
-        let bash = match self.bash.resolve(environment) {
-            Ok(bash) => bash,
-            Err(error) => return ToolResponse::error(error),
-        };
-        foreground::run(
+        let bash = self
+            .bash
+            .resolve(environment)
+            .map_err(ToolResponse::error)?;
+        Ok(foreground::run(
             foreground::ForegroundCommand {
                 bash: &bash,
                 command: &request.command,
@@ -202,7 +238,7 @@ impl FastShell {
                 utf8_locale: self.bash.utf8_locale(environment, &bash),
             },
             cancelled,
-        )
+        ))
     }
 
     /// Starts a background command and returns immediately.
@@ -314,9 +350,9 @@ impl Default for FastShell {
     }
 }
 
-fn invalid_timeout(timeout_ms: u64) -> ToolResponse {
+fn invalid_timeout(timeout_ms: u64, ceiling_ms: u64) -> ToolResponse {
     ToolResponse::error(format!(
-        "Invalid timeout_ms value: {timeout_ms}. Expected an integer from 1 to 240000."
+        "Invalid timeout_ms value: {timeout_ms}. Expected an integer from 1 to {ceiling_ms}."
     ))
 }
 

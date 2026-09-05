@@ -16,6 +16,14 @@ use serde::{Deserialize, Serialize};
 /// Largest frame accepted on the control connection.
 pub(crate) const MAX_FRAME_BYTES: usize = super::envelope::MAX_CONTROL_MESSAGE_BYTES + 4096;
 
+/// Which end of a `copy` data connection a member is.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StreamRole {
+    Source,
+    Sink,
+}
+
 /// Client-side intent declared in `hello`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,6 +34,9 @@ pub(crate) enum Intent {
     Enroll,
     /// The first machine of a World presenting the hub's bootstrap password.
     Bootstrap,
+    /// One end of a `copy` data connection: authenticated exactly like `auth`, then paired by
+    /// `stream` with the other end and pumped. Never a session, never replaces one.
+    Stream { stream: u64, role: StreamRole },
 }
 
 /// How the hub binds the application handshake to the TLS connection.
@@ -179,6 +190,11 @@ pub(crate) enum Frame {
     Replaced,
     Bye {
         reason: String,
+    },
+    /// Both ends of a data connection are in place; what follows on this connection is the
+    /// stream's records, not frames.
+    Attached {
+        stream: u64,
     },
     /// An application envelope. `seq` makes it reliable; `id` correlates a request or its
     /// answer; neither means fire-and-forget.
