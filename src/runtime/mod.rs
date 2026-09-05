@@ -241,13 +241,14 @@ fn select_unix_runtime_directory(
             .saturating_add(1)
     };
     let fits = |directory: &Path| socket_length(directory) <= MAX_UNIX_SOCKET_PATH_BYTES;
-    // A control center this user is already running wins over the directory this process would
-    // have picked. `XDG_RUNTIME_DIR` is exported to login sessions and user services and
-    // missing from cron jobs and from anything a system service starts, so the daemon and the
-    // shell that looks for it can disagree about where the endpoint lives — and two
-    // directories for one user mean two control centers, which is exactly what "one control
-    // center per user" forbids. The endpoint name is the identity; the directory is only where
-    // it was bound, so search every place this user's center could be before binding a new one.
+    // A server this user is already running wins over the directory this process would have
+    // picked. `XDG_RUNTIME_DIR` is exported to login sessions and user services and missing
+    // from cron jobs and from anything a system service starts, so a daemon and the shell that
+    // looks for it can disagree about where the endpoint lives — the node daemon then answers
+    // nobody, and two directories for one user mean two control centers, which is exactly what
+    // "one control center per user" forbids. The endpoint name is the identity; the directory
+    // is only where it was bound, so search every place this endpoint could already be serving
+    // before binding a new one.
     let conventional = crate::edit::private_storage::conventional_control_center_directory();
     for candidate in [Some(&preferred), Some(&fallback), conventional.as_ref()]
         .into_iter()
@@ -272,23 +273,28 @@ fn select_unix_runtime_directory(
     ))
 }
 
-/// Whether a control center with this endpoint name is running out of `directory`.
+/// Whether a server with this endpoint name is running out of `directory`.
 ///
-/// The running center holds its instance lock for as long as it lives, so a lock that cannot be
-/// taken is a live center; a lock file left behind by a dead one takes cleanly and says nothing.
+/// Two signs, because the two kinds of server that bind here are not built the same. A control
+/// center holds its instance lock for as long as it lives, so a lock that cannot be taken is a
+/// live center. The node's admin channel takes no lock at all, so for it the only honest test is
+/// the socket: a listener accepts the connection, while a socket file left behind by a dead
+/// process refuses it. Testing only the lock would answer "nothing here" for every node endpoint
+/// and send the search back to the directory this process would have picked on its own — which
+/// is the disagreement the search exists to settle.
 #[cfg(unix)]
 fn unix_endpoint_is_live(directory: &Path, id: &str) -> bool {
-    let path = directory.join(format!("{id}.instance.lock"));
-    let Ok(file) = std::fs::File::open(&path) else {
-        return false;
-    };
-    match file.try_lock_exclusive() {
-        Ok(()) => {
-            let _ = fs2::FileExt::unlock(&file);
-            false
+    let lock = directory.join(format!("{id}.instance.lock"));
+    if let Ok(file) = std::fs::File::open(&lock) {
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                let _ = fs2::FileExt::unlock(&file);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return true,
+            Err(_) => {}
         }
-        Err(error) => error.kind() == std::io::ErrorKind::WouldBlock,
     }
+    std::os::unix::net::UnixStream::connect(directory.join(format!("{id}.sock"))).is_ok()
 }
 
 /// The bytes that identify a home directory in an endpoint name.
