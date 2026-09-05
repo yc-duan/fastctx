@@ -240,19 +240,55 @@ fn select_unix_runtime_directory(
             .len()
             .saturating_add(1)
     };
-    if socket_length(&preferred) <= MAX_UNIX_SOCKET_PATH_BYTES {
+    let fits = |directory: &Path| socket_length(directory) <= MAX_UNIX_SOCKET_PATH_BYTES;
+    // A control center this user is already running wins over the directory this process would
+    // have picked. `XDG_RUNTIME_DIR` is exported to login sessions and user services and
+    // missing from cron jobs and from anything a system service starts, so the daemon and the
+    // shell that looks for it can disagree about where the endpoint lives — and two
+    // directories for one user mean two control centers, which is exactly what "one control
+    // center per user" forbids. The endpoint name is the identity; the directory is only where
+    // it was bound, so search every place this user's center could be before binding a new one.
+    let conventional = crate::edit::private_storage::conventional_control_center_directory();
+    for candidate in [Some(&preferred), Some(&fallback), conventional.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        if fits(candidate.as_path()) && unix_endpoint_is_live(candidate.as_path(), id) {
+            return Ok(candidate.to_path_buf());
+        }
+    }
+    if fits(&preferred) {
         return Ok(preferred);
     }
     // Darwin's per-user temporary directory can already consume most of sockaddr_un::sun_path.
     // Keep the endpoint and both ownership locks together in an owner-only short directory.
-    let fallback_length = socket_length(&fallback);
-    if fallback_length <= MAX_UNIX_SOCKET_PATH_BYTES {
+    if fits(&fallback) {
         return Ok(fallback);
     }
     Err(format!(
-        "The private control-center socket path is too long ({fallback_length} bytes): {}",
+        "The private control-center socket path is too long ({} bytes): {}",
+        socket_length(&fallback),
         crate::paths::display_path(&fallback.join(format!("{id}.sock")))
     ))
+}
+
+/// Whether a control center with this endpoint name is running out of `directory`.
+///
+/// The running center holds its instance lock for as long as it lives, so a lock that cannot be
+/// taken is a live center; a lock file left behind by a dead one takes cleanly and says nothing.
+#[cfg(unix)]
+fn unix_endpoint_is_live(directory: &Path, id: &str) -> bool {
+    let path = directory.join(format!("{id}.instance.lock"));
+    let Ok(file) = std::fs::File::open(&path) else {
+        return false;
+    };
+    match file.try_lock_exclusive() {
+        Ok(()) => {
+            let _ = fs2::FileExt::unlock(&file);
+            false
+        }
+        Err(error) => error.kind() == std::io::ErrorKind::WouldBlock,
+    }
 }
 
 /// The bytes that identify a home directory in an endpoint name.

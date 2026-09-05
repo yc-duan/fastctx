@@ -20,6 +20,21 @@ pub(super) fn short_control_center_directory() -> PathBuf {
     PathBuf::from("/tmp").join(format!("fastctx-engine-{uid}"))
 }
 
+/// Where this user's runtime directory conventionally lives, whether or not this process was
+/// told about it.
+///
+/// `XDG_RUNTIME_DIR` is exported to login sessions and to user services, and missing from cron
+/// jobs and from processes started by a system service, so a control center and the shell
+/// looking for it can each hold a different half of the truth. Knowing the conventional path
+/// lets the search find a center the other half started. `None` where the convention does not
+/// exist on this system.
+pub(super) fn conventional_runtime_directory(component: &str) -> Option<PathBuf> {
+    let uid = unsafe { libc::geteuid() };
+    let base = PathBuf::from("/run/user").join(uid.to_string());
+    base.is_dir()
+        .then(|| base.join(format!("fastctx-{component}")))
+}
+
 fn resolve_runtime_component(
     component: &str,
     xdg_runtime_dir: Option<OsString>,
