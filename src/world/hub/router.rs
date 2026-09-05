@@ -784,7 +784,7 @@ impl Hub {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value))
             .collect::<BTreeMap<_, _>>();
-        if let Err(error) = self.store.append_event(subject, kind, facts, None) {
+        if let Err(error) = self.store.append_event(subject, kind, facts) {
             log(format!("cannot append event {kind}: {error}"));
         }
     }

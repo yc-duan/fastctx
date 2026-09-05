@@ -85,13 +85,15 @@ impl Executor {
     }
 
     fn prepare(&self, opened: &Opened) -> Result<(Call, Arc<SessionContext>), String> {
+        // These sentences travel back inside the call result and reach the caller's model as
+        // `<node>: <sentence>`, so they read as prose, not as error codes.
         if !opened.encrypted {
-            return Err("forbidden: calls must be encrypted under the World key.".to_string());
+            return Err("Calls must be encrypted under the World key; nothing ran.".to_string());
         }
         let from = &opened.header.from;
         if self.client.member(from).is_none() {
             return Err(format!(
-                "forbidden: \"{from}\" is not a verified member of this World."
+                "\"{from}\" is not a verified member of this World; nothing ran."
             ));
         }
         let call: Call = messages::decode(&opened.body, kind::CALL)?;
@@ -101,7 +103,7 @@ impl Executor {
         // execute something already withdrawn.
         if self.client.raise_grant_floor(call.grant_revision) {
             return Err(format!(
-                "grant_stale: node \"{me}\" holds grant revision {} but revision {} is in force; it is fetching the newer set, retry shortly.",
+                "Node \"{me}\" holds grant revision {} but revision {} is in force; it is fetching the newer set. Retry shortly.",
                 self.client.grant_revision(),
                 self.client.state_snapshot().grant_floor
             ));
@@ -113,7 +115,7 @@ impl Executor {
             .allows(from, &call.verb, &me, &self.client.own_tags())
         {
             return Err(format!(
-                "forbidden: node \"{me}\" does not allow {} for \"{from}\".",
+                "Node \"{me}\" does not allow {} for \"{from}\".",
                 call.verb
             ));
         }

@@ -190,10 +190,7 @@ impl AdminServer {
                 hubs,
             } => {
                 if !self.client.is_connected() {
-                    Err(format!(
-                        "hub_unreachable: {}",
-                        self.client.unreachable_error()
-                    ))
+                    Err(self.client.unreachable_error())
                 } else {
                     self.client
                         .create_invite(

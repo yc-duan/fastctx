@@ -300,8 +300,6 @@ pub(crate) struct Event {
     pub(crate) kind: String,
     #[serde(default)]
     pub(crate) facts: BTreeMap<String, serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) task: Option<String>,
 }
 
 /// Body of `hub_result`: a generic success answer from the hub.

@@ -180,26 +180,13 @@ impl FastCtxServer {
             // the machine map. Descriptions and schemas come from the local routes so the two
             // surfaces cannot drift apart; only the `node` property is added.
             let mut world_router = Self::world_tool_router();
-            for (name, multi) in [
-                ("inspect_local_file", true),
-                ("grep", true),
-                ("glob", true),
-                ("replace", false),
-                ("run", false),
-            ] {
+            for name in ["inspect_local_file", "grep", "glob", "replace", "run"] {
                 let base = tool_router
                     .map
                     .get(name)
                     .expect("the compiled router must contain every node-taking tool");
                 let description = base.attr.description.clone();
-                let schema = crate::world::surface::add_node_property(
-                    &base.attr.input_schema,
-                    if multi {
-                        crate::world::surface::NODE_PARAMETER_MULTI
-                    } else {
-                        crate::world::surface::NODE_PARAMETER_SINGLE
-                    },
-                );
+                let schema = crate::world::surface::world_input_schema(&base.attr.input_schema);
                 let route = world_router
                     .map
                     .get_mut(name)

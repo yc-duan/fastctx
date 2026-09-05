@@ -30,14 +30,12 @@ pub(crate) struct Header {
     /// Request correlation number for request/response messages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) id: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) task: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) step: Option<u64>,
-    /// Tool verb of a call or step, visible so the hub can apply grant shapes.
+    /// Tool verb of a call, visible so the hub can apply grant shapes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) verb: Option<String>,
-    /// Target member names of a fan-out call or step.
+    /// Every addressee of a message sent to several members at once; absent when `to` is the
+    /// only one. The tool surface sends to one member; the field stays for primitives that are
+    /// multi-machine by nature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) targets: Option<Vec<String>>,
     /// World key epoch the body is sealed under; 0 means the body is plaintext.
@@ -55,8 +53,6 @@ impl Header {
             to: to.to_string(),
             n,
             id: None,
-            task: None,
-            step: None,
             verb: None,
             targets: None,
             epoch: 0,
@@ -71,11 +67,6 @@ impl Header {
 
     pub(crate) fn with_verb(mut self, verb: &str) -> Self {
         self.verb = Some(verb.to_string());
-        self
-    }
-
-    pub(crate) fn with_targets(mut self, targets: Vec<String>) -> Self {
-        self.targets = Some(targets);
         self
     }
 }
@@ -225,10 +216,10 @@ mod tests {
     #[test]
     fn encrypted_envelopes_bind_their_header_and_open_only_with_the_named_epoch() {
         let mut keys = KeyRing::new_initial().unwrap();
-        let header = Header::new("call", "desktop", "laptop", 7)
+        let mut header = Header::new("call", "desktop", "laptop", 7)
             .with_id(3)
-            .with_verb("grep")
-            .with_targets(vec!["laptop".to_string()]);
+            .with_verb("grep");
+        header.targets = Some(vec!["laptop".to_string()]);
         let envelope = Envelope::seal(header.clone(), b"{\"pattern\":\"x\"}", &keys).unwrap();
         let opened = envelope.open(Some(&keys)).unwrap();
         assert!(opened.encrypted);

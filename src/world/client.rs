@@ -15,7 +15,7 @@ use super::envelope::{Envelope, Header, Opened};
 use super::grant::{self, GrantChange, GrantSet, GrantSnapshot};
 use super::identity::Identity;
 use super::keys::{KeyRing, SealedKey};
-use super::members::{self, MemberTable, Selector, VerifiedMember};
+use super::members::{self, MemberTable, VerifiedMember};
 use super::messages::{self, Call, CallBudget, CallResult, CallStatus, kind};
 use super::outbox::{Outbox, OutboxEntry};
 use super::state::{Counters, NodeState};
@@ -517,7 +517,7 @@ impl WorldClient {
         timeout: Duration,
     ) -> Result<Answers, String> {
         if !self.is_connected() {
-            return Err(format!("hub_unreachable: {}", self.unreachable_error()));
+            return Err(self.unreachable_error());
         }
         let to_hub = header.to == HUB_NAME;
         let id = self.next_request_id()?;
@@ -529,7 +529,7 @@ impl WorldClient {
         let generation = self.link_generation.load(Ordering::SeqCst);
         if !self.send_frame(Frame::request(id, env)) {
             self.pending.lock().remove(&id);
-            return Err(format!("hub_unreachable: {}", self.unreachable_error()));
+            return Err(self.unreachable_error());
         }
         let mut answers = Vec::with_capacity(expected);
         let mut delivered = BTreeSet::new();
@@ -552,7 +552,7 @@ impl WorldClient {
         self.pending.lock().remove(&id);
         let link_lost = self.link_generation.load(Ordering::SeqCst) != generation;
         if to_hub && answers.is_empty() && (link_lost || !self.is_connected()) {
-            return Err(format!("hub_unreachable: {}", self.unreachable_error()));
+            return Err(self.unreachable_error());
         }
         Ok(Answers {
             answers,
@@ -1237,36 +1237,29 @@ impl WorldClient {
         self.members.read().get(name).cloned()
     }
 
-    pub(crate) fn expand(&self, selector: &Selector) -> Result<Vec<String>, String> {
-        self.members.read().expand(selector)
+    /// Whether `name` is a member this one may call, with the reason it is not.
+    pub(crate) fn resolve_target(&self, name: &str) -> Result<(), String> {
+        self.members.read().resolve(name)
     }
 
     // ----- direct calls -----
 
-    /// Runs `verb` with `args` on every target named by the selector and returns one outcome
-    /// per target. Targets that are offline, forbidden, or silent produce status outcomes.
+    /// Runs `verb` with `args` on `target` and returns its outcome. A target that is offline,
+    /// forbidden, or silent produces a status outcome, not an error.
     pub(crate) async fn call(
         &self,
         verb: &str,
-        selector: &Selector,
+        target: &str,
         args: serde_json::Value,
         budget: CallBudget,
         cwd: Option<String>,
         tool_timeout: Duration,
-    ) -> Result<Vec<NodeOutcome>, String> {
-        let me = self.name();
-        let remote = self.expand(selector)?;
-        if remote.is_empty() {
-            return Ok(Vec::new());
-        }
+    ) -> Result<NodeOutcome, String> {
         if !self.is_connected() {
-            return Err(format!("hub_unreachable: {}", self.unreachable_error()));
+            return Err(self.unreachable_error());
         }
-        // The hub routes a fan-out by `targets`; `to` carries the first of them so a hub that
-        // understands only single-target routing still delivers one leg rather than none.
-        let header = Header::new(kind::CALL, &me, &remote[0], 0)
-            .with_verb(verb)
-            .with_targets(remote.clone());
+        let me = self.name();
+        let header = Header::new(kind::CALL, &me, target, 0).with_verb(verb);
         let body = Call {
             verb: verb.to_string(),
             args,
@@ -1280,10 +1273,7 @@ impl WorldClient {
             answers,
             delivered,
             link_lost,
-        } = self
-            .request(header, &body, true, false, remote.len(), window)
-            .await?;
-        let mut outcomes: BTreeMap<String, NodeOutcome> = BTreeMap::new();
+        } = self.request(header, &body, true, false, 1, window).await?;
         for answer in answers {
             match answer.header.t.as_str() {
                 kind::CALL_RESULT if answer.encrypted => {
@@ -1292,29 +1282,23 @@ impl WorldClient {
                     else {
                         continue;
                     };
-                    // A result answers for the member that sent it, and only for one this call
-                    // was addressed to; both fields sit inside the ciphertext.
-                    if result.node != answer.header.from
-                        || !remote.contains(&result.node)
-                        || outcomes.contains_key(&result.node)
-                    {
+                    // A result answers for the member that sent it, and only for the one this
+                    // call was addressed to; both fields sit inside the ciphertext.
+                    if result.node != answer.header.from || result.node != target {
                         continue;
                     }
                     self.raise_grant_floor(result.grant_revision);
-                    outcomes.insert(
-                        result.node.clone(),
-                        NodeOutcome {
-                            node: result.node,
-                            status: if result.response.is_error {
-                                "error"
-                            } else {
-                                "ok"
-                            }
-                            .to_string(),
-                            response: Some(result.response.into()),
-                            message: None,
-                        },
-                    );
+                    return Ok(NodeOutcome {
+                        node: result.node,
+                        status: if result.response.is_error {
+                            "error"
+                        } else {
+                            "ok"
+                        }
+                        .to_string(),
+                        response: Some(result.response.into()),
+                        message: None,
+                    });
                 }
                 kind::CALL_STATUS if answer.header.from == HUB_NAME => {
                     let Ok(status) =
@@ -1322,61 +1306,49 @@ impl WorldClient {
                     else {
                         continue;
                     };
-                    if !remote.contains(&status.node) || outcomes.contains_key(&status.node) {
+                    if status.node != target {
                         continue;
                     }
-                    outcomes.insert(
-                        status.node.clone(),
-                        NodeOutcome {
-                            node: status.node,
-                            status: status.status,
-                            response: None,
-                            message: Some(status.message),
-                        },
-                    );
+                    return Ok(NodeOutcome {
+                        node: status.node,
+                        status: status.status,
+                        response: None,
+                        message: Some(status.message),
+                    });
                 }
                 _ => {}
             }
         }
-        for target in &remote {
-            if outcomes.contains_key(target) {
-                continue;
-            }
-            let (status, message) = if !link_lost {
-                (
-                    "timeout",
-                    format!(
-                        "Node \"{target}\" did not answer within {} s.",
-                        window.as_secs()
-                    ),
-                )
-            } else if delivered.contains(target) {
-                (
-                    "unknown",
-                    format!(
-                        "The hub handed this call to \"{target}\" before the hub link dropped; no answer arrived within {} s, so it may have run.",
-                        window.as_secs()
-                    ),
-                )
-            } else {
-                (
-                    "unreachable",
-                    format!(
-                        "The hub link dropped before \"{target}\" received this call; nothing ran there."
-                    ),
-                )
-            };
-            outcomes.insert(
-                target.clone(),
-                NodeOutcome {
-                    node: target.clone(),
-                    status: status.to_string(),
-                    response: None,
-                    message: Some(message),
-                },
-            );
-        }
-        Ok(outcomes.into_values().collect())
+        let (status, message) = if !link_lost {
+            (
+                "timeout",
+                format!(
+                    "Node \"{target}\" did not answer within {} s.",
+                    window.as_secs()
+                ),
+            )
+        } else if delivered.contains(target) {
+            (
+                "unknown",
+                format!(
+                    "The hub handed this call to \"{target}\" before the hub link dropped; no answer arrived within {} s, so it may have run.",
+                    window.as_secs()
+                ),
+            )
+        } else {
+            (
+                "unreachable",
+                format!(
+                    "The hub link dropped before \"{target}\" received this call; nothing ran there."
+                ),
+            )
+        };
+        Ok(NodeOutcome {
+            node: target.to_string(),
+            status: status.to_string(),
+            response: None,
+            message: Some(message),
+        })
     }
 }
 

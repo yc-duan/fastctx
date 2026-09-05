@@ -285,106 +285,31 @@ impl MemberTable {
         self.get(name).and_then(|member| member.public_key().ok())
     }
 
-    /// Current members the hub lists, online or not.
-    pub(crate) fn listed(&self) -> impl Iterator<Item = &VerifiedMember> {
-        self.members
-            .values()
-            .filter(|member| member.is_current() && member.state != STATE_UNLISTED)
-    }
-
-    /// Expands a selector (`design-objects.md` §2.1) into member names.
-    ///
-    /// `all` and tags expand to every listed member, offline ones included: a fan-out answers
-    /// for each machine, and "offline" is an answer the caller wants to see rather than a
-    /// machine silently left out of the count. Explicit names are kept as given so a call to
-    /// an offline member is answered with its real state.
-    pub(crate) fn expand(&self, selector: &Selector) -> Result<Vec<String>, String> {
-        let mut names = Vec::new();
-        let mut push = |name: String| {
-            if !names.contains(&name) {
-                names.push(name);
-            }
-        };
-        for item in &selector.items {
-            match item.as_str() {
-                "all" => {
-                    for member in self.listed() {
-                        push(member.record.name.clone());
-                    }
-                }
-                tagged if tagged.starts_with("tag:") => {
-                    let tag = &tagged[4..];
-                    if tag.is_empty() {
-                        return Err("A tag selector needs a tag after \"tag:\".".to_string());
-                    }
-                    for member in self
-                        .listed()
-                        .filter(|member| member.record.tags.iter().any(|entry| entry == tag))
-                    {
-                        push(member.record.name.clone());
-                    }
-                }
-                name => {
-                    if self.get(name).is_some() {
-                        push(name.to_string());
-                    } else if self.revoked.contains_key(name)
-                        || self
-                            .members
-                            .get(name)
-                            .is_some_and(|member| !member.is_current())
-                    {
-                        return Err(format!(
-                            "revoked: \"{name}\" was removed from this World. List machines with nodes."
-                        ));
-                    } else if let Some(reason) = self.unverified.get(name) {
-                        return Err(format!(
-                            "node_unknown: \"{name}\" is listed by the hub but its record does not verify ({reason})."
-                        ));
-                    } else {
-                        return Err(format!(
-                            "node_unknown: no member named \"{name}\". List machines with nodes."
-                        ));
-                    }
-                }
-            }
+    /// Whether `name` is a current member a call may be addressed to. An offline member
+    /// resolves: "offline" is an answer the caller wants to see, and the hub gives it. The
+    /// errors are the sentences the tool surface shows the model.
+    pub(crate) fn resolve(&self, name: &str) -> Result<(), String> {
+        if self.get(name).is_some() {
+            return Ok(());
         }
-        Ok(names)
-    }
-}
-
-/// A parsed `node` argument: one or more names, `all`, or `tag:<t>` items.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Selector {
-    pub(crate) items: Vec<String>,
-}
-
-impl Selector {
-    pub(crate) fn parse_items(items: &[String]) -> Result<Self, String> {
-        if items.is_empty() {
-            return Err("The node selector is empty.".to_string());
+        if self.revoked.contains_key(name)
+            || self
+                .members
+                .get(name)
+                .is_some_and(|member| !member.is_current())
+        {
+            return Err(format!(
+                "\"{name}\" was removed from this World. List machines with nodes."
+            ));
         }
-        for item in items {
-            let item = item.trim();
-            if item == "all" || item.starts_with("tag:") {
-                continue;
-            }
-            super::validate_node_name(item)?;
+        if let Some(reason) = self.unverified.get(name) {
+            return Err(format!(
+                "\"{name}\" is listed by the hub but its record does not verify ({reason})."
+            ));
         }
-        Ok(Self {
-            items: items.iter().map(|item| item.trim().to_string()).collect(),
-        })
-    }
-
-    /// Whether the selector names exactly one explicit member.
-    pub(crate) fn single_name(&self) -> Option<&str> {
-        match self.items.as_slice() {
-            [item] if item != "all" && !item.starts_with("tag:") => Some(item),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn describe(&self) -> String {
-        self.items.join(", ")
+        Err(format!(
+            "No machine named \"{name}\". List machines with nodes."
+        ))
     }
 }
 
@@ -478,7 +403,7 @@ pub(crate) fn verify_revocation(
 
 #[cfg(test)]
 mod tests {
-    use super::{MemberTable, Selector, publish_record, sign_revocation, verify_record};
+    use super::{MemberTable, publish_record, sign_revocation, verify_record};
     use crate::world::identity::Identity;
     use crate::world::keys::KeyRing;
     use crate::world::messages::{MemberEntry, MemberRecord, RevocationStatement};
@@ -528,53 +453,6 @@ mod tests {
         let mut renamed = signed.clone();
         renamed.record = renamed.record.replace("desktop", "evil");
         assert!(verify_record(&renamed, &keys).is_err());
-    }
-
-    #[test]
-    fn selectors_expand_names_tags_and_all_over_listed_members() {
-        let keys = KeyRing::new_initial().unwrap();
-        let entries = [
-            ("desktop", &["office"][..], "online"),
-            ("laptop", &["office", "mobile"][..], "offline"),
-            ("vps", &[][..], "online"),
-        ]
-        .iter()
-        .map(|(name, tags, state)| entry(&Identity::generate().unwrap(), &keys, name, tags, state))
-        .collect::<Vec<_>>();
-        let table = MemberTable::from_entries(3, &entries, &keys, &MemberTable::default());
-        assert_eq!(table.members.len(), 3);
-        let all = table
-            .expand(&Selector::parse_items(&["all".to_string()]).unwrap())
-            .unwrap();
-        assert_eq!(all, vec!["desktop", "laptop", "vps"]);
-        let office = table
-            .expand(&Selector::parse_items(&["tag:office".to_string()]).unwrap())
-            .unwrap();
-        assert_eq!(office, vec!["desktop", "laptop"]);
-        let explicit = table
-            .expand(
-                &Selector::parse_items(&[
-                    "laptop".to_string(),
-                    "desktop".to_string(),
-                    "laptop".to_string(),
-                ])
-                .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(explicit, vec!["laptop", "desktop"]);
-        assert!(
-            table
-                .expand(&Selector::parse_items(&["ghost".to_string()]).unwrap())
-                .unwrap_err()
-                .contains("node_unknown")
-        );
-        assert_eq!(
-            Selector::parse_items(&["laptop".to_string()])
-                .unwrap()
-                .single_name(),
-            Some("laptop")
-        );
-        assert!(Selector::parse_items(&["Bad Name".to_string()]).is_err());
     }
 
     #[test]
@@ -632,9 +510,9 @@ mod tests {
         assert!(table.get("laptop").is_none());
         assert!(
             table
-                .expand(&Selector::parse_items(&["laptop".to_string()]).unwrap())
+                .resolve("laptop")
                 .unwrap_err()
-                .contains("revoked")
+                .contains("was removed from this World")
         );
         // Nor under a new name.
         resurrected[1] = entry(&laptop, &keys, "laptop2", &[], "online");

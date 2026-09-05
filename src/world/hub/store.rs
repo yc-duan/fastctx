@@ -827,7 +827,6 @@ impl Store {
         subject: &str,
         kind: &str,
         facts: BTreeMap<String, serde_json::Value>,
-        task: Option<&str>,
     ) -> Result<Event, String> {
         self.write(|txn| {
             let mut meta = txn
@@ -841,7 +840,6 @@ impl Store {
                 subject: subject.to_string(),
                 kind: kind.to_string(),
                 facts,
-                task: task.map(str::to_string),
             };
             let bytes = encode(&event)?;
             let mut table = txn

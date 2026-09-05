@@ -776,7 +776,7 @@ pub(crate) fn revoke_from_cli(data: &Path, name: &str) -> Result<String, String>
         "reason".to_string(),
         serde_json::Value::String("revoked".to_string()),
     );
-    store.append_event(name, "node.revoked", facts, None)?;
+    store.append_event(name, "node.revoked", facts)?;
     Ok(format!(
         "\"{name}\" revoked (the hub was not running; members learn of it when it starts)."
     ))
