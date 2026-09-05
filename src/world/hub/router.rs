@@ -672,18 +672,11 @@ impl Hub {
                 ("reason", serde_json::Value::String(reason.to_string())),
             ],
         );
-        // The same refusal the next handshake would give, said now: a plain `bye` would read
-        // as an ordinary disconnect and send the member round the reconnect loop to find out
-        // what happened, and its own connection being cancelled underneath would explain the
-        // link as "replaced by another process".
+        // Cutting the connection is the whole message: the session reads the member row on its
+        // way out and signs off with the same refusal the next handshake would give, so the
+        // member stops instead of reconnecting to find out why (`session.rs`). Queueing that
+        // frame here instead would race the cancellation that follows it.
         if let Some(connection) = self.connection(name) {
-            let _ = connection.tx.send(crate::world::wire::Frame::Rejected(
-                crate::world::wire::Rejected {
-                    code: "revoked".to_string(),
-                    message: format!("The member \"{name}\" was revoked from this World."),
-                    protocol: None,
-                },
-            ));
             connection.cancel.cancel();
         }
         self.broadcast_members_changed(version, Some(name));

@@ -582,8 +582,19 @@ where
             },
         }
     };
+    // Both of these say why the connection is ending, and both are sent from here rather than
+    // by whoever cancelled it: a frame queued on the writer while the session task is being
+    // cancelled may never be flushed, and then the member has to reconnect to learn why.
     if reason == "replaced" {
         let _ = link.send(&Frame::Replaced).await;
+    } else if reason == "revoked" {
+        let _ = link
+            .send(&Frame::Rejected(crate::world::wire::Rejected {
+                code: "revoked".to_string(),
+                message: format!("The member \"{name}\" was revoked from this World."),
+                protocol: None,
+            }))
+            .await;
     }
     link.close().await;
     let still_current = hub.unregister(&name, peer.generation);
