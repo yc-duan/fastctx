@@ -179,6 +179,8 @@ FastCtx 提供九个同级 MCP 工具：
 
 每个宿主独立保存自己的 enabled set。`inspect_local_file`、`grep`、`glob`、`replace` 可以组成任意非空子集；Bash 五工具是原子组，选择其中任意一个就发布全部五个，关闭时也一起移除。新接入默认选择文件四工具。所有已选工具同属 `mcp__fastctx` 命名空间；命名空间内单个工具的拼写方式由宿主自己决定。
 
+在登记进 [World](#world) 的机器上，同一个 server 还会发布 `nodes`、`copy`、`remote_write`、`remote_edit`，上表前五个工具多一个 `node` 参数，可以把这次调用发到别的机器上执行。
+
 ### `inspect_local_file`
 
 `inspect_local_file` 每次只处理一个文件；读取文本时返回 1 基行号，并支持分页：
@@ -371,6 +373,84 @@ stdio MCP server 拿不到用户配置的环境：宿主会清空子进程环境
 
 TUI 的 **Jobs** dashboard 直接扫描同一份当前用户 registry，但只显示当前仍在运行的任务，并汇总所有 FastCtx server 与 TUI 实例。任务结束后会从列表消失，同时短暂提示其保留输出仍可由智能体通过 `job_output` 读取。界面按真实来源会话标签分组，并显示 workspace、server PID 与父进程信息；列表用固定列对齐相对时间和 job id，过长的 ASCII/CJK 命令会在同一右边界显示省略号。右侧详情显示精确到秒的 UTC 开始时间和实时 `HH:MM:SS` 已运行时长。输出仍支持水平和纵向移动；页脚固定为一行，优先保留关键按键，并在宽度允许时补充 `←/→ 输出`、`PgUp/PgDn 滚动` 与 `F 跟随`。ChatGPT / Codex 没有向 MCP server 暴露对话标题或 id，因此 FastCtx 不会伪造一个对话名。
 
+## World
+
+World 是你自己拥有的一组机器：它们通过一台你自己运行的中枢会合，同一套 FastCtx 工具可以指向其中任何一台。它默认是关闭的，直到你亲手登记一台机器为止：未登记的机器发布的就是上面九个工具，一字不差，也不会发起任何网络连接。
+
+### 建立一个 World
+
+在一台所有成员都能通过一个 TCP 端口访问到的机器上运行中枢。用 443 时它看起来就是一台普通的 HTTPS 服务器（Linux 上该端口需要 `setcap`，或者换一个端口）；首次启动会生成自签名证书，成员在登记时把它钉住。
+
+```console
+fastctx hub serve --listen 0.0.0.0:443
+```
+
+首次启动会打印一个一次性的引导口令。用它在第一台机器上创建 World，然后在任意成员上邀请其他机器：
+
+```console
+fastctx world init hub.example.com:443 --bootstrap <口令> --name desk
+fastctx world invite --name laptop
+```
+
+`invite` 打印一串以 `fxw1.` 开头的邀请，只能用一次，24 小时后过期。在新机器上：
+
+```console
+fastctx node enroll fxw1....
+```
+
+登记会写入 `~/.fastctx/world.toml`，为当前用户安装节点服务（Windows 上是登录任务，Linux 上是 `systemd --user`，macOS 上是 LaunchAgent）并启动它。这个服务持有与中枢的连接和 World 密钥，同时承载该用户的 FastCtx 控制中心，因此本机会话和来自别的机器的调用共用同一个执行器、同一份任务账本。`fastctx node status` 与 `fastctx doctor` 报告它的健康状况；`fastctx node unenroll` 退出 World。登记或退出之后再跑一次 `fastctx apply`，让 guidance 块与现状一致。
+
+与中枢的连接是 WebSocket 之上的 TLS 1.3。节点默认钉住物理网卡并自己解析域名，所以本机的 VPN 或代理既不会承载这条连接，也不会弄断它；`--network system` 则改用操作系统的路由和 `HTTPS_PROXY`。
+
+### 登记之后模型得到什么
+
+还是同一套工具，多了一种把它们指向别处的办法：
+
+| 新增 | 用途 |
+|---|---|
+| `inspect_local_file`、`grep`、`glob`、`replace`、`run` 的 `node` 参数 | 在指定的机器上执行这次调用；省略时和以前一样在本机 |
+| `nodes` | 地图：有哪些机器、是否在线、操作系统、home 目录和用户名 |
+| `copy` | 在两台机器之间搬一个文件或一整棵目录树 |
+| `remote_write`、`remote_edit` | 在别的机器上写入或编辑一个文件；两者都必须带 `node` |
+
+一次调用只指一台机器。远端 `run` 使用那台机器的登录 shell，省略 `cwd` 时落在它的 home 目录，响应里会写明。`copy` 跳过目标处已经相同的文件、替换不同的、合并目录、不删除任何东西；它的字节走一条专用的数据连接经过中枢，所以大文件传输不会拖慢其他调用，中途停下的 copy 再跑一次就会接着完成。`remote_edit` 以及对既有文件的 `remote_write` 要求这个文件在本次会话里先用 `inspect_local_file` 在那台机器上看过，看过之后被改动就会失败；这项检查在持有文件的机器上比对内容哈希。这两个工具只在 `inspect_local_file` 启用时发布。本机的写入仍然交给宿主自己的工具，这样宿主的 diff 与审批流程照常有效。
+
+### 能到达别的机器的脚本
+
+涉及很多台机器的活，或者要活得比对话久的活，就是一个用 `run_background` 起的脚本。`run` 与 `run_background` 跑的命令在 PATH 里一定找得到 `fastctx`（Windows 上经由一个启动器，它让 Git Bash 不再改写写给别的机器的路径；在你自己的 Git Bash 窗口里设 `MSYS_NO_PATHCONV=1` 可以得到同样的效果），有三条子命令能到达 World：
+
+```console
+fastctx world nodes --names --online
+fastctx world run --node laptop --timeout 10m -- ./install.sh --silent
+fastctx world copy --to-node laptop ./build/app.msi 'C:/Temp/app.msi'
+```
+
+`world run` 打印 `run` 工具会返回的内容，退出码就是远端命令的退出码；命令在超时处被停掉时退 124，调用根本没到达那台机器（未登记、节点服务没在跑、机器离线或不存在）时退 255，与 `ssh` 的约定相同。`world copy` 全部到位退 0，有文件失败退 1，没到达退 255。超时默认一小时，最长 24 小时；`--json` 打印 `{node, status, exit_code, text}`。往五十台机器部署因此就是一个循环：
+
+```bash
+for n in $(fastctx world nodes --names --online); do
+  fastctx world copy --to-node "$n" ./app.msi 'C:/Temp/app.msi' &&
+  fastctx world run --node "$n" --timeout 10m -- msiexec /i C:/Temp/app.msi /qn ||
+  echo "$n" >> failed.txt
+done
+```
+
+### 谁可以做什么
+
+默认每个成员都可以在每台机器上使用每个工具。发布任何一条授权都会取代这个默认：
+
+```console
+fastctx world grants
+fastctx world grants allow laptop --node desk --verb inspect_local_file --verb grep
+fastctx world grants remove <id>
+```
+
+授权按成员、按机器（名字、`tag:<标签>` 或 `all`）、按工具划分，由发布它的成员签名，由收到调用的那台机器执行。`fastctx world revoke <名字>` 移除一个成员并轮换 World 密钥。
+
+### 字节去了哪里
+
+中枢知道谁连着，并按明文信头转发消息；消息本身——工具参数、输出、以及 `copy` 搬运的每一个字节——都用一把中枢从未持有的 World 密钥加密。这条路径上没有任何属于 FastCtx 或任何厂商的东西：中枢是你自己运行的，连上它的只有你登记的机器。详见[安全与隐私](#安全与隐私)。
+
 ## 安全与隐私
 
 FastCtx MCP server 继承宿主进程的本地权限。
@@ -385,7 +465,7 @@ FastCtx MCP server 继承宿主进程的本地权限。
 
 启动检查只会发送 FastCtx 版本、常规 HTTPS 请求元数据，以及 npm 的标准仓库请求；不会发送仓库路径、任务数据或文件内容。后台任务的命令、工作目录、已保留输出前缀、截断状态与退出状态只保存在当前用户的私有目录 `~/.fastctx/jobs/` 中。FastCtx 不会上传这些数据。Bash 命令仍可按照命令本身访问网络。预构建版本已经内嵌 PDF 引擎。
 
-上表描述的是**未登记进 World 的机器**，也就是你自己动手登记之前的每一台机器。登记是一个明确的动作——用你自己签发的邀请跑一次 `fastctx node enroll`——它只增加一条对外连接，由 `fastctx node` 守护进程发起，连向一台你自己运行、自己拥有的中枢。`fastctx serve` 本身仍然不发起任何网络请求。中枢按明文信头路由，读不到成员之间的内容：消息正文由一把中枢没有的 World 密钥加密。这条路径上没有 FastCtx 的服务器，也没有任何厂商的服务器；不会上传你没要求的东西——一次跨机调用带走的是你传的参数，带回的是那次调用产生的输出。
+上表描述的是**未登记进 World 的机器**，也就是你自己动手登记之前的每一台机器。登记是一个明确的动作——用你自己签发的邀请跑一次 `fastctx node enroll`——它只增加一条常驻的对外连接，由 `fastctx node` 守护进程发起，连向一台你自己运行、自己拥有的中枢；每次 `copy` 期间另有一条连向同一中枢的短暂数据连接。`fastctx serve` 本身仍然不发起任何网络请求。中枢按明文信头路由，读不到成员之间的内容：消息正文和搬运的字节都由一把中枢没有的 World 密钥加密。这条路径上没有 FastCtx 的服务器，也没有任何厂商的服务器；不会上传你没要求的东西——一次跨机调用带走的是你传的参数，带回的是那次调用产生的输出，一次 `copy` 搬的只是你点名的那个文件或目录。
 
 MCP server 位于宿主文件沙箱之外。需要逐次确认写入和命令执行时，可以配置：
 

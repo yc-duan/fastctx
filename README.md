@@ -179,6 +179,8 @@ FastCtx provides nine MCP tools:
 
 Each agent stores its own enabled set. Any non-empty combination of `inspect_local_file`, `grep`, `glob`, and `replace` is valid. The five Bash tools are atomic: selecting any one publishes all five, and clearing Bash removes all five. A new connection defaults to the four file tools. All selected tools share the `mcp__fastctx` namespace; how a host spells an individual tool inside that namespace is the host's own convention.
 
+On a machine enrolled in a [World](#world), the same server also publishes `nodes`, `copy`, `remote_write`, and `remote_edit`, and the first five tools above accept a `node` parameter that runs the call on another machine.
+
 ### `inspect_local_file`
 
 `inspect_local_file` handles one file per call, returns 1-based line numbers for text, and supports paging:
@@ -377,6 +379,84 @@ Finished records have no time-to-live. FastCtx retains them until the current us
 
 The TUI **Jobs** dashboard scans this same current-user registry but shows only jobs that are currently running, aggregated from every FastCtx session and TUI instance. A finished job disappears with a short notice that its retained output remains available to the agent through `job_output`. Jobs are grouped by a source tag with workspace and runtime-process context. Fixed list columns keep relative age and job ids aligned, while long ASCII or CJK commands end with an ellipsis at one shared edge. The detail panel shows the exact UTC start time to the second and a live `HH:MM:SS` elapsed time. Horizontal and vertical output navigation remains available; one width-aware footer row keeps the essential keys visible and adds `←/→ output`, `PgUp/PgDn scroll`, and `F follow` when space permits. ChatGPT / Codex does not expose conversation titles or ids to the MCP server, so FastCtx does not invent one.
 
+## World
+
+A World is a set of machines you own, joined through a hub you run, on which the same FastCtx tools can point at any member. It is off until you enroll a machine yourself: an unenrolled machine publishes the nine tools above byte for byte and makes no network connection.
+
+### Setting up a World
+
+Run the hub on a machine every member can reach on one TCP port. On 443 it looks like an ordinary HTTPS server (Linux needs `setcap` for that port, or pick another); a self-signed certificate is created on first start and members pin it when they enroll.
+
+```console
+fastctx hub serve --listen 0.0.0.0:443
+```
+
+The first start prints a one-time bootstrap password. Create the World from the first machine with it, then invite the others from any member:
+
+```console
+fastctx world init hub.example.com:443 --bootstrap <password> --name desk
+fastctx world invite --name laptop
+```
+
+`invite` prints an `fxw1.` string that works once and expires after 24 hours. On the new machine:
+
+```console
+fastctx node enroll fxw1....
+```
+
+Enrolling writes `~/.fastctx/world.toml`, installs the node service for the current user (a logon task on Windows, `systemd --user` on Linux, a LaunchAgent on macOS), and starts it. The service holds the hub connection and the World keys, and it also hosts this user's FastCtx control center, so local sessions and calls from other machines share one executor and one job registry. `fastctx node status` and `fastctx doctor` report its health; `fastctx node unenroll` leaves the World. Run `fastctx apply` again after enrolling or leaving so the guidance block matches.
+
+The hub link is TLS 1.3 over WebSocket. By default the node pins the physical network interface and resolves names itself, so a VPN or proxy on the machine neither carries nor breaks the link; `--network system` uses the operating system's routing and `HTTPS_PROXY` instead.
+
+### What the model gets on an enrolled machine
+
+The same tools, plus a way to point them elsewhere:
+
+| Addition | Purpose |
+|---|---|
+| `node` on `inspect_local_file`, `grep`, `glob`, `replace`, `run` | Run that call on the named machine; omitted, the call is local as before |
+| `nodes` | The map: every machine, whether it is online, its OS, home directory, and user |
+| `copy` | Move one file or one directory tree between two machines |
+| `remote_write`, `remote_edit` | Write or edit a file on another machine; both require `node` |
+
+One call names one machine. A remote `run` uses that machine's login shell and, without `cwd`, its home directory, which the response names. `copy` skips files already identical at the destination, replaces differing ones, merges directories, and deletes nothing; its bytes travel over their own data connection through the hub, so a large transfer never delays other calls, and a copy that stopped is continued by running it again. `remote_edit`, and `remote_write` over an existing file, require that the file was inspected with `inspect_local_file` on that machine earlier in the session and fail if it changed since; the check compares a content hash on the machine that holds the file. They are published only while `inspect_local_file` is. Local writes stay with the host's own tools so its diff and approval flow keep working.
+
+### Scripts that reach other machines
+
+Work on many machines, or work that must outlive the conversation, is a script started with `run_background`. Commands run by `run` and `run_background` find `fastctx` on their PATH (on Windows through a launcher that keeps Git Bash from rewriting paths meant for another machine; in your own Git Bash window, set `MSYS_NO_PATHCONV=1` for the same effect), and three subcommands reach the World:
+
+```console
+fastctx world nodes --names --online
+fastctx world run --node laptop --timeout 10m -- ./install.sh --silent
+fastctx world copy --to-node laptop ./build/app.msi 'C:/Temp/app.msi'
+```
+
+`world run` prints what the `run` tool would return and exits with the remote command's exit code, 124 when the command was stopped at the timeout, or 255 when the call never reached the machine (not enrolled, node service not running, machine offline or unknown), the convention `ssh` uses. `world copy` exits 0 when everything arrived, 1 when a file failed, and 255 when the call never got there. Timeouts default to one hour and go up to 24 hours; `--json` prints `{node, status, exit_code, text}`. A deployment to fifty machines is therefore a loop:
+
+```bash
+for n in $(fastctx world nodes --names --online); do
+  fastctx world copy --to-node "$n" ./app.msi 'C:/Temp/app.msi' &&
+  fastctx world run --node "$n" --timeout 10m -- msiexec /i C:/Temp/app.msi /qn ||
+  echo "$n" >> failed.txt
+done
+```
+
+### Who may do what
+
+By default every member may use every tool on every machine. Publishing a grant replaces that default:
+
+```console
+fastctx world grants
+fastctx world grants allow laptop --node desk --verb inspect_local_file --verb grep
+fastctx world grants remove <id>
+```
+
+Grants are per member, per machine (names, `tag:<tag>`, or `all`), and per tool. They are signed by the member that publishes them and enforced by the machine that receives a call. `fastctx world revoke <name>` removes a member and rotates the World key.
+
+### Where the bytes go
+
+The hub sees who is connected and routes messages by their plaintext headers. The messages themselves, including tool arguments, outputs, and every byte a `copy` moves, are encrypted under a World key the hub never holds. Nothing on this path belongs to FastCtx or any vendor: you run the hub, and the only machines that connect to it are the ones you enrolled. See [Security and privacy](#security-and-privacy).
+
 ## Security and privacy
 
 The FastCtx MCP server inherits the local permissions of the host process.
@@ -391,7 +471,7 @@ The FastCtx MCP server inherits the local permissions of the host process.
 
 The startup check sends the FastCtx version, normal HTTPS request metadata, and npm's standard registry request; it never sends repository paths, job data, or file contents. Background jobs persist their command, working directory, retained output prefix, truncation state, and exit status only in the current user's private `~/.fastctx/jobs/` directory. Proxy-to-control-center traffic stays on an owner-private Unix-domain socket or Windows named pipe. FastCtx does not upload this data. Bash commands can access the network according to the command itself. Prebuilt binaries include the PDF engine.
 
-The table above describes a machine that has not been enrolled in a World, which is every machine until you enroll one yourself. Enrolling is a deliberate act — `fastctx node enroll` with an invite you created — and it adds exactly one outbound connection, made by the `fastctx node` daemon to a hub you run and own. `fastctx serve` still makes no network requests of its own. The hub routes on plaintext headers and cannot read what members send each other: message bodies are encrypted under a World key the hub never holds. There is no FastCtx server and no vendor server anywhere on this path, and nothing is uploaded that you did not ask for — a remote tool call carries the arguments you passed and returns the output that call produced.
+The table above describes a machine that has not been enrolled in a World, which is every machine until you enroll one yourself. Enrolling is a deliberate act — `fastctx node enroll` with an invite you created — and it adds one standing outbound connection, made by the `fastctx node` daemon to a hub you run and own, plus a short-lived data connection to the same hub for the duration of each `copy`. `fastctx serve` still makes no network requests of its own. The hub routes on plaintext headers and cannot read what members send each other: message bodies and copied bytes are encrypted under a World key the hub never holds. There is no FastCtx server and no vendor server anywhere on this path, and nothing is uploaded that you did not ask for — a remote tool call carries the arguments you passed and returns the output that call produced, and a `copy` moves the one file or directory you named.
 
 The MCP server runs outside the host filesystem sandbox. Use an approval mode when every write and command execution should be reviewed:
 
