@@ -123,8 +123,23 @@ pub(crate) fn install(paths: &ControlPaths, run_as_user: Option<&str>) -> Result
 }
 
 /// Stops and removes the service registration.
+///
+/// Nothing to remove is an outcome, not a failure: a node started with `--no-service`, or one
+/// whose registration a user already removed, must not have `unenroll` report an error for a
+/// registration that was never there.
 pub(crate) fn uninstall(paths: &ControlPaths) -> Result<String, String> {
     if cfg!(windows) {
+        let mut query = Command::new("schtasks");
+        query.args(["/Query", "/TN", WINDOWS_TASK_NAME]);
+        let registered = query
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if !registered {
+            return Ok(format!(
+                "No logon task \"{WINDOWS_TASK_NAME}\" is registered."
+            ));
+        }
         let mut end = Command::new("schtasks");
         end.args(["/End", "/TN", WINDOWS_TASK_NAME]);
         let _ = end.output();
@@ -139,6 +154,12 @@ pub(crate) fn uninstall(paths: &ControlPaths) -> Result<String, String> {
             .join("Library")
             .join("LaunchAgents")
             .join(format!("{LAUNCHD_LABEL}.plist"));
+        if !plist.exists() {
+            return Ok(format!(
+                "No LaunchAgent {} is registered.",
+                crate::paths::display_path(&plist)
+            ));
+        }
         let uid = unix_uid();
         let mut bootout = Command::new("launchctl");
         bootout.args(["bootout", &format!("gui/{uid}/{LAUNCHD_LABEL}")]);
@@ -149,15 +170,21 @@ pub(crate) fn uninstall(paths: &ControlPaths) -> Result<String, String> {
             crate::paths::display_path(&plist)
         ));
     }
-    let mut disable = Command::new("systemctl");
-    disable.args(["--user", "disable", "--now", SYSTEMD_UNIT]);
-    let _ = disable.output();
     let unit = paths
         .home
         .join(".config")
         .join("systemd")
         .join("user")
         .join(format!("{SYSTEMD_UNIT}.service"));
+    if !unit.exists() {
+        return Ok(format!(
+            "No user unit {} is registered.",
+            crate::paths::display_path(&unit)
+        ));
+    }
+    let mut disable = Command::new("systemctl");
+    disable.args(["--user", "disable", "--now", SYSTEMD_UNIT]);
+    let _ = disable.output();
     let _ = std::fs::remove_file(&unit);
     let mut reload = Command::new("systemctl");
     reload.args(["--user", "daemon-reload"]);
