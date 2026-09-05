@@ -1,7 +1,7 @@
 //! One member connection at the hub: the handshake, the replacement rule, heartbeats, acks,
 //! and the frame loop that hands application envelopes to the router.
 
-use super::store::{MemberRow, OutboxRow};
+use super::store::{Admission, AdmissionOutcome, MemberRow, OutboxRow};
 use super::{Connected, Hub, log};
 use crate::world::PROTOCOL_VERSION;
 use crate::world::crypto::{self, b64_array, b64_decode, b64_encode};
@@ -25,6 +25,11 @@ use tokio_util::sync::CancellationToken;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Three missed heartbeats.
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
+/// A single frame write that takes longer than this means the peer stopped reading. Without
+/// it a stalled peer pins the session task inside `send` and the heartbeat deadline is never
+/// polled, so the member stays "online" until TCP itself gives up, minutes later.
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Who is on the other end of an authenticated connection.
 #[derive(Clone, Debug)]
@@ -48,10 +53,19 @@ where
 {
     async fn send(&mut self, frame: &Frame) -> Result<(), String> {
         let bytes = frame.encode()?;
-        self.socket
-            .send(Message::Binary(bytes.into()))
-            .await
-            .map_err(|error| format!("cannot write to {}: {error}", self.peer))
+        match tokio::time::timeout(
+            SEND_TIMEOUT,
+            self.socket.send(Message::Binary(bytes.into())),
+        )
+        .await
+        {
+            Ok(result) => result.map_err(|error| format!("cannot write to {}: {error}", self.peer)),
+            Err(_) => Err(format!(
+                "a write to {} stalled for {} s",
+                self.peer,
+                SEND_TIMEOUT.as_secs()
+            )),
+        }
     }
 
     /// Reads the next frame; `Ok(None)` when the peer closed the connection.
@@ -69,7 +83,7 @@ where
     }
 
     async fn close(&mut self) {
-        let _ = self.socket.close(None).await;
+        let _ = tokio::time::timeout(CLOSE_TIMEOUT, self.socket.close(None)).await;
     }
 }
 
@@ -279,41 +293,37 @@ fn enroll(
     }
     crate::world::validate_node_name(&enrollment.name)
         .map_err(|error| reject("invalid_name", error))?;
-    if let Some(existing) = hub.store.member(&enrollment.name)?
-        && existing.node_pub != node_pub_b64
+    let row = member_row(&enrollment.name, node_pub_b64, wrap_pub, &enrollment.tags);
+    match hub
+        .store
+        .admit_member(&row, Admission::Invite(&enrollment.code_id))?
     {
-        return Err(reject(
-            "node_name_taken",
-            format!(
-                "The name \"{}\" already belongs to another member.",
-                enrollment.name
-            ),
-        ));
+        AdmissionOutcome::Admitted => {}
+        AdmissionOutcome::InviteGone | AdmissionOutcome::NotFirst => return Err(invalid()),
+        AdmissionOutcome::NameTaken => {
+            return Err(reject(
+                "node_name_taken",
+                format!(
+                    "The name \"{}\" already belongs to another member.",
+                    enrollment.name
+                ),
+            ));
+        }
+        AdmissionOutcome::KeyEnrolledAs(name) => {
+            return Err(reject(
+                "already_enrolled",
+                format!(
+                    "This machine's key is already enrolled as \"{name}\". Run 'fastctx node unenroll' there first."
+                ),
+            ));
+        }
+        AdmissionOutcome::Revoked => {
+            return Err(reject(
+                "revoked",
+                "This machine's key was revoked from this World and cannot rejoin. Run 'fastctx node unenroll' to discard it, then enroll under a new name.",
+            ));
+        }
     }
-    if let Some(existing) = hub.store.member_by_key(node_pub_b64)?
-        && existing.name != enrollment.name
-    {
-        return Err(reject(
-            "already_enrolled",
-            format!(
-                "This machine's key is already enrolled as \"{}\". Run 'fastctx node unenroll' there first.",
-                existing.name
-            ),
-        ));
-    }
-    let now = crate::world::now_rfc3339();
-    hub.store.put_member(&MemberRow {
-        name: enrollment.name.clone(),
-        node_pub: node_pub_b64.to_string(),
-        wrap_pub: b64_encode(wrap_pub),
-        tags: enrollment.tags.clone(),
-        admitted_at: now,
-        signed: None,
-        revoked_at: None,
-        revoke_reason: None,
-        revocation: None,
-    })?;
-    hub.store.remove_invite(&enrollment.code_id)?;
     hub.append_event(
         &enrollment.name,
         "node.enrolled",
@@ -352,14 +362,6 @@ fn bootstrap(
             "That bootstrap password is not valid, or this World already has its first member.",
         )
     };
-    if hub
-        .store
-        .meta_string(super::store::meta::BOOTSTRAP_USED)?
-        .is_some()
-        || hub.store.member_count()? > 0
-    {
-        return Err(invalid());
-    }
     let Some(expected) = hub
         .store
         .meta_string(super::store::meta::BOOTSTRAP_ADMISSION)?
@@ -372,20 +374,15 @@ fn bootstrap(
     }
     crate::world::validate_node_name(&enrollment.name)
         .map_err(|error| reject("invalid_name", error))?;
-    let now = crate::world::now_rfc3339();
-    hub.store.put_member(&MemberRow {
-        name: enrollment.name.clone(),
-        node_pub: node_pub_b64.to_string(),
-        wrap_pub: b64_encode(wrap_pub),
-        tags: enrollment.tags.clone(),
-        admitted_at: now,
-        signed: None,
-        revoked_at: None,
-        revoke_reason: None,
-        revocation: None,
-    })?;
-    hub.store
-        .set_meta_string(super::store::meta::BOOTSTRAP_USED, "1")?;
+    let row = member_row(&enrollment.name, node_pub_b64, wrap_pub, &enrollment.tags);
+    // The first member is whoever commits first; any other outcome means the World already
+    // has one, and the password says nothing more to the loser.
+    if !matches!(
+        hub.store.admit_member(&row, Admission::Bootstrap)?,
+        AdmissionOutcome::Admitted
+    ) {
+        return Err(invalid());
+    }
     hub.append_event(
         &enrollment.name,
         "node.enrolled",
@@ -400,6 +397,25 @@ fn bootstrap(
         enrollment.name
     ));
     Ok(enrollment.name.clone())
+}
+
+fn member_row(
+    name: &str,
+    node_pub_b64: &str,
+    wrap_pub: &crypto::Key32,
+    tags: &[String],
+) -> MemberRow {
+    MemberRow {
+        name: name.to_string(),
+        node_pub: node_pub_b64.to_string(),
+        wrap_pub: b64_encode(wrap_pub),
+        tags: tags.to_vec(),
+        admitted_at: crate::world::now_rfc3339(),
+        signed: None,
+        revoked_at: None,
+        revoke_reason: None,
+        revocation: None,
+    }
 }
 
 async fn run_session<S>(hub: Arc<Hub>, mut link: Link<S>, peer: Peer, auth: Auth)

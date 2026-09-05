@@ -130,6 +130,32 @@ pub(crate) struct InventoryRow {
     pub(crate) stored_at: String,
 }
 
+/// What a machine presents to be admitted (`Store::admit_member`).
+pub(crate) enum Admission<'a> {
+    /// Consume this invite in the same transaction as the insert.
+    Invite(&'a str),
+    /// Become the World's first member; refused once any member or a used bootstrap exists.
+    Bootstrap,
+}
+
+/// The outcome of an atomic admission.
+pub(crate) enum AdmissionOutcome {
+    /// Inserted. The members version moves too, but nobody is told until the member publishes
+    /// its signed record, so it stays inside.
+    Admitted,
+    /// The name belongs to a member with another key.
+    NameTaken,
+    /// The key is already enrolled under this other name.
+    KeyEnrolledAs(String),
+    /// The key, or the name it presents with its own key, was revoked; members never trust
+    /// that key again, so readmitting it would only produce a member nobody answers.
+    Revoked,
+    /// The invite was consumed by another enrollment, or never existed.
+    InviteGone,
+    /// A bootstrap after the World already had its first member.
+    NotFirst,
+}
+
 pub(crate) struct Store {
     db: Database,
 }
@@ -409,6 +435,90 @@ impl Store {
             let version = get_u64(&meta, meta::MEMBERS_VERSION)? + 1;
             put_u64(&mut meta, meta::MEMBERS_VERSION, version)?;
             Ok(version)
+        })
+    }
+
+    /// Admits a member in one transaction: the name and key checks, the invite consumption or
+    /// the bootstrap flag, and the insert commit together or not at all. Two enrollments racing
+    /// on one invite, one name, or the bootstrap password therefore cannot both succeed; the
+    /// separate read-check-write steps this replaces let both through (2026-09-05 review).
+    pub(crate) fn admit_member(
+        &self,
+        row: &MemberRow,
+        admission: Admission<'_>,
+    ) -> Result<AdmissionOutcome, String> {
+        let bytes = encode(row)?;
+        self.write(|txn| {
+            let mut members = txn
+                .open_table(MEMBERS)
+                .map_err(|error| store_error("cannot open members", error))?;
+            let mut index = txn
+                .open_table(MEMBER_KEYS)
+                .map_err(|error| store_error("cannot open member_keys", error))?;
+            if let Some(existing) = get_json::<MemberRow>(&members, &row.name)? {
+                if existing.node_pub != row.node_pub {
+                    return Ok(AdmissionOutcome::NameTaken);
+                }
+                if existing.is_revoked() {
+                    return Ok(AdmissionOutcome::Revoked);
+                }
+            }
+            let enrolled_as = index
+                .get(row.node_pub.as_str())
+                .map_err(|error| store_error("cannot read member_keys", error))?
+                .map(|name| name.value().to_string());
+            if let Some(name) = enrolled_as
+                && name != row.name
+            {
+                return Ok(
+                    match get_json::<MemberRow>(&members, &name)?
+                        .is_some_and(|row| row.is_revoked())
+                    {
+                        true => AdmissionOutcome::Revoked,
+                        false => AdmissionOutcome::KeyEnrolledAs(name),
+                    },
+                );
+            }
+            let mut meta = txn
+                .open_table(META)
+                .map_err(|error| store_error("cannot open meta", error))?;
+            match admission {
+                Admission::Invite(code_id) => {
+                    let mut invites = txn
+                        .open_table(INVITES)
+                        .map_err(|error| store_error("cannot open invites", error))?;
+                    let consumed = invites
+                        .remove(code_id)
+                        .map_err(|error| store_error("cannot consume an invite", error))?
+                        .is_some();
+                    if !consumed {
+                        return Ok(AdmissionOutcome::InviteGone);
+                    }
+                }
+                Admission::Bootstrap => {
+                    let used = meta
+                        .get(meta::BOOTSTRAP_USED)
+                        .map_err(|error| store_error("cannot read meta", error))?
+                        .is_some();
+                    let count = members
+                        .len()
+                        .map_err(|error| store_error("cannot count members", error))?;
+                    if used || count > 0 {
+                        return Ok(AdmissionOutcome::NotFirst);
+                    }
+                    meta.insert(meta::BOOTSTRAP_USED, b"1".as_slice())
+                        .map_err(|error| store_error("cannot write meta", error))?;
+                }
+            }
+            members
+                .insert(row.name.as_str(), bytes.as_slice())
+                .map_err(|error| store_error("cannot write a member", error))?;
+            index
+                .insert(row.node_pub.as_str(), row.name.as_str())
+                .map_err(|error| store_error("cannot index a member", error))?;
+            let version = get_u64(&meta, meta::MEMBERS_VERSION)? + 1;
+            put_u64(&mut meta, meta::MEMBERS_VERSION, version)?;
+            Ok(AdmissionOutcome::Admitted)
         })
     }
 

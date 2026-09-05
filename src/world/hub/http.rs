@@ -37,6 +37,10 @@ where
         let binding = binding.clone();
         async move { Ok::<_, Infallible>(handle(hub, binding, peer, request)) }
     });
+    // Keep-alive must stay on: with it off hyper rewrites the 101's `Connection: Upgrade` into
+    // `Connection: close`, and every WebSocket client refuses the upgrade (2026-09-05, caught
+    // in the loopback rehearsal). A browser or scanner that idles on a kept-alive connection
+    // is bounded by the HTTP phase timeout in `hub::serve_http` instead.
     if let Err(error) = hyper::server::conn::http1::Builder::new()
         .keep_alive(true)
         .serve_connection(TokioIo::new(io), service)

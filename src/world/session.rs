@@ -28,6 +28,9 @@ const MAX_BACKOFF_SECS: u64 = 60;
 const REPLACED_LIMIT: u32 = 3;
 const REPLACED_PAUSE: Duration = Duration::from_secs(300);
 const INVENTORY_INTERVAL: Duration = Duration::from_secs(300);
+/// A frame write that takes longer than this means the hub stopped reading; without a bound
+/// the session task sits inside `send` and never reaches its own heartbeat check.
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Runs the session until the client's shutdown token fires.
 pub(crate) async fn run(client: Arc<WorldClient>, executor: Arc<Executor>) {
@@ -435,7 +438,8 @@ async fn run_connected(
     let end = loop {
         tokio::select! {
             () = client.shutdown.cancelled() => {
-                let _ = sink.send(Message::Binary(Frame::Bye { reason: "node shutting down".to_string() }.encode().unwrap_or_default().into())).await;
+                let bye = Frame::Bye { reason: "node shutting down".to_string() }.encode().unwrap_or_default();
+                let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Binary(bye.into()))).await;
                 break SessionEnd::Shutdown;
             }
             () = &mut after_welcome, if !after_welcome_done => {
@@ -461,8 +465,10 @@ async fn run_connected(
                             continue;
                         }
                     };
-                    if let Err(error) = sink.send(Message::Binary(bytes.into())).await {
-                        break SessionEnd::Lost(format!("write failed: {error}"));
+                    match tokio::time::timeout(SEND_TIMEOUT, sink.send(Message::Binary(bytes.into()))).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => break SessionEnd::Lost(format!("write failed: {error}")),
+                        Err(_) => break SessionEnd::Lost(format!("a write stalled for {} s", SEND_TIMEOUT.as_secs())),
                     }
                 }
                 None => break SessionEnd::Lost("outbound channel closed".to_string()),
@@ -586,10 +592,13 @@ async fn run_connected(
                         });
                     }
                     Frame::Ack { seq } => {
-                        ack_deadline = None;
                         if let Err(error) = client.outbox_ack(seq) {
                             log(format!("cannot drop an acknowledged message: {error}"));
                         }
+                        // The deadline follows the queue, not the frame: with two messages in
+                        // flight, the first ack must not silence the wait for the second.
+                        ack_deadline = (client.link().outbox_depth > 0)
+                            .then(|| Instant::now() + super::client::ACK_TIMEOUT);
                     }
                     Frame::Msg { seq: Some(seq), id, env } => {
                         if seq <= recv_seq {
@@ -626,9 +635,9 @@ async fn run_connected(
 /// Whether this member is one of the addressees the sender named, dropping and logging when it
 /// is not.
 ///
-/// A single-target message names its addressee in `to`. A fan-out call or step names every
-/// addressee in `targets` and carries only the first in `to`, because the hub routes by
-/// `targets` when it is present. Both fields live inside the AEAD-authenticated header, so the
+/// A single-target message names its addressee in `to`. A message sent to several members at
+/// once names every addressee in `targets` and carries only the first in `to`, because the hub
+/// routes by `targets` when it is present. Both fields live inside the AEAD-authenticated header, so the
 /// hub can neither forge nor widen them — but only if the receiver actually reads them. Without
 /// this check the hub could deliver a call one member addressed to a second to a third instead,
 /// which is exactly the execution power the hub is not supposed to have.

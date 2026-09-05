@@ -118,10 +118,10 @@ impl Invite {
         Ok(Self {
             hub: wire.hub,
             hub_key: Fingerprint::parse(&wire.hub_key)?,
-            secret: crypto::b64_array::<32>(
-                &wire.secret.replace('-', "+").replace('_', "/"),
-                "invite secret",
-            )?,
+            secret: b64url_decode(&wire.secret)
+                .ok()
+                .and_then(|bytes| Key32::try_from(bytes).ok())
+                .ok_or_else(|| "That invite is not intact; paste the whole string.".to_string())?,
             name: wire.name,
             exp: wire.exp,
         })

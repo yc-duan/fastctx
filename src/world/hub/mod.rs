@@ -31,6 +31,14 @@ const N_RESERVATION: u64 = 1_000;
 /// A pending request older than this is dropped; its caller timed out long ago.
 const PENDING_MAX_AGE: Duration = Duration::from_secs(600);
 const TLS_ACCEPT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A connection that has not upgraded to the World protocol by then is closed. The hub is not
+/// a web server: a member upgrades on its first request, and anything else on this port is a
+/// scanner or a browser, neither of which gets to hold a slot.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Connections in the TLS or HTTP phase at once. Strangers are the only thing that can fill
+/// this, and every slot frees itself within the two timeouts above; at the cap the hub stops
+/// accepting rather than growing without bound.
+const MAX_PENDING_CONNECTIONS: usize = 512;
 const STATUS_INTERVAL: Duration = Duration::from_secs(10);
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -225,7 +233,7 @@ pub(crate) async fn run(options: HubOptions) -> Result<(), String> {
                 log("shutdown requested");
                 break;
             }
-            accepted = listener.accept() => match accepted {
+            accepted = listener.accept(), if connections.len() < MAX_PENDING_CONNECTIONS => match accepted {
                 Ok((stream, peer)) => {
                     configure_socket(&stream);
                     let hub = Arc::clone(&hub);
@@ -236,14 +244,14 @@ pub(crate) async fn run(options: HubOptions) -> Result<(), String> {
                                 let accepted = tokio::time::timeout(TLS_ACCEPT_TIMEOUT, tls.acceptor.accept(stream)).await;
                                 match accepted {
                                     Ok(Ok(stream)) => match exporter_binding(stream.get_ref().1) {
-                                        Ok(binding) => http::serve_connection(hub, stream, binding, peer).await,
+                                        Ok(binding) => serve_http(hub, stream, binding, peer).await,
                                         Err(error) => log(format!("{peer}: {error}")),
                                     },
                                     Ok(Err(error)) => log(format!("{peer}: TLS handshake failed: {error}")),
                                     Err(_) => log(format!("{peer}: TLS handshake timed out")),
                                 }
                             }
-                            None => http::serve_connection(hub, stream, Vec::new(), peer).await,
+                            None => serve_http(hub, stream, Vec::new(), peer).await,
                         }
                     });
                 }
@@ -276,6 +284,24 @@ pub(crate) async fn run(options: HubOptions) -> Result<(), String> {
     hub.write_status();
     let _ = std::fs::remove_file(hub.data_dir.join("status.json"));
     Ok(())
+}
+
+/// Runs the HTTP phase of one connection under `HTTP_TIMEOUT`. The hyper future resolves as
+/// soon as the WebSocket upgrade is handed off (the World session then runs in its own task),
+/// so the timeout bounds only strangers and stalled requests, never a live member.
+async fn serve_http<IO>(hub: Arc<Hub>, io: IO, binding: Vec<u8>, peer: std::net::SocketAddr)
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    if tokio::time::timeout(HTTP_TIMEOUT, http::serve_connection(hub, io, binding, peer))
+        .await
+        .is_err()
+    {
+        log(format!(
+            "{peer}: closed: no World upgrade within {} s",
+            HTTP_TIMEOUT.as_secs()
+        ));
+    }
 }
 
 async fn wait_for_shutdown_signal() {

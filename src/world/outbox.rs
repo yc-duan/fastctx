@@ -99,7 +99,27 @@ impl Outbox {
         Ok(entries)
     }
 
+    /// How many messages are queued, by counting files: every push and every status read asks,
+    /// and parsing each entry to count them made both quadratic in the queue length.
     pub(crate) fn depth(&self) -> Result<usize, String> {
-        Ok(self.entries()?.len())
+        let listing = match std::fs::read_dir(&self.directory) {
+            Ok(listing) => listing,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => {
+                return Err(format!(
+                    "Cannot list {}: {error}",
+                    crate::paths::display_path(&self.directory)
+                ));
+            }
+        };
+        Ok(listing
+            .flatten()
+            .filter(|item| {
+                item.path()
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| stem.parse::<u64>().is_ok())
+            })
+            .count())
     }
 }
