@@ -18,9 +18,10 @@ pub(crate) fn apply_guidance(
     target: AgentTarget,
     original: Option<&[u8]>,
     tools: EnabledTools,
+    world: bool,
     owned: bool,
 ) -> Result<GuidanceEdit, String> {
-    let generated = generated_guidance(target, tools);
+    let generated = generated_guidance(target, tools, world);
     match target.guidance_kind() {
         GuidanceKind::SharedMarkdown => {
             apply_shared(original.unwrap_or_default(), &generated, owned)
@@ -173,22 +174,30 @@ fn apply_dedicated(
     })
 }
 
-pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools) -> String {
+/// The managed guidance for one enabled set. `world` says whether this machine is enrolled in
+/// a World: the block then speaks of machines instead of "local" and ends with the World
+/// section (`specs/world/design-agent-surface.md` §5).
+pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools, world: bool) -> String {
     let names = tools
         .names()
         .into_iter()
         .map(|name| format!("`{name}`"))
         .collect::<Vec<_>>()
         .join(", ");
-    let scope = if tools.files_enabled() && tools.shell_enabled() {
-        "local filesystem and command work"
+    let work = if tools.files_enabled() && tools.shell_enabled() {
+        "filesystem and command work"
     } else if tools.shell_enabled() {
-        "local command work"
+        "command work"
     } else {
-        "local filesystem work"
+        "filesystem work"
     };
-    let mut text =
-        format!("## FastCtx local tools\n\nUse FastCtx for {scope}. Enabled tools: {names}.\n");
+    let mut text = if world {
+        format!(
+            "## FastCtx tools\n\nUse FastCtx for {work} on this machine and, with `node`, on the other machines of its World. Enabled tools: {names}.\n"
+        )
+    } else {
+        format!("## FastCtx local tools\n\nUse FastCtx for local {work}. Enabled tools: {names}.\n")
+    };
     if tools.contains("inspect_local_file") {
         text.push_str(
             "Each inspect_local_file call accepts one path; issue independent read-only calls in parallel when the host supports it.\n",
@@ -205,13 +214,48 @@ pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools) -> S
         );
     }
     if tools.shell_enabled() {
-        text.push_str(
-            "Use run for local shell work; it is POSIX bash on every platform, including Windows.\n",
-        );
+        text.push_str(if world {
+            "Use run for shell work on any machine; it is POSIX bash on every platform, including Windows.\n"
+        } else {
+            "Use run for local shell work; it is POSIX bash on every platform, including Windows.\n"
+        });
     }
     text.push_str(
         "Successful responses begin with a factual head note whose ranges and totals describe the body that FastCtx emitted.\n",
     );
+    if world {
+        text.push_str(&world_guidance(tools));
+    }
+    text
+}
+
+/// The World section: the cross-tool facts no tool description can say
+/// (`specs/world/design-agent-surface.md` §5). Every tool it names is published on this
+/// enabled set in World mode.
+fn world_guidance(tools: EnabledTools) -> String {
+    let mut text = String::from(
+        "\n## FastCtx World\n\nThis machine is one of your trusted machines woven into a World. `nodes` lists them with their OS, home directory and user; a call with `node` runs on that machine and its first line names it.\nOne call names one machine; several machines are several calls, sent in parallel where the host allows.\n",
+    );
+    if tools.shell_enabled() {
+        text.push_str(
+            "Each machine runs commands in its own login shell, starting in its home directory when `cwd` is omitted.\nBefore working on a machine for the first time, read its OS and home from `nodes` and look around with `run` rather than assuming paths.\n",
+        );
+    } else {
+        text.push_str(
+            "Before working on a machine for the first time, read its OS and home from `nodes` rather than assuming paths.\n",
+        );
+    }
+    text.push_str("`copy` moves a file or a directory tree between two machines and skips files already identical there.\n");
+    if tools.contains("inspect_local_file") {
+        text.push_str(
+            "`remote_write` and `remote_edit` change files on other machines; inspect a file with `inspect_local_file` on that machine before changing it.\n",
+        );
+    }
+    if tools.shell_enabled() {
+        text.push_str(
+            "For work across many machines, or work that must outlive this conversation, write a script and start it with `run_background`; inside it, `fastctx world nodes`, `fastctx world run --node <machine> -- <command>`, and `fastctx world copy` reach the other machines.\n",
+        );
+    }
     text
 }
 

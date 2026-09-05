@@ -302,7 +302,8 @@ pub(crate) fn synchronize_applied_guidance(
             EnabledTools::files()
         }
     });
-    let state = agents::classify_managed_section_for_tools(&original, record_tools);
+    let world = crate::world::is_enrolled(paths);
+    let state = agents::classify_managed_section_for(&original, record_tools, world);
     match state {
         agents::ManagedSectionState::Current
             if record.agents_contract_id.as_deref()
@@ -321,8 +322,8 @@ pub(crate) fn synchronize_applied_guidance(
             ))
         }
         agents::ManagedSectionState::KnownLegacy => {
-            let refreshed = agents::refresh_known_legacy_section_for_tools(&original, record_tools)
-                .expect(
+            let refreshed =
+                agents::refresh_known_legacy_section_for(&original, record_tools, world).expect(
                     "an exact known legacy classification must produce its current replacement",
                 );
             let change = file_write(
@@ -406,9 +407,11 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
     let codex_edit = codex_config::apply(codex_source, &expected, previous_ownership)?;
 
     let agents_original = transaction::read_snapshot(&paths.codex_agents)?;
-    let agents_edit = agents::apply_section_with_ownership_for_tools(
+    let world = crate::world::is_enrolled(paths);
+    let agents_edit = agents::apply_section_with_ownership_for_world(
         agents_original.as_deref().unwrap_or_default(),
         options.enabled_tools,
+        world,
     )?;
     let agents_bytes = agents_edit.bytes;
 
@@ -491,6 +494,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
             tool_budgets: expected.tool_budgets,
             fastshell_enabled: options.enabled_tools.shell_enabled(),
             enabled_tools: Some(options.enabled_tools),
+            world,
             fastedit_enabled: false,
             codex_dir_created,
             codex_config: managed_record(
@@ -720,7 +724,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
                 }
             });
             let guidance_state =
-                agents::classify_managed_section_for_tools(original, enabled_tools);
+                agents::classify_managed_section_for(original, enabled_tools, record.world);
             let removable = guidance_state == agents::ManagedSectionState::Current
                 || (guidance_state == agents::ManagedSectionState::KnownLegacy
                     && record.agents_contract_id.is_none());

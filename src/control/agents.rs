@@ -254,13 +254,20 @@ pub fn section(fastshell_enabled: bool) -> String {
     })
 }
 
-/// Builds the exact Codex managed block for an arbitrary valid enabled set.
+/// Builds the exact Codex managed block for an arbitrary valid enabled set on a machine that
+/// is not enrolled in a World.
 pub fn section_for_tools(tools: EnabledTools) -> String {
+    section_for(tools, false)
+}
+
+/// Builds the exact Codex managed block for an enabled set and this machine's enrollment.
+pub fn section_for(tools: EnabledTools, world: bool) -> String {
     let mut output = String::from(BEGIN_MARKER);
     output.push('\n');
     output.push_str(&crate::control::targets::generated_guidance(
         AgentTarget::Codex,
         tools,
+        world,
     ));
     output.push_str(END_MARKER);
     output
@@ -295,13 +302,22 @@ pub(crate) fn apply_section_with_ownership_for_tools(
     original: &[u8],
     tools: EnabledTools,
 ) -> Result<SectionEdit, String> {
+    apply_section_with_ownership_for_world(original, tools, false)
+}
+
+/// Applies the exact managed block for an enabled set and this machine's World enrollment.
+pub(crate) fn apply_section_with_ownership_for_world(
+    original: &[u8],
+    tools: EnabledTools,
+    world: bool,
+) -> Result<SectionEdit, String> {
     let original = remove_exact_legacy_section(original)?;
     let source = std::str::from_utf8(&original).map_err(|error| {
         format!(
             "Cannot edit AGENTS.md because it is not valid UTF-8 ({error}). Convert it to UTF-8 and retry."
         )
     })?;
-    let expected = section_for_tools(tools);
+    let expected = section_for(tools, world);
     match section_range(source)? {
         Some((start, end)) => {
             let mut output = Vec::with_capacity(original.len() + expected.len());
@@ -416,6 +432,17 @@ pub(crate) fn classify_managed_section_for_tools(
     bytes: &[u8],
     tools: EnabledTools,
 ) -> ManagedSectionState {
+    classify_managed_section_for(bytes, tools, false)
+}
+
+/// Classifies the managed block against the contract for `tools` on a machine whose World
+/// enrollment is `world`. A block written under the other enrollment state is `Drifted`
+/// here; callers that want to name that case compare with `!world` as well.
+pub(crate) fn classify_managed_section_for(
+    bytes: &[u8],
+    tools: EnabledTools,
+    world: bool,
+) -> ManagedSectionState {
     let source = match std::str::from_utf8(bytes) {
         Ok(source) => source,
         Err(error) => {
@@ -431,7 +458,7 @@ pub(crate) fn classify_managed_section_for_tools(
         return ManagedSectionState::Missing;
     };
     let managed = &source[start..end];
-    if managed == section_for_tools(tools) {
+    if managed == section_for(tools, world) {
         ManagedSectionState::Current
     } else if KnownLegacyGuidance::ALL
         .iter()
@@ -443,16 +470,27 @@ pub(crate) fn classify_managed_section_for_tools(
     }
 }
 
-pub(crate) fn refresh_known_legacy_section_for_tools(
+/// Whether the managed block is exactly the contract for the other enrollment state: the
+/// machine enrolled or left a World after Apply, and only Apply may rewrite the block.
+pub(crate) fn managed_section_matches_other_enrollment(
     bytes: &[u8],
     tools: EnabledTools,
+    world: bool,
+) -> bool {
+    classify_managed_section_for(bytes, tools, !world) == ManagedSectionState::Current
+}
+
+pub(crate) fn refresh_known_legacy_section_for(
+    bytes: &[u8],
+    tools: EnabledTools,
+    world: bool,
 ) -> Option<Vec<u8>> {
-    if classify_managed_section_for_tools(bytes, tools) != ManagedSectionState::KnownLegacy {
+    if classify_managed_section_for(bytes, tools, world) != ManagedSectionState::KnownLegacy {
         return None;
     }
     let source = std::str::from_utf8(bytes).ok()?;
     let (start, end) = section_range(source).ok()??;
-    let current = section_for_tools(tools);
+    let current = section_for(tools, world);
     let mut output = Vec::with_capacity(bytes.len() + current.len() - (end - start));
     output.extend_from_slice(&bytes[..start]);
     output.extend_from_slice(current.as_bytes());

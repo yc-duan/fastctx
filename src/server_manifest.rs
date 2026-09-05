@@ -82,11 +82,38 @@ const TOOL_ENTRIES: [ToolManifestEntry; 9] = [
     },
 ];
 
-/// Published whenever the proxy runs in World mode, regardless of the enabled set.
-const WORLD_ENTRIES: [ToolManifestEntry; 1] = [ToolManifestEntry {
-    name: "nodes",
-    group: ToolGroup::World,
-}];
+/// Published only in World mode: the first two whatever the enabled set, the two remote
+/// writers only when `inspect_local_file` is enabled, because their "inspected before
+/// changed" contract has no other way to be met.
+const WORLD_ENTRIES: [ToolManifestEntry; 4] = [
+    ToolManifestEntry {
+        name: "nodes",
+        group: ToolGroup::World,
+    },
+    ToolManifestEntry {
+        name: "copy",
+        group: ToolGroup::World,
+    },
+    ToolManifestEntry {
+        name: "remote_write",
+        group: ToolGroup::World,
+    },
+    ToolManifestEntry {
+        name: "remote_edit",
+        group: ToolGroup::World,
+    },
+];
+
+/// The World tool whose publication the remote writers follow.
+const REMOTE_WRITERS_REQUIRE: &str = "inspect_local_file";
+
+/// Whether a World entry is published on top of `enabled`.
+pub fn world_entry_published(name: &str, enabled: EnabledTools) -> bool {
+    match name {
+        "remote_write" | "remote_edit" => enabled.contains(REMOTE_WRITERS_REQUIRE),
+        _ => true,
+    }
+}
 
 const FILE_MASK: u16 = 0b0000_1111;
 const SHELL_MASK: u16 = 0b1_1111_0000;
@@ -251,7 +278,12 @@ impl ToolManifest {
     pub fn expected_names_for(options: crate::server::ServerOptions) -> Vec<&'static str> {
         let mut names = options.tools.names();
         if options.world {
-            names.extend(WORLD_ENTRIES.iter().map(|entry| entry.name));
+            names.extend(
+                WORLD_ENTRIES
+                    .iter()
+                    .filter(|entry| world_entry_published(entry.name, options.tools))
+                    .map(|entry| entry.name),
+            );
         }
         names
     }
@@ -604,7 +636,7 @@ mod tests {
         );
         let mut prose = vec![(
             "server instructions".to_string(),
-            crate::model_guidance::server_instructions(options.tools),
+            crate::model_guidance::server_instructions(options.tools, options.world),
         )];
         for tool in published_tools(options) {
             if let Some(description) = tool.description.as_deref() {

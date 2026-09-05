@@ -1238,12 +1238,33 @@ fn check_extension_state(name: &'static str, desired: bool, applied: bool) -> Do
 }
 
 fn check_agents(paths: &ControlPaths, applied: Option<&settings::AppliedRecord>) -> DoctorCheck {
+    let world = crate::world::is_enrolled(paths);
     match std::fs::read(&paths.codex_agents) {
         Ok(bytes) => {
             let state = applied.map_or_else(
-                || classify_unowned_agents(&bytes),
-                |record| agents::classify_managed_section_for_tools(&bytes, applied_tools(record)),
+                || classify_unowned_agents(&bytes, world),
+                |record| agents::classify_managed_section_for(&bytes, applied_tools(record), world),
             );
+            // A block from the other enrollment state is not drift a user made: the machine
+            // enrolled in or left a World after Apply, and only Apply rewrites the block.
+            if state == agents::ManagedSectionState::Drifted
+                && let Some(record) = applied
+                && agents::managed_section_matches_other_enrollment(
+                    &bytes,
+                    applied_tools(record),
+                    world,
+                )
+            {
+                return DoctorCheck::fail(
+                    "AGENTS guidance",
+                    if world {
+                        "State: predates enrollment. The managed block was written before this machine joined a World and has no World section."
+                    } else {
+                        "State: predates leaving. The managed block still carries the World section from before this machine left its World."
+                    },
+                    "Run fastctx apply to rewrite the managed block, then restart Codex.",
+                );
+            }
             check_agents_state(paths, applied, state)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1260,7 +1281,7 @@ fn check_agents(paths: &ControlPaths, applied: Option<&settings::AppliedRecord>)
     }
 }
 
-fn classify_unowned_agents(bytes: &[u8]) -> agents::ManagedSectionState {
+fn classify_unowned_agents(bytes: &[u8], world: bool) -> agents::ManagedSectionState {
     let file_names = ["inspect_local_file", "grep", "glob", "replace"];
     let shell_names = [
         "run",
@@ -1279,7 +1300,7 @@ fn classify_unowned_agents(bytes: &[u8]) -> agents::ManagedSectionState {
                 .collect::<Vec<_>>();
             let tools = EnabledTools::from_names(names)
                 .expect("the closed Doctor enumeration only builds valid tool sets");
-            let state = agents::classify_managed_section_for_tools(bytes, tools);
+            let state = agents::classify_managed_section_for(bytes, tools, world);
             if !matches!(state, agents::ManagedSectionState::Drifted) {
                 return state;
             }

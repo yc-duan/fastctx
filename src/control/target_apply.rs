@@ -160,10 +160,12 @@ pub fn plan_target_apply(
             .as_ref()
             .and_then(|receipt| receipt.jsonc_config.as_ref()),
     })?;
+    let world = crate::world::is_enrolled(control);
     let guidance_edit = apply_guidance(
         options.target,
         guidance_original.as_deref(),
         options.enabled_tools,
+        world,
         previous.is_some(),
     )?;
     let mut created_directories = previous
@@ -185,6 +187,7 @@ pub fn plan_target_apply(
         applied_at_utc,
         version: env!("CARGO_PKG_VERSION").to_string(),
         enabled_tools: options.enabled_tools,
+        world,
         fastctx_token_budget: global_budget,
         config: managed_record(
             &target_paths.config,
@@ -472,8 +475,11 @@ fn plan_codex_disconnect(control: &ControlPaths) -> Result<TargetDisconnectPlan,
             "The managed Codex AGENTS.md is missing; Disconnect stopped before changing anything."
                 .to_string()
         })?;
-    if agents::classify_managed_section_for_tools(&guidance_original, receipt.enabled_tools)
-        != agents::ManagedSectionState::Current
+    if agents::classify_managed_section_for(
+        &guidance_original,
+        receipt.enabled_tools,
+        receipt.world,
+    ) != agents::ManagedSectionState::Current
     {
         return Err(
             "Codex managed guidance drifted after Apply; Disconnect will not remove user-changed bytes."

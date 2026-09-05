@@ -157,7 +157,10 @@ impl FastCtxServer {
         for (name, description) in [
             (
                 "run_background",
-                crate::model_guidance::run_background_tool_description(options.tools),
+                crate::model_guidance::run_background_tool_description(
+                    options.tools,
+                    options.world,
+                ),
             ),
             (
                 "job_output",
@@ -196,6 +199,11 @@ impl FastCtxServer {
                 tool_router.remove_route(name);
             }
             tool_router.merge(world_router);
+            for entry in ToolManifest::world_entries() {
+                if !crate::server_manifest::world_entry_published(entry.name, options.tools) {
+                    tool_router.remove_route(entry.name);
+                }
+            }
         }
         for entry in ToolManifest::entries() {
             if !options.tools.contains(entry.name) {
@@ -390,6 +398,7 @@ impl ServerHandler for FastCtxServer {
             // the host guidance file, which has no such limit.
             .with_instructions(crate::model_guidance::server_instructions(
                 self.options.tools,
+                self.options.world,
             ))
     }
 

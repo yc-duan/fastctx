@@ -759,10 +759,12 @@ fn no_pdf_build_rejects_pdf_without_affecting_the_public_read_schema() {
 fn a_world_appears_in_the_published_surface_only_after_this_machine_is_enrolled() {
     let unenrolled = tempfile::tempdir().unwrap();
     let tools = published_tools(unenrolled.path());
-    assert!(
-        tools.iter().all(|tool| tool["name"] != "nodes"),
-        "an unenrolled machine published the nodes tool"
-    );
+    for name in ["nodes", "copy", "remote_write", "remote_edit"] {
+        assert!(
+            tools.iter().all(|tool| tool["name"] != name),
+            "an unenrolled machine published the {name} tool"
+        );
+    }
     for tool in &tools {
         assert!(
             tool["inputSchema"]["properties"].get("node").is_none(),
@@ -776,11 +778,13 @@ fn a_world_appears_in_the_published_surface_only_after_this_machine_is_enrolled(
     // Enrollment is a file-existence check; the surface must not need a reachable hub to change.
     std::fs::write(enrolled.path().join(".fastctx/world.toml"), "version = 1\n").unwrap();
     let tools = published_tools(enrolled.path());
-    assert!(
-        tools.iter().any(|tool| tool["name"] == "nodes"),
-        "an enrolled machine did not publish the nodes tool; it published {:?}",
-        tools.iter().map(|tool| &tool["name"]).collect::<Vec<_>>()
-    );
+    for name in ["nodes", "copy", "remote_write", "remote_edit"] {
+        assert!(
+            tools.iter().any(|tool| tool["name"] == name),
+            "an enrolled machine did not publish {name}; it published {:?}",
+            tools.iter().map(|tool| &tool["name"]).collect::<Vec<_>>()
+        );
+    }
     for name in ["inspect_local_file", "grep", "glob", "replace", "run"] {
         let tool = tools
             .iter()

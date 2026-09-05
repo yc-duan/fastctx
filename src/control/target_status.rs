@@ -112,7 +112,7 @@ fn inspect_connected(
     let config = read_required(&paths.config, "configuration")?;
     let guidance = read_required(&paths.guidance, "guidance")?;
     if target == AgentTarget::Codex {
-        inspect_codex(receipt, installation_receipt, &config, &guidance)?;
+        inspect_codex(control, receipt, installation_receipt, &config, &guidance)?;
     } else {
         let current = inspect_config(target, &config).map_err(TargetIssue::Invalid)?;
         if current.as_deref() != Some(receipt.config_entry_sha256.as_str()) {
@@ -126,6 +126,11 @@ fn inspect_connected(
             return Err(TargetIssue::Drift(
                 "Managed guidance is missing or differs from the Apply receipt.".to_string(),
             ));
+        }
+        // The block still matches its receipt, but the receipt was written for the other
+        // enrollment state: only Apply adds or removes the World section.
+        if receipt.world != crate::world::is_enrolled(control) {
+            return Err(TargetIssue::Drift(enrollment_changed(receipt.world)));
         }
     }
     let installation = fs::read(&control.installed_binary)
@@ -151,6 +156,7 @@ fn inspect_connected(
 }
 
 fn inspect_codex(
+    control: &ControlPaths,
     receipt: &TargetReceipt,
     installation: Option<&crate::control::settings::InstallationRecord>,
     config: &[u8],
@@ -186,14 +192,28 @@ fn inspect_codex(
             drift.join(", ")
         )));
     }
-    if agents::classify_managed_section_for_tools(guidance, receipt.enabled_tools)
+    let world = crate::world::is_enrolled(control);
+    if agents::classify_managed_section_for(guidance, receipt.enabled_tools, world)
         != agents::ManagedSectionState::Current
     {
+        if agents::managed_section_matches_other_enrollment(guidance, receipt.enabled_tools, world)
+        {
+            return Err(TargetIssue::Drift(enrollment_changed(!world)));
+        }
         return Err(TargetIssue::Drift(
             "Codex managed guidance differs from the enabled-set contract.".to_string(),
         ));
     }
     Ok(())
+}
+
+/// The sentence for a guidance block written before this machine enrolled in or left a World.
+fn enrollment_changed(applied_enrolled: bool) -> String {
+    if applied_enrolled {
+        "Managed guidance still carries the World section from before this machine left its World; run fastctx apply to remove it.".to_string()
+    } else {
+        "Managed guidance predates this machine's World enrollment and has no World section; run fastctx apply to add it.".to_string()
+    }
 }
 
 enum TargetIssue {

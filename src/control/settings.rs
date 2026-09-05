@@ -666,6 +666,10 @@ pub struct AppliedRecord {
     /// Exact 1.0 tool set; older receipts derive it from fastshell_enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_tools: Option<EnabledTools>,
+    /// Whether this machine was enrolled in a World when Apply wrote the guidance block; the
+    /// block's World section follows it, so a later enrollment change needs another Apply.
+    #[serde(default)]
+    pub world: bool,
     /// Legacy receipt field accepted so older installations can be re-applied safely.
     #[serde(default, skip_serializing)]
     pub fastedit_enabled: bool,
@@ -749,6 +753,9 @@ pub struct TargetReceipt {
     pub applied_at_utc: String,
     pub version: String,
     pub enabled_tools: EnabledTools,
+    /// Whether this machine was enrolled in a World when Apply wrote the guidance.
+    #[serde(default)]
+    pub world: bool,
     pub fastctx_token_budget: usize,
     pub config: ManagedFileRecord,
     pub guidance: ManagedFileRecord,
@@ -952,6 +959,7 @@ impl FastCtxSettings {
                 applied_at_utc: record.applied_at_utc.clone(),
                 version: record.version.clone(),
                 enabled_tools,
+                world: record.world,
                 fastctx_token_budget: record.fastctx_token_budget,
                 config: record.codex_config.clone(),
                 guidance: record.codex_agents.clone(),
@@ -1012,6 +1020,7 @@ impl FastCtxSettings {
             tool_budgets: codex.tool_budgets,
             fastshell_enabled: receipt.enabled_tools.shell_enabled(),
             enabled_tools: Some(receipt.enabled_tools),
+            world: receipt.world,
             fastedit_enabled: false,
             codex_dir_created: codex.codex_dir_created,
             codex_config: receipt.config.clone(),
