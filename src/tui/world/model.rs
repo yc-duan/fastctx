@@ -8,7 +8,7 @@
 use super::i18n::{WorldMessages, fill};
 use crate::tui::theme;
 use crate::world::client::{LinkState, NodeView};
-use crate::world::control::{ReadState, Snapshot};
+use crate::world::control::{FailureKind, ReadState, Snapshot};
 use crate::world::doctor::{LinkFinding, StopRemedy, status_is_fresh};
 use crate::world::node::admin::NodeStatus;
 use ratatui::style::Color;
@@ -25,10 +25,10 @@ pub(super) enum Tone {
 impl Tone {
     pub(super) fn symbol(self) -> &'static str {
         match self {
-            Self::Ok => "✓",
+            Self::Ok => "√",
             Self::Info => "·",
             Self::Warn => "!",
-            Self::Fail => "✕",
+            Self::Fail => "×",
         }
     }
     pub(super) fn color(self) -> Color {
@@ -63,7 +63,7 @@ impl Presence {
         match self {
             Self::Online => "●",
             Self::Offline => "○",
-            Self::Revoked => "✕",
+            Self::Revoked => "×",
             Self::Unknown => "?",
         }
     }
@@ -113,8 +113,8 @@ impl LinkTone {
     pub(super) fn symbol(self) -> &'static str {
         match self {
             Self::Connected => "●",
-            Self::Connecting => "◌",
-            Self::Stopped => "✕",
+            Self::Connecting => "○",
+            Self::Stopped => "×",
         }
     }
     pub(super) fn color(self) -> Color {
@@ -192,8 +192,6 @@ pub(super) fn current_status(snapshot: &Snapshot) -> Option<(&NodeStatus, bool)>
 pub(super) struct Verdict {
     pub(super) tone: Tone,
     pub(super) text: String,
-    /// The one key that leads to the fix, already phrased for the footer band.
-    pub(super) hint: Option<&'static str>,
 }
 
 pub(super) fn verdict(snapshot: &Snapshot, m: &WorldMessages) -> Verdict {
@@ -202,14 +200,17 @@ pub(super) fn verdict(snapshot: &Snapshot, m: &WorldMessages) -> Verdict {
             return Verdict {
                 tone: Tone::Fail,
                 text: m.verdict_node_down.to_string(),
-                hint: Some(m.go_service),
             };
         }
         ReadState::Failed(error) => {
             return Verdict {
                 tone: Tone::Fail,
-                text: format!("{} {}", m.verdict_node_error, error.detail),
-                hint: Some(m.go_service),
+                text: if error.kind == FailureKind::Permission {
+                    m.permission
+                } else {
+                    m.verdict_node_error
+                }
+                .to_string(),
             };
         }
         ReadState::Ready(_) => {}
@@ -218,22 +219,19 @@ pub(super) fn verdict(snapshot: &Snapshot, m: &WorldMessages) -> Verdict {
         return Verdict {
             tone: Tone::Warn,
             text: m.unavailable.to_string(),
-            hint: Some(m.go_service),
         };
     };
     if !fresh {
         return Verdict {
             tone: Tone::Warn,
             text: m.verdict_stale.to_string(),
-            hint: Some(m.go_service),
         };
     }
     match &status.link.state {
-        LinkState::Stopped { reason, .. } => {
+        LinkState::Stopped { .. } => {
             return Verdict {
                 tone: Tone::Fail,
-                text: fill(m.verdict_link_stopped, &[("reason", reason)]),
-                hint: Some(m.go_connection),
+                text: fill(m.verdict_link_stopped, &[("reason", m.stopped)]),
             };
         }
         LinkState::Reconnecting { attempt, .. } => {
@@ -243,7 +241,6 @@ pub(super) fn verdict(snapshot: &Snapshot, m: &WorldMessages) -> Verdict {
                     m.verdict_link_reconnecting,
                     &[("attempt", &attempt.to_string())],
                 ),
-                hint: Some(m.go_connection),
             };
         }
         LinkState::Starting | LinkState::Connecting { .. } => {
@@ -257,7 +254,6 @@ pub(super) fn verdict(snapshot: &Snapshot, m: &WorldMessages) -> Verdict {
                     m.verdict_link_connecting,
                     &[("attempt", &attempt.to_string())],
                 ),
-                hint: Some(m.go_connection),
             };
         }
         LinkState::Connected => {}
@@ -266,14 +262,12 @@ pub(super) fn verdict(snapshot: &Snapshot, m: &WorldMessages) -> Verdict {
         return Verdict {
             tone: Tone::Fail,
             text: m.verdict_not_hosting.to_string(),
-            hint: Some(m.go_service),
         };
     }
     if status.grant_stale {
         return Verdict {
             tone: Tone::Warn,
             text: m.verdict_grant_stale.to_string(),
-            hint: Some(m.go_connection),
         };
     }
     let unverified = snapshot.node.get().map_or(0, |node| node.unverified.len());
@@ -281,7 +275,6 @@ pub(super) fn verdict(snapshot: &Snapshot, m: &WorldMessages) -> Verdict {
         return Verdict {
             tone: Tone::Warn,
             text: fill(m.verdict_unverified, &[("count", &unverified.to_string())]),
-            hint: None,
         };
     }
     let members = fill(
@@ -300,13 +293,11 @@ pub(super) fn verdict(snapshot: &Snapshot, m: &WorldMessages) -> Verdict {
                 fill(m.verdict_offline, &[("count", &offline.to_string())]),
                 members
             ),
-            hint: None,
         };
     }
     Verdict {
         tone: Tone::Ok,
         text: format!("{} · {}", m.verdict_ok, members),
-        hint: None,
     }
 }
 
@@ -385,7 +376,12 @@ pub(super) fn stages(snapshot: &Snapshot, m: &WorldMessages) -> Vec<StageView> {
         (ReadState::Failed(error), _) => StageView {
             stage: Stage::Service,
             tone: Tone::Warn,
-            detail: error.detail.clone(),
+            detail: if error.kind == FailureKind::Permission {
+                m.permission
+            } else {
+                m.error
+            }
+            .to_string(),
         },
         (_, Some(true)) => StageView {
             stage: Stage::Service,
@@ -407,13 +403,18 @@ pub(super) fn stages(snapshot: &Snapshot, m: &WorldMessages) -> Vec<StageView> {
         (ReadState::Failed(error), _) => StageView {
             stage: Stage::Process,
             tone: Tone::Fail,
-            detail: error.detail.clone(),
+            detail: if error.kind == FailureKind::Permission {
+                m.permission
+            } else {
+                m.verdict_node_error
+            }
+            .to_string(),
         },
         (_, Some(true)) if fresh => StageView {
             stage: Stage::Process,
             tone: Tone::Ok,
             detail: status
-                .map(|status| format!("{} · PID {}", m.running, status.pid))
+                .map(|_| m.running.to_string())
                 .unwrap_or_else(|| m.running.to_string()),
         },
         (_, Some(true)) => StageView {
@@ -436,7 +437,7 @@ pub(super) fn stages(snapshot: &Snapshot, m: &WorldMessages) -> Vec<StageView> {
                 LinkTone::Stopped => Tone::Fail,
             },
             detail: match status.map(|status| &status.link.state) {
-                Some(LinkState::Stopped { reason, .. }) => format!("{} · {reason}", m.stopped),
+                Some(LinkState::Stopped { .. }) => m.stopped.to_string(),
                 Some(LinkState::Reconnecting { attempt, .. })
                 | Some(LinkState::Connecting { attempt }) => {
                     format!("{} · {attempt}", m.connecting)

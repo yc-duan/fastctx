@@ -25,10 +25,10 @@ pub(crate) struct Theme {
     pub(crate) danger: Color,
     pub(crate) muted: Color,
     pub(crate) border: Color,
-    /// Filled panel ground for raster cards; text on it uses `fg` and `accent`.
+    /// Filled panel ground for cards, inputs and key caps; text on it uses `fg` and `accent`.
     pub(crate) surface: Color,
-    /// A second filled ground that must read as different from `surface` next to it.
-    pub(crate) emphasis: Color,
+    /// Ground of the focused card or row: one step lighter than `surface`, never a hue.
+    pub(crate) highlight: Color,
 }
 
 impl Theme {
@@ -54,7 +54,7 @@ impl Theme {
                 muted: Color::Rgb(0x8a, 0x8c, 0x8e),
                 border: Color::Rgb(0x30, 0x32, 0x36),
                 surface: Color::Rgb(0x1c, 0x21, 0x27),
-                emphasis: Color::Rgb(0x24, 0x33, 0x44),
+                highlight: Color::Rgb(0x28, 0x2f, 0x37),
             },
             ColorMode::Ansi256 => Self {
                 bg: Color::Indexed(232),
@@ -66,8 +66,8 @@ impl Theme {
                 danger: Color::Indexed(167),
                 muted: Color::Indexed(246),
                 border: Color::Indexed(236),
-                surface: Color::Indexed(236),
-                emphasis: Color::Indexed(24),
+                surface: Color::Indexed(235),
+                highlight: Color::Indexed(238),
             },
             ColorMode::Ansi16 => Self {
                 bg: Color::Black,
@@ -82,10 +82,11 @@ impl Theme {
                 // grey-on-grey erases the value outright.
                 muted: Color::Gray,
                 border: Color::DarkGray,
-                // Sixteen colors give exactly one dark grey and one dark blue; both keep `Gray`
-                // and `White` text readable, and the blue is the only second ground on offer.
-                surface: Color::DarkGray,
-                emphasis: Color::Blue,
+                // Standard sixteen-color palettes often make dark grey too bright for status
+                // colors. Cards and inputs draw outlines instead of a filled ground (`flat`),
+                // and only the focused row spends the one dark grey on offer.
+                surface: Color::Black,
+                highlight: Color::DarkGray,
             },
             ColorMode::Monochrome => Self {
                 bg: Color::Reset,
@@ -98,16 +99,23 @@ impl Theme {
                 muted: Color::Reset,
                 border: Color::Reset,
                 surface: Color::Reset,
-                emphasis: Color::Reset,
+                highlight: Color::Reset,
             },
         }
     }
 }
 
-/// True when every role collapses to the terminal default; raster art must then draw outlines,
-/// because a filled block in the default foreground would swallow any text placed on it.
+/// True when every role collapses to the terminal default; drawings must then rely on glyphs
+/// and reversed video, because no colour survives.
 pub(crate) fn monochrome() -> bool {
     current().surface == Color::Reset
+}
+
+/// True when a filled `surface` would be indistinguishable from the page: cards and inputs
+/// then draw outlines so their extent stays visible.
+pub(crate) fn flat() -> bool {
+    let theme = current();
+    theme.surface == theme.bg
 }
 
 fn detect_color_mode_with(mut value: impl FnMut(&str) -> Option<OsString>) -> ColorMode {
@@ -202,8 +210,8 @@ pub(crate) fn surface() -> Color {
     current().surface
 }
 
-pub(crate) fn emphasis() -> Color {
-    current().emphasis
+pub(crate) fn highlight() -> Color {
+    current().highlight
 }
 
 #[cfg(test)]

@@ -1,36 +1,27 @@
-//! The World drawn as a picture: machines around the hub the user runs, joined by their links.
-//!
-//! Three arrangements cover every terminal: a star when a handful of machines and the space for
-//! them exist, a tree with a trunk and curved branches when there are many, and a plain text
-//! tree when the area is too small to draw at all. Presence is carried by the card's symbol and
-//! by the stroke of its connector (solid for online, dashed for offline) before colour is
-//! considered, so the picture survives sixteen colours and monochrome.
+//! The Overview picture: the hub above its machines, joined by thin rounded lines, with the
+//! selected machine lifted one shade. Everything is box drawing and block elements, the two
+//! sets every terminal renders, so the drawing looks the same in a console and a GPU terminal.
 
 use super::i18n::WorldMessages;
 use super::model::{LinkTone, Presence};
-use super::raster::{Dot, Stroke, Surface};
+use super::widgets::{card, clipped, padded, safe, selection_style, width};
 use crate::tui::theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget};
 
 pub(super) struct Machine {
     pub(super) name: String,
     pub(super) presence: Presence,
     pub(super) system: String,
     pub(super) is_self: bool,
-    /// Round trip to the hub as the member reports it.
     pub(super) rtt_ms: Option<u32>,
-    /// "3 min ago" for machines that are not online.
     pub(super) last_seen: String,
-    pub(super) activity: Option<String>,
 }
 
 pub(super) struct Hub {
     pub(super) address: String,
-    /// This machine's own link; absent when the node is not running.
+    /// Only this machine's own connection is known; it does not establish hub-wide health.
     pub(super) link: Option<LinkTone>,
 }
 
@@ -40,624 +31,703 @@ pub(super) struct Topology {
     pub(super) selected: Option<usize>,
 }
 
-/// Machines this many or fewer are shown as a star when the area allows.
-const STAR_LIMIT: usize = 6;
-const CARD_ROWS: i32 = 4;
-const HUB_ROWS: i32 = 3;
-const MIN_CARD_COLUMNS: i32 = 16;
-const MAX_CARD_COLUMNS: i32 = 24;
+const UP: u8 = 1;
+const DOWN: u8 = 2;
+const LEFT: u8 = 4;
+const RIGHT: u8 = 8;
 
-struct Palette {
-    machine_fill: Option<Color>,
-    hub_fill: Option<Color>,
-    outline: Option<Color>,
-    text: Color,
-    faint: Color,
+/// Lines are accumulated as direction masks and resolved to one glyph per cell, so junctions
+/// come out right no matter in which order the segments were drawn.
+struct Wires {
+    columns: u16,
+    cells: Vec<(u8, Option<Color>, bool)>,
 }
 
-fn palette() -> Palette {
-    if theme::monochrome() {
-        Palette {
-            machine_fill: None,
-            hub_fill: None,
-            outline: Some(Color::Reset),
-            text: Color::Reset,
-            faint: Color::Reset,
-        }
-    } else {
-        Palette {
-            machine_fill: Some(theme::surface()),
-            hub_fill: Some(theme::emphasis()),
-            outline: None,
-            text: theme::fg(),
-            faint: theme::muted(),
+impl Wires {
+    fn new(columns: u16, rows: u16) -> Self {
+        Self {
+            columns,
+            cells: vec![(0, None, false); usize::from(columns) * usize::from(rows)],
         }
     }
-}
-
-fn width_of(text: &str) -> i32 {
-    Span::raw(text).width() as i32
-}
-
-impl Topology {
-    fn card_columns(&self) -> i32 {
-        let widest = self
-            .machines
-            .iter()
-            .map(|machine| width_of(&machine.name) + 4)
-            .max()
-            .unwrap_or(0);
-        widest.clamp(MIN_CARD_COLUMNS, MAX_CARD_COLUMNS)
-    }
-    fn hub_columns(&self) -> i32 {
-        (width_of(&self.hub.address) + 4).clamp(MIN_CARD_COLUMNS + 2, 34)
-    }
-    fn stroke(&self, machine: &Machine) -> (Color, Stroke) {
-        if machine.is_self {
-            return match self.hub.link {
-                Some(tone) => (
-                    tone.color(),
-                    if tone == LinkTone::Connected {
-                        Stroke::Solid
-                    } else {
-                        Stroke::Dashed
-                    },
-                ),
-                None => (theme::danger(), Stroke::Dashed),
-            };
-        }
-        match machine.presence {
-            Presence::Online => (theme::success(), Stroke::Solid),
-            Presence::Offline => (theme::muted(), Stroke::Dashed),
-            Presence::Revoked => (theme::danger(), Stroke::Dashed),
-            Presence::Unknown => (theme::warning(), Stroke::Dashed),
-        }
-    }
-}
-
-/// A card placed on the cell grid.
-#[derive(Clone, Copy, Debug)]
-struct Box {
-    column: i32,
-    row: i32,
-    columns: i32,
-    rows: i32,
-}
-
-impl Box {
-    fn overlaps(&self, other: &Box) -> bool {
-        self.column < other.column + other.columns + 1
-            && other.column < self.column + self.columns + 1
-            && self.row < other.row + other.rows
-            && other.row < self.row + self.rows
-    }
-    fn center(&self) -> Dot {
-        Dot::new(
-            f64::from(self.column * 2 + self.columns),
-            f64::from(self.row * 4 + self.rows * 2),
-        )
-    }
-}
-
-/// Renders the picture, falling back to a text tree when the area is too small for cards.
-pub(super) fn render(buf: &mut Buffer, area: Rect, topology: &Topology, m: &WorldMessages) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let columns = i32::from(area.width);
-    let rows = i32::from(area.height);
-    let card = topology.card_columns();
-    let hub = topology.hub_columns();
-    if let Some(placement) = star(topology, columns, rows, card, hub) {
-        draw_star(buf, area, topology, m, &placement);
-    } else if columns >= hub.max(card + 6) && rows >= HUB_ROWS + 1 + CARD_ROWS {
-        draw_tree(buf, area, topology, m, card, hub);
-    } else {
-        draw_list(buf, area, topology, m);
-    }
-}
-
-struct Star {
-    hub: Box,
-    machines: Vec<Box>,
-}
-
-fn star(topology: &Topology, columns: i32, rows: i32, card: i32, hub: i32) -> Option<Star> {
-    let count = topology.machines.len();
-    if count == 0 || count > STAR_LIMIT {
-        return None;
-    }
-    let hub_box = Box {
-        column: (columns - hub) / 2,
-        row: (rows - HUB_ROWS) / 2,
-        columns: hub,
-        rows: HUB_ROWS,
-    };
-    let radius_x = f64::from((columns - card) / 2 - 1);
-    let radius_y = f64::from(rows - CARD_ROWS) / 2.0;
-    if radius_x < f64::from(card / 2 + hub / 2 + 3) && count > 1 {
-        return None;
-    }
-    let mut machines = Vec::with_capacity(count);
-    for index in 0..count {
-        let angle =
-            -std::f64::consts::FRAC_PI_2 + std::f64::consts::TAU * index as f64 / count as f64;
-        let center_column = f64::from(columns) / 2.0 + radius_x * angle.cos();
-        let center_row = f64::from(rows) / 2.0 + radius_y * angle.sin();
-        let placed = Box {
-            column: (center_column - f64::from(card) / 2.0).round() as i32,
-            row: (center_row - f64::from(CARD_ROWS) / 2.0).round() as i32,
-            columns: card,
-            rows: CARD_ROWS,
-        };
-        if placed.column < 0
-            || placed.row < 0
-            || placed.column + card > columns
-            || placed.row + CARD_ROWS > rows
-            || placed.overlaps(&hub_box)
-            || machines.iter().any(|other| placed.overlaps(other))
-        {
+    fn cell(&mut self, x: u16, y: u16) -> Option<&mut (u8, Option<Color>, bool)> {
+        if x >= self.columns {
             return None;
         }
-        machines.push(placed);
+        self.cells
+            .get_mut(usize::from(y) * usize::from(self.columns) + usize::from(x))
     }
-    Some(Star {
-        hub: hub_box,
-        machines,
-    })
-}
-
-fn draw_star(
-    buf: &mut Buffer,
-    area: Rect,
-    topology: &Topology,
-    m: &WorldMessages,
-    placement: &Star,
-) {
-    let colors = palette();
-    let mut surface = Surface::new(area.width, area.height, super::raster::glyphs());
-    let hub_center = placement.hub.center();
-    for (machine, placed) in topology.machines.iter().zip(&placement.machines) {
-        let (color, stroke) = topology.stroke(machine);
-        let center = placed.center();
-        surface.gradient(hub_center, center, colors.faint, color, stroke);
-        if let Some(rtt) = machine
-            .rtt_ms
-            .filter(|_| machine.presence == Presence::Online)
-        {
-            let label = format!(" {rtt} ms ");
-            let width = width_of(&label);
-            let mid_column = ((hub_center.x + center.x) / 4.0).round() as i32 - width / 2;
-            let mid_row = ((hub_center.y + center.y) / 8.0).round() as i32;
-            let clear = |b: &Box| {
-                !(mid_row >= b.row - 1 && mid_row <= b.row + b.rows)
-                    || mid_column + width < b.column
-                    || mid_column > b.column + b.columns
-            };
-            if clear(&placement.hub) && clear(placed) {
-                surface.label(
-                    mid_column,
-                    mid_row,
-                    label,
-                    Style::default().fg(colors.faint).bg(theme::bg()),
-                    width,
-                );
+    fn hline(&mut self, y: u16, x0: u16, x1: u16, color: Color) {
+        let (x0, x1) = (x0.min(x1), x0.max(x1));
+        for x in x0..=x1 {
+            if let Some(cell) = self.cell(x, y) {
+                if x > x0 {
+                    cell.0 |= LEFT;
+                }
+                if x < x1 {
+                    cell.0 |= RIGHT;
+                }
+                cell.1 = Some(color);
             }
         }
     }
-    draw_hub_card(&mut surface, &colors, &placement.hub, &topology.hub, m);
-    for (index, (machine, placed)) in topology
+    /// A vertical run that keeps the colour of any horizontal it crosses.
+    fn vline(&mut self, x: u16, y0: u16, y1: u16, color: Color, dashed: bool) {
+        let (y0, y1) = (y0.min(y1), y0.max(y1));
+        for y in y0..=y1 {
+            if let Some(cell) = self.cell(x, y) {
+                if y > y0 {
+                    cell.0 |= UP;
+                }
+                if y < y1 {
+                    cell.0 |= DOWN;
+                }
+                if cell.1.is_none() {
+                    cell.1 = Some(color);
+                }
+                cell.2 |= dashed;
+            }
+        }
+    }
+    /// Marks a cell as continuing a line that arrives from the row above.
+    fn enter_from_above(&mut self, x: u16, y: u16, color: Color, dashed: bool) {
+        if let Some(cell) = self.cell(x, y) {
+            cell.0 |= UP;
+            if cell.1.is_none() {
+                cell.1 = Some(color);
+            }
+            cell.2 |= dashed;
+        }
+    }
+    fn render(&self, buf: &mut Buffer, area: Rect) {
+        for (index, (mask, color, dashed)) in self.cells.iter().enumerate() {
+            if *mask == 0 {
+                continue;
+            }
+            let x = area.x + (index % usize::from(self.columns)) as u16;
+            let y = area.y + (index / usize::from(self.columns)) as u16;
+            if x >= area.right() || y >= area.bottom() {
+                continue;
+            }
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_symbol(glyph(*mask, *dashed))
+                    .set_fg(color.unwrap_or_else(theme::border));
+            }
+        }
+    }
+}
+
+const VERTICAL: u8 = UP | DOWN;
+const HORIZONTAL: u8 = LEFT | RIGHT;
+const TOP_LEFT: u8 = DOWN | RIGHT;
+const TOP_RIGHT: u8 = DOWN | LEFT;
+const BOTTOM_LEFT: u8 = UP | RIGHT;
+const BOTTOM_RIGHT: u8 = UP | LEFT;
+const TEE_DOWN: u8 = LEFT | RIGHT | DOWN;
+const TEE_UP: u8 = LEFT | RIGHT | UP;
+const TEE_RIGHT: u8 = UP | DOWN | RIGHT;
+const TEE_LEFT: u8 = UP | DOWN | LEFT;
+
+fn glyph(mask: u8, dashed: bool) -> &'static str {
+    match mask {
+        UP | DOWN | VERTICAL => {
+            if dashed {
+                "┆"
+            } else {
+                "│"
+            }
+        }
+        LEFT | RIGHT | HORIZONTAL => "─",
+        TOP_LEFT => "╭",
+        TOP_RIGHT => "╮",
+        BOTTOM_LEFT => "╰",
+        BOTTOM_RIGHT => "╯",
+        TEE_DOWN => "┬",
+        TEE_UP => "┴",
+        TEE_RIGHT => "├",
+        TEE_LEFT => "┤",
+        _ => "┼",
+    }
+}
+
+/// Row budgets for one layout tier: the hub card, the link rows between hub and cards, and a
+/// machine card. The full tier pads its cards; the tight tier keeps the same picture in fewer rows.
+#[derive(Clone, Copy)]
+struct Tier {
+    hub: u16,
+    link: u16,
+    card: u16,
+    pad: u16,
+}
+
+const FULL: Tier = Tier {
+    hub: 4,
+    link: 3,
+    card: 5,
+    pad: 1,
+};
+const TIGHT: Tier = Tier {
+    hub: 2,
+    link: 2,
+    card: 3,
+    pad: 0,
+};
+/// Rows between two rows of cards: a bus and the drops into the next row.
+const GAP: u16 = 2;
+
+struct Plan {
+    tier: Tier,
+    card_width: u16,
+    columns: u16,
+    rows: u16,
+    hub_width: u16,
+    left: u16,
+    rail: Option<u16>,
+    /// A page counter needs its own row so it never sits on a card.
+    counter: bool,
+}
+
+impl Plan {
+    fn height_for(&self, rows: u16) -> u16 {
+        self.tier.hub
+            + self.tier.link
+            + self.tier.card
+            + (rows.max(1) - 1) * (self.tier.card + GAP)
+            + u16::from(self.counter)
+    }
+    fn capacity(&self) -> usize {
+        usize::from(self.columns) * usize::from(self.rows)
+    }
+    /// The machines this page shows, given which one is selected.
+    fn page(&self, topology: &Topology) -> (usize, usize) {
+        let selected = topology
+            .selected
+            .unwrap_or(0)
+            .min(topology.machines.len().saturating_sub(1));
+        let first = selected / self.capacity() * self.capacity();
+        (
+            first,
+            (first + self.capacity()).min(topology.machines.len()),
+        )
+    }
+    /// Rows the current page actually fills; the last page is usually shorter than the plan.
+    fn page_rows(&self, topology: &Topology) -> u16 {
+        let (first, last) = self.page(topology);
+        (last - first).div_ceil(usize::from(self.columns)).max(1) as u16
+    }
+}
+
+fn machine_name(machine: &Machine, m: &WorldMessages) -> (String, String) {
+    (
+        safe(&machine.name),
+        if machine.is_self {
+            m.this_machine.to_string()
+        } else {
+            String::new()
+        },
+    )
+}
+
+fn machine_status(machine: &Machine, m: &WorldMessages) -> String {
+    let detail = if machine.presence == Presence::Online {
+        machine
+            .rtt_ms
+            .map(|rtt| format!("{rtt} ms"))
+            .unwrap_or_default()
+    } else if machine.presence == Presence::Offline {
+        machine.last_seen.clone()
+    } else {
+        String::new()
+    };
+    let mut status = format!(
+        "{} {}",
+        machine.presence.symbol(),
+        machine.presence.label(m)
+    );
+    if !detail.is_empty() {
+        status.push_str(" · ");
+        status.push_str(&detail);
+    }
+    status
+}
+
+fn plan(topology: &Topology, m: &WorldMessages, width: u16, available: u16) -> Option<Plan> {
+    if topology.machines.is_empty() || width < 24 {
+        return None;
+    }
+    let content = topology
         .machines
         .iter()
-        .zip(&placement.machines)
-        .enumerate()
-    {
-        draw_machine_card(
-            &mut surface,
-            &colors,
-            placed,
-            machine,
-            m,
-            topology.selected == Some(index),
-        );
+        .flat_map(|machine| {
+            let (name, tag) = machine_name(machine, m);
+            let title = if tag.is_empty() {
+                name
+            } else {
+                format!("{name}  {tag}")
+            };
+            [title, safe(&machine.system), machine_status(machine, m)]
+        })
+        .map(|text| self::width(&text))
+        .max()
+        .unwrap_or(16);
+    let card_width = (content as u16 + 4)
+        .clamp(20, 40)
+        .min(width.saturating_sub(2));
+    let total = topology.machines.len();
+    let mut columns = ((width + 2) / (card_width + 2)).max(1).min(total as u16);
+    let mut rows_needed = total.div_ceil(usize::from(columns)) as u16;
+    let mut rail = None;
+    if rows_needed > 1 {
+        columns = (width.saturating_sub(2) / (card_width + 2))
+            .max(1)
+            .min(total as u16);
+        rows_needed = total.div_ceil(usize::from(columns)) as u16;
     }
-    surface.render(area, buf);
+    let grid_width = columns * (card_width + 2) - 2;
+    let left = (width - grid_width) / 2;
+    if rows_needed > 1 {
+        rail = Some(left.saturating_sub(2));
+    }
+    for tier in [FULL, TIGHT] {
+        let base = tier.hub + tier.link + tier.card;
+        if available >= base {
+            let mut rows = (1 + (available - base) / (tier.card + GAP)).min(rows_needed);
+            let mut counter = rows < rows_needed;
+            if counter && available < base + (rows - 1) * (tier.card + GAP) + 1 {
+                if rows > 1 {
+                    rows -= 1;
+                } else if available == base {
+                    counter = false;
+                }
+            }
+            let hub_width = (self::width(&safe(&topology.hub.address)) as u16 + 8)
+                .clamp(24, 48)
+                .min(width);
+            return Some(Plan {
+                tier,
+                card_width,
+                columns,
+                rows,
+                hub_width,
+                left,
+                rail,
+                counter,
+            });
+        }
+    }
+    None
 }
 
-fn draw_tree(
-    buf: &mut Buffer,
-    area: Rect,
+/// How many rows the picture wants for this width, at most `available`.
+pub(super) fn preferred_height(
     topology: &Topology,
     m: &WorldMessages,
-    card: i32,
-    hub: i32,
-) {
-    let colors = palette();
-    let columns = i32::from(area.width);
-    let rows = i32::from(area.height);
-    let mut surface = Surface::new(area.width, area.height, super::raster::glyphs());
-    let hub_box = Box {
-        column: 0,
-        row: 0,
-        columns: hub,
-        rows: HUB_ROWS,
+    width: u16,
+    available: u16,
+) -> u16 {
+    match plan(topology, m, width, available) {
+        Some(plan) => plan.height_for(plan.page_rows(topology)).min(available),
+        None => (topology.machines.len() as u16 + 1).min(available),
+    }
+}
+
+pub(super) fn render(buf: &mut Buffer, area: Rect, topology: &Topology, m: &WorldMessages) {
+    if area.is_empty() {
+        return;
+    }
+    let Some(plan) = plan(topology, m, area.width, area.height) else {
+        compact(buf, area, topology, m);
+        return;
     };
-    let trunk_column = 2;
-    let first_column = 5;
-    let per_row = ((columns - first_column + 1) / (card + 1)).max(1) as usize;
-    let mut placed = Vec::new();
-    let mut row = HUB_ROWS + 1;
-    let mut hidden = 0usize;
-    for (index, _) in topology.machines.iter().enumerate() {
-        let slot = index % per_row;
-        if slot == 0 && index > 0 {
-            row += CARD_ROWS + 1;
+    let tier = plan.tier;
+    let (first, last) = plan.page(topology);
+    let visible = &topology.machines[first..last];
+    let rows = plan.page_rows(topology);
+    // The rail only exists to reach a second row; a one-row page hangs straight off the hub.
+    let rail = plan.rail.filter(|_| rows > 1);
+    let hub_left = (area.width - plan.hub_width) / 2;
+    let hub_center = hub_left + plan.hub_width / 2;
+    let in_row = |row: u16| {
+        (visible.len() - usize::from(row) * usize::from(plan.columns))
+            .min(usize::from(plan.columns)) as u16
+    };
+    // A single row hangs straight off the hub, so it is centred on the hub however many cards
+    // it holds; the rows under a rail stay on the grid the rail runs down.
+    let row_left = |row: u16| {
+        if rail.is_some() {
+            return plan.left;
         }
-        if row + CARD_ROWS > rows {
-            hidden = topology.machines.len() - index;
+        let span = in_row(row) * (plan.card_width + 2) - 2;
+        hub_center
+            .saturating_sub(span / 2)
+            .min(area.width.saturating_sub(span))
+    };
+    let center = |row: u16, column: u16| {
+        row_left(row) + column * (plan.card_width + 2) + plan.card_width / 2
+    };
+    let hub_bottom = tier.hub;
+    let bus_row = |row: u16| {
+        if row == 0 {
+            hub_bottom + tier.link - 2
+        } else {
+            hub_bottom + tier.link + row * (tier.card + GAP) - 2
+        }
+    };
+    let cards_row = |row: u16| bus_row(row) + 2;
+    let mut wires = Wires::new(area.width, area.height);
+    let border = theme::border();
+    for row in 0..rows {
+        let last_center = center(row, in_row(row) - 1);
+        let (start, end) = if row == 0 {
+            (
+                rail.unwrap_or(center(0, 0).min(hub_center)),
+                last_center.max(hub_center),
+            )
+        } else {
+            (rail.unwrap_or(center(row, 0)), last_center)
+        };
+        wires.hline(bus_row(row), start, end, border);
+    }
+    let link_color = topology.hub.link.map_or(theme::warning(), LinkTone::color);
+    for y in hub_bottom..=bus_row(0) {
+        wires.enter_from_above(hub_center, y, link_color, false);
+        if y < bus_row(0) {
+            wires.vline(hub_center, y, y + 1, link_color, false);
+        }
+    }
+    if let Some(rail) = rail {
+        wires.vline(rail, bus_row(0), bus_row(rows - 1), border, false);
+    }
+    for (index, machine) in visible.iter().enumerate() {
+        let column = index as u16 % plan.columns;
+        let row = index as u16 / plan.columns;
+        let x = center(row, column);
+        let dashed = machine.presence != Presence::Online;
+        wires.vline(
+            x,
+            bus_row(row),
+            bus_row(row) + 1,
+            machine.presence.color(),
+            dashed,
+        );
+    }
+    wires.render(buf, area);
+    hub_card(
+        buf,
+        Rect::new(area.x + hub_left, area.y, plan.hub_width, tier.hub),
+        &topology.hub,
+        tier,
+        m,
+    );
+    for (index, machine) in visible.iter().enumerate() {
+        let column = index as u16 % plan.columns;
+        let row = index as u16 / plan.columns;
+        let rect = Rect::new(
+            area.x + row_left(row) + column * (plan.card_width + 2),
+            area.y + cards_row(row),
+            plan.card_width,
+            tier.card,
+        );
+        if rect.bottom() > area.bottom() {
             break;
         }
-        placed.push(Box {
-            column: first_column + slot as i32 * (card + 1),
-            row,
-            columns: card,
-            rows: CARD_ROWS,
-        });
-    }
-    let trunk = Dot::new(f64::from(trunk_column * 2 + 1), f64::from(HUB_ROWS * 4));
-    let mut trunk_end = trunk;
-    for (machine, placed) in topology.machines.iter().zip(&placed) {
-        let (color, stroke) = topology.stroke(machine);
-        let mid = Dot::new(f64::from(placed.column * 2), placed.center().y);
-        if placed.column == first_column {
-            let junction = Dot::new(trunk.x, mid.y - 6.0);
-            trunk_end = junction;
-            surface.curve(junction, Dot::new(trunk.x, mid.y), mid, color, stroke);
-        } else {
-            let from = Dot::new(f64::from(placed.column * 2 - 2), mid.y);
-            surface.line(from, mid, color, stroke);
-        }
-    }
-    surface.line(trunk, trunk_end, colors.faint, Stroke::Solid);
-    draw_hub_card(&mut surface, &colors, &hub_box, &topology.hub, m);
-    for (index, (machine, placed)) in topology.machines.iter().zip(&placed).enumerate() {
-        draw_machine_card(
-            &mut surface,
-            &colors,
-            placed,
+        machine_card(
+            buf,
+            rect,
             machine,
+            topology.selected == Some(first + index),
+            tier,
             m,
-            topology.selected == Some(index),
         );
     }
-    if hidden > 0 {
-        surface.label(
-            first_column,
-            rows - 1,
-            format!("+{hidden}  ({})", m.machines),
-            Style::default().fg(colors.faint),
-            columns - first_column,
-        );
-    }
-    surface.render(area, buf);
-}
-
-fn draw_hub_card(
-    surface: &mut Surface,
-    colors: &Palette,
-    placed: &Box,
-    hub: &Hub,
-    m: &WorldMessages,
-) {
-    surface.panel(
-        placed.column * 2,
-        placed.row * 4,
-        placed.columns * 2,
-        placed.rows * 4,
-        colors.hub_fill,
-        colors.outline,
-    );
-    let inner = placed.columns - 2;
-    let title = Style::default()
-        .fg(theme::accent())
-        .add_modifier(Modifier::BOLD);
-    surface.label(
-        placed.column + 1,
-        placed.row,
-        format!("◆ {}", m.hub_title),
-        title,
-        inner,
-    );
-    surface.label(
-        placed.column + 1,
-        placed.row + 1,
-        hub.address.clone(),
-        Style::default().fg(colors.text),
-        inner,
-    );
-    let (symbol, label, color) = match hub.link {
-        Some(tone) => (tone.symbol(), tone.label(m), tone.color()),
-        None => ("?", m.unknown, theme::warning()),
-    };
-    surface.label(
-        placed.column + 1,
-        placed.row + 2,
-        format!("{symbol} {label}"),
-        Style::default().fg(color),
-        inner,
-    );
-}
-
-fn draw_machine_card(
-    surface: &mut Surface,
-    colors: &Palette,
-    placed: &Box,
-    machine: &Machine,
-    m: &WorldMessages,
-    selected: bool,
-) {
-    let (x, y, w, h) = (
-        placed.column * 2,
-        placed.row * 4,
-        placed.columns * 2,
-        placed.rows * 4,
-    );
-    surface.panel(x, y, w, h, colors.machine_fill, colors.outline);
-    if selected {
-        surface.frame(x - 1, y - 1, w + 2, h + 2, theme::accent());
-    }
-    let inner = placed.columns - 2;
-    let name = format!(
-        "{}{}",
-        if selected { "› " } else { "" },
-        if machine.is_self {
-            format!("★ {}", machine.name)
-        } else {
-            machine.name.clone()
+    if plan.counter && topology.machines.len() > plan.capacity() {
+        let count = format!("{}–{} / {}  ↑↓", first + 1, last, topology.machines.len());
+        let count_width = self::width(&count) as u16;
+        // Directly under the last card of this page, not at the bottom of the room the plan
+        // asked for: a short last page would otherwise leave the counter floating.
+        let y = area.y + cards_row(rows - 1) + tier.card;
+        if count_width < area.width && y < area.bottom() {
+            buf.set_stringn(
+                area.right() - count_width,
+                y,
+                &count,
+                usize::from(count_width),
+                Style::default().fg(theme::muted()),
+            );
         }
-    );
-    surface.label(
-        placed.column + 1,
-        placed.row,
-        name,
-        Style::default()
-            .fg(if machine.is_self || selected {
-                theme::accent()
-            } else {
-                colors.text
-            })
-            .add_modifier(Modifier::BOLD),
-        inner,
-    );
-    surface.label(
-        placed.column + 1,
-        placed.row + 1,
-        machine.system.clone(),
-        Style::default().fg(colors.faint),
-        inner,
-    );
-    let presence = match (machine.presence, machine.rtt_ms) {
-        (Presence::Online, Some(rtt)) => {
-            format!("● {} · {rtt} ms", machine.presence.label(m))
-        }
-        (Presence::Online, None) => format!("● {}", machine.presence.label(m)),
-        (presence, _) => format!(
-            "{} {} · {}",
-            presence.symbol(),
-            presence.label(m),
-            machine.last_seen
-        ),
-    };
-    surface.label(
-        placed.column + 1,
-        placed.row + 2,
-        presence,
-        Style::default().fg(machine.presence.color()),
-        inner,
-    );
-    if let Some(activity) = &machine.activity {
-        surface.label(
-            placed.column + 1,
-            placed.row + 3,
-            activity.clone(),
-            Style::default().fg(colors.faint),
-            inner,
-        );
     }
 }
 
-/// The welcome page's illustration: a few machines meeting at a hub, so the idea lands before
-/// a single word of the form. Nothing here is live data.
-pub(super) fn sketch(buf: &mut Buffer, area: Rect, m: &WorldMessages) {
-    let columns = i32::from(area.width);
-    let rows = i32::from(area.height);
-    if rows < 6 {
-        return;
+/// Outlined cards lose two rows to their frame, so padding is dropped before content is.
+fn padding(inner: Rect, tier: Tier, rows: u16) -> u16 {
+    if inner.height >= rows + 2 * tier.pad {
+        tier.pad
+    } else {
+        0
     }
-    let colors = palette();
-    let machine_label = m.sketch_machine;
-    let hub_label = format!("◆ {}", m.sketch_hub);
-    let card = width_of(machine_label) + 4;
-    let count = ((columns + 2) / (card + 2)).clamp(0, 3);
-    if count < 2 {
-        return;
-    }
-    let total = count * card + (count - 1) * 2;
-    let left = (columns - total) / 2;
-    let hub_width = width_of(&hub_label) + 4;
-    let hub_left = (columns - hub_width) / 2;
-    let hub_top = rows - 2;
-    let mut surface = Surface::new(area.width, area.height, super::raster::glyphs());
-    let hub_center_x = f64::from(hub_left * 2 + hub_width);
-    for index in 0..count {
-        let column = left + index * (card + 2);
-        let from = Dot::new(f64::from(column * 2 + card), 8.0);
-        let to = Dot::new(hub_center_x, f64::from(hub_top * 4 - 1));
-        surface.curve(
-            from,
-            Dot::new(hub_center_x, from.y),
-            to,
-            theme::success(),
-            Stroke::Solid,
-        );
-    }
-    for index in 0..count {
-        let column = left + index * (card + 2);
-        surface.panel(
-            column * 2,
-            0,
-            card * 2,
-            8,
-            colors.machine_fill,
-            colors.outline,
-        );
-        surface.label(
-            column + 2,
-            0,
-            machine_label,
-            Style::default()
-                .fg(colors.text)
-                .add_modifier(Modifier::BOLD),
-            card - 4,
-        );
-        surface.label(
-            column + 2,
-            1,
-            format!("● {}", m.online),
-            Style::default().fg(theme::success()),
-            card - 4,
-        );
-    }
-    surface.panel(
-        hub_left * 2,
-        hub_top * 4,
-        hub_width * 2,
-        8,
-        colors.hub_fill,
-        colors.outline,
-    );
-    surface.label(
-        hub_left + 2,
-        hub_top,
-        hub_label,
+}
+
+fn hub_card(buf: &mut Buffer, area: Rect, hub: &Hub, tier: Tier, m: &WorldMessages) {
+    let inner = card(buf, area, false);
+    let y = inner.y + padding(inner, tier, 2);
+    let title = format!("◆ {}", m.hub_title);
+    buf.set_stringn(
+        inner.x,
+        y,
+        &title,
+        usize::from(inner.width),
         Style::default()
             .fg(theme::accent())
             .add_modifier(Modifier::BOLD),
-        hub_width - 4,
     );
-    surface.label(
-        hub_left + 2,
-        hub_top + 1,
-        "fastctx hub serve",
-        Style::default().fg(colors.faint),
-        hub_width - 4,
-    );
-    surface.render(area, buf);
+    if let Some(link) = hub.link {
+        let state = format!("{} {}", link.symbol(), link.label(m));
+        let state_width = self::width(&state) as u16;
+        if self::width(&title) as u16 + state_width + 2 <= inner.width {
+            buf.set_stringn(
+                inner.right() - state_width,
+                y,
+                &state,
+                usize::from(state_width),
+                Style::default().fg(link.color()),
+            );
+        }
+    }
+    if y + 1 < inner.bottom() {
+        buf.set_stringn(
+            inner.x,
+            y + 1,
+            clipped(&safe(&hub.address), usize::from(inner.width)),
+            usize::from(inner.width),
+            Style::default().fg(theme::fg()),
+        );
+    }
 }
 
-fn draw_list(buf: &mut Buffer, area: Rect, topology: &Topology, m: &WorldMessages) {
-    let (symbol, label, color) = match topology.hub.link {
-        Some(tone) => (tone.symbol(), tone.label(m), tone.color()),
-        None => ("?", m.unknown, theme::warning()),
+fn machine_card(
+    buf: &mut Buffer,
+    area: Rect,
+    machine: &Machine,
+    selected: bool,
+    tier: Tier,
+    m: &WorldMessages,
+) {
+    let inner = card(buf, area, selected);
+    let dim = matches!(machine.presence, Presence::Offline | Presence::Revoked);
+    let (name, tag) = machine_name(machine, m);
+    let y = inner.y + padding(inner, tier, 3);
+    let name_style = Style::default()
+        .fg(if dim { theme::muted() } else { theme::accent() })
+        .add_modifier(Modifier::BOLD);
+    // The tag keeps its place; a long name gives way to it rather than pushing it off.
+    let name_room = if tag.is_empty() {
+        usize::from(inner.width)
+    } else {
+        usize::from(inner.width).saturating_sub(self::width(&tag) + 2)
     };
-    let mut lines = vec![Line::from(vec![
-        Span::styled(
-            format!("◆ {} ", m.hub_title),
+    let name = clipped(&name, name_room.max(4));
+    buf.set_stringn(inner.x, y, &name, usize::from(inner.width), name_style);
+    if !tag.is_empty() {
+        let offset = self::width(&name) as u16 + 2;
+        if offset < inner.width {
+            buf.set_stringn(
+                inner.x + offset,
+                y,
+                &tag,
+                usize::from(inner.width - offset),
+                Style::default().fg(theme::muted()),
+            );
+        }
+    }
+    if y + 1 < inner.bottom() {
+        buf.set_stringn(
+            inner.x,
+            y + 1,
+            clipped(&safe(&machine.system), usize::from(inner.width)),
+            usize::from(inner.width),
+            Style::default().fg(theme::muted()),
+        );
+    }
+    if y + 2 < inner.bottom() {
+        buf.set_stringn(
+            inner.x,
+            y + 2,
+            clipped(&machine_status(machine, m), usize::from(inner.width)),
+            usize::from(inner.width),
+            Style::default().fg(machine.presence.color()),
+        );
+    }
+}
+
+/// The same picture as a list, for terminals too small to draw cards.
+fn compact(buf: &mut Buffer, area: Rect, topology: &Topology, m: &WorldMessages) {
+    let state = topology
+        .hub
+        .link
+        .map(|link| format!("{} {}", link.symbol(), link.label(m)));
+    let hub = format!("◆ {}  {}", m.hub_title, safe(&topology.hub.address));
+    let state_width = state.as_ref().map_or(0, |state| self::width(state) as u16);
+    buf.set_stringn(
+        area.x,
+        area.y,
+        clipped(
+            &hub,
+            usize::from(area.width.saturating_sub(state_width + 2)),
+        ),
+        usize::from(area.width),
+        Style::default()
+            .fg(theme::accent())
+            .add_modifier(Modifier::BOLD),
+    );
+    if let Some(state) = state
+        && state_width < area.width
+    {
+        buf.set_stringn(
+            area.right() - state_width,
+            area.y,
+            &state,
+            usize::from(state_width),
+            Style::default().fg(topology.hub.link.map_or(theme::fg(), LinkTone::color)),
+        );
+    }
+    let capacity = usize::from(area.height.saturating_sub(1)).max(1);
+    let selected = topology
+        .selected
+        .unwrap_or(0)
+        .min(topology.machines.len().saturating_sub(1));
+    let first = selected / capacity * capacity;
+    for (slot, machine) in topology
+        .machines
+        .iter()
+        .skip(first)
+        .take(capacity)
+        .enumerate()
+    {
+        let y = area.y + 1 + slot as u16;
+        if y >= area.bottom() {
+            break;
+        }
+        let focused = topology.selected == Some(first + slot);
+        let status = machine_status(machine, m);
+        let status_width = self::width(&status) as u16;
+        let (name, tag) = machine_name(machine, m);
+        let title = if tag.is_empty() {
+            name
+        } else {
+            format!("{name} · {tag}")
+        };
+        let name_width = usize::from(area.width.saturating_sub(status_width + 4));
+        let line = format!(
+            "{} {}",
+            if focused { "▌" } else { " " },
+            padded(&title, name_width)
+        );
+        let style = if focused {
+            selection_style()
+        } else {
+            Style::default().fg(theme::fg())
+        };
+        buf.set_stringn(area.x, y, &line, usize::from(area.width), style);
+        if status_width < area.width {
+            buf.set_stringn(
+                area.right() - status_width,
+                y,
+                &status,
+                usize::from(status_width),
+                if focused {
+                    style
+                } else {
+                    Style::default().fg(machine.presence.color())
+                },
+            );
+        }
+    }
+}
+
+/// The welcome page's illustration of what a World is: one hub, several trusted machines.
+/// Rows the sketch needs at the current palette; outlined cards cost two more.
+pub(super) fn sketch_height() -> u16 {
+    if theme::flat() { 11 } else { 8 }
+}
+
+pub(super) fn sketch(buf: &mut Buffer, area: Rect, m: &WorldMessages) {
+    if area.width < 48 || area.height < sketch_height() {
+        return;
+    }
+    let card_width = ((area.width - 8) / 3 - 2).min(24);
+    let grid = card_width * 3 + 4;
+    let left = (area.width - grid) / 2;
+    let centers = [0, 1, 2].map(|index| left + index * (card_width + 2) + card_width / 2);
+    let hub_width = (self::width(m.sketch_hub).max(self::width("fastctx hub serve")) as u16 + 6)
+        .min(area.width);
+    let hub_left = (area.width - hub_width) / 2;
+    let hub_center = hub_left + hub_width / 2;
+    // Outlined cards spend two rows on their frame, so the picture grows by them.
+    let hub_height = if theme::flat() { 4 } else { 2 };
+    let bus = hub_height + 1;
+    let mut wires = Wires::new(area.width, area.height);
+    wires.hline(
+        bus,
+        centers[0].min(hub_center),
+        centers[2].max(hub_center),
+        theme::border(),
+    );
+    wires.enter_from_above(hub_center, hub_height, theme::border(), false);
+    wires.vline(hub_center, hub_height, bus, theme::border(), false);
+    for center in centers {
+        wires.vline(center, bus, bus + 1, theme::success(), false);
+    }
+    wires.render(buf, area);
+    let hub = Rect::new(area.x + hub_left, area.y, hub_width, hub_height);
+    let inner = card(buf, hub, false);
+    buf.set_stringn(
+        inner.x,
+        inner.y,
+        format!("◆ {}", m.sketch_hub),
+        usize::from(inner.width),
+        Style::default()
+            .fg(theme::accent())
+            .add_modifier(Modifier::BOLD),
+    );
+    if inner.height > 1 {
+        buf.set_stringn(
+            inner.x,
+            inner.y + 1,
+            "fastctx hub serve",
+            usize::from(inner.width),
+            Style::default().fg(theme::muted()),
+        );
+    }
+    let cards_y = bus + 2;
+    if cards_y + 2 > area.height {
+        return;
+    }
+    let card_height = (area.height - cards_y).min(if theme::flat() { 4 } else { 3 });
+    for (index, name) in ["Windows", "macOS", "Linux"].into_iter().enumerate() {
+        let rect = Rect::new(
+            area.x + left + index as u16 * (card_width + 2),
+            area.y + cards_y,
+            card_width,
+            card_height,
+        );
+        let inner = card(buf, rect, false);
+        buf.set_stringn(
+            inner.x,
+            inner.y,
+            name,
+            usize::from(inner.width),
             Style::default()
                 .fg(theme::accent())
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(topology.hub.address.clone()),
-        Span::styled(format!("  {symbol} {label}"), Style::default().fg(color)),
-    ])];
-    let count = topology.machines.len();
-    for (index, machine) in topology.machines.iter().enumerate() {
-        let branch = if index + 1 == count { "└ " } else { "├ " };
-        let selected = topology.selected == Some(index);
-        let tail = match (machine.presence, machine.rtt_ms) {
-            (Presence::Online, Some(rtt)) => format!("{rtt} ms"),
-            (Presence::Online, None) => machine.presence.label(m).to_string(),
-            _ => format!("{} · {}", machine.presence.label(m), machine.last_seen),
-        };
-        let mut style = Style::default();
-        if selected {
-            style = style.fg(theme::accent()).add_modifier(Modifier::REVERSED);
+        );
+        if inner.y + 1 < inner.bottom() {
+            buf.set_stringn(
+                inner.x,
+                inner.y + 1,
+                clipped(m.sketch_machine, usize::from(inner.width)),
+                usize::from(inner.width),
+                Style::default().fg(theme::muted()),
+            );
         }
-        lines.push(Line::from(vec![
-            Span::styled(branch, Style::default().fg(theme::muted())),
-            Span::styled(
-                format!("{} ", machine.presence.symbol()),
-                Style::default().fg(machine.presence.color()),
-            ),
-            Span::styled(
-                format!(
-                    "{}{}  {}  {tail}",
-                    if machine.is_self { "★ " } else { "" },
-                    machine.name,
-                    machine.system
-                ),
-                style,
-            ),
-        ]));
-    }
-    Paragraph::new(lines).render(area, buf);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::control::i18n::Language;
-
-    fn sample(count: usize, selected: Option<usize>) -> Topology {
-        Topology {
-            hub: Hub {
-                address: "hub.example:443".into(),
-                link: Some(LinkTone::Connected),
-            },
-            machines: (0..count)
-                .map(|index| Machine {
-                    name: format!("machine-{index}"),
-                    presence: if index % 3 == 1 {
-                        Presence::Offline
-                    } else {
-                        Presence::Online
-                    },
-                    system: "Linux · x86_64".into(),
-                    is_self: index == 0,
-                    rtt_ms: Some(12 + index as u32),
-                    last_seen: "3 min ago".into(),
-                    activity: Some("Idle".into()),
-                })
-                .collect(),
-            selected,
-        }
-    }
-
-    fn text(buf: &Buffer) -> String {
-        buf.content.iter().map(|cell| cell.symbol()).collect()
-    }
-
-    #[test]
-    fn every_arrangement_renders_without_panicking_and_names_each_machine() {
-        let m = super::super::i18n::messages(Language::En);
-        for count in [1, 2, 3, 6, 7, 20] {
-            for (width, height) in [(38, 6), (52, 12), (78, 17), (120, 34)] {
-                let area = Rect::new(0, 0, width, height);
-                let mut buf = Buffer::empty(area);
-                render(&mut buf, area, &sample(count, Some(0)), m);
-                let rendered = text(&buf);
-                assert!(
-                    rendered.contains("machine-0"),
-                    "{count} machines at {width}x{height}: {rendered}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_small_world_becomes_a_star_and_a_large_one_a_tree() {
-        assert!(star(&sample(3, None), 100, 20, 20, 22).is_some());
-        assert!(star(&sample(7, None), 200, 60, 20, 22).is_none());
-        assert!(star(&sample(4, None), 50, 20, 20, 22).is_none());
     }
 }

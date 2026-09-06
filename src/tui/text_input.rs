@@ -260,7 +260,7 @@ impl TextInput {
                 cursor_index = cells.len() + 1;
             }
             let text = if self.secret && !self.revealed {
-                "•".into()
+                "●".into()
             } else {
                 visible(grapheme)
             };
@@ -293,7 +293,7 @@ impl TextInput {
         let mut used = 0;
         if start > 0 && width > 2 {
             result.push(InputCell {
-                text: "‹".into(),
+                text: "<".into(),
                 selected: false,
                 cursor: false,
             });
@@ -313,7 +313,7 @@ impl TextInput {
 
 fn visible(grapheme: &str) -> String {
     grapheme.chars().map(|ch| match ch {
-        '\n' => "↵".to_string(), '\r' => "␍".to_string(), '\t' => "⇥".to_string(),
+        '\n' => "\\n".to_string(), '\r' => "\\r".to_string(), '\t' => "\\t".to_string(),
         ch if ch.is_control() || matches!(ch, '\u{061c}' | '\u{200b}' | '\u{200e}' | '\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}') => format!("\\u{:04x}", ch as u32),
         ch => ch.to_string(),
     }).collect()

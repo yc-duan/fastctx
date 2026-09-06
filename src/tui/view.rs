@@ -53,7 +53,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut App) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(2),
             Constraint::Min(5),
             Constraint::Length(footer_height),
         ])
@@ -4006,7 +4006,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     if index > 0 {
                         spans.push(Span::styled("  ·  ", Style::default().fg(theme::border())));
                     }
-                    spans.push(Span::styled(hint, Style::default().fg(theme::muted())));
+                    spans.extend(footer_hint(hint));
                     spans
                 })
                 .collect::<Vec<_>>(),
@@ -4014,6 +4014,26 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .alignment(Alignment::Center),
         area,
     );
+}
+
+/// A footer hint is "key what-it-does" in every language; the key reads as a key cap and the
+/// rest recedes, the same way the World pages draw theirs.
+fn footer_hint(hint: &str) -> Vec<Span<'static>> {
+    let (key, rest) = hint.split_once(' ').unwrap_or((hint, ""));
+    let mut spans = vec![Span::styled(
+        format!(" {key} "),
+        Style::default()
+            .fg(theme::accent())
+            .bg(theme::surface())
+            .add_modifier(Modifier::BOLD),
+    )];
+    if !rest.is_empty() {
+        spans.push(Span::styled(
+            format!(" {rest}"),
+            Style::default().fg(theme::muted()),
+        ));
+    }
+    spans
 }
 
 fn jobs_footer(app: &App, maximum_width: usize) -> String {

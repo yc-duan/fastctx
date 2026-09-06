@@ -1,9 +1,13 @@
 //! World forms retain drafts across validation and operation failures.
+//!
+//! A form is a list of fields plus two pseudo-targets: the advanced-options toggle, which hides
+//! the settings a first-time user never needs, and the submit button. Focus moves over the
+//! visible targets only, and a validation failure in a hidden field opens the section it is in.
 
 use super::i18n::WorldMessages;
 use crate::tui::text_input::{InputMode, TextInput};
 use crate::world::control::{Action, Failure};
-use crate::world::grant::Grant;
+use crate::world::grant::{Grant, GrantField};
 use crate::world::{NetworkMode, notes};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
@@ -21,7 +25,7 @@ pub(super) enum FormKind {
     Export(String),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FieldKind {
     Name,
     Hub,
@@ -75,11 +79,13 @@ impl FieldKind {
     pub(super) fn help(self, m: &WorldMessages, form: &FormKind) -> &'static str {
         match self {
             Self::Name => m.name_help,
-            Self::Hub | Self::Bootstrap => m.setup_help,
+            Self::Hub => m.hub_field_help,
+            Self::Bootstrap => m.bootstrap_help,
             Self::Invite => m.join_help,
             Self::Tags => m.tags_help,
             Self::Network => m.network_help,
-            Self::Interface | Self::AutoService => m.optional_help,
+            Self::Interface => m.interface_help,
+            Self::AutoService => m.auto_service_help,
             Self::Text => {
                 if matches!(form, FormKind::Description) {
                     m.description_help
@@ -97,6 +103,34 @@ impl FieldKind {
             Self::Directory => m.hub_help,
             Self::Path => m.path_help,
         }
+    }
+    /// A field chosen with Left/Right rather than typed.
+    pub(super) fn is_choice(self) -> bool {
+        matches!(self, Self::Network | Self::AutoService)
+    }
+    /// A field the enrollment forms keep behind the advanced toggle.
+    pub(super) fn is_advanced(self) -> bool {
+        matches!(
+            self,
+            Self::Tags | Self::Network | Self::Interface | Self::AutoService
+        )
+    }
+    /// Submission refuses an empty value here.
+    pub(super) fn required(self) -> bool {
+        matches!(
+            self,
+            Self::Name
+                | Self::Hub
+                | Self::Bootstrap
+                | Self::Invite
+                | Self::Hours
+                | Self::Principal
+                | Self::Targets
+                | Self::Verbs
+                | Self::Cursor
+                | Self::Directory
+                | Self::Path
+        )
     }
 }
 
@@ -117,12 +151,30 @@ impl Field {
     }
 }
 
+/// One thing the cursor can rest on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Focus {
+    Field(usize),
+    Advanced,
+    Submit,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Form {
     pub(super) kind: FormKind,
     pub(super) fields: Vec<Field>,
-    pub(super) selected: usize,
+    /// Index into `targets()`.
+    selected: usize,
+    pub(super) advanced: bool,
     pub(super) error: Option<Failure>,
+    pub(super) error_hint: Option<ErrorHint>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum ErrorHint {
+    Field(FieldKind),
+    Choice,
+    IncompletePaste,
 }
 
 pub(super) enum Submission {
@@ -185,7 +237,9 @@ impl Form {
             kind,
             fields,
             selected: 0,
+            advanced: false,
             error: None,
+            error_hint: None,
         }
     }
     pub(super) fn title<'a>(&self, m: &'a WorldMessages) -> &'a str {
@@ -201,22 +255,90 @@ impl Form {
             FormKind::Export(_) => m.export,
         }
     }
+    /// One sentence under the title saying what the form does; None for trivial forms.
+    pub(super) fn subtitle<'a>(&self, m: &'a WorldMessages) -> Option<&'a str> {
+        match self.kind {
+            FormKind::Create => Some(m.create_subtitle),
+            FormKind::Join => Some(m.join_subtitle),
+            FormKind::Invite => Some(m.invite_subtitle),
+            FormKind::Grant(_) => Some(m.grant_subtitle),
+            _ => None,
+        }
+    }
+    /// What the submit button says: saving forms save, the rest continue to a review.
+    pub(super) fn submit_label<'a>(&self, m: &'a WorldMessages) -> &'a str {
+        match self.kind {
+            FormKind::Description | FormKind::PrivateNote(_) | FormKind::Export(_) => m.save,
+            _ => m.continue_action,
+        }
+    }
+    pub(super) fn has_advanced(&self) -> bool {
+        self.fields.iter().any(|field| field.kind.is_advanced())
+    }
+    /// The focusable things, in Tab order, as currently visible.
+    pub(super) fn targets(&self) -> Vec<Focus> {
+        let mut targets = self
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| self.advanced || !field.kind.is_advanced())
+            .map(|(index, _)| Focus::Field(index))
+            .collect::<Vec<_>>();
+        if self.has_advanced() {
+            let position = targets
+                .iter()
+                .position(|target| {
+                    matches!(target, Focus::Field(index) if self.fields[*index].kind.is_advanced())
+                })
+                .unwrap_or(targets.len());
+            targets.insert(position, Focus::Advanced);
+        }
+        targets.push(Focus::Submit);
+        targets
+    }
+    pub(super) fn focus(&self) -> Focus {
+        let targets = self.targets();
+        targets[self.selected.min(targets.len() - 1)]
+    }
+    pub(super) fn focused_field(&self) -> Option<usize> {
+        match self.focus() {
+            Focus::Field(index) => Some(index),
+            _ => None,
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn focus_submit(&mut self) {
+        self.selected = self.targets().len() - 1;
+    }
+    fn focus_field(&mut self, index: usize) {
+        if self.fields[index].kind.is_advanced() {
+            self.advanced = true;
+        }
+        let targets = self.targets();
+        self.selected = targets
+            .iter()
+            .position(|target| *target == Focus::Field(index))
+            .unwrap_or(0);
+    }
     pub(super) fn dirty(&self) -> bool {
         self.fields
             .iter()
             .any(|field| field.original != field.input.text())
     }
     pub(super) fn paste(&mut self, value: &str) {
-        if let Some(field) = self.fields.get_mut(self.selected) {
-            if matches!(field.kind, FieldKind::Network | FieldKind::AutoService) {
-                self.error = Some(Failure::invalid(
-                    "Use Left/Right or Space to choose this option.",
-                ));
-                return;
-            }
-            field.input.insert(value);
-            self.error = None;
+        let Some(index) = self.focused_field() else {
+            return;
+        };
+        let field = &mut self.fields[index];
+        if field.kind.is_choice() {
+            self.error = Some(Failure::invalid(
+                "Use Left/Right or Space to choose this option.",
+            ));
+            self.error_hint = Some(ErrorHint::Choice);
+            return;
         }
+        field.input.insert(value);
+        self.error = None;
         self.invite_name();
     }
     fn invite_name(&mut self) {
@@ -230,6 +352,25 @@ impl Form {
             self.fields[1].input.replace(name.clone());
         }
     }
+    fn toggle_advanced(&mut self) {
+        self.advanced = !self.advanced;
+        let targets = self.targets();
+        self.selected = targets
+            .iter()
+            .position(|target| *target == Focus::Advanced)
+            .unwrap_or(0);
+    }
+    fn cycle_choice(&mut self, index: usize) {
+        let field = &mut self.fields[index];
+        let next = match (field.kind, field.input.text()) {
+            (FieldKind::Network, "auto") => "direct",
+            (FieldKind::Network, "direct") => "system",
+            (FieldKind::Network, _) => "auto",
+            (_, "yes") => "no",
+            _ => "yes",
+        };
+        field.input.replace(next.to_string());
+    }
     pub(super) fn key(&mut self, key: KeyEvent) -> FormEvent {
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
         if key.code == KeyCode::Esc {
@@ -238,40 +379,38 @@ impl Form {
         if control && key.code == KeyCode::Char('s') {
             return FormEvent::Submit;
         }
+        let targets = self.targets();
+        let focus = self.focus();
         match key.code {
             KeyCode::BackTab => {
-                self.selected = self.selected.checked_sub(1).unwrap_or(self.fields.len())
+                self.selected = self.selected.checked_sub(1).unwrap_or(targets.len() - 1);
             }
-            KeyCode::Tab => self.selected = (self.selected + 1) % (self.fields.len() + 1),
-            KeyCode::Enter if self.selected == self.fields.len() => return FormEvent::Submit,
-            KeyCode::Enter => {
-                self.invite_name();
-                self.selected += 1;
-            }
+            KeyCode::Tab => self.selected = (self.selected + 1) % targets.len(),
+            KeyCode::Enter => match focus {
+                Focus::Submit => return FormEvent::Submit,
+                Focus::Advanced => self.toggle_advanced(),
+                Focus::Field(_) => {
+                    self.invite_name();
+                    self.selected = (self.selected + 1).min(targets.len() - 1);
+                }
+            },
             KeyCode::F(2) => {
-                if let Some(field) = self.fields.get_mut(self.selected) {
-                    field.input.revealed = !field.input.revealed;
+                if let Focus::Field(index) = focus {
+                    self.fields[index].input.revealed = !self.fields[index].input.revealed;
                 }
             }
-            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ')
-                if self.fields.get(self.selected).is_some_and(|field| {
-                    matches!(field.kind, FieldKind::Network | FieldKind::AutoService)
-                }) =>
-            {
-                let field = &mut self.fields[self.selected];
-                let next = match (field.kind, field.input.text()) {
-                    (FieldKind::Network, "auto") => "direct",
-                    (FieldKind::Network, "direct") => "system",
-                    (FieldKind::Network, _) => "auto",
-                    (_, "yes") => "no",
-                    _ => "yes",
-                };
-                field.input.replace(next.to_string());
+            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if focus == Focus::Advanced => {
+                self.toggle_advanced();
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if matches!(focus, Focus::Field(index) if self.fields[index].kind.is_choice()) => {
+                if let Focus::Field(index) = focus {
+                    self.cycle_choice(index);
+                }
             }
             _ => {
-                if let Some(field) = self.fields.get_mut(self.selected)
-                    && !matches!(field.kind, FieldKind::Network | FieldKind::AutoService)
-                    && field.input.handle_key(key)
+                if let Focus::Field(index) = focus
+                    && !self.fields[index].kind.is_choice()
+                    && self.fields[index].input.handle_key(key)
                 {
                     self.error = None;
                 }
@@ -282,7 +421,7 @@ impl Form {
     fn value(&self, kind: FieldKind) -> &str {
         self.fields
             .iter()
-            .find(|field| std::mem::discriminant(&field.kind) == std::mem::discriminant(&kind))
+            .find(|field| field.kind == kind)
             .map(|field| field.input.text())
             .unwrap_or("")
     }
@@ -298,19 +437,49 @@ impl Form {
         (!value.is_empty()).then(|| value.to_string())
     }
     pub(super) fn submit(&mut self) -> Result<Submission, Failure> {
-        let result = self.validate();
-        if let Err((kind, error)) = result {
-            self.selected = self
-                .fields
-                .iter()
-                .position(|field| {
-                    std::mem::discriminant(&field.kind) == std::mem::discriminant(&kind)
-                })
-                .unwrap_or(0);
-            self.error = Some(error.clone());
-            Err(error)
-        } else {
-            Ok(result.unwrap_or_else(|_| unreachable!()))
+        match self.validate() {
+            Err((kind, error)) => {
+                if let Some(index) = self.fields.iter().position(|field| field.kind == kind) {
+                    self.focus_field(index);
+                }
+                self.error = Some(error.clone());
+                self.error_hint = Some(ErrorHint::Field(kind));
+                Err(error)
+            }
+            Ok(submission) => {
+                self.error = None;
+                self.error_hint = None;
+                Ok(submission)
+            }
+        }
+    }
+    pub(super) fn error_text(&self, m: &WorldMessages) -> String {
+        let text = match self.error_hint {
+            Some(ErrorHint::IncompletePaste) => m.paste_incomplete,
+            Some(ErrorHint::Choice) => m.choice_help,
+            Some(ErrorHint::Field(kind)) if self.value(kind).is_empty() => m.required,
+            Some(ErrorHint::Field(FieldKind::Invite))
+                if crate::world::invite::Invite::parse(self.value(FieldKind::Invite))
+                    .is_ok_and(|invite| invite.is_expired_at(time::OffsetDateTime::now_utc())) =>
+            {
+                m.invite_expired
+            }
+            Some(ErrorHint::Field(FieldKind::Directory | FieldKind::Path)) => m.absolute_path,
+            Some(ErrorHint::Field(FieldKind::Cursor)) => m.integer_required,
+            Some(ErrorHint::Field(FieldKind::Tags)) => m.name_help,
+            Some(ErrorHint::Field(kind)) => kind.help(m, &self.kind),
+            None => m.validation,
+        };
+        text.to_string()
+    }
+    /// The field the current error belongs to, so it can be shown in place.
+    pub(super) fn error_field(&self) -> Option<FieldKind> {
+        match self.error_hint {
+            Some(ErrorHint::Field(kind)) => Some(kind),
+            Some(ErrorHint::Choice) | Some(ErrorHint::IncompletePaste) => {
+                self.focused_field().map(|index| self.fields[index].kind)
+            }
+            None => None,
         }
     }
     fn validate(&self) -> Result<Submission, (FieldKind, Failure)> {
@@ -386,18 +555,15 @@ impl Form {
                     verbs: self.list(F::Verbs),
                     expires: self.optional(F::Expires),
                 };
-                grant.validate().map_err(|e| {
+                grant.validate_fields().map_err(|(field, detail)| {
                     bad(
-                        if grant.principal.is_empty() {
-                            F::Principal
-                        } else if grant.nodes.is_empty() {
-                            F::Targets
-                        } else if grant.verbs.is_empty() {
-                            F::Verbs
-                        } else {
-                            F::Expires
+                        match field {
+                            GrantField::Principal => F::Principal,
+                            GrantField::Targets => F::Targets,
+                            GrantField::Verbs => F::Verbs,
+                            GrantField::Expires => F::Expires,
                         },
-                        e,
+                        detail,
                     )
                 })?;
                 Ok(Submission::Action(Action::Grant {
@@ -406,6 +572,16 @@ impl Form {
                 }))
             }
             FormKind::Create | FormKind::Join => {
+                if matches!(self.kind, FormKind::Join) {
+                    let invite = crate::world::invite::Invite::parse(self.value(F::Invite))
+                        .map_err(|e| bad(F::Invite, e))?;
+                    if invite.is_expired_at(time::OffsetDateTime::now_utc()) {
+                        return Err(bad(
+                            F::Invite,
+                            "This invite has expired. Ask for a new invite.".into(),
+                        ));
+                    }
+                }
                 crate::world::validate_node_name(self.value(F::Name))
                     .map_err(|e| bad(F::Name, e))?;
                 let tags = self.list(F::Tags);
@@ -440,14 +616,6 @@ impl Form {
                         install_service,
                     }))
                 } else {
-                    let invite = crate::world::invite::Invite::parse(self.value(F::Invite))
-                        .map_err(|e| bad(F::Invite, e))?;
-                    if invite.is_expired_at(time::OffsetDateTime::now_utc()) {
-                        return Err(bad(
-                            F::Invite,
-                            "This invite has expired. Ask for a new invite.".into(),
-                        ));
-                    }
                     Ok(Submission::Action(Action::Enroll {
                         invite: self.value(F::Invite).to_string(),
                         name,
