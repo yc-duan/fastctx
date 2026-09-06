@@ -47,9 +47,23 @@ pub(crate) struct Grant {
     pub(crate) expires: Option<String>,
 }
 
+/// The input responsible for a rejected access rule, shared with the interactive editor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GrantField {
+    Principal,
+    Targets,
+    Verbs,
+    Expires,
+}
+
 impl Grant {
     /// Validates the protocol shape without assuming every principal is a machine.
     pub(crate) fn validate(&self) -> Result<(), String> {
+        self.validate_fields().map_err(|(_, detail)| detail)
+    }
+
+    /// Uses the same protocol checks as `validate`, retaining the field for user-facing recovery.
+    pub(crate) fn validate_fields(&self) -> Result<(), (GrantField, String)> {
         if self.principal.is_empty()
             || self.principal.chars().count() > 128
             || self
@@ -57,31 +71,47 @@ impl Grant {
                 .chars()
                 .any(|ch| ch.is_control() || ch.is_whitespace())
         {
-            return Err(
+            return Err((
+                GrantField::Principal,
                 "A principal must be one nonempty identity (at most 128 characters), or *."
                     .to_string(),
-            );
+            ));
         }
         if self.nodes.is_empty() || self.verbs.is_empty() {
-            return Err("A grant needs at least one target selector and one verb.".to_string());
+            return Err((
+                if self.nodes.is_empty() {
+                    GrantField::Targets
+                } else {
+                    GrantField::Verbs
+                },
+                "A grant needs at least one target selector and one verb.".to_string(),
+            ));
         }
         for selector in &self.nodes {
             if selector != "all" {
-                super::validate_node_name(selector.strip_prefix("tag:").unwrap_or(selector))?;
+                super::validate_node_name(selector.strip_prefix("tag:").unwrap_or(selector))
+                    .map_err(|detail| (GrantField::Targets, detail))?;
             }
         }
         for verb in &self.verbs {
             if verb != "*" && !ALL_VERBS.contains(&verb.as_str()) {
-                return Err(format!(
-                    "Unknown verb \"{verb}\". Verbs: {} or *.",
-                    ALL_VERBS.join(", ")
+                return Err((
+                    GrantField::Verbs,
+                    format!(
+                        "Unknown verb \"{verb}\". Verbs: {} or *.",
+                        ALL_VERBS.join(", ")
+                    ),
                 ));
             }
         }
         if let Some(expires) = &self.expires
-            && super::parse_rfc3339(expires)? <= time::OffsetDateTime::now_utc()
+            && super::parse_rfc3339(expires).map_err(|detail| (GrantField::Expires, detail))?
+                <= time::OffsetDateTime::now_utc()
         {
-            return Err("The grant expiry must be in the future (RFC 3339 UTC).".to_string());
+            return Err((
+                GrantField::Expires,
+                "The grant expiry must be in the future (RFC 3339 UTC).".to_string(),
+            ));
         }
         Ok(())
     }

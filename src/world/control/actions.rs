@@ -359,8 +359,18 @@ async fn wait_for_node(expected: bool) -> Result<(), Failure> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let result = snapshot::ask(&AdminRequest::Status, Duration::from_secs(1)).await;
-        if result.is_ok() == expected {
+        if (expected && result.is_ok())
+            || (!expected
+                && result
+                    .as_ref()
+                    .is_err_and(|error| error.kind == super::FailureKind::Unavailable))
+        {
             return Ok(());
+        }
+        if let Err(error) = result.as_ref()
+            && error.kind == super::FailureKind::Permission
+        {
+            return Err(error.clone());
         }
         if tokio::time::Instant::now() >= deadline {
             return Err(Failure::new(if expected {
