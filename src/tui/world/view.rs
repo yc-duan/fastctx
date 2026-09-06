@@ -733,10 +733,11 @@ fn render_events(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessa
     };
     if app.events.is_empty() {
         let mut lines = Vec::new();
+        // One failure, said once: the event read and the node read usually fail for the same
+        // reason, and printing both spells the same sentence out twice.
         if let Some(error) = &app.event_error {
             lines.extend(failure_lines(error, m));
-        }
-        if let Some(error) = node_error(app, m, false) {
+        } else if let Some(error) = node_error(app, m, false) {
             lines.extend(error);
         }
         if app.event_gap {
@@ -1461,7 +1462,7 @@ fn render_failed(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessa
         .map(|action| format!(" · {}", action_name(action, m)))
         .unwrap_or_default();
     let body = headline(frame, area, Tone::Fail, &format!("{}{action}", m.failed));
-    let lines = failure_lines(&failure, m);
+    let lines = classified_failure_lines(&failure, m);
     scroll(frame, app, body, None, lines);
 }
 
@@ -2133,7 +2134,7 @@ fn help_lines(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
         }
         if let Some(error) = &form.error {
             lines.push(warn(form.error_text(m)));
-            lines.extend(failure_lines(error, m));
+            lines.extend(classified_failure_lines(error, m));
             lines.push(Line::raw(""));
         }
         lines.push(muted(m.form_keys));
@@ -2185,7 +2186,7 @@ fn help_lines(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
                 Line::raw(""),
             ];
             if let Some(error) = &app.event_error {
-                lines.extend(failure_lines(error, m));
+                lines.extend(classified_failure_lines(error, m));
             }
             lines.extend(detail(app, m));
             lines
@@ -2246,19 +2247,28 @@ fn help_lines(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
     lines
 }
 
+/// What went wrong and what to do about it. The caller's own title already names the state, so
+/// this does not restate it — repeating the classification above the detail reads as two
+/// separate problems, and "check this field" is nonsense over a file that could not be read.
 fn failure_lines(error: &Failure, m: &i18n::WorldMessages) -> Lines {
-    let title = match error.kind {
-        FailureKind::Permission => m.permission,
-        FailureKind::Unavailable => m.unavailable,
-        FailureKind::Invalid => m.validation,
-        _ => m.error,
-    };
-    let mut lines = vec![warn(title), plain(&error.detail)];
+    let mut lines = vec![plain(&error.detail)];
     if error.kind == FailureKind::Permission {
-        lines.insert(1, plain(m.permission_help));
+        lines.push(muted(m.permission_help));
     }
     if error.uncertain {
         lines.push(warn(m.uncertain));
+    }
+    lines
+}
+
+/// The same, led by the kind of failure; for screens whose title names the action rather than
+/// the state. Only the two kinds that change what the user should do next are named.
+fn classified_failure_lines(error: &Failure, m: &i18n::WorldMessages) -> Lines {
+    let mut lines = failure_lines(error, m);
+    match error.kind {
+        FailureKind::Permission => lines.insert(0, warn(m.permission)),
+        FailureKind::Unavailable => lines.insert(0, warn(m.unavailable)),
+        _ => {}
     }
     lines
 }

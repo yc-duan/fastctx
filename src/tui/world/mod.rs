@@ -342,9 +342,11 @@ impl WorldApp {
         if visible
             && !self.stopping
             && self.worker.is_none()
+            // A refresh under an open menu can reorder the actions the user is aiming at, so the
+            // modal screens all hold the snapshot still until they are dismissed.
             && !matches!(
                 self.screen,
-                Screen::Form | Screen::Confirm | Screen::Discard
+                Screen::Form | Screen::Confirm | Screen::Discard | Screen::Actions
             )
             && self
                 .last_read
