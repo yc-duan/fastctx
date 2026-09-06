@@ -13,6 +13,24 @@ pub(crate) fn noninteractive_command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
+/// Lets a foreground handoff share the existing console, but never creates a new one.
+/// Redirected launches without an attached console retain their inherited pipe handles.
+pub(crate) fn console_inheriting_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::GetConsoleWindow;
+
+        // SAFETY: GetConsoleWindow returns a borrowed handle and takes no arguments.
+        if unsafe { GetConsoleWindow() }.is_null() {
+            apply_noninteractive_policy(&mut command);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = &mut command;
+    command
+}
+
 /// Applies the platform policy to an existing non-interactive command.
 pub(crate) fn apply_noninteractive_policy(command: &mut Command) {
     #[cfg(windows)]

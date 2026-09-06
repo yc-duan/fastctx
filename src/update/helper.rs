@@ -20,7 +20,7 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
@@ -218,7 +218,7 @@ pub(crate) fn begin_update(
         return Err(error);
     }
 
-    let spawned = Command::new(&helper_executable)
+    let spawned = crate::process_policy::console_inheriting_command(&helper_executable)
         .arg("update-helper")
         .arg("--request")
         .arg(&request_path)
@@ -663,7 +663,7 @@ fn spawn_npm_exec(
 }
 
 fn spawn_npm_launcher(provenance: &NpmProvenance, request_path: &Path) -> Result<Child, String> {
-    Command::new(&provenance.node)
+    crate::process_policy::console_inheriting_command(&provenance.node)
         .arg(&provenance.launcher)
         .env(UPDATE_FINALIZE_ENV, request_path)
         .stdin(Stdio::inherit())
@@ -674,7 +674,7 @@ fn spawn_npm_launcher(provenance: &NpmProvenance, request_path: &Path) -> Result
 }
 
 fn spawn_release_restart(target: &Path, request_path: &Path) -> Result<Child, String> {
-    Command::new(target)
+    crate::process_policy::console_inheriting_command(target)
         .env(UPDATE_FINALIZE_ENV, request_path)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -686,11 +686,13 @@ fn spawn_release_restart(target: &Path, request_path: &Path) -> Result<Child, St
 fn restart_fallback(request: &UpdateRequest, failure: &str) -> Result<UpdatedSession, String> {
     let mut command = match &request.plan {
         UpdatePlan::Npm { provenance, .. } => {
-            let mut command = Command::new(&provenance.node);
+            let mut command = crate::process_policy::console_inheriting_command(&provenance.node);
             command.arg(&provenance.launcher);
             command
         }
-        UpdatePlan::GithubRelease { .. } => Command::new(&request.target_executable),
+        UpdatePlan::GithubRelease { .. } => {
+            crate::process_policy::console_inheriting_command(&request.target_executable)
+        }
     };
     let child = command
         .env("FASTCTX_DISABLE_UPDATE_CHECK", "1")

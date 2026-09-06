@@ -8,11 +8,13 @@ use std::process::Command;
 pub(super) fn command(provenance: &NpmProvenance) -> Command {
     match provenance.driver {
         NpmDriver::NodeScript => {
-            let mut command = Command::new(&provenance.node);
+            let mut command = crate::process_policy::console_inheriting_command(&provenance.node);
             command.arg(&provenance.npm_cli);
             command
         }
-        NpmDriver::Executable => Command::new(&provenance.npm_cli),
+        NpmDriver::Executable => {
+            crate::process_policy::console_inheriting_command(&provenance.npm_cli)
+        }
     }
 }
 
