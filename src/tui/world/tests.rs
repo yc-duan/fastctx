@@ -2,14 +2,19 @@
 
 use super::*;
 use crate::control::i18n::{ALL_LANGUAGES, Language};
-use crate::world::client::Inventory;
+use crate::world::client::{Disk, Inventory};
 use crate::world::control::{FailureKind, NodeSnapshot};
 use crate::world::grant::{Grant, GrantEntry, GrantSnapshot};
+use crate::world::node::activity::NodeActivity;
 use crate::world::node::admin::NodeStatus;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 fn fixture() -> WorldApp {
+    fixture_with(3)
+}
+
+fn fixture_with(machines: usize) -> WorldApp {
     let paths = ControlPaths::for_home(std::env::temp_dir().join("fastctx-world-render-only"));
     let mut app = WorldApp::new(&paths);
     let now = crate::world::now_rfc3339();
@@ -17,7 +22,7 @@ fn fixture() -> WorldApp {
         "name":"desktop", "world_id":"world-demo", "hub":["example.test:443"], "hub_key":"public fingerprint", "fingerprint":"public fingerprint", "pid":1234,
         "version":"1.0.0", "started_at":now, "written_at":now,
         "link":{"state":"connected","network":"direct","path":"direct via Ethernet","interface":"Ethernet", "tunnels":[],"tls":"pinned", "connected_since":now,"last_heartbeat_at":now,"last_ack_at":now,"rtt_ms":18,"hub_time_offset_s":0,"last_error":null,"replaced_count":0,"key_epoch":2,"outbox_depth":0},
-        "members":2,"members_online":2,"grant_revision":1,"grant_stale":false,"running_calls":1,"engine_hosted":true,"agent_connections":2
+        "members":machines,"members_online":machines.saturating_sub(1),"grant_revision":1,"grant_stale":false,"running_calls":1,"engine_hosted":true,"agent_connections":2
     })).unwrap();
     let inventory = Inventory {
         hostname: "workstation".into(),
@@ -29,6 +34,18 @@ fn fixture() -> WorldApp {
         user: "Ada".into(),
         description: "办公台式机 · builds and experiments".into(),
         collected_at: now.clone(),
+        disks: vec![Disk {
+            mount: "C:".into(),
+            free_gb: 120.5,
+            total_gb: 476.0,
+        }],
+        activity: Some(NodeActivity {
+            engine_hosted: true,
+            agent_connections: 2,
+            local_requests: 1,
+            remote_calls: 0,
+            observed_at: now.clone(),
+        }),
         ..Inventory::default()
     };
     let first = NodeView {
@@ -46,16 +63,24 @@ fn fixture() -> WorldApp {
         is_self: true,
         private_note: None,
     };
-    let mut second = first.clone();
-    second.name = "linux-builder".into();
-    second.os = "linux".into();
-    second.is_self = false;
-    second.private_note = Some("我的服务器".into());
+    let mut nodes = vec![first.clone()];
+    for index in 1..machines {
+        let mut other = first.clone();
+        other.name = format!("machine-{index}");
+        other.os = if index % 2 == 0 { "linux" } else { "macos" }.into();
+        other.is_self = false;
+        other.private_note = Some("我的服务器".into());
+        if index % 3 == 2 {
+            other.state = "offline".into();
+            other.hub_rtt_ms = None;
+        }
+        nodes.push(other);
+    }
     let mut config: crate::world::WorldConfig=serde_json::from_value(serde_json::json!({"version":1,"name":"desktop","world_id":"world-demo","hub":["example.test:443"],"hub_key":"public fingerprint","tls":"pinned","enrolled_at":now})).unwrap();
     config.network = NetworkMode::Direct;
     let node = NodeSnapshot {
         status: status.clone(),
-        nodes: ReadState::Ready(vec![first, second]),
+        nodes: ReadState::Ready(nodes),
         grants: GrantSnapshot {
             revision: 1,
             grants: vec![GrantEntry {
@@ -84,16 +109,26 @@ fn fixture() -> WorldApp {
         hub: ReadState::Ready(hub),
         hub_data: app.hub_data.clone(),
     });
-    app.events = vec![Event {
-        seq: 1,
-        at: now,
-        subject: "desktop".into(),
-        kind: "node.online".into(),
-        facts: Default::default(),
-    }];
-    app.event_cursor = 1;
-    app.event_latest = 1;
+    app.events = vec![
+        Event {
+            seq: 1,
+            at: now.clone(),
+            subject: "desktop".into(),
+            kind: "node.online".into(),
+            facts: Default::default(),
+        },
+        Event {
+            seq: 2,
+            at: now,
+            subject: "machine-1".into(),
+            kind: "grant.changed".into(),
+            facts: Default::default(),
+        },
+    ];
+    app.event_cursor = 2;
+    app.event_latest = 2;
     app.events_loaded = true;
+    app.rtt_history = (0..40).map(|index| 12 + (index * 7) % 23).collect();
     app
 }
 
@@ -112,15 +147,19 @@ fn all_languages_render_world_states_at_terminal_boundaries() {
     for language in ALL_LANGUAGES {
         for (width, height) in [(39, 8), (40, 9), (52, 12), (80, 24), (120, 36)] {
             for page in Page::ALL {
-                let mut app = fixture();
-                app.page = page;
-                draw(&mut app, language, width, height);
-                app.screen = Screen::Detail;
-                draw(&mut app, language, width, height);
-                app.screen = Screen::Actions;
-                draw(&mut app, language, width, height);
+                for machines in [1, 3, 9] {
+                    let mut app = fixture_with(machines);
+                    app.page = page;
+                    draw(&mut app, language, width, height);
+                    app.screen = Screen::Detail;
+                    draw(&mut app, language, width, height);
+                    app.screen = Screen::Actions;
+                    draw(&mut app, language, width, height);
+                    app.screen = Screen::Help;
+                    draw(&mut app, language, width, height);
+                }
             }
-            for state in 0..6 {
+            for state in 0..7 {
                 let mut app = fixture();
                 match state {
                     0 => app.snapshot = None,
@@ -137,13 +176,24 @@ fn all_languages_render_world_states_at_terminal_boundaries() {
                         })
                     }
                     4 => app.snapshot.as_mut().unwrap().node = ReadState::Missing,
-                    _ => {
+                    5 => {
                         let snapshot = app.snapshot.as_mut().unwrap();
                         snapshot.node = ReadState::Missing;
                         snapshot.last_status = ReadState::Missing;
+                        snapshot.service_installed = ReadState::Ready(false);
+                    }
+                    _ => {
+                        let snapshot = app.snapshot.as_mut().unwrap();
+                        snapshot.node = ReadState::Failed(Failure::new("node_service_not_running"));
+                        snapshot.service_installed =
+                            ReadState::Failed(Failure::new("Access is denied"));
                     }
                 }
-                draw(&mut app, language, width, height);
+                for page in Page::ALL {
+                    app.page = page;
+                    app.screen = Screen::Page;
+                    draw(&mut app, language, width, height);
+                }
             }
             for kind in [
                 FormKind::Create,
@@ -193,29 +243,172 @@ fn all_languages_render_world_states_at_terminal_boundaries() {
 }
 
 #[test]
+fn the_recommended_action_follows_the_first_broken_step() {
+    let mut app = fixture();
+    assert_eq!(app.recommended(), None);
+    app.snapshot.as_mut().unwrap().service_installed = ReadState::Ready(false);
+    assert_eq!(app.recommended(), Some(MenuAction::Install));
+    app.snapshot.as_mut().unwrap().node = ReadState::Missing;
+    assert_eq!(app.recommended(), Some(MenuAction::Install));
+    app.snapshot.as_mut().unwrap().service_installed = ReadState::Ready(true);
+    assert_eq!(app.recommended(), Some(MenuAction::Start));
+    app.page = Page::Service;
+    assert_eq!(app.actions()[0], MenuAction::Start);
+    assert!(!app.actions().contains(&MenuAction::Stop));
+}
+
+#[test]
 fn temporary_world_render_review() {
     let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("dev-notes/validation/world-tui/render");
     std::fs::create_dir_all(&output).unwrap();
-    for (name, language, width, height, screen) in [
-        ("welcome-zh", Language::ZhCn, 80, 24, Screen::Page),
-        ("welcome-40", Language::ZhCn, 40, 9, Screen::Page),
-        ("create-40", Language::ZhCn, 40, 9, Screen::Form),
-        ("create-de", Language::De, 80, 24, Screen::Form),
-        ("revoke-zh", Language::ZhCn, 80, 24, Screen::Confirm),
-        ("machines-zh", Language::ZhCn, 120, 36, Screen::Detail),
+    for (name, language, width, height, page, screen, machines) in [
+        (
+            "overview-zh",
+            Language::ZhCn,
+            100,
+            30,
+            Page::Overview,
+            Screen::Page,
+            3,
+        ),
+        (
+            "overview-en-80",
+            Language::En,
+            80,
+            24,
+            Page::Overview,
+            Screen::Page,
+            3,
+        ),
+        (
+            "overview-many",
+            Language::ZhCn,
+            100,
+            30,
+            Page::Overview,
+            Screen::Page,
+            9,
+        ),
+        (
+            "overview-narrow",
+            Language::ZhCn,
+            52,
+            12,
+            Page::Overview,
+            Screen::Page,
+            3,
+        ),
+        (
+            "overview-40",
+            Language::ZhCn,
+            40,
+            9,
+            Page::Overview,
+            Screen::Page,
+            3,
+        ),
+        (
+            "welcome-zh",
+            Language::ZhCn,
+            80,
+            24,
+            Page::Overview,
+            Screen::Page,
+            3,
+        ),
+        (
+            "machines-zh",
+            Language::ZhCn,
+            120,
+            36,
+            Page::Machines,
+            Screen::Page,
+            5,
+        ),
+        (
+            "machines-80",
+            Language::ZhCn,
+            80,
+            24,
+            Page::Machines,
+            Screen::Page,
+            5,
+        ),
+        (
+            "service-zh",
+            Language::ZhCn,
+            100,
+            30,
+            Page::Service,
+            Screen::Page,
+            3,
+        ),
+        (
+            "service-down",
+            Language::ZhCn,
+            100,
+            30,
+            Page::Service,
+            Screen::Page,
+            3,
+        ),
+        (
+            "connection-zh",
+            Language::ZhCn,
+            100,
+            30,
+            Page::Connection,
+            Screen::Page,
+            3,
+        ),
+        (
+            "events-zh",
+            Language::ZhCn,
+            100,
+            30,
+            Page::Events,
+            Screen::Page,
+            3,
+        ),
+        (
+            "grants-zh",
+            Language::ZhCn,
+            100,
+            30,
+            Page::Grants,
+            Screen::Page,
+            3,
+        ),
+        (
+            "actions-zh",
+            Language::ZhCn,
+            80,
+            24,
+            Page::Overview,
+            Screen::Actions,
+            3,
+        ),
+        (
+            "overview-de",
+            Language::De,
+            100,
+            30,
+            Page::Overview,
+            Screen::Page,
+            4,
+        ),
     ] {
-        let mut app = fixture();
+        let mut app = fixture_with(machines);
+        app.page = page;
         app.screen = screen;
-        match screen {
-            Screen::Page => app.snapshot.as_mut().unwrap().config = ReadState::Missing,
-            Screen::Form => app.open_form(FormKind::Create, "desktop"),
-            Screen::Confirm => {
-                app.preview = Some(Action::Revoke {
-                    name: "linux-builder".into(),
-                })
+        match name {
+            "welcome-zh" => app.snapshot.as_mut().unwrap().config = ReadState::Missing,
+            "service-down" => {
+                let snapshot = app.snapshot.as_mut().unwrap();
+                snapshot.node = ReadState::Missing;
+                snapshot.service_installed = ReadState::Ready(false);
             }
-            Screen::Detail => app.page = Page::Machines,
             _ => {}
         }
         let terminal = draw(&mut app, language, width, height);

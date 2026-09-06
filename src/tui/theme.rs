@@ -25,6 +25,10 @@ pub(crate) struct Theme {
     pub(crate) danger: Color,
     pub(crate) muted: Color,
     pub(crate) border: Color,
+    /// Filled panel ground for raster cards; text on it uses `fg` and `accent`.
+    pub(crate) surface: Color,
+    /// A second filled ground that must read as different from `surface` next to it.
+    pub(crate) emphasis: Color,
 }
 
 impl Theme {
@@ -49,6 +53,8 @@ impl Theme {
                 // under 4.5:1 against `bg_raised` and the value disappears on the focused row.
                 muted: Color::Rgb(0x8a, 0x8c, 0x8e),
                 border: Color::Rgb(0x30, 0x32, 0x36),
+                surface: Color::Rgb(0x1c, 0x21, 0x27),
+                emphasis: Color::Rgb(0x24, 0x33, 0x44),
             },
             ColorMode::Ansi256 => Self {
                 bg: Color::Indexed(232),
@@ -60,6 +66,8 @@ impl Theme {
                 danger: Color::Indexed(167),
                 muted: Color::Indexed(246),
                 border: Color::Indexed(236),
+                surface: Color::Indexed(236),
+                emphasis: Color::Indexed(24),
             },
             ColorMode::Ansi16 => Self {
                 bg: Color::Black,
@@ -74,6 +82,10 @@ impl Theme {
                 // grey-on-grey erases the value outright.
                 muted: Color::Gray,
                 border: Color::DarkGray,
+                // Sixteen colors give exactly one dark grey and one dark blue; both keep `Gray`
+                // and `White` text readable, and the blue is the only second ground on offer.
+                surface: Color::DarkGray,
+                emphasis: Color::Blue,
             },
             ColorMode::Monochrome => Self {
                 bg: Color::Reset,
@@ -85,9 +97,17 @@ impl Theme {
                 danger: Color::Reset,
                 muted: Color::Reset,
                 border: Color::Reset,
+                surface: Color::Reset,
+                emphasis: Color::Reset,
             },
         }
     }
+}
+
+/// True when every role collapses to the terminal default; raster art must then draw outlines,
+/// because a filled block in the default foreground would swallow any text placed on it.
+pub(crate) fn monochrome() -> bool {
+    current().surface == Color::Reset
 }
 
 fn detect_color_mode_with(mut value: impl FnMut(&str) -> Option<OsString>) -> ColorMode {
@@ -176,6 +196,14 @@ pub(crate) fn muted() -> Color {
 
 pub(crate) fn border() -> Color {
     current().border
+}
+
+pub(crate) fn surface() -> Color {
+    current().surface
+}
+
+pub(crate) fn emphasis() -> Color {
+    current().emphasis
 }
 
 #[cfg(test)]

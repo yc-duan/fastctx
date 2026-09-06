@@ -2,8 +2,11 @@
 
 mod forms;
 pub(super) mod i18n;
+mod model;
+mod raster;
 #[cfg(test)]
 mod tests;
+mod topology;
 mod view;
 mod widgets;
 mod worker;
@@ -14,6 +17,8 @@ use crate::world::control::{Action, Failure, ReadState, Receipt, Reply, ServiceA
 use crate::world::messages::Event;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use forms::{Form, FormEvent, FormKind, Submission};
+use model::{LinkTone, service_facts};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 pub(super) use view::render;
@@ -25,7 +30,7 @@ pub(super) enum Page {
     Overview,
     Machines,
     Grants,
-    Health,
+    Connection,
     Events,
     Service,
     Hub,
@@ -35,7 +40,7 @@ impl Page {
         Self::Overview,
         Self::Machines,
         Self::Grants,
-        Self::Health,
+        Self::Connection,
         Self::Events,
         Self::Service,
         Self::Hub,
@@ -48,11 +53,16 @@ impl Page {
             Self::Overview => m.overview,
             Self::Machines => m.machines,
             Self::Grants => m.grants,
-            Self::Health => m.health,
+            Self::Connection => m.connection,
             Self::Events => m.events,
             Self::Service => m.service,
             Self::Hub => m.hub,
         }
+    }
+    /// Pages whose list is the machines of the World, so one selection follows the user
+    /// between them.
+    fn lists_machines(self) -> bool {
+        matches!(self, Self::Overview | Self::Machines)
     }
 }
 
@@ -71,7 +81,7 @@ pub(super) enum Screen {
     Help,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MenuAction {
     Create,
     Join,
@@ -96,6 +106,7 @@ pub(super) enum MenuAction {
     Reconnect,
     OpenAgents,
     ServicePage,
+    ConnectionPage,
     HubPage,
     Export,
 }
@@ -125,8 +136,23 @@ impl MenuAction {
             Self::Reconnect => m.reconnect,
             Self::OpenAgents => m.open_agents,
             Self::ServicePage => m.service,
+            Self::ConnectionPage => m.connection,
             Self::HubPage => m.hub,
             Self::Export => m.export,
+        }
+    }
+    /// The single letter that runs this action from a page, shown next to its label.
+    fn hotkey(self) -> Option<char> {
+        match self {
+            Self::Invite => Some('i'),
+            Self::Description => Some('d'),
+            Self::PrivateNote => Some('n'),
+            Self::ServicePage => Some('s'),
+            Self::Refresh => Some('r'),
+            Self::Reconnect => Some('c'),
+            Self::AddGrant | Self::Cursor | Self::ChooseHub => Some('e'),
+            Self::NextEvents => Some('l'),
+            _ => None,
         }
     }
 }
@@ -136,6 +162,9 @@ pub(super) enum Navigation {
     Back,
     Agents,
 }
+
+/// Round-trip samples kept for the Connection chart.
+const RTT_SAMPLES: usize = 120;
 
 pub(super) struct WorldApp {
     pub(super) page: Page,
@@ -160,6 +189,11 @@ pub(super) struct WorldApp {
     pub(super) confirm_yes: bool,
     help_from: Screen,
     pub(super) hub_data: PathBuf,
+    /// Where the node writes its diagnostics; shown so a stuck service has a paper trail.
+    pub(super) node_log: PathBuf,
+    /// Hub round trips in arrival order, one per fresh status; the chart reads them left to right.
+    pub(super) rtt_history: VecDeque<u32>,
+    rtt_sampled_at: Option<String>,
     worker: Option<Worker>,
     active: Option<Action>,
     pending: Option<Action>,
@@ -193,6 +227,9 @@ impl WorldApp {
             confirm_yes: false,
             help_from: Screen::Page,
             hub_data: paths.home.join(".fastctx-hub"),
+            node_log: paths.fastctx_dir.join("world").join("node.log"),
+            rtt_history: VecDeque::new(),
+            rtt_sampled_at: None,
             worker: None,
             active: None,
             pending: None,
@@ -314,14 +351,16 @@ impl WorldApp {
     fn accept(&mut self, reply: Reply, action: Option<&Action>) {
         match reply {
             Reply::Snapshot(snapshot) => {
-                let selected_name = self.selected_node().map(|node| node.name.clone());
+                let selected_name = self.focused_node().map(|node| node.name.clone());
                 self.hub_data = snapshot.hub_data.clone();
+                self.sample_rtt(&snapshot);
                 self.snapshot = Some(*snapshot);
                 self.load_error = None;
                 if let Some(name) = selected_name
                     && let Some(index) = self.nodes().iter().position(|node| node.name == name)
                 {
                     self.selected[Page::Machines.index()] = index;
+                    self.selected[Page::Overview.index()] = index;
                 }
                 self.clamp_selection();
             }
@@ -354,6 +393,8 @@ impl WorldApp {
                     self.event_cursor = 0;
                     self.events_loaded = false;
                     self.snapshot = None;
+                    self.rtt_history.clear();
+                    self.rtt_sampled_at = None;
                 }
                 if receipt.left {
                     self.page = Page::Overview;
@@ -379,6 +420,26 @@ impl WorldApp {
             },
         }
     }
+    /// One sample per status the node actually wrote; repeated reads of the same status are
+    /// not new measurements.
+    fn sample_rtt(&mut self, snapshot: &Snapshot) {
+        let Some(node) = snapshot.node.get() else {
+            return;
+        };
+        if !crate::world::doctor::status_is_fresh(&node.status) {
+            return;
+        }
+        if self.rtt_sampled_at.as_deref() == Some(node.status.written_at.as_str()) {
+            return;
+        }
+        self.rtt_sampled_at = Some(node.status.written_at.clone());
+        if let Some(rtt) = node.status.link.rtt_ms {
+            if self.rtt_history.len() == RTT_SAMPLES {
+                self.rtt_history.pop_front();
+            }
+            self.rtt_history.push_back(rtt);
+        }
+    }
     pub(super) fn nodes(&self) -> &[NodeView] {
         self.snapshot
             .as_ref()
@@ -387,13 +448,45 @@ impl WorldApp {
             .map(Vec::as_slice)
             .unwrap_or(&[])
     }
-    pub(super) fn selected_node(&self) -> Option<&NodeView> {
-        self.nodes().get(self.selected[Page::Machines.index()])
+    /// The machine the current page points at; Overview and Machines share the selection.
+    pub(super) fn focused_node(&self) -> Option<&NodeView> {
+        let page = if self.page.lists_machines() {
+            self.page
+        } else {
+            Page::Machines
+        };
+        self.nodes().get(self.selected[page.index()])
     }
     fn enrolled(&self) -> bool {
         self.snapshot
             .as_ref()
             .is_some_and(|snapshot| matches!(snapshot.config, ReadState::Ready(_)))
+    }
+    /// The one action the current state asks for, if any: the first broken step of the
+    /// service chain, from the outside in.
+    pub(super) fn recommended(&self) -> Option<MenuAction> {
+        if !self.enrolled() || self.page == Page::Hub {
+            return None;
+        }
+        let facts = service_facts(self.snapshot.as_ref()?);
+        match (facts.running, facts.installed) {
+            (Some(false), Some(true)) => return Some(MenuAction::Start),
+            (Some(false), _) => return Some(MenuAction::Install),
+            (None, _) => return Some(MenuAction::Inspect),
+            (Some(true), _) => {}
+        }
+        match facts.link {
+            Some(LinkTone::Connected) => {}
+            Some(_) => return Some(MenuAction::Reconnect),
+            None => return Some(MenuAction::Restart),
+        }
+        if facts.hosting == Some(false) {
+            return Some(MenuAction::Restart);
+        }
+        if facts.installed == Some(false) {
+            return Some(MenuAction::Install);
+        }
+        None
     }
     pub(super) fn actions(&self) -> Vec<MenuAction> {
         use MenuAction as A;
@@ -421,18 +514,28 @@ impl WorldApp {
         if !self.enrolled() {
             return vec![A::Create, A::Join, A::HubPage, A::Inspect];
         }
-        match self.page {
-            Page::Overview => vec![
-                A::Invite,
-                A::Description,
-                A::ServicePage,
-                A::OpenAgents,
-                A::Refresh,
-                A::Leave,
-            ],
+        let recommended = self.recommended();
+        let mut list = match self.page {
+            Page::Overview => {
+                let mut list = vec![A::Invite];
+                if let Some(node) = self.focused_node() {
+                    list.push(A::PrivateNote);
+                    if node.is_self {
+                        list.push(A::Description);
+                    }
+                }
+                list.extend([
+                    A::ServicePage,
+                    A::ConnectionPage,
+                    A::Refresh,
+                    A::OpenAgents,
+                    A::Leave,
+                ]);
+                list
+            }
             Page::Machines => {
                 let mut list = vec![A::Invite, A::Refresh];
-                if let Some(node) = self.selected_node() {
+                if let Some(node) = self.focused_node() {
                     list.insert(0, A::PrivateNote);
                     if node.is_self {
                         list.insert(1, A::Description);
@@ -449,18 +552,41 @@ impl WorldApp {
                 }
                 list
             }
-            Page::Health => vec![A::Inspect, A::Refresh, A::Reconnect, A::ServicePage],
+            Page::Connection => vec![A::Reconnect, A::Refresh, A::Inspect, A::ServicePage],
             Page::Events => vec![A::NextEvents, A::Cursor],
-            Page::Service => vec![
-                A::Start,
-                A::Install,
-                A::Restart,
-                A::Stop,
-                A::Uninstall,
-                A::Inspect,
-            ],
+            Page::Service => self.service_actions(),
             Page::Hub => unreachable!(),
+        };
+        if let Some(action) = recommended
+            && matches!(self.page, Page::Overview | Page::Service | Page::Connection)
+        {
+            list.retain(|candidate| *candidate != action);
+            list.insert(0, action);
         }
+        list
+    }
+    /// Service actions that make sense in the current state; the recommended one leads.
+    fn service_actions(&self) -> Vec<MenuAction> {
+        use MenuAction as A;
+        let Some(snapshot) = &self.snapshot else {
+            return vec![A::Inspect];
+        };
+        let facts = service_facts(snapshot);
+        let mut list = match (facts.running, facts.installed) {
+            (Some(false), Some(false)) => vec![A::Install, A::Start],
+            (Some(false), Some(true)) => vec![A::Start, A::Uninstall],
+            (Some(false), None) => vec![A::Start, A::Install],
+            (Some(true), Some(false)) => vec![A::Install, A::Restart, A::Stop],
+            (Some(true), Some(true)) => vec![A::Restart, A::Stop, A::Uninstall],
+            (Some(true), None) => vec![A::Restart, A::Stop],
+            (None, _) => vec![A::Start, A::Restart, A::Stop, A::Install, A::Uninstall],
+        };
+        if facts.running == Some(true) && facts.link.is_some_and(|tone| tone != LinkTone::Connected)
+        {
+            list.insert(0, A::Reconnect);
+        }
+        list.push(A::Inspect);
+        list
     }
     fn grants_len(&self) -> usize {
         self.snapshot
@@ -473,7 +599,7 @@ impl WorldApp {
             return self.actions().len();
         }
         match self.page {
-            Page::Machines => self.nodes().len(),
+            Page::Overview | Page::Machines => self.nodes().len(),
             Page::Grants => self.grants_len(),
             Page::Events => self.events.len(),
             Page::Hub => self
@@ -481,17 +607,23 @@ impl WorldApp {
                 .as_ref()
                 .and_then(|snapshot| snapshot.hub.get())
                 .map_or(0, |hub| hub.members.len()),
-            Page::Overview | Page::Service => self.actions().len(),
-            Page::Health => 0,
+            Page::Service => self.actions().len(),
+            Page::Connection => 0,
         }
     }
     fn clamp_selection(&mut self) {
         self.selected[self.page.index()] =
             self.selected[self.page.index()].min(self.count().saturating_sub(1));
     }
-    fn change_page(&mut self, next: bool, paths: &ControlPaths) {
-        self.page = Page::ALL
-            [(self.page.index() + if next { 1 } else { Page::ALL.len() - 1 }) % Page::ALL.len()];
+    fn select(&mut self, index: usize) {
+        self.selected[self.page.index()] = index;
+        if self.page.lists_machines() {
+            self.selected[Page::Overview.index()] = index;
+            self.selected[Page::Machines.index()] = index;
+        }
+    }
+    fn go_to(&mut self, page: Page, paths: &ControlPaths) {
+        self.page = page;
         self.screen = Screen::Page;
         self.scroll = 0;
         self.clamp_selection();
@@ -504,6 +636,11 @@ impl WorldApp {
                 },
             );
         }
+    }
+    fn change_page(&mut self, next: bool, paths: &ControlPaths) {
+        let page = Page::ALL
+            [(self.page.index() + if next { 1 } else { Page::ALL.len() - 1 }) % Page::ALL.len()];
+        self.go_to(page, paths);
     }
     pub(super) fn paste(&mut self, text: &str) {
         if self.screen == Screen::Form
@@ -582,14 +719,14 @@ impl WorldApp {
                 }
             }
             A::PrivateNote => {
-                if let Some(node) = self.selected_node() {
+                if let Some(node) = self.focused_node() {
                     let name = node.name.clone();
                     let note = node.private_note.clone().unwrap_or_default();
                     self.open_form(FormKind::PrivateNote(name), &note);
                 }
             }
             A::Revoke => {
-                if let Some(node) = self.selected_node() {
+                if let Some(node) = self.focused_node() {
                     self.prepare(
                         paths,
                         Action::Revoke {
@@ -676,14 +813,9 @@ impl WorldApp {
             A::Refresh => self.prepare(paths, Action::Refresh),
             A::Reconnect => self.prepare(paths, Action::Reconnect),
             A::OpenAgents => return Navigation::Agents,
-            A::ServicePage => {
-                self.page = Page::Service;
-                self.scroll = 0;
-            }
-            A::HubPage => {
-                self.page = Page::Hub;
-                self.scroll = 0;
-            }
+            A::ServicePage => self.go_to(Page::Service, paths),
+            A::ConnectionPage => self.go_to(Page::Connection, paths),
+            A::HubPage => self.go_to(Page::Hub, paths),
             A::Export => {
                 if let Some(invite) = self
                     .receipt
@@ -707,7 +839,8 @@ impl WorldApp {
                 Navigation::Stay
             };
         }
-        if key.code == KeyCode::F(1)
+        if (key.code == KeyCode::F(1)
+            || (key.code == KeyCode::Char('?') && self.screen != Screen::Form))
             && matches!(self.screen, Screen::Page | Screen::Detail | Screen::Form)
         {
             self.help_from = self.screen;
@@ -717,7 +850,7 @@ impl WorldApp {
         }
         match self.screen {
             Screen::Help => match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::F(1) => {
+                KeyCode::Esc | KeyCode::Enter | KeyCode::F(1) | KeyCode::Char('?') => {
                     self.screen = self.help_from;
                     self.scroll = 0;
                 }
@@ -846,8 +979,10 @@ impl WorldApp {
             Screen::Actions => {
                 let actions = self.actions();
                 match key.code {
-                    KeyCode::Up => self.menu_selected = self.menu_selected.saturating_sub(1),
-                    KeyCode::Down => {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.menu_selected = self.menu_selected.saturating_sub(1)
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
                         self.menu_selected =
                             (self.menu_selected + 1).min(actions.len().saturating_sub(1))
                     }
@@ -857,6 +992,14 @@ impl WorldApp {
                         }
                     }
                     KeyCode::Esc => self.screen = Screen::Page,
+                    KeyCode::Char(letter) => {
+                        if let Some(action) = actions
+                            .iter()
+                            .find(|action| action.hotkey() == Some(letter))
+                        {
+                            return self.dispatch(paths, *action);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -868,6 +1011,9 @@ impl WorldApp {
                 KeyCode::Char('a') => {
                     self.screen = Screen::Actions;
                     self.menu_selected = 0;
+                }
+                KeyCode::Char('n') if self.page.lists_machines() => {
+                    return self.dispatch(paths, MenuAction::PrivateNote);
                 }
                 _ => self.scroll_key(key.code),
             },
@@ -882,19 +1028,24 @@ impl WorldApp {
                 KeyCode::Left => self.change_page(false, paths),
                 KeyCode::Right | KeyCode::Tab => self.change_page(true, paths),
                 KeyCode::BackTab => self.change_page(false, paths),
+                KeyCode::Char(digit @ '1'..='7') => {
+                    let index = usize::from(digit as u8 - b'1');
+                    self.go_to(Page::ALL[index], paths);
+                }
                 KeyCode::PageUp if self.count() > 0 => {
-                    self.selected[self.page.index()] =
-                        self.selected[self.page.index()].saturating_sub(self.viewport_rows.max(1))
+                    self.select(
+                        self.selected[self.page.index()].saturating_sub(self.viewport_rows.max(1)),
+                    );
                 }
                 KeyCode::PageDown if self.count() > 0 => {
-                    self.selected[self.page.index()] = self.selected[self.page.index()]
-                        .saturating_add(self.viewport_rows.max(1))
-                        .min(self.count().saturating_sub(1))
+                    self.select(
+                        self.selected[self.page.index()]
+                            .saturating_add(self.viewport_rows.max(1))
+                            .min(self.count().saturating_sub(1)),
+                    );
                 }
-                KeyCode::Home if self.count() > 0 => self.selected[self.page.index()] = 0,
-                KeyCode::End if self.count() > 0 => {
-                    self.selected[self.page.index()] = self.count().saturating_sub(1)
-                }
+                KeyCode::Home if self.count() > 0 => self.select(0),
+                KeyCode::End if self.count() > 0 => self.select(self.count().saturating_sub(1)),
                 KeyCode::Char('a') => {
                     self.screen = Screen::Actions;
                     self.menu_selected = 0;
@@ -917,17 +1068,15 @@ impl WorldApp {
                     );
                 }
                 KeyCode::Up | KeyCode::Char('k') if self.count() > 0 => {
-                    self.selected[self.page.index()] =
-                        self.selected[self.page.index()].saturating_sub(1)
+                    self.select(self.selected[self.page.index()].saturating_sub(1));
                 }
                 KeyCode::Down | KeyCode::Char('j') if self.count() > 0 => {
-                    self.selected[self.page.index()] =
-                        (self.selected[self.page.index()] + 1).min(self.count().saturating_sub(1))
+                    self.select(
+                        (self.selected[self.page.index()] + 1).min(self.count().saturating_sub(1)),
+                    );
                 }
                 KeyCode::Enter => {
-                    if matches!(self.page, Page::Overview | Page::Service)
-                        || (!self.enrolled() && self.page != Page::Hub)
-                    {
+                    if self.page == Page::Service || (!self.enrolled() && self.page != Page::Hub) {
                         if let Some(action) = self.actions().get(self.selected[self.page.index()]) {
                             return self.dispatch(paths, *action);
                         }
@@ -938,6 +1087,16 @@ impl WorldApp {
                         self.screen = Screen::Actions;
                         self.menu_selected = 0;
                     }
+                }
+                KeyCode::Char(letter) => {
+                    if let Some(action) = self
+                        .actions()
+                        .into_iter()
+                        .find(|action| action.hotkey() == Some(letter))
+                    {
+                        return self.dispatch(paths, action);
+                    }
+                    self.scroll_key(key.code);
                 }
                 _ => self.scroll_key(key.code),
             },
