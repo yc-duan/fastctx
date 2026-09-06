@@ -447,6 +447,17 @@ fn export_world_render_scenes() {
     app.load_error = Some(Failure::new("The local snapshot request timed out."));
     app.page = Page::Machines;
     export_scene("refresh-failed", Language::ZhCn, 80, 24, app);
+    // The two screens every page falls back to: the focused object's full record, and the keys.
+    for (name, screen, page) in [
+        ("detail-machine", Screen::Detail, Page::Machines),
+        ("help-overview", Screen::Help, Page::Overview),
+        ("help-connection", Screen::Help, Page::Connection),
+    ] {
+        let mut app = fixture();
+        app.page = page;
+        app.screen = screen;
+        export_scene(name, Language::ZhCn, 100, 30, app);
+    }
     let mut app = fixture();
     review_node(&mut app).status.written_at = "2020-01-01T00:00:00Z".into();
     app.page = Page::Service;
@@ -638,6 +649,19 @@ fn export_world_render_scenes() {
     for (name, screen, selected) in [
         ("main-menu", crate::tui::app::Screen::Main, 1),
         ("main-about", crate::tui::app::Screen::About, 0),
+        ("main-agents", crate::tui::app::Screen::AgentList, 0),
+        ("main-config", crate::tui::app::Screen::Config, 0),
+        ("main-jobs", crate::tui::app::Screen::Jobs, 0),
+        ("main-update", crate::tui::app::Screen::Update, 0),
+        ("main-status", crate::tui::app::Screen::Status, 0),
+        (
+            "main-language",
+            crate::tui::app::Screen::Language { first_run: false },
+            0,
+        ),
+        // The two card-over-page shapes: a confirmation and an inline editor.
+        ("main-confirm", crate::tui::app::Screen::ApplyConfirm, 1),
+        ("main-cpu-edit", crate::tui::app::Screen::ConfigCpuEdit, 0),
     ] {
         let mut app = crate::tui::app::App::for_test(paths.clone(), executable.clone());
         app.settings.language = Some("zh-cn".to_string());
@@ -647,6 +671,7 @@ fn export_world_render_scenes() {
         for (mode_name, mode) in [
             ("truecolor", crate::tui::theme::ColorMode::TrueColor),
             ("ansi16", crate::tui::theme::ColorMode::Ansi16),
+            ("mono", crate::tui::theme::ColorMode::Monochrome),
         ] {
             let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("dev-notes/validation/world-tui/render-redesign")

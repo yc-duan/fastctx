@@ -375,7 +375,7 @@ fn render_update(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ])
         .split(popup);
     let visible_rows = usize::from(if body_has_panel {
-        chunks[0].height.saturating_sub(2)
+        chunks[0].height.saturating_sub(1)
     } else {
         chunks[0].height
     });
@@ -433,7 +433,7 @@ fn append_npm_discovery_lines(
     let limit = usize::from(width.saturating_sub(12)).max(16);
     for probe in &discovery.probes {
         let marker = if probe.is_ready() {
-            "✓"
+            "√"
         } else if probe.reachable {
             "◐"
         } else {
@@ -493,7 +493,7 @@ fn append_npm_discovery_lines(
 }
 
 const fn check_mark(value: bool) -> &'static str {
-    if value { "✓" } else { "×" }
+    if value { "√" } else { "×" }
 }
 
 fn render_update_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -576,6 +576,7 @@ fn render_languages(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+        .spacing(2)
         .split(inner(area, 2, 1));
     let items = ALL_LANGUAGES
         .iter()
@@ -594,7 +595,7 @@ fn render_languages(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         List::new(items)
             .block(panel(app.messages().language_title))
             .highlight_style(selected_style())
-            .highlight_symbol("❯ "),
+            .highlight_symbol("▌ "),
         chunks[0],
         &mut state,
     );
@@ -628,6 +629,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .spacing(2)
         .split(inner(area, 2, 1));
     let messages = app.messages();
     let labels = [
@@ -650,12 +652,13 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         List::new(items)
             .block(panel(messages.main_title))
             .highlight_style(selected_style())
-            .highlight_symbol("❯"),
+            .highlight_symbol("▌"),
         chunks[0],
         &mut state,
     );
+    // The header already carries the product name and version; repeating them two rows below
+    // spends the pane's first line on something the eye has just read.
     let mut details = vec![
-        detail_line("FastCtx", &format!("v{}", env!("CARGO_PKG_VERSION"))),
         detail_line(messages.tier_label, app.settings.tier.display_name()),
         detail_line(messages.menu_language, app.language.native_name()),
     ];
@@ -700,9 +703,15 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         messages.terminal_role_note,
         Style::default().fg(theme::muted()),
     ));
+    // The pane says what the highlighted entry is about, so its heading names that entry rather
+    // than repeating the product name the header already shows.
+    let detail_title = labels
+        .get(app.selected)
+        .copied()
+        .unwrap_or(messages.app_title);
     frame.render_widget(
         Paragraph::new(details)
-            .block(panel(messages.app_title))
+            .block(panel(detail_title))
             .wrap(Wrap { trim: false }),
         chunks[1],
     );
@@ -719,7 +728,7 @@ fn link_status_line(app: &App) -> Line<'static> {
     let messages = app.messages();
     let (symbol, text, colour) = match app.link_state {
         LinkState::Absent => ("○", messages.link_state_absent, theme::accent()),
-        LinkState::Current => ("✓", messages.link_state_current, theme::success()),
+        LinkState::Current => ("√", messages.link_state_current, theme::success()),
         LinkState::ApplyRequired
         | LinkState::KnownLegacy
         | LinkState::Missing
@@ -784,7 +793,7 @@ fn target_state_visual(
     let messages = app.agent_messages();
     match state {
         TargetConnectionState::NotConnected => ("○", messages.not_connected, theme::muted()),
-        TargetConnectionState::Connected => ("✓", messages.connected, theme::success()),
+        TargetConnectionState::Connected => ("√", messages.connected, theme::success()),
         TargetConnectionState::NeedsAttention => ("!", messages.needs_attention, theme::warning()),
         TargetConnectionState::PermissionDenied => {
             ("!", messages.permission_denied, theme::warning())
@@ -867,6 +876,7 @@ fn render_agent_list(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                .spacing(2)
                 .split(inner(area, 2, 1));
             let items = statuses
                 .iter()
@@ -887,7 +897,7 @@ fn render_agent_list(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 List::new(items)
                     .block(panel(app.agent_messages().title))
                     .highlight_style(selected_style())
-                    .highlight_symbol("❯ "),
+                    .highlight_symbol("▌ "),
                 chunks[0],
                 &mut state,
             );
@@ -919,6 +929,7 @@ fn render_agent_detail(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .spacing(2)
         .split(inner(area, 2, 1));
     let focused = app.agent_cursor.item();
     let items = AgentDetailItem::ALL
@@ -973,7 +984,7 @@ fn render_agent_detail(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         List::new(items)
             .block(panel(&title))
             .highlight_style(selected_style())
-            .highlight_symbol("❯ "),
+            .highlight_symbol("▌ "),
         chunks[0],
         &mut state,
     );
@@ -1040,7 +1051,7 @@ fn render_agent_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply:
     let preview_area = inner(area, 2, 1);
     app.detail_viewport.update(
         lines.len(),
-        usize::from(preview_area.height.saturating_sub(2)),
+        usize::from(preview_area.height.saturating_sub(1)),
     );
     let title = format!(
         "{} · {}",
@@ -1101,29 +1112,37 @@ fn render_agent_draft_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect)
             spans
         })
         .collect::<Vec<_>>();
-    let popup = if area.width < 72 || area.height < 14 {
-        inner(area, 1, 0)
+    let lines = vec![
+        Line::raw(""),
+        Line::styled(
+            messages.leave_prompt,
+            Style::default()
+                .fg(theme::fg())
+                .add_modifier(Modifier::BOLD),
+        )
+        .alignment(Alignment::Center),
+        Line::raw(""),
+        Line::from(spans).alignment(Alignment::Center),
+    ];
+    let floating = area.width >= 72 && area.height >= 14;
+    let width = (area.width * 72 / 100).min(area.width);
+    let popup = if floating {
+        card_rect(72, wrapped_rows(&lines, width.saturating_sub(4)), area)
     } else {
-        centered_rect(72, 38, area)
+        inner(area, 1, 0)
     };
-    if popup != area {
+    let block = if floating {
+        dim(frame, area);
         frame.render_widget(Clear, popup);
-    }
+        dialog(messages.unsaved, theme::warning())
+    } else {
+        panel(messages.unsaved).border_style(Style::default().fg(theme::warning()))
+    };
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(
-                messages.leave_prompt,
-                Style::default()
-                    .fg(theme::fg())
-                    .add_modifier(Modifier::BOLD),
-            )
-            .alignment(Alignment::Center),
-            Line::raw(""),
-            Line::from(spans).alignment(Alignment::Center),
-        ])
-        .alignment(Alignment::Center)
-        .block(panel(messages.unsaved).border_style(Style::default().fg(theme::warning())))
-        .wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .block(block)
+            .wrap(Wrap { trim: false }),
         popup,
     );
 }
@@ -1140,12 +1159,13 @@ fn render_apply_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
+        .spacing(2)
         .split(inner(area, 2, 1));
     frame.render_stateful_widget(
         List::new(items)
             .block(panel(messages.apply_title))
             .highlight_style(selected_style())
-            .highlight_symbol("❯"),
+            .highlight_symbol("▌"),
         chunks[0],
         &mut state,
     );
@@ -1343,7 +1363,7 @@ fn render_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect, apply: bool)
     let preview_area = inner(area, 2, 1);
     app.detail_viewport.update(
         lines.len(),
-        usize::from(preview_area.height.saturating_sub(2)),
+        usize::from(preview_area.height.saturating_sub(1)),
     );
     frame.render_widget(
         Paragraph::new(lines)
@@ -1392,7 +1412,7 @@ fn render_config(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let visible_rows = usize::from(if compact {
         chunks[0].height
     } else {
-        chunks[0].height.saturating_sub(2)
+        chunks[0].height.saturating_sub(1)
     });
     let list_rows = config::list_rows();
     let window = app
@@ -1869,7 +1889,7 @@ fn config_save_button_line(app: &App) -> Line<'static> {
     Line::from(vec![
         // The caret, not the highlight, is what survives a monochrome terminal.
         Span::styled(
-            if focused { "❯ " } else { "  " },
+            if focused { "▌ " } else { "  " },
             Style::default().fg(theme::accent()),
         ),
         // Brackets rather than a drawn box: a bracketed face reads as pressable in every terminal
@@ -1937,9 +1957,8 @@ fn render_cpu_limit_editor(frame: &mut Frame<'_>, app: &App, area: Rect) {
         );
         return;
     }
-    let popup = centered_rect(72, 54, area);
-    frame.render_widget(Clear, popup);
     let mut lines = vec![
+        Line::raw(""),
         Line::styled(prompt, Style::default().fg(theme::fg())),
         Line::raw(""),
         Line::from(vec![
@@ -1960,10 +1979,14 @@ fn render_cpu_limit_editor(frame: &mut Frame<'_>, app: &App, area: Rect) {
         messages.cpu_limit_note,
         Style::default().fg(theme::muted()),
     ));
+    let width = (area.width * 72 / 100).min(area.width);
+    let popup = card_rect(72, wrapped_rows(&lines, width.saturating_sub(4)), area);
+    dim(frame, area);
+    frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(Alignment::Center)
-            .block(panel(messages.cpu_edit_title).border_style(Style::default().fg(color)))
+            .block(dialog(messages.cpu_edit_title, color))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -2035,9 +2058,8 @@ fn render_budget_editor(frame: &mut Frame<'_>, app: &App, area: Rect, item: Conf
         );
         return;
     }
-    let popup = centered_rect(72, 54, area);
-    frame.render_widget(Clear, popup);
     let mut lines = vec![
+        Line::raw(""),
         Line::styled(prompt, Style::default().fg(theme::fg())),
         Line::raw(""),
         input_line().alignment(Alignment::Center),
@@ -2057,10 +2079,14 @@ fn render_budget_editor(frame: &mut Frame<'_>, app: &App, area: Rect, item: Conf
         messages.budget_edit_note,
         Style::default().fg(theme::muted()),
     ));
+    let width = (area.width * 72 / 100).min(area.width);
+    let popup = card_rect(72, wrapped_rows(&lines, width.saturating_sub(4)), area);
+    dim(frame, area);
+    frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(Alignment::Center)
-            .block(panel(messages.budget_edit_title).border_style(Style::default().fg(color)))
+            .block(dialog(messages.budget_edit_title, color))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -2142,6 +2168,7 @@ fn render_jobs(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         let columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .spacing(2)
             .split(content);
         render_job_list(frame, app, &jobs, &groups, focused_job, columns[0]);
         let detail = Layout::default()
@@ -2185,7 +2212,7 @@ fn render_job_list(
         }
     }
 
-    let visible_rows = usize::from(area.height.saturating_sub(2).max(1));
+    let visible_rows = usize::from(area.height.saturating_sub(1).max(1));
     let window = app
         .jobs_viewport
         .window(focused_row, rows.len(), visible_rows);
@@ -2227,7 +2254,7 @@ fn render_job_list(
         List::new(items)
             .block(panel(&title))
             .highlight_style(selected_style())
-            .highlight_symbol("❯ "),
+            .highlight_symbol("▌ "),
         area,
         &mut state,
     );
@@ -2374,7 +2401,7 @@ fn render_job_output(
     } else {
         app.job_messages().follow_off
     };
-    let content_width = usize::from(area.width.saturating_sub(4).max(1));
+    let content_width = usize::from(area.width.saturating_sub(2).max(1));
     let has_right = app.jobs_detail.tail.lines.iter().any(|line| {
         Line::from(display_output_line(line)).width()
             > app.jobs_detail.horizontal_offset + content_width
@@ -2447,7 +2474,7 @@ fn render_job_output(
                 Style::default().fg(theme::muted()),
             ));
         } else {
-            let available = usize::from(area.height.saturating_sub(2).max(1));
+            let available = usize::from(area.height.saturating_sub(1).max(1));
             let max_scroll = output.len().saturating_sub(available);
             let scroll = app.jobs_detail.lines_below.min(max_scroll);
             let end = output.len().saturating_sub(scroll);
@@ -2467,24 +2494,7 @@ fn render_job_output(
 }
 
 fn render_job_kill_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let popup = centered_rect(72, 54, area);
-    frame.render_widget(Clear, popup);
-    let no_style = if app.selected == 0 {
-        Style::default()
-            .fg(theme::bg())
-            .bg(theme::muted())
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::muted())
-    };
-    let yes_style = if app.selected == 1 {
-        Style::default()
-            .fg(theme::bg())
-            .bg(theme::danger())
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::danger())
-    };
+    let words = super::world::i18n::messages(app.language);
     let (job_id, command) = app.pending_job.as_ref().map_or_else(
         || ("—".to_string(), "—".to_string()),
         |job| {
@@ -2494,39 +2504,42 @@ fn render_job_kill_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect) {
             )
         },
     );
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(
-                job_id,
-                Style::default()
-                    .fg(theme::accent())
-                    .add_modifier(Modifier::BOLD),
-            )
-            .alignment(Alignment::Center),
-            Line::raw(""),
-            Line::styled(command, Style::default().fg(theme::muted())).alignment(Alignment::Center),
-            Line::raw(""),
-            Line::styled(
-                app.job_messages().kill_warning,
-                Style::default()
-                    .fg(theme::danger())
-                    .add_modifier(Modifier::BOLD),
-            )
-            .alignment(Alignment::Center),
-            Line::raw(""),
-            Line::from(vec![
-                Span::styled("  ✕  ", no_style),
-                Span::raw("     "),
-                Span::styled("  ✓  ", yes_style),
-            ])
-            .alignment(Alignment::Center),
-        ])
-        .alignment(Alignment::Center)
-        .block(
-            panel(app.job_messages().kill_prompt)
-                .border_style(Style::default().fg(theme::danger())),
+    let lines = vec![
+        Line::raw(""),
+        Line::styled(
+            job_id,
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
         )
-        .wrap(Wrap { trim: false }),
+        .alignment(Alignment::Center),
+        Line::raw(""),
+        Line::styled(command, Style::default().fg(theme::muted())).alignment(Alignment::Center),
+        Line::raw(""),
+        Line::styled(
+            app.job_messages().kill_warning,
+            Style::default()
+                .fg(theme::danger())
+                .add_modifier(Modifier::BOLD),
+        )
+        .alignment(Alignment::Center),
+        Line::raw(""),
+        Line::from(vec![
+            choice_button(words.cancel, app.selected == 0, theme::muted()),
+            Span::raw("     "),
+            choice_button(words.confirm, app.selected == 1, theme::danger()),
+        ])
+        .alignment(Alignment::Center),
+    ];
+    let width = (area.width * 72 / 100).min(area.width);
+    let popup = card_rect(72, wrapped_rows(&lines, width.saturating_sub(4)), area);
+    dim(frame, area);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .block(dialog(app.job_messages().kill_prompt, theme::danger()))
+            .wrap(Wrap { trim: false }),
         popup,
     );
 }
@@ -2676,7 +2689,7 @@ fn config_item_row(
 ) -> Row<'static> {
     let entry = app.config_cursor.entry();
     let selected = entry.group == group && entry.item == item;
-    let marker = if selected { "❯ " } else { "  " };
+    let marker = if selected { "▌ " } else { "  " };
     let hierarchy = match role {
         ConfigItemRole::Parent => "  ",
         ConfigItemRole::Child { is_last: false } => "    ├─ ",
@@ -2810,7 +2823,7 @@ fn render_doctor_state(
         StatusState::Ready(report) => {
             let rows = report.checks.iter().map(|check| {
                 let (mark, color) = match check.status {
-                    DoctorCheckStatus::Pass => ("✓", theme::success()),
+                    DoctorCheckStatus::Pass => ("√", theme::success()),
                     DoctorCheckStatus::Info => ("○", theme::muted()),
                     DoctorCheckStatus::Fail => ("×", theme::danger()),
                 };
@@ -2892,7 +2905,7 @@ fn render_receipt(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut lines = Vec::new();
     if let Some(receipt) = &app.receipt {
         lines.push(Line::styled(
-            format!("✓ {}", receipt.changed_targets),
+            format!("√ {}", receipt.changed_targets),
             Style::default()
                 .fg(theme::success())
                 .add_modifier(Modifier::BOLD),
@@ -2941,26 +2954,13 @@ fn render_error(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn render_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect, prompt: &str, color: Color) {
     let panel_title = prompt.lines().next().unwrap_or(prompt);
-    let no_style = if app.selected == 0 {
-        Style::default()
-            .fg(theme::bg())
-            .bg(theme::muted())
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::muted())
-    };
-    let yes_style = if app.selected == 1 {
-        Style::default()
-            .fg(theme::bg())
-            .bg(color)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(color)
-    };
+    // The World pages name both choices; a bare tick and cross leave the reader to guess which
+    // one the highlight is sitting on, which is the wrong thing to guess about a destructive act.
+    let words = super::world::i18n::messages(app.language);
     let actions = Line::from(vec![
-        Span::styled("  ✕  ", no_style),
+        choice_button(words.cancel, app.selected == 0, theme::muted()),
         Span::raw("     "),
-        Span::styled("  ✓  ", yes_style),
+        choice_button(words.confirm, app.selected == 1, color),
     ])
     .alignment(Alignment::Center);
     if area.width < 72 || area.height < 14 {
@@ -2982,14 +2982,12 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect, prompt: &st
         frame.render_widget(Paragraph::new(actions), rows[1]);
         return;
     }
-    let popup = centered_rect(66, 38, area);
-    frame.render_widget(Clear, popup);
     // A Line cannot hold a newline, so the prompt has to be split by hand or its paragraphs run
-    // together. The panel title already carries the first line, so the body starts after it
-    // unless the prompt is that one line.
+    // together. The card's title always carries the first line, so the body starts after it; a
+    // one-line prompt leaves a card that is its question and its two answers.
     let mut body = prompt
         .lines()
-        .skip(usize::from(prompt.lines().nth(1).is_some()))
+        .skip(1)
         .map(|line| {
             Line::styled(
                 line.to_string(),
@@ -2999,12 +2997,18 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &App, area: Rect, prompt: &st
             )
         })
         .collect::<Vec<_>>();
+    body.insert(0, Line::raw(""));
     body.push(Line::raw(""));
     body.push(actions);
+    let width = (area.width * 66 / 100).min(area.width);
+    let rows = wrapped_rows(&body, width.saturating_sub(4));
+    let popup = card_rect(66, rows, area);
+    dim(frame, area);
+    frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(body)
             .alignment(Alignment::Center)
-            .block(panel(panel_title).border_style(Style::default().fg(color)))
+            .block(dialog(panel_title, color))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -3077,7 +3081,7 @@ fn render_migration_notice(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         body_area,
     );
     frame.render_widget(
-        Paragraph::new(format!("✓ {}", messages.action_confirm))
+        Paragraph::new(format!("√ {}", messages.action_confirm))
             .alignment(Alignment::Center)
             .style(Style::default().fg(theme::success())),
         content[1],
@@ -3306,7 +3310,7 @@ fn render_narrow_doctor_state(
             };
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("✓ {}", count(DoctorCheckStatus::Pass)),
+                    format!("√ {}", count(DoctorCheckStatus::Pass)),
                     Style::default().fg(theme::success()),
                 ),
                 Span::raw("   "),
@@ -3327,7 +3331,7 @@ fn render_narrow_doctor_state(
             ] {
                 for check in report.checks.iter().filter(|check| check.status == status) {
                     let (marker, color) = match status {
-                        DoctorCheckStatus::Pass => ("✓", theme::success()),
+                        DoctorCheckStatus::Pass => ("√", theme::success()),
                         DoctorCheckStatus::Info => ("○", theme::muted()),
                         DoctorCheckStatus::Fail => ("×", theme::danger()),
                     };
@@ -3417,7 +3421,7 @@ fn render_narrow_agent_detail(frame: &mut Frame<'_>, app: &mut App, area: Rect) 
         let absolute = start + index;
         let unavailable = item == AgentDetailItem::Disconnect && !app.agent_has_receipt();
         let mut spans = vec![Span::styled(
-            if absolute == focused { "❯ " } else { "  " },
+            if absolute == focused { "▌ " } else { "  " },
             Style::default().fg(theme::accent()),
         )];
         spans.push(Span::styled(
@@ -3500,7 +3504,7 @@ fn render_narrow_receipt(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         return;
     };
     lines.push(Line::styled(
-        format!("✓ {}", receipt.changed_targets),
+        format!("√ {}", receipt.changed_targets),
         Style::default()
             .fg(theme::success())
             .add_modifier(Modifier::BOLD),
@@ -3839,24 +3843,11 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             | Screen::ConfigDiscardConfirm
             | Screen::JobsKillConfirm
     ) {
+        let words = super::world::i18n::messages(app.language);
         lines.push(Line::from(vec![
-            Span::styled(
-                "  ✕  ",
-                if app.selected == 0 {
-                    Style::default().fg(theme::bg()).bg(theme::muted())
-                } else {
-                    Style::default().fg(theme::muted())
-                },
-            ),
+            choice_button(words.cancel, app.selected == 0, theme::muted()),
             Span::raw("  "),
-            Span::styled(
-                "  ✓  ",
-                if app.selected == 1 {
-                    Style::default().fg(theme::bg()).bg(theme::accent())
-                } else {
-                    Style::default().fg(theme::accent())
-                },
-            ),
+            choice_button(words.confirm, app.selected == 1, theme::accent()),
         ]));
     }
     frame.render_widget(
@@ -4120,15 +4111,71 @@ fn render_toast(frame: &mut Frame<'_>, area: Rect, message: &str, color: Color) 
     );
 }
 
-fn panel(title: &str) -> Block<'_> {
+/// A section: its name on a rule, and the content under it. Structure comes from rules and
+/// filled grounds throughout this terminal, the same way it does on the World pages — a frame
+/// around every pane reads as clutter, and a rule survives every colour depth intact.
+fn panel(title: &str) -> Block<'static> {
     Block::default()
-        .title(format!(" {title} "))
-        .title_style(Style::default().fg(theme::muted()))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .title(Span::styled(
+            format!("{title} "),
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::TOP)
         .border_style(Style::default().fg(theme::border()))
         .style(Style::default().fg(theme::fg()).bg(theme::bg()))
         .padding(Padding::horizontal(1))
+}
+
+/// One of a confirmation's two answers. The focused face is filled with its colour; monochrome
+/// reverses it, which is the same thing said with the only means left.
+fn choice_button(label: &str, focused: bool, color: Color) -> Span<'static> {
+    let style = if focused {
+        let style = Style::default()
+            .fg(theme::bg())
+            .bg(color)
+            .add_modifier(Modifier::BOLD);
+        if theme::monochrome() {
+            style.add_modifier(Modifier::REVERSED)
+        } else {
+            style
+        }
+    } else {
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
+    };
+    Span::styled(format!("[ {label} ]"), style)
+}
+
+/// A card laid over the page: popups keep a full frame and a lifted ground, because a rule
+/// alone cannot say "this is in front of what you were looking at".
+fn dialog(title: &str, color: Color) -> Block<'static> {
+    Block::default()
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(color))
+        .style(Style::default().fg(theme::fg()).bg(theme::surface()))
+        .padding(Padding::horizontal(1))
+}
+
+/// Flattens what is already drawn to one recessive shade, so a card laid over it reads as the
+/// live layer while the page beneath still says where the user is.
+fn dim(frame: &mut Frame<'_>, area: Rect) {
+    let style = Style::reset().fg(theme::border()).bg(theme::bg());
+    let buffer = frame.buffer_mut();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            if let Some(cell) = buffer.cell_mut((x, y)) {
+                cell.set_style(style);
+            }
+        }
+    }
 }
 
 fn selected_style() -> Style {
@@ -4147,23 +4194,48 @@ fn inner(area: Rect, horizontal: u16, vertical: u16) -> Rect {
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
+/// A card of the given width holding `rows` of content, centred a third of the way down. Cards
+/// are sized to what they say: a fixed share of the screen leaves a question stranded above an
+/// empty half-card.
+fn card_rect(percent_x: u16, rows: u16, area: Rect) -> Rect {
+    let width = (area.width * percent_x / 100).min(area.width);
+    let height = rows.saturating_add(3).min(area.height);
+    Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + area.height.saturating_sub(height) / 3,
+        width,
+        height,
+    )
+}
+
+/// Rows a centred, wrapped paragraph will need, counted the way `Paragraph` fills them: greedily
+/// by word, splitting a word that cannot fit on its own line.
+fn wrapped_rows(lines: &[Line<'static>], width: u16) -> u16 {
+    let width = usize::from(width.max(1));
+    let mut rows = 0usize;
+    for line in lines {
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let mut used = 0usize;
+        let mut count = 1usize;
+        for word in text.split_inclusive(' ') {
+            let mut remaining = Span::raw(word).width();
+            if used > 0 && used + remaining > width {
+                count += 1;
+                used = 0;
+            }
+            while remaining > width {
+                count += 1;
+                remaining -= width;
+            }
+            used += remaining;
+        }
+        rows += count;
+    }
+    u16::try_from(rows).unwrap_or(u16::MAX)
 }
 
 fn localized_check_name<'a>(app: &'a App, name: &'a str) -> &'a str {
@@ -4643,7 +4715,8 @@ mod tests {
                 let mut terminal = Terminal::new(backend).unwrap();
                 terminal.draw(|frame| render(frame, &mut app)).unwrap();
                 let text = buffer_text(&terminal);
-                for expected in ["Guarded", "✕", "✓"] {
+                let words = crate::tui::world::i18n::messages(language);
+                for expected in ["Guarded", words.cancel, words.confirm] {
                     assert!(
                         contains_visible_text(&text, expected),
                         "{} missing {expected} at {width}x{height}\n{text}",
@@ -4694,7 +4767,7 @@ mod tests {
         });
 
         let text = buffer_text(&terminal);
-        for marker in ["✓", "○", "×"] {
+        for marker in ["√", "○", "×"] {
             assert!(text.contains(marker), "missing {marker}\n{text}");
         }
         for cell in terminal.backend().buffer().content() {
