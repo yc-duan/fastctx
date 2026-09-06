@@ -48,6 +48,44 @@ pub(crate) struct Grant {
 }
 
 impl Grant {
+    /// Validates the protocol shape without assuming every principal is a machine.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.principal.is_empty()
+            || self.principal.chars().count() > 128
+            || self
+                .principal
+                .chars()
+                .any(|ch| ch.is_control() || ch.is_whitespace())
+        {
+            return Err(
+                "A principal must be one nonempty identity (at most 128 characters), or *."
+                    .to_string(),
+            );
+        }
+        if self.nodes.is_empty() || self.verbs.is_empty() {
+            return Err("A grant needs at least one target selector and one verb.".to_string());
+        }
+        for selector in &self.nodes {
+            if selector != "all" {
+                super::validate_node_name(selector.strip_prefix("tag:").unwrap_or(selector))?;
+            }
+        }
+        for verb in &self.verbs {
+            if verb != "*" && !ALL_VERBS.contains(&verb.as_str()) {
+                return Err(format!(
+                    "Unknown verb \"{verb}\". Verbs: {} or *.",
+                    ALL_VERBS.join(", ")
+                ));
+            }
+        }
+        if let Some(expires) = &self.expires
+            && super::parse_rfc3339(expires)? <= time::OffsetDateTime::now_utc()
+        {
+            return Err("The grant expiry must be in the future (RFC 3339 UTC).".to_string());
+        }
+        Ok(())
+    }
+
     /// The implicit v1 default when no grant has been published.
     pub(crate) fn default_all() -> Self {
         Self {

@@ -21,6 +21,8 @@ pub(crate) const ADMIN_TIMEOUT: Duration = Duration::from_secs(40);
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum AdminRequest {
     Status,
+    /// Reads the node's in-memory control view without contacting the hub.
+    Snapshot,
     Nodes,
     /// Runs one verb on one machine on behalf of `fastctx world run` / `copy`: the script door.
     /// The answer is the outcome as the tool surface would see it, plus its facts.
@@ -44,6 +46,12 @@ pub(crate) enum AdminRequest {
     },
     Refresh,
     Reconnect,
+    /// Saves this machine's user-authored description and queues encrypted inventory.
+    SetDescription {
+        text: String,
+    },
+    /// Stops this daemon, including a node started without a service registration.
+    Shutdown,
     Leave,
     /// Publishes a grant, or removes the one named by `id` when `delete` is set.
     Grant {
@@ -53,6 +61,9 @@ pub(crate) enum AdminRequest {
         verbs: Vec<String>,
         expires: Option<String>,
         delete: bool,
+        /// A TUI confirmation is valid only for the revision the user reviewed.
+        #[serde(default)]
+        expected_revision: Option<u64>,
     },
 }
 
@@ -87,6 +98,9 @@ pub(crate) struct NodeStatus {
     pub(crate) hub_key: String,
     pub(crate) fingerprint: String,
     pub(crate) pid: u32,
+    /// The OS creation token disambiguates a live process from a reused status-file PID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) process_identity: Option<crate::process_identity::ProcessIdentity>,
     pub(crate) version: String,
     pub(crate) started_at: String,
     pub(crate) written_at: String,
@@ -99,6 +113,12 @@ pub(crate) struct NodeStatus {
     pub(crate) grant_stale: bool,
     pub(crate) running_calls: usize,
     pub(crate) engine_hosted: bool,
+    /// Local agent transport connections; older node builds omit this counter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) agent_connections: Option<usize>,
+    /// Collection or publication failed; the previous inventory remains in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) inventory_error: Option<String>,
 }
 
 pub(crate) struct AdminServer {
@@ -123,6 +143,7 @@ impl AdminServer {
     pub(crate) fn status(&self) -> NodeStatus {
         let config = self.client.config.read().clone();
         let members = self.client.members.read();
+        let activity = self.client.activity(self.executor.running_calls());
         NodeStatus {
             name: config.name.clone(),
             world_id: config.world_id.clone(),
@@ -130,6 +151,7 @@ impl AdminServer {
             hub_key: config.hub_key.clone(),
             fingerprint: self.client.identity.fingerprint().to_string(),
             pid: std::process::id(),
+            process_identity: crate::process_identity::process_identity(std::process::id()),
             version: env!("CARGO_PKG_VERSION").to_string(),
             started_at: self.client.started_at.clone(),
             written_at: crate::world::now_rfc3339(),
@@ -149,7 +171,10 @@ impl AdminServer {
             running_calls: self.executor.running_calls(),
             engine_hosted: self
                 .engine_hosted
-                .load(std::sync::atomic::Ordering::Relaxed),
+                .load(std::sync::atomic::Ordering::Relaxed)
+                && activity.engine_hosted,
+            agent_connections: Some(activity.agent_connections),
+            inventory_error: self.client.inventory_error.read().clone(),
         }
     }
 
@@ -206,10 +231,42 @@ impl AdminServer {
             AdminRequest::Status => {
                 serde_json::to_value(self.status()).map_err(|error| error.to_string())
             }
+            AdminRequest::Snapshot => {
+                use crate::world::control::{NodeSnapshot, ReadState};
+                let mut nodes = self.client.all_node_views();
+                let nodes = ReadState::result(
+                    crate::world::notes::annotate(&self.client.paths, &mut nodes).map(|()| nodes),
+                );
+                let grants = self.client.grants.read().clone();
+                let snapshot = NodeSnapshot {
+                    status: self.status(),
+                    nodes,
+                    grants: crate::world::grant::GrantSnapshot {
+                        revision: grants.revision,
+                        grants: grants.grants,
+                        published_by: grants.published_by,
+                        published_at: grants.published_at,
+                    },
+                    description: ReadState::result(crate::world::notes::description(
+                        &self.client.paths,
+                    )),
+                    unverified: self
+                        .client
+                        .members
+                        .read()
+                        .unverified
+                        .iter()
+                        .map(|(name, reason)| (name.clone(), reason.clone()))
+                        .collect(),
+                };
+                serde_json::to_value(snapshot).map_err(|error| error.to_string())
+            }
             AdminRequest::Nodes => {
                 let _ = self.client.refresh_members().await;
                 let _ = self.client.refresh_inventories().await;
-                serde_json::to_value(self.client.nodes()).map_err(|error| error.to_string())
+                let mut nodes = self.client.nodes();
+                crate::world::notes::annotate(&self.client.paths, &mut nodes)
+                    .and_then(|()| serde_json::to_value(nodes).map_err(|error| error.to_string()))
             }
             AdminRequest::Call {
                 verb,
@@ -268,15 +325,37 @@ impl AdminServer {
                 .await
                 .and_then(|events| serde_json::to_value(events).map_err(|error| error.to_string())),
             AdminRequest::Refresh => {
-                let members = self.client.refresh_members().await;
-                let inventories = self.client.refresh_inventories().await;
-                members
-                    .and(inventories)
-                    .map(|updated| serde_json::json!({ "inventories_updated": updated }))
+                async {
+                    let members = self.client.refresh_members().await?;
+                    let (inventories,grants) = tokio::join!(self.client.refresh_inventories(),self.client.refresh_grants());
+                    Ok(serde_json::json!({"members_version":members,"inventories_updated":inventories?,"grants_updated":grants?}))
+                }.await
             }
             AdminRequest::Reconnect => {
                 self.client.wake.notify_one();
                 Ok(serde_json::Value::Null)
+            }
+            AdminRequest::Shutdown => {
+                let shutdown = self.client.shutdown.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    shutdown.cancel();
+                });
+                Ok(serde_json::Value::Null)
+            }
+            AdminRequest::SetDescription { text } => {
+                match crate::world::notes::save_description(&self.client.paths, &text) {
+                    Err(error) => Err(error),
+                    Ok(()) => {
+                        let publication = super::inventory::publish(&self.client, false).await;
+                        Ok(serde_json::json!({
+                            "saved": true,
+                            "queued": publication.is_ok(),
+                            "connected": self.client.is_connected(),
+                            "error": publication.err(),
+                        }))
+                    }
+                }
             }
             AdminRequest::Grant {
                 id,
@@ -285,12 +364,14 @@ impl AdminServer {
                 verbs,
                 expires,
                 delete,
+                expected_revision,
             } => {
                 let id = match id {
                     Some(id) => id,
-                    None => crate::world::crypto::random_bytes::<3>()
-                        .map(|bytes| format!("g-{}", hex::encode(bytes)))
-                        .unwrap_or_else(|_| "g-000000".to_string()),
+                    None => match crate::world::crypto::random_bytes::<3>() {
+                        Ok(bytes) => format!("g-{}",hex::encode(bytes)),
+                        Err(error) => return AdminResponse{ok:false,error:Some(error),data:serde_json::Value::Null},
+                    },
                 };
                 let change = if delete {
                     crate::world::grant::GrantChange::Remove(id.clone())
@@ -306,7 +387,7 @@ impl AdminServer {
                     })
                 };
                 self.client
-                    .change_grants(change)
+                    .change_grants_at(change, expected_revision)
                     .await
                     .map(|revision| serde_json::json!({ "id": id, "revision": revision }))
             }
@@ -375,6 +456,12 @@ pub(crate) async fn call(
 ) -> Result<Option<AdminResponse>, String> {
     let mut stream = match local_ipc::connect(endpoint).await {
         Ok(stream) => stream,
+        Err(error)
+            if crate::world::control::Failure::new(&error).kind
+                == crate::world::control::FailureKind::Permission =>
+        {
+            return Err(error);
+        }
         Err(_) => return Ok(None),
     };
     let bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;

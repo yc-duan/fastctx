@@ -18,6 +18,7 @@
 
 pub mod cli;
 pub(crate) mod client;
+pub(crate) mod control;
 pub(crate) mod copy;
 pub(crate) mod crypto;
 pub(crate) mod dispatch;
@@ -33,6 +34,7 @@ pub(crate) mod link;
 pub(crate) mod members;
 pub(crate) mod messages;
 pub(crate) mod node;
+pub(crate) mod notes;
 pub(crate) mod outbox;
 pub(crate) mod remote_edit;
 pub(crate) mod session;

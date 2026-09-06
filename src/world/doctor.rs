@@ -41,61 +41,74 @@ pub(crate) fn checks(paths: &ControlPaths) -> Vec<DoctorCheck> {
             return checks;
         }
     };
-    match (
-        super::identity::Identity::load(&world_paths),
-        super::keys::KeyRing::load(&world_paths),
-    ) {
-        (Ok(Some(identity)), Ok(Some(keys))) => checks.push(DoctorCheck::pass(
-            "World enrollment",
-            format!(
-                "Enrolled as \"{}\" in World {} via {} (member key {}, World key epoch {}).",
-                config.name,
-                config.world_id,
-                config.hub.join(", "),
-                identity.fingerprint(),
-                keys.current().epoch()
-            ),
-        )),
-        (Ok(None), _) | (_, Ok(None)) => checks.push(DoctorCheck::fail(
-            "World enrollment",
-            "world.toml exists but the identity or World key files are missing.",
-            "Run fastctx node unenroll, then enroll again with a fresh invite.",
-        )),
-        (Err(error), _) | (_, Err(error)) => checks.push(DoctorCheck::fail(
-            "World enrollment",
-            error,
-            "Run fastctx node unenroll, then enroll again with a fresh invite.",
-        )),
-    }
-
-    let installed = super::node::service::is_installed();
-    let status = super::node::read_status(&world_paths).ok().flatten();
+    let status = match super::node::read_status(&world_paths) {
+        Ok(status) => status,
+        Err(error) => {
+            checks.push(DoctorCheck::fail(
+                "World node status",
+                error,
+                "Repair the reported status file or restart the node.",
+            ));
+            None
+        }
+    };
     let live = status.as_ref().is_some_and(status_is_fresh);
+    let mut missing = Vec::new();
+    for path in [
+        &world_paths.identity_key,
+        &world_paths.wrap_key,
+        &world_paths.world_keys,
+    ] {
+        match std::fs::metadata(path) {
+            Ok(metadata) if metadata.is_file() && metadata.len() > 0 => {}
+            Ok(_) => missing.push(format!(
+                "{} is not a nonempty key file",
+                crate::paths::display_path(path)
+            )),
+            Err(error) => missing.push(format!(
+                "Cannot inspect {}: {error}",
+                crate::paths::display_path(path)
+            )),
+        }
+    }
+    if !missing.is_empty() {
+        checks.push(DoctorCheck::fail(
+            "World enrollment",
+            missing.join("; "),
+            "Repair the enrollment files, or leave and join with a fresh invite.",
+        ));
+    } else if let Some(status) = status.as_ref().filter(|_| live) {
+        checks.push(DoctorCheck::pass("World enrollment",format!("Enrolled as \"{}\" in World {} via {} (node-reported member key {}, World key epoch {}).",config.name,config.world_id,config.hub.join(", "),status.fingerprint,status.link.key_epoch)));
+    } else {
+        checks.push(DoctorCheck::info("World enrollment",format!("Enrolled as \"{}\" in World {} via {}. Key files are present; start the node to validate them. Control interfaces never load private keys.",config.name,config.world_id,config.hub.join(", "))));
+    }
+    let installed = super::node::service::inspect(paths);
     checks.push(match (installed, live) {
-        (true, true) => DoctorCheck::pass(
+        (Ok(true), true) => DoctorCheck::pass(
             "World node service",
             format!(
                 "Installed and running (pid {}).",
                 status.as_ref().map_or(0, |status| status.pid)
             ),
         ),
-        (true, false) => DoctorCheck::fail(
+        (Ok(true), false) => DoctorCheck::fail(
             "World node service",
             "The service is installed but no node is writing status; it is not running.",
             "Run fastctx node restart, then fastctx node status.",
         ),
-        (false, true) => DoctorCheck::info(
+        (Ok(false), true) => DoctorCheck::info(
             "World node service",
             format!(
                 "A node is running (pid {}) without a service registration; it will not survive a logout.",
                 status.as_ref().map_or(0, |status| status.pid)
             ),
         ),
-        (false, false) => DoctorCheck::fail(
+        (Ok(false), false) => DoctorCheck::fail(
             "World node service",
             "No service is installed and no node is running; World calls fail with node_service_not_running.",
             "Run fastctx node install-service.",
         ),
+        (Err(error),_) => DoctorCheck::fail("World node service",error,"Inspect the OS service manager using the same account and HOME as the node."),
     });
 
     let Some(status) = status.filter(|_| live) else {
@@ -107,7 +120,7 @@ pub(crate) fn checks(paths: &ControlPaths) -> Vec<DoctorCheck> {
     checks
 }
 
-fn status_is_fresh(status: &NodeStatus) -> bool {
+pub(crate) fn status_is_fresh(status: &NodeStatus) -> bool {
     super::parse_rfc3339(&status.written_at)
         .map(|written| {
             (time::OffsetDateTime::now_utc() - written).whole_seconds() < STATUS_FRESH_SECONDS
@@ -121,7 +134,7 @@ fn seconds_since(text: &Option<String>) -> Option<i64> {
     Some((time::OffsetDateTime::now_utc() - moment).whole_seconds())
 }
 
-fn link_checks(status: &NodeStatus) -> Vec<DoctorCheck> {
+pub(crate) fn link_checks(status: &NodeStatus) -> Vec<DoctorCheck> {
     let mut checks = Vec::new();
     let link = &status.link;
     checks.push(match &link.state {

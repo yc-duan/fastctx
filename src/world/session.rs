@@ -1,7 +1,7 @@
 //! The member's hub session: dial, authenticate, resync, heartbeat, dispatch, and reconnect
 //! with jittered backoff. State lives in `WorldClient`; this task only owns the socket.
 
-use super::client::{Inventory, LinkState, WorldClient};
+use super::client::{LinkState, WorldClient};
 use super::crypto::{b64_array, b64_decode, b64_encode};
 use super::envelope::{Envelope, Header};
 use super::identity::{Fingerprint, verify};
@@ -435,11 +435,7 @@ async fn run_connected(
             if let Err(error) = client.refresh_inventories().await {
                 log(format!("inventory refresh failed: {error}"));
             }
-            let inventory = super::node::inventory::collect(&client).await;
-            if let Err(error) = client.publish_record(&inventory) {
-                log(format!("cannot publish the member record: {error}"));
-            }
-            if let Err(error) = client.publish_inventory(&inventory) {
+            if let Err(error) = super::node::inventory::publish(&client, true).await {
                 log(format!("cannot publish the inventory: {error}"));
             }
             if welcome.rotation_pending {
@@ -532,6 +528,10 @@ async fn run_connected(
                     });
                 }
                 let link = client.link();
+                if let Err(error) = client.publish_activity(executor.running_calls()) {
+                    *client.inventory_error.write() = Some(error.clone());
+                    log(format!("cannot publish activity: {error}"));
+                }
                 let load = Load {
                     outbox_depth: link.outbox_depth as u32,
                     facts_version: client.state_snapshot().inventory_version,
@@ -555,8 +555,7 @@ async fn run_connected(
                     inventory_at = now;
                     let client = Arc::clone(client);
                     tokio::spawn(async move {
-                        let inventory: Inventory = super::node::inventory::collect(&client).await;
-                        if let Err(error) = client.publish_inventory(&inventory) {
+                        if let Err(error) = super::node::inventory::publish(&client, false).await {
                             log(format!("cannot publish the inventory: {error}"));
                         }
                     });

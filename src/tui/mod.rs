@@ -6,13 +6,21 @@ mod budget_editor;
 mod config;
 mod jobs;
 mod migration;
+#[cfg(windows)]
+mod paste;
+mod text_input;
 mod theme;
 mod update;
 mod view;
+#[cfg(windows)]
+mod windows_input;
+mod world;
 
 use crate::control::paths::ControlPaths;
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{self, Event, KeyEventKind};
+#[cfg(not(windows))]
+use crossterm::event;
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -63,8 +71,10 @@ pub(crate) fn run(
 }
 
 fn restore_terminal_unconditionally() {
+    #[cfg(windows)]
+    windows_input::restore_mode();
     let mut stdout = io::stdout();
-    let _ = execute!(stdout, Show, LeaveAlternateScreen);
+    let _ = execute!(stdout, DisableBracketedPaste, Show, LeaveAlternateScreen);
     let _ = disable_raw_mode();
 }
 
@@ -89,11 +99,11 @@ impl TerminalControl for CrosstermControl {
     }
 
     fn enter_alternate_screen(&mut self) -> io::Result<()> {
-        execute!(io::stdout(), EnterAlternateScreen)
+        execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
     }
 
     fn leave_alternate_screen(&mut self) -> io::Result<()> {
-        execute!(io::stdout(), LeaveAlternateScreen)
+        execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen)
     }
 
     fn hide_cursor(&mut self) -> io::Result<()> {
@@ -190,12 +200,24 @@ fn run_loop(
     check_for_updates_at_startup: bool,
 ) -> Result<TuiOutcome, String> {
     let mut app = app::App::load_with_startup(paths, startup_update, startup_notice)?;
+    #[cfg(windows)]
+    let mut windows_input = windows_input::WindowsInput::new()?;
     if check_for_updates_at_startup {
         app.request_startup_update_check();
     }
     loop {
         draw_then_poll_update(terminal, &mut app)?;
+        if app.take_input_drain() {
+            #[cfg(windows)]
+            windows_input.drain()?;
+            #[cfg(not(windows))]
+            drain_pending_input()?;
+        }
         if app.should_quit {
+            if !app.world.cancel_reads_for_exit() {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
             return Ok(match app.take_update_plan() {
                 Some(plan) => TuiOutcome::Update(Box::new(plan)),
                 None => TuiOutcome::Exit,
@@ -203,19 +225,43 @@ fn run_loop(
         }
         if app.has_pending_effect() {
             app.execute_pending();
+            #[cfg(windows)]
+            windows_input.drain()?;
+            #[cfg(not(windows))]
             drain_pending_input()?;
             continue;
         }
+        #[cfg(not(windows))]
         if !event::poll(Duration::from_millis(100))
             .map_err(|error| format!("Cannot poll terminal events: {error}"))?
         {
             continue;
         }
-        match event::read().map_err(|error| format!("Cannot read a terminal event: {error}"))? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
-            Event::Resize(_, _) => {}
-            _ => {}
+        #[cfg(not(windows))]
+        let event =
+            event::read().map_err(|error| format!("Cannot read a terminal event: {error}"))?;
+        #[cfg(windows)]
+        for decoded in windows_input.read(Duration::from_millis(100))? {
+            deliver_decoded(&mut app, decoded);
         }
+        #[cfg(not(windows))]
+        deliver_event(&mut app, event);
+    }
+}
+
+fn deliver_event(app: &mut app::App, event: Event) {
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+        Event::Paste(text) => app.handle_paste(&text),
+        _ => {}
+    }
+}
+
+#[cfg(windows)]
+fn deliver_decoded(app: &mut app::App, event: paste::Decoded) {
+    match event {
+        paste::Decoded::Event(event) => deliver_event(app, event),
+        paste::Decoded::Rejected(count) => app.reject_paste(count),
     }
 }
 
@@ -224,6 +270,7 @@ fn run_loop(
 /// Effects run synchronously, so anything pressed during one queues up in the terminal and then
 /// replays against a screen that has since changed. The first replayed key also clears the toast
 /// the effect just raised, which is how a save that worked could look like nothing had happened.
+#[cfg(not(windows))]
 fn drain_pending_input() -> Result<(), String> {
     while event::poll(Duration::ZERO)
         .map_err(|error| format!("Cannot poll terminal events: {error}"))?

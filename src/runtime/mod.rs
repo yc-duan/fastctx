@@ -586,6 +586,9 @@ pub(crate) async fn host_engine(options: EngineHostOptions) -> Result<(), String
     #[cfg(debug_assertions)]
     record_test_host_start(&environment);
     let state = HostState::new(world, !take_over);
+    if let Some(client) = &state.world {
+        *client.runtime_activity.write() = Arc::downgrade(&state.activity);
+    }
     let (idle_candidate_tx, mut idle_candidate_rx) = tokio::sync::mpsc::channel(1);
     let monitor = idle_timeout.map(|idle_timeout| {
         tokio::spawn(monitor_idle(

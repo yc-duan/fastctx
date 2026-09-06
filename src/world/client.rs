@@ -64,6 +64,12 @@ pub(crate) struct Inventory {
     /// The user the node runs as.
     #[serde(default)]
     pub(crate) user: String,
+    /// User-authored description from this machine's local profile, encrypted with inventory.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) description: String,
+    /// Last observed runtime usage; old nodes omit this rather than claiming zero activity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) activity: Option<super::node::activity::NodeActivity>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -157,6 +163,24 @@ pub(crate) struct NodeView {
     pub(crate) network: Option<String>,
     pub(crate) inventory: Option<Inventory>,
     pub(crate) is_self: bool,
+    /// Controller-local presentation metadata; never published in inventory or other frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) private_note: Option<String>,
+}
+
+impl NodeView {
+    /// One effective label for compact local surfaces; the TUI also displays both sources.
+    pub(crate) fn effective_note(&self) -> Option<&str> {
+        self.private_note
+            .as_deref()
+            .filter(|note| !note.is_empty())
+            .or_else(|| {
+                self.inventory
+                    .as_ref()
+                    .map(|inventory| inventory.description.as_str())
+                    .filter(|note| !note.is_empty())
+            })
+    }
 }
 
 /// The outcome of a direct call on one target member.
@@ -225,6 +249,10 @@ pub(crate) struct WorldClient {
     pub(crate) grants: RwLock<GrantSet>,
     pub(crate) inventories: RwLock<BTreeMap<String, (u64, Inventory)>>,
     pub(crate) own_inventory: RwLock<Option<Inventory>>,
+    /// Last failed collection or publish, exposed to local health views until recovery.
+    pub(crate) inventory_error: RwLock<Option<String>>,
+    /// Weak ownership follows the control center's actual lifetime, not the daemon startup.
+    pub(crate) runtime_activity: RwLock<std::sync::Weak<crate::runtime::activity::RuntimeActivity>>,
     /// The hub's last member listing, kept raw so the table can be re-verified when the key
     /// ring grows without another round trip.
     members_raw: RwLock<Option<messages::MembersResult>>,
@@ -298,6 +326,8 @@ impl WorldClient {
             grants: RwLock::new(grants),
             inventories: RwLock::new(BTreeMap::new()),
             own_inventory: RwLock::new(None),
+            inventory_error: RwLock::new(None),
+            runtime_activity: RwLock::new(std::sync::Weak::new()),
             members_raw: RwLock::new(None),
             persistent: Mutex::new(Persistent { state, counters }),
             outbox,
@@ -969,10 +999,18 @@ impl WorldClient {
     /// Publishes the set in force plus `change` as the next revision. The hub refuses a
     /// revision that does not follow its own, in which case the set is refreshed and the
     /// change retried once on top of it.
-    pub(crate) async fn change_grants(&self, change: GrantChange) -> Result<u64, String> {
+    /// A reviewed revision is a compare-and-swap precondition, including after hub conflict.
+    pub(crate) async fn change_grants_at(
+        &self,
+        change: GrantChange,
+        expected_revision: Option<u64>,
+    ) -> Result<u64, String> {
         let me = self.name();
         for attempt in 0..2 {
             let current = self.grants.read().clone();
+            if expected_revision.is_some_and(|expected| expected != current.revision) {
+                return Err("The grant snapshot changed after the preview. Refresh it and review the change again.".to_string());
+            }
             let snapshot = GrantSnapshot {
                 revision: current.revision + 1,
                 grants: current.entries_after(&change)?,
@@ -1044,9 +1082,19 @@ impl WorldClient {
 
     /// Publishes the encrypted inventory as a reliable message.
     pub(crate) fn publish_inventory(&self, inventory: &Inventory) -> Result<(), String> {
+        let mut inventory = inventory.clone();
+        if inventory.activity.is_none() {
+            inventory.activity = self
+                .own_inventory
+                .read()
+                .as_ref()
+                .and_then(|previous| previous.activity.clone());
+        }
+        // A slow hardware probe may have begun before a user saved a newer description.
+        inventory.description = super::notes::description(&self.paths)?;
         let header = Header::new(kind::INVENTORY, &self.name(), HUB_NAME, 0);
-        self.send_reliable(header, inventory, true, false)?;
-        *self.own_inventory.write() = Some(inventory.clone());
+        self.send_reliable(header, &inventory, true, false)?;
+        *self.own_inventory.write() = Some(inventory);
         self.with_state(|state| state.inventory_version += 1)?;
         Ok(())
     }
@@ -1215,7 +1263,51 @@ impl WorldClient {
 
     // ----- views -----
 
+    /// Current, non-content local usage. The weak reference is installed only after the
+    /// control center binds its endpoint and expires with that control center.
+    pub(crate) fn activity(&self, remote_calls: usize) -> super::node::activity::NodeActivity {
+        let runtime = self.runtime_activity.read().upgrade();
+        let (connections, requests) = runtime.as_ref().map_or((0, 0), |runtime| runtime.counts());
+        super::node::activity::NodeActivity {
+            engine_hosted: runtime.is_some(),
+            agent_connections: connections,
+            local_requests: requests,
+            remote_calls,
+            observed_at: super::now_rfc3339(),
+        }
+    }
+
+    /// Updates the encrypted usage facts when counts change, and at least once per minute.
+    /// Hardware collection retains its own timestamp and cadence.
+    pub(crate) fn publish_activity(&self, remote_calls: usize) -> Result<(), String> {
+        let Some(mut inventory) = self.own_inventory.read().clone() else {
+            return Ok(());
+        };
+        let activity = self.activity(remote_calls);
+        if inventory.activity.as_ref().is_some_and(|previous| {
+            previous.same_counts(&activity)
+                && super::parse_rfc3339(&previous.observed_at).is_ok_and(|observed| {
+                    time::OffsetDateTime::now_utc() - observed < time::Duration::seconds(60)
+                })
+        }) {
+            return Ok(());
+        }
+        inventory.activity = Some(activity);
+        let result = self.publish_inventory(&inventory);
+        *self.inventory_error.write() = result.as_ref().err().cloned();
+        result
+    }
+
     pub(crate) fn nodes(&self) -> Vec<NodeView> {
+        self.node_views(false)
+    }
+
+    /// The control view includes revoked names, whose identities remain permanently reserved.
+    pub(crate) fn all_node_views(&self) -> Vec<NodeView> {
+        self.node_views(true)
+    }
+
+    fn node_views(&self, include_revoked: bool) -> Vec<NodeView> {
         let me = self.name();
         let members = self.members.read();
         let inventories = self.inventories.read();
@@ -1223,7 +1315,7 @@ impl WorldClient {
         let mut views = members
             .members
             .values()
-            .filter(|member| member.is_current())
+            .filter(|member| include_revoked || member.is_current())
             .map(|member| {
                 let inventory = if member.record.name == me {
                     own.clone()
@@ -1249,9 +1341,54 @@ impl WorldClient {
                     network: member.network.clone(),
                     inventory,
                     is_self: member.record.name == me,
+                    private_note: None,
                 }
             })
             .collect::<Vec<_>>();
+        if include_revoked {
+            for (name, revocation) in &members.revoked {
+                if views.iter().any(|node| node.name == *name) {
+                    continue;
+                }
+                let inventory = if *name == me {
+                    own.clone()
+                } else {
+                    inventories
+                        .get(name)
+                        .map(|(_, inventory)| inventory.clone())
+                };
+                views.push(NodeView {
+                    name: name.clone(),
+                    state: "revoked".to_string(),
+                    last_seen: revocation
+                        .parse()
+                        .map(|statement| statement.at)
+                        .unwrap_or_default(),
+                    os: inventory
+                        .as_ref()
+                        .map(|inventory| inventory.os.clone())
+                        .unwrap_or_default(),
+                    arch: inventory
+                        .as_ref()
+                        .map(|inventory| inventory.arch.clone())
+                        .unwrap_or_default(),
+                    tags: inventory
+                        .as_ref()
+                        .map(|inventory| inventory.tags.clone())
+                        .unwrap_or_default(),
+                    version: inventory
+                        .as_ref()
+                        .map(|inventory| inventory.version.clone())
+                        .unwrap_or_default(),
+                    hub_rtt_ms: None,
+                    tls: None,
+                    network: None,
+                    inventory,
+                    is_self: *name == me,
+                    private_note: None,
+                });
+            }
+        }
         views.sort_by(|left, right| left.name.cmp(&right.name));
         views
     }

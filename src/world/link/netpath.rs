@@ -527,7 +527,7 @@ mod platform {
             }
             return (None, None, 0);
         }
-        let output = std::process::Command::new("route")
+        let output = crate::process_policy::noninteractive_command("route")
             .args(["-n", "get", "default"])
             .output();
         let Ok(output) = output else {
@@ -550,7 +550,7 @@ mod platform {
     /// Per-interface DNS where the platform exposes it (macOS DHCP option, systemd-resolved).
     fn interface_dns(name: &str) -> Option<Vec<IpAddr>> {
         if cfg!(target_os = "macos") {
-            let output = std::process::Command::new("ipconfig")
+            let output = crate::process_policy::noninteractive_command("ipconfig")
                 .args(["getoption", name, "domain_name_server"])
                 .output()
                 .ok()?;
@@ -561,7 +561,7 @@ mod platform {
             return (!servers.is_empty()).then_some(servers);
         }
         if cfg!(target_os = "linux") {
-            let output = std::process::Command::new("resolvectl")
+            let output = crate::process_policy::noninteractive_command("resolvectl")
                 .args(["dns", name])
                 .output()
                 .ok()?;

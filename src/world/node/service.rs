@@ -1,29 +1,44 @@
-//! Installing `fastctx node run` as a user-level service: a logon scheduled task on Windows,
-//! a `systemd --user` unit on Linux, a LaunchAgent on macOS.
+//! User-level node services, scoped by OS identity and explicit enrollment HOME.
+//!
+//! New registrations carry `node run --home` so an OS login cannot silently switch Worlds.
+//! Legacy unscoped registrations are managed only in this OS user's default profile.
+
+#[cfg(unix)]
+mod unix;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+mod windows_task;
+#[cfg(unix)]
+use unix as platform;
+#[cfg(windows)]
+use windows as platform;
 
 use crate::control::paths::ControlPaths;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub(crate) const WINDOWS_TASK_NAME: &str = "FastCtx Node";
-pub(crate) const SYSTEMD_UNIT: &str = "fastctx-node";
-pub(crate) const LAUNCHD_LABEL: &str = "com.fastctx.node";
-
-/// The binary the service runs: Apply's stable copy when present, else the current one.
+/// Uses the managed binary only if it is the same build; admin endpoints include build id.
 pub(crate) fn service_binary(paths: &ControlPaths) -> Result<PathBuf, String> {
-    if paths.installed_binary.is_file() {
-        return Ok(paths.installed_binary.clone());
+    let current =
+        std::env::current_exe().map_err(|error| format!("Cannot locate FastCtx: {error}"))?;
+    if paths.installed_binary.is_file()
+        && crate::world::remote_edit::sha256_of(&paths.installed_binary)?
+            == crate::world::remote_edit::sha256_of(&current)?
+    {
+        Ok(paths.installed_binary.clone())
+    } else {
+        Ok(current)
     }
-    std::env::current_exe()
-        .map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))
 }
 
 fn run_checked(mut command: Command, what: &str) -> Result<String, String> {
+    crate::process_policy::apply_noninteractive_policy(&mut command);
     let output = command
         .output()
         .map_err(|error| format!("Cannot {what}: {error}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = command_text(&output.stdout)?;
+    let stderr = command_text(&output.stderr)?;
     if output.status.success() {
         Ok(stdout)
     } else {
@@ -34,253 +49,62 @@ fn run_checked(mut command: Command, what: &str) -> Result<String, String> {
     }
 }
 
-/// Registers the service for the current user and starts it.
+fn command_text(bytes: &[u8]) -> Result<String, String> {
+    if bytes.starts_with(&[0xff, 0xfe]) || (bytes.len() > 3 && bytes[1] == 0 && bytes[3] == 0) {
+        let bytes = bytes.strip_prefix(&[0xff, 0xfe]).unwrap_or(bytes);
+        if !bytes.len().is_multiple_of(2) {
+            return Err("The service manager returned incomplete UTF-16 output.".into());
+        }
+        let units = bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&units)
+            .map(|text| text.trim().to_string())
+            .map_err(|error| format!("Cannot decode service-manager output: {error}"))
+    } else if let Ok(text) = std::str::from_utf8(bytes) {
+        Ok(text.trim_start_matches('\u{feff}').trim().to_string())
+    } else {
+        #[cfg(windows)]
+        {
+            windows_task::command_text(bytes)
+        }
+        #[cfg(not(windows))]
+        {
+            Err("The service manager returned invalid UTF-8 output.".into())
+        }
+    }
+}
+
+/// Registers this profile for automatic startup and starts this build.
 pub(crate) fn install(paths: &ControlPaths, run_as_user: Option<&str>) -> Result<String, String> {
-    let binary = service_binary(paths)?;
-    if cfg!(windows) {
-        let action = format!("\"{}\" node run", binary.display());
-        let mut command = Command::new("schtasks");
-        command.args([
-            "/Create",
-            "/TN",
-            WINDOWS_TASK_NAME,
-            "/SC",
-            "ONLOGON",
-            "/RL",
-            "LIMITED",
-            "/F",
-            "/TR",
-            &action,
-        ]);
-        if let Some(user) = run_as_user {
-            command.args(["/RU", user, "/IT"]);
-        }
-        run_checked(command, "create the logon task")?;
-        let mut start = Command::new("schtasks");
-        start.args(["/Run", "/TN", WINDOWS_TASK_NAME]);
-        run_checked(start, "start the logon task")?;
-        return Ok(format!(
-            "Registered the logon task \"{WINDOWS_TASK_NAME}\" running {} and started it.",
-            crate::paths::display_path(&binary)
-        ));
-    }
-    if cfg!(target_os = "macos") {
-        let directory = paths.home.join("Library").join("LaunchAgents");
-        std::fs::create_dir_all(&directory).map_err(|error| {
-            format!(
-                "Cannot create {}: {error}",
-                crate::paths::display_path(&directory)
-            )
-        })?;
-        let plist = directory.join(format!("{LAUNCHD_LABEL}.plist"));
-        let content = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key><string>{LAUNCHD_LABEL}</string>\n  <key>ProgramArguments</key><array><string>{}</string><string>node</string><string>run</string></array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>ProcessType</key><string>Background</string>\n</dict>\n</plist>\n",
-            binary.display()
-        );
-        crate::world::write_atomic(&plist, content.as_bytes())?;
-        let uid = unix_uid();
-        let mut bootstrap = Command::new("launchctl");
-        bootstrap.args(["bootstrap", &format!("gui/{uid}"), &plist.to_string_lossy()]);
-        if run_checked(bootstrap, "load the LaunchAgent").is_err() {
-            let mut load = Command::new("launchctl");
-            load.args(["load", "-w", &plist.to_string_lossy()]);
-            run_checked(load, "load the LaunchAgent")?;
-        }
-        return Ok(format!(
-            "Installed the LaunchAgent {} and started it.",
-            crate::paths::display_path(&plist)
-        ));
-    }
-    let directory = paths.home.join(".config").join("systemd").join("user");
-    std::fs::create_dir_all(&directory).map_err(|error| {
-        format!(
-            "Cannot create {}: {error}",
-            crate::paths::display_path(&directory)
-        )
-    })?;
-    let unit = directory.join(format!("{SYSTEMD_UNIT}.service"));
-    let content = format!(
-        "[Unit]\nDescription=FastCtx World node\nAfter=network-online.target\n\n[Service]\nExecStart={} node run\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
-        binary.display()
-    );
-    crate::world::write_atomic(&unit, content.as_bytes())?;
-    let mut linger = Command::new("loginctl");
-    linger.args(["enable-linger"]);
-    let _ = linger.output();
-    let mut reload = Command::new("systemctl");
-    reload.args(["--user", "daemon-reload"]);
-    run_checked(
-        reload,
-        "reload the user systemd manager (is a user session running? try 'loginctl enable-linger' and log in again)",
-    )?;
-    let mut enable = Command::new("systemctl");
-    enable.args(["--user", "enable", "--now", SYSTEMD_UNIT]);
-    run_checked(enable, "enable the fastctx-node user unit")?;
-    Ok(format!(
-        "Installed the user unit {} and started it.",
-        crate::paths::display_path(&unit)
-    ))
+    platform::install(paths, run_as_user)
 }
-
-/// Stops and removes the service registration.
-///
-/// Nothing to remove is an outcome, not a failure: a node started with `--no-service`, or one
-/// whose registration a user already removed, must not have `unenroll` report an error for a
-/// registration that was never there.
-pub(crate) fn uninstall(paths: &ControlPaths) -> Result<String, String> {
-    if cfg!(windows) {
-        let mut query = Command::new("schtasks");
-        query.args(["/Query", "/TN", WINDOWS_TASK_NAME]);
-        let registered = query
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
-        if !registered {
-            return Ok(format!(
-                "No logon task \"{WINDOWS_TASK_NAME}\" is registered."
-            ));
-        }
-        let mut end = Command::new("schtasks");
-        end.args(["/End", "/TN", WINDOWS_TASK_NAME]);
-        let _ = end.output();
-        let mut delete = Command::new("schtasks");
-        delete.args(["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"]);
-        run_checked(delete, "delete the logon task")?;
-        return Ok(format!("Removed the logon task \"{WINDOWS_TASK_NAME}\"."));
-    }
-    if cfg!(target_os = "macos") {
-        let plist = paths
-            .home
-            .join("Library")
-            .join("LaunchAgents")
-            .join(format!("{LAUNCHD_LABEL}.plist"));
-        if !plist.exists() {
-            return Ok(format!(
-                "No LaunchAgent {} is registered.",
-                crate::paths::display_path(&plist)
-            ));
-        }
-        let uid = unix_uid();
-        let mut bootout = Command::new("launchctl");
-        bootout.args(["bootout", &format!("gui/{uid}/{LAUNCHD_LABEL}")]);
-        let _ = bootout.output();
-        let _ = std::fs::remove_file(&plist);
-        return Ok(format!(
-            "Removed the LaunchAgent {}.",
-            crate::paths::display_path(&plist)
-        ));
-    }
-    let unit = paths
-        .home
-        .join(".config")
-        .join("systemd")
-        .join("user")
-        .join(format!("{SYSTEMD_UNIT}.service"));
-    if !unit.exists() {
-        return Ok(format!(
-            "No user unit {} is registered.",
-            crate::paths::display_path(&unit)
-        ));
-    }
-    let mut disable = Command::new("systemctl");
-    disable.args(["--user", "disable", "--now", SYSTEMD_UNIT]);
-    let _ = disable.output();
-    let _ = std::fs::remove_file(&unit);
-    let mut reload = Command::new("systemctl");
-    reload.args(["--user", "daemon-reload"]);
-    let _ = reload.output();
-    Ok(format!(
-        "Removed the user unit {}.",
-        crate::paths::display_path(&unit)
-    ))
+/// Starts an existing service without interrupting it.
+pub(crate) fn start(paths: &ControlPaths) -> Result<String, String> {
+    platform::start(paths)
 }
-
-/// Restarts the service so a new binary or configuration takes effect.
+/// Updates this profile's service to the current build, then restarts it.
 pub(crate) fn restart(paths: &ControlPaths) -> Result<String, String> {
-    if cfg!(windows) {
-        let mut end = Command::new("schtasks");
-        end.args(["/End", "/TN", WINDOWS_TASK_NAME]);
-        let _ = end.output();
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let mut run = Command::new("schtasks");
-        run.args(["/Run", "/TN", WINDOWS_TASK_NAME]);
-        run_checked(
-            run,
-            "start the logon task (is it installed? run 'fastctx node install-service')",
-        )?;
-        return Ok(format!("Restarted the logon task \"{WINDOWS_TASK_NAME}\"."));
-    }
-    if cfg!(target_os = "macos") {
-        let uid = unix_uid();
-        let mut kick = Command::new("launchctl");
-        kick.args(["kickstart", "-k", &format!("gui/{uid}/{LAUNCHD_LABEL}")]);
-        run_checked(
-            kick,
-            "restart the LaunchAgent (is it installed? run 'fastctx node install-service')",
-        )?;
-        return Ok("Restarted the LaunchAgent.".to_string());
-    }
-    let _ = paths;
-    let mut restart = Command::new("systemctl");
-    restart.args(["--user", "restart", SYSTEMD_UNIT]);
-    run_checked(
-        restart,
-        "restart the fastctx-node user unit (is it installed? run 'fastctx node install-service')",
-    )?;
-    Ok("Restarted the fastctx-node user unit.".to_string())
+    platform::install(paths, None)
 }
-
-/// Stops the service without removing it.
+/// Stops this profile while preserving its automatic startup registration.
 pub(crate) fn stop(paths: &ControlPaths) -> Result<String, String> {
-    let _ = paths;
-    if cfg!(windows) {
-        let mut end = Command::new("schtasks");
-        end.args(["/End", "/TN", WINDOWS_TASK_NAME]);
-        run_checked(end, "stop the logon task")?;
-        return Ok(format!("Stopped the logon task \"{WINDOWS_TASK_NAME}\"."));
-    }
-    if cfg!(target_os = "macos") {
-        let uid = unix_uid();
-        let mut kill = Command::new("launchctl");
-        kill.args(["kill", "TERM", &format!("gui/{uid}/{LAUNCHD_LABEL}")]);
-        run_checked(kill, "stop the LaunchAgent")?;
-        return Ok("Stopped the LaunchAgent (it restarts on next login).".to_string());
-    }
-    let mut stop = Command::new("systemctl");
-    stop.args(["--user", "stop", SYSTEMD_UNIT]);
-    run_checked(stop, "stop the fastctx-node user unit")?;
-    Ok("Stopped the fastctx-node user unit.".to_string())
+    platform::stop(paths)
 }
-
-/// Whether the service registration exists, as the platform reports it.
+/// Stops this profile and removes its registration, retaining enrollment files.
+pub(crate) fn uninstall(paths: &ControlPaths) -> Result<String, String> {
+    platform::uninstall(paths)
+}
+/// Reads registration independently of whether the node currently answers IPC.
+pub(crate) fn inspect(paths: &ControlPaths) -> Result<bool, String> {
+    platform::inspect(paths)
+}
+/// Legacy CLI/Doctor convenience; the World TUI uses fallible inspection.
 pub(crate) fn is_installed() -> bool {
-    if cfg!(windows) {
-        return Command::new("schtasks")
-            .args(["/Query", "/TN", WINDOWS_TASK_NAME])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
-    }
-    if cfg!(target_os = "macos") {
-        return Command::new("launchctl")
-            .args(["print", &format!("gui/{}/{LAUNCHD_LABEL}", unix_uid())])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
-    }
-    Command::new("systemctl")
-        .args(["--user", "is-enabled", SYSTEMD_UNIT])
-        .output()
-        .map(|output| output.status.success())
+    ControlPaths::discover()
+        .and_then(|paths| inspect(&paths))
         .unwrap_or(false)
-}
-
-#[cfg(unix)]
-fn unix_uid() -> u32 {
-    unsafe { libc::getuid() }
-}
-
-#[cfg(not(unix))]
-fn unix_uid() -> u32 {
-    0
 }

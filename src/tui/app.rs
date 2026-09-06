@@ -48,6 +48,7 @@ pub(crate) enum Screen {
     UpdateConfirm,
     Language { first_run: bool },
     Main,
+    World,
     AgentListLoading,
     AgentList,
     AgentDetail,
@@ -279,6 +280,7 @@ pub(crate) struct App {
     pub(crate) provider_detection: provider::ProviderDetection,
     pub language: Language,
     pub screen: Screen,
+    pub(crate) world: super::world::WorldApp,
     pub selected: usize,
     pub config_draft: ConfigDraft,
     pub config_cursor: ConfigCursor,
@@ -420,6 +422,7 @@ impl App {
             ),
             agent_cursor: AgentDetailCursor::default(),
             target_doctor: StatusState::Loading,
+            world: super::world::WorldApp::new(&paths),
             paths,
             settings,
             provider_detection,
@@ -633,7 +636,12 @@ impl App {
         self.pending.is_some()
     }
 
+    pub(crate) fn take_input_drain(&mut self) -> bool {
+        self.world.take_input_drain()
+    }
+
     pub fn tick(&mut self) {
+        self.world.tick(&self.paths, self.screen == Screen::World);
         if self.pending.is_some() {
             return;
         }
@@ -669,7 +677,11 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
         self.toast = None;
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.should_quit = true;
+            if self.world.can_exit() {
+                self.should_quit = true;
+            } else {
+                self.screen = Screen::World;
+            }
             return;
         }
         match self.screen {
@@ -678,6 +690,11 @@ impl App {
             Screen::UpdateConfirm => self.handle_update_confirm(key.code),
             Screen::Language { first_run } => self.handle_language(key.code, first_run),
             Screen::Main => self.handle_main(key.code),
+            Screen::World => match self.world.handle_key(key, &self.paths) {
+                super::world::Navigation::Stay => {}
+                super::world::Navigation::Back => self.back_to_main(),
+                super::world::Navigation::Agents => self.begin_agent_list_load(),
+            },
             Screen::AgentList => self.handle_agent_list(key.code),
             Screen::AgentDetail => self.handle_agent_detail(key.code),
             Screen::AgentDraftConfirm => self.handle_agent_draft_confirm(key.code),
@@ -722,6 +739,19 @@ impl App {
             | Screen::ConfigResetting
             | Screen::ConfigSaving
             | Screen::JobsKilling => {}
+        }
+    }
+
+    pub fn handle_paste(&mut self, text: &str) {
+        if self.screen == Screen::World {
+            self.world.paste(text);
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn reject_paste(&mut self, count: Option<usize>) {
+        if self.screen == Screen::World {
+            self.world.reject_paste(count);
         }
     }
 
@@ -1237,18 +1267,22 @@ impl App {
 
     fn handle_main(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Up | KeyCode::Char('k') => self.move_previous(7),
-            KeyCode::Down | KeyCode::Char('j') => self.move_next(7),
+            KeyCode::Up | KeyCode::Char('k') => self.move_previous(8),
+            KeyCode::Down | KeyCode::Char('j') => self.move_next(8),
             KeyCode::Enter => match self.selected {
                 0 => self.begin_agent_list_load(),
                 1 => {
+                    self.screen = Screen::World;
+                    self.world.enter(&self.paths);
+                }
+                2 => {
                     self.provider_detection = provider::detect_path(&self.paths.codex_config);
                     self.config_draft = ConfigDraft::from_settings(&self.settings);
                     self.config_cursor = ConfigCursor::default();
                     self.config_viewport = ConfigViewport::default();
                     self.set_screen(Screen::Config);
                 }
-                2 => {
+                3 => {
                     self.jobs_state = JobsState::Loading;
                     self.jobs_detail = JobsDetail::default();
                     self.jobs_selected = 0;
@@ -1258,16 +1292,16 @@ impl App {
                     self.screen = Screen::Jobs;
                     self.pending = Some(Effect::LoadJobs);
                 }
-                3 => {
+                4 => {
                     self.set_screen(Screen::Update);
                 }
-                4 => {
+                5 => {
                     self.status = StatusState::Loading;
                     self.screen = Screen::Status;
                     self.pending = Some(Effect::RunDoctor);
                 }
-                5 => self.set_screen(Screen::About),
-                6 => {
+                6 => self.set_screen(Screen::About),
+                7 => {
                     self.selected = language_index(self.language);
                     self.screen = Screen::Language { first_run: false };
                 }

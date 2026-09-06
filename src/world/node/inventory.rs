@@ -1,25 +1,45 @@
 //! What this machine tells the World about itself: hardware, disks, GPUs, shell, addresses.
 //! Facts that cannot be measured are left absent rather than invented.
 
+use crate::process_policy::noninteractive_command;
 use crate::world::client::{Disk, Gpu, Inventory, Shell, WorldClient};
 use crate::world::link::netpath;
-use std::process::Command;
 
 /// Collects the inventory; slow probes (GPU, shell) run off the async runtime.
-pub(crate) async fn collect(client: &WorldClient) -> Inventory {
+pub(crate) async fn collect(client: &WorldClient) -> Result<Inventory, String> {
     let tags = client.own_tags();
+    let description = crate::world::notes::description(&client.paths)?;
     let home = client
         .paths
         .dir
         .parent()
         .map(|path| path.to_path_buf())
         .and_then(|path| path.parent().map(|path| path.to_path_buf()));
-    tokio::task::spawn_blocking(move || collect_blocking(tags, home))
+    tokio::task::spawn_blocking(move || collect_blocking(tags, home, description))
         .await
-        .unwrap_or_default()
+        .map_err(|error| format!("Cannot collect the machine inventory: {error}"))
 }
 
-fn collect_blocking(tags: Vec<String>, home: Option<std::path::PathBuf>) -> Inventory {
+/// Collects and queues a fresh inventory, preserving an observable failure until a publish
+/// succeeds. A failed profile read must not replace the last published description with blank.
+pub(crate) async fn publish(client: &WorldClient, record: bool) -> Result<(), String> {
+    let result = async {
+        let inventory = collect(client).await?;
+        if record {
+            client.publish_record(&inventory)?;
+        }
+        client.publish_inventory(&inventory)
+    }
+    .await;
+    *client.inventory_error.write() = result.as_ref().err().cloned();
+    result
+}
+
+fn collect_blocking(
+    tags: Vec<String>,
+    home: Option<std::path::PathBuf>,
+    description: String,
+) -> Inventory {
     let (shell, capabilities) = probe_shell(home.as_deref());
     Inventory {
         hostname: hostname(),
@@ -52,6 +72,8 @@ fn collect_blocking(tags: Vec<String>, home: Option<std::path::PathBuf>) -> Inve
             .map(crate::paths::display_path)
             .unwrap_or_default(),
         user: user_name(),
+        description,
+        activity: None,
     }
 }
 
@@ -62,7 +84,7 @@ fn user_name() -> String {
         .ok()
         .filter(|name| !name.is_empty())
         .or_else(|| {
-            Command::new("whoami")
+            noninteractive_command("whoami")
                 .output()
                 .ok()
                 .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -77,7 +99,7 @@ fn hostname() -> String {
         .ok()
         .filter(|name| !name.is_empty())
         .or_else(|| {
-            Command::new("hostname")
+            noninteractive_command("hostname")
                 .output()
                 .ok()
                 .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -120,7 +142,7 @@ fn memory_gb() -> f32 {
         }
         return 0.0;
     }
-    Command::new("sysctl")
+    noninteractive_command("sysctl")
         .args(["-n", "hw.memsize"])
         .output()
         .ok()
@@ -199,7 +221,7 @@ fn free_space(_path: &std::path::Path) -> Option<(u64, u64)> {
 }
 
 fn gpus() -> Vec<Gpu> {
-    let output = Command::new("nvidia-smi")
+    let output = noninteractive_command("nvidia-smi")
         .args([
             "--query-gpu=index,name,memory.total",
             "--format=csv,noheader,nounits",
@@ -235,7 +257,10 @@ fn wsl2() -> Option<bool> {
     if !cfg!(windows) {
         return None;
     }
-    let output = Command::new("wsl.exe").args(["-l", "-q"]).output().ok()?;
+    let output = noninteractive_command("wsl.exe")
+        .args(["-l", "-q"])
+        .output()
+        .ok()?;
     let text = String::from_utf16_lossy(
         &output
             .stdout
@@ -260,7 +285,7 @@ fn probe_shell(home: Option<&std::path::Path>) -> (Shell, Vec<String>) {
     let mut capabilities = vec!["files".to_string()];
     match locator.resolve(&environment) {
         Ok(path) => {
-            let login = Command::new(&path)
+            let login = noninteractive_command(&path)
                 .args(["-lc", "echo fastctx-login-ok"])
                 .output()
                 .map(|output| {

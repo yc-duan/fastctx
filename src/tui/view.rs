@@ -45,6 +45,10 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut App) {
         render_minimum_size(frame, app, area);
         return;
     }
+    if app.screen == Screen::World {
+        super::world::render(frame, &mut app.world, app.language, area);
+        return;
+    }
     let footer_height = 2;
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -153,6 +157,7 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn render_body(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     match app.screen {
+        Screen::World => super::world::render(frame, &mut app.world, app.language, area),
         Screen::MigrationNotice => render_migration_notice(frame, app, area),
         Screen::Update => render_update(frame, app, area),
         Screen::UpdateChecking => render_loading(frame, app, area, app.update_messages().checking),
@@ -627,6 +632,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let messages = app.messages();
     let labels = [
         app.agent_messages().title,
+        super::world::i18n::messages(app.language).title,
         messages.menu_config,
         app.job_messages().menu,
         app.update_messages().page_title,
@@ -664,7 +670,13 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             ),
         ));
     }
-    if app.selected == 2 {
+    if app.selected == 1 {
+        details.push(Line::raw(""));
+        details.push(Line::raw(
+            super::world::i18n::messages(app.language).welcome_body,
+        ));
+    }
+    if app.selected == 3 {
         let count = app
             .running_job_count
             .map(|count| {
@@ -675,7 +687,7 @@ fn render_main(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .unwrap_or_else(|| "—".to_string());
         details.push(detail_line(app.job_messages().title, &count));
     }
-    if app.selected == 3 {
+    if app.selected == 4 {
         details.push(detail_line(
             app.update_messages().page_title,
             &update_state_summary(app),
@@ -3660,6 +3672,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let messages = app.messages();
     let mut lines = Vec::new();
     let selected = match app.screen {
+        Screen::World => super::world::i18n::messages(app.language).title.to_string(),
         Screen::MigrationNotice => app.migration_messages().title.to_string(),
         Screen::Update => update_state_summary(app),
         Screen::UpdateChecking => app.update_messages().checking.to_string(),
@@ -3672,6 +3685,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Screen::Main => {
             let labels = [
                 app.agent_messages().title,
+                super::world::i18n::messages(app.language).title,
                 messages.menu_config,
                 app.job_messages().menu,
                 app.update_messages().page_title,
@@ -4403,6 +4417,7 @@ mod tests {
                 } else if width == 40 {
                     let selected_label = [
                         app.agent_messages().title,
+                        super::super::world::i18n::messages(app.language).title,
                         app.messages().menu_config,
                         app.job_messages().menu,
                         app.update_messages().page_title,

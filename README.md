@@ -383,6 +383,10 @@ The TUI **Jobs** dashboard scans this same current-user registry but shows only 
 
 A World is a set of machines you own, joined through a hub you run, on which the same FastCtx tools can point at any member. It is off until you enroll a machine yourself: an unenrolled machine publishes the nine tools above byte for byte and makes no network connection.
 
+Open `fastctx` and choose **World** to create or join a World, inspect machines and connection health, manage invitations, membership, access rules and node services, or browse events and a local hub. Forms preserve your input after a failed action, and destructive changes show their consequences before you confirm. The terminal interface supports all 17 languages.
+
+Each machine can publish a description to the World. You can also give it a private note on your own machine; that note takes precedence in your `nodes` output and is not synchronized to other controllers. Both fields accept up to 256 Unicode characters. Clearing a private note restores the shared description.
+
 ### Setting up a World
 
 Run the hub on a machine every member can reach on one TCP port. On 443 it looks like an ordinary HTTPS server (Linux needs `setcap` for that port, or pick another); a self-signed certificate is created on first start and members pin it when they enroll.

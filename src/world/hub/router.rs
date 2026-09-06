@@ -235,6 +235,8 @@ fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> 
                     stored_at: crate::world::now_rfc3339(),
                 },
             )?;
+            let version = hub.store.meta_u64(super::store::meta::MEMBERS_VERSION)?;
+            hub.broadcast_members_changed(version, Some(&peer.name));
             Ok(())
         }
         kind::LEAVE => {

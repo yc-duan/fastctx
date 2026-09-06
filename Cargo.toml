@@ -87,6 +87,7 @@ tokio-util = { version = "0.7.18", features = ["rt"] }
 toml_edit = { version = "0.22.27", features = ["serde"] }
 tempfile = "3.23.0"
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
+unicode-segmentation = "1.13.3"
 url = "2.5.8"
 walkdir = "2.5.0"
 webpki-roots = "1.0.9"
@@ -101,7 +102,7 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 libc = "0.2.186"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell"] }
 
 [build-dependencies]
 flate2 = "1.1.5"

@@ -267,7 +267,14 @@ pub enum NodeCommand {
     /// Stop the node service until the next login or restart.
     Stop,
     /// Run the node in the foreground (what the service runs).
-    Run,
+    Run {
+        /// Explicit enrollment HOME used by an installed user service.
+        #[arg(long, hide = true, value_name = "DIR")]
+        home: Option<PathBuf>,
+        /// Bind this node to the headless Windows task host's lifetime.
+        #[arg(long, hide = true)]
+        service_host: bool,
+    },
 }
 
 fn hub_data_dir(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
@@ -464,6 +471,7 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
                 verbs,
                 expires,
                 delete: false,
+                expected_revision: None,
             })
             .await?;
             println!(
@@ -491,6 +499,7 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
                 verbs: Vec::new(),
                 expires: None,
                 delete: true,
+                expected_revision: None,
             })
             .await?;
             println!(
@@ -718,7 +727,17 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
 }
 
 pub async fn run_node(command: NodeCommand) -> Result<ExitCode, String> {
-    let paths = ControlPaths::discover()?;
+    let paths = match &command {
+        NodeCommand::Run {
+            home: Some(home), ..
+        } => {
+            if !home.is_absolute() {
+                return Err("The node service HOME must be an absolute directory.".to_string());
+            }
+            ControlPaths::for_home(home)
+        }
+        _ => ControlPaths::discover()?,
+    };
     let world_paths = super::WorldPaths::from_control(&paths);
     match command {
         NodeCommand::Enroll {
@@ -847,8 +866,8 @@ pub async fn run_node(command: NodeCommand) -> Result<ExitCode, String> {
             println!("{}", super::node::service::stop(&paths)?);
             Ok(ExitCode::SUCCESS)
         }
-        NodeCommand::Run => {
-            run_on_dedicated_runtime(super::node::run_daemon(paths)).await?;
+        NodeCommand::Run { service_host, .. } => {
+            run_on_dedicated_runtime(super::node::run_daemon(paths, service_host)).await?;
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -959,6 +978,9 @@ fn print_nodes(nodes: &[super::client::NodeView]) {
             },
             tags,
             link,
+            node.effective_note()
+                .map(|note| format!("note {}", super::notes::quoted(note)))
+                .unwrap_or_default(),
         ]
         .into_iter()
         .filter(|part| !part.is_empty())

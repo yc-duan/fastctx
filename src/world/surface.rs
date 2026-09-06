@@ -836,7 +836,10 @@ async fn list_nodes(client: &Arc<WorldClient>, request: NodesRequest) -> ToolRes
     } else {
         stale = Some(client.unreachable_error());
     }
-    let all = client.nodes();
+    let mut all = client.nodes();
+    if let Err(error) = super::notes::annotate(&client.paths, &mut all) {
+        return ToolResponse::error(error);
+    }
     let need = request.need.unwrap_or_default();
     let filtered = all
         .iter()
@@ -949,6 +952,9 @@ fn render_node(node: &NodeView) -> String {
     }
     if node.is_self {
         columns.push("(this machine)".to_string());
+    }
+    if let Some(note) = node.effective_note() {
+        columns.push(format!("note {}", super::notes::quoted(note)));
     }
     columns.join("  ")
 }

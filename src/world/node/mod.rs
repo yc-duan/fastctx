@@ -1,10 +1,17 @@
 //! `fastctx node run`: the daemon that is this machine's presence in the World and, while it
 //! runs, its FastCtx control center.
 
+pub(crate) mod activity;
 pub(crate) mod admin;
 pub(crate) mod executor;
 pub(crate) mod inventory;
+mod logging;
+pub(crate) mod process;
+#[cfg(windows)]
+mod process_windows;
 pub(crate) mod service;
+mod service_identity;
+mod service_lifetime;
 
 use crate::control::paths::ControlPaths;
 use crate::world::WorldPaths;
@@ -16,11 +23,29 @@ use std::time::Duration;
 const STATUS_INTERVAL: Duration = Duration::from_secs(5);
 
 pub(crate) fn log(message: impl std::fmt::Display) {
-    eprintln!("[{}] node: {message}", crate::world::now_rfc3339());
+    let line = format!("[{}] node: {message}", crate::world::now_rfc3339());
+    eprintln!("{line}");
+    logging::write(&line);
 }
 
 /// Runs the daemon until interrupted.
-pub(crate) async fn run_daemon(paths: ControlPaths) -> Result<(), String> {
+pub(crate) async fn run_daemon(paths: ControlPaths, service_host: bool) -> Result<(), String> {
+    logging::open(&WorldPaths::from_control(&paths))?;
+    let result = async {
+        let parent = service_lifetime::capture(service_host)?;
+        run_daemon_inner(paths, parent).await
+    }
+    .await;
+    if let Err(error) = &result {
+        log(error);
+    }
+    result
+}
+
+async fn run_daemon_inner(
+    paths: ControlPaths,
+    parent: Option<service_lifetime::ServiceParent>,
+) -> Result<(), String> {
     let world_paths = WorldPaths::from_control(&paths);
     let Some(client) = WorldClient::open(world_paths.clone())? else {
         return Err(format!(
@@ -29,7 +54,15 @@ pub(crate) async fn run_daemon(paths: ControlPaths) -> Result<(), String> {
         ));
     };
     world_paths.ensure()?;
-    let environment = crate::session::SessionEnvironment::capture()?;
+    let captured = crate::session::SessionEnvironment::capture()?;
+    let mut variables = captured
+        .variables()
+        .iter()
+        .filter(|(name, _)| !crate::session::environment_name_eq(name, "HOME"))
+        .cloned()
+        .collect::<Vec<_>>();
+    variables.push(("HOME".into(), paths.home.as_os_str().to_os_string()));
+    let environment = crate::session::SessionEnvironment::new(paths.home.clone(), variables);
     let session = crate::session::SessionContext::from_environment(environment.clone())?;
     let executor = executor::Executor::new(Arc::clone(&client), Arc::clone(&session));
     let engine_hosted = Arc::new(AtomicBool::new(false));
@@ -87,22 +120,27 @@ pub(crate) async fn run_daemon(paths: ControlPaths) -> Result<(), String> {
         })
     };
 
-    tokio::select! {
-        () = wait_for_shutdown_signal() => log("shutdown requested"),
-        () = client.shutdown.cancelled() => {}
+    let service_error = tokio::select! {
+        () = wait_for_shutdown_signal() => { log("shutdown requested"); None },
+        result = service_lifetime::wait(parent) => match result {
+            Ok(()) => { log("service host stopped"); None },
+            Err(error) => Some(error),
+        },
+        () = client.shutdown.cancelled() => None,
         result = engine_task => {
             if let Ok(Err(error)) = result {
                 log(format!("control center stopped: {error}"));
             }
+            None
         }
-    }
+    };
     client.shutdown.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(3), session_task).await;
     admin_task.abort();
     status_task.abort();
     write_status(&admin, &client);
     let _ = std::fs::remove_file(&client.paths.status);
-    Ok(())
+    service_error.map_or(Ok(()), Err)
 }
 
 fn write_status(admin: &admin::AdminServer, client: &WorldClient) {
@@ -125,9 +163,21 @@ async fn wait_for_shutdown_signal() {
             _ = terminate.recv() => {}
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        async fn event(receiver: std::io::Result<tokio::signal::windows::CtrlClose>) {
+            match receiver {
+                Ok(mut receiver) => {
+                    receiver.recv().await;
+                }
+                Err(_) => std::future::pending::<()>().await,
+            }
+        }
+        // Closing the headless service host sends a close event, not Ctrl-C (2026-09-06).
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            () = event(tokio::signal::windows::ctrl_close()) => {}
+        }
     }
 }
 

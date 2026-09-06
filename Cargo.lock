@@ -1010,6 +1010,7 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "toml_edit",
+ "unicode-segmentation",
  "ureq",
  "url",
  "walkdir",

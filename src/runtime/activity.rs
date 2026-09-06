@@ -54,6 +54,12 @@ impl RuntimeActivity {
         self.state.lock().unwrap().last_activity = Instant::now();
     }
 
+    /// Current connection/request counts, read without changing shutdown or admission state.
+    pub(crate) fn counts(&self) -> (usize, usize) {
+        let state = self.state.lock().unwrap();
+        (state.connections, state.in_flight)
+    }
+
     pub(crate) fn is_shutdown_eligible(&self, duration: Duration) -> bool {
         self.is_shutdown_eligible_at(Instant::now(), duration)
     }

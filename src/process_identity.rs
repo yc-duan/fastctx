@@ -253,6 +253,12 @@ pub(crate) fn parent_identity_from_environment() -> Result<Option<Option<Process
     if std::env::var("FASTCTX_NO_PARENT_WATCH").ok().as_deref() == Some("1") {
         return Ok(None);
     }
+    direct_parent_identity()
+}
+
+/// Captures the direct parent independently of the MCP-only opt-out environment setting.
+/// A missing inner identity means the parent exited during capture.
+pub(crate) fn direct_parent_identity() -> Result<Option<Option<ProcessIdentity>>, String> {
     let Some(pid) = direct_parent_pid()? else {
         return Ok(None);
     };

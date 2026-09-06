@@ -113,6 +113,9 @@ enum Command {
         #[command(subcommand)]
         command: crate::world::cli::NodeCommand,
     },
+    /// Internal World control worker; request and result are private stdin/stdout JSON.
+    #[command(hide = true)]
+    WorldControl,
     /// Internal Unix detach bootstrap.
     #[cfg(unix)]
     #[command(hide = true)]
@@ -236,6 +239,7 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         Some(Command::Hub { command }) => crate::world::cli::run_hub(command).await,
         Some(Command::World { command }) => crate::world::cli::run_world(command).await,
         Some(Command::Node { command }) => crate::world::cli::run_node(command).await,
+        Some(Command::WorldControl) => crate::world::control::run_helper().await,
         #[cfg(unix)]
         Some(Command::JobBootstrap) => {
             crate::shell::jobs::run_bootstrap_entry()?;
@@ -282,6 +286,7 @@ fn is_internal_command(command: &Option<Command>) -> bool {
         command,
         Some(
             Command::JobHost
+                | Command::WorldControl
                 | Command::RuntimeBootstrap
                 | Command::RuntimeHost { .. }
                 | Command::UpdateHelper { .. }

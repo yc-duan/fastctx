@@ -199,7 +199,7 @@ async fn enroll_with(
     // member immediately, then let the daemon own the link.
     let client = super::client::WorldClient::open(world_paths.clone())?
         .ok_or_else(|| "The enrollment files were written but cannot be read back.".to_string())?;
-    let inventory: Inventory = super::node::inventory::collect(&client).await;
+    let inventory: Inventory = super::node::inventory::collect(&client).await?;
     let record_env = {
         let record = messages::MemberRecord {
             name: config.name.clone(),
