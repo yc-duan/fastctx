@@ -359,7 +359,12 @@ pub(crate) enum ConfigListRow {
 ///
 /// Pinned groups are absent: they render in their own area, so putting them here would draw them
 /// twice and let the viewport scroll something that is supposed to stay put.
-pub(crate) fn list_rows() -> Vec<ConfigListRow> {
+pub(crate) fn list_rows() -> &'static [ConfigListRow] {
+    static ROWS: std::sync::OnceLock<Vec<ConfigListRow>> = std::sync::OnceLock::new();
+    ROWS.get_or_init(build_list_rows)
+}
+
+fn build_list_rows() -> Vec<ConfigListRow> {
     let mut rows = Vec::new();
     for group in groups().iter().filter(|group| !group.pinned()) {
         rows.push(ConfigListRow::Group(group.id()));
@@ -451,36 +456,44 @@ impl ConfigViewport {
             .min(total_rows - 1);
         let mut best: Option<(usize, usize, usize, ConfigViewportWindow)> = None;
 
-        for start in 0..=focused {
-            for end in focused + 1..=total_rows {
-                let show_above = start > 0;
-                let show_below = end < total_rows;
-                let rendered_rows = end - start + usize::from(show_above) + usize::from(show_below);
-                if rendered_rows > visible_rows {
-                    continue;
-                }
-                let content_rows = end - start;
-                let movement = start.abs_diff(self.offset);
-                let center = start + content_rows.saturating_sub(1) / 2;
-                let focus_distance = focused.abs_diff(center);
-                let window = ConfigViewportWindow {
-                    start,
-                    end,
-                    show_above,
-                    show_below,
-                };
-                let replace =
-                    best.as_ref()
-                        .is_none_or(|(best_content, best_movement, best_distance, _)| {
-                            content_rows > *best_content
-                                || (content_rows == *best_content && movement < *best_movement)
-                                || (content_rows == *best_content
-                                    && movement == *best_movement
-                                    && focus_distance < *best_distance)
-                        });
-                if replace {
-                    best = Some((content_rows, movement, focus_distance, window));
-                }
+        // For each start, a shorter fitting window can never beat its longest one.
+        for start in focused.saturating_add(1).saturating_sub(visible_rows)..=focused {
+            let capacity = visible_rows.saturating_sub(usize::from(start > 0));
+            let end = if total_rows - start <= capacity {
+                total_rows
+            } else {
+                start.saturating_add(capacity.saturating_sub(1))
+            };
+            if end <= focused {
+                continue;
+            }
+            let show_above = start > 0;
+            let show_below = end < total_rows;
+            let rendered_rows = end - start + usize::from(show_above) + usize::from(show_below);
+            if rendered_rows > visible_rows {
+                continue;
+            }
+            let content_rows = end - start;
+            let movement = start.abs_diff(self.offset);
+            let center = start + content_rows.saturating_sub(1) / 2;
+            let focus_distance = focused.abs_diff(center);
+            let window = ConfigViewportWindow {
+                start,
+                end,
+                show_above,
+                show_below,
+            };
+            let replace =
+                best.as_ref()
+                    .is_none_or(|(best_content, best_movement, best_distance, _)| {
+                        content_rows > *best_content
+                            || (content_rows == *best_content && movement < *best_movement)
+                            || (content_rows == *best_content
+                                && movement == *best_movement
+                                && focus_distance < *best_distance)
+                    });
+            if replace {
+                best = Some((content_rows, movement, focus_distance, window));
             }
         }
 

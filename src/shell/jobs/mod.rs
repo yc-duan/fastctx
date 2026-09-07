@@ -155,7 +155,7 @@ enum KillState {
 /// Read-only output tail for the TUI detail panel.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct JobTail {
-    pub(crate) lines: Vec<String>,
+    pub(crate) lines: Arc<Vec<String>>,
     pub(crate) capture_error: Option<String>,
     pub(crate) output_truncation: Option<String>,
     cursor: TailCursor,
@@ -1205,8 +1205,21 @@ fn global_head(head: String) -> ToolResponse {
     }
 }
 
-pub(crate) fn summaries(paths: &ControlPaths) -> Result<Vec<JobSummary>, JobRegistryError> {
+/// Keeps live jobs plus terminal records the dashboard needs for completion notices.
+pub(crate) fn dashboard_summaries(
+    paths: &ControlPaths,
+    observed: &[String],
+) -> Result<Vec<JobSummary>, JobRegistryError> {
+    let observed = observed
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
     let mut records = store::scan_registry(&paths.jobs_dir)?.records;
+    records.retain(|record| record.status.is_running() || observed.contains(record.id.as_str()));
+    Ok(summarize_records(records))
+}
+
+fn summarize_records(mut records: Vec<JobRecord>) -> Vec<JobSummary> {
     records.sort_by(
         |left, right| match (left.status.is_running(), right.status.is_running()) {
             (true, false) => std::cmp::Ordering::Less,
@@ -1218,7 +1231,7 @@ pub(crate) fn summaries(paths: &ControlPaths) -> Result<Vec<JobSummary>, JobRegi
                 .then_with(|| right.id.cmp(&left.id)),
         },
     );
-    Ok(records
+    records
         .into_iter()
         .map(|record| {
             let source_key = format!(
@@ -1252,7 +1265,7 @@ pub(crate) fn summaries(paths: &ControlPaths) -> Result<Vec<JobSummary>, JobRegi
                 source,
             }
         })
-        .collect())
+        .collect()
 }
 
 /// Runs one admission-serialized history maintenance pass without starting a new job.
@@ -1272,10 +1285,16 @@ fn source_tag(source_key: &str) -> String {
 }
 
 pub(crate) fn running_summaries(paths: &ControlPaths) -> Result<Vec<JobSummary>, String> {
-    Ok(summaries(paths)?
-        .into_iter()
-        .filter(|job| job.status == JobSummaryStatus::Running)
-        .collect())
+    Ok(dashboard_summaries(paths, &[])?)
+}
+
+/// Counts live records without sorting history or constructing display summaries.
+pub(crate) fn running_count(paths: &ControlPaths) -> Result<usize, JobRegistryError> {
+    Ok(store::scan_registry(&paths.jobs_dir)?
+        .records
+        .iter()
+        .filter(|record| record.status.is_running())
+        .count())
 }
 
 pub(crate) fn refresh_tail(
@@ -1302,10 +1321,13 @@ pub(crate) fn refresh_tail(
         .iter()
         .map(StoredLine::encoded_line)
         .collect::<Vec<_>>();
-    tail.lines
-        .extend(decode_job(&encoded, None, default_encoding).lines);
-    if tail.lines.len() > max_lines {
-        tail.lines.drain(..tail.lines.len() - max_lines);
+    let decoded = decode_job(&encoded, None, default_encoding).lines;
+    if !decoded.is_empty() || tail.lines.len() > max_lines {
+        let lines = Arc::make_mut(&mut tail.lines);
+        lines.extend(decoded);
+        if lines.len() > max_lines {
+            lines.drain(..lines.len() - max_lines);
+        }
     }
     tail.capture_error = delta.capture_error.map(|error| {
         format!(

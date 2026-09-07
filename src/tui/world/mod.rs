@@ -318,25 +318,31 @@ impl WorldApp {
             true
         }
     }
-    pub(super) fn tick(&mut self, paths: &ControlPaths, visible: bool) {
+    pub(super) fn is_animating(&self) -> bool {
+        self.screen == Screen::Busy
+    }
+
+    pub(super) fn tick(&mut self, paths: &ControlPaths, visible: bool) -> bool {
+        let mut changed = false;
         if let Some(reply) = self.worker.as_ref().and_then(Worker::poll) {
+            changed = true;
             self.worker = None;
             let action = self.active.take();
             if self.stopping && action.as_ref().is_some_and(Action::is_read) {
-                return;
+                return true;
             }
             if self.pending.is_some() && action.as_ref().is_some_and(Action::is_read) {
                 if let Some(pending) = self.pending.take() {
                     self.start(paths, pending);
                 }
-                return;
+                return true;
             }
             self.accept(reply, action.as_ref());
             if self.pending.is_some()
                 && let Some(pending) = self.pending.take()
             {
                 self.start(paths, pending);
-                return;
+                return true;
             }
         }
         if visible
@@ -352,6 +358,7 @@ impl WorldApp {
                 .last_read
                 .is_none_or(|last| last.elapsed() >= Duration::from_secs(5))
         {
+            changed = true;
             self.start(
                 paths,
                 Action::Snapshot {
@@ -359,6 +366,7 @@ impl WorldApp {
                 },
             );
         }
+        changed
     }
     fn start(&mut self, paths: &ControlPaths, action: Action) {
         if let Some(worker) = &self.worker {

@@ -3,7 +3,8 @@
 use super::agents::{AgentDetailCursor, AgentDetailItem, AgentListState, AgentToolDraft};
 use super::budget_editor::{self, BudgetEditor};
 use super::config::{self, ConfigCursor, ConfigDraft, ConfigItemId, ConfigValue, ConfigViewport};
-use super::jobs::{JobsDetail, JobsState, JobsViewport, visible_job_count, visible_jobs};
+use super::job_reader::{JobReader, Reply as JobReply, Request as JobRequest};
+use super::jobs::{JobsDetail, JobsState, JobsViewport};
 use super::migration::{self as migration_copy, MigrationMessages};
 use super::update::{self as update_copy, UpdateMessages};
 use crate::control::agent_i18n::{self, AgentMessages};
@@ -320,6 +321,12 @@ pub(crate) struct App {
     migration_notice_pending: bool,
     startup_update_check_requested: bool,
     update_check: Option<ActiveUpdateCheck>,
+    job_reader: JobReader,
+    active_job_read: Option<Effect>,
+    jobs_epoch: u64,
+    active_jobs_epoch: u64,
+    redraw: bool,
+    clock_second: i64,
 }
 
 impl App {
@@ -337,9 +344,7 @@ impl App {
         let migration_notice_pending = startup_settings.migration_notice;
         let settings = startup_settings.settings;
         let provider_detection = provider::detect_path(&paths.codex_config);
-        let running_job_count = jobs::running_summaries(&paths)
-            .ok()
-            .map(|running| running.len());
+        let running_job_count = jobs::running_count(&paths).ok();
         let link_state = link::link_state(&paths, settings.applied.as_ref());
         let language = settings
             .language
@@ -450,6 +455,12 @@ impl App {
             migration_notice_pending,
             startup_update_check_requested: false,
             update_check: None,
+            job_reader: JobReader::default(),
+            active_job_read: None,
+            jobs_epoch: 0,
+            active_jobs_epoch: 0,
+            redraw: true,
+            clock_second: time::OffsetDateTime::now_utc().unix_timestamp(),
         })
     }
 
@@ -604,6 +615,7 @@ impl App {
             })),
         };
         if let Some(result) = result {
+            self.request_redraw();
             self.update_check = None;
             self.resolve_update_check(purpose, result);
         } else if purpose == UpdateCheckPurpose::Startup
@@ -616,6 +628,7 @@ impl App {
             self.update_check = None;
             self.update_state = StartupUpdate::None;
             self.back_to_main();
+            self.request_redraw();
         }
     }
 
@@ -633,7 +646,25 @@ impl App {
     }
 
     pub fn has_pending_effect(&self) -> bool {
-        self.pending.is_some()
+        self.pending.as_ref().is_some_and(|effect| {
+            !self.job_reader.is_busy()
+                || !matches!(
+                    effect,
+                    Effect::LoadJobs | Effect::LoadJobTail { .. } | Effect::RefreshJobCount
+                )
+        })
+    }
+
+    pub(crate) fn request_redraw(&mut self) {
+        self.redraw = true;
+    }
+
+    pub(crate) fn redraw_requested(&self) -> bool {
+        self.redraw
+    }
+
+    pub(crate) fn take_redraw(&mut self) -> bool {
+        std::mem::take(&mut self.redraw)
     }
 
     pub(crate) fn take_input_drain(&mut self) -> bool {
@@ -641,8 +672,20 @@ impl App {
     }
 
     pub fn tick(&mut self) {
-        self.world.tick(&self.paths, self.screen == Screen::World);
+        let world_visible = self.screen == Screen::World;
+        self.redraw |= self.world.tick(&self.paths, world_visible) && world_visible;
+        self.poll_job_read();
+        let second = time::OffsetDateTime::now_utc().unix_timestamp();
+        if second != self.clock_second {
+            self.clock_second = second;
+            self.redraw |= world_visible
+                || (self.screen == Screen::Jobs && !self.jobs_state.jobs().is_empty());
+        }
+        self.redraw |= world_visible && self.world.is_animating();
         if self.pending.is_some() {
+            return;
+        }
+        if self.job_reader.is_busy() {
             return;
         }
         let now = Instant::now();
@@ -675,6 +718,8 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        let previous_screen = self.screen;
+        self.request_redraw();
         self.toast = None;
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             if self.world.can_exit() {
@@ -740,10 +785,16 @@ impl App {
             | Screen::ConfigSaving
             | Screen::JobsKilling => {}
         }
+        if previous_screen != self.screen
+            && (previous_screen == Screen::Jobs || self.screen == Screen::Jobs)
+        {
+            self.jobs_epoch = self.jobs_epoch.wrapping_add(1);
+        }
     }
 
     pub fn handle_paste(&mut self, text: &str) {
         if self.screen == Screen::World {
+            self.request_redraw();
             self.world.paste(text);
         }
     }
@@ -751,14 +802,24 @@ impl App {
     #[cfg(windows)]
     pub fn reject_paste(&mut self, count: Option<usize>) {
         if self.screen == Screen::World {
+            self.request_redraw();
             self.world.reject_paste(count);
         }
     }
 
-    pub fn execute_pending(&mut self) {
+    /// Returns whether synchronous I/O requires draining input queued during the operation.
+    pub fn execute_pending(&mut self) -> bool {
         let Some(effect) = self.pending.take() else {
-            return;
+            return false;
         };
+        if matches!(
+            effect,
+            Effect::LoadJobs | Effect::LoadJobTail { .. } | Effect::RefreshJobCount
+        ) {
+            self.start_job_read(effect);
+            return false;
+        }
+        self.request_redraw();
         let retry_effect = match &effect {
             Effect::CommitApply => Effect::PlanApply,
             Effect::CommitUnapply => Effect::PlanUnapply,
@@ -1030,50 +1091,7 @@ impl App {
                 self.screen = Screen::AgentDoctor;
                 Ok(())
             }
-            Effect::LoadJobs => {
-                self.last_jobs_refresh = Some(Instant::now());
-                match jobs::summaries(&self.paths) {
-                    Ok(all_jobs) => self.refresh_jobs(all_jobs),
-                    Err(error) => {
-                        self.running_job_count = None;
-                        self.jobs_state = if error.is_permission_denied() {
-                            JobsState::PermissionDenied(error.to_string())
-                        } else {
-                            JobsState::Error(error.to_string())
-                        };
-                    }
-                }
-                Ok(())
-            }
-            Effect::LoadJobTail { job_id } => {
-                self.last_tail_refresh = Some(Instant::now());
-                if self.focused_job().is_some_and(|job| job.id == job_id) {
-                    if self.jobs_detail.job_id.as_deref() != Some(job_id.as_str()) {
-                        self.jobs_detail = JobsDetail::default();
-                    }
-                    self.jobs_detail.job_id = Some(job_id.clone());
-                    match jobs::refresh_tail(
-                        &self.paths,
-                        &job_id,
-                        JOB_TAIL_LINES,
-                        &mut self.jobs_detail.tail,
-                    ) {
-                        Ok(appended) => {
-                            self.jobs_detail.error = None;
-                            self.jobs_detail.preserve_view_after_append(appended);
-                        }
-                        Err(error) => self.jobs_detail.error = Some(error),
-                    }
-                }
-                Ok(())
-            }
-            Effect::RefreshJobCount => {
-                self.last_jobs_refresh = Some(Instant::now());
-                self.running_job_count = jobs::running_summaries(&self.paths)
-                    .ok()
-                    .map(|running| running.len());
-                Ok(())
-            }
+            Effect::LoadJobs | Effect::LoadJobTail { .. } | Effect::RefreshJobCount => unreachable!("dashboard reads are dispatched before synchronous effects"),
             Effect::KillJob { job_id } => {
                 jobs::kill_for_control(&self.paths, &job_id).map(|_| self.finish_job_kill())
             }
@@ -1092,6 +1110,141 @@ impl App {
                 self.screen = Screen::OperationFailed;
             }
             self.selected = 0;
+        }
+        true
+    }
+
+    fn start_job_read(&mut self, effect: Effect) {
+        if self.job_reader.is_busy() {
+            self.pending = Some(effect);
+            return;
+        }
+        let request = match &effect {
+            Effect::LoadJobs => {
+                self.last_jobs_refresh = Some(Instant::now());
+                JobRequest::List {
+                    observed: self
+                        .jobs_state
+                        .jobs()
+                        .iter()
+                        .map(|job| job.id.clone())
+                        .collect(),
+                }
+            }
+            Effect::RefreshJobCount => {
+                self.last_jobs_refresh = Some(Instant::now());
+                JobRequest::Count
+            }
+            Effect::LoadJobTail { job_id } => {
+                self.last_tail_refresh = Some(Instant::now());
+                if !self.focused_job().is_some_and(|job| job.id == *job_id) {
+                    return;
+                }
+                if self.jobs_detail.job_id.as_deref() != Some(job_id.as_str()) {
+                    self.jobs_detail = JobsDetail::default();
+                    self.jobs_detail.loading = true;
+                }
+                self.jobs_detail.job_id = Some(job_id.clone());
+                JobRequest::Tail {
+                    job_id: job_id.clone(),
+                    tail: Box::new(self.jobs_detail.tail.clone()),
+                    max_lines: JOB_TAIL_LINES,
+                    max_line_width: self.jobs_detail.max_line_width(),
+                }
+            }
+            _ => return,
+        };
+        self.active_job_read = Some(effect);
+        self.active_jobs_epoch = self.jobs_epoch;
+        if let Err(error) = self.job_reader.start(&self.paths, request) {
+            self.accept_job_read(JobReply::Failed(error));
+        }
+    }
+
+    fn poll_job_read(&mut self) {
+        if let Some(reply) = self.job_reader.poll() {
+            self.accept_job_read(reply);
+        }
+    }
+
+    fn accept_job_read(&mut self, reply: JobReply) {
+        let active = self.active_job_read.take();
+        let current = self.active_jobs_epoch == self.jobs_epoch;
+        // Slow scans must leave room for tail reads instead of immediately scheduling another scan.
+        if matches!(active, Some(Effect::LoadJobs | Effect::RefreshJobCount)) {
+            self.last_jobs_refresh = Some(Instant::now());
+        }
+        match reply {
+            JobReply::List(result) if self.screen == Screen::Jobs && current => {
+                let before = self.jobs_state.clone();
+                let toast = self.toast.clone();
+                match result {
+                    Ok(all_jobs) => self.refresh_jobs(all_jobs),
+                    Err(error) => {
+                        self.running_job_count = None;
+                        self.jobs_state = if error.is_permission_denied() {
+                            JobsState::PermissionDenied(error.to_string())
+                        } else {
+                            JobsState::Error(error.to_string())
+                        };
+                    }
+                }
+                self.redraw |= before != self.jobs_state || toast != self.toast;
+            }
+            JobReply::Count(count) => {
+                self.redraw |= self.screen == Screen::Main && self.running_job_count != count;
+                self.running_job_count = count;
+            }
+            JobReply::Tail {
+                job_id,
+                tail,
+                result,
+                max_line_width,
+            } if self.screen == Screen::Jobs
+                && current
+                && self.jobs_detail.job_id.as_deref() == Some(job_id.as_str())
+                && self.focused_job().is_some_and(|job| job.id == job_id) =>
+            {
+                self.last_tail_refresh = Some(Instant::now());
+                self.redraw |= self.jobs_detail.loading
+                    || !std::sync::Arc::ptr_eq(&self.jobs_detail.tail.lines, &tail.lines)
+                    || self.jobs_detail.tail.capture_error != tail.capture_error
+                    || self.jobs_detail.tail.output_truncation != tail.output_truncation;
+                self.jobs_detail.loading = false;
+                self.jobs_detail.set_tail(*tail, max_line_width);
+                let error = match result {
+                    Ok(appended) => {
+                        self.jobs_detail.preserve_view_after_append(appended);
+                        None
+                    }
+                    Err(error) => Some(error),
+                };
+                self.redraw |= self.jobs_detail.error != error;
+                self.jobs_detail.error = error;
+            }
+            JobReply::Failed(error) => {
+                match active {
+                    Some(Effect::RefreshJobCount) => self.running_job_count = None,
+                    Some(Effect::LoadJobs) if self.screen == Screen::Jobs => {
+                        if !current {
+                            return;
+                        }
+                        self.running_job_count = None;
+                        self.jobs_state = JobsState::Error(error)
+                    }
+                    Some(Effect::LoadJobTail { job_id })
+                        if self.screen == Screen::Jobs
+                            && current
+                            && self.jobs_detail.job_id.as_deref() == Some(job_id.as_str()) =>
+                    {
+                        self.jobs_detail.loading = false;
+                        self.jobs_detail.error = Some(error)
+                    }
+                    _ => return,
+                }
+                self.request_redraw();
+            }
+            _ => {}
         }
     }
 
@@ -2172,28 +2325,24 @@ impl App {
     }
 
     pub(crate) fn focused_job(&self) -> Option<&JobSummary> {
-        visible_jobs(self.jobs_state.jobs())
-            .get(self.jobs_selected)
-            .copied()
+        self.jobs_state.snapshot()?.focused(self.jobs_selected)
     }
 
     fn refresh_jobs(&mut self, all_jobs: Vec<JobSummary>) {
         let focused_id = self.focused_job().map(|job| job.id.clone());
+        let finished = all_jobs
+            .iter()
+            .filter(|job| job.status != jobs::JobSummaryStatus::Running)
+            .map(|job| job.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
         let finished_id = focused_id
             .as_deref()
-            .filter(|job_id| {
-                all_jobs
-                    .iter()
-                    .any(|job| job.id == *job_id && job.status != jobs::JobSummaryStatus::Running)
-            })
+            .filter(|job_id| finished.contains(job_id))
             .map(str::to_string)
             .or_else(|| {
                 self.jobs_state.jobs().iter().find_map(|previous| {
-                    all_jobs
-                        .iter()
-                        .any(|job| {
-                            job.id == previous.id && job.status != jobs::JobSummaryStatus::Running
-                        })
+                    finished
+                        .contains(previous.id.as_str())
                         .then(|| previous.id.clone())
                 })
             });
@@ -2216,15 +2365,13 @@ impl App {
             self.last_tail_refresh = None;
             return;
         }
-        self.jobs_state = JobsState::ready(running_jobs);
-        let visible_count = visible_job_count(self.jobs_state.jobs());
+        if self.jobs_state.jobs() != running_jobs {
+            self.jobs_state = JobsState::ready(running_jobs);
+        }
+        let visible_count = self.jobs_state.visible_count();
         self.jobs_selected = focused_id
             .as_deref()
-            .and_then(|job_id| {
-                visible_jobs(self.jobs_state.jobs())
-                    .iter()
-                    .position(|job| job.id == job_id)
-            })
+            .and_then(|job_id| self.jobs_state.snapshot()?.position(job_id))
             .unwrap_or_else(|| previous_index.min(visible_count - 1));
         let next_id = self
             .focused_job()
@@ -2238,7 +2385,7 @@ impl App {
     }
 
     fn move_job_selection(&mut self, forward: bool) {
-        let len = visible_job_count(self.jobs_state.jobs());
+        let len = self.jobs_state.visible_count();
         if len == 0 {
             return;
         }
@@ -2255,7 +2402,7 @@ impl App {
     }
 
     fn select_job_edge(&mut self, end: bool) {
-        let len = visible_job_count(self.jobs_state.jobs());
+        let len = self.jobs_state.visible_count();
         if len == 0 {
             return;
         }
@@ -2268,6 +2415,7 @@ impl App {
     }
 
     fn finish_job_kill(&mut self) {
+        self.jobs_epoch = self.jobs_epoch.wrapping_add(1);
         self.pending_job = None;
         self.retry_effect = None;
         self.error = None;
@@ -2304,6 +2452,98 @@ fn language_index(language: Language) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dashboard_reads_keep_input_live_and_discard_stale_results() {
+        use super::*;
+        use crate::shell::jobs::{JobSourceSummary, JobSummaryStatus, JobTail};
+        use std::sync::mpsc;
+        const DEADLINE: Duration = Duration::from_secs(10);
+        struct Stopped(mpsc::Sender<()>);
+        impl Drop for Stopped {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let mut app = App::for_test(
+            ControlPaths::for_home(temp.path()),
+            temp.path().join("source"),
+        );
+        let job = |id: &str| JobSummary {
+            id: id.into(),
+            command: "fixture".into(),
+            cwd: "fixture".into(),
+            started_at: "2026-01-01T00:00:00Z".into(),
+            status: JobSummaryStatus::Running,
+            source: JobSourceSummary {
+                key: "source".into(),
+                tag: "source".into(),
+                server_pid: 1,
+                parent_executable: None,
+                server_cwd: "fixture".into(),
+            },
+        };
+        app.jobs_state = JobsState::ready(vec![job("j-aaaaaa"), job("j-bbbbbb")]);
+        app.screen = Screen::Jobs;
+        let (entered, started) = mpsc::channel();
+        let (resume, resumed) = mpsc::channel();
+        let (stopped, finished) = mpsc::channel();
+        let stopped = Stopped(stopped);
+        app.job_reader = JobReader::with_reader(move |_| {
+            let _keep_until_exit = &stopped;
+            entered.send(std::thread::current().id()).unwrap();
+            resumed.recv().unwrap();
+            JobReply::List(Ok(Vec::new()))
+        });
+        app.pending = Some(Effect::LoadJobs);
+        assert!(!app.execute_pending());
+        let thread = started.recv_timeout(DEADLINE).unwrap();
+        for _ in 0..100 {
+            app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+            assert!(!app.has_pending_effect());
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.focused_job().unwrap().id, "j-bbbbbb");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.screen, Screen::Main);
+        app.selected = 3;
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.screen, Screen::Jobs);
+        resume.send(()).unwrap();
+        let until = Instant::now() + DEADLINE;
+        while app.job_reader.is_busy() {
+            app.poll_job_read();
+            assert!(Instant::now() < until);
+            std::thread::yield_now();
+        }
+        assert!(matches!(app.jobs_state, JobsState::Loading));
+        assert!(app.has_pending_effect());
+        assert!(!app.execute_pending());
+        assert_eq!(started.recv_timeout(DEADLINE).unwrap(), thread);
+        resume.send(()).unwrap();
+        let until = Instant::now() + DEADLINE;
+        while app.job_reader.is_busy() {
+            app.poll_job_read();
+            assert!(Instant::now() < until);
+            std::thread::yield_now();
+        }
+        assert!(matches!(app.jobs_state, JobsState::Empty));
+        app.jobs_state = JobsState::ready(vec![job("j-aaaaaa"), job("j-bbbbbb")]);
+        app.jobs_selected = 1;
+        app.screen = Screen::Jobs;
+        app.jobs_detail.job_id = Some("j-bbbbbb".into());
+        let mut tail = JobTail::default();
+        std::sync::Arc::make_mut(&mut tail.lines).push("stale output".into());
+        app.accept_job_read(JobReply::Tail {
+            job_id: "j-aaaaaa".into(),
+            tail: Box::new(tail),
+            result: Ok(1),
+            max_line_width: 12,
+        });
+        assert!(app.jobs_detail.tail.lines.is_empty());
+        drop(app);
+        finished.recv_timeout(DEADLINE).unwrap();
+    }
     use super::{App, Effect, Screen, config};
     use crate::control::i18n::Language;
     use crate::control::paths::ControlPaths;

@@ -251,25 +251,16 @@ fn machine_status(machine: &Machine, m: &WorldMessages) -> String {
     status
 }
 
-fn plan(topology: &Topology, m: &WorldMessages, width: u16, available: u16) -> Option<Plan> {
+fn plan(
+    topology: &Topology,
+    width: u16,
+    available: u16,
+    content: usize,
+    hub: usize,
+) -> Option<Plan> {
     if topology.machines.is_empty() || width < 24 {
         return None;
     }
-    let content = topology
-        .machines
-        .iter()
-        .flat_map(|machine| {
-            let (name, tag) = machine_name(machine, m);
-            let title = if tag.is_empty() {
-                name
-            } else {
-                format!("{name}  {tag}")
-            };
-            [title, safe(&machine.system), machine_status(machine, m)]
-        })
-        .map(|text| self::width(&text))
-        .max()
-        .unwrap_or(16);
     let card_width = (content as u16 + 4)
         .clamp(20, 40)
         .min(width.saturating_sub(2));
@@ -300,9 +291,7 @@ fn plan(topology: &Topology, m: &WorldMessages, width: u16, available: u16) -> O
                     counter = false;
                 }
             }
-            let hub_width = (self::width(&safe(&topology.hub.address)) as u16 + 8)
-                .clamp(24, 48)
-                .min(width);
+            let hub_width = (hub as u16 + 8).clamp(24, 48).min(width);
             return Some(Plan {
                 tier,
                 card_width,
@@ -318,24 +307,55 @@ fn plan(topology: &Topology, m: &WorldMessages, width: u16, available: u16) -> O
     None
 }
 
-/// How many rows the picture wants for this width, at most `available`.
-pub(super) fn preferred_height(
+/// Measures the text once, retaining the layout for the picture's actual height.
+pub(super) struct Diagram {
+    pub(super) height: u16,
+    plan: Option<Plan>,
+}
+
+pub(super) fn diagram(
     topology: &Topology,
     m: &WorldMessages,
     width: u16,
     available: u16,
-) -> u16 {
-    match plan(topology, m, width, available) {
+) -> Diagram {
+    let content = topology
+        .machines
+        .iter()
+        .flat_map(|machine| {
+            let (name, tag) = machine_name(machine, m);
+            let title = if tag.is_empty() {
+                name
+            } else {
+                format!("{name}  {tag}")
+            };
+            [title, safe(&machine.system), machine_status(machine, m)]
+        })
+        .map(|text| self::width(&text))
+        .max()
+        .unwrap_or(16);
+    let hub = self::width(&safe(&topology.hub.address));
+    let height = match plan(topology, width, available, content, hub) {
         Some(plan) => plan.height_for(plan.page_rows(topology)).min(available),
         None => (topology.machines.len() as u16 + 1).min(available),
+    };
+    Diagram {
+        height,
+        plan: plan(topology, width, height, content, hub),
     }
 }
 
-pub(super) fn render(buf: &mut Buffer, area: Rect, topology: &Topology, m: &WorldMessages) {
+pub(super) fn render(
+    buf: &mut Buffer,
+    area: Rect,
+    topology: &Topology,
+    m: &WorldMessages,
+    diagram: &Diagram,
+) {
     if area.is_empty() {
         return;
     }
-    let Some(plan) = plan(topology, m, area.width, area.height) else {
+    let Some(plan) = &diagram.plan else {
         compact(buf, area, topology, m);
         return;
     };

@@ -6,7 +6,8 @@ use super::budget_editor::{self, ToolBudgetInputError};
 use super::config::{
     self, ConfigGroupId, ConfigItemId, ConfigItemRole, ConfigListRow, ConfigValue,
 };
-use super::jobs::{JobGroup, JobsState, display_output_line, grouped_jobs, source_count};
+use super::job_snapshot::{DashboardRow, JobSnapshot};
+use super::jobs::{JobsState, display_output_line};
 use super::theme;
 use crate::control::apply::{PreviewAction, PreviewItem, PreviewTarget};
 use crate::control::doctor::DoctorCheckStatus;
@@ -2139,11 +2140,7 @@ fn render_jobs(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         JobsState::Ready(jobs) => jobs.clone(),
     };
 
-    let groups = grouped_jobs(&jobs);
-    let focused_job = groups
-        .iter()
-        .flat_map(|group| group.jobs.iter().copied())
-        .nth(app.jobs_selected);
+    let focused_job = jobs.focused(app.jobs_selected);
     if focused_job.is_none() {
         render_message_panel(
             frame,
@@ -2162,7 +2159,7 @@ fn render_jobs(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(44), Constraint::Min(3)])
             .split(content);
-        render_job_list(frame, app, &jobs, &groups, focused_job, chunks[0]);
+        render_job_list(frame, app, &jobs, chunks[0]);
         render_job_output(frame, app, focused_job, chunks[1], true);
     } else {
         let columns = Layout::default()
@@ -2170,7 +2167,7 @@ fn render_jobs(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
             .spacing(2)
             .split(content);
-        render_job_list(frame, app, &jobs, &groups, focused_job, columns[0]);
+        render_job_list(frame, app, &jobs, columns[0]);
         let detail = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(7), Constraint::Min(4)])
@@ -2180,37 +2177,10 @@ fn render_jobs(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     }
 }
 
-enum JobDashboardRow<'a> {
-    Source {
-        source: &'a JobSourceSummary,
-        total: usize,
-    },
-    Job(&'a JobSummary),
-}
-
-fn render_job_list(
-    frame: &mut Frame<'_>,
-    app: &mut App,
-    jobs: &[JobSummary],
-    groups: &[JobGroup<'_>],
-    focused_job: Option<&JobSummary>,
-    area: Rect,
-) {
-    let focused_id = focused_job.map(|job| job.id.as_str());
-    let mut rows = Vec::<JobDashboardRow<'_>>::new();
-    let mut focused_row = 0;
-    for group in groups {
-        rows.push(JobDashboardRow::Source {
-            source: group.source,
-            total: group.total,
-        });
-        for job in &group.jobs {
-            if focused_id == Some(job.id.as_str()) {
-                focused_row = rows.len();
-            }
-            rows.push(JobDashboardRow::Job(job));
-        }
-    }
+fn render_job_list(frame: &mut Frame<'_>, app: &mut App, snapshot: &JobSnapshot, area: Rect) {
+    let jobs = &snapshot.jobs;
+    let rows = &snapshot.rows;
+    let focused_row = snapshot.focused_row(app.jobs_selected);
 
     let visible_rows = usize::from(area.height.saturating_sub(1).max(1));
     let window = app
@@ -2226,8 +2196,10 @@ fn render_job_list(
     let selected_index = focused_row.saturating_sub(window.start) + usize::from(window.show_above);
     let row_width = usize::from(area.width.saturating_sub(6));
     items.extend(rows[window.start..window.end].iter().map(|row| match row {
-        JobDashboardRow::Source { source, total } => source_header_row(source, *total, row_width),
-        JobDashboardRow::Job(job) => job_list_row(job, row_width),
+        DashboardRow::Source { first_job, total } => {
+            source_header_row(&jobs[*first_job].source, *total, row_width)
+        }
+        DashboardRow::Job(index) => job_list_row(&jobs[*index], row_width),
     }));
     if window.show_below {
         items.push(ListItem::new(Line::styled(
@@ -2242,7 +2214,7 @@ fn render_job_list(
         .summary
         .replace("{running}", &running.to_string())
         .replace("{total}", &jobs.len().to_string())
-        .replace("{sources}", &source_count(jobs).to_string());
+        .replace("{sources}", &snapshot.source_count.to_string());
     let title = format!(
         "{} · {} · {}",
         app.job_messages().footer_scope,
@@ -2402,10 +2374,8 @@ fn render_job_output(
         app.job_messages().follow_off
     };
     let content_width = usize::from(area.width.saturating_sub(2).max(1));
-    let has_right = app.jobs_detail.tail.lines.iter().any(|line| {
-        Line::from(display_output_line(line)).width()
-            > app.jobs_detail.horizontal_offset + content_width
-    });
+    let has_right =
+        app.jobs_detail.max_line_width() > app.jobs_detail.horizontal_offset + content_width;
     let horizontal_marker = match (app.jobs_detail.horizontal_offset > 0, has_right) {
         (true, true) => "←→",
         (true, false) => "←",
@@ -2444,7 +2414,8 @@ fn render_job_output(
             app.jobs_detail.horizontal_offset + 1
         )
     };
-    let detail_matches = app.jobs_detail.job_id.as_deref() == Some(job.id.as_str());
+    let detail_matches =
+        !app.jobs_detail.loading && app.jobs_detail.job_id.as_deref() == Some(job.id.as_str());
     let mut lines = Vec::new();
     if !detail_matches {
         lines.push(Line::styled(
@@ -2643,16 +2614,7 @@ fn right_align_display_width(value: &str, width: usize) -> String {
 }
 
 fn escape_controls(value: &str) -> String {
-    value
-        .chars()
-        .flat_map(|character| {
-            if character.is_control() {
-                character.escape_default().collect::<Vec<_>>()
-            } else {
-                vec![character]
-            }
-        })
-        .collect()
+    display_output_line(value).into_owned()
 }
 
 fn truncate_end(value: &str, max_chars: usize) -> String {
@@ -3268,7 +3230,7 @@ fn render_narrow_status(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         frame,
         app,
         area,
-        &app.status.clone(),
+        false,
         app.messages().status_title.to_string(),
     );
 }
@@ -3277,10 +3239,15 @@ fn render_narrow_doctor_state(
     frame: &mut Frame<'_>,
     app: &mut App,
     area: Rect,
-    state: &StatusState,
+    target: bool,
     title: String,
 ) {
     let mut lines = vec![narrow_title(title)];
+    let state = if target {
+        &app.target_doctor
+    } else {
+        &app.status
+    };
     match state {
         StatusState::Loading => lines.push(Line::styled(
             app.messages().loading,
@@ -3638,7 +3605,7 @@ fn render_narrow(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 frame,
                 app,
                 area,
-                &app.target_doctor.clone(),
+                true,
                 format!(
                     "{} · {}",
                     app.agent_draft.target.display_name(),
@@ -4657,7 +4624,8 @@ mod tests {
             ));
 
             app.jobs_detail.job_id = Some("j-000001".to_string());
-            app.jobs_detail.tail.lines = vec!["older line".to_string(), "newest line".to_string()];
+            app.jobs_detail.tail.lines =
+                vec!["older line".to_string(), "newest line".to_string()].into();
             let ready = render_once(&mut app);
             for expected in [
                 "j-000001",

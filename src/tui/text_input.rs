@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Span;
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InputMode {
@@ -21,6 +21,7 @@ pub(crate) enum InputError {
 #[derive(Clone)]
 pub(crate) struct TextInput {
     text: String,
+    character_count: usize,
     cursor: usize,
     anchor: Option<usize>,
     limit: usize,
@@ -58,6 +59,7 @@ pub(crate) struct InputCell {
 impl TextInput {
     pub(crate) fn new(text: String, limit: usize, mode: InputMode, secret: bool) -> Self {
         Self {
+            character_count: text.chars().count(),
             cursor: text.len(),
             text,
             anchor: None,
@@ -72,12 +74,13 @@ impl TextInput {
         &self.text
     }
     pub(crate) fn len(&self) -> usize {
-        self.text.chars().count()
+        self.character_count
     }
     pub(crate) fn limit(&self) -> usize {
         self.limit
     }
     pub(crate) fn replace(&mut self, text: String) {
+        self.character_count = text.chars().count();
         self.text = text;
         self.cursor = self.text.len();
         self.anchor = None;
@@ -117,13 +120,18 @@ impl TextInput {
             return false;
         }
         self.text.replace_range(selection.clone(), value);
+        self.character_count = count;
         self.cursor = selection.start + value.len();
-        self.cursor = self
-            .text
-            .grapheme_indices(true)
-            .map(|(offset, _)| offset)
-            .find(|offset| *offset >= self.cursor)
-            .unwrap_or(self.text.len());
+        let mut cursor = GraphemeCursor::new(self.cursor, self.text.len(), true);
+        if !cursor
+            .is_boundary(&self.text, 0)
+            .expect("the complete input supplies grapheme context")
+        {
+            self.cursor = cursor
+                .next_boundary(&self.text, 0)
+                .expect("the complete input supplies grapheme context")
+                .unwrap_or(self.text.len());
+        }
         self.anchor = None;
         self.error = None;
         true
@@ -139,18 +147,15 @@ impl TextInput {
         self.cursor = target;
     }
     fn previous(&self) -> usize {
-        self.text
-            .grapheme_indices(true)
-            .map(|(offset, _)| offset)
-            .take_while(|offset| *offset < self.cursor)
-            .last()
+        GraphemeCursor::new(self.cursor, self.text.len(), true)
+            .prev_boundary(&self.text, 0)
+            .expect("the complete input supplies grapheme context")
             .unwrap_or(0)
     }
     fn next(&self) -> usize {
-        self.text
-            .grapheme_indices(true)
-            .map(|(offset, _)| offset)
-            .find(|offset| *offset > self.cursor)
+        GraphemeCursor::new(self.cursor, self.text.len(), true)
+            .next_boundary(&self.text, 0)
+            .expect("the complete input supplies grapheme context")
             .unwrap_or(self.text.len())
     }
     fn word_left(&self) -> usize {
@@ -253,41 +258,40 @@ impl TextInput {
             return Vec::new();
         }
         let selection = self.selection();
-        let mut cells = Vec::new();
-        let mut cursor_index = 0;
-        for (offset, grapheme) in self.text.grapheme_indices(true) {
-            if offset < self.cursor {
-                cursor_index = cells.len() + 1;
-            }
-            let text = if self.secret && !self.revealed {
-                "●".into()
+        let hidden = self.secret && !self.revealed;
+        let measure = |grapheme: &str| {
+            if hidden {
+                1
+            } else if grapheme.chars().any(needs_escape) {
+                Span::raw(visible(grapheme)).width().max(1)
             } else {
-                visible(grapheme)
-            };
-            cells.push(InputCell {
-                text,
-                selected: selection.contains(&offset),
-                cursor: offset == self.cursor,
-            });
-        }
-        if self.cursor == self.text.len() {
-            cells.push(InputCell {
-                text: " ".into(),
-                selected: false,
-                cursor: true,
-            });
-        } else if let Some(cell) = cells.get_mut(cursor_index) {
-            cell.cursor = true;
-        }
-        let measure = |cell: &InputCell| Span::raw(cell.text.as_str()).width().max(1);
-        let widths = cells.iter().map(measure).collect::<Vec<_>>();
-        let mut cursor_span = widths[..=cursor_index.min(widths.len().saturating_sub(1))]
-            .iter()
-            .sum::<usize>();
-        let mut start = 0;
-        while start < cursor_index && cursor_span > width.saturating_sub(1).max(1) {
-            cursor_span = cursor_span.saturating_sub(widths[start]);
-            start += 1;
+                Span::raw(grapheme).width().max(1)
+            }
+        };
+        let mut before = GraphemeCursor::new(self.cursor, self.text.len(), true);
+        let cursor_end = before
+            .clone()
+            .next_boundary(&self.text, 0)
+            .expect("the complete input supplies grapheme context")
+            .unwrap_or(self.text.len());
+        let mut cursor_span = if self.cursor == self.text.len() {
+            1
+        } else {
+            measure(&self.text[self.cursor..cursor_end])
+        };
+        let mut start = self.cursor;
+        let budget = width.saturating_sub(1).max(1);
+        while start > 0 && cursor_span <= budget {
+            let previous = before
+                .prev_boundary(&self.text, 0)
+                .expect("the complete input supplies grapheme context")
+                .unwrap_or(0);
+            let size = measure(&self.text[previous..start]);
+            if cursor_span + size > budget {
+                break;
+            }
+            cursor_span += size;
+            start = previous;
         }
         let mut result = Vec::new();
         let mut used = 0;
@@ -299,22 +303,64 @@ impl TextInput {
             });
             used += 1;
         }
-        for cell in cells.into_iter().skip(start) {
-            let size = measure(&cell);
+        let mut after = GraphemeCursor::new(start, self.text.len(), true);
+        let mut offset = start;
+        loop {
+            if offset == self.text.len() && self.cursor != self.text.len() {
+                break;
+            }
+            let next = after
+                .next_boundary(&self.text, 0)
+                .expect("the complete input supplies grapheme context")
+                .unwrap_or(self.text.len());
+            let grapheme = if offset == self.text.len() {
+                " "
+            } else {
+                &self.text[offset..next]
+            };
+            let size = measure(grapheme);
             if used + size > width {
                 break;
             }
             used += size;
-            result.push(cell);
+            result.push(InputCell {
+                text: if offset == self.text.len() {
+                    " ".into()
+                } else if hidden {
+                    "●".into()
+                } else {
+                    visible(grapheme)
+                },
+                selected: selection.contains(&offset),
+                cursor: offset == self.cursor,
+            });
+            if offset == self.text.len() {
+                break;
+            }
+            offset = next;
         }
         result
     }
 }
 
 fn visible(grapheme: &str) -> String {
-    grapheme.chars().map(|ch| match ch {
-        '\n' => "\\n".to_string(), '\r' => "\\r".to_string(), '\t' => "\\t".to_string(),
-        ch if ch.is_control() || matches!(ch, '\u{061c}' | '\u{200b}' | '\u{200e}' | '\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}') => format!("\\u{:04x}", ch as u32),
-        ch => ch.to_string(),
-    }).collect()
+    use std::fmt::Write;
+    let mut text = String::with_capacity(grapheme.len());
+    for ch in grapheme.chars() {
+        match ch {
+            '\n' => text.push_str("\\n"),
+            '\r' => text.push_str("\\r"),
+            '\t' => text.push_str("\\t"),
+            ch if needs_escape(ch) => {
+                let _ = write!(text, "\\u{:04x}", ch as u32);
+            }
+            ch => text.push(ch),
+        }
+    }
+    text
+}
+
+fn needs_escape(ch: char) -> bool {
+    ch.is_control()
+        || matches!(ch, '\u{061c}' | '\u{200b}' | '\u{200e}' | '\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}')
 }

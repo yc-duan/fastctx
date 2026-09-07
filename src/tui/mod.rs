@@ -4,6 +4,8 @@ mod agents;
 mod app;
 mod budget_editor;
 mod config;
+mod job_reader;
+mod job_snapshot;
 mod jobs;
 mod migration;
 #[cfg(windows)]
@@ -224,11 +226,15 @@ fn run_loop(
             });
         }
         if app.has_pending_effect() {
-            app.execute_pending();
-            #[cfg(windows)]
-            windows_input.drain()?;
-            #[cfg(not(windows))]
-            drain_pending_input()?;
+            if app.execute_pending() {
+                #[cfg(windows)]
+                windows_input.drain()?;
+                #[cfg(not(windows))]
+                drain_pending_input()?;
+            }
+            continue;
+        }
+        if app.redraw_requested() {
             continue;
         }
         #[cfg(not(windows))]
@@ -253,6 +259,7 @@ fn deliver_event(app: &mut app::App, event: Event) {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
         Event::Paste(text) => app.handle_paste(&text),
+        Event::Resize(_, _) | Event::FocusGained => app.request_redraw(),
         _ => {}
     }
 }
@@ -285,9 +292,11 @@ fn draw_then_poll_update<B: Backend>(
     app: &mut app::App,
 ) -> Result<(), String> {
     app.tick();
-    terminal
-        .draw(|frame| view::render(frame, app))
-        .map_err(|error| format!("Cannot draw the terminal UI: {error}"))?;
+    if app.take_redraw() {
+        terminal
+            .draw(|frame| view::render(frame, app))
+            .map_err(|error| format!("Cannot draw the terminal UI: {error}"))?;
+    }
     // The startup gate is polled only after its loading frame has reached the terminal.
     app.poll_update_check();
     Ok(())
@@ -425,5 +434,36 @@ mod tests {
         );
         assert!(!rendered.contains("99.88.77"));
         assert_eq!(app.screen, Screen::Update);
+    }
+
+    #[test]
+    fn idle_frames_are_quiet_and_input_and_resize_repaint_immediately() {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        let temp = tempfile::tempdir().unwrap();
+        let mut app = App::for_test(
+            ControlPaths::for_home(temp.path()),
+            temp.path().join("source"),
+        );
+        app.settings.language = Some("en".into());
+        app.language = Language::En;
+        app.screen = Screen::About;
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        draw_then_poll_update(&mut terminal, &mut app).unwrap();
+        let count = terminal.get_frame().count();
+        for _ in 0..1000 {
+            draw_then_poll_update(&mut terminal, &mut app).unwrap();
+        }
+        assert_eq!(terminal.get_frame().count(), count);
+        terminal.backend_mut().resize(80, 20);
+        super::deliver_event(&mut app, Event::Resize(80, 20));
+        draw_then_poll_update(&mut terminal, &mut app).unwrap();
+        assert_eq!(terminal.get_frame().count(), count + 1);
+        super::deliver_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        );
+        draw_then_poll_update(&mut terminal, &mut app).unwrap();
+        assert_eq!(app.screen, Screen::Main);
+        assert_eq!(terminal.get_frame().count(), count + 2);
     }
 }

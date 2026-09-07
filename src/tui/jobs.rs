@@ -1,9 +1,9 @@
 //! Aggregated running-job state, output navigation, and bounded viewports.
 
-use crate::shell::jobs::{JobSourceSummary, JobSummary, JobSummaryStatus, JobTail};
+use super::job_snapshot::JobSnapshot;
+use crate::shell::jobs::{JobSummary, JobTail};
 use ratatui::text::Line;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Escapes terminal controls without allocating for ordinary output lines.
@@ -11,25 +11,22 @@ pub(crate) fn display_output_line(value: &str) -> Cow<'_, str> {
     if value.chars().all(|character| !character.is_control()) {
         return Cow::Borrowed(value);
     }
-    Cow::Owned(
-        value
-            .chars()
-            .flat_map(|character| {
-                if character.is_control() {
-                    character.escape_default().collect::<Vec<_>>()
-                } else {
-                    vec![character]
-                }
-            })
-            .collect(),
-    )
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            output.extend(character.escape_default());
+        } else {
+            output.push(character);
+        }
+    }
+    Cow::Owned(output)
 }
 
 /// Complete data model for the current user's cross-session job dashboard.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum JobsState {
     Loading,
-    Ready(Arc<[JobSummary]>),
+    Ready(Arc<JobSnapshot>),
     Empty,
     PermissionDenied(String),
     Error(String),
@@ -37,69 +34,25 @@ pub(crate) enum JobsState {
 
 impl JobsState {
     pub(crate) fn ready(jobs: Vec<JobSummary>) -> Self {
-        Self::Ready(jobs.into())
+        Self::Ready(Arc::new(JobSnapshot::new(jobs)))
     }
 
     pub(crate) fn jobs(&self) -> &[JobSummary] {
         match self {
-            Self::Ready(jobs) => jobs.as_ref(),
+            Self::Ready(snapshot) => &snapshot.jobs,
             Self::Loading | Self::Empty | Self::PermissionDenied(_) | Self::Error(_) => &[],
         }
     }
-}
-
-/// One source session and its running jobs, preserving registry order inside each group.
-#[derive(Debug)]
-pub(crate) struct JobGroup<'a> {
-    pub(crate) source: &'a JobSourceSummary,
-    pub(crate) jobs: Vec<&'a JobSummary>,
-    pub(crate) total: usize,
-}
-
-/// Groups running jobs by immutable source identity; terminal records never enter the dashboard.
-pub(crate) fn grouped_jobs(jobs: &[JobSummary]) -> Vec<JobGroup<'_>> {
-    let mut groups = Vec::<JobGroup<'_>>::new();
-    let mut group_indices = HashMap::<&str, usize>::new();
-    for job in jobs
-        .iter()
-        .filter(|job| job.status == JobSummaryStatus::Running)
-    {
-        let group_index = match group_indices.get(job.source.key.as_str()) {
-            Some(index) => *index,
-            None => {
-                let index = groups.len();
-                group_indices.insert(job.source.key.as_str(), index);
-                groups.push(JobGroup {
-                    source: &job.source,
-                    jobs: Vec::new(),
-                    total: 0,
-                });
-                index
-            }
-        };
-        let group = &mut groups[group_index];
-        group.total = group.total.saturating_add(1);
-        group.jobs.push(job);
+    pub(crate) fn snapshot(&self) -> Option<&JobSnapshot> {
+        match self {
+            Self::Ready(snapshot) => Some(snapshot),
+            _ => None,
+        }
     }
-    groups
-}
 
-pub(crate) fn visible_jobs(jobs: &[JobSummary]) -> Vec<&JobSummary> {
-    grouped_jobs(jobs)
-        .into_iter()
-        .flat_map(|group| group.jobs)
-        .collect()
-}
-
-pub(crate) fn visible_job_count(jobs: &[JobSummary]) -> usize {
-    visible_jobs(jobs).len()
-}
-
-pub(crate) fn source_count(jobs: &[JobSummary]) -> usize {
-    jobs.iter()
-        .map(|job| job.source.key.as_str())
-        .collect::<std::collections::HashSet<_>>()
-        .len()
+    pub(crate) fn visible_count(&self) -> usize {
+        self.snapshot().map_or(0, JobSnapshot::visible_count)
+    }
 }
 
 /// Read-only output detail and viewport for the focused job.
@@ -108,9 +61,11 @@ pub(crate) struct JobsDetail {
     pub(crate) job_id: Option<String>,
     pub(crate) tail: JobTail,
     pub(crate) error: Option<String>,
+    pub(crate) loading: bool,
     pub(crate) horizontal_offset: usize,
     pub(crate) lines_below: usize,
     pub(crate) follow_tail: bool,
+    max_line_width: Option<usize>,
 }
 
 impl Default for JobsDetail {
@@ -119,28 +74,30 @@ impl Default for JobsDetail {
             job_id: None,
             tail: JobTail::default(),
             error: None,
+            loading: false,
             horizontal_offset: 0,
             lines_below: 0,
             follow_tail: true,
+            max_line_width: None,
         }
     }
 }
 
 impl JobsDetail {
+    pub(crate) fn set_tail(&mut self, tail: JobTail, max_line_width: usize) {
+        self.max_line_width = Some(max_line_width);
+        self.tail = tail;
+    }
+
+    pub(crate) fn max_line_width(&self) -> usize {
+        self.max_line_width
+            .unwrap_or_else(|| output_width(&self.tail))
+    }
+
     pub(crate) fn move_horizontal(&mut self, forward: bool) {
         const STEP: usize = 8;
         if forward {
-            let max_offset = self
-                .tail
-                .lines
-                .iter()
-                .map(|line| {
-                    Line::from(display_output_line(line))
-                        .width()
-                        .saturating_sub(1)
-                })
-                .max()
-                .unwrap_or(0);
+            let max_offset = self.max_line_width().saturating_sub(1);
             self.horizontal_offset = self.horizontal_offset.saturating_add(STEP).min(max_offset);
         } else {
             self.horizontal_offset = self.horizontal_offset.saturating_sub(STEP);
@@ -182,6 +139,14 @@ impl JobsDetail {
             self.lines_below = self.lines_below.saturating_add(appended);
         }
     }
+}
+
+pub(super) fn output_width(tail: &JobTail) -> usize {
+    tail.lines
+        .iter()
+        .map(|line| Line::from(display_output_line(line)).width())
+        .max()
+        .unwrap_or(0)
 }
 
 /// Bounded dashboard viewport whose offset is anchored to rendered rows.

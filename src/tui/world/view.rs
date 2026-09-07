@@ -10,7 +10,7 @@ use super::topology::{self, Hub, Machine, Topology};
 use super::widgets::{
     Lines, Tile, bar, button, clipped, dim, elided, judged, muted, notice, padded, pair, plain,
     popup, safe, scroll, section, selection_style, split_width, stat_tiles, strong, table,
-    title_rule, warn, width, wrapped,
+    table_window, title_rule, warn, width, wrapped,
 };
 use super::{MenuAction, Page, Screen, WorldApp, i18n};
 use crate::control::i18n::Language;
@@ -350,19 +350,19 @@ fn render_overview(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMes
     let topology = build_topology(app, m);
     let body = headline(frame, area, verdict.tone, &verdict.text);
     let strip_rows = if body.height >= 15 { 3 } else { 0 };
-    let diagram_rows = topology::preferred_height(
+    let diagram = topology::diagram(
         &topology,
         m,
         body.width,
         body.height.saturating_sub(strip_rows),
     );
     let parts = Layout::vertical([
-        Constraint::Length(diagram_rows),
+        Constraint::Length(diagram.height),
         Constraint::Length(strip_rows),
         Constraint::Min(0),
     ])
     .split(body);
-    topology::render(frame.buffer_mut(), parts[0], &topology, m);
+    topology::render(frame.buffer_mut(), parts[0], &topology, m, &diagram);
     if strip_rows == 0 {
         return;
     }
@@ -492,11 +492,20 @@ fn render_machines(
     if with_system && !with_note {
         constraints.pop();
     }
+    let selected = app.selected[Page::Machines.index()];
+    let table_area = Rect {
+        y: list.y + 1,
+        height: list.height.saturating_sub(1),
+        ..list
+    };
+    let window = table_window(app.nodes().len(), selected, table_area.height);
     let rows = app
         .nodes()
         .iter()
         .zip(names.iter())
         .zip(systems.iter())
+        .skip(window.start)
+        .take(window.len())
         .map(|((node, name), system)| {
             let presence = Presence::from_state(&node.state);
             let latency = if presence == Presence::Online {
@@ -539,7 +548,6 @@ fn render_machines(
             Row::new(cells)
         })
         .collect::<Vec<_>>();
-    let selected = app.selected[Page::Machines.index()];
     let mut header = vec![m.col_state, m.name];
     if with_system {
         header.push(m.col_system);
@@ -551,15 +559,11 @@ fn render_machines(
     table(
         frame,
         app,
-        Rect {
-            y: list.y + 1,
-            height: list.height.saturating_sub(1),
-            ..list
-        },
+        table_area,
         &header,
         rows,
         &constraints,
-        selected,
+        selected.saturating_sub(window.start),
     );
     if wide && let Some(node) = app.focused_node() {
         let pane = panes[1];
@@ -651,10 +655,22 @@ fn render_grants(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessa
         vec![principal_width]
     };
     let (constraints, last_width) = super::widgets::columns(area.width, &fixed);
+    let rows_len = node.grants.grants.len();
+    let selected = app.selected[Page::Grants.index()];
+    let table_area = Rect {
+        y: area.y + 1,
+        height: area
+            .height
+            .saturating_sub(if area.height >= 8 { 3 } else { 1 }),
+        ..area
+    };
+    let window = table_window(rows_len, selected, table_area.height);
     let rows = node
         .grants
         .grants
         .iter()
+        .skip(window.start)
+        .take(window.len())
         .map(|entry| {
             let mut cells = vec![
                 Cell::from(Span::styled(
@@ -684,15 +700,6 @@ fn render_grants(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessa
             Row::new(cells)
         })
         .collect::<Vec<_>>();
-    let rows_len = rows.len();
-    let selected = app.selected[Page::Grants.index()];
-    let table_area = Rect {
-        y: area.y + 1,
-        height: area
-            .height
-            .saturating_sub(if area.height >= 8 { 3 } else { 1 }),
-        ..area
-    };
     let header: Vec<&str> = if full {
         vec![m.principal, m.targets, m.verbs, m.expires]
     } else {
@@ -705,7 +712,7 @@ fn render_grants(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessa
         &header,
         rows,
         &constraints,
-        selected,
+        selected.saturating_sub(window.start),
     );
     if area.height >= 8 {
         let used = 2 + (rows_len as u16).min(table_area.height.saturating_sub(1));
@@ -773,9 +780,18 @@ fn render_events(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessa
         .unwrap_or(10)
         .clamp(10, 30);
     let (constraints, subject_width) = super::widgets::columns(area.width, &[12, label_width]);
+    let selected = app.selected[Page::Events.index()];
+    let table_area = Rect {
+        y: area.y + 1 + gap,
+        height: area.height.saturating_sub(1 + gap),
+        ..area
+    };
+    let window = table_window(app.events.len(), selected, table_area.height);
     let rows = app
         .events
         .iter()
+        .skip(window.start)
+        .take(window.len())
         .map(|event| {
             let (label, tone) = model::event_label(&event.kind, m);
             Row::new(vec![
@@ -801,19 +817,14 @@ fn render_events(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessa
             ])
         })
         .collect::<Vec<_>>();
-    let selected = app.selected[Page::Events.index()];
     table(
         frame,
         app,
-        Rect {
-            y: area.y + 1 + gap,
-            height: area.height.saturating_sub(1 + gap),
-            ..area
-        },
+        table_area,
         &[m.col_when, m.col_event, m.subject],
         rows,
         &constraints,
-        selected,
+        selected.saturating_sub(window.start),
     );
 }
 
@@ -862,9 +873,18 @@ fn render_hub(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessages
                     .max()
                     .unwrap_or(8)
                     .clamp(8, 32);
+                let selected = app.selected[Page::Hub.index()];
+                let table_area = Rect {
+                    y: parts[1].y + 1,
+                    height: parts[1].height.saturating_sub(1),
+                    ..parts[1]
+                };
+                let window = table_window(hub.members.len(), selected, table_area.height);
                 let rows = hub
                     .members
                     .iter()
+                    .skip(window.start)
+                    .take(window.len())
                     .map(|member| {
                         let presence = Presence::from_state(&member.state);
                         Row::new(vec![
@@ -894,7 +914,6 @@ fn render_hub(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessages
                         ])
                     })
                     .collect::<Vec<_>>();
-                let selected = app.selected[Page::Hub.index()];
                 let (constraints, _) = super::widgets::columns(
                     parts[1].width,
                     &[
@@ -907,15 +926,11 @@ fn render_hub(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMessages
                 table(
                     frame,
                     app,
-                    Rect {
-                        y: parts[1].y + 1,
-                        height: parts[1].height.saturating_sub(1),
-                        ..parts[1]
-                    },
+                    table_area,
                     &[m.col_state, m.name, m.last_seen, m.outbox, m.version],
                     rows,
                     &constraints,
-                    selected,
+                    selected.saturating_sub(window.start),
                 );
             }
             if parts[2].height > 0 {

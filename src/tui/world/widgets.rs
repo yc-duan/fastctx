@@ -26,28 +26,29 @@ pub(super) fn width(text: &str) -> usize {
 
 /// Escapes control characters and invisible direction marks so data can never draw the screen.
 pub(super) fn safe(text: &str) -> String {
-    text.chars()
-        .map(|ch| {
-            if ch == '\n' {
-                " \\n ".into()
-            } else if ch.is_control()
-                || matches!(
-                    ch,
-                    '\u{061c}'
-                        | '\u{200b}'
-                        | '\u{200e}'
-                        | '\u{200f}'
-                        | '\u{2028}'..='\u{202e}'
-                        | '\u{2060}'..='\u{2069}'
-                        | '\u{feff}'
-                )
-            {
-                format!("\\u{:04x}", ch as u32)
-            } else {
-                ch.to_string()
-            }
-        })
-        .collect()
+    use std::fmt::Write;
+    let mut output = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch == '\n' {
+            output.push_str(" \\n ");
+        } else if ch.is_control()
+            || matches!(
+                ch,
+                '\u{061c}'
+                    | '\u{200b}'
+                    | '\u{200e}'
+                    | '\u{200f}'
+                    | '\u{2028}'..='\u{202e}'
+                    | '\u{2060}'..='\u{2069}'
+                    | '\u{feff}'
+            )
+        {
+            let _ = write!(output, "\\u{:04x}", ch as u32);
+        } else {
+            output.push(ch);
+        }
+    }
+    output
 }
 
 pub(super) fn plain(value: impl ToString) -> Line<'static> {
@@ -497,8 +498,16 @@ pub(super) fn columns(
     (constraints, last)
 }
 
+/// Visible one-line rows for a table with one header row and a fresh scroll offset.
+/// Selection remains in the same screen row as the full ratatui table.
+pub(super) fn table_window(total: usize, selected: usize, height: u16) -> std::ops::Range<usize> {
+    let capacity = usize::from(height.saturating_sub(1).max(1));
+    let selected = selected.min(total.saturating_sub(1));
+    let start = selected.saturating_add(1).saturating_sub(capacity);
+    start..start.saturating_add(capacity).min(total)
+}
+
 /// A dense table with a muted header, one row per object and a full-width focused row.
-/// The caller sizes columns; the table keeps the focused row in view.
 pub(super) fn table(
     frame: &mut Frame<'_>,
     app: &mut WorldApp,
