@@ -1142,6 +1142,8 @@ fn preview_apply(
             } else if is_codex_config(change) {
                 let new_limit = expected.host_limit;
                 let original = change.original.as_deref().unwrap_or_default();
+                let written_command =
+                    codex_config::preserved_portable_command(original).unwrap_or(&expected.command);
                 let updated = match &change.action {
                     FileAction::Write(bytes) => bytes.as_slice(),
                     FileAction::Delete => &[],
@@ -1167,8 +1169,7 @@ fn preview_apply(
                 }
                 details.extend([
                     PreviewDetail::kept(format!(
-                        "[mcp_servers.fastctx] command = {}",
-                        expected.command
+                        "[mcp_servers.fastctx] command = {written_command}"
                     )),
                     PreviewDetail::kept(format!(
                         "[mcp_servers.fastctx] args = [{}]",

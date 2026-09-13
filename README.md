@@ -115,6 +115,10 @@ fastctx unapply --yes
 
 `status` uses three states: `[PASS]`, `[INFO]`, and `[FAIL]`. It also reports the detected search CPU ceiling and the configured/effective parallelism. A `[FAIL]` result returns a non-zero exit code.
 
+### Sharing one Codex configuration across machines
+
+Apply writes the machine-local absolute path `~/.fastctx/bin/fastctx(.exe)` into `mcp_servers.fastctx.command`. A `config.toml` synced between machines should instead set the exact literal `command = "fastctx"`: every machine then resolves it through its own PATH (the npm launcher, or the stable copy it falls back to). `fastctx status` treats that literal as equivalent to the recorded stable path, and `fastctx apply` preserves it; any other command is repaired to the local stable path. Receipts and updates keep using the absolute path.
+
 ### Tool limits and settings reset
 
 grep/glob uses automatic parallelism by default: the operating system's available parallelism, capped at 16. In **Config → Search**, choose a preset with ←/→ or press Enter and type `auto` or any integer in the displayed `1..=maximum` range. The setting is loaded when the shared control center starts and takes effect after that control center restarts, which happens once every Codex process using it has exited. Reconnecting is not required.

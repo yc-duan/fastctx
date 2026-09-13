@@ -267,6 +267,48 @@ fn apply_status_and_unapply_cover_both_shell_states() {
         assert!(!status.contains("fastshell bash"), "{status}");
         assert!(!status.contains("fastedit"), "{status}");
 
+        // The literal portable command "fastctx" is the supported shared-config form: status
+        // accepts it, re-Apply preserves it, and any other foreign command is repaired.
+        let installed = installed_command_string(temp.path());
+        let config_path = codex.join("config.toml");
+        set_fastctx_command(&config_path, "fastctx");
+        let portable_status = isolated_command(temp.path())
+            .arg("status")
+            .output()
+            .unwrap();
+        assert_success(&portable_status);
+        let portable_status = String::from_utf8_lossy(&portable_status.stdout);
+        assert!(
+            portable_status.contains("[PASS] Applied state"),
+            "{portable_status}"
+        );
+        let reapplied = isolated_command(temp.path())
+            .args(["apply", "--yes"])
+            .output()
+            .unwrap();
+        assert_success(&reapplied);
+        let preserved = std::fs::read_to_string(&config_path).unwrap();
+        assert!(preserved.contains("command = \"fastctx\""), "{preserved}");
+        let receipt = std::fs::read_to_string(temp.path().join(".fastctx/config.toml"))
+            .unwrap()
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        assert_eq!(
+            receipt["applied"]["command"].as_str(),
+            Some(installed.as_str())
+        );
+        set_fastctx_command(&config_path, "other-server");
+        let repaired = isolated_command(temp.path())
+            .args(["apply", "--yes"])
+            .output()
+            .unwrap();
+        assert_success(&repaired);
+        let repaired = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            repaired.contains(&format!("command = \"{installed}\"")),
+            "{repaired}"
+        );
+
         let removed = isolated_command(temp.path())
             .args(["unapply", "--yes"])
             .output()
@@ -442,6 +484,35 @@ fn a_non_tty_apply_without_yes_refuses_a_shared_limit_conflict_without_writes() 
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_fastctx"))
+}
+
+/// The stable binary path exactly as Apply records it: `display_path` normalization only.
+fn installed_command_string(home: &Path) -> String {
+    home.join(".fastctx/bin")
+        .join(if cfg!(windows) {
+            "fastctx.exe"
+        } else {
+            "fastctx"
+        })
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Rewrites the single `command = ` line of a freshly applied Codex config.
+fn set_fastctx_command(config: &Path, command: &str) {
+    let source = std::fs::read_to_string(config).unwrap();
+    let updated = source
+        .lines()
+        .map(|line| {
+            if line.starts_with("command = ") {
+                format!("command = \"{command}\"")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(config, format!("{updated}\n")).unwrap();
 }
 
 fn isolated_command(home: &Path) -> Command {

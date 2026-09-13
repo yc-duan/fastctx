@@ -637,7 +637,8 @@ pub struct AppliedRecord {
     pub applied_at_utc: String,
     /// FastCtx version that performed Apply.
     pub version: String,
-    /// Stable absolute binary path written to Codex.
+    /// Stable absolute binary path owned by this receipt; drift and binary synchronization
+    /// always compare it. The Codex config may equivalently carry the portable `fastctx` literal.
     pub command: String,
     /// Host tier selected for that Apply.
     pub tier: Tier,
