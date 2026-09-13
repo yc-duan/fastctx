@@ -12,6 +12,10 @@ const LEGACY_FASTEDIT_NAMESPACE: &str = "mcp__fastedit";
 const STARTUP_TIMEOUT_SECONDS: i64 = 120;
 /// MCP tool timeout written by Apply so 240-second tool waits retain a 60-second return margin.
 pub(crate) const TOOL_TIMEOUT_SECONDS: i64 = 300;
+/// The one portable command accepted in a shared Codex configuration: machines that sync one
+/// `config.toml` set `command = "fastctx"` so each resolves it through its own PATH instead of
+/// carrying a machine-specific absolute path. Only this exact literal is treated as portable.
+const PORTABLE_COMMAND: &str = "fastctx";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct LegacyRemoval {
@@ -59,7 +63,8 @@ pub struct ApplyEdit {
     pub conflict: Option<TokenLimitConflict>,
 }
 
-/// Parses Codex TOML and produces the post-Apply bytes.
+/// Parses Codex TOML and produces the post-Apply bytes. An existing portable `command = "fastctx"`
+/// is preserved instead of rewriting the machine-specific stable path (see `PORTABLE_COMMAND`).
 pub fn apply(original: &[u8], expected: &ExpectedConfig) -> Result<ApplyEdit, String> {
     let (migrated, legacy) = strip_owned_legacy_servers(original, expected)?;
     let mut document = parse(&migrated)?;
@@ -82,7 +87,7 @@ pub fn apply(original: &[u8], expected: &ExpectedConfig) -> Result<ApplyEdit, St
         });
 
     let mcp_servers = ensure_table(&mut document, "mcp_servers")?;
-    let mut fastctx_table = build_fastctx_table(expected);
+    let mut fastctx_table = build_fastctx_table(expected, preserved_portable_command(&migrated));
     if let Some(existing) = mcp_servers.get("fastctx").and_then(Item::as_table) {
         *fastctx_table.decor_mut() = existing.decor().clone();
     }
@@ -255,6 +260,24 @@ pub fn has_namespace(original: &[u8], namespace: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Reads the current `mcp_servers.fastctx.command` string, if present and valid TOML.
+fn server_command(original: &[u8]) -> Option<String> {
+    parse(original)
+        .ok()?
+        .get("mcp_servers")
+        .and_then(Item::as_table_like)?
+        .get("fastctx")
+        .and_then(Item::as_table_like)?
+        .get("command")
+        .and_then(Item::as_str)
+        .map(str::to_string)
+}
+
+/// The portable command to keep writing when the existing config already uses it, else `None`.
+pub fn preserved_portable_command(original: &[u8]) -> Option<&'static str> {
+    (server_command(original).as_deref() == Some(PORTABLE_COMMAND)).then_some(PORTABLE_COMMAND)
+}
+
 /// Checks each Codex configuration item against the Apply receipt.
 pub fn drift(original: &[u8], expected: &ExpectedConfig) -> Result<Vec<String>, String> {
     drift_with_limits(
@@ -300,7 +323,10 @@ fn drift_with_limits(
         .and_then(Item::as_table_like);
     match fastctx {
         Some(table) => {
-            if table.get("command").and_then(Item::as_str) != Some(expected.command.as_str()) {
+            let actual_command = table.get("command").and_then(Item::as_str);
+            if actual_command != Some(expected.command.as_str())
+                && actual_command != Some(PORTABLE_COMMAND)
+            {
                 drift.push("mcp_servers.fastctx.command".to_string());
             }
             if table.get("startup_timeout_sec").and_then(Item::as_integer)
@@ -482,10 +508,13 @@ fn ensure_child_table<'a>(
         })
 }
 
-fn build_fastctx_table(expected: &ExpectedConfig) -> Table {
+fn build_fastctx_table(expected: &ExpectedConfig, portable_command: Option<&str>) -> Table {
     let global = expected.fastctx_budget;
     let mut table = Table::new();
-    table.insert("command", value(expected.command.clone()));
+    table.insert(
+        "command",
+        value(portable_command.unwrap_or(expected.command.as_str())),
+    );
     let mut args = Array::new();
     for argument in server_args(expected) {
         args.push(argument);

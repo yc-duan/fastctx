@@ -115,6 +115,10 @@ fastctx unapply --yes
 
 `status` 使用 `[PASS]`、`[INFO]`、`[FAIL]` 三种状态，也会显示探测到的搜索 CPU 上界以及配置值/实际生效并行度。出现 `[FAIL]` 时退出码为非零。
 
+### 在多台机器间共享同一份 Codex 配置
+
+Apply 写入 `mcp_servers.fastctx.command` 的是本机绝对路径 `~/.fastctx/bin/fastctx(.exe)`。在机器间同步的 `config.toml` 应改用精确字面值 `command = "fastctx"`：每台机器通过自己的 PATH 解析（npm launcher，或它回退到的稳定副本）。`fastctx status` 把该字面值视为与记录的稳定路径等价，`fastctx apply` 会保留它；其他命令仍会被修复为本机稳定路径。回执与更新继续使用绝对路径。
+
 ### 工具上限与设置重置
 
 grep/glob 默认使用自动并行度：操作系统报告的可用并行度，最高 16。在 **配置 → 搜索** 中，可用 ←/→ 选择预设，也可按 Enter 输入 `auto` 或界面显示的 `1..=最大值` 范围内任意整数。该设置在共享控制中心启动时读取；控制中心重启后生效，而控制中心要等用过它的 Codex 进程全部退出才会重启。不需要重新接入。
