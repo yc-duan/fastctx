@@ -17,6 +17,8 @@ use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+mod apply_patch;
+
 /// Dual-mode fastctx entry point.
 #[derive(Debug, Parser)]
 #[command(
@@ -34,6 +36,9 @@ pub struct Cli {
 /// All scriptable commands.
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Apply a patch read from standard input.
+    #[command(name = "apply_patch")]
+    ApplyPatch,
     /// Force the stdio MCP server.
     Serve {
         /// Comma-separated enabled tools; file tools are independent and shell tools are atomic.
@@ -218,6 +223,7 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         crate::update::cleanup_replaced_binaries(&paths);
     }
     match cli.command {
+        Some(Command::ApplyPatch) => apply_patch::run(),
         Some(Command::Serve {
             tools,
             enable_shell,
