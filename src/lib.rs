@@ -43,5 +43,6 @@ pub(crate) mod traversal;
 pub mod tui;
 pub(crate) mod update;
 pub(crate) mod world;
+pub mod write;
 
 pub use model::{ImageDetail, ToolContent, ToolResponse};
