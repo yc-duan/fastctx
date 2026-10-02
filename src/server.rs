@@ -430,6 +430,7 @@ impl ServerHandler for FastCtxServer {
         let context = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         let mut result = self.tool_router.call(context).await;
         if let (Some(slot), Ok(result)) = (&self.resident, &mut result) {
+            slot.introduce(result, self.tool_router.has_route("run"));
             slot.piggyback(result);
         }
         result

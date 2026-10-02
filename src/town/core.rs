@@ -116,6 +116,12 @@ impl Town {
         &self.config.machine
     }
 
+    /// The town a resident on this machine is in: `Some(None)` outside every town, `None` when
+    /// no such resident lives here.
+    pub(crate) fn town_of(&self, id: &str) -> Option<Option<String>> {
+        self.state.lock().residents.get(id).map(|live| live.about.town.clone())
+    }
+
     /// The directory holding a resident's records.
     pub(crate) fn resident_dir(&self, town: Option<&str>, id: &str) -> PathBuf {
         match town {

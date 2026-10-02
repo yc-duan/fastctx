@@ -21,11 +21,35 @@ const CLAUDE_ENTRYPOINT_VARIABLE: &str = "CLAUDE_CODE_ENTRYPOINT";
 pub(crate) struct ResidentSlot {
     town: Arc<Town>,
     id: Mutex<Option<String>>,
+    /// Whether the resident was already told who and where it is.
+    introduced: std::sync::atomic::AtomicBool,
 }
 
 impl ResidentSlot {
     pub(crate) fn new(town: Arc<Town>) -> Arc<Self> {
-        Arc::new(Self { town, id: Mutex::new(None) })
+        Arc::new(Self { town, id: Mutex::new(None), introduced: std::sync::atomic::AtomicBool::new(false) })
+    }
+
+    /// On the first World tool response of the session, one more head line says who the
+    /// resident is and where (`specs/world-projects.md`, "世界请居民进来"). It names commands
+    /// that run inside `run`, so it is given only to sessions that have `run`.
+    pub(crate) fn introduce(&self, result: &mut rmcp::model::CallToolResult, has_run: bool) {
+        if !has_run || self.introduced.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let Some(id) = self.id() else { return };
+        let Some(town) = self.town.town_of(&id) else { return };
+        let machine = self.town.machine();
+        let line = match town {
+            Some(town) => format!("=== you are {id} on {machine}, in the town {town}; fastctx w shows who else is here ==="),
+            None => format!(
+                "=== you are {id} on {machine}, outside every town; fastctx w shows the towns, and fastctx project enter <town> enters one when the user tells you which project to work on ==="
+            ),
+        };
+        match result.content.first_mut() {
+            Some(rmcp::model::ContentBlock::Text(text)) => text.text = format!("{line}\n{}", text.text),
+            _ => result.content.insert(0, rmcp::model::ContentBlock::text(line)),
+        }
     }
 
     pub(crate) fn town(&self) -> &Arc<Town> {
