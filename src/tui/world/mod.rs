@@ -5,6 +5,7 @@ mod forms;
 pub(super) mod i18n;
 mod model;
 mod status_pages;
+mod talk;
 #[cfg(test)]
 mod tests;
 mod topology;
