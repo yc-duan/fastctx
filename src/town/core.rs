@@ -122,6 +122,11 @@ impl Town {
         &self.config.machine
     }
 
+    /// `~/.fastctx/world` on this machine.
+    pub(crate) fn world_dir(&self) -> &std::path::Path {
+        &self.config.world_dir
+    }
+
     /// The town a resident on this machine is in: `Some(None)` outside every town, `None` when
     /// no such resident lives here.
     pub(crate) fn town_of(&self, id: &str) -> Option<Option<String>> {

@@ -3,3 +3,4 @@
 
 pub(crate) mod colleague;
 pub(crate) mod text;
+pub(crate) mod write;
