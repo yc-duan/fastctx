@@ -308,13 +308,51 @@ pub(crate) async fn start_background(background: &Background<'_>) -> Result<(), 
         system_prompt_file: &prompt,
         first_words: background.words,
     });
+    // The session's environment names its resident, which the mod reports when it registers.
+    claude(&args, Some(background.cwd), Some(background.resident)).await.map(|_| ())
+}
+
+fn claude_binary() -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    let names: &[&str] = if cfg!(windows) { &["claude.exe", "claude.cmd"] } else { &["claude"] };
+    std::env::split_paths(&paths).flat_map(|dir| names.iter().map(move |name| dir.join(name))).find(|path| path.is_file())
+}
+
+/// Whether Claude Code's supervisor still runs a background session's process. A session idle
+/// for about an hour has its process stopped while its conversation stays on disk; words for
+/// it then wake it rather than wait in an inbox nobody reads. `claude agents --json --all`
+/// lists every background session with the process it runs in, if any.
+pub(crate) async fn background_running(session: &str) -> Result<bool, String> {
+    let output = claude(&["agents".into(), "--json".into(), "--all".into()], None, None).await?;
+    let agents: serde_json::Value = serde_json::from_slice(&output)
+        .map_err(|error| format!("claude agents --json answered with something that is not JSON: {error}"))?;
+    Ok(agents
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|agent| agent.get("sessionId").and_then(serde_json::Value::as_str) == Some(session))
+        .and_then(|agent| agent.get("pid"))
+        .is_some_and(|pid| pid.as_u64().is_some()))
+}
+
+/// Wakes a stopped background session with words, which arrive as the user's prompt
+/// (`claude --resume <session> --bg "<words>"`, nothing else, or Claude Code starts a copy).
+pub(crate) async fn wake(session: &str, words: &str, cwd: &Path) -> Result<(), String> {
+    claude(&wake_args(session, words), Some(cwd), None).await.map(|_| ())
+}
+
+/// Runs the claude command and returns its standard output, or its complaint. `resident`
+/// names the resident in the environment of a session it starts.
+async fn claude(args: &[String], cwd: Option<&Path>, resident: Option<&str>) -> Result<Vec<u8>, String> {
     let binary = claude_binary().ok_or_else(|| "Claude Code is not installed on this machine: no claude command was found.".to_string())?;
     let mut command = tokio::process::Command::new(&binary);
-    command
-        .args(&args)
-        .current_dir(background.cwd)
-        .env(crate::town::session::RESIDENT_VARIABLE, background.resident)
-        .stdin(std::process::Stdio::null());
+    command.args(args).stdin(std::process::Stdio::null());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    if let Some(resident) = resident {
+        command.env(crate::town::session::RESIDENT_VARIABLE, resident);
+    }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
     let output = command
@@ -322,18 +360,13 @@ pub(crate) async fn start_background(background: &Background<'_>) -> Result<(), 
         .await
         .map_err(|error| format!("Cannot start {}: {error}", crate::paths::display_path(&binary)))?;
     if output.status.success() {
-        return Ok(());
+        return Ok(output.stdout);
     }
     Err(format!(
-        "claude --bg failed ({}): {}{}",
+        "claude {} failed ({}): {}{}",
+        args.first().map(String::as_str).unwrap_or_default(),
         output.status,
         String::from_utf8_lossy(&output.stdout).trim(),
         String::from_utf8_lossy(&output.stderr).trim()
     ))
-}
-
-fn claude_binary() -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    let names: &[&str] = if cfg!(windows) { &["claude.exe", "claude.cmd"] } else { &["claude"] };
-    std::env::split_paths(&paths).flat_map(|dir| names.iter().map(move |name| dir.join(name))).find(|path| path.is_file())
 }

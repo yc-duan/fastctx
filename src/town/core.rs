@@ -634,7 +634,22 @@ impl Town {
                 };
                 self.codex.send(&thread, input).await.map(|_| ())
             }
-            Some(Route::ClaudeMod(Some(session))) => super::claude::deliver(&self.config.world_dir, &session, &mod_delivery(delivery)),
+            Some(Route::ClaudeMod(Some(session))) => {
+                // A background resident whose process the supervisor stopped is woken with the
+                // words; any other Claude session reads them from its mod's inbox.
+                let (background, cwd) = {
+                    let state = self.state.lock();
+                    let about = state.residents.get(to).map(|live| live.about.clone());
+                    match about {
+                        Some(about) if about.surface == "bg" => (true, about.town.map(|town| self.town_dir(&town)).unwrap_or_else(|| self.config.world_dir.join("outside"))),
+                        _ => (false, PathBuf::new()),
+                    }
+                };
+                if background && !super::claude::background_running(&session).await? {
+                    return super::claude::wake(&session, &delivery.text, &cwd).await;
+                }
+                super::claude::deliver(&self.config.world_dir, &session, &mod_delivery(delivery))
+            }
             Some(Route::ClaudeMod(None) | Route::Piggyback) => self.enqueue(to, delivery),
             None => Err(format!("No resident named {to} lives on {}.", self.config.machine)),
         }
