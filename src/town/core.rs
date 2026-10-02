@@ -901,6 +901,17 @@ impl Town {
         Ok((history, receiver))
     }
 
+    /// Stops the turn a resident is running, at the user's word. Its thread stays; the next
+    /// words start a new turn. Only a Codex resident can be stopped from outside its host.
+    pub(crate) async fn interrupt(&self, id: &str) -> Result<bool, String> {
+        let route = self.state.lock().residents.get(id).map(|live| live.route.clone());
+        match route {
+            Some(Route::CodexThread(thread)) => self.codex.interrupt(&thread).await,
+            Some(_) => Err(format!("{id}'s host offers the World no way to stop its turn.")),
+            None => Err(format!("No resident named {id} lives on {}.", self.config.machine)),
+        }
+    }
+
     /// Puts the user's own words into a resident's session, as the user. Only words the user
     /// typed on one of the user's devices come here (`specs/world.md`, the first rule).
     pub(crate) async fn say_as_user(&self, id: &str, text: &str) -> Result<Spoken, String> {

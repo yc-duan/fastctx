@@ -21,6 +21,8 @@ pub(crate) enum TownRequest {
     JobEnded { record: std::path::PathBuf },
     /// Opens a resident for the user and puts the user's first words in.
     Open { agent: String, town: Option<String>, words: String },
+    /// Stops the turn a resident is running, at the user's word.
+    Interrupt { resident: String },
 }
 
 impl TownRequest {
@@ -42,6 +44,7 @@ pub(crate) async fn handle(town: &Town, request: TownRequest) -> Result<Value, S
         }
         TownRequest::Watch { .. } => Err("A watch streams; it is not answered once.".to_string()),
         TownRequest::Open { agent, town: place, words } => Ok(json!({ "resident": town.open_resident(&agent, place, &words).await? })),
+        TownRequest::Interrupt { resident } => Ok(json!({ "stopped": town.interrupt(&resident).await? })),
         TownRequest::JobEnded { record } => {
             town.job_ended(&record).await?;
             Ok(Value::Null)
