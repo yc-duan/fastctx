@@ -1,0 +1,222 @@
+//! A resident's records on the machine it lives on (`specs/world-town.md`, "世界的东西存在哪").
+//!
+//! `about` and `now` are JSON documents rewritten whole; `actions` is one line per action, tab
+//! separated, so a model reading it with `fastctx view` sees plain text; `messages` is one JSON
+//! object per line because a message spans lines. Nothing here is synced to other machines:
+//! `fastctx w` asks the machine that holds them.
+
+use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+/// `<agent>-<4 hex>`, for example `codex-7f3a`.
+pub(crate) fn new_resident_id(agent: &str, taken: impl Fn(&str) -> bool) -> Result<String, String> {
+    let prefix = agent_prefix(agent);
+    loop {
+        let bytes = crate::world::crypto::random_bytes::<2>()?;
+        let id = format!("{prefix}-{}", hex::encode(bytes));
+        if !taken(&id) {
+            return Ok(id);
+        }
+    }
+}
+
+/// The word an agent program goes by in resident ids.
+pub(crate) fn agent_prefix(agent: &str) -> String {
+    let lower = agent.to_ascii_lowercase();
+    if lower.contains("claude") {
+        "claude".to_string()
+    } else if lower.contains("codex") {
+        "codex".to_string()
+    } else {
+        let word: String = lower.chars().filter(char::is_ascii_alphanumeric).take(12).collect();
+        if word.is_empty() { "agent".to_string() } else { word }
+    }
+}
+
+/// Whether a text is shaped like a resident id.
+pub(crate) fn is_resident_id(text: &str) -> bool {
+    let Some((prefix, suffix)) = text.rsplit_once('-') else { return false };
+    !prefix.is_empty()
+        && prefix.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        && suffix.len() == 4
+        && suffix.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// How a resident came to be.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum Birth {
+    /// The user opened the session.
+    User,
+    /// Another resident asked for it; `label` is the three-to-eight-word task label.
+    Colleague { requester: String, label: String },
+}
+
+/// Who it is and how it came to be; written once at birth, amended when the host reports more.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct About {
+    pub(crate) id: String,
+    /// Agent program as the host names itself (`clientInfo.name`), e.g. `claude-code`, `codex`.
+    pub(crate) agent: String,
+    #[serde(default)]
+    pub(crate) agent_version: Option<String>,
+    /// Model name and whether the host reported it (`host`) or only the resident did (`self`).
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+    #[serde(default)]
+    pub(crate) model_source: Option<String>,
+    pub(crate) machine: String,
+    /// Where it runs: `vscode`, `app`, `cli`, `bg`, `world`, or what the host says.
+    pub(crate) surface: String,
+    pub(crate) birth: Birth,
+    pub(crate) since: String,
+    /// The host-side id the World uses to talk to it: a Codex thread id or a Claude session id.
+    #[serde(default)]
+    pub(crate) session: Option<String>,
+    /// The town it is in; `None` while outside every town.
+    #[serde(default)]
+    pub(crate) town: Option<String>,
+}
+
+/// What a resident is doing right now. Only facts: what the host reported and what the World
+/// saw its hands do.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct Now {
+    /// `busy`, `idle`, `waiting`, `error`, `left`, or `unknown` when the host does not say.
+    pub(crate) state: String,
+    /// When `state` last changed.
+    pub(crate) since: String,
+    /// The command running right now, with the machine it runs on.
+    #[serde(default)]
+    pub(crate) running: Option<String>,
+    /// The last action the World saw, already rendered as one line.
+    #[serde(default)]
+    pub(crate) last_action: Option<String>,
+    #[serde(default)]
+    pub(crate) last_action_at: Option<String>,
+    /// Holding this machine's Computer Use desk for the current turn.
+    #[serde(default)]
+    pub(crate) desk: bool,
+}
+
+/// One line of `messages`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct MessageLine {
+    pub(crate) at: String,
+    /// `asked` (the first request), `said` (someone spoke to it), `answered` (its turn ended),
+    /// `delivered` (an answer reached its reader).
+    pub(crate) kind: String,
+    /// Who spoke, or who the answer was for.
+    pub(crate) peer: String,
+    #[serde(default)]
+    pub(crate) turn: Option<String>,
+    #[serde(default)]
+    pub(crate) text: Option<String>,
+}
+
+/// The directory of one resident.
+#[derive(Clone, Debug)]
+pub(crate) struct Records {
+    pub(crate) dir: PathBuf,
+}
+
+impl Records {
+    pub(crate) fn new(dir: PathBuf) -> Self {
+        Self { dir }
+    }
+
+    pub(crate) fn create(&self) -> Result<(), String> {
+        std::fs::create_dir_all(self.dir.join("jobs"))
+            .and_then(|()| std::fs::create_dir_all(self.dir.join("out")))
+            .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&self.dir)))
+    }
+
+    pub(crate) fn about(&self) -> Result<Option<About>, String> {
+        read_json(&self.dir.join("about"))
+    }
+
+    pub(crate) fn write_about(&self, about: &About) -> Result<(), String> {
+        write_json(&self.dir.join("about"), about)
+    }
+
+    pub(crate) fn now(&self) -> Result<Option<Now>, String> {
+        read_json(&self.dir.join("now"))
+    }
+
+    pub(crate) fn write_now(&self, now: &Now) -> Result<(), String> {
+        write_json(&self.dir.join("now"), now)
+    }
+
+    /// Appends one action: when, where, which hand, what, and the result.
+    pub(crate) fn append_action(&self, at: &str, machine: &str, hand: &str, what: &str, result: &str) -> Result<String, String> {
+        let line = format!("{at}\t{machine}\t{hand}\t{}\t{}", one_line(what), one_line(result));
+        append_line(&self.dir.join("actions"), &line)?;
+        Ok(line)
+    }
+
+    pub(crate) fn append_message(&self, message: &MessageLine) -> Result<(), String> {
+        let line = serde_json::to_string(message).map_err(|error| format!("Cannot encode a message line: {error}"))?;
+        append_line(&self.dir.join("messages"), &line)
+    }
+
+    pub(crate) fn messages(&self) -> Result<Vec<MessageLine>, String> {
+        let path = self.dir.join("messages");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+        };
+        text.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str(line)
+                    .map_err(|error| format!("{} holds a line that is not a message ({error})", crate::paths::display_path(&path)))
+            })
+            .collect()
+    }
+
+    /// The last `count` action lines and how many there are in all.
+    pub(crate) fn recent_actions(&self, count: usize) -> Result<(Vec<String>, usize), String> {
+        let path = self.dir.join("actions");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
+            Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+        };
+        let lines: Vec<&str> = text.lines().filter(|line| !line.is_empty()).collect();
+        let total = lines.len();
+        let start = total.saturating_sub(count);
+        Ok((lines[start..].iter().map(|line| (*line).to_string()).collect(), total))
+    }
+}
+
+/// Collapses newlines and tabs so an action stays one line with five fields.
+fn one_line(text: &str) -> String {
+    text.split(['\n', '\r', '\t']).filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|error| format!("Cannot parse {}: {error}", crate::paths::display_path(path))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Cannot read {}: {error}", crate::paths::display_path(path))),
+    }
+}
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value).map_err(|error| format!("Cannot encode {}: {error}", crate::paths::display_path(path)))?;
+    crate::world::write_atomic(path, &bytes)
+}
+
+fn append_line(path: &Path, line: &str) -> Result<(), String> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|error| format!("Cannot open {}: {error}", crate::paths::display_path(path)))?;
+    file.write_all(format!("{line}\n").as_bytes())
+        .map_err(|error| format!("Cannot append to {}: {error}", crate::paths::display_path(path)))
+}

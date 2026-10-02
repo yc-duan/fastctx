@@ -40,6 +40,7 @@ pub(crate) mod skip_report;
 pub(crate) mod stdio_transport;
 pub(crate) mod tool_schema;
 pub(crate) mod traversal;
+pub(crate) mod town;
 pub mod tui;
 pub(crate) mod update;
 pub(crate) mod world;
