@@ -28,6 +28,7 @@ pub(crate) mod process_identity;
 pub(crate) mod process_policy;
 pub mod read_tool;
 pub(crate) mod render_plan;
+pub mod run;
 pub(crate) mod runtime;
 pub(crate) mod search_parallelism;
 pub(crate) mod search_text;

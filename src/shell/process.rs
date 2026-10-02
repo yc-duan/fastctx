@@ -280,7 +280,7 @@ impl ChildWrapper for KillOnCloseJobChild {
 }
 
 #[cfg(windows)]
-fn create_kill_on_close_job(
+pub(crate) fn create_kill_on_close_job(
     process_handle: std::os::windows::io::RawHandle,
 ) -> std::io::Result<OwnedHandle> {
     use std::ffi::c_void;
@@ -324,7 +324,7 @@ fn create_kill_on_close_job(
 }
 
 #[cfg(windows)]
-fn resume_process_threads(pid: u32) -> std::io::Result<()> {
+pub(crate) fn resume_process_threads(pid: u32) -> std::io::Result<()> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,

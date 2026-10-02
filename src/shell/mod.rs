@@ -9,7 +9,7 @@ pub(crate) mod jobs;
 pub(crate) mod msys_shim;
 mod normalize;
 mod output;
-mod process;
+pub(crate) mod process;
 
 use crate::model::ToolResponse;
 use crate::paths::{canonical_existing, display_path, parse_input_path};

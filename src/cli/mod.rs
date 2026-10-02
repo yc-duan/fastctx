@@ -1,5 +1,7 @@
 //! Command-line parsing, dual-mode TTY dispatch, and non-interactive control commands.
 
+mod run_core;
+
 use crate::control::apply::{UnapplyOptions, commit_unapply, plan_unapply};
 use crate::control::doctor;
 use crate::control::i18n::{ALL_LANGUAGES, Language};
@@ -39,6 +41,15 @@ enum Command {
     /// Apply a patch read from standard input.
     #[command(name = "apply_patch")]
     ApplyPatch,
+    #[command(hide = true)]
+    RunCore,
+    #[command(hide = true)]
+    RunHost { request: PathBuf },
+    #[cfg(unix)]
+    #[command(hide = true)]
+    RunBootstrap { request: PathBuf },
+    #[command(hide = true)]
+    RunReconcile { directory: PathBuf },
     /// Force the stdio MCP server.
     Serve {
         /// Comma-separated enabled tools; file tools are independent and shell tools are atomic.
@@ -224,6 +235,23 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
     }
     match cli.command {
         Some(Command::ApplyPatch) => apply_patch::run(),
+        Some(Command::RunCore) => {
+            run_core::execute()?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Command::RunHost { request }) => {
+            crate::run::supervise(&request)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        #[cfg(unix)]
+        Some(Command::RunBootstrap { request }) => {
+            crate::run::bootstrap(&request)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Command::RunReconcile { directory }) => {
+            run_core::reconcile(&directory)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Some(Command::Serve {
             tools,
             enable_shell,
@@ -315,6 +343,10 @@ fn is_internal_command(command: &Option<Command>) -> bool {
         command,
         Some(
             Command::JobHost
+                | Command::JobEnded { .. }
+                | Command::RunCore
+                | Command::RunHost { .. }
+                | Command::RunReconcile { .. }
                 | Command::WorldControl
                 | Command::RuntimeBootstrap
                 | Command::RuntimeHost { .. }
@@ -326,7 +358,9 @@ fn is_internal_command(command: &Option<Command>) -> bool {
         common
             || matches!(
                 command,
-                Some(Command::JobBootstrap | Command::JobWatch { .. })
+                Some(
+                    Command::JobBootstrap | Command::JobWatch { .. } | Command::RunBootstrap { .. }
+                )
             )
     }
     #[cfg(not(unix))]
