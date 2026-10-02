@@ -50,6 +50,9 @@ pub(crate) struct ResidentFacts {
     /// Detail only: requests, words spoken to it, and its answers.
     #[serde(default)]
     pub(crate) messages: Vec<MessageLine>,
+    /// Detail only: lines of its `messages` that could not be read.
+    #[serde(default)]
+    pub(crate) damaged_messages: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -180,13 +183,27 @@ fn resident(dir: &Path, detail: bool) -> Option<ResidentFacts> {
     let records = Records::new(dir.to_path_buf());
     let about = records.about().ok().flatten()?;
     let now = records.now().ok().flatten().unwrap_or_default();
-    let mut facts = ResidentFacts { about, now, dir: dir.to_path_buf(), actions: Vec::new(), actions_total: 0, messages: Vec::new() };
+    let mut facts = ResidentFacts {
+        about,
+        now,
+        dir: dir.to_path_buf(),
+        actions: Vec::new(),
+        actions_total: 0,
+        messages: Vec::new(),
+        damaged_messages: 0,
+    };
     if detail {
         if let Ok((lines, total)) = records.recent_actions(DETAIL_ACTIONS) {
             facts.actions = lines.iter().filter_map(|line| parse_action(line)).collect();
             facts.actions_total = total;
         }
-        facts.messages = records.messages().unwrap_or_default();
+        match records.messages() {
+            Ok((messages, damaged)) => {
+                facts.messages = messages;
+                facts.damaged_messages = damaged;
+            }
+            Err(_) => facts.damaged_messages = 1,
+        }
     }
     Some(facts)
 }

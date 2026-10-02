@@ -51,15 +51,28 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
         .map_err(|_| "The FastCtx node service is not running on this machine; run 'fastctx node status'.".to_string())?;
     let request = AdminRequest::Town { request: TownRequest::Watch { resident: resident.clone() } };
     admin::write_frame(&mut watch, &serde_json::to_vec(&request).map_err(|error| error.to_string())?).await?;
+    // Frames are read by their own task: reading one must never be cut short by a typed line,
+    // or the rest of the frame would be read as the start of the next.
+    let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel::<Result<TalkEvent, String>>();
+    tokio::spawn(async move {
+        loop {
+            let event = next(&mut watch).await;
+            let failed = event.is_err();
+            if events_tx.send(event).is_err() || failed {
+                return;
+            }
+        }
+    });
+    let mut next_event = async || events.recv().await.unwrap_or_else(|| Err("The node closed the watch.".to_string()));
 
     let mut printer = Printer::default();
     // The history comes first; words said before it ends would show twice.
-    let mut turn_open = false;
+    let mut running: Option<String> = None;
     loop {
-        let event = next(&mut watch).await?;
-        match event {
-            TalkEvent::TurnStarted { .. } => turn_open = true,
-            TalkEvent::TurnEnded { .. } => turn_open = false,
+        let event = next_event().await?;
+        match &event {
+            TalkEvent::TurnStarted { turn } => running = Some(turn.clone()),
+            TalkEvent::TurnEnded { .. } => running = None,
             _ => {}
         }
         let live = matches!(event, TalkEvent::Live);
@@ -78,39 +91,46 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
         async move {
             let request = AdminRequest::Town { request: TownRequest::Say { resident, text } };
             match admin::call(&endpoint, &request, admin::ADMIN_TIMEOUT).await? {
-                Some(response) if response.ok => Ok(()),
+                Some(response) if response.ok => Ok(response.data.get("turn").and_then(serde_json::Value::as_str).map(str::to_string)),
                 Some(response) => Err(response.error.unwrap_or_else(|| "The node refused the words.".to_string())),
                 None => Err("The FastCtx node service stopped.".to_string()),
             }
         }
     };
 
-    if opened {
-        // Its first turn started before the watch; follow it to its end unless it already ended.
-        while turn_open {
-            let event = next(&mut watch).await?;
-            turn_open = !matches!(event, TalkEvent::TurnEnded { .. } | TalkEvent::Gone { .. });
-            printer.show(&event);
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
-    if !words.is_empty() {
-        say(words.join(" ")).await?;
-        // Follow the session until the turn the words went into ends.
-        let mut said = false;
+    // Follows the session until `turn` ends; without a known turn id (a Claude resident), until
+    // the first turn that starts from now on ends.
+    let mut follow = async |turn: Option<String>, printer: &mut Printer| -> Result<ExitCode, String> {
+        let mut target = turn;
         loop {
-            let event = next(&mut watch).await?;
-            if let TalkEvent::Words { from, .. } = &event
-                && from == "user"
+            let event = next_event().await?;
+            if target.is_none()
+                && let TalkEvent::TurnStarted { turn } = &event
             {
-                said = true;
+                target = Some(turn.clone());
             }
-            let ended = matches!(event, TalkEvent::TurnEnded { .. } | TalkEvent::Gone { .. });
+            let done = match &event {
+                TalkEvent::TurnEnded { turn, .. } => target.as_ref() == Some(turn),
+                TalkEvent::Gone { .. } => true,
+                _ => false,
+            };
             printer.show(&event);
-            if said && ended {
+            if done {
                 return Ok(ExitCode::SUCCESS);
             }
         }
+    };
+
+    if opened {
+        // Its first turn started before the watch; follow it unless it already ended.
+        return match running {
+            Some(turn) => follow(Some(turn), &mut printer).await,
+            None => Ok(ExitCode::SUCCESS),
+        };
+    }
+    if !words.is_empty() {
+        let turn = say(words.join(" ")).await?;
+        return follow(turn, &mut printer).await;
     }
 
     let (lines_tx, mut lines) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -123,7 +143,7 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
     });
     loop {
         tokio::select! {
-            event = next(&mut watch) => {
+            event = next_event() => {
                 let event = event?;
                 let gone = matches!(event, TalkEvent::Gone { .. });
                 printer.show(&event);
@@ -133,7 +153,9 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
             }
             line = lines.recv() => match line {
                 Some(line) if line.trim().is_empty() => {}
-                Some(line) => say(line).await?,
+                Some(line) => {
+                    say(line).await?;
+                }
                 None => return Ok(ExitCode::SUCCESS),
             },
         }

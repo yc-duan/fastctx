@@ -19,6 +19,7 @@ let dir = null
 let busy = false
 let sequence = 0
 const handled = new Set()
+const failing = new Set()
 const held = []
 
 function stamp() {
@@ -42,35 +43,51 @@ function framed(delivery) {
   return 'The fastctx plugin delivers a message from the World.\n\n' + delivery.text
 }
 
-async function poll($) {
-  let entries = []
+async function names($, sub) {
   try {
-    entries = await $.fs.list(dir + '/inbox')
+    return (await $.fs.list(dir + '/' + sub)).map((entry) => entry.name)
   } catch (error) {
-    return
+    return []
   }
-  const fresh = entries
-    .map((entry) => entry.name)
-    .filter((name) => name.endsWith('.json') && !handled.has(name))
+}
+
+// Tells the World once that a delivery could not be handed over yet; it is tried again at
+// every look until it goes through.
+async function trouble($, name, kind, error) {
+  if (failing.has(name)) return
+  failing.add(name)
+  await event($, kind, { file: name, error: String(error) })
+}
+
+async function poll($) {
+  // A delivery with a receipt was handed over already, perhaps before this mod restarted.
+  const receipted = new Set(await names($, 'receipts'))
+  const fresh = (await names($, 'inbox'))
+    .filter((name) => name.endsWith('.json') && !handled.has(name) && !receipted.has(name.slice(0, -5)))
     .sort()
   for (const name of fresh) {
-    handled.add(name)
     let delivery = null
     try {
       delivery = JSON.parse(await $.fs.read(dir + '/inbox/' + name))
     } catch (error) {
-      await event($, 'unreadable', { file: name, error: String(error) })
+      await trouble($, name, 'unreadable', error)
       continue
     }
-    if (delivery.as_user === true) {
-      // The user's own words, typed on one of the user's devices: only these go in as the user.
-      await $.prompt.submit({ text: delivery.text, asUser: true })
-      await receipt($, delivery, 'submitted as the user')
-    } else if (busy) {
-      held.push(delivery)
-    } else {
-      await $.prompt.submit({ text: framed(delivery) })
-      await receipt($, delivery, 'submitted')
+    try {
+      if (delivery.as_user === true) {
+        // The user's own words, typed on one of the user's devices: only these go in as the user.
+        await $.prompt.submit({ text: delivery.text, asUser: true })
+        await receipt($, delivery, 'submitted as the user')
+      } else if (busy) {
+        held.push(delivery)
+      } else {
+        await $.prompt.submit({ text: framed(delivery) })
+        await receipt($, delivery, 'submitted')
+      }
+      handled.add(name)
+      failing.delete(name)
+    } catch (error) {
+      await trouble($, name, 'undelivered', error)
     }
   }
 }

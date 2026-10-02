@@ -109,7 +109,10 @@ pub(crate) fn entries(world_dir: &Path, town: &str, name: &str) -> Vec<Entry> {
         .filter_map(|item| {
             let dir = item.path();
             let stamp: Stamp = serde_json::from_slice(&std::fs::read(dir.join("entry.json")).ok()?).ok()?;
-            let text = std::fs::read_to_string(dir.join("text.md")).unwrap_or_default();
+            let body = dir.join("text.md");
+            let text = std::fs::read_to_string(&body).unwrap_or_else(|error| {
+                format!("(the text of this entry cannot be read: {}: {error})", crate::paths::display_path(&body))
+            });
             Some(Entry { stamp, text, dir })
         })
         .collect();
@@ -177,6 +180,18 @@ pub(crate) fn render(world_dir: &Path, town: &str, name: &str, before: Option<&s
     while start > 0 && used + blocks[start - 1].chars().count() <= READ_BUDGET {
         used += blocks[start - 1].chars().count();
         start -= 1;
+    }
+    let mut blocks = blocks;
+    // An entry longer than the whole budget is still shown, as far as the budget goes, and
+    // says so; earlier entries are a page back.
+    if start == end && end > 0 {
+        start = end - 1;
+        let block = &blocks[start];
+        let room = READ_BUDGET.saturating_sub(used);
+        let total = block.chars().count();
+        let mut cut: String = block.chars().take(room).collect();
+        cut.push_str(&format!("\n(this entry is shown in part: characters 1-{room} of {total}; its files are in {})\n", crate::paths::display_path(&all[start].dir)));
+        blocks[start] = cut;
     }
     let shown = &all[start..end];
     let residents: BTreeSet<&str> = all.iter().map(|entry| entry.stamp.resident.as_str()).collect();

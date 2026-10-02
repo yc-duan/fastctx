@@ -173,12 +173,13 @@ impl CodexHost {
     /// Sends words to a thread. `turn/start` starts a turn when the thread is idle and folds
     /// the input into the running turn when it is busy; which one happened is read off the
     /// turn id it answers with. A thread the app-server no longer has loaded is resumed first.
-    pub(crate) async fn send(self: &Arc<Self>, thread: &str, input: Input) -> Result<Landed, String> {
+    pub(crate) async fn send(self: &Arc<Self>, thread: &str, input: Input) -> Result<(Landed, String), String> {
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
         let running = self.state.lock().threads.get(thread).and_then(|state| state.turn.clone());
-        let turn = self.turn(&server, thread, &input).await?;
-        Ok(if running.is_some() && running == turn { Landed::Steered } else { Landed::NewTurn })
+        let turn = self.turn(&server, thread, &input).await?.ok_or_else(|| "turn/start answered without a turn id.".to_string())?;
+        let landed = if running.as_deref() == Some(turn.as_str()) { Landed::Steered } else { Landed::NewTurn };
+        Ok((landed, turn))
     }
 
     /// Stops the running turn of a thread; `false` when none was running.

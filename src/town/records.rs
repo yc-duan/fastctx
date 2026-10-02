@@ -160,20 +160,24 @@ impl Records {
         append_line(&self.dir.join("messages"), &line)
     }
 
-    pub(crate) fn messages(&self) -> Result<Vec<MessageLine>, String> {
+    /// Every message line, and how many lines could not be read: a write cut short leaves a
+    /// partial last line, which must not hide the lines before it.
+    pub(crate) fn messages(&self) -> Result<(Vec<MessageLine>, usize), String> {
         let path = self.dir.join("messages");
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
             Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
         };
-        text.lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| {
-                serde_json::from_str(line)
-                    .map_err(|error| format!("{} holds a line that is not a message ({error})", crate::paths::display_path(&path)))
-            })
-            .collect()
+        let mut lines = Vec::new();
+        let mut damaged = 0;
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            match serde_json::from_str(line) {
+                Ok(message) => lines.push(message),
+                Err(_) => damaged += 1,
+            }
+        }
+        Ok((lines, damaged))
     }
 
     /// The last `count` action lines and how many there are in all.
@@ -206,9 +210,20 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, Str
     }
 }
 
+/// Replaces a record file whole. Several writers may replace the same file at once (a turn
+/// ending while an action is recorded), so each writes its own temporary file and the last
+/// rename wins; none fails because another one was writing.
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(value).map_err(|error| format!("Cannot encode {}: {error}", crate::paths::display_path(path)))?;
-    crate::world::write_atomic(path, &bytes)
+    let parent = path.parent().ok_or_else(|| format!("{} has no directory", crate::paths::display_path(path)))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("Cannot create a temporary file in {}: {error}", crate::paths::display_path(parent)))?;
+    temporary
+        .write_all(&bytes)
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|error| format!("Cannot write {}: {error}", crate::paths::display_path(path)))?;
+    temporary.persist(path).map_err(|error| format!("Cannot replace {}: {}", crate::paths::display_path(path), error.error))?;
+    Ok(())
 }
 
 fn append_line(path: &Path, line: &str) -> Result<(), String> {

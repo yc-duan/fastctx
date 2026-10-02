@@ -142,10 +142,12 @@ pub(crate) struct ModEvent {
 }
 
 /// Everything new under one session's directory since the last look: its events (removed once
-/// read) and the deliveries it confirmed (the delivery and its receipt are removed).
+/// read) and the deliveries it confirmed (the delivery and its receipt are removed), and what
+/// stopped the look early, if anything did.
 pub(crate) struct Harvest {
     pub(crate) events: Vec<ModEvent>,
     pub(crate) delivered: Vec<String>,
+    pub(crate) problem: Option<String>,
 }
 
 pub(crate) fn registration(world_dir: &Path, session: &str) -> Result<Option<Registration>, String> {
@@ -170,34 +172,61 @@ pub(crate) fn sessions(world_dir: &Path) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn harvest(world_dir: &Path, session: &str) -> Result<Harvest, String> {
+pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
     let dir = session_dir(world_dir, session);
-    let mut events = Vec::new();
-    let mut names = list(&dir.join("events"))?;
+    let mut harvest = Harvest { events: Vec::new(), delivered: Vec::new(), problem: None };
+    let mut names = match list(&dir.join("events")) {
+        Ok(names) => names,
+        Err(error) => {
+            harvest.problem = Some(error);
+            return harvest;
+        }
+    };
     names.sort();
+    // Events are taken in order and each is removed once taken. The first one that does not
+    // parse yet, being written or damaged, stops the look: it and everything after it wait for
+    // the next one, so no event is taken out of order and none is lost.
     for name in names {
         let path = dir.join("events").join(&name);
-        let bytes = std::fs::read(&path).map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&path)))?;
-        match serde_json::from_slice::<ModEvent>(&bytes) {
-            Ok(event) => events.push(event),
-            // A file the mod is still writing parses on the next look.
-            Err(_) if bytes.is_empty() => continue,
-            Err(error) => return Err(format!("{} is not a mod event ({error})", crate::paths::display_path(&path))),
+        let event = std::fs::read(&path)
+            .map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&path)))
+            .and_then(|bytes| {
+                serde_json::from_slice::<ModEvent>(&bytes)
+                    .map_err(|error| format!("{} is not a whole mod event yet ({error})", crate::paths::display_path(&path)))
+            });
+        let event = match event {
+            Ok(event) => event,
+            Err(problem) => {
+                harvest.problem = Some(problem);
+                break;
+            }
+        };
+        if let Err(error) = std::fs::remove_file(&path) {
+            harvest.problem = Some(format!("Cannot remove {}: {error}", crate::paths::display_path(&path)));
+            break;
         }
-        std::fs::remove_file(&path).map_err(|error| format!("Cannot remove {}: {error}", crate::paths::display_path(&path)))?;
+        harvest.events.push(event);
     }
-    let mut delivered = Vec::new();
-    for id in list(&dir.join("receipts"))? {
+    let receipts = match list(&dir.join("receipts")) {
+        Ok(receipts) => receipts,
+        Err(error) => {
+            harvest.problem = Some(error);
+            return harvest;
+        }
+    };
+    for id in receipts {
         let delivery = dir.join("inbox").join(format!("{id}.json"));
-        if delivery.exists() {
-            std::fs::remove_file(&delivery)
-                .map_err(|error| format!("Cannot remove {}: {error}", crate::paths::display_path(&delivery)))?;
-        }
         let receipt = dir.join("receipts").join(&id);
-        std::fs::remove_file(&receipt).map_err(|error| format!("Cannot remove {}: {error}", crate::paths::display_path(&receipt)))?;
-        delivered.push(id);
+        let removed = match std::fs::remove_file(&delivery) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => std::fs::remove_file(&receipt),
+        };
+        match removed {
+            Ok(()) => harvest.delivered.push(id),
+            Err(error) => harvest.problem = Some(format!("Cannot clear the delivered {id}: {error}")),
+        }
     }
-    Ok(Harvest { events, delivered })
+    harvest
 }
 
 fn list(dir: &Path) -> Result<Vec<String>, String> {

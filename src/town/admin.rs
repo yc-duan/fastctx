@@ -35,12 +35,13 @@ pub(crate) async fn handle(town: &Town, request: TownRequest) -> Result<Value, S
     match request {
         TownRequest::Enter { resident, town: name } => Ok(json!({ "map": town.enter(&resident, &name)? })),
         TownRequest::Say { resident, text } => {
-            let how = match town.say_as_user(&resident, &text).await? {
+            let (spoken, turn) = town.say_as_user(&resident, &text).await?;
+            let how = match spoken {
                 Spoken::NewTurn => "started a new turn",
                 Spoken::JoinedTurn => "joined its current turn",
                 Spoken::Queued => "handed to its host",
             };
-            Ok(json!({ "landed": how }))
+            Ok(json!({ "landed": how, "turn": turn }))
         }
         TownRequest::Watch { .. } => Err("A watch streams; it is not answered once.".to_string()),
         TownRequest::Open { agent, town: place, words } => Ok(json!({ "resident": town.open_resident(&agent, place, &words).await? })),
@@ -68,7 +69,11 @@ pub(crate) async fn stream(town: &Town, request: TownRequest, mut connection: Bo
             return;
         }
     }
+    let seen = super::talk::HistoryKeys::of(&history);
     while let Some(event) = events.recv().await {
+        if seen.repeats(&event) {
+            continue;
+        }
         if send(&mut connection, &event).await.is_err() {
             return;
         }

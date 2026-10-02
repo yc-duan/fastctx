@@ -254,6 +254,14 @@ fn write_resident_detail(out: &mut String, facts: &ResidentFacts, jobs: &[&JobFa
             let _ = writeln!(out, "  {} {}  {:<hand_width$}  {}{result}", clock(&action.at), action.machine, action.hand, action.what);
         }
     }
+    if facts.damaged_messages > 0 {
+        let _ = writeln!(
+            out,
+            "damaged  {} lines of {} could not be read",
+            facts.damaged_messages,
+            crate::paths::display_path(&facts.dir.join("messages"))
+        );
+    }
     let answers: Vec<_> = facts.messages.iter().filter(|line| line.kind == "answered").collect();
     match answers.last() {
         None => {

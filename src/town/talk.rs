@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// One thing that happened in a resident's session, for whoever is watching it.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -29,6 +30,42 @@ pub(crate) enum TalkEvent {
     Live,
     /// The watched resident does not exist here, or the watch cannot continue.
     Gone { reason: String },
+}
+
+/// What a watcher already got from the history. A watch registers before it reads the
+/// history, so whatever finished while the history was read arrives a second time live; these
+/// keys recognize it.
+#[derive(Default)]
+pub(crate) struct HistoryKeys {
+    items: HashSet<String>,
+    ended: HashSet<String>,
+}
+
+impl HistoryKeys {
+    pub(crate) fn of(history: &[TalkEvent]) -> Self {
+        let mut keys = Self::default();
+        for event in history {
+            match event {
+                TalkEvent::Message { item, .. } | TalkEvent::Tool { item, done: true, .. } => {
+                    keys.items.insert(item.clone());
+                }
+                TalkEvent::TurnEnded { turn, .. } => {
+                    keys.ended.insert(turn.clone());
+                }
+                _ => {}
+            }
+        }
+        keys
+    }
+
+    /// Whether a live event only repeats something the history already showed.
+    pub(crate) fn repeats(&self, event: &TalkEvent) -> bool {
+        match event {
+            TalkEvent::Message { item, .. } | TalkEvent::Tool { item, done: true, .. } => self.items.contains(item),
+            TalkEvent::TurnEnded { turn, .. } => self.ended.contains(turn),
+            _ => false,
+        }
+    }
 }
 
 /// Turns a Codex item into the events a watcher sees; `done` tells a completed item from one
