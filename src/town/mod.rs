@@ -15,6 +15,7 @@ pub(crate) mod desk;
 pub(crate) mod journal;
 pub(crate) mod project;
 pub(crate) mod records;
+pub(crate) mod seen;
 pub(crate) mod session;
 pub(crate) mod talk;
 pub(crate) mod talk_cli;
