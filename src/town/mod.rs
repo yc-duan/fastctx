@@ -10,3 +10,25 @@ pub(crate) mod claude;
 pub(crate) mod codex;
 pub(crate) mod core;
 pub(crate) mod records;
+pub(crate) mod session;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+/// Starts this machine's town: the Codex host that will hold its Codex residents and the town
+/// core. The node daemon calls it once; the World's Claude plugin is rewritten at the same time
+/// so it always matches the running binary.
+pub(crate) fn start(
+    machine: String,
+    world_dir: PathBuf,
+    codex_home: PathBuf,
+    log: Arc<dyn Fn(String) + Send + Sync>,
+) -> Result<Arc<core::Town>, String> {
+    let fastctx = std::env::current_exe().map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?;
+    let workdir = world_dir.join("codex");
+    std::fs::create_dir_all(&workdir)
+        .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&workdir)))?;
+    claude::write_plugin(&claude::plugin_dir(&world_dir), &world_dir)?;
+    let (codex, events) = codex::host::CodexHost::new(codex_home, workdir, Arc::clone(&log));
+    Ok(core::Town::new(core::TownConfig { machine, world_dir, fastctx }, codex, events, log))
+}

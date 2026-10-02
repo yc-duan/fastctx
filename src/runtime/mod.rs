@@ -122,7 +122,7 @@ async fn start_in_process(
     host: Option<ProcessIdentity>,
 ) -> Result<BoxedStream, String> {
     let (proxy_side, engine_side) = tokio::io::duplex(IN_PROCESS_BUFFER_BYTES);
-    let state = HostState::new(None, false);
+    let state = HostState::new(None, None, false);
     let connection = state
         .activity
         .try_connection()
@@ -438,19 +438,26 @@ struct HostState {
     hosts: Arc<HostRegistry>,
     /// The World client when the node daemon hosts this control center.
     world: Option<Arc<crate::world::client::WorldClient>>,
+    /// The node's town, when the node daemon hosts this control center.
+    town: Option<Arc<crate::town::core::Town>>,
     /// Whether a `retire` handshake may shut this host down. The node daemon's engine is
     /// managed by the service manager and never steps aside on request.
     retirable: bool,
 }
 
 impl HostState {
-    fn new(world: Option<Arc<crate::world::client::WorldClient>>, retirable: bool) -> Arc<Self> {
+    fn new(
+        world: Option<Arc<crate::world::client::WorldClient>>,
+        town: Option<Arc<crate::town::core::Town>>,
+        retirable: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             runtime: OnceCell::new(),
             control_paths: OnceCell::new(),
             activity: activity::RuntimeActivity::new(),
             hosts: Arc::new(HostRegistry::new()),
             world,
+            town,
             retirable,
         })
     }
@@ -473,6 +480,7 @@ impl HostState {
                     executor,
                     Arc::clone(&self.activity),
                     self.world.clone(),
+                    self.town.clone(),
                 ))
             })
             .await?;
@@ -485,6 +493,7 @@ impl HostState {
 pub(crate) struct EngineHostOptions {
     pub(crate) environment: SessionEnvironment,
     pub(crate) world: Option<Arc<crate::world::client::WorldClient>>,
+    pub(crate) town: Option<Arc<crate::town::core::Town>>,
     pub(crate) shutdown: CancellationToken,
     /// Ask a control center already holding the endpoint to retire, then take its place.
     pub(crate) take_over: bool,
@@ -510,6 +519,7 @@ pub(crate) async fn run_host_entry(
     host_engine(EngineHostOptions {
         environment,
         world: None,
+        town: None,
         shutdown: CancellationToken::new(),
         take_over: false,
         idle_timeout: Some(idle_timeout),
@@ -523,6 +533,7 @@ pub(crate) async fn host_engine(options: EngineHostOptions) -> Result<(), String
     let EngineHostOptions {
         environment,
         world,
+        town,
         shutdown,
         take_over,
         idle_timeout,
@@ -585,7 +596,7 @@ pub(crate) async fn host_engine(options: EngineHostOptions) -> Result<(), String
     drop(startup_lock);
     #[cfg(debug_assertions)]
     record_test_host_start(&environment);
-    let state = HostState::new(world, !take_over);
+    let state = HostState::new(world, town, !take_over);
     if let Some(client) = &state.world {
         *client.runtime_activity.write() = Arc::downgrade(&state.activity);
     }

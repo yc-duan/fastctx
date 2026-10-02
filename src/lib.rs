@@ -15,6 +15,7 @@ pub mod glob_filter;
 pub mod glob_tool;
 pub(crate) mod grep_sink;
 pub mod grep_tool;
+pub(crate) mod hands;
 pub(crate) mod head_note;
 pub mod model;
 pub(crate) mod model_guidance;

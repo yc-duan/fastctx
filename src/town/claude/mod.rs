@@ -49,6 +49,11 @@ pub(crate) fn write_plugin(dir: &Path, world_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Where the node keeps the plugin: `<world>/claude-plugin`.
+pub(crate) fn plugin_dir(world_dir: &Path) -> PathBuf {
+    world_dir.join("claude-plugin")
+}
+
 /// `<world>/claude/<session>`.
 pub(crate) fn session_dir(world_dir: &Path, session: &str) -> PathBuf {
     world_dir.join("claude").join(session)

@@ -70,6 +70,8 @@ pub struct FastCtxServer {
     /// The World client when this engine runs inside an enrolled node daemon; `None` on an
     /// unenrolled machine or in the degraded plain control center.
     pub(crate) world: Option<Arc<crate::world::client::WorldClient>>,
+    /// The resident behind this session, when the node hosts a town.
+    pub(crate) resident: Option<Arc<crate::town::session::ResidentSlot>>,
 }
 
 /// Expensive executors and process-wide admission gates shared by every control-center session.
@@ -82,6 +84,7 @@ pub struct SharedRuntime {
     replace_permits: Arc<Semaphore>,
     activity: Arc<crate::runtime::activity::RuntimeActivity>,
     world: Option<Arc<crate::world::client::WorldClient>>,
+    town: Option<Arc<crate::town::core::Town>>,
 }
 
 impl SharedRuntime {
@@ -91,6 +94,7 @@ impl SharedRuntime {
             grep_glob_executor,
             crate::runtime::activity::RuntimeActivity::new(),
             None,
+            None,
         )
     }
 
@@ -98,6 +102,7 @@ impl SharedRuntime {
         grep_glob_executor: Arc<GrepGlobExecutor>,
         activity: Arc<crate::runtime::activity::RuntimeActivity>,
         world: Option<Arc<crate::world::client::WorldClient>>,
+        town: Option<Arc<crate::town::core::Town>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             file_permits: Arc::new(Semaphore::new(MAX_FILE_OPERATIONS)),
@@ -107,6 +112,7 @@ impl SharedRuntime {
             replace_permits: Arc::new(Semaphore::new(MAX_REPLACE_OPERATIONS)),
             activity,
             world,
+            town,
         })
     }
 }
@@ -223,6 +229,22 @@ impl FastCtxServer {
         let definitions = tool_router.list_all();
         ToolManifest::validate_options(&definitions, options)
             .expect("the compiled tool router must match ToolManifest");
+        // A session on a node that hosts a town is a resident. Its colleague tools sit outside
+        // the 1.0 manifest: they exist only here, and never for a colleague itself.
+        let resident = runtime
+            .town
+            .as_ref()
+            .filter(|_| options.world)
+            .map(|town| crate::town::session::ResidentSlot::new(Arc::clone(town)));
+        if resident.is_some() && !crate::town::session::ResidentSlot::is_colleague(&session.environment) {
+            let mut colleague_router = crate::hands::colleague::router();
+            for route in colleague_router.map.values_mut() {
+                route.attr.input_schema = Arc::new(crate::tool_schema::normalize_published_schema(
+                    &route.attr.input_schema,
+                ));
+            }
+            tool_router.merge(colleague_router);
+        }
         Self {
             tool_router,
             options,
@@ -234,6 +256,7 @@ impl FastCtxServer {
             replace_permits: Arc::clone(&runtime.replace_permits),
             activity: Arc::clone(&runtime.activity),
             world: runtime.world.clone(),
+            resident,
             session,
         }
     }
@@ -252,6 +275,18 @@ impl FastCtxServer {
     /// Returns the startup feature selection used by this server.
     pub const fn options(&self) -> ServerOptions {
         self.options
+    }
+
+    /// The town and this session's resident id, for tools that act as the resident.
+    pub(crate) fn resident_for_tools(&self) -> Result<(Arc<crate::town::core::Town>, String), String> {
+        let slot = self
+            .resident
+            .as_ref()
+            .ok_or_else(|| "This machine's FastCtx node does not host a town.".to_string())?;
+        let id = slot
+            .id()
+            .ok_or_else(|| "This session is not registered as a resident of the World yet.".to_string())?;
+        Ok((Arc::clone(slot.town()), id))
     }
 }
 
@@ -385,6 +420,32 @@ impl FastCtxServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for FastCtxServer {
+    // Written out instead of generated so that words waiting for a resident whose host offers
+    // no other channel ride on whatever World tool it calls next.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let context = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        let mut result = self.tool_router.call(context).await;
+        if let (Some(slot), Ok(result)) = (&self.resident, &mut result) {
+            slot.piggyback(result);
+        }
+        result
+    }
+
+    // The handshake is complete: the host has said what it is, so the session can register.
+    async fn on_initialized(&self, context: rmcp::service::NotificationContext<RoleServer>) {
+        let Some(slot) = &self.resident else { return };
+        let (agent, version) = context
+            .peer
+            .peer_info()
+            .map(|info| (info.client_info.name.clone(), info.client_info.version.clone()))
+            .unwrap_or_default();
+        slot.attach(&self.session.environment, &agent, &version);
+    }
+
     fn get_info(&self) -> ServerInfo {
         self.activity.touch();
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())

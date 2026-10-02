@@ -40,8 +40,8 @@ pub(crate) struct Delivery {
 enum Route {
     /// A thread in this machine's Codex app-server.
     CodexThread(String),
-    /// A Claude session with the World's mod, which collects its queue.
-    ClaudeMod,
+    /// A Claude session; once its mod has registered, the session id whose inbox it reads.
+    ClaudeMod(Option<String>),
     /// No channel: words ride on its next World tool response.
     Piggyback,
 }
@@ -50,6 +50,9 @@ struct Live {
     records: Records,
     about: About,
     route: Route,
+    /// The host's per-session inbox address, which pairs a Claude session's MCP connection
+    /// with its mod's registration.
+    inbox_address: Option<String>,
     /// MCP sessions currently attached for this resident.
     sessions: u32,
     /// Residents whose words went into the running turn; they get its last message.
@@ -96,8 +99,14 @@ impl Town {
         log: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Arc<Self> {
         let town = Arc::new(Self { config, codex, log, state: Mutex::new(State::default()) });
+        town.restore();
         tokio::spawn(Arc::clone(&town).follow_codex(events));
+        tokio::spawn(Arc::clone(&town).follow_claude());
         town
+    }
+
+    pub(crate) fn log(&self, line: String) {
+        (self.log)(line);
     }
 
     pub(crate) fn machine(&self) -> &str {
@@ -112,6 +121,12 @@ impl Town {
         }
     }
 
+    /// Whether any resident ever recorded on this machine had this id, in or outside a town.
+    fn recorded(&self, id: &str) -> bool {
+        self.resident_dir(None, id).exists()
+            || subdirectories(&self.config.world_dir.join("towns")).iter().any(|town| town.join("residents").join(id).exists())
+    }
+
     /// A town's bookkeeping directory: where residents the World launches stand.
     pub(crate) fn town_dir(&self, town: &str) -> PathBuf {
         self.config.world_dir.join("towns").join(town)
@@ -119,7 +134,14 @@ impl Town {
 
     /// Registers an MCP session as a resident. A session the World launched names itself in
     /// `FASTCTX_RESIDENT`; any other session becomes a new resident born of the user.
-    pub(crate) fn attach(&self, agent: &str, agent_version: Option<&str>, named: Option<&str>, surface: &str) -> Result<String, String> {
+    pub(crate) fn attach(
+        &self,
+        agent: &str,
+        agent_version: Option<&str>,
+        named: Option<&str>,
+        surface: &str,
+        inbox_address: Option<&str>,
+    ) -> Result<String, String> {
         let mut state = self.state.lock();
         if let Some(id) = named
             && let Some(live) = state.residents.get_mut(id)
@@ -129,7 +151,7 @@ impl Town {
         }
         let id = match named {
             Some(id) => id.to_string(),
-            None => new_resident_id(agent, |candidate| state.residents.contains_key(candidate))?,
+            None => new_resident_id(agent, |candidate| state.residents.contains_key(candidate) || self.recorded(candidate))?,
         };
         let about = About {
             id: id.clone(),
@@ -148,11 +170,21 @@ impl Town {
         records.create()?;
         records.write_about(&about)?;
         records.write_now(&Now { state: "unknown".into(), since: about.since.clone(), ..Now::default() })?;
-        let route = if agent.to_ascii_lowercase().contains("claude") { Route::ClaudeMod } else { Route::Piggyback };
+        let route = if agent.to_ascii_lowercase().contains("claude") { Route::ClaudeMod(None) } else { Route::Piggyback };
         state.residents.insert(
             id.clone(),
-            Live { records, about, route, sessions: 1, readers: BTreeSet::new(), turn_started: None },
+            Live {
+                records,
+                about,
+                route,
+                inbox_address: inbox_address.map(str::to_string),
+                sessions: 1,
+                readers: BTreeSet::new(),
+                turn_started: None,
+            },
         );
+        drop(state);
+        self.pair_claude_sessions();
         Ok(id)
     }
 
@@ -192,14 +224,10 @@ impl Town {
         };
         let id = {
             let state = self.state.lock();
-            new_resident_id("codex", |candidate| state.residents.contains_key(candidate))?
+            new_resident_id("codex", |candidate| state.residents.contains_key(candidate) || self.recorded(candidate))?
         };
         let records = Records::new(self.resident_dir(town.as_deref(), &id));
         records.create()?;
-        let cwd = match &town {
-            Some(town) => self.town_dir(town),
-            None => self.config.world_dir.join("outside"),
-        };
         let about = About {
             id: id.clone(),
             agent: "codex".to_string(),
@@ -222,17 +250,7 @@ impl Town {
             turn: None,
             text: Some(prompt.to_string()),
         })?;
-        let spec = ThreadSpec {
-            cwd,
-            developer_instructions: colleague_instructions(&id, requester, town.as_deref(), &self.config.machine),
-            config: json!({
-                "mcp_servers": {"fastctx": {
-                    "command": self.config.fastctx,
-                    "args": ["serve"],
-                    "env": {"FASTCTX_RESIDENT": id, "FASTCTX_COLLEAGUE": "1"},
-                }},
-            }),
-        };
+        let spec = self.colleague_spec(&id, requester, town.as_deref());
         {
             let mut state = self.state.lock();
             state.residents.insert(
@@ -241,6 +259,7 @@ impl Town {
                     records: records.clone(),
                     about: about.clone(),
                     route: Route::Piggyback,
+                    inbox_address: None,
                     sessions: 0,
                     readers: BTreeSet::from([requester.to_string()]),
                     turn_started: Some(Instant::now()),
@@ -267,6 +286,80 @@ impl Town {
         let first = format!("=== from {requester} ===\n{prompt}");
         self.codex.send(&thread, Input::Text(first)).await.map_err(failed)?;
         Ok(Asked { id, machine: self.config.machine.clone() })
+    }
+
+    /// What a colleague's thread is started and resumed with.
+    fn colleague_spec(&self, id: &str, requester: &str, town: Option<&str>) -> ThreadSpec {
+        ThreadSpec {
+            cwd: match town {
+                Some(town) => self.town_dir(town),
+                None => self.config.world_dir.join("outside"),
+            },
+            developer_instructions: colleague_instructions(id, requester, town, &self.config.machine),
+            config: json!({
+                "mcp_servers": {"fastctx": {
+                    "command": self.config.fastctx,
+                    "args": ["serve"],
+                    "env": {"FASTCTX_RESIDENT": id, "FASTCTX_COLLEAGUE": "1"},
+                }},
+            }),
+        }
+    }
+
+    /// Takes back what this machine's town held before the node restarted. A Codex colleague
+    /// sleeps in its thread and wakes at the next words; a turn it was running died with the
+    /// old app-server. Every other resident's session ended with the old node.
+    fn restore(&self) {
+        let mut dirs = Vec::new();
+        for parent in [self.config.world_dir.join("outside").join("residents")]
+            .into_iter()
+            .chain(subdirectories(&self.config.world_dir.join("towns")).into_iter().map(|town| town.join("residents")))
+        {
+            dirs.extend(subdirectories(&parent));
+        }
+        let mut state = self.state.lock();
+        for dir in dirs {
+            let records = Records::new(dir);
+            let about = match records.about() {
+                Ok(Some(about)) if about.machine == self.config.machine => about,
+                Ok(_) => continue,
+                Err(error) => {
+                    (self.log)(error);
+                    continue;
+                }
+            };
+            let now = records.now().ok().flatten().unwrap_or_default();
+            let thread = match (&about.birth, about.agent.as_str(), &about.session) {
+                (Birth::Colleague { requester, .. }, "codex", Some(thread)) => {
+                    self.codex.adopt(thread, self.colleague_spec(&about.id, requester, about.town.as_deref()));
+                    Some(thread.clone())
+                }
+                _ => None,
+            };
+            let state_now = match (&thread, now.state.as_str()) {
+                (Some(_), "busy") => Some("interrupted"),
+                (Some(_), _) => None,
+                (None, "left") => None,
+                (None, _) => Some("left"),
+            };
+            if let Some(word) = state_now {
+                let _ = records.write_now(&Now { state: word.into(), since: crate::world::now_rfc3339(), ..now });
+            }
+            let Some(thread) = thread else { continue };
+            state.threads.insert(thread.clone(), about.id.clone());
+            state.residents.insert(
+                about.id.clone(),
+                Live {
+                    records,
+                    about,
+                    route: Route::CodexThread(thread),
+                    inbox_address: None,
+                    sessions: 0,
+                    readers: BTreeSet::new(),
+                    turn_started: None,
+                },
+            );
+        }
     }
 
     /// Speaks to a resident on this machine on behalf of `from`. For a colleague, `from` then
@@ -302,8 +395,9 @@ impl Town {
                     Landed::Steered => Spoken::JoinedTurn,
                 })
             }
-            Route::ClaudeMod | Route::Piggyback => {
-                self.enqueue(to, Delivery { id: delivery_id()?, from: from.to_string(), kind: "message".into(), text, as_tool_output: false })?;
+            Route::ClaudeMod(_) | Route::Piggyback => {
+                let delivery = Delivery { id: delivery_id()?, from: from.to_string(), kind: "message".into(), text, as_tool_output: false };
+                self.deliver(to, delivery).await?;
                 Ok(Spoken::Queued)
             }
         }
@@ -321,8 +415,105 @@ impl Town {
                 };
                 self.codex.send(&thread, input).await.map(|_| ())
             }
-            Some(_) => self.enqueue(to, delivery),
+            Some(Route::ClaudeMod(Some(session))) => super::claude::deliver(&self.config.world_dir, &session, &mod_delivery(delivery)),
+            Some(Route::ClaudeMod(None) | Route::Piggyback) => self.enqueue(to, delivery),
             None => Err(format!("No resident named {to} lives on {}.", self.config.machine)),
+        }
+    }
+
+    /// Links Claude residents to the sessions their mods registered: by the resident id the
+    /// World gave a session it launched, or else by the session's inbox address. Whatever
+    /// waited for a resident before its pairing moves to its session's inbox.
+    fn pair_claude_sessions(&self) {
+        let mut paired = Vec::new();
+        {
+            let mut state = self.state.lock();
+            if !state.residents.values().any(|live| live.route == Route::ClaudeMod(None)) {
+                return;
+            }
+            for session in super::claude::sessions(&self.config.world_dir) {
+                let registration = match super::claude::registration(&self.config.world_dir, &session) {
+                    Ok(Some(registration)) => registration,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        (self.log)(error);
+                        continue;
+                    }
+                };
+                let found = state.residents.iter_mut().find(|(id, live)| {
+                    live.route == Route::ClaudeMod(None)
+                        && (registration.resident.as_deref() == Some(id.as_str())
+                            || (registration.inbox_address.is_some() && registration.inbox_address == live.inbox_address))
+                });
+                if let Some((id, live)) = found {
+                    live.route = Route::ClaudeMod(Some(session.clone()));
+                    live.about.session = Some(session.clone());
+                    if let Err(error) = live.records.write_about(&live.about) {
+                        (self.log)(error);
+                    }
+                    paired.push((id.clone(), session));
+                }
+            }
+        }
+        for (id, session) in paired {
+            for delivery in self.take_waiting(&id) {
+                if let Err(error) = super::claude::deliver(&self.config.world_dir, &session, &mod_delivery(delivery)) {
+                    (self.log)(format!("cannot move a waiting delivery into {id}'s session: {error}"));
+                }
+            }
+        }
+    }
+
+    /// Reads what the Claude mods wrote: pairs new sessions, turns their events into the
+    /// residents' `now`, and records which deliveries reached the model.
+    async fn follow_claude(self: Arc<Self>) {
+        // The mod looks at its inbox every 2 s; looking back at the same pace keeps `now` at
+        // most one look behind what the mod reported.
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(2));
+        loop {
+            ticker.tick().await;
+            self.pair_claude_sessions();
+            let sessions: Vec<(String, Records)> = {
+                let state = self.state.lock();
+                state
+                    .residents
+                    .values()
+                    .filter_map(|live| match &live.route {
+                        Route::ClaudeMod(Some(session)) => Some((session.clone(), live.records.clone())),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            for (session, records) in sessions {
+                let harvest = match super::claude::harvest(&self.config.world_dir, &session) {
+                    Ok(harvest) => harvest,
+                    Err(error) => {
+                        (self.log)(error);
+                        continue;
+                    }
+                };
+                for event in harvest.events {
+                    let state = match event.kind.as_str() {
+                        "turn_start" => "busy",
+                        "turn_complete" => "idle",
+                        "session_end" => "left",
+                        _ => continue,
+                    };
+                    let mut now = records.now().ok().flatten().unwrap_or_default();
+                    now.state = state.to_string();
+                    now.since = event.at;
+                    let _ = records.write_now(&now);
+                }
+                for delivered in harvest.delivered {
+                    let _ = records.append_message(&MessageLine {
+                        at: crate::world::now_rfc3339(),
+                        kind: "read".into(),
+                        peer: delivered,
+                        turn: None,
+                        text: None,
+                    });
+                }
+            }
         }
     }
 
@@ -451,13 +642,33 @@ impl Town {
     }
 }
 
+impl std::fmt::Debug for Town {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Town").field("machine", &self.config.machine).finish_non_exhaustive()
+    }
+}
+
 /// How speaking to a resident landed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Spoken {
     NewTurn,
     JoinedTurn,
-    /// Its host offers no channel now; the words wait for it.
+    /// Handed to its host's plugin, or waiting for its next World tool response.
     Queued,
+}
+
+fn mod_delivery(delivery: Delivery) -> super::claude::ModDelivery {
+    super::claude::ModDelivery { id: delivery.id, from: delivery.from, kind: delivery.kind, text: delivery.text, as_user: false }
+}
+
+fn subdirectories(dir: &std::path::Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect()
 }
 
 fn delivery_id() -> Result<String, String> {
