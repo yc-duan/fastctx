@@ -30,6 +30,7 @@ use std::sync::Arc;
 /// so it always matches the running binary.
 pub(crate) fn start(
     machine: String,
+    home: PathBuf,
     world_dir: PathBuf,
     codex_home: PathBuf,
     log: Arc<dyn Fn(String) + Send + Sync>,
@@ -40,5 +41,5 @@ pub(crate) fn start(
         .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&workdir)))?;
     claude::write_plugin(&world_dir)?;
     let (codex, events) = codex::host::CodexHost::new(codex_home, workdir, Arc::clone(&log));
-    Ok(core::Town::new(core::TownConfig { machine, world_dir, fastctx }, codex, events, log))
+    Ok(core::Town::new(core::TownConfig { machine, world_dir, fastctx, home }, codex, events, log))
 }

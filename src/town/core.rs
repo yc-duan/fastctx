@@ -81,6 +81,10 @@ pub(crate) struct TownConfig {
     pub(crate) world_dir: PathBuf,
     /// The fastctx binary residents launched by the World use as their MCP server.
     pub(crate) fastctx: PathBuf,
+    /// The home the node runs in. A resident's MCP server is told it explicitly: the Codex
+    /// app-server gives the servers it starts the operating system's idea of the user's home,
+    /// and an MCP server that finds a different home reaches a different control center.
+    pub(crate) home: PathBuf,
 }
 
 pub(crate) struct Town {
@@ -453,6 +457,7 @@ impl Town {
             records: &records.dir,
             world_dir: &self.config.world_dir,
             fastctx: &self.config.fastctx,
+            home: &self.config.home,
             instructions: &instructions,
             words,
         })
@@ -479,7 +484,11 @@ impl Town {
     /// for, the town's map when it is in one, and the World's tools under its own name.
     fn codex_spec(&self, about: &About) -> ThreadSpec {
         let colleague = matches!(about.birth, Birth::Colleague { .. });
-        let mut env = json!({"FASTCTX_RESIDENT": about.id});
+        let mut env = json!({
+            "FASTCTX_RESIDENT": about.id,
+            "HOME": self.config.home,
+            "USERPROFILE": self.config.home,
+        });
         if colleague {
             env["FASTCTX_COLLEAGUE"] = json!("1");
         }

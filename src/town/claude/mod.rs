@@ -276,6 +276,8 @@ pub(crate) struct Background<'a> {
     pub(crate) records: &'a Path,
     pub(crate) world_dir: &'a Path,
     pub(crate) fastctx: &'a Path,
+    /// The node's home, given to the resident's MCP server so it reaches this node.
+    pub(crate) home: &'a Path,
     pub(crate) instructions: &'a str,
     pub(crate) words: &'a str,
 }
@@ -292,7 +294,7 @@ pub(crate) async fn start_background(background: &Background<'_>) -> Result<(), 
         "mcpServers": {"fastctx": {
             "command": background.fastctx,
             "args": ["serve"],
-            "env": {"FASTCTX_RESIDENT": background.resident},
+            "env": {"FASTCTX_RESIDENT": background.resident, "HOME": background.home, "USERPROFILE": background.home},
         }}
     });
     let encode = |value: &serde_json::Value| serde_json::to_vec_pretty(value).expect("JSON values encode");

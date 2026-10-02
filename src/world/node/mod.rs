@@ -67,6 +67,7 @@ async fn run_daemon_inner(
     let executor = executor::Executor::new(Arc::clone(&client), Arc::clone(&session));
     let town = crate::town::start(
         client.name(),
+        paths.home.clone(),
         world_paths.dir.clone(),
         paths.codex_dir.clone(),
         Arc::new(|line: String| log(format!("town: {line}"))),
