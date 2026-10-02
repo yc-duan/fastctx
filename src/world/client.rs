@@ -39,7 +39,7 @@ pub(crate) const LINK_MARGIN: Duration = Duration::from_secs(15);
 /// Reliable message ack window before the link is treated as dead.
 pub(crate) const ACK_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Facts a member publishes about itself, encrypted (`design-objects.md` §2 `facts`).
+/// Facts a member publishes about itself, encrypted.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Inventory {
     pub(crate) hostname: String,

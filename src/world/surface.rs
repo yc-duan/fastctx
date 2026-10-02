@@ -169,7 +169,7 @@ impl ArchRequirement {
     }
 }
 
-/// Requirements a machine must meet (`design-objects.md` §2.2).
+/// Requirements a machine must meet.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Requirements {

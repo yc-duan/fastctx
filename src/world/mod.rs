@@ -53,7 +53,7 @@ pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const WS_PATH: &str = "/fastctx/world/v1";
 /// Prefix of every domain-separated signature input.
 pub(crate) const SIGNATURE_DOMAIN_PREFIX: &str = "fastctx-world/v1/";
-/// Node names are words: `[a-z0-9-]{1,32}` (`spec.md` FR-W-003).
+/// Node names are words: `[a-z0-9-]{1,32}`.
 pub(crate) const MAX_NODE_NAME_LEN: usize = 32;
 /// The hub's own name in envelope headers; never a legal member name because of the reserved
 /// list in `validate_node_name`.

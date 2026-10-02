@@ -290,7 +290,7 @@ pub(crate) struct EventsResult {
     pub(crate) latest: u64,
 }
 
-/// One entry of the World's append-only log (`design-objects.md` §6). The hub writes only
+/// One entry of the World's append-only log. The hub writes only
 /// metadata here: kinds, handles, counts, state words.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Event {

@@ -176,7 +176,7 @@ fn apply_dedicated(
 
 /// The managed guidance for one enabled set. `world` says whether this machine is enrolled in
 /// a World: the block then speaks of machines instead of "local" and ends with the World
-/// section (`specs/world/design-agent-surface.md` §5).
+/// section.
 pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools, world: bool) -> String {
     let names = tools
         .names()
@@ -229,9 +229,8 @@ pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools, worl
     text
 }
 
-/// The World section: the cross-tool facts no tool description can say
-/// (`specs/world/design-agent-surface.md` §5). Every tool it names is published on this
-/// enabled set in World mode.
+/// The World section: the cross-tool facts no tool description can say. Every tool it names
+/// is published on this enabled set in World mode.
 fn world_guidance(tools: EnabledTools) -> String {
     let mut text = String::from(
         "\n## FastCtx World\n\nThis machine is one of your trusted machines woven into a World. `nodes` lists them with their OS, home directory and user; a call with `node` runs on that machine and its first line names it.\nOne call names one machine; several machines are several calls, sent in parallel where the host allows.\n",
