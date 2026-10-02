@@ -217,6 +217,10 @@ impl AdminServer {
             Err(_) => return,
         };
         let response = match serde_json::from_slice::<AdminRequest>(&request) {
+            Ok(AdminRequest::Town { request }) if request.streams() => {
+                crate::town::admin::stream(&self.town, request, stream).await;
+                return;
+            }
             Ok(request) => self.handle(request).await,
             Err(error) => AdminResponse {
                 ok: false,
@@ -418,7 +422,7 @@ pub(crate) fn node_views_from(value: serde_json::Value) -> Result<Vec<NodeView>,
     serde_json::from_value(value).map_err(|error| format!("Unreadable node list: {error}"))
 }
 
-async fn read_frame(stream: &mut BoxedStream) -> Result<Vec<u8>, String> {
+pub(crate) async fn read_frame(stream: &mut BoxedStream) -> Result<Vec<u8>, String> {
     let mut length = [0_u8; 4];
     stream
         .read_exact(&mut length)
@@ -436,7 +440,7 @@ async fn read_frame(stream: &mut BoxedStream) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-async fn write_frame(stream: &mut BoxedStream, bytes: &[u8]) -> Result<(), String> {
+pub(crate) async fn write_frame(stream: &mut BoxedStream, bytes: &[u8]) -> Result<(), String> {
     let length =
         u32::try_from(bytes.len()).map_err(|_| "the admin frame is too large".to_string())?;
     stream

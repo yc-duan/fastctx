@@ -51,6 +51,8 @@ pub(crate) enum Landed {
 #[derive(Clone, Debug)]
 pub(crate) enum HostEvent {
     TurnStarted { thread: String, turn: String },
+    /// An item of a turn started, raw as the app-server sent it.
+    ItemStarted { thread: String, turn: String, item: Value },
     /// A finished item of a turn, raw as the app-server sent it.
     Item { thread: String, turn: String, item: Value },
     /// A piece of text the model is writing, for live views.
@@ -366,6 +368,11 @@ impl CodexHost {
                 }
                 Some(HostEvent::TurnStarted { thread, turn })
             }
+            "item/started" => Some(HostEvent::ItemStarted {
+                thread,
+                turn: params.get("turnId").and_then(Value::as_str).unwrap_or_default().to_string(),
+                item: params.get("item")?.clone(),
+            }),
             "item/completed" => {
                 let item = params.get("item")?.clone();
                 let turn = params.get("turnId").and_then(Value::as_str).unwrap_or_default().to_string();

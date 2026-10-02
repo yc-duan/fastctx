@@ -52,7 +52,7 @@ fn own_town(world_dir: &std::path::Path, machine: &str, caller: Option<&str>) ->
     }
     let caller = caller?;
     let found = who::answer(world_dir, machine, &Query { ids: vec![caller.to_string()], ..Query::default() });
-    found.residents.into_iter().next().and_then(|facts| facts.about.town)
+    who::current(found.residents.iter().collect()).and_then(|facts| facts.about.town.clone())
 }
 
 /// Projects: each project is a town.
@@ -151,6 +151,13 @@ pub(crate) fn run_journal(command: JournalCommand) -> Result<ExitCode, String> {
             print!("{}", super::journal::render(&paths.dir, &town, &name, before.as_deref())?);
         }
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The run engine's end hook: tells the node that the job whose record is given has ended.
+pub(crate) async fn run_job_ended(record: std::path::PathBuf) -> Result<ExitCode, String> {
+    let request = crate::world::node::admin::AdminRequest::Town { request: super::admin::TownRequest::JobEnded { record } };
+    ask_node(&request).await?;
     Ok(ExitCode::SUCCESS)
 }
 

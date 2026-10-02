@@ -9,6 +9,7 @@
 
 use super::codex::host::{CodexHost, HostEvent, Input, Landed, ThreadSpec};
 use super::records::{About, Birth, MessageLine, Now, Records, new_resident_id};
+use super::talk::TalkEvent;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -65,6 +66,8 @@ struct State {
     residents: HashMap<String, Live>,
     /// Codex thread id → resident id.
     threads: HashMap<String, String>,
+    /// Who is watching each resident live.
+    watchers: HashMap<String, Vec<mpsc::UnboundedSender<TalkEvent>>>,
 }
 
 /// Settings that do not change while the node runs.
@@ -251,6 +254,36 @@ impl Town {
         live.about = about;
         drop(state);
         super::project::render_map(&self.config.world_dir, town, &self.config.machine)
+    }
+
+    /// A command a resident started on this machine has ended: the resident that started it is
+    /// told, and only it (`specs/world-run.md`, "怎样得知它跑完了"). The notice reaches a Codex
+    /// resident as a tool output, a fact rather than words to answer.
+    pub(crate) async fn job_ended(&self, record: &std::path::Path) -> Result<(), String> {
+        let jobs = record.parent().ok_or("A job record sits in a jobs directory.")?;
+        let resident_dir = jobs.parent().ok_or("A jobs directory sits in a resident's directory.")?;
+        let resident = resident_dir.file_name().and_then(|name| name.to_str()).ok_or("A resident directory is named by its id.")?;
+        let job = super::who::read_job(record, resident, None)
+            .ok_or_else(|| format!("{} is not a job record.", crate::paths::display_path(record)))?;
+        let ended = match (job.state.as_str(), job.exit_code) {
+            ("exited", Some(code)) => format!("exited {code}"),
+            ("interrupted", _) => "was interrupted".to_string(),
+            (state, _) => state.to_string(),
+        };
+        let elapsed = match (time::OffsetDateTime::parse(&job.started_at, &time::format_description::well_known::Rfc3339), job.ended_at.as_deref().map(|at| time::OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339))) {
+            (Ok(start), Some(Ok(end))) => format_duration(u64::try_from((end - start).whole_milliseconds()).unwrap_or_default()),
+            _ => "?".to_string(),
+        };
+        let command = job.command.lines().find(|line| !line.trim().is_empty()).unwrap_or_default().trim().to_string();
+        let log = crate::paths::display_path(&job.output_path);
+        let text = crate::hands::text::job_ended_notice(&job.id, &job.machine, &ended, &elapsed, &command, &log);
+        let known = self.state.lock().residents.contains_key(resident);
+        if !known {
+            // Its starter lives on another machine, or has gone; the record says what happened.
+            return Ok(());
+        }
+        let delivery = Delivery { id: delivery_id()?, from: "world".into(), kind: "notice".into(), text, as_tool_output: true };
+        self.deliver(resident, delivery).await
     }
 
     /// Records one action of a resident's hands and makes it the last thing it did.
@@ -444,6 +477,9 @@ impl Town {
             live.route.clone()
         };
         let text = format!("=== from {from} ===\n{message}");
+        if !matches!(route, Route::CodexThread(_)) {
+            self.publish(to, TalkEvent::Words { from: from.to_string(), text: message.to_string() });
+        }
         match route {
             Route::CodexThread(thread) => {
                 let landed = self.codex.send(&thread, Input::Text(text)).await?;
@@ -567,6 +603,11 @@ impl Town {
                         continue;
                     }
                 };
+                for event in &harvest.events {
+                    if let Some(talk) = claude_event(event) {
+                        self.publish_session(&session, talk);
+                    }
+                }
                 for event in harvest.events {
                     let state = match event.kind.as_str() {
                         "turn_start" => "busy",
@@ -642,19 +683,129 @@ impl Town {
 
     async fn on_codex(&self, event: HostEvent) {
         match event {
-            HostEvent::TurnStarted { thread, .. } => {
+            HostEvent::TurnStarted { thread, turn } => {
                 if let Some(records) = self.live_for_thread(&thread) {
                     set_state(&records, "busy");
                 }
+                self.publish_thread(&thread, TalkEvent::TurnStarted { turn });
             }
             HostEvent::TurnCompleted { thread, turn, status, error, duration_ms, last_message } => {
+                self.publish_thread(&thread, TalkEvent::TurnEnded { turn: turn.clone(), status: status.clone() });
                 self.answer(&thread, &turn, &status, error, duration_ms, last_message).await;
             }
+            HostEvent::ItemStarted { thread, item, .. } => {
+                if let Some(event) = super::talk::codex_item(&item, false) {
+                    self.publish_thread(&thread, event);
+                }
+            }
+            HostEvent::Item { thread, item, .. } => {
+                if let Some(event) = super::talk::codex_item(&item, true) {
+                    self.publish_thread(&thread, event);
+                }
+            }
+            HostEvent::Delta { thread, item, delta } => self.publish_thread(&thread, TalkEvent::Delta { item, text: delta }),
             HostEvent::Declined { thread, method } => {
                 (self.log)(format!("a Codex thread {thread:?} asked {method}; declined"));
             }
             HostEvent::ServerGone { reason } => (self.log)(reason),
-            HostEvent::Item { .. } | HostEvent::Delta { .. } | HostEvent::Status { .. } => {}
+            HostEvent::Status { .. } => {}
+        }
+    }
+
+    /// Starts watching a resident on this machine: its history so far, then its events as they
+    /// happen. The watcher is registered before the history is read, so nothing falls between.
+    pub(crate) async fn watch(&self, id: &str) -> Result<(Vec<TalkEvent>, mpsc::UnboundedReceiver<TalkEvent>), String> {
+        let (route, receiver) = {
+            let mut state = self.state.lock();
+            let route = state
+                .residents
+                .get(id)
+                .map(|live| live.route.clone())
+                .ok_or_else(|| format!("No resident named {id} lives on {}.", self.config.machine))?;
+            let (sender, receiver) = mpsc::unbounded_channel();
+            state.watchers.entry(id.to_string()).or_default().push(sender);
+            (route, receiver)
+        };
+        let history = match route {
+            Route::CodexThread(thread) => super::talk::codex_history(&self.codex.history(&thread).await?),
+            Route::ClaudeMod(_) | Route::Piggyback => Vec::new(),
+        };
+        Ok((history, receiver))
+    }
+
+    /// Puts the user's own words into a resident's session, as the user. Only words the user
+    /// typed on one of the user's devices come here (`specs/world.md`, the first rule).
+    pub(crate) async fn say_as_user(&self, id: &str, text: &str) -> Result<Spoken, String> {
+        let route = self.state.lock().residents.get(id).map(|live| live.route.clone());
+        let spoken = match route {
+            Some(Route::CodexThread(thread)) => match self.codex.send(&thread, Input::Text(text.to_string())).await? {
+                Landed::NewTurn => {
+                    if let Some(live) = self.state.lock().residents.get_mut(id) {
+                        live.readers.clear();
+                        live.turn_started = Some(Instant::now());
+                        set_state(&live.records, "busy");
+                    }
+                    Spoken::NewTurn
+                }
+                Landed::Steered => Spoken::JoinedTurn,
+            },
+            Some(Route::ClaudeMod(Some(session))) => {
+                let delivery = super::claude::ModDelivery {
+                    id: delivery_id()?,
+                    from: "user".into(),
+                    kind: "typed".into(),
+                    text: text.to_string(),
+                    as_user: true,
+                };
+                super::claude::deliver(&self.config.world_dir, &session, &delivery)?;
+                Spoken::Queued
+            }
+            Some(_) => return Err(format!("{id}'s host offers the World no way to put words into its session.")),
+            None => return Err(format!("No resident named {id} lives on {}.", self.config.machine)),
+        };
+        if let Some(live) = self.state.lock().residents.get(id) {
+            let _ = live.records.append_message(&MessageLine {
+                at: crate::world::now_rfc3339(),
+                kind: "said".into(),
+                peer: "user".into(),
+                turn: None,
+                text: Some(text.to_string()),
+            });
+        }
+        if spoken == Spoken::Queued {
+            self.publish(id, TalkEvent::Words { from: "user".into(), text: text.to_string() });
+        }
+        Ok(spoken)
+    }
+
+    fn publish_thread(&self, thread: &str, event: TalkEvent) {
+        let resident = self.state.lock().threads.get(thread).cloned();
+        if let Some(resident) = resident {
+            self.publish(&resident, event);
+        }
+    }
+
+    fn publish_session(&self, session: &str, event: TalkEvent) {
+        let resident = self
+            .state
+            .lock()
+            .residents
+            .iter()
+            .find(|(_, live)| matches!(&live.route, Route::ClaudeMod(Some(paired)) if paired == session))
+            .map(|(id, _)| id.clone());
+        if let Some(resident) = resident {
+            self.publish(&resident, event);
+        }
+    }
+
+    /// Hands an event to everyone watching the resident; watchers that went away are dropped.
+    fn publish(&self, resident: &str, event: TalkEvent) {
+        let mut state = self.state.lock();
+        if let Some(watchers) = state.watchers.get_mut(resident) {
+            watchers.retain(|watcher| watcher.send(event.clone()).is_ok());
+            if watchers.is_empty() {
+                state.watchers.remove(resident);
+            }
         }
     }
 
@@ -746,6 +897,29 @@ pub(crate) enum Spoken {
     JoinedTurn,
     /// Handed to its host's plugin, or waiting for its next World tool response.
     Queued,
+}
+
+/// What a watcher sees of a Claude mod's event; the mod reports turns and tools, not text.
+fn claude_event(event: &super::claude::ModEvent) -> Option<TalkEvent> {
+    match event.kind.as_str() {
+        "turn_start" => Some(TalkEvent::TurnStarted { turn: event.at.clone() }),
+        "turn_complete" => match &event.answer {
+            Some(answer) => Some(TalkEvent::Message { item: event.at.clone(), text: answer.clone() }),
+            None => Some(TalkEvent::TurnEnded {
+                turn: event.at.clone(),
+                status: if event.aborted == Some(true) { "interrupted".into() } else { "completed".into() },
+            }),
+        },
+        "tool" => Some(TalkEvent::Tool {
+            item: event.at.clone(),
+            name: event.tool.clone().unwrap_or_default(),
+            summary: String::new(),
+            done: false,
+            failed: false,
+        }),
+        "session_end" => Some(TalkEvent::State { state: "left".into() }),
+        _ => None,
+    }
 }
 
 fn mod_delivery(delivery: Delivery) -> super::claude::ModDelivery {

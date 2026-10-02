@@ -94,6 +94,13 @@ pub(crate) struct TownCount {
     pub(crate) busy: usize,
 }
 
+/// Of the records one resident left in several places (it moved between towns), the one it is
+/// living in now: the one it has not left, else the latest.
+pub(crate) fn current(mut records: Vec<&ResidentFacts>) -> Option<&ResidentFacts> {
+    records.sort_by(|left, right| (left.now.state != "left", &left.now.since).cmp(&(right.now.state != "left", &right.now.since)));
+    records.pop()
+}
+
 /// Whether a resident in this state counts as here; the rest show only with `-a`.
 pub(crate) fn is_here(state: &str) -> bool {
     matches!(state, "busy" | "idle" | "waiting" | "unknown")
@@ -197,6 +204,18 @@ fn parse_action(line: &str) -> Option<ActionLine> {
 
 /// The job records under a resident's directory, as the run engine writes them.
 fn jobs(dir: &Path, resident: &str, town: Option<&str>) -> Vec<JobFacts> {
+    std::fs::read_dir(dir.join("jobs"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .filter_map(|entry| read_job(&entry.path(), resident, town))
+        .collect()
+}
+
+/// One job record. Records live in `<place>/residents/<resident>/jobs/<id>.json`, so the
+/// resident and the town come from where it is.
+pub(crate) fn read_job(path: &Path, resident: &str, town: Option<&str>) -> Option<JobFacts> {
     #[derive(Deserialize)]
     struct Record {
         id: String,
@@ -212,26 +231,20 @@ fn jobs(dir: &Path, resident: &str, town: Option<&str>) -> Vec<JobFacts> {
         exit_code: Option<i32>,
         output_path: PathBuf,
     }
-    std::fs::read_dir(dir.join("jobs"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
-        .filter_map(|entry| serde_json::from_slice::<Record>(&std::fs::read(entry.path()).ok()?).ok())
-        .map(|record| JobFacts {
-            resident: resident.to_string(),
-            town: town.map(str::to_string),
-            id: record.id,
-            pid: record.pid,
-            command: record.command,
-            machine: record.machine,
-            started_at: record.started_at,
-            ended_at: record.ended_at,
-            state: record.state,
-            exit_code: record.exit_code,
-            output_path: record.output_path,
-        })
-        .collect()
+    let record: Record = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    Some(JobFacts {
+        resident: resident.to_string(),
+        town: town.map(str::to_string),
+        id: record.id,
+        pid: record.pid,
+        command: record.command,
+        machine: record.machine,
+        started_at: record.started_at,
+        ended_at: record.ended_at,
+        state: record.state,
+        exit_code: record.exit_code,
+        output_path: record.output_path,
+    })
 }
 
 fn subdirectories(dir: &Path) -> Vec<PathBuf> {

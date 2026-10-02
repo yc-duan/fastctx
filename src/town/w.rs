@@ -211,7 +211,7 @@ fn write_unattended(out: &mut String, residents: &[&ResidentFacts], jobs: &[&Job
 fn render_details(view: &View<'_>, now: OffsetDateTime) -> String {
     let mut out = String::new();
     for id in &view.query.ids {
-        let resident = view.answers.iter().flat_map(|answer| &answer.residents).find(|facts| &facts.about.id == id);
+        let resident = super::who::current(view.answers.iter().flat_map(|answer| &answer.residents).filter(|facts| &facts.about.id == id).collect());
         let job = view.answers.iter().flat_map(|answer| &answer.jobs).find(|job| &job.id == id);
         let jobs: Vec<&JobFacts> = view.answers.iter().flat_map(|answer| &answer.jobs).collect();
         match (resident, job) {

@@ -121,6 +121,11 @@ enum Command {
         #[command(subcommand)]
         command: crate::town::cli::ProjectCommand,
     },
+    /// Internal end hook of a World job: tells the node the job whose record is given ended.
+    #[command(hide = true, name = "job-ended")]
+    JobEnded { record: PathBuf },
+    /// Talk to a resident as yourself and watch it answer.
+    Talk(crate::town::talk_cli::TalkArgs),
     /// Journals: the history residents leave in a project.
     Journal {
         #[command(subcommand)]
@@ -256,6 +261,8 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         Some(Command::W(args)) => crate::town::cli::run(args),
         Some(Command::Project { command }) => crate::town::cli::run_project(command).await,
         Some(Command::Journal { command }) => crate::town::cli::run_journal(command),
+        Some(Command::Talk(args)) => crate::town::talk_cli::run(args).await,
+        Some(Command::JobEnded { record }) => crate::town::cli::run_job_ended(record).await,
         #[cfg(unix)]
         Some(Command::JobBootstrap) => {
             crate::shell::jobs::run_bootstrap_entry()?;
