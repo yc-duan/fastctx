@@ -68,6 +68,8 @@ struct State {
     threads: HashMap<String, String>,
     /// Who is watching each resident live.
     watchers: HashMap<String, Vec<mpsc::UnboundedSender<TalkEvent>>>,
+    /// This machine's Computer Use desk.
+    desk: super::desk::Desk,
 }
 
 /// Settings that do not change while the node runs.
@@ -806,14 +808,33 @@ impl Town {
             }
             HostEvent::TurnCompleted { thread, turn, status, error, duration_ms, last_message } => {
                 self.publish_thread(&thread, TalkEvent::TurnEnded { turn: turn.clone(), status: status.clone() });
+                self.desk_turn_ended(&thread).await;
                 self.answer(&thread, &turn, &status, error, duration_ms, last_message).await;
             }
             HostEvent::ItemStarted { thread, item, .. } => {
+                let sat = {
+                    let mut state = self.state.lock();
+                    match state.threads.get(&thread).cloned() {
+                        Some(resident) if state.desk.item_started(&resident, &item) => state.residents.get(&resident).map(|live| live.records.clone()),
+                        _ => None,
+                    }
+                };
+                if let Some(records) = sat {
+                    set_desk(&records, true);
+                }
                 if let Some(event) = super::talk::codex_item(&item, false) {
                     self.publish_thread(&thread, event);
                 }
             }
             HostEvent::Item { thread, item, .. } => {
+                let notice = {
+                    let mut state = self.state.lock();
+                    let resident = state.threads.get(&thread).cloned();
+                    resident.and_then(|resident| state.desk.item_completed(&resident, &item, &self.config.machine))
+                };
+                if let Some(notice) = notice {
+                    self.desk_notice(notice).await;
+                }
                 if let Some(event) = super::talk::codex_item(&item, true) {
                     self.publish_thread(&thread, event);
                 }
@@ -894,6 +915,32 @@ impl Town {
             self.publish(id, TalkEvent::Words { from: "user".into(), text: text.to_string() });
         }
         Ok(spoken)
+    }
+
+    /// A turn ended: if its resident sat at the desk, the desk is free and whoever waits hears.
+    async fn desk_turn_ended(&self, thread: &str) {
+        let (records, notices) = {
+            let mut state = self.state.lock();
+            let Some(resident) = state.threads.get(thread).cloned() else { return };
+            let (held, notices) = state.desk.turn_ended(&resident, &self.config.machine);
+            (held.then(|| state.residents.get(&resident).map(|live| live.records.clone())).flatten(), notices)
+        };
+        if let Some(records) = records {
+            set_desk(&records, false);
+        }
+        for notice in notices {
+            self.desk_notice(notice).await;
+        }
+    }
+
+    async fn desk_notice(&self, notice: super::desk::Notice) {
+        let delivery = match delivery_id() {
+            Ok(id) => Delivery { id, from: "world".into(), kind: "notice".into(), text: notice.text, as_tool_output: false },
+            Err(error) => return (self.log)(error),
+        };
+        if let Err(error) = self.deliver(&notice.to, delivery).await {
+            (self.log)(format!("cannot tell {} about the Computer Use desk: {error}", notice.to));
+        }
     }
 
     fn publish_thread(&self, thread: &str, event: TalkEvent) {
@@ -1042,6 +1089,13 @@ fn claude_event(event: &super::claude::ModEvent) -> Option<TalkEvent> {
 
 fn mod_delivery(delivery: Delivery) -> super::claude::ModDelivery {
     super::claude::ModDelivery { id: delivery.id, from: delivery.from, kind: delivery.kind, text: delivery.text, as_user: false }
+}
+
+/// Records whether a resident sits at this machine's Computer Use desk.
+fn set_desk(records: &Records, desk: bool) {
+    let mut now = records.now().ok().flatten().unwrap_or_default();
+    now.desk = desk;
+    let _ = records.write_now(&now);
 }
 
 /// Changes a resident's state and keeps what else `now` knows.

@@ -11,6 +11,7 @@ pub(crate) mod claude;
 pub(crate) mod cli;
 pub(crate) mod codex;
 pub(crate) mod core;
+pub(crate) mod desk;
 pub(crate) mod journal;
 pub(crate) mod project;
 pub(crate) mod records;
