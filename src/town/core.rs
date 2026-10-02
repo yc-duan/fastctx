@@ -194,9 +194,27 @@ impl Town {
         let mut state = self.state.lock();
         let Some(live) = state.residents.get_mut(id) else { return };
         live.sessions = live.sessions.saturating_sub(1);
-        if live.sessions == 0 && !matches!(live.route, Route::CodexThread(_)) {
-            let _ = live.records.write_now(&Now { state: "left".into(), since: crate::world::now_rfc3339(), ..Now::default() });
+        if live.sessions > 0 || matches!(live.route, Route::CodexThread(_)) {
+            return;
         }
+        set_state(&live.records, "left");
+        // A colleague works for whoever asked for it; once that resident has left, an idle
+        // colleague sleeps until someone speaks to it again.
+        for colleague in state.residents.values() {
+            if let (Birth::Colleague { requester, .. }, Route::CodexThread(thread)) = (&colleague.about.birth, &colleague.route)
+                && requester == id
+                && !self.codex.is_running(thread)
+            {
+                set_state(&colleague.records, "asleep");
+            }
+        }
+    }
+
+    /// Whether a resident is here: an MCP session is attached, or the World holds it running.
+    fn present(&self, state: &State, id: &str) -> bool {
+        state.residents.get(id).is_some_and(|live| {
+            live.sessions > 0 || matches!(&live.route, Route::CodexThread(thread) if self.codex.is_running(thread))
+        })
     }
 
     /// Records one action of a resident's hands and makes it the last thing it did.
@@ -271,9 +289,11 @@ impl Town {
             let _ = records.write_now(&Now { state: "error".into(), since: crate::world::now_rfc3339(), ..Now::default() });
             error
         };
-        let thread = self.codex.create_thread(spec).await.map_err(failed)?;
+        let (thread, model) = self.codex.create_thread(spec).await.map_err(failed)?;
         let mut about = about;
         about.session = Some(thread.clone());
+        about.model_source = model.as_ref().map(|_| "host".to_string());
+        about.model = model;
         records.write_about(&about)?;
         {
             let mut state = self.state.lock();
@@ -338,12 +358,22 @@ impl Town {
             };
             let state_now = match (&thread, now.state.as_str()) {
                 (Some(_), "busy") => Some("interrupted"),
-                (Some(_), _) => None,
+                (Some(_), "interrupted" | "asleep" | "error") => None,
+                (Some(_), _) => Some("asleep"),
                 (None, "left") => None,
                 (None, _) => Some("left"),
             };
             if let Some(word) = state_now {
-                let _ = records.write_now(&Now { state: word.into(), since: crate::world::now_rfc3339(), ..now });
+                set_state(&records, word);
+            }
+            if state_now == Some("interrupted") {
+                let _ = records.append_message(&MessageLine {
+                    at: crate::world::now_rfc3339(),
+                    kind: "interrupted".into(),
+                    peer: String::new(),
+                    turn: None,
+                    text: Some("The node restarted while this turn ran; the turn did not finish.".into()),
+                });
             }
             let Some(thread) = thread else { continue };
             state.threads.insert(thread.clone(), about.id.clone());
@@ -386,9 +416,9 @@ impl Town {
                     if landed == Landed::NewTurn {
                         live.readers.clear();
                         live.turn_started = Some(Instant::now());
+                        set_state(&live.records, "busy");
                     }
                     live.readers.insert(from.to_string());
-                    let _ = live.records.write_now(&Now { state: "busy".into(), since: crate::world::now_rfc3339(), ..Now::default() });
                 }
                 Ok(match landed {
                     Landed::NewTurn => Spoken::NewTurn,
@@ -448,6 +478,15 @@ impl Town {
                 if let Some((id, live)) = found {
                     live.route = Route::ClaudeMod(Some(session.clone()));
                     live.about.session = Some(session.clone());
+                    let model = match &registration.model {
+                        Some(Value::String(model)) => Some(model.clone()),
+                        Some(Value::Object(model)) => model.get("id").and_then(Value::as_str).map(str::to_string),
+                        _ => None,
+                    };
+                    if model.is_some() {
+                        live.about.model = model;
+                        live.about.model_source = Some("host".into());
+                    }
                     if let Err(error) = live.records.write_about(&live.about) {
                         (self.log)(error);
                     }
@@ -568,8 +607,8 @@ impl Town {
     async fn on_codex(&self, event: HostEvent) {
         match event {
             HostEvent::TurnStarted { thread, .. } => {
-                if let Some(live) = self.live_for_thread(&thread) {
-                    let _ = live.write_now(&Now { state: "busy".into(), since: crate::world::now_rfc3339(), ..Now::default() });
+                if let Some(records) = self.live_for_thread(&thread) {
+                    set_state(&records, "busy");
                 }
             }
             HostEvent::TurnCompleted { thread, turn, status, error, duration_ms, last_message } => {
@@ -595,7 +634,23 @@ impl Town {
             (id, readers, live.records.clone())
         };
         let ended = crate::world::now_rfc3339();
-        let _ = records.write_now(&Now { state: "idle".into(), since: ended.clone(), ..Now::default() });
+        let requester_here = {
+            let state = self.state.lock();
+            match state.residents.get(&id).map(|live| &live.about.birth) {
+                Some(Birth::Colleague { requester, .. }) => self.present(&state, requester),
+                _ => true,
+            }
+        };
+        {
+            let mut now = records.now().ok().flatten().unwrap_or_default();
+            now.state = if requester_here { "idle" } else { "asleep" }.to_string();
+            now.since = ended.clone();
+            if !readers.is_empty() {
+                now.last_action = Some(format!("answered {}", readers.join(", ")));
+                now.last_action_at = Some(ended.clone());
+            }
+            let _ = records.write_now(&now);
+        }
         let _ = records.append_message(&MessageLine {
             at: ended.clone(),
             kind: "answered".into(),
@@ -659,6 +714,14 @@ pub(crate) enum Spoken {
 
 fn mod_delivery(delivery: Delivery) -> super::claude::ModDelivery {
     super::claude::ModDelivery { id: delivery.id, from: delivery.from, kind: delivery.kind, text: delivery.text, as_user: false }
+}
+
+/// Changes a resident's state and keeps what else `now` knows.
+fn set_state(records: &Records, state: &str) {
+    let mut now = records.now().ok().flatten().unwrap_or_default();
+    now.state = state.to_string();
+    now.since = crate::world::now_rfc3339();
+    let _ = records.write_now(&now);
 }
 
 fn subdirectories(dir: &std::path::Path) -> Vec<PathBuf> {

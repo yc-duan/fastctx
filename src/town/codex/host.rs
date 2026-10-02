@@ -86,6 +86,10 @@ pub(crate) struct Launch {
     pub(crate) args: Vec<String>,
     /// Whether this is the desktop app's binary, which lends Computer Use to its threads.
     pub(crate) from_app: bool,
+    /// The user's `config.toml` as it was at launch. The app rewrites it when it upgrades
+    /// (new binary directory) or restarts (new Computer Use pipe); an app-server started
+    /// before that still points at the old ones.
+    pub(crate) config: Option<Vec<u8>>,
 }
 
 const CLIENT_NAME: &str = "fastctx";
@@ -133,8 +137,9 @@ impl CodexHost {
     }
 
     /// Creates a resident's thread without starting a turn; the caller records the thread id
-    /// before sending the first words, so no event of the first turn can outrun it.
-    pub(crate) async fn create_thread(self: &Arc<Self>, spec: ThreadSpec) -> Result<String, String> {
+    /// before sending the first words, so no event of the first turn can outrun it. Returns the
+    /// thread id and the model the app-server chose from the user's configuration.
+    pub(crate) async fn create_thread(self: &Arc<Self>, spec: ThreadSpec) -> Result<(String, Option<String>), String> {
         let server = self.server().await?;
         let result = server
             .request(
@@ -155,11 +160,12 @@ impl CodexHost {
             .and_then(Value::as_str)
             .ok_or_else(|| "thread/start answered without a thread id.".to_string())?
             .to_string();
+        let model = result.get("model").and_then(Value::as_str).map(str::to_string);
         self.state.lock().threads.insert(
             thread.clone(),
             ThreadState { spec: Some(spec), loaded: true, ..ThreadState::default() },
         );
-        Ok(thread)
+        Ok((thread, model))
     }
 
     /// Sends words to a thread. `turn/start` starts a turn when the thread is idle and folds
@@ -191,28 +197,6 @@ impl CodexHost {
     /// Whether this thread has a turn running.
     pub(crate) fn is_running(&self, thread: &str) -> bool {
         self.state.lock().threads.get(thread).is_some_and(|state| state.turn.is_some())
-    }
-
-    /// Restarts the app-server when no turn is running and the app has moved its binary (an
-    /// upgrade rewrites `config.toml`); otherwise leaves it alone. Threads resume on their
-    /// next send and see the new binary and the new Computer Use pipe.
-    pub(crate) fn restart_if_moved(&self) {
-        let Ok(launch) = resolve_launch(&self.codex_home) else { return };
-        let mut state = self.state.lock();
-        let moved = state.server.as_ref().is_some_and(|(_, current)| current.binary != launch.binary);
-        if !moved || state.threads.values().any(|thread| thread.turn.is_some()) {
-            return;
-        }
-        if let Some((server, _)) = state.server.take() {
-            (self.log)(format!(
-                "the Codex app moved its binary to {}; restarting the app-server",
-                crate::paths::display_path(&launch.binary)
-            ));
-            server.kill();
-        }
-        for thread in state.threads.values_mut() {
-            thread.loaded = false;
-        }
     }
 
     /// Starts a turn (or steers the running one) and returns the turn id the server names.
@@ -273,14 +257,25 @@ impl CodexHost {
         Ok(())
     }
 
-    /// The running app-server, started on first use or after it stopped.
+    /// The running app-server, started on first use or after it stopped. When the user's
+    /// `config.toml` changed since it started and no turn is running, it is replaced first, so
+    /// threads pick up the app's new binary and Computer Use pipe; a running turn finishes on
+    /// the old one.
     async fn server(self: &Arc<Self>) -> Result<Arc<AppServer>, String> {
-        if let Some((server, _)) = &self.state.lock().server {
-            return Ok(Arc::clone(server));
-        }
+        let config = read_config(&self.codex_home)?;
         let _starting = self.starting.lock().await;
-        if let Some((server, _)) = &self.state.lock().server {
-            return Ok(Arc::clone(server));
+        {
+            let mut state = self.state.lock();
+            let busy = state.threads.values().any(|thread| thread.turn.is_some());
+            match &state.server {
+                Some((server, launch)) if launch.config == config || busy => return Ok(Arc::clone(server)),
+                Some((server, _)) => {
+                    (self.log)("the user's Codex configuration changed; restarting the app-server".to_string());
+                    server.kill();
+                    state.server = None;
+                }
+                None => {}
+            }
         }
         let launch = resolve_launch(&self.codex_home)?;
         std::fs::create_dir_all(&self.workdir)
@@ -335,12 +330,18 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
             Inbound::Exited(reason) => {
                 {
                     let mut state = host.state.lock();
-                    if state.server.as_ref().is_some_and(|(current, _)| Arc::ptr_eq(current, &server)) {
+                    // A server replaced on purpose may exit after its successor loaded threads;
+                    // only the current one's exit unloads them.
+                    let current = match &state.server {
+                        Some((current, _)) => Arc::ptr_eq(current, &server),
+                        None => true,
+                    };
+                    if current {
                         state.server = None;
-                    }
-                    for thread in state.threads.values_mut() {
-                        thread.loaded = false;
-                        thread.turn = None;
+                        for thread in state.threads.values_mut() {
+                            thread.loaded = false;
+                            thread.turn = None;
+                        }
                     }
                 }
                 (host.log)(reason.clone());
@@ -420,21 +421,28 @@ pub(crate) fn resolve_launch(codex_home: &Path) -> Result<Launch, String> {
                 "app-server".to_string(),
             ],
             from_app: true,
+            config: read_config(codex_home)?,
         });
     }
     let binary = find_on_path(if cfg!(windows) { "codex.exe" } else { "codex" }).ok_or_else(|| {
         "Codex is not installed on this machine: neither the ChatGPT desktop app nor a codex command was found.".to_string()
     })?;
-    Ok(Launch { binary, args: vec!["app-server".to_string()], from_app: false })
+    Ok(Launch { binary, args: vec!["app-server".to_string()], from_app: false, config: read_config(codex_home)? })
+}
+
+fn read_config(codex_home: &Path) -> Result<Option<Vec<u8>>, String> {
+    let path = codex_home.join("config.toml");
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+    }
 }
 
 fn app_binary(codex_home: &Path) -> Result<Option<PathBuf>, String> {
     let path = codex_home.join("config.toml");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
-    };
+    let Some(bytes) = read_config(codex_home)? else { return Ok(None) };
+    let text = String::from_utf8(bytes).map_err(|error| format!("{} is not UTF-8: {error}", crate::paths::display_path(&path)))?;
     let document: toml_edit::DocumentMut = text
         .parse()
         .map_err(|error| format!("Cannot parse {}: {error}", crate::paths::display_path(&path)))?;

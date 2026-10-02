@@ -113,6 +113,9 @@ enum Command {
         #[command(subcommand)]
         command: crate::world::cli::NodeCommand,
     },
+    /// Who is in this town and what they are doing; with ids, those residents or jobs in detail.
+    #[command(name = "w")]
+    W(crate::town::cli::WArgs),
     /// Internal World control worker; request and result are private stdin/stdout JSON.
     #[command(hide = true)]
     WorldControl,
@@ -240,6 +243,7 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         Some(Command::World { command }) => crate::world::cli::run_world(command).await,
         Some(Command::Node { command }) => crate::world::cli::run_node(command).await,
         Some(Command::WorldControl) => crate::world::control::run_helper().await,
+        Some(Command::W(args)) => crate::town::cli::run(args),
         #[cfg(unix)]
         Some(Command::JobBootstrap) => {
             crate::shell::jobs::run_bootstrap_entry()?;

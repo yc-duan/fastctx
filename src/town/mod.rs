@@ -7,10 +7,13 @@
 //! another device are two uses of the same four operations (`specs/world-colleagues.md`).
 
 pub(crate) mod claude;
+pub(crate) mod cli;
 pub(crate) mod codex;
 pub(crate) mod core;
 pub(crate) mod records;
 pub(crate) mod session;
+pub(crate) mod w;
+pub(crate) mod who;
 
 use std::path::PathBuf;
 use std::sync::Arc;
