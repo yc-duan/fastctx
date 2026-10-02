@@ -198,7 +198,12 @@ impl CodexHost {
 
     /// Whether this thread has a turn running.
     pub(crate) fn is_running(&self, thread: &str) -> bool {
-        self.state.lock().threads.get(thread).is_some_and(|state| state.turn.is_some())
+        self.running_turn(thread).is_some()
+    }
+
+    /// The id of the turn running in this thread, if one is.
+    pub(crate) fn running_turn(&self, thread: &str) -> Option<String> {
+        self.state.lock().threads.get(thread).and_then(|state| state.turn.clone())
     }
 
     /// Starts a turn (or steers the running one) and returns the turn id the server names.

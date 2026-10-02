@@ -19,6 +19,8 @@ pub(crate) enum TownRequest {
     Watch { resident: String },
     /// A command ended; its record is at `record`. Sent by the run engine's end hook.
     JobEnded { record: std::path::PathBuf },
+    /// Opens a resident for the user and puts the user's first words in.
+    Open { agent: String, town: Option<String>, words: String },
 }
 
 impl TownRequest {
@@ -39,6 +41,7 @@ pub(crate) async fn handle(town: &Town, request: TownRequest) -> Result<Value, S
             Ok(json!({ "landed": how }))
         }
         TownRequest::Watch { .. } => Err("A watch streams; it is not answered once.".to_string()),
+        TownRequest::Open { agent, town: place, words } => Ok(json!({ "resident": town.open_resident(&agent, place, &words).await? })),
         TownRequest::JobEnded { record } => {
             town.job_ended(&record).await?;
             Ok(Value::Null)

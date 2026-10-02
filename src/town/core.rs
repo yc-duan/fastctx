@@ -309,6 +309,40 @@ impl Town {
             let live = state.residents.get(requester).ok_or_else(|| format!("{requester} is not a resident of this machine."))?;
             live.about.town.clone()
         };
+        let birth = Birth::Colleague { requester: requester.to_string(), label: label.to_string() };
+        let first = format!("=== from {requester} ===\n{prompt}");
+        let id = self.start_codex(birth, town, BTreeSet::from([requester.to_string()]), first, (requester, prompt)).await?;
+        Ok(Asked { id, machine: self.config.machine.clone() })
+    }
+
+    /// Opens a resident for the user on this machine, in a town or outside every town, and
+    /// puts the user's first words in as the user (`specs/world-colleagues.md`, "用户在任何地方
+    /// 和居民说话"). Codex is a thread of this machine's app-server; Claude is a background
+    /// session started with `claude --bg`.
+    pub(crate) async fn open_resident(&self, agent: &str, town: Option<String>, words: &str) -> Result<String, String> {
+        if let Some(town) = &town {
+            let charter = super::project::charter(&self.config.world_dir, town)?;
+            if !charter.machines.iter().any(|machine| machine == &self.config.machine) {
+                return Err(format!("{} is not one of {town}'s machines ({}).", self.config.machine, charter.machines.join(", ")));
+            }
+        }
+        match agent {
+            "codex" => self.start_codex(Birth::User, town, BTreeSet::new(), words.to_string(), ("user", words)).await,
+            "claude" => self.start_claude(town, words).await,
+            other => Err(format!("The World opens codex or claude residents; {other} is neither.")),
+        }
+    }
+
+    /// Creates a Codex resident's records and thread and sends its first words; `readers` get
+    /// the last message of that first turn.
+    async fn start_codex(
+        &self,
+        birth: Birth,
+        town: Option<String>,
+        readers: BTreeSet<String>,
+        first: String,
+        (asker, asked): (&str, &str),
+    ) -> Result<String, String> {
         let id = {
             let state = self.state.lock();
             new_resident_id("codex", |candidate| state.residents.contains_key(candidate) || self.recorded(candidate))?
@@ -323,39 +357,36 @@ impl Town {
             model_source: None,
             machine: self.config.machine.clone(),
             surface: "world".to_string(),
-            birth: Birth::Colleague { requester: requester.to_string(), label: label.to_string() },
+            birth,
             since: crate::world::now_rfc3339(),
             session: None,
-            town: town.clone(),
+            town,
         };
         records.write_about(&about)?;
         records.write_now(&Now { state: "busy".into(), since: about.since.clone(), ..Now::default() })?;
         records.append_message(&MessageLine {
             at: about.since.clone(),
             kind: "asked".into(),
-            peer: requester.to_string(),
+            peer: asker.to_string(),
             turn: None,
-            text: Some(prompt.to_string()),
+            text: Some(asked.to_string()),
         })?;
-        let spec = self.colleague_spec(&id, requester, town.as_deref());
-        {
-            let mut state = self.state.lock();
-            state.residents.insert(
-                id.clone(),
-                Live {
-                    records: records.clone(),
-                    about: about.clone(),
-                    route: Route::Piggyback,
-                    inbox_address: None,
-                    sessions: 0,
-                    readers: BTreeSet::from([requester.to_string()]),
-                    turn_started: Some(Instant::now()),
-                },
-            );
-        }
+        let spec = self.codex_spec(&about);
+        self.state.lock().residents.insert(
+            id.clone(),
+            Live {
+                records: records.clone(),
+                about: about.clone(),
+                route: Route::Piggyback,
+                inbox_address: None,
+                sessions: 0,
+                readers,
+                turn_started: Some(Instant::now()),
+            },
+        );
         let failed = |error: String| {
             self.state.lock().residents.remove(&id);
-            let _ = records.write_now(&Now { state: "error".into(), since: crate::world::now_rfc3339(), ..Now::default() });
+            set_state(&records, "error");
             error
         };
         let (thread, model) = self.codex.create_thread(spec).await.map_err(failed)?;
@@ -372,26 +403,103 @@ impl Town {
                 live.route = Route::CodexThread(thread.clone());
             }
         }
-        let first = format!("=== from {requester} ===\n{prompt}");
         self.codex.send(&thread, Input::Text(first)).await.map_err(failed)?;
-        Ok(Asked { id, machine: self.config.machine.clone() })
+        Ok(id)
     }
 
-    /// What a colleague's thread is started and resumed with.
-    fn colleague_spec(&self, id: &str, requester: &str, town: Option<&str>) -> ThreadSpec {
+    /// Starts a background Claude resident. Its mod registers with the resident id the World
+    /// gave it, which pairs the session with these records.
+    async fn start_claude(&self, town: Option<String>, words: &str) -> Result<String, String> {
+        if words.trim().is_empty() {
+            return Err("A Claude resident starts with the user's first words; give them.".to_string());
+        }
+        let id = {
+            let state = self.state.lock();
+            new_resident_id("claude", |candidate| state.residents.contains_key(candidate) || self.recorded(candidate))?
+        };
+        let records = Records::new(self.resident_dir(town.as_deref(), &id));
+        records.create()?;
+        let session = super::claude::new_session_id()?;
+        let mut about = About {
+            id: id.clone(),
+            agent: "claude-code".to_string(),
+            agent_version: None,
+            model: None,
+            model_source: None,
+            machine: self.config.machine.clone(),
+            surface: "bg".to_string(),
+            birth: Birth::User,
+            since: crate::world::now_rfc3339(),
+            session: Some(session.clone()),
+            town: town.clone(),
+        };
+        let cwd = match &town {
+            Some(town) => self.town_dir(town),
+            None => self.config.world_dir.join("outside"),
+        };
+        let instructions = resident_instructions(&about, &self.config.machine, self.map(town.as_deref()));
+        super::claude::start_background(&super::claude::Background {
+            resident: &id,
+            session: &session,
+            cwd: &cwd,
+            records: &records.dir,
+            world_dir: &self.config.world_dir,
+            fastctx: &self.config.fastctx,
+            instructions: &instructions,
+            words,
+        })
+        .await?;
+        records.write_about(&about)?;
+        records.write_now(&Now { state: "busy".into(), since: about.since.clone(), ..Now::default() })?;
+        about.session = Some(session);
+        self.state.lock().residents.insert(
+            id.clone(),
+            Live {
+                records,
+                about,
+                route: Route::ClaudeMod(None),
+                inbox_address: None,
+                sessions: 0,
+                readers: BTreeSet::new(),
+                turn_started: None,
+            },
+        );
+        Ok(id)
+    }
+
+    /// What a Codex resident's thread is started and resumed with: its place and whom it works
+    /// for, the town's map when it is in one, and the World's tools under its own name.
+    fn codex_spec(&self, about: &About) -> ThreadSpec {
+        let colleague = matches!(about.birth, Birth::Colleague { .. });
+        let mut env = json!({"FASTCTX_RESIDENT": about.id});
+        if colleague {
+            env["FASTCTX_COLLEAGUE"] = json!("1");
+        }
         ThreadSpec {
-            cwd: match town {
+            cwd: match &about.town {
                 Some(town) => self.town_dir(town),
                 None => self.config.world_dir.join("outside"),
             },
-            developer_instructions: colleague_instructions(id, requester, town, &self.config.machine),
+            developer_instructions: resident_instructions(about, &self.config.machine, self.map(about.town.as_deref())),
             config: json!({
                 "mcp_servers": {"fastctx": {
                     "command": self.config.fastctx,
                     "args": ["serve"],
-                    "env": {"FASTCTX_RESIDENT": id, "FASTCTX_COLLEAGUE": "1"},
+                    "env": env,
                 }},
             }),
+        }
+    }
+
+    /// The town's map, compiled now; `None` outside every town or when it cannot be read.
+    fn map(&self, town: Option<&str>) -> Option<String> {
+        let town = town?;
+        match super::project::render_map(&self.config.world_dir, town, &self.config.machine) {
+            Ok(map) => Some(map),
+            Err(error) => {
+                (self.log)(format!("cannot compile the map of {town}: {error}"));
+                None
+            }
         }
     }
 
@@ -418,9 +526,10 @@ impl Town {
                 }
             };
             let now = records.now().ok().flatten().unwrap_or_default();
-            let thread = match (&about.birth, about.agent.as_str(), &about.session) {
-                (Birth::Colleague { requester, .. }, "codex", Some(thread)) => {
-                    self.codex.adopt(thread, self.colleague_spec(&about.id, requester, about.town.as_deref()));
+            // Codex residents the World holds come back; their threads are on disk.
+            let thread = match (about.agent.as_str(), about.surface.as_str(), &about.session) {
+                ("codex", "world", Some(thread)) => {
+                    self.codex.adopt(thread, self.codex_spec(&about));
                     Some(thread.clone())
                 }
                 _ => None,
@@ -727,7 +836,10 @@ impl Town {
             (route, receiver)
         };
         let history = match route {
-            Route::CodexThread(thread) => super::talk::codex_history(&self.codex.history(&thread).await?),
+            Route::CodexThread(thread) => {
+                let history = self.codex.history(&thread).await?;
+                super::talk::codex_history(&history, self.codex.running_turn(&thread).as_deref())
+            }
             Route::ClaudeMod(_) | Route::Piggyback => Vec::new(),
         };
         Ok((history, receiver))
@@ -962,20 +1074,34 @@ fn format_duration(ms: u64) -> String {
     }
 }
 
-/// What a colleague is told about where it is and whom it works for.
-fn colleague_instructions(id: &str, requester: &str, town: Option<&str>, machine: &str) -> String {
-    let place = match town {
+/// What a resident the World started is told: where it is, whom it works for, and the map of
+/// its town. A colleague works for the resident that asked for it and answers it at the end of
+/// every turn; a resident the user opened talks with the user.
+fn resident_instructions(about: &About, machine: &str, map: Option<String>) -> String {
+    let id = &about.id;
+    let place = match &about.town {
         Some(town) => format!("in the town (project) \"{town}\""),
         None => "outside every town".to_string(),
     };
-    format!(
-        "You are {id}, a resident of the FastCtx World on the machine \"{machine}\", {place}. \
-{requester} asked you to work for it. You work for {requester}, not for a human: there is no user \
+    let mut text = format!("You are {id}, a resident of the FastCtx World on the machine \"{machine}\", {place}. ");
+    match &about.birth {
+        Birth::Colleague { requester, .. } => text.push_str(&format!(
+            "{requester} asked you to work for it. You work for {requester}, not for a human: there is no user \
 here to ask. The last message of each of your turns is delivered to {requester} word for word, and \
 only to the residents whose words went into that turn; nobody else reads it. End every turn with a \
 plain report {requester} can act on: what you did, what you ran to check it and the exit codes, what \
 still fails or is left, and a direct answer to every question you were asked. If you need a decision, \
-ask it in that last message and stop; the answer comes back as your next turn. Use the World's tools \
-for files and commands; your own shell is not available here."
-    )
+ask it in that last message and stop; the answer comes back as your next turn. "
+        )),
+        Birth::User => text.push_str(
+            "The user opened you through the World and talks with you from their own devices; the user's \
+words reach you as user messages, and words from other residents arrive marked with their name. ",
+        ),
+    }
+    text.push_str("Use the World's tools for files and commands; your own shell is not available here.");
+    if let Some(map) = map {
+        text.push_str("\n\n");
+        text.push_str(&map);
+    }
+    text
 }

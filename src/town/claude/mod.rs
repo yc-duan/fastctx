@@ -16,16 +16,34 @@ use std::path::{Path, PathBuf};
 
 const WORLD_JS: &str = include_str!("world.js");
 const PLUGIN_NAME: &str = "fastctx-world";
+/// The local marketplace that holds the plugin, so a user-level install can name it as
+/// `fastctx-world@fastctx`. A plugin with a relative source in a local-directory marketplace
+/// loads in place, so a new node build's plugin takes effect at the next session start.
+const MARKETPLACE_NAME: &str = "fastctx";
 
 /// Environment variable Claude Code gives each session's inbox; its value is a path that
 /// differs per session, which is what pairs the mod's registration with the session's MCP
 /// connection. Only the address is read, never the token beside it.
 pub(crate) const INBOX_ADDRESS_VARIABLE: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
 
-/// Writes the plugin into `dir` for a World whose directory is `world_dir`.
-pub(crate) fn write_plugin(dir: &Path, world_dir: &Path) -> Result<(), String> {
+/// Writes the marketplace and the plugin under `<world>/claude-plugins/`.
+pub(crate) fn write_plugin(world_dir: &Path) -> Result<(), String> {
     let world = world_dir.to_string_lossy().replace('\\', "/");
-    let files: [(PathBuf, String); 3] = [
+    let dir = plugin_dir(world_dir);
+    let files: [(PathBuf, String); 4] = [
+        (
+            marketplace_dir(world_dir).join(".claude-plugin").join("marketplace.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "name": MARKETPLACE_NAME,
+                "owner": {"name": "FastCtx"},
+                "plugins": [{
+                    "name": PLUGIN_NAME,
+                    "source": format!("./{PLUGIN_NAME}"),
+                    "description": "FastCtx World: tells the World this session exists and delivers its messages.",
+                }],
+            }))
+            .expect("a literal serializes"),
+        ),
         (
             dir.join(".claude-plugin").join("plugin.json"),
             serde_json::to_string_pretty(&serde_json::json!({
@@ -49,9 +67,24 @@ pub(crate) fn write_plugin(dir: &Path, world_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Where the node keeps the plugin: `<world>/claude-plugin`.
+/// The local marketplace the node keeps: `<world>/claude-plugins`.
+pub(crate) fn marketplace_dir(world_dir: &Path) -> PathBuf {
+    world_dir.join("claude-plugins")
+}
+
+/// The plugin itself, inside the marketplace; background residents load it with `--plugin-dir`.
 pub(crate) fn plugin_dir(world_dir: &Path) -> PathBuf {
-    world_dir.join("claude-plugin")
+    marketplace_dir(world_dir).join(PLUGIN_NAME)
+}
+
+/// The official commands that install the plugin for every Claude Code session of the user:
+/// add the local marketplace, then install the plugin from it at user scope. `fastctx apply`
+/// runs them; Claude Code itself does the installing.
+pub(crate) fn install_commands(world_dir: &Path) -> [Vec<String>; 2] {
+    [
+        vec!["plugin".into(), "marketplace".into(), "add".into(), marketplace_dir(world_dir).to_string_lossy().into_owned()],
+        vec!["plugin".into(), "install".into(), format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}"), "--scope".into(), "user".into()],
+    ]
 }
 
 /// `<world>/claude/<session>`.
@@ -222,4 +255,85 @@ pub(crate) fn resident_settings() -> serde_json::Value {
             "deny": ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         }
     })
+}
+
+/// A new session id in the UUID form `--session-id` requires.
+pub(crate) fn new_session_id() -> Result<String, String> {
+    let mut bytes = crate::world::crypto::random_bytes::<16>()?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = hex::encode(bytes);
+    Ok(format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..]))
+}
+
+/// What a background Claude resident is started from.
+pub(crate) struct Background<'a> {
+    pub(crate) resident: &'a str,
+    pub(crate) session: &'a str,
+    /// The town's directory, or the outside; Claude Code must trust it before `--bg` works.
+    pub(crate) cwd: &'a Path,
+    /// The resident's records; its launch files are kept beside them.
+    pub(crate) records: &'a Path,
+    pub(crate) world_dir: &'a Path,
+    pub(crate) fastctx: &'a Path,
+    pub(crate) instructions: &'a str,
+    pub(crate) words: &'a str,
+}
+
+/// Starts `claude --bg` for a resident and returns once Claude Code has taken the session. The
+/// session runs under Claude Code's own supervisor; the World talks to it through the mod.
+pub(crate) async fn start_background(background: &Background<'_>) -> Result<(), String> {
+    let dir = background.records.join("claude");
+    std::fs::create_dir_all(&dir).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&dir)))?;
+    let mcp_config = dir.join("mcp.json");
+    let settings = dir.join("settings.json");
+    let prompt = dir.join("instructions.md");
+    let config = serde_json::json!({
+        "mcpServers": {"fastctx": {
+            "command": background.fastctx,
+            "args": ["serve"],
+            "env": {"FASTCTX_RESIDENT": background.resident},
+        }}
+    });
+    let encode = |value: &serde_json::Value| serde_json::to_vec_pretty(value).expect("JSON values encode");
+    crate::world::write_atomic(&mcp_config, &encode(&config))?;
+    crate::world::write_atomic(&settings, &encode(&resident_settings()))?;
+    crate::world::write_atomic(&prompt, background.instructions.as_bytes())?;
+    let plugin_dir = plugin_dir(background.world_dir);
+    let args = launch_args(&Launch {
+        session: background.session,
+        plugin_dir: &plugin_dir,
+        mcp_config: &mcp_config,
+        settings: &settings,
+        system_prompt_file: &prompt,
+        first_words: background.words,
+    });
+    let binary = claude_binary().ok_or_else(|| "Claude Code is not installed on this machine: no claude command was found.".to_string())?;
+    let mut command = tokio::process::Command::new(&binary);
+    command
+        .args(&args)
+        .current_dir(background.cwd)
+        .env(crate::town::session::RESIDENT_VARIABLE, background.resident)
+        .stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let output = command
+        .output()
+        .await
+        .map_err(|error| format!("Cannot start {}: {error}", crate::paths::display_path(&binary)))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "claude --bg failed ({}): {}{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout).trim(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    ))
+}
+
+fn claude_binary() -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    let names: &[&str] = if cfg!(windows) { &["claude.exe", "claude.cmd"] } else { &["claude"] };
+    std::env::split_paths(&paths).flat_map(|dir| names.iter().map(move |name| dir.join(name))).find(|path| path.is_file())
 }

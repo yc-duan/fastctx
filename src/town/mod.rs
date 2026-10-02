@@ -36,7 +36,7 @@ pub(crate) fn start(
     let workdir = world_dir.join("codex");
     std::fs::create_dir_all(&workdir)
         .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&workdir)))?;
-    claude::write_plugin(&claude::plugin_dir(&world_dir), &world_dir)?;
+    claude::write_plugin(&world_dir)?;
     let (codex, events) = codex::host::CodexHost::new(codex_home, workdir, Arc::clone(&log));
     Ok(core::Town::new(core::TownConfig { machine, world_dir, fastctx }, codex, events, log))
 }

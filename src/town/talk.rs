@@ -77,8 +77,10 @@ pub(crate) fn codex_item(item: &Value, done: bool) -> Option<TalkEvent> {
     }
 }
 
-/// A Codex thread's recorded history as events, oldest first.
-pub(crate) fn codex_history(thread: &Value) -> Vec<TalkEvent> {
+/// A Codex thread's recorded history as events, oldest first. `running` is the turn the
+/// app-server is running now: its end is not on disk yet, and `thread/read` reports such a
+/// turn as interrupted, so it is left open.
+pub(crate) fn codex_history(thread: &Value, running: Option<&str>) -> Vec<TalkEvent> {
     let mut events = Vec::new();
     let turns = thread.pointer("/thread/turns").and_then(Value::as_array).cloned().unwrap_or_default();
     for turn in turns {
@@ -88,7 +90,7 @@ pub(crate) fn codex_history(thread: &Value) -> Vec<TalkEvent> {
             events.extend(codex_item(item, true));
         }
         let status = turn.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string();
-        if status != "inProgress" {
+        if status != "inProgress" && running != Some(id.as_str()) {
             events.push(TalkEvent::TurnEnded { turn: id, status });
         }
     }
