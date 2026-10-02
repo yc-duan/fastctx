@@ -116,6 +116,16 @@ enum Command {
     /// Who is in this town and what they are doing; with ids, those residents or jobs in detail.
     #[command(name = "w")]
     W(crate::town::cli::WArgs),
+    /// Projects: list them, show one's charter or map, or enter one's town.
+    Project {
+        #[command(subcommand)]
+        command: crate::town::cli::ProjectCommand,
+    },
+    /// Journals: the history residents leave in a project.
+    Journal {
+        #[command(subcommand)]
+        command: crate::town::cli::JournalCommand,
+    },
     /// Internal World control worker; request and result are private stdin/stdout JSON.
     #[command(hide = true)]
     WorldControl,
@@ -244,6 +254,8 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         Some(Command::Node { command }) => crate::world::cli::run_node(command).await,
         Some(Command::WorldControl) => crate::world::control::run_helper().await,
         Some(Command::W(args)) => crate::town::cli::run(args),
+        Some(Command::Project { command }) => crate::town::cli::run_project(command).await,
+        Some(Command::Journal { command }) => crate::town::cli::run_journal(command),
         #[cfg(unix)]
         Some(Command::JobBootstrap) => {
             crate::shell::jobs::run_bootstrap_entry()?;

@@ -217,6 +217,42 @@ impl Town {
         })
     }
 
+    /// Moves a resident on this machine into a town (`fastctx project enter`) and returns the
+    /// town's map. What it did so far stays where it happened; from now on its records are in
+    /// the town's directory.
+    pub(crate) fn enter(&self, id: &str, town: &str) -> Result<String, String> {
+        let charter = super::project::charter(&self.config.world_dir, town)?;
+        if !charter.machines.iter().any(|machine| machine == &self.config.machine) {
+            return Err(format!(
+                "{} is not one of {town}'s machines ({}); the user can add it to the project first.",
+                self.config.machine,
+                charter.machines.join(", ")
+            ));
+        }
+        let mut state = self.state.lock();
+        let live = state.residents.get_mut(id).ok_or_else(|| format!("{id} is not a resident of this machine."))?;
+        if live.about.town.as_deref() == Some(town) {
+            drop(state);
+            return super::project::render_map(&self.config.world_dir, town, &self.config.machine);
+        }
+        let records = Records::new(self.resident_dir(Some(town), id));
+        records.create()?;
+        let mut about = live.about.clone();
+        about.town = Some(town.to_string());
+        records.write_about(&about)?;
+        let mut now = live.records.now().ok().flatten().unwrap_or_default();
+        records.write_now(&now)?;
+        now.state = "left".into();
+        now.since = crate::world::now_rfc3339();
+        now.last_action = Some(format!("entered the town {town}"));
+        now.last_action_at = Some(now.since.clone());
+        live.records.write_now(&now)?;
+        live.records = records;
+        live.about = about;
+        drop(state);
+        super::project::render_map(&self.config.world_dir, town, &self.config.machine)
+    }
+
     /// Records one action of a resident's hands and makes it the last thing it did.
     pub(crate) fn record_action(&self, id: &str, machine: &str, hand: &str, what: &str, result: &str) {
         let state = self.state.lock();

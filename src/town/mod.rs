@@ -6,10 +6,13 @@
 //! they are doing, and stops them. Asking a colleague and a user talking to a resident from
 //! another device are two uses of the same four operations (`specs/world-colleagues.md`).
 
+pub(crate) mod admin;
 pub(crate) mod claude;
 pub(crate) mod cli;
 pub(crate) mod codex;
 pub(crate) mod core;
+pub(crate) mod journal;
+pub(crate) mod project;
 pub(crate) mod records;
 pub(crate) mod session;
 pub(crate) mod w;

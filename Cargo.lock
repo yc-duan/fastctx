@@ -1011,6 +1011,7 @@ dependencies = [
  "tokio-util",
  "toml_edit",
  "unicode-segmentation",
+ "unicode-width",
  "ureq",
  "url",
  "walkdir",

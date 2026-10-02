@@ -76,6 +76,7 @@ async fn run_daemon_inner(
         Arc::clone(&client),
         Arc::clone(&executor),
         Arc::clone(&engine_hosted),
+        Arc::clone(&town),
     );
     log(format!(
         "\"{}\" starting (World {}, key {})",

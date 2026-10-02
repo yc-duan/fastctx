@@ -65,6 +65,8 @@ pub(crate) enum AdminRequest {
         #[serde(default)]
         expected_revision: Option<u64>,
     },
+    /// A request for this machine's town.
+    Town { request: crate::town::admin::TownRequest },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -125,6 +127,7 @@ pub(crate) struct AdminServer {
     client: Arc<WorldClient>,
     executor: Arc<super::executor::Executor>,
     engine_hosted: Arc<std::sync::atomic::AtomicBool>,
+    town: Arc<crate::town::core::Town>,
 }
 
 impl AdminServer {
@@ -132,11 +135,13 @@ impl AdminServer {
         client: Arc<WorldClient>,
         executor: Arc<super::executor::Executor>,
         engine_hosted: Arc<std::sync::atomic::AtomicBool>,
+        town: Arc<crate::town::core::Town>,
     ) -> Arc<Self> {
         Arc::new(Self {
             client,
             executor,
             engine_hosted,
+            town,
         })
     }
 
@@ -392,6 +397,7 @@ impl AdminServer {
                     .map(|revision| serde_json::json!({ "id": id, "revision": revision }))
             }
             AdminRequest::Leave => self.client.leave().map(|()| serde_json::Value::Null),
+            AdminRequest::Town { request } => crate::town::admin::handle(&self.town, request).await,
         };
         match result {
             Ok(data) => AdminResponse {
