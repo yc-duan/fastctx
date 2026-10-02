@@ -6,6 +6,8 @@ use super::{
     About, Asked, Birth, Delivery, HashMap, Live, MessageLine, Now, Records, Route, Town, delivery_id, format_duration,
     new_resident_id, resident_instructions, set_desk, set_state,
 };
+use crate::control::codex_config;
+use crate::hands::text;
 use crate::town::codex::host::{HostEvent, Input, ThreadSpec};
 use crate::town::talk::TalkEvent;
 use serde_json::{Value, json};
@@ -137,11 +139,17 @@ impl Town {
         ThreadSpec {
             cwd: self.standing_dir(about.town.as_deref()),
             developer_instructions: resident_instructions(about, &self.config.machine, self.map(about.town.as_deref())),
+            // The same timeouts `fastctx apply` registers, and host limits opened past the
+            // World's own budget so Codex never cuts a result after us (`specs/world-view.md`).
             config: json!({
+                "tool_output_token_limit": text::CODEX_OUTPUT_TOKEN_LIMIT,
                 "mcp_servers": {"fastctx": {
                     "command": self.config.fastctx,
-                    "args": ["serve"],
+                    "args": ["serve", "--writer", "apply_patch"],
                     "env": env,
+                    "startup_timeout_sec": codex_config::STARTUP_TIMEOUT_SECONDS,
+                    "tool_timeout_sec": codex_config::TOOL_TIMEOUT_SECONDS,
+                    "tools": {"run": {"output_token_limit": text::CODEX_OUTPUT_TOKEN_LIMIT}},
                 }},
             }),
         }
@@ -197,7 +205,6 @@ impl Town {
                 (self.log)(reason);
                 self.server_gone().await;
             }
-            HostEvent::Status { .. } => {}
         }
     }
 

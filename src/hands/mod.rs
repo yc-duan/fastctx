@@ -1,6 +1,9 @@
-//! The World's hands as MCP tools: the words models read about them, and the tools a resident
-//! uses to ask for a colleague and speak to one.
+//! The World's hands as MCP tools (`specs/world-run.md`, `world-write.md`,
+//! `world-colleagues.md`): the surface an enrolled machine publishes, the hands behind it, and
+//! the words models read about them.
 
 pub(crate) mod colleague;
+pub(crate) mod run;
+pub(crate) mod surface;
 pub(crate) mod text;
 pub(crate) mod write;

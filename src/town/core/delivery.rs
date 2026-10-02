@@ -172,15 +172,54 @@ impl Town {
         self.state.lock().residents.get(id).map(|live| live.records.dir.join("inbox"))
     }
 
-    /// A command a resident started on this machine has ended: the resident that started it is
-    /// told, and only it (`specs/world-run.md`, "怎样得知它跑完了"). The notice reaches a Codex
-    /// resident as a tool output, a fact rather than words to answer.
+    /// `run` gave a command back while it still ran, so its end is owed to the resident that
+    /// started it. A marker beside the record says so. Whoever claims the marker first delivers
+    /// the notice: the command's end hook, this look if the command ended before the marker was
+    /// written, or the node's next start if the node was down when it ended. So a notice is
+    /// given once, never lost, and never given for a command whose end its caller already saw.
+    pub(crate) async fn owe_end(&self, record: &Path) -> Result<(), String> {
+        let marker = record.with_extension(OWED);
+        std::fs::write(&marker, b"").map_err(|error| format!("Cannot write {}: {error}", crate::paths::display_path(&marker)))?;
+        self.job_ended(record).await
+    }
+
+    /// Delivers every owed end recorded in one resident's directory whose command has ended.
+    pub(crate) async fn owed_ends(&self, resident_dir: &Path) {
+        let jobs = resident_dir.join("jobs");
+        let owed: Vec<PathBuf> = std::fs::read_dir(&jobs)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == OWED))
+            .collect();
+        for marker in owed {
+            if let Err(error) = self.job_ended(&marker.with_extension("json")).await {
+                (self.log)(format!("cannot deliver the end of {}: {error}", crate::paths::display_path(&marker)));
+            }
+        }
+    }
+
+    /// A command a resident started on this machine has ended: if its end is owed, the resident
+    /// that started it is told, and only it (`specs/world-run.md`, "怎样得知它跑完了"). The notice
+    /// reaches a Codex resident as a tool output, a fact rather than words to answer. A
+    /// resident that is not here keeps its notice owed until it comes back.
     pub(crate) async fn job_ended(&self, record: &Path) -> Result<(), String> {
         let jobs = record.parent().ok_or("A job record sits in a jobs directory.")?;
         let resident_dir = jobs.parent().ok_or("A jobs directory sits in a resident's directory.")?;
         let resident = resident_dir.file_name().and_then(|name| name.to_str()).ok_or("A resident directory is named by its id.")?;
         let job = crate::town::who::read_job(record, resident, None)
             .ok_or_else(|| format!("{} is not a job record.", crate::paths::display_path(record)))?;
+        if matches!(job.state.as_str(), "starting" | "running") || !self.state.lock().residents.contains_key(resident) {
+            return Ok(());
+        }
+        let marker = record.with_extension(OWED);
+        let claimed = record.with_extension(DELIVERED);
+        match std::fs::rename(&marker, &claimed) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("Cannot claim {}: {error}", crate::paths::display_path(&marker))),
+        }
         let ended = match (job.state.as_str(), job.exit_code) {
             ("exited", Some(code)) => format!("exited {code}"),
             ("interrupted", _) => "was interrupted".to_string(),
@@ -194,12 +233,37 @@ impl Town {
         let command = job.command.lines().find(|line| !line.trim().is_empty()).unwrap_or_default().trim().to_string();
         let log = crate::paths::display_path(&job.output_path);
         let text = crate::hands::text::job_ended_notice(&job.id, &job.machine, &ended, &elapsed, &command, &log);
-        if !self.state.lock().residents.contains_key(resident) {
-            // Its starter lives on another machine, or has gone; the record says what happened.
-            return Ok(());
+        let delivered = match delivery_id() {
+            Ok(id) => self.deliver(resident, Delivery { id, from: "world".into(), kind: "notice".into(), text, as_tool_output: true }).await,
+            Err(error) => Err(error),
+        };
+        if delivered.is_err() {
+            // Owed again, so the node's next start tries once more.
+            let _ = std::fs::rename(&claimed, &marker);
         }
-        let delivery = Delivery { id: delivery_id()?, from: "world".into(), kind: "notice".into(), text, as_tool_output: true };
-        self.deliver(resident, delivery).await
+        delivered
+    }
+}
+
+/// The marker of an end owed to the resident that started a command, and the name it takes
+/// once the notice went out.
+const OWED: &str = "notify";
+const DELIVERED: &str = "notified";
+
+impl Town {
+    /// At the node's start: commands whose supervisor did not survive, because the machine
+    /// restarted, are recorded as interrupted (`specs/world-run.md`, "跑起来的东西留在世界上"),
+    /// and every end still owed, including those that came while the node was down, is told.
+    pub(super) async fn reconcile_jobs(self: std::sync::Arc<Self>) {
+        for dir in self.record_dirs() {
+            let scanned = dir.clone();
+            match tokio::task::spawn_blocking(move || crate::run::reconcile(&scanned)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => (self.log)(format!("cannot reconcile the commands in {}: {error}", crate::paths::display_path(&dir))),
+                Err(error) => (self.log)(format!("reconciling {} stopped: {error}", crate::paths::display_path(&dir))),
+            }
+            self.owed_ends(&dir).await;
+        }
     }
 }
 

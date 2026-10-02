@@ -1,7 +1,7 @@
 //! `ask_colleague` and `message_colleague` (`specs/world-colleagues.md`, "两个工具").
 //!
-//! Both act for the resident behind this MCP session. They are published only on a machine
-//! whose node hosts a town, and never to a colleague: a colleague cannot ask for colleagues.
+//! Both act for the resident behind this MCP session. They are part of the World's surface,
+//! except for a colleague: a colleague cannot ask for colleagues.
 
 use super::text;
 use crate::server::FastCtxServer;

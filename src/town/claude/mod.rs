@@ -112,20 +112,17 @@ pub(crate) fn deliver(world_dir: &Path, session: &str, delivery: &ModDelivery) -
     crate::world::write_atomic(&inbox.join(format!("{}.json", delivery.id)), &bytes)
 }
 
-/// What the mod wrote when its session started.
+/// What the town uses of what the mod wrote when its session started. The file says more (the
+/// session's surfaces and Claude Code's version) for whoever reads it; the MCP handshake
+/// already told the town those.
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct Registration {
-    pub(crate) session: String,
     #[serde(default)]
     pub(crate) resident: Option<String>,
     #[serde(default)]
     pub(crate) inbox_address: Option<String>,
     #[serde(default)]
     pub(crate) model: Option<serde_json::Value>,
-    #[serde(default)]
-    pub(crate) surfaces: Option<serde_json::Value>,
-    #[serde(default)]
-    pub(crate) version: Option<serde_json::Value>,
 }
 
 /// One event file the mod wrote.
@@ -183,29 +180,36 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
         }
     };
     names.sort();
-    // Events are taken in order and each is removed once taken. The first one that does not
-    // parse yet, being written or damaged, stops the look: it and everything after it wait for
-    // the next one, so no event is taken out of order and none is lost.
+    // Events are taken in order and each is removed once taken. The mod writes a marker after
+    // each event: the first event without one is still being written and stops the look, so no
+    // event is taken out of order. One with a marker that does not parse is damaged; it is set
+    // aside in `damaged/`, kept for whoever looks, and the look goes on.
     for name in names {
-        let path = dir.join("events").join(&name);
-        let event = std::fs::read(&path)
+        let Some(stem) = name.strip_suffix(".json") else { continue };
+        let events = dir.join("events");
+        let path = events.join(&name);
+        let marker = events.join(format!("{stem}.done"));
+        if !marker.is_file() {
+            break;
+        }
+        let parsed = std::fs::read(&path)
             .map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&path)))
             .and_then(|bytes| {
                 serde_json::from_slice::<ModEvent>(&bytes)
-                    .map_err(|error| format!("{} is not a whole mod event yet ({error})", crate::paths::display_path(&path)))
+                    .map_err(|error| format!("{} is not a mod event ({error})", crate::paths::display_path(&path)))
             });
-        let event = match event {
-            Ok(event) => event,
-            Err(problem) => {
-                harvest.problem = Some(problem);
-                break;
-            }
+        let taken = match &parsed {
+            Ok(_) => std::fs::remove_file(&path).and_then(|()| std::fs::remove_file(&marker)),
+            Err(_) => set_aside(&dir, &path, &marker),
         };
-        if let Err(error) = std::fs::remove_file(&path) {
-            harvest.problem = Some(format!("Cannot remove {}: {error}", crate::paths::display_path(&path)));
+        if let Err(error) = taken {
+            harvest.problem = Some(format!("Cannot take {}: {error}", crate::paths::display_path(&path)));
             break;
         }
-        harvest.events.push(event);
+        match parsed {
+            Ok(event) => harvest.events.push(event),
+            Err(problem) => harvest.problem = Some(format!("{problem}; set aside in {}", crate::paths::display_path(&dir.join("damaged")))),
+        }
     }
     let receipts = match list(&dir.join("receipts")) {
         Ok(receipts) => receipts,
@@ -227,6 +231,18 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
         }
     }
     harvest
+}
+
+/// Moves a damaged event and its marker into the session's `damaged/` directory.
+fn set_aside(session_dir: &Path, event: &Path, marker: &Path) -> std::io::Result<()> {
+    let damaged = session_dir.join("damaged");
+    std::fs::create_dir_all(&damaged)?;
+    for path in [event, marker] {
+        if let Some(name) = path.file_name() {
+            std::fs::rename(path, damaged.join(name))?;
+        }
+    }
+    Ok(())
 }
 
 fn list(dir: &Path) -> Result<Vec<String>, String> {
@@ -276,13 +292,16 @@ pub(crate) fn wake_args(session: &str, words: &str) -> Vec<String> {
 }
 
 /// Settings for a background resident: the host's own read, write, search and shell tools are
-/// off and the World's tools are allowed, so the session never stops on an approval.
+/// off and the World's tools are allowed, so the session never stops on an approval; and the
+/// host's limit on one MCP result is opened past the World's own budget, so Claude Code never
+/// drops a result after us (`specs/world-view.md`, "一次给多少").
 pub(crate) fn resident_settings() -> serde_json::Value {
     serde_json::json!({
         "permissions": {
             "allow": ["mcp__fastctx"],
             "deny": ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
-        }
+        },
+        "env": {"MAX_MCP_OUTPUT_TOKENS": crate::hands::text::CLAUDE_MCP_OUTPUT_TOKENS.to_string()},
     })
 }
 

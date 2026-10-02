@@ -4,10 +4,28 @@
 //! command really exists (`specs/world-run.md`, `world-view.md`, `world-write.md`,
 //! `world-colleagues.md`).
 
-/// The seconds `run` waits before a command continues in the background. Set by the World,
-/// never by the model: it bounds how late a message to a busy resident can be, because both
-/// hosts read incoming words at tool boundaries (`specs/world-run.md`, "一次调用等 15 秒").
-pub(crate) const RUN_WAIT_SECONDS: u64 = 15;
+/// The namespace blurb a host shows for the server. Hosts may keep only its first 250
+/// characters, so it introduces the hands and nothing else.
+pub(crate) fn server_instructions(writer: crate::server::Writer) -> String {
+    let write = match writer {
+        crate::server::Writer::Edit => "edit and write",
+        crate::server::Writer::ApplyPatch => "apply_patch",
+    };
+    format!(
+        "The World's hands: run bash with run and change files with {write}, on this machine or, with node, on any machine of this World."
+    )
+}
+
+/// What Codex may return of one tool result, in its own tokens of four UTF-8 bytes. One run
+/// gives at most 150,000 characters (`specs/world-view.md`), at most four bytes each, so at most
+/// 150,000 Codex tokens; Codex lets a result run 1.2 times its limit, and 125,000 × 1.2 is
+/// exactly 150,000.
+pub(crate) const CODEX_OUTPUT_TOKEN_LIMIT: u64 = 125_000;
+
+/// What Claude Code may return of one MCP result, in tokens: the 200,000-token window every
+/// model is assumed to have. It has no clamp of its own, and one run's 150,000 characters with
+/// images never reach it.
+pub(crate) const CLAUDE_MCP_OUTPUT_TOKENS: u64 = 200_000;
 
 pub(crate) const RUN_DESCRIPTION: &str = concat!(
     "Run a bash command on this machine or, with node, on another machine of this World. ",
@@ -89,21 +107,6 @@ pub(crate) const MESSAGE_COLLEAGUE_DESCRIPTION: &str = concat!(
 );
 pub(crate) const MESSAGE_TO: &str = "The resident's id, such as codex-7f3a.";
 pub(crate) const MESSAGE_TEXT: &str = "What you want to say; delivered verbatim with your name.";
-
-/// First line of a `run` result that finished within the wait.
-pub(crate) fn run_finished_head(machine: &str, exit: &str) -> String {
-    format!("=== run on {machine} ({exit}) ===")
-}
-
-/// First line of a `run` result that continues in the background.
-pub(crate) fn run_continuing_head(machine: &str, job: &str) -> String {
-    format!("=== run on {machine} (still running after {RUN_WAIT_SECONDS}s; {job}) ===")
-}
-
-/// Last line of a `run` result that continues in the background.
-pub(crate) fn run_continuing_tail(machine: &str, log: &str) -> String {
-    format!("=== output continues in {machine} {log}; you'll be told when it ends ===")
-}
 
 /// The notice a resident receives when a command it started has ended.
 pub(crate) fn job_ended_notice(job: &str, machine: &str, ended: &str, elapsed: &str, command: &str, log: &str) -> String {

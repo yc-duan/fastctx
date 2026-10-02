@@ -10,7 +10,7 @@ const FASTCTX_NAMESPACE: &str = "mcp__fastctx";
 const LEGACY_FASTREAD_NAMESPACE: &str = "mcp__fastread";
 const LEGACY_FASTSHELL_NAMESPACE: &str = "mcp__fastshell";
 const LEGACY_FASTEDIT_NAMESPACE: &str = "mcp__fastedit";
-const STARTUP_TIMEOUT_SECONDS: i64 = 120;
+pub(crate) const STARTUP_TIMEOUT_SECONDS: i64 = 120;
 /// MCP tool timeout written by Apply so 240-second tool waits retain a 60-second return margin.
 pub(crate) const TOOL_TIMEOUT_SECONDS: i64 = 300;
 
@@ -817,11 +817,15 @@ fn positive_integer_string(value: Option<&str>) -> bool {
         .is_some_and(|value| value > 0)
 }
 
+/// Codex writes with `apply_patch` once the machine is enrolled in a World
+/// (`specs/world-write.md`); an unenrolled machine ignores the writer.
 fn server_args(expected: &ExpectedConfig) -> Vec<String> {
     vec![
         "serve".to_string(),
         "--tools".to_string(),
         expected.enabled_tools.names().join(","),
+        "--writer".to_string(),
+        "apply_patch".to_string(),
     ]
 }
 

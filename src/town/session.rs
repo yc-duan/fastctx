@@ -31,10 +31,9 @@ impl ResidentSlot {
     }
 
     /// On the first World tool response of the session, one more head line says who the
-    /// resident is and where (`specs/world-projects.md`, "世界请居民进来"). It names commands
-    /// that run inside `run`, so it is given only to sessions that have `run`.
-    pub(crate) fn introduce(&self, result: &mut rmcp::model::CallToolResult, has_run: bool) {
-        if !has_run || self.introduced.swap(true, std::sync::atomic::Ordering::Relaxed) {
+    /// resident is and where (`specs/world-projects.md`, "世界请居民进来").
+    pub(crate) fn introduce(&self, result: &mut rmcp::model::CallToolResult) {
+        if self.introduced.swap(true, std::sync::atomic::Ordering::Relaxed) {
             return;
         }
         let Some(id) = self.id() else { return };
@@ -46,8 +45,12 @@ impl ResidentSlot {
                 "=== you are {id} on {machine}, outside every town; fastctx w shows the towns, and fastctx project enter <town> enters one when the user tells you which project to work on ==="
             ),
         };
+        // The head note stays the first line: it names the machine the call happened on.
         match result.content.first_mut() {
-            Some(rmcp::model::ContentBlock::Text(text)) => text.text = format!("{line}\n{}", text.text),
+            Some(rmcp::model::ContentBlock::Text(text)) => match text.text.split_once('\n') {
+                Some((head, rest)) => text.text = format!("{head}\n{line}\n{rest}"),
+                None => text.text = format!("{}\n{line}", text.text),
+            },
             _ => result.content.insert(0, rmcp::model::ContentBlock::text(line)),
         }
     }
@@ -74,7 +77,15 @@ impl ResidentSlot {
         };
         let inbox = variable(environment, super::claude::INBOX_ADDRESS_VARIABLE);
         match self.town.attach(agent, Some(agent_version), named.as_deref(), &surface, inbox.as_deref()) {
-            Ok(id) => *self.id.lock() = Some(id),
+            Ok(id) => {
+                // A resident that comes back is told what ended while it was away.
+                if let Some(place) = self.town.town_of(&id) {
+                    let dir = self.town.resident_dir(place.as_deref(), &id);
+                    let town = Arc::clone(&self.town);
+                    tokio::spawn(async move { town.owed_ends(&dir).await });
+                }
+                *self.id.lock() = Some(id);
+            }
             Err(error) => self.town.log(format!("cannot register a session of {agent}: {error}")),
         }
     }
@@ -86,11 +97,6 @@ impl ResidentSlot {
         for delivery in self.town.take_waiting(&id) {
             result.content.push(rmcp::model::ContentBlock::text(delivery.text));
         }
-    }
-
-    /// Whether this session belongs to a colleague, which has no colleague tools.
-    pub(crate) fn is_colleague(environment: &SessionEnvironment) -> bool {
-        variable(environment, COLLEAGUE_VARIABLE).is_some()
     }
 }
 

@@ -29,20 +29,36 @@ const MAX_REPLACE_OPERATIONS: usize = 8;
 pub struct ServerOptions {
     /// Validated tool names to publish.
     pub tools: EnabledTools,
-    /// Publish the World-mode surface: this machine is enrolled in a World, so file tools and
-    /// `run` take a `node` and the machine map is published. Decided by the proxy from the
-    /// existence of `~/.fastctx/world.toml`, never from the network.
+    /// Publish the World's hands instead of the 1.0 surface: this machine is enrolled in a
+    /// World. Decided by the proxy from the existence of `~/.fastctx/world.toml`, never from
+    /// the network.
     #[serde(default)]
     pub world: bool,
+    /// Which write tools the World publishes (`specs/world-write.md`); chosen when the host is
+    /// connected, never both.
+    #[serde(default)]
+    pub writer: Writer,
+    /// The session is a colleague, which has no colleague tools of its own.
+    #[serde(default)]
+    pub colleague: bool,
+}
+
+/// The World's write tools for one host: Claude Code's `edit` and `write`, or Codex's
+/// `apply_patch`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Writer {
+    #[default]
+    #[value(name = "edit")]
+    Edit,
+    #[value(name = "apply_patch")]
+    ApplyPatch,
 }
 
 impl ServerOptions {
     /// Enables all nine tools; intended for contract tests and doctor probes.
     pub const fn all() -> Self {
-        Self {
-            tools: EnabledTools::all(),
-            world: false,
-        }
+        Self::local(EnabledTools::all())
     }
 
     /// The local, non-World surface for one enabled set.
@@ -50,6 +66,8 @@ impl ServerOptions {
         Self {
             tools,
             world: false,
+            writer: Writer::Edit,
+            colleague: false,
         }
     }
 }
@@ -146,6 +164,44 @@ impl FastCtxServer {
         session: Arc<SessionContext>,
         runtime: Arc<SharedRuntime>,
     ) -> Self {
+        let mut tool_router = if options.world { crate::hands::surface::router(options) } else { Self::local_router(options) };
+        // Every consumer of a tool definition reads it back out of this router — the
+        // stdio `tools/list` answer, `tool_definitions`, and the contract hashes doctor
+        // compares across processes. Normalizing here keeps all of them on one shape;
+        // doing it in `tool_definitions` instead would make doctor compare a normalized
+        // expectation against an underived wire answer.
+        for route in tool_router.map.values_mut() {
+            route.attr.input_schema = Arc::new(crate::tool_schema::normalize_published_schema(
+                &route.attr.input_schema,
+            ));
+        }
+        let definitions = tool_router.list_all();
+        ToolManifest::validate_options(&definitions, options)
+            .expect("the compiled tool router must match ToolManifest");
+        // A World session on a node that hosts a town is a resident.
+        let resident = runtime
+            .town
+            .as_ref()
+            .filter(|_| options.world)
+            .map(|town| crate::town::session::ResidentSlot::new(Arc::clone(town)));
+        Self {
+            tool_router,
+            options,
+            shell: FastShell::with_session(Arc::clone(&session)),
+            replace: runtime.replace.clone(),
+            file_permits: Arc::clone(&runtime.file_permits),
+            grep_glob_executor: Arc::clone(&runtime.grep_glob_executor),
+            shell_permits: Arc::clone(&runtime.shell_permits),
+            replace_permits: Arc::clone(&runtime.replace_permits),
+            activity: Arc::clone(&runtime.activity),
+            world: runtime.world.clone(),
+            resident,
+            session,
+        }
+    }
+
+    /// The 1.0 surface: the enabled file and shell tools.
+    fn local_router(options: ServerOptions) -> ToolRouter<Self> {
         let mut tool_router = Self::file_tool_router();
         tool_router.merge(Self::shell_tool_router());
         tool_router.merge(Self::edit_tool_router());
@@ -163,10 +219,7 @@ impl FastCtxServer {
         for (name, description) in [
             (
                 "run_background",
-                crate::model_guidance::run_background_tool_description(
-                    options.tools,
-                    options.world,
-                ),
+                crate::model_guidance::run_background_tool_description(options.tools),
             ),
             (
                 "job_output",
@@ -184,81 +237,12 @@ impl FastCtxServer {
                 .attr
                 .description = Some(description.into());
         }
-        if options.world {
-            // World mode replaces the five node-taking tools with their World routes and adds
-            // the machine map. Descriptions and schemas come from the local routes so the two
-            // surfaces cannot drift apart; only the `node` property is added.
-            let mut world_router = Self::world_tool_router();
-            for name in ["inspect_local_file", "grep", "glob", "replace", "run"] {
-                let base = tool_router
-                    .map
-                    .get(name)
-                    .expect("the compiled router must contain every node-taking tool");
-                let description = base.attr.description.clone();
-                let schema = crate::world::surface::world_input_schema(&base.attr.input_schema);
-                let route = world_router
-                    .map
-                    .get_mut(name)
-                    .expect("the compiled World router must contain every node-taking tool");
-                route.attr.description = description;
-                route.attr.input_schema = Arc::new(schema);
-                tool_router.remove_route(name);
-            }
-            tool_router.merge(world_router);
-            for entry in ToolManifest::world_entries() {
-                if !crate::server_manifest::world_entry_published(entry.name, options.tools) {
-                    tool_router.remove_route(entry.name);
-                }
-            }
-        }
         for entry in ToolManifest::entries() {
             if !options.tools.contains(entry.name) {
                 tool_router.remove_route(entry.name);
             }
         }
-        // Every consumer of a tool definition reads it back out of this router — the
-        // stdio `tools/list` answer, `tool_definitions`, and the contract hashes doctor
-        // compares across processes. Normalizing here keeps all of them on one shape;
-        // doing it in `tool_definitions` instead would make doctor compare a normalized
-        // expectation against an underived wire answer.
-        for route in tool_router.map.values_mut() {
-            route.attr.input_schema = Arc::new(crate::tool_schema::normalize_published_schema(
-                &route.attr.input_schema,
-            ));
-        }
-        let definitions = tool_router.list_all();
-        ToolManifest::validate_options(&definitions, options)
-            .expect("the compiled tool router must match ToolManifest");
-        // A session on a node that hosts a town is a resident. Its colleague tools sit outside
-        // the 1.0 manifest: they exist only here, and never for a colleague itself.
-        let resident = runtime
-            .town
-            .as_ref()
-            .filter(|_| options.world)
-            .map(|town| crate::town::session::ResidentSlot::new(Arc::clone(town)));
-        if resident.is_some() && !crate::town::session::ResidentSlot::is_colleague(&session.environment) {
-            let mut colleague_router = crate::hands::colleague::router();
-            for route in colleague_router.map.values_mut() {
-                route.attr.input_schema = Arc::new(crate::tool_schema::normalize_published_schema(
-                    &route.attr.input_schema,
-                ));
-            }
-            tool_router.merge(colleague_router);
-        }
-        Self {
-            tool_router,
-            options,
-            shell: FastShell::with_session(Arc::clone(&session)),
-            replace: runtime.replace.clone(),
-            file_permits: Arc::clone(&runtime.file_permits),
-            grep_glob_executor: Arc::clone(&runtime.grep_glob_executor),
-            shell_permits: Arc::clone(&runtime.shell_permits),
-            replace_permits: Arc::clone(&runtime.replace_permits),
-            activity: Arc::clone(&runtime.activity),
-            world: runtime.world.clone(),
-            resident,
-            session,
-        }
+        tool_router
     }
 
     /// Returns every definition exposed by MCP `tools/list` for tests and diagnostics.
@@ -268,7 +252,7 @@ impl FastCtxServer {
 
     /// Returns stable contract hashes for every currently published tool.
     pub fn tool_contracts(&self) -> Vec<ToolContract> {
-        ToolManifest::contracts(&self.tool_definitions())
+        ToolManifest::contracts(&self.tool_definitions(), self.options.world)
             .expect("validated server tools must have manifest entries")
     }
 
@@ -279,10 +263,11 @@ impl FastCtxServer {
 
     /// The town and this session's resident id, for tools that act as the resident.
     pub(crate) fn resident_for_tools(&self) -> Result<(Arc<crate::town::core::Town>, String), String> {
+        // Only an engine hosted by the node has a town; anywhere else the node is not running.
         let slot = self
             .resident
             .as_ref()
-            .ok_or_else(|| "This machine's FastCtx node does not host a town.".to_string())?;
+            .ok_or_else(|| crate::world::surface::NODE_SERVICE_NOT_RUNNING.to_string())?;
         let id = slot
             .id()
             .ok_or_else(|| "This session is not registered as a resident of the World yet.".to_string())?;
@@ -430,7 +415,7 @@ impl ServerHandler for FastCtxServer {
         let context = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         let mut result = self.tool_router.call(context).await;
         if let (Some(slot), Ok(result)) = (&self.resident, &mut result) {
-            slot.introduce(result, self.tool_router.has_route("run"));
+            slot.introduce(result);
             slot.piggyback(result);
         }
         result
@@ -458,10 +443,7 @@ impl ServerHandler for FastCtxServer {
             // blurb and may keep only its first line and first 250 characters, so this text
             // has to introduce the toolset within that budget. Behavioural rules belong in
             // the host guidance file, which has no such limit.
-            .with_instructions(crate::model_guidance::server_instructions(
-                self.options.tools,
-                self.options.world,
-            ))
+            .with_instructions(crate::model_guidance::server_instructions(self.options))
     }
 
     // The three `resources/*` methods stay on the rmcp defaults on purpose: both list methods

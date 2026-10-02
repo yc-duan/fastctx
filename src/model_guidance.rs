@@ -52,27 +52,14 @@ pub(crate) fn inspect_tool_description() -> String {
     )
 }
 
-/// The same two routes on an enrolled machine, where "local" would contradict `node`. Each
-/// stays under the 250 characters a host may keep.
-pub(crate) const WORLD_FILE_ROUTE_GUIDANCE: &str = concat!(
-    "Use FastCtx file tools directly for file operations on this machine and, with node,\n",
-    "on the other machines of its World, including when a reference is URI-shaped; pass\n",
-    "the equivalent plain absolute filesystem path."
-);
-
-pub(crate) const WORLD_SHELL_ROUTE_GUIDANCE: &str = concat!(
-    "Use FastCtx shell tools directly for command work on this machine and, with node, on\n",
-    "the other machines of its World; they run POSIX bash on every platform."
-);
-
-pub(crate) fn server_instructions(tools: EnabledTools, world: bool) -> String {
-    match (tools.files_enabled(), world) {
-        (true, false) => LOCAL_FILE_ROUTE_GUIDANCE,
-        (true, true) => WORLD_FILE_ROUTE_GUIDANCE,
-        (false, false) => LOCAL_SHELL_ROUTE_GUIDANCE,
-        (false, true) => WORLD_SHELL_ROUTE_GUIDANCE,
+/// The namespace blurb a host shows for the server: the 1.0 route on an unenrolled machine,
+/// the World's hands on an enrolled one.
+pub(crate) fn server_instructions(options: crate::server::ServerOptions) -> String {
+    if options.world {
+        return crate::hands::text::server_instructions(options.writer);
     }
-    .replace('\n', " ")
+    let guidance = if options.tools.files_enabled() { LOCAL_FILE_ROUTE_GUIDANCE } else { LOCAL_SHELL_ROUTE_GUIDANCE };
+    guidance.replace('\n', " ")
 }
 
 /// Collapses the source line breaks of a composed description into one flowed paragraph.
@@ -101,15 +88,6 @@ const RUN_BACKGROUND_TAIL: &str = concat!(
     "a push notification, so keep working and check back when useful."
 );
 
-/// The script door, told where the decision about long or many-machine work is made. The
-/// command names are learned here; their usage is what `fastctx world --help` is for.
-const RUN_BACKGROUND_WORLD: &str = concat!(
-    " Inside this World a command can reach the other machines: fastctx world nodes,\n",
-    "fastctx world run --node <machine> -- <command>, and fastctx world copy; see\n",
-    "fastctx world --help. Start such a script here for work across many machines or\n",
-    "work that must outlive this conversation."
-);
-
 const JOB_OUTPUT_HEAD: &str = concat!(
     "Query a background job: its status plus output after after_seq (or after\n",
     "the session cursor when omitted). Works for jobs started in earlier sessions.\n",
@@ -136,15 +114,12 @@ fn log_readers(tools: EnabledTools) -> Option<String> {
     (!names.is_empty()).then(|| names.join(" or "))
 }
 
-pub(crate) fn run_background_tool_description(tools: EnabledTools, world: bool) -> String {
+pub(crate) fn run_background_tool_description(tools: EnabledTools) -> String {
     let clause = match log_readers(tools) {
         Some(readers) => format!("; {readers} that path for anything job_output does not show. "),
         None => ". ".to_string(),
     };
-    let door = if world { RUN_BACKGROUND_WORLD } else { "" };
-    flow(&format!(
-        "{RUN_BACKGROUND_HEAD}{clause}{RUN_BACKGROUND_TAIL}{door}"
-    ))
+    flow(&format!("{RUN_BACKGROUND_HEAD}{clause}{RUN_BACKGROUND_TAIL}"))
 }
 
 pub(crate) fn job_output_tool_description(tools: EnabledTools) -> String {

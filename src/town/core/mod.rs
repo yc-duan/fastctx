@@ -133,6 +133,7 @@ impl Town {
         town.restore();
         tokio::spawn(Arc::clone(&town).follow_codex(events));
         tokio::spawn(Arc::clone(&town).follow_claude());
+        tokio::spawn(Arc::clone(&town).reconcile_jobs());
         town
     }
 
@@ -147,6 +148,11 @@ impl Town {
     /// `~/.fastctx/world` on this machine.
     pub(crate) fn world_dir(&self) -> &Path {
         &self.config.world_dir
+    }
+
+    /// The home this node runs in, where `run` starts when no cwd is given.
+    pub(crate) fn home(&self) -> &Path {
+        &self.config.home
     }
 
     /// The town a resident on this machine is in: `Some(None)` outside every town, `None` when

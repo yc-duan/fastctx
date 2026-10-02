@@ -6,7 +6,8 @@
 //
 // It talks to the FastCtx node only through files under the session's own directory:
 //   session.json      written once when the session starts
-//   events/<n>.json   one file per event (turn start and end, tool calls, session end)
+//   events/<n>.json   one file per event (turn start and end, tool calls, session end), and
+//   events/<n>.done   written after it, once it is whole
 //   inbox/<id>.json   deliveries the node writes; read here, never modified
 //   receipts/<id>     written here once a delivery was handed to the model
 // Only these mod APIs are used: on(), $.session.*, $.env.get, $.fs.read/write/list,
@@ -26,11 +27,14 @@ function stamp() {
   return new Date().toISOString()
 }
 
+// The marker is written after the event, so an event with a marker is whole: the node waits
+// for an event without one, and sets aside one that has a marker yet does not parse.
 async function event($, kind, fields) {
   if (!dir) return
   sequence += 1
-  const name = String(Date.now()).padStart(15, '0') + '-' + String(sequence).padStart(6, '0') + '.json'
-  await $.fs.write(dir + '/events/' + name, JSON.stringify({ kind, at: stamp(), ...fields }))
+  const name = String(Date.now()).padStart(15, '0') + '-' + String(sequence).padStart(6, '0')
+  await $.fs.write(dir + '/events/' + name + '.json', JSON.stringify({ kind, at: stamp(), ...fields }))
+  await $.fs.write(dir + '/events/' + name + '.done', '')
 }
 
 async function receipt($, delivery, how) {

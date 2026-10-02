@@ -52,9 +52,9 @@ pub(crate) enum Landed {
 pub(crate) enum HostEvent {
     TurnStarted { thread: String, turn: String },
     /// An item of a turn started, raw as the app-server sent it.
-    ItemStarted { thread: String, turn: String, item: Value },
+    ItemStarted { thread: String, item: Value },
     /// A finished item of a turn, raw as the app-server sent it.
-    Item { thread: String, turn: String, item: Value },
+    Item { thread: String, item: Value },
     /// A piece of text the model is writing, for live views.
     Delta { thread: String, item: String, delta: String },
     TurnCompleted {
@@ -66,7 +66,6 @@ pub(crate) enum HostEvent {
         /// The last agent message of the turn, verbatim; what goes back to whoever asked.
         last_message: Option<String>,
     },
-    Status { thread: String, status: Value },
     /// The app-server asked something the World does not answer; it was declined.
     Declined { thread: Option<String>, method: String },
     /// The app-server stopped; threads come back on the next send.
@@ -86,8 +85,6 @@ struct ThreadState {
 pub(crate) struct Launch {
     pub(crate) binary: PathBuf,
     pub(crate) args: Vec<String>,
-    /// Whether this is the desktop app's binary, which lends Computer Use to its threads.
-    pub(crate) from_app: bool,
     /// The user's `config.toml` as it was at launch. The app rewrites it when it upgrades
     /// (new binary directory) or restarts (new Computer Use pipe); an app-server started
     /// before that still points at the old ones.
@@ -374,19 +371,14 @@ impl CodexHost {
                 }
                 Some(HostEvent::TurnStarted { thread, turn })
             }
-            "item/started" => Some(HostEvent::ItemStarted {
-                thread,
-                turn: params.get("turnId").and_then(Value::as_str).unwrap_or_default().to_string(),
-                item: params.get("item")?.clone(),
-            }),
+            "item/started" => Some(HostEvent::ItemStarted { thread, item: params.get("item")?.clone() }),
             "item/completed" => {
                 let item = params.get("item")?.clone();
-                let turn = params.get("turnId").and_then(Value::as_str).unwrap_or_default().to_string();
                 if item.get("type").and_then(Value::as_str) == Some("agentMessage") {
                     let text = item.get("text").and_then(Value::as_str).map(str::to_string);
                     self.state.lock().threads.entry(thread.clone()).or_default().last_message = text;
                 }
-                Some(HostEvent::Item { thread, turn, item })
+                Some(HostEvent::Item { thread, item })
             }
             "item/agentMessage/delta" => Some(HostEvent::Delta {
                 thread,
@@ -410,7 +402,6 @@ impl CodexHost {
                     last_message,
                 })
             }
-            "thread/status/changed" => Some(HostEvent::Status { thread, status: params.get("status")?.clone() }),
             _ => None,
         }
     }
@@ -433,14 +424,13 @@ pub(crate) fn resolve_launch(codex_home: &Path) -> Result<Launch, String> {
                 "plugins.unified-computer-use@openai-bundled.mcp_servers.cua_repl.enabled=false".to_string(),
                 "app-server".to_string(),
             ],
-            from_app: true,
             config: read_config(codex_home)?,
         });
     }
     let binary = find_on_path(if cfg!(windows) { "codex.exe" } else { "codex" }).ok_or_else(|| {
         "Codex is not installed on this machine: neither the ChatGPT desktop app nor a codex command was found.".to_string()
     })?;
-    Ok(Launch { binary, args: vec!["app-server".to_string()], from_app: false, config: read_config(codex_home)? })
+    Ok(Launch { binary, args: vec!["app-server".to_string()], config: read_config(codex_home)? })
 }
 
 fn read_config(codex_home: &Path) -> Result<Option<Vec<u8>>, String> {

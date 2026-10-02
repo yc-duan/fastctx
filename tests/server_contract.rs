@@ -777,19 +777,17 @@ fn a_world_appears_in_the_published_surface_only_after_this_machine_is_enrolled(
     std::fs::create_dir_all(enrolled.path().join(".fastctx")).unwrap();
     // Enrollment is a file-existence check; the surface must not need a reachable hub to change.
     std::fs::write(enrolled.path().join(".fastctx/world.toml"), "version = 1\n").unwrap();
+    // An enrolled machine publishes the World's hands instead of the 1.0 set, whatever that
+    // enables.
     let tools = published_tools(enrolled.path());
-    for name in ["nodes", "copy", "remote_write", "remote_edit"] {
-        assert!(
-            tools.iter().any(|tool| tool["name"] == name),
-            "an enrolled machine did not publish {name}; it published {:?}",
-            tools.iter().map(|tool| &tool["name"]).collect::<Vec<_>>()
-        );
-    }
-    for name in ["inspect_local_file", "grep", "glob", "replace", "run"] {
-        let tool = tools
-            .iter()
-            .find(|tool| tool["name"] == name)
-            .unwrap_or_else(|| panic!("{name} should be published"));
+    let names = tools.iter().filter_map(|tool| tool["name"].as_str()).collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        names,
+        ["ask_colleague", "copy", "edit", "message_colleague", "nodes", "run", "write"].into_iter().collect(),
+        "an enrolled machine published the wrong surface"
+    );
+    for name in ["run", "edit", "write"] {
+        let tool = tools.iter().find(|tool| tool["name"] == name).unwrap();
         assert!(
             tool["inputSchema"]["properties"]["node"].is_object(),
             "an enrolled machine published {name} without a node selector"

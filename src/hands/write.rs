@@ -15,14 +15,14 @@ use std::sync::Arc;
 
 /// Who is writing: the resident, and where its records are on this machine.
 pub(crate) struct Writer {
-    pub(crate) town: Arc<Town>,
-    pub(crate) resident: Option<String>,
-    pub(crate) records: Option<PathBuf>,
+    town: Arc<Town>,
+    resident: String,
+    records: Option<PathBuf>,
 }
 
 impl Writer {
-    pub(crate) fn new(town: Arc<Town>, resident: Option<String>) -> Self {
-        let records = resident.as_deref().and_then(|id| town.town_of(id).map(|place| town.resident_dir(place.as_deref(), id)));
+    pub(crate) fn new(town: Arc<Town>, resident: String) -> Self {
+        let records = town.town_of(&resident).map(|place| town.resident_dir(place.as_deref(), &resident));
         Self { town, resident, records }
     }
 
@@ -31,12 +31,11 @@ impl Writer {
     }
 
     fn record(&self, hand: &str, what: &str, outcome: &Result<WriteResult, WriteError>) {
-        let Some(resident) = &self.resident else { return };
         let result = match outcome {
             Ok(result) => format!("{} changed", result.changes.len()),
             Err(error) => format!("refused: {}", error.message.lines().next().unwrap_or_default()),
         };
-        self.town.record_action(resident, self.town.machine(), hand, what, &result);
+        self.town.record_action(&self.resident, self.town.machine(), hand, what, &result);
     }
 
     /// Whether a path lies in a town's ledger, which only the World writes.

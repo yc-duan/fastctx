@@ -61,6 +61,9 @@ enum Command {
         /// Deprecated compatibility flag; replace is always published.
         #[arg(long, hide = true)]
         enable_edit: bool,
+        /// On a machine enrolled in a World: the write tools, edit and write or apply_patch.
+        #[arg(long, value_enum, default_value_t)]
+        writer: crate::server::Writer,
     },
     /// Force the full-screen control terminal.
     Ui,
@@ -256,17 +259,14 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
             tools,
             enable_shell,
             enable_edit: _,
+            writer,
         }) => {
             let tools = match tools {
                 Some(csv) => EnabledTools::from_csv(&csv)?,
                 None if enable_shell => EnabledTools::all(),
                 None => EnabledTools::files(),
             };
-            run_server_with_options(ServerOptions {
-                tools,
-                world: world_mode(),
-            })
-            .await
+            run_server_with_options(ServerOptions { tools, writer, ..world_options() }).await
         }
         Some(Command::Ui) => {
             require_tty()?;
@@ -466,13 +466,19 @@ fn world_mode() -> bool {
         .unwrap_or(false)
 }
 
+/// What the environment decides about the surface: whether this machine is enrolled, and
+/// whether this server belongs to a colleague the World started.
+fn world_options() -> ServerOptions {
+    ServerOptions {
+        world: world_mode(),
+        colleague: std::env::var_os(crate::town::session::COLLEAGUE_VARIABLE).is_some_and(|value| !value.is_empty()),
+        ..ServerOptions::default()
+    }
+}
+
 /// Forces stdio MCP server startup for reuse by the entry point and doctor.
 pub async fn run_server() -> Result<ExitCode, String> {
-    run_server_with_options(ServerOptions {
-        world: world_mode(),
-        ..ServerOptions::default()
-    })
-    .await
+    run_server_with_options(world_options()).await
 }
 
 /// Starts the single server with the requested optional tool groups.

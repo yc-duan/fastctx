@@ -8,7 +8,6 @@ use crate::control::paths::{CodexHomeSource, ControlPaths};
 use crate::control::provider::{EffectiveOutput, EffectiveOutputMode, ProviderDetection};
 use crate::control::settings::{FastCtxSettings, ToolBudgets};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::env::VarError;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -260,40 +259,9 @@ pub struct SessionContext {
     pub provider: ProviderDetection,
     /// Provider-aware output policy made for this connection.
     pub effective_output: EffectiveOutput,
-    /// Files on other machines this connection inspected or wrote, keyed by machine and path,
-    /// with the SHA-256 last seen: the record `remote_edit` and `remote_write` compare against
-    /// before they change anything.
-    world_files: Arc<parking_lot::Mutex<HashMap<(String, String), String>>>,
 }
 
 impl SessionContext {
-    /// The hash this connection last saw for `path` on `node`, if it ever inspected it.
-    pub(crate) fn world_file_seen(&self, node: &str, path: &str) -> Option<String> {
-        self.world_files
-            .lock()
-            .get(&(node.to_string(), path.trim().to_string()))
-            .cloned()
-    }
-
-    /// Records the hash of a file on another machine under both the path as given and the
-    /// canonical path the machine reported.
-    pub(crate) fn remember_world_file(
-        &self,
-        node: &str,
-        given: &str,
-        canonical: &str,
-        sha256: &str,
-    ) {
-        let mut files = self.world_files.lock();
-        files.insert(
-            (node.to_string(), given.trim().to_string()),
-            sha256.to_string(),
-        );
-        files.insert(
-            (node.to_string(), canonical.trim().to_string()),
-            sha256.to_string(),
-        );
-    }
     /// Captures and resolves one standalone server process as a single connection.
     pub fn capture() -> Result<Arc<Self>, String> {
         Self::from_environment(SessionEnvironment::capture()?)
@@ -324,7 +292,6 @@ impl SessionContext {
             settings,
             provider,
             effective_output,
-            world_files: Arc::default(),
         }))
     }
 
@@ -366,8 +333,7 @@ impl SessionContext {
                 settings,
                 provider,
                 effective_output,
-                world_files: Arc::default(),
-            })
+                })
         })
     }
 
@@ -404,7 +370,6 @@ impl SessionContext {
             settings: base.settings.clone(),
             provider: base.provider.clone(),
             effective_output: base.effective_output,
-            world_files: Arc::default(),
         })
     }
 

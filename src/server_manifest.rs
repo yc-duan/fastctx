@@ -82,10 +82,26 @@ const TOOL_ENTRIES: [ToolManifestEntry; 9] = [
     },
 ];
 
-/// Published only in World mode: the first two whatever the enabled set, the two remote
-/// writers only when `inspect_local_file` is enabled, because their "inspected before
-/// changed" contract has no other way to be met.
-const WORLD_ENTRIES: [ToolManifestEntry; 4] = [
+/// The World's surface on an enrolled machine, replacing the 1.0 set whatever it enables:
+/// the hands (`specs/world-run.md`, `world-write.md`), the machine map and `copy`, and the
+/// colleague tools (`world-colleagues.md`).
+const WORLD_ENTRIES: [ToolManifestEntry; 8] = [
+    ToolManifestEntry {
+        name: "run",
+        group: ToolGroup::World,
+    },
+    ToolManifestEntry {
+        name: "edit",
+        group: ToolGroup::World,
+    },
+    ToolManifestEntry {
+        name: "write",
+        group: ToolGroup::World,
+    },
+    ToolManifestEntry {
+        name: "apply_patch",
+        group: ToolGroup::World,
+    },
     ToolManifestEntry {
         name: "nodes",
         group: ToolGroup::World,
@@ -95,22 +111,23 @@ const WORLD_ENTRIES: [ToolManifestEntry; 4] = [
         group: ToolGroup::World,
     },
     ToolManifestEntry {
-        name: "remote_write",
+        name: "ask_colleague",
         group: ToolGroup::World,
     },
     ToolManifestEntry {
-        name: "remote_edit",
+        name: "message_colleague",
         group: ToolGroup::World,
     },
 ];
 
-/// The World tool whose publication the remote writers follow.
-const REMOTE_WRITERS_REQUIRE: &str = "inspect_local_file";
-
-/// Whether a World entry is published on top of `enabled`.
-pub fn world_entry_published(name: &str, enabled: EnabledTools) -> bool {
+/// Whether a World entry is published in one configuration: one of the two ways to write,
+/// and the colleague tools to everyone but a colleague, which cannot ask for colleagues.
+pub fn world_entry_published(name: &str, options: crate::server::ServerOptions) -> bool {
+    use crate::server::Writer;
     match name {
-        "remote_write" | "remote_edit" => enabled.contains(REMOTE_WRITERS_REQUIRE),
+        "edit" | "write" => options.writer == Writer::Edit,
+        "apply_patch" => options.writer == Writer::ApplyPatch,
+        "ask_colleague" | "message_colleague" => !options.colleague,
         _ => true,
     }
 }
@@ -264,7 +281,7 @@ impl ToolManifest {
         &TOOL_ENTRIES
     }
 
-    /// The World-only entries, published on an enrolled machine on top of the enabled set.
+    /// The World's entries, published on an enrolled machine instead of the enabled set.
     pub const fn world_entries() -> &'static [ToolManifestEntry] {
         &WORLD_ENTRIES
     }
@@ -276,16 +293,14 @@ impl ToolManifest {
 
     /// Returns expected names for one complete server configuration.
     pub fn expected_names_for(options: crate::server::ServerOptions) -> Vec<&'static str> {
-        let mut names = options.tools.names();
-        if options.world {
-            names.extend(
-                WORLD_ENTRIES
-                    .iter()
-                    .filter(|entry| world_entry_published(entry.name, options.tools))
-                    .map(|entry| entry.name),
-            );
+        if !options.world {
+            return options.tools.names();
         }
-        names
+        WORLD_ENTRIES
+            .iter()
+            .filter(|entry| world_entry_published(entry.name, options))
+            .map(|entry| entry.name)
+            .collect()
     }
 
     /// Validates names and explicit permission annotations against the manifest.
@@ -293,7 +308,7 @@ impl ToolManifest {
         Self::validate_options(tools, crate::server::ServerOptions::local(enabled))
     }
 
-    /// Validates a complete configuration, World entries included.
+    /// Validates a complete configuration, local or World.
     pub fn validate_options(
         tools: &[Tool],
         options: crate::server::ServerOptions,
@@ -356,13 +371,11 @@ impl ToolManifest {
         Ok(())
     }
 
-    /// Builds stable doctor contracts for a visible tool list.
-    pub fn contracts(tools: &[Tool]) -> Result<Vec<ToolContract>, String> {
-        let groups = TOOL_ENTRIES
-            .iter()
-            .chain(WORLD_ENTRIES.iter())
-            .map(|entry| (entry.name, entry.group))
-            .collect::<BTreeMap<_, _>>();
+    /// Builds stable doctor contracts for a visible tool list. The two surfaces share the
+    /// name `run`, so the groups come from the one that is published.
+    pub fn contracts(tools: &[Tool], world: bool) -> Result<Vec<ToolContract>, String> {
+        let entries: &[ToolManifestEntry] = if world { &WORLD_ENTRIES } else { &TOOL_ENTRIES };
+        let groups = entries.iter().map(|entry| (entry.name, entry.group)).collect::<BTreeMap<_, _>>();
         let mut seen = BTreeSet::new();
         let mut contracts = tools
             .iter()
@@ -413,7 +426,7 @@ fn contract_hash(tool: &Tool, group: ToolGroup) -> String {
 #[cfg(test)]
 mod tests {
     use super::{EnabledTools, TOOL_ENTRIES, ToolGroup, ToolManifest, contract_hash};
-    use crate::server::{FastCtxServer, ServerOptions};
+    use crate::server::{FastCtxServer, ServerOptions, Writer};
     use std::collections::BTreeSet;
 
     #[test]
@@ -475,7 +488,7 @@ mod tests {
             "tool router contains duplicate names: inspect_local_file"
         );
         assert_eq!(
-            ToolManifest::contracts(&tools).unwrap_err(),
+            ToolManifest::contracts(&tools, false).unwrap_err(),
             "tool router contains duplicate name: inspect_local_file"
         );
 
@@ -574,17 +587,16 @@ mod tests {
         sets
     }
 
-    /// Every legal server configuration: each enabled set, local and in World mode.
+    /// Every legal server configuration: each enabled set locally, and the World surface with
+    /// each writer, for a resident and for a colleague.
     fn legal_configurations() -> Vec<ServerOptions> {
-        legal_tool_sets()
-            .into_iter()
-            .flat_map(|tools| {
-                [
-                    ServerOptions::local(tools),
-                    ServerOptions { tools, world: true },
-                ]
-            })
-            .collect()
+        let mut configurations: Vec<ServerOptions> = legal_tool_sets().into_iter().map(ServerOptions::local).collect();
+        for writer in [Writer::Edit, Writer::ApplyPatch] {
+            for colleague in [false, true] {
+                configurations.push(ServerOptions { world: true, writer, colleague, ..ServerOptions::default() });
+            }
+        }
+        configurations
     }
 
     fn published_tools(options: ServerOptions) -> Vec<rmcp::model::Tool> {
@@ -636,7 +648,7 @@ mod tests {
         );
         let mut prose = vec![(
             "server instructions".to_string(),
-            crate::model_guidance::server_instructions(options.tools, options.world),
+            crate::model_guidance::server_instructions(options),
         )];
         for tool in published_tools(options) {
             if let Some(description) = tool.description.as_deref() {

@@ -157,7 +157,7 @@ fn notes(job: &JobRecord) -> (String, String) {
         format!(
             "\n=== output continues in {} {}; you'll be told when it ends ===\n",
             job.machine,
-            job.output_path.display()
+            crate::paths::display_path(&job.output_path)
         )
     } else {
         String::new()
@@ -171,6 +171,6 @@ fn omission(job: &JobRecord, range: &ByteRange) -> String {
         range.start,
         range.end,
         job.machine,
-        job.output_path.display()
+        crate::paths::display_path(&job.output_path)
     )
 }

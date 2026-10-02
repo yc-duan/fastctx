@@ -1517,7 +1517,7 @@ fn preview_unapply(
 
 fn server_args_preview(expected: &ExpectedConfig) -> String {
     format!(
-        "\"serve\", \"--tools\", \"{}\"",
+        "\"serve\", \"--tools\", \"{}\", \"--writer\", \"apply_patch\"",
         expected.enabled_tools.names().join(",")
     )
 }

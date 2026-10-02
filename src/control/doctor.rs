@@ -306,6 +306,8 @@ pub fn run_target(
             ServerOptions {
                 tools: status.enabled_tools,
                 world: crate::world::is_enrolled(paths),
+                writer: target_writer(target),
+                ..ServerOptions::default()
             },
         ) {
             Ok(()) => DoctorCheck::pass(
@@ -1169,6 +1171,14 @@ fn check_recorded_path(
     }
 }
 
+/// The write tools Apply registers for a target (`specs/world-write.md`).
+fn target_writer(target: crate::control::targets::AgentTarget) -> crate::server::Writer {
+    match target {
+        crate::control::targets::AgentTarget::Codex => crate::server::Writer::ApplyPatch,
+        _ => crate::server::Writer::Edit,
+    }
+}
+
 fn check_mcp(
     executable: &Path,
     applied: Option<&settings::AppliedRecord>,
@@ -1185,13 +1195,15 @@ fn check_mcp(
     let options = ServerOptions {
         tools: applied.map_or_else(EnabledTools::default, applied_tools),
         world,
+        writer: target_writer(crate::control::targets::AgentTarget::Codex),
+        ..ServerOptions::default()
     };
     match probe_mcp(executable, options) {
         Ok(()) => DoctorCheck::pass(
             "MCP server contract",
             format!(
                 "FastCtx initialize and tools/list returned {} tools with matching contract hashes. This proves the server contract only, not model-side tool exposure.",
-                ToolManifest::expected_names(options.tools).len()
+                ToolManifest::expected_names_for(options).len()
             ),
         ),
         Err(error) => DoctorCheck::fail(
@@ -1401,13 +1413,18 @@ fn check_agents_state(
 pub fn probe_mcp(executable: &Path, options: ServerOptions) -> Result<(), String> {
     let expected = FastCtxServer::with_options(options).tool_contracts();
     let tools = options.tools.names().join(",");
-    probe_mcp_server(executable, &["serve", "--tools", &tools], &expected)
+    let writer = match options.writer {
+        crate::server::Writer::Edit => "edit",
+        crate::server::Writer::ApplyPatch => "apply_patch",
+    };
+    probe_mcp_server(executable, &["serve", "--tools", &tools, "--writer", writer], options, &expected)
 }
 
 /// Probes one explicit server invocation and requires exact tool contracts.
 pub fn probe_mcp_server(
     executable: &Path,
     arguments: &[&str],
+    options: ServerOptions,
     expected_contracts: &[ToolContract],
 ) -> Result<(), String> {
     let mut child = crate::process_policy::noninteractive_command(executable);
@@ -1509,14 +1526,9 @@ pub fn probe_mcp_server(
             .map_err(|error| {
                 format!("MCP tools/list returned an invalid tool definition: {error}")
             })?;
-        let enabled = EnabledTools::from_names(
-            expected_contracts
-                .iter()
-                .map(|contract| contract.name.as_str()),
-        )?;
-        ToolManifest::validate(&definitions, enabled)
+        ToolManifest::validate_options(&definitions, options)
             .map_err(|error| format!("MCP tools/list manifest mismatch: {error}"))?;
-        let actual = ToolManifest::contracts(&definitions)?
+        let actual = ToolManifest::contracts(&definitions, options.world)?
             .into_iter()
             .map(|contract| (contract.name, contract.hash))
             .collect::<BTreeMap<_, _>>();
