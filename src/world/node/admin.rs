@@ -448,7 +448,7 @@ pub(crate) async fn read_frame(stream: &mut BoxedStream) -> Result<Vec<u8>, Stri
     Ok(bytes)
 }
 
-pub(crate) async fn write_frame(stream: &mut BoxedStream, bytes: &[u8]) -> Result<(), String> {
+pub(crate) async fn write_frame(stream: &mut (impl tokio::io::AsyncWrite + Unpin), bytes: &[u8]) -> Result<(), String> {
     let length =
         u32::try_from(bytes.len()).map_err(|_| "the admin frame is too large".to_string())?;
     stream

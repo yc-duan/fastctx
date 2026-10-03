@@ -23,8 +23,8 @@ pub(crate) fn service_binary(paths: &ControlPaths) -> Result<PathBuf, String> {
     let current =
         std::env::current_exe().map_err(|error| format!("Cannot locate FastCtx: {error}"))?;
     if paths.installed_binary.is_file()
-        && crate::world::remote_edit::sha256_of(&paths.installed_binary)?
-            == crate::world::remote_edit::sha256_of(&current)?
+        && crate::world::file_hash::sha256_of(&paths.installed_binary)?
+            == crate::world::file_hash::sha256_of(&current)?
     {
         Ok(paths.installed_binary.clone())
     } else {

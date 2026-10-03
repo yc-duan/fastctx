@@ -1,4 +1,7 @@
-//! Local IPC contract for resident processes. JSON operations share the node's identity.
+//! Network operations other processes on this machine ask the node for over its admin channel,
+//! under the node's identity. Mail and subscriptions are not among them: the node's town is
+//! their one consumer (`town::remote`), so no other reader can take a letter or an event
+//! meant for it.
 use super::{
     client::WorldClient,
     ledger::{LedgerFile, ProjectUpdate},
@@ -10,16 +13,7 @@ use std::{sync::Arc, time::Duration};
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub(crate) enum Request {
-    SendMail {
-        to: String,
-        body: serde_json::Value,
-    },
-    Inbox,
-    WaitInbox,
     DeliveryFailures,
-    AcknowledgeMail {
-        receipt: String,
-    },
     AppendLedger {
         scope: String,
         files: Vec<LedgerFile>,
@@ -29,18 +23,6 @@ pub(crate) enum Request {
         scope: String,
     },
     SyncLedger,
-    Subscribe {
-        node: String,
-        topic: serde_json::Value,
-    },
-    SubscriptionNext,
-    PublishEvent {
-        id: String,
-        value: serde_json::Value,
-    },
-    Unsubscribe {
-        id: String,
-    },
     CallMany {
         nodes: Vec<String>,
         verb: String,
@@ -53,16 +35,7 @@ pub(crate) async fn handle(
     request: Request,
 ) -> Result<serde_json::Value, String> {
     match request {
-        Request::SendMail { to, body } => {
-            Ok(serde_json::json!({"id": client.send_mail(&to, body)?}))
-        }
         Request::DeliveryFailures => value(super::delivery::failures(&client.paths)?),
-        Request::Inbox => value(client.inbox()?),
-        Request::WaitInbox => value(client.wait_inbox().await?),
-        Request::AcknowledgeMail { receipt } => {
-            client.acknowledge_mail(&receipt)?;
-            Ok(serde_json::json!({"acknowledged": receipt}))
-        }
         Request::AppendLedger {
             scope,
             files,
@@ -71,18 +44,6 @@ pub(crate) async fn handle(
         Request::ReadLedger { scope } => value(client.read_ledger(&scope)?),
         Request::SyncLedger => {
             client.sync_ledger().await?;
-            Ok(serde_json::Value::Null)
-        }
-        Request::Subscribe { node, topic } => {
-            Ok(serde_json::json!({"id": client.subscribe(&node, topic).await?}))
-        }
-        Request::SubscriptionNext => value(client.subscriptions.next().await),
-        Request::PublishEvent { id, value } => {
-            client.publish_event(&id, value)?;
-            Ok(serde_json::Value::Null)
-        }
-        Request::Unsubscribe { id } => {
-            client.unsubscribe(&id)?;
             Ok(serde_json::Value::Null)
         }
         Request::CallMany {

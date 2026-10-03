@@ -7,6 +7,7 @@ use super::{Page, Screen, WorldApp};
 use crate::control::i18n::{ALL_LANGUAGES, Language};
 use crate::town::records::{About, Birth, MessageLine, Now};
 use crate::town::talk::TalkEvent;
+use crate::town::w::{Silence, Silent};
 use crate::town::who::{ActionLine, JobFacts, ResidentFacts};
 
 fn ago(seconds: i64) -> String {
@@ -49,6 +50,9 @@ fn resident(id: &str, agent: &str, model: Option<&str>, town: Option<&str>, stat
 pub(super) fn census(residents: Vec<ResidentFacts>) -> Census {
     Census {
         machine: "desktop".into(),
+        machines: vec!["desktop".into(), "laptop".into()],
+        silent: vec![Silent { machine: "hangzhou".into(), why: Silence::Offline(Some(ago(3600))) }],
+        alone: false,
         residents,
         running: Vec::new(),
         towns: vec![TownName { slug: "mark50".into(), name: "mark50 研发".into() }, TownName { slug: "probe".into(), name: "probe".into() }],
@@ -57,7 +61,7 @@ pub(super) fn census(residents: Vec<ResidentFacts>) -> Census {
 }
 
 fn populated() -> Census {
-    let colleague = Birth::Colleague { requester: "claude-2b1c".into(), label: "port the PID loop to fixed-point".into() };
+    let colleague = Birth::Colleague { requester: "claude-2b1c".into(), label: "port the PID loop to fixed-point".into(), machine: None };
     let mut residents = vec![
         resident("codex-7f3a", "codex", Some("gpt-6-astra"), Some("mark50"), "busy", colleague.clone(), "world"),
         resident("claude-2b1c", "claude-code", Some("opus-5-5"), Some("mark50"), "idle", Birth::User, "vscode"),
@@ -66,6 +70,7 @@ fn populated() -> Census {
         resident("claude-5e77", "claude-code", None, None, "unknown", Birth::User, "cli"),
     ];
     residents[0].now.desk = true;
+    residents[2].about.machine = "laptop".into();
     let mut census = census(residents);
     census.running.push(JobFacts {
         resident: "codex-7f3a".into(),

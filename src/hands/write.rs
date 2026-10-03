@@ -5,8 +5,10 @@
 //! (`town::seen`): a whole-file view gives the content hash the core compares against, a partial
 //! view gives size and modification time, which `write` checks before replacing a whole file.
 //! The town's ledger (charters and journals) is never written through these tools; journals
-//! change only through `fastctx journal`.
+//! change only through `fastctx journal`. A resident living on another machine writes here with
+//! what it has seen here; its own machine records the action.
 
+use super::Starter;
 use crate::town::core::Town;
 use crate::town::seen::{self, Seen};
 use crate::write::{ApplyPatchRequest, EditRequest, WriteContext, WriteError, WriteRequest, WriteResult};
@@ -16,14 +18,17 @@ use std::sync::Arc;
 /// Who is writing: the resident, and where its records are on this machine.
 pub(crate) struct Writer {
     town: Arc<Town>,
-    resident: String,
+    starter: Starter,
     records: Option<PathBuf>,
 }
 
 impl Writer {
-    pub(crate) fn new(town: Arc<Town>, resident: String) -> Self {
-        let records = town.town_of(&resident).map(|place| town.resident_dir(place.as_deref(), &resident));
-        Self { town, resident, records }
+    pub(crate) fn new(town: Arc<Town>, starter: Starter) -> Self {
+        let records = match &starter {
+            Starter::Here(id) => town.town_of(id).map(|place| town.resident_dir(place.as_deref(), id)),
+            Starter::Guest { peer, town: place } => Some(town.resident_dir(place.as_deref(), &peer.id)),
+        };
+        Self { town, starter, records }
     }
 
     fn seen(&self, path: &Path) -> Option<Seen> {
@@ -31,11 +36,9 @@ impl Writer {
     }
 
     fn record(&self, hand: &str, what: &str, outcome: &Result<WriteResult, WriteError>) {
-        let result = match outcome {
-            Ok(result) => format!("{} changed", result.changes.len()),
-            Err(error) => format!("refused: {}", error.message.lines().next().unwrap_or_default()),
-        };
-        self.town.record_action(&self.resident, self.town.machine(), hand, what, &result);
+        if let Starter::Here(id) = &self.starter {
+            self.town.record_action(id, self.town.machine(), hand, what, &action(outcome));
+        }
     }
 
     /// Whether a path lies in a town's ledger, which only the World writes.
@@ -100,8 +103,16 @@ fn run(
     operation(&context)
 }
 
+/// What an action line says about how a write went.
+pub(crate) fn action(outcome: &Result<WriteResult, WriteError>) -> String {
+    match outcome {
+        Ok(result) => format!("{} changed", result.changes.len()),
+        Err(error) => format!("refused: {}", error.message.lines().next().unwrap_or_default()),
+    }
+}
+
 /// The files a patch names, for the action line.
-fn patch_files(input: &str) -> String {
+pub(crate) fn patch_files(input: &str) -> String {
     let files: Vec<&str> = input
         .lines()
         .filter_map(|line| {

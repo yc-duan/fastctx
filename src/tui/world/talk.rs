@@ -134,7 +134,7 @@ async fn converse(target: Target, updates: &mpsc::Sender<Update>, commands: &mut
     let resident = match target {
         Target::Resident(resident) => resident,
         Target::New { agent, town, words } => {
-            let opened = match ask(TownRequest::Open { agent, town, words }).await {
+            let opened = match ask(TownRequest::Open { agent, town, words, node: None }).await {
                 Ok(data) => data.get("resident").and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
                 Err(closed) => return closed,
             };

@@ -4,26 +4,37 @@
 
 use super::{Delivery, MessageLine, Route, Spoken, Town, delivery_id, format_duration, mod_delivery};
 use crate::town::codex::host::{Input, Landed};
+use crate::town::remote::{Letter, Peer};
 use crate::town::talk::TalkEvent;
 use std::path::{Path, PathBuf};
 
 impl Town {
-    /// Speaks to a resident on this machine on behalf of `from`. For a Codex resident, `from`
-    /// then receives the last message of the turn its words went into.
-    pub(crate) async fn speak(&self, from: &str, to: &str, message: &str) -> Result<Spoken, String> {
+    /// How a resident is named to residents of this machine: its id, and its machine when that
+    /// is another one.
+    pub(crate) fn peer_name(&self, peer: &Peer) -> String {
+        if peer.machine == self.config.machine { peer.id.clone() } else { format!("{} on {}", peer.id, peer.machine) }
+    }
+
+    /// Speaks to a resident on this machine on behalf of `from`, who lives here or elsewhere.
+    /// For a Codex resident, `from` then receives the last message of the turn its words went
+    /// into.
+    pub(crate) async fn speak(&self, from: &Peer, to: &str, message: &str) -> Result<Spoken, String> {
+        let name = self.peer_name(from);
         let route = {
-            let state = self.state.lock();
+            let mut state = self.state.lock();
+            // A requester that speaks again is back.
+            state.departed.remove(from);
             let live = state.residents.get(to).ok_or_else(|| format!("No resident named {to} lives on {}.", self.config.machine))?;
             let _ = live.records.append_message(&MessageLine {
                 at: crate::world::now_rfc3339(),
                 kind: "said".into(),
-                peer: from.to_string(),
+                peer: name.clone(),
                 turn: None,
                 text: Some(message.to_string()),
             });
             live.route.clone()
         };
-        let text = format!("=== from {from} ===\n{message}");
+        let text = format!("=== from {name} ===\n{message}");
         match route {
             Route::CodexThread(thread) => {
                 // A Codex thread echoes its input as an item, which watchers see.
@@ -34,7 +45,7 @@ impl Town {
                         self.set_state(&live.records, "busy");
                     }
                     live.turn = Some(turn.clone());
-                    live.readers.entry(turn).or_default().insert(from.to_string());
+                    live.readers.entry(turn).or_default().insert(from.clone());
                 }
                 Ok(match landed {
                     Landed::NewTurn => Spoken::NewTurn,
@@ -42,12 +53,40 @@ impl Town {
                 })
             }
             Route::ClaudeMod(_) | Route::Piggyback => {
-                self.publish(to, TalkEvent::Words { from: from.to_string(), text: message.to_string(), item: None });
-                let delivery = Delivery { id: delivery_id()?, from: from.to_string(), kind: "message".into(), text, as_tool_output: false };
+                self.publish(to, TalkEvent::Words { from: name.clone(), text: message.to_string(), item: None });
+                let delivery = Delivery { id: delivery_id()?, from: name, kind: "message".into(), text, as_tool_output: false };
                 self.deliver(to, delivery).await?;
                 Ok(Spoken::Queued)
             }
         }
+    }
+
+    /// Mails a letter to another machine's town. It is committed here before this returns, and
+    /// reaches that machine when it is online, in the order letters were sent.
+    pub(crate) fn mail(&self, machine: &str, letter: &Letter) -> Result<(), String> {
+        let body = serde_json::to_value(letter).map_err(|error| format!("Cannot encode a letter: {error}"))?;
+        self.world.send_mail(machine, body).map(|_| ())
+    }
+
+    /// Delivers words that came for a resident of this machine from elsewhere. A resident that
+    /// is not here, or whose host cannot take them now, keeps them waiting in its records until
+    /// its next World tool response or its return.
+    pub(crate) async fn deliver_or_hold(&self, to: &str, delivery: Delivery) -> Result<(), String> {
+        if self.state.lock().residents.contains_key(to) {
+            match self.deliver(to, delivery.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(error) => (self.log)(format!("cannot deliver to {to} now, so it waits in its records: {error}")),
+            }
+        }
+        let _inbox = self.inbox.lock();
+        let dir = match self.inbox_dir(to) {
+            Some(dir) => dir,
+            None => self
+                .current_records(to)
+                .map(|(records, _)| records.dir.join("inbox"))
+                .ok_or_else(|| format!("No resident named {to} has records on {}.", self.config.machine))?,
+        };
+        write_waiting(&dir, &delivery)
     }
 
     /// Puts the user's own words into a resident's session, as the user. Only words the user
@@ -149,9 +188,7 @@ impl Town {
     fn enqueue(&self, to: &str, delivery: Delivery) -> Result<(), String> {
         let _inbox = self.inbox.lock();
         let dir = self.inbox_dir(to).ok_or_else(|| format!("No resident named {to} lives on {}.", self.config.machine))?;
-        std::fs::create_dir_all(&dir).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&dir)))?;
-        let bytes = serde_json::to_vec(&delivery).map_err(|error| format!("Cannot encode a delivery: {error}"))?;
-        crate::world::write_atomic(&dir.join(format!("{}.json", delivery.id)), &bytes)
+        write_waiting(&dir, &delivery)
     }
 
     /// Moves what waits for a resident into its Claude session's inbox, once its mod has
@@ -176,13 +213,15 @@ impl Town {
     }
 
     /// `run` gave a command back while it still ran, so its end is owed to the resident that
-    /// started it. A marker beside the record says so. Whoever claims the marker first delivers
-    /// the notice: the command's end hook, this look if the command ended before the marker was
-    /// written, or the node's next start if the node was down when it ended. So a notice is
-    /// given once, never lost, and never given for a command whose end its caller already saw.
-    pub(crate) async fn owe_end(&self, record: &Path) -> Result<(), String> {
+    /// started it. A marker beside the record says so, and names the machine that resident
+    /// lives on when it is not this one. Whoever claims the marker first delivers the notice:
+    /// the command's end hook, this look if the command ended before the marker was written,
+    /// or the node's next start if the node was down when it ended. So a notice is given once,
+    /// never lost, and never given for a command whose end its caller already saw.
+    pub(crate) async fn owe_end(&self, record: &Path, home: Option<&str>) -> Result<(), String> {
         let marker = record.with_extension(OWED);
-        std::fs::write(&marker, b"").map_err(|error| format!("Cannot write {}: {error}", crate::paths::display_path(&marker)))?;
+        std::fs::write(&marker, home.unwrap_or_default())
+            .map_err(|error| format!("Cannot write {}: {error}", crate::paths::display_path(&marker)))?;
         self.job_ended(record).await
     }
 
@@ -214,17 +253,23 @@ impl Town {
     /// A command a resident started on this machine has ended: if its end is owed, the resident
     /// that started it is told, and only it (`specs/world-run.md`, "怎样得知它跑完了"). The notice
     /// reaches a Codex resident as a tool output, a fact rather than words to answer. A
-    /// resident that is not here keeps its notice owed until it comes back.
+    /// resident of this machine that is not here keeps its notice owed until it comes back; one
+    /// living elsewhere is mailed, and its machine holds the notice for it.
     pub(crate) async fn job_ended(&self, record: &Path) -> Result<(), String> {
         let jobs = record.parent().ok_or("A job record sits in a jobs directory.")?;
         let resident_dir = jobs.parent().ok_or("A jobs directory sits in a resident's directory.")?;
         let resident = resident_dir.file_name().and_then(|name| name.to_str()).ok_or("A resident directory is named by its id.")?;
         let job = crate::town::who::read_job(record, resident, None)
             .ok_or_else(|| format!("{} is not a job record.", crate::paths::display_path(record)))?;
-        if matches!(job.state.as_str(), "starting" | "running") || !self.state.lock().residents.contains_key(resident) {
+        let marker = record.with_extension(OWED);
+        let home = match std::fs::read_to_string(&marker) {
+            Ok(home) => Some(home).filter(|home| !home.is_empty() && *home != self.config.machine),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&marker))),
+        };
+        if matches!(job.state.as_str(), "starting" | "running") || (home.is_none() && !self.state.lock().residents.contains_key(resident)) {
             return Ok(());
         }
-        let marker = record.with_extension(OWED);
         let claimed = record.with_extension(CLAIMED);
         match std::fs::rename(&marker, &claimed) {
             Ok(()) => {}
@@ -245,7 +290,13 @@ impl Town {
         let log = crate::paths::display_path(&job.output_path);
         let text = crate::hands::text::job_ended_notice(&job.id, &job.machine, &ended, &elapsed, &command, &log);
         let delivered = match delivery_id() {
-            Ok(id) => self.deliver(resident, Delivery { id, from: "world".into(), kind: "notice".into(), text, as_tool_output: true }).await,
+            Ok(id) => {
+                let delivery = Delivery { id, from: "world".into(), kind: "notice".into(), text, as_tool_output: true };
+                match &home {
+                    None => self.deliver(resident, delivery).await,
+                    Some(home) => self.mail(home, &Letter::Deliver { to: resident.to_string(), delivery }),
+                }
+            }
             Err(error) => Err(error),
         };
         // Delivered, the claim becomes the record that it was; failed, it is owed again. A
@@ -309,6 +360,13 @@ pub(super) fn move_waiting(from: &Path, to: &Path) -> Result<(), String> {
         moved.push(name);
     }
     Ok(())
+}
+
+/// Leaves a delivery waiting in a resident's queue directory.
+fn write_waiting(dir: &Path, delivery: &Delivery) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(dir)))?;
+    let bytes = serde_json::to_vec(delivery).map_err(|error| format!("Cannot encode a delivery: {error}"))?;
+    crate::world::write_atomic(&dir.join(format!("{}.json", delivery.id)), &bytes)
 }
 
 /// The deliveries waiting in a queue directory, oldest first. A file that is not a delivery

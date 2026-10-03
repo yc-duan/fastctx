@@ -124,3 +124,10 @@ pub(crate) fn colleague_started(id: &str, machine: &str) -> String {
 pub(crate) fn message_landed(id: &str, machine: &str, how: &str) -> String {
     format!("=== message to {id} on {machine} ({how}) ===")
 }
+
+/// What `message_colleague` returns when the words travel by mail to another machine.
+pub(crate) fn message_sent(id: &str, machine: &str) -> String {
+    format!(
+        "=== message to {id} on {machine} (sent) ===\n{machine} puts it into {id}'s session when it receives it, now or once it is back online; the last message of the turn it goes into comes back to you."
+    )
+}

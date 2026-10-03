@@ -1,13 +1,15 @@
-//! The Towns page and the chat screen: who lives in the World on this machine, and a live
+//! The Towns page and the chat screen: who lives in the World, on every machine, and a live
 //! conversation with one of them (`specs/world-town.md`, `world-colleagues.md`).
 //!
-//! The page reads the same records `fastctx w` reads, on a background thread, again every few
-//! seconds while it is on screen. The chat screen holds one conversation; leaving it ends the
+//! The page asks what `fastctx w` asks, through this machine's node, on a background thread,
+//! again every few seconds while it is on screen; without the node it reads this machine's
+//! records alone and says so. The chat screen holds one conversation; leaving it ends the
 //! watch, never the resident.
 
 use super::talk::{TalkClient, Target};
 use crate::control::paths::ControlPaths;
-use crate::town::who::{self, JobFacts, Query, ResidentFacts};
+use crate::town::w::Silent;
+use crate::town::who::{self, JobFacts, MachineAnswer, Query, ResidentFacts};
 use crate::tui::text_input::{InputMode, TextInput};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::sync::mpsc;
@@ -26,9 +28,16 @@ const MESSAGE_LIMIT: usize = (crate::world::node::admin::MAX_ADMIN_FRAME - 64 * 
 /// The agents the World can open on this machine.
 pub(super) const AGENTS: [&str; 2] = ["codex", "claude"];
 
-/// Who lives in the World on this machine, as the records say.
+/// Who lives in the World, as every machine that answered says.
 pub(super) struct Census {
+    /// This machine.
     pub(super) machine: String,
+    /// The machines that answered, this one first.
+    pub(super) machines: Vec<String>,
+    /// The other machines that gave no answer, and why.
+    pub(super) silent: Vec<Silent>,
+    /// This machine's node is not running, so only its own records were read.
+    pub(super) alone: bool,
     /// Residents not gone, grouped by town (the outside last), busiest first within a town.
     pub(super) residents: Vec<ResidentFacts>,
     /// Commands still running, by whom they were started.
@@ -254,26 +263,33 @@ impl Chat {
     }
 }
 
-/// Reads who lives here from the records under this machine's World directory.
+/// Reads who lives in the World: every machine's answer as this machine's node gathers it, or
+/// this machine's own records when its node is not running.
 fn read(paths: &ControlPaths, detail: Option<String>) -> Result<Census, CensusError> {
     let world = crate::world::WorldPaths::from_control(paths);
     let config = crate::world::load_config(&world).map_err(CensusError::Failed)?.ok_or(CensusError::NotEnrolled)?;
     let machine = config.name;
-    let slugs = crate::town::project::towns(&world.dir);
-    let mut every = Vec::new();
-    let mut running = Vec::new();
-    for town in std::iter::once(None).chain(slugs.iter().cloned().map(Some)) {
-        let answer = who::answer(&world.dir, &machine, &Query { town, all: true, ids: Vec::new() });
-        every.extend(answer.residents);
-        running.extend(answer.jobs);
-    }
-    // A resident that moved between towns left records in each; the current ones count.
-    let mut ids: Vec<String> = every.iter().map(|facts| facts.about.id.clone()).collect();
-    ids.sort();
-    ids.dedup();
-    let mut residents: Vec<ResidentFacts> = ids
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|error| CensusError::Failed(error.to_string()))?;
+    let ask = |query: Query| -> Result<(Vec<MachineAnswer>, Vec<Silent>, bool), CensusError> {
+        match runtime.block_on(crate::town::cli::gather(&query)).map_err(CensusError::Failed)? {
+            Some((answers, silent)) => Ok((answers, silent, false)),
+            None => Ok((vec![who::answer(&world.dir, &machine, &query)], Vec::new(), true)),
+        }
+    };
+    let (answers, silent, alone) = ask(Query { all: true, everywhere: true, ..Query::default() })?;
+    let machines: Vec<String> = answers.iter().map(|answer| answer.machine.clone()).collect();
+    let every: Vec<ResidentFacts> = answers.iter().flat_map(|answer| answer.residents.iter().cloned()).collect();
+    let running: Vec<JobFacts> = answers.into_iter().flat_map(|answer| answer.jobs).filter(JobFacts::running).collect();
+    // A resident that moved between towns left records in each; the current ones count. Ids
+    // are each machine's own, so a resident is its machine and its id.
+    let mut keys: Vec<(String, String)> = every.iter().map(|facts| (facts.about.machine.clone(), facts.about.id.clone())).collect();
+    keys.sort();
+    keys.dedup();
+    let mut residents: Vec<ResidentFacts> = keys
         .iter()
-        .filter_map(|id| who::current(every.iter().filter(|facts| &facts.about.id == id).collect()).cloned())
+        .filter_map(|(home, id)| {
+            who::current(every.iter().filter(|facts| facts.about.machine == *home && facts.about.id == *id).collect()).cloned()
+        })
         .filter(|facts| facts.now.state != "left")
         .collect();
     let rank = |state: &str| match state {
@@ -290,18 +306,22 @@ fn read(paths: &ControlPaths, detail: Option<String>) -> Result<Census, CensusEr
             std::cmp::Reverse(activity(right)),
         ))
     });
-    let towns = slugs
+    let towns = crate::town::project::towns(&world.dir)
         .into_iter()
         .map(|slug| {
-            let name = crate::town::project::charter(&world.dir, &slug).map(|charter| charter.name).unwrap_or_else(|_| slug.clone());
+            let name = crate::town::project::charter(&world.dir, &slug).map_or_else(|_| slug.clone(), |charter| charter.name);
             TownName { slug, name }
         })
         .collect();
-    let detail = detail.and_then(|id| {
-        let answer = who::answer(&world.dir, &machine, &Query { ids: vec![id], ..Query::default() });
-        who::current(answer.residents.iter().collect()).cloned()
-    });
-    Ok(Census { machine, residents, running, towns, detail })
+    let detail = match detail {
+        Some(id) => {
+            let (answers, _, _) = ask(Query { ids: vec![id], ..Query::default() })?;
+            let found: Vec<&ResidentFacts> = answers.iter().flat_map(|answer| &answer.residents).collect();
+            who::current(found).cloned()
+        }
+        None => None,
+    };
+    Ok(Census { machine, machines, silent, alone, residents, running, towns, detail })
 }
 
 /// When a resident last did anything the records show.

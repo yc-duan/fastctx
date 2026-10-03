@@ -66,6 +66,9 @@ pub(crate) fn accept(
     )?;
     Ok(true)
 }
+/// The letters waiting in the inbox, in receipt order. A letter whose file or receipt cannot
+/// be read is set aside with its reason among the delivery failures, so one damaged file never
+/// holds up the letters after it.
 pub(crate) fn list(paths: &WorldPaths) -> Result<Vec<InboxItem>, String> {
     let inbox = paths.dir.join("inbox");
     if !inbox.exists() {
@@ -77,35 +80,59 @@ pub(crate) fn list(paths: &WorldPaths) -> Result<Vec<InboxItem>, String> {
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        let id = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or("Invalid inbox name")?
-            .to_string();
-        let Some(bytes) =
-            super::read_optional(&paths.dir.join("mail-receipts").join(format!("{id}.json")))?
-        else {
+        let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
+            set_aside(paths, &path, "unnamed", "the inbox file name is not text")?;
             continue;
         };
-        let receipt: Receipt = messages::decode(&bytes, "mail receipt")?;
-        if receipt.consumed {
-            continue;
+        match read_item(paths, &path, &id) {
+            Ok(Some(item)) => items.push(item),
+            Ok(None) => {}
+            Err(reason) => set_aside(paths, &path, &id, &reason)?,
         }
-        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-        if hex::encode(super::crypto::sha256(&bytes)) != receipt.hash {
-            return Err("inbox integrity failure".into());
-        }
-        let env: Envelope = messages::decode(&bytes, "inbox envelope")?;
-        let opened = env.open()?;
-        items.push(InboxItem {
-            receipt: id,
-            from: opened.header.from,
-            letter: messages::decode(&opened.body, "mail")?,
-            path,
-        });
     }
     items.sort_by(|a, b| a.receipt.cmp(&b.receipt));
     Ok(items)
+}
+
+/// One inbox letter; `None` while it has no receipt yet, or once it was consumed.
+fn read_item(paths: &WorldPaths, path: &std::path::Path, id: &str) -> Result<Option<InboxItem>, String> {
+    let Some(bytes) =
+        super::read_optional(&paths.dir.join("mail-receipts").join(format!("{id}.json")))?
+    else {
+        return Ok(None);
+    };
+    let receipt: Receipt = messages::decode(&bytes, "mail receipt")?;
+    if receipt.consumed {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    if hex::encode(super::crypto::sha256(&bytes)) != receipt.hash {
+        return Err("inbox integrity failure".into());
+    }
+    let env: Envelope = messages::decode(&bytes, "inbox envelope")?;
+    let opened = env.open()?;
+    Ok(Some(InboxItem {
+        receipt: id.to_string(),
+        from: opened.header.from,
+        letter: messages::decode(&opened.body, "mail")?,
+        path: path.to_path_buf(),
+    }))
+}
+
+/// Moves an unreadable inbox file beside the delivery failures, with a record of why.
+fn set_aside(paths: &WorldPaths, path: &std::path::Path, id: &str, reason: &str) -> Result<(), String> {
+    let directory = paths.dir.join("delivery-failures");
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let kept = directory.join(format!("inbound-{id}.letter"));
+    std::fs::rename(path, &kept).map_err(|e| format!("Cannot set aside {}: {e}", path.display()))?;
+    write_atomic(
+        &directory.join(format!("inbound-{id}.json")),
+        &messages::encode(&serde_json::json!({
+            "direction": "inbound",
+            "reason": reason,
+            "letter": kept,
+        }))?,
+    )
 }
 pub(crate) fn acknowledge(paths: &WorldPaths, id: &str) -> Result<(), String> {
     if id.len() != 64 || hex::decode(id).is_err() {

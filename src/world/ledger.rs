@@ -7,7 +7,35 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct LedgerFile {
     pub(crate) path: String,
+    /// Base64 on the wire: an entry travels whole in one control message (`fits`).
+    #[serde(with = "base64_bytes")]
     pub(crate) bytes: Vec<u8>,
+}
+
+mod base64_bytes {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub(super) fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&super::crypto::b64_encode(bytes))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        super::crypto::b64_decode(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+/// Whether an entry, once signed, fits the one control message the hub takes it in: the signed
+/// entry is the base64 body of an envelope whose header, signature and frame stay under 4 KiB.
+pub(crate) fn fits(entry: &Entry) -> Result<bool, String> {
+    let mut entry = entry.clone();
+    entry.id = entry.content_id()?;
+    let signed = SignedEntry {
+        entry: String::from_utf8(messages::encode(&entry)?).expect("JSON is UTF-8"),
+        // An Ed25519 signature is 64 bytes, 88 characters of base64.
+        sig: "A".repeat(88),
+    };
+    let body = messages::encode(&signed)?.len();
+    Ok(body.div_ceil(3) * 4 <= super::envelope::MAX_CONTROL_MESSAGE_BYTES - 4 * 1024)
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ProjectUpdate {

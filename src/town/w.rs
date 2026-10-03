@@ -10,13 +10,14 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 /// A machine of the World that gave no answer, and why.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub(crate) struct Silent {
     pub(crate) machine: String,
     pub(crate) why: Silence,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
 pub(crate) enum Silence {
     /// Offline since the hub last saw it, when known.
     Offline(Option<String>),
@@ -147,8 +148,13 @@ fn identity(facts: &ResidentFacts, now: OffsetDateTime) -> String {
     parts.push(if surface.is_empty() { about.machine.clone() } else { format!("{} {surface}", about.machine) });
     parts.push(match &about.birth {
         Birth::User => "opened by user".to_string(),
-        Birth::Colleague { requester, label } if label.is_empty() => format!("for {requester}"),
-        Birth::Colleague { requester, label } => format!("for {requester} \"{label}\""),
+        Birth::Colleague { requester, label, machine } => {
+            let requester = match machine {
+                Some(machine) => format!("{requester} on {machine}"),
+                None => requester.clone(),
+            };
+            if label.is_empty() { format!("for {requester}") } else { format!("for {requester} \"{label}\"") }
+        }
     });
     if is_here(&facts.now.state) {
         parts.push(format!("here {}", span(&about.since, now)));

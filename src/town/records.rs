@@ -49,8 +49,14 @@ pub(crate) fn is_resident_id(text: &str) -> bool {
 pub(crate) enum Birth {
     /// The user opened the session.
     User,
-    /// Another resident asked for it; `label` is the three-to-eight-word task label.
-    Colleague { requester: String, label: String },
+    /// Another resident asked for it; `label` is the three-to-eight-word task label. `machine`
+    /// is where the requester lives when that is not this resident's machine.
+    Colleague {
+        requester: String,
+        label: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
 }
 
 /// Who it is and how it came to be; written once at birth, amended when the host reports more.
@@ -127,6 +133,15 @@ pub(crate) fn now_precise() -> String {
 /// times are compared as moments, not as text, so precisions can mix.
 pub(crate) fn currency(now: &Now) -> (bool, Option<time::OffsetDateTime>) {
     (now.state != "left", crate::world::parse_rfc3339(&now.since).ok())
+}
+
+/// Where a resident's records are on a machine: in its town's directory, or outside every
+/// town. A resident living elsewhere has the same directory here for what it runs here.
+pub(crate) fn resident_dir(world_dir: &Path, town: Option<&str>, id: &str) -> PathBuf {
+    match town {
+        Some(town) => world_dir.join("towns").join(town).join("residents").join(id),
+        None => world_dir.join("outside").join("residents").join(id),
+    }
 }
 
 /// The directory of one resident.
@@ -218,6 +233,27 @@ impl Records {
         let total = lines.len();
         let start = total.saturating_sub(count);
         Ok((lines[start..].iter().map(|line| (*line).to_string()).collect(), total))
+    }
+
+    /// The colleagues this resident asked for, each with the machine it lives on, as its
+    /// `ask_colleague` actions recorded them (`machine`, then the colleague's id as the result).
+    pub(crate) fn colleagues_asked(&self) -> Result<Vec<(String, String)>, String> {
+        let path = self.dir.join("actions");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+        };
+        Ok(text
+            .lines()
+            .filter_map(|line| {
+                let fields: Vec<&str> = line.splitn(5, '\t').collect();
+                match fields.as_slice() {
+                    [_, machine, "ask_colleague", _, id] if is_resident_id(id) => Some((machine.to_string(), id.to_string())),
+                    _ => None,
+                }
+            })
+            .collect())
     }
 }
 

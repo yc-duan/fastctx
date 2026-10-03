@@ -13,10 +13,12 @@ mod watch;
 
 use super::codex::host::{CodexHost, HostEvent};
 use super::records::{About, Birth, MessageLine, Now, Records, new_resident_id};
+use super::remote::Peer;
 use super::talk::TalkEvent;
+use crate::world::client::WorldClient;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -58,8 +60,9 @@ struct Live {
     inbox_address: Option<String>,
     /// MCP sessions currently attached for this resident.
     sessions: u32,
-    /// For each Codex turn, the residents whose words went into it; they get its last message.
-    readers: HashMap<String, BTreeSet<String>>,
+    /// For each Codex turn, the residents whose words went into it, here or on other machines;
+    /// they get its last message.
+    readers: HashMap<String, BTreeSet<Peer>>,
     /// The Codex turn running now, as the host reported or answered it. Kept here rather than
     /// read from `now`, whose write can fail while someone reads it.
     turn: Option<String>,
@@ -74,6 +77,9 @@ struct State {
     watchers: HashMap<String, Vec<mpsc::UnboundedSender<TalkEvent>>>,
     /// This machine's Computer Use desk.
     desk: super::desk::Desk,
+    /// Residents of other machines that asked for colleagues here and have since left, as
+    /// their machines wrote; they come back by speaking again.
+    departed: HashSet<Peer>,
 }
 
 /// Settings that do not change while the node runs.
@@ -93,6 +99,8 @@ pub(crate) struct TownConfig {
 
 pub(crate) struct Town {
     config: TownConfig,
+    /// This machine's member of the World: calls, mail and subscriptions to other machines.
+    world: Arc<WorldClient>,
     codex: Arc<CodexHost>,
     log: Arc<dyn Fn(String) + Send + Sync>,
     state: Mutex<State>,
@@ -101,6 +109,8 @@ pub(crate) struct Town {
     turns: tokio::sync::Mutex<()>,
     /// Held while a waiting queue is read, added to or moved, so no words are taken twice.
     inbox: Mutex<()>,
+    /// Residents of other machines watched from here, and residents here watched from others.
+    pub(in crate::town) watches: super::remote::watch::Watches,
 }
 
 /// What `ask_colleague` hands back.
@@ -121,23 +131,33 @@ pub(crate) enum Spoken {
 impl Town {
     pub(crate) fn new(
         config: TownConfig,
+        world: Arc<WorldClient>,
         codex: Arc<CodexHost>,
         events: mpsc::UnboundedReceiver<HostEvent>,
         log: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Arc<Self> {
         let town = Arc::new(Self {
             config,
+            world,
             codex,
             log,
             state: Mutex::new(State::default()),
             turns: tokio::sync::Mutex::new(()),
             inbox: Mutex::new(()),
+            watches: super::remote::watch::Watches::default(),
         });
         town.restore();
         tokio::spawn(Arc::clone(&town).follow_codex(events));
         tokio::spawn(Arc::clone(&town).follow_claude());
         tokio::spawn(Arc::clone(&town).reconcile_jobs());
+        tokio::spawn(Arc::clone(&town).read_mail());
+        tokio::spawn(Arc::clone(&town).follow_subscriptions());
         town
+    }
+
+    /// This machine's member of the World.
+    pub(crate) fn world(&self) -> &Arc<WorldClient> {
+        &self.world
     }
 
     pub(crate) fn log(&self, line: String) {
@@ -164,12 +184,36 @@ impl Town {
         self.state.lock().residents.get(id).map(|live| live.about.town.clone())
     }
 
+    /// Whether a resident lives on this machine: the town holds it, or its records here say so.
+    pub(crate) fn lives_here(&self, id: &str) -> bool {
+        self.state.lock().residents.contains_key(id)
+            || self.current_records(id).is_some_and(|(_, about)| about.machine == self.config.machine)
+    }
+
+    /// Who a resident of this machine is, as its records say; `None` for one living elsewhere.
+    pub(crate) fn about_of(&self, id: &str) -> Option<About> {
+        if let Some(live) = self.state.lock().residents.get(id) {
+            return Some(live.about.clone());
+        }
+        self.current_records(id).map(|(_, about)| about).filter(|about| about.machine == self.config.machine)
+    }
+
+    /// The colleagues a resident of this machine asked for, with the machine each lives on.
+    pub(crate) fn colleagues_of(&self, id: &str) -> Vec<(String, String)> {
+        let records = self.state.lock().residents.get(id).map(|live| live.records.clone());
+        match records.map(|records| records.colleagues_asked()) {
+            Some(Ok(asked)) => asked,
+            Some(Err(error)) => {
+                (self.log)(format!("cannot read the colleagues {id} asked for: {error}"));
+                Vec::new()
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// The directory holding a resident's records.
     pub(crate) fn resident_dir(&self, town: Option<&str>, id: &str) -> PathBuf {
-        match town {
-            Some(town) => self.config.world_dir.join("towns").join(town).join("residents").join(id),
-            None => self.config.world_dir.join("outside").join("residents").join(id),
-        }
+        super::records::resident_dir(&self.config.world_dir, town, id)
     }
 
     /// A town's bookkeeping directory: where residents the World launches stand.
@@ -316,16 +360,20 @@ impl Town {
             return;
         }
         self.set_state(&live.records, "left");
+        let records = live.records.clone();
         // A colleague works for whoever asked for it; once that resident has left, an idle
-        // colleague sleeps until someone speaks to it again.
+        // colleague sleeps until someone speaks to it again. Machines where it asked for
+        // colleagues hear it left.
         for colleague in state.residents.values() {
-            if let (Birth::Colleague { requester, .. }, Route::CodexThread(thread)) = (&colleague.about.birth, &colleague.route)
+            if let (Birth::Colleague { requester, machine: None, .. }, Route::CodexThread(thread)) = (&colleague.about.birth, &colleague.route)
                 && requester == id
                 && !self.codex.is_running(thread)
             {
                 self.set_state(&colleague.records, "asleep");
             }
         }
+        drop(state);
+        self.tell_colleagues_left(id, &records);
     }
 
     /// Whether a resident is here: an MCP session is attached, or the World holds it running.
@@ -522,7 +570,7 @@ fn subdirectories(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir).into_iter().flatten().flatten().map(|entry| entry.path()).filter(|path| path.is_dir()).collect()
 }
 
-fn delivery_id() -> Result<String, String> {
+pub(crate) fn delivery_id() -> Result<String, String> {
     let random = crate::world::crypto::random_bytes::<4>()?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -551,13 +599,17 @@ fn resident_instructions(about: &About, machine: &str, map: Option<String>) -> S
     };
     let mut text = format!("You are {id}, a resident of the FastCtx World on the machine \"{machine}\", {place}. ");
     match &about.birth {
-        Birth::Colleague { requester, .. } => text.push_str(&format!(
+        Birth::Colleague { requester, machine: requester_machine, .. } => text.push_str(&format!(
             "{requester} asked you to work for it. You work for {requester}, not for a human: there is no user \
 here to ask. The last message of each of your turns is delivered to {requester} word for word, and \
 only to the residents whose words went into that turn; nobody else reads it. End every turn with a \
 plain report {requester} can act on: what you did, what you ran to check it and the exit codes, what \
 still fails or is left, and a direct answer to every question you were asked. If you need a decision, \
-ask it in that last message and stop; the answer comes back as your next turn. "
+ask it in that last message and stop; the answer comes back as your next turn. ",
+            requester = match requester_machine {
+                Some(home) => format!("{requester} (on the machine \"{home}\")"),
+                None => requester.clone(),
+            }
         )),
         Birth::User => text.push_str(
             "The user opened you through the World and talks with you from their own devices; the user's \

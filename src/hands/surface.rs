@@ -1,12 +1,14 @@
 //! The World's surface on an enrolled machine: `run`, one of the two ways to write, the machine
 //! map and `copy`, and the colleague tools (`specs/world-run.md`, `world-write.md`,
 //! `world-colleagues.md`). It replaces the 1.0 surface whatever that enables; every tool acts
-//! for the resident behind this session.
+//! for the resident behind this session, on this machine or on the one `node` names.
 
+use super::Starter;
 use super::run::{self as hand_run, Runner};
 use super::text;
 use super::write::{self as hand_write, Writer as WriteHand};
 use crate::server::{FastCtxServer, ServerOptions};
+use crate::server_support::into_mcp_result;
 use crate::server_manifest::{ToolManifest, world_entry_published};
 use crate::town::core::Town;
 use crate::write::{ApplyPatchRequest, EditRequest, WriteError, WriteRequest, WriteResult};
@@ -79,14 +81,20 @@ impl FastCtxServer {
     )]
     async fn hands_run(&self, Parameters(arguments): Parameters<RunArguments>) -> CallToolResult {
         let _activity = self.activity.request();
-        let (town, resident) = match self.hand_owner(arguments.node.as_deref()) {
-            Ok(owner) => owner,
-            Err(failure) => return failure,
-        };
-        let runner = Runner { town, resident };
-        match hand_run::run(&runner, &self.session.command_environment, arguments.command, arguments.cwd).await {
-            Ok(result) => CallToolResult::success(hand_run::content(&result)),
-            Err(error) => failed(error),
+        match self.reach(arguments.node.as_deref()) {
+            Err(failure) => failure,
+            Ok(Reach::Here(town, resident)) => {
+                let runner = Runner { town, starter: Starter::Here(resident) };
+                match hand_run::run(&runner, &self.session.command_environment, arguments.command, arguments.cwd).await {
+                    Ok(result) => into_mcp_result(hand_run::response(&result)),
+                    Err(error) => failed(error),
+                }
+            }
+            Ok(Reach::There(town, resident, node)) => {
+                let (what, _) = hand_run::action(&arguments.command, &Err(String::new()));
+                let request = serde_json::json!({ "command": arguments.command, "cwd": arguments.cwd });
+                into_mcp_result(town.hand_elsewhere(&resident, &node, "run", &what, request).await)
+            }
         }
     }
 
@@ -102,7 +110,9 @@ impl FastCtxServer {
             new_string: arguments.new_string,
             replace_all: arguments.replace_all,
         };
-        self.write_hand(arguments.node.as_deref(), move |hand| hand_write::edit(hand, request)).await
+        let what = request.file_path.clone();
+        let wire = serde_json::json!(request);
+        self.write_hand(arguments.node.as_deref(), "edit", what, wire, move |hand| hand_write::edit(hand, request)).await
     }
 
     #[tool(
@@ -112,7 +122,9 @@ impl FastCtxServer {
     )]
     async fn hands_write(&self, Parameters(arguments): Parameters<WriteArguments>) -> CallToolResult {
         let request = WriteRequest { file_path: arguments.file_path, content: arguments.content };
-        self.write_hand(arguments.node.as_deref(), move |hand| hand_write::write(hand, request)).await
+        let what = request.file_path.clone();
+        let wire = serde_json::json!(request);
+        self.write_hand(arguments.node.as_deref(), "write", what, wire, move |hand| hand_write::write(hand, request)).await
     }
 
     #[tool(
@@ -122,34 +134,46 @@ impl FastCtxServer {
     )]
     async fn hands_apply_patch(&self, Parameters(arguments): Parameters<ApplyPatchArguments>) -> CallToolResult {
         let request = ApplyPatchRequest { input: arguments.input };
-        self.write_hand(arguments.node.as_deref(), move |hand| hand_write::apply_patch(hand, request)).await
+        let what = hand_write::patch_files(&request.input);
+        let wire = serde_json::json!(request);
+        self.write_hand(arguments.node.as_deref(), "apply_patch", what, wire, move |hand| hand_write::apply_patch(hand, request)).await
     }
 }
 
+/// Where a hand acts for the resident behind this session: on this machine, or on another.
+enum Reach {
+    Here(Arc<Town>, String),
+    There(Arc<Town>, String, String),
+}
+
 impl FastCtxServer {
-    /// The town and the resident a hand acts for, on the machine `node` names.
-    fn hand_owner(&self, node: Option<&str>) -> Result<(Arc<Town>, String), CallToolResult> {
+    /// The town and the resident a hand acts for, and the machine `node` names.
+    fn reach(&self, node: Option<&str>) -> Result<Reach, CallToolResult> {
         let (town, resident) = self.resident_for_tools().map_err(failed)?;
-        match node.map(str::trim).filter(|node| !node.is_empty()) {
-            Some(node) if node != town.machine() => Err(failed(format!(
-                "{node} is not this machine ({}); the hands reach only this machine in this build.",
-                town.machine()
-            ))),
-            _ => Ok((town, resident)),
-        }
+        Ok(match node.map(str::trim).filter(|node| !node.is_empty()) {
+            Some(node) if node != town.machine() => Reach::There(town, resident, node.to_string()),
+            _ => Reach::Here(town, resident),
+        })
     }
 
+    /// A write hand: run here, or `wire` sent to the machine `node` names.
     async fn write_hand(
         &self,
         node: Option<&str>,
+        hand: &str,
+        what: String,
+        wire: serde_json::Value,
         operation: impl FnOnce(&WriteHand) -> Result<WriteResult, WriteError> + Send + 'static,
     ) -> CallToolResult {
         let _activity = self.activity.request();
-        let (town, resident) = match self.hand_owner(node) {
-            Ok(owner) => owner,
+        let (town, resident) = match self.reach(node) {
             Err(failure) => return failure,
+            Ok(Reach::There(town, resident, node)) => {
+                return into_mcp_result(town.hand_elsewhere(&resident, &node, hand, &what, wire).await);
+            }
+            Ok(Reach::Here(town, resident)) => (town, resident),
         };
-        let outcome = tokio::task::spawn_blocking(move || operation(&WriteHand::new(town, resident))).await;
+        let outcome = tokio::task::spawn_blocking(move || operation(&WriteHand::new(town, Starter::Here(resident)))).await;
         match outcome {
             Ok(Ok(result)) => CallToolResult::success(vec![ContentBlock::text(result.text)]),
             Ok(Err(error)) => failed(error.to_string()),

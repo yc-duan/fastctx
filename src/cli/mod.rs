@@ -137,7 +137,7 @@ enum Command {
     /// Who is in this town and what they are doing; with ids, those residents or jobs in detail.
     #[command(name = "w")]
     W(crate::town::cli::WArgs),
-    /// Projects: list them, show one's charter or map, or enter one's town.
+    /// Projects: list them, show one's charter or map, enter one's town, or open and edit one.
     Project {
         #[command(subcommand)]
         command: crate::town::cli::ProjectCommand,
@@ -148,6 +148,7 @@ enum Command {
     /// Talk to a resident as yourself and watch it answer.
     Talk(crate::town::talk_cli::TalkArgs),
     /// Journals: the history residents leave in a project.
+    #[command(after_long_help = crate::town::cli::JOURNAL_PROMPT)]
     Journal {
         #[command(subcommand)]
         command: crate::town::cli::JournalCommand,
@@ -298,9 +299,9 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         Some(Command::World { command }) => crate::world::cli::run_world(command).await,
         Some(Command::Node { command }) => crate::world::cli::run_node(command).await,
         Some(Command::WorldControl) => crate::world::control::run_helper().await,
-        Some(Command::W(args)) => crate::town::cli::run(args),
+        Some(Command::W(args)) => crate::town::cli::run(args).await,
         Some(Command::Project { command }) => crate::town::cli::run_project(command).await,
-        Some(Command::Journal { command }) => crate::town::cli::run_journal(command),
+        Some(Command::Journal { command }) => crate::town::cli::run_journal(command).await,
         Some(Command::Talk(args)) => crate::town::talk_cli::run(args).await,
         Some(Command::JobEnded { record }) => crate::town::cli::run_job_ended(record).await,
         #[cfg(unix)]

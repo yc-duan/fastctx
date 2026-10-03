@@ -23,6 +23,10 @@ pub(crate) struct Query {
     /// Particular residents or jobs, for their details; when set, `town` and `all` are ignored.
     #[serde(default)]
     pub(crate) ids: Vec<String>,
+    /// The residents of every town and of the outside, each listed, as the TUI's census shows
+    /// them; `town` is then ignored.
+    #[serde(default)]
+    pub(crate) everywhere: bool,
 }
 
 /// One machine's answer.
@@ -129,6 +133,7 @@ pub(crate) fn answer(world_dir: &Path, machine: &str, query: &Query) -> MachineA
     }
     for (town, residents_dir) in &places {
         let wanted = match (&query.town, town) {
+            _ if query.everywhere => true,
             (Some(asked), Some(town)) => asked == town,
             (Some(_), None) => false,
             (None, None) => true,

@@ -8,13 +8,15 @@ use std::process::ExitCode;
 
 #[derive(Debug, clap::Args)]
 pub(crate) struct TalkArgs {
-    /// Open a new resident on this machine first: codex or claude. Every word given is then
-    /// its first words.
+    /// Open a new resident first: codex or claude. Every word given is then its first words.
     #[arg(long, value_name = "AGENT")]
     open: Option<String>,
     /// The town to open it in; omitted, outside every town.
     #[arg(long, requires = "open")]
     town: Option<String>,
+    /// The machine to open it on; omitted, this one.
+    #[arg(long, requires = "open")]
+    node: Option<String>,
     /// The resident to talk to, such as codex-7f3a.
     resident: Option<String>,
     /// Words to say. Given, the command says them, shows the turn they start or join, and
@@ -35,7 +37,7 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
             if words.is_empty() {
                 return Err("Give the first words for the new resident.".to_string());
             }
-            let request = AdminRequest::Town { request: TownRequest::Open { agent, town: args.town, words: words.join(" ") } };
+            let request = AdminRequest::Town { request: TownRequest::Open { agent, town: args.town, words: words.join(" "), node: args.node } };
             let resident = match admin::call(&endpoint, &request, admin::ADMIN_TIMEOUT).await? {
                 Some(response) if response.ok => response.data.get("resident").and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
                 Some(response) => return Err(response.error.unwrap_or_else(|| "The node could not open the resident.".to_string())),

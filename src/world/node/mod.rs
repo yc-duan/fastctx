@@ -64,14 +64,15 @@ async fn run_daemon_inner(
     variables.push(("HOME".into(), paths.home.as_os_str().to_os_string()));
     let environment = crate::session::SessionEnvironment::new(paths.home.clone(), variables);
     let session = crate::session::SessionContext::from_environment(environment.clone())?;
-    let executor = executor::Executor::new(Arc::clone(&client), Arc::clone(&session));
     let town = crate::town::start(
         client.name(),
         paths.home.clone(),
         world_paths.dir.clone(),
         paths.codex_dir.clone(),
+        Arc::clone(&client),
         Arc::new(|line: String| log(format!("town: {line}"))),
     )?;
+    let executor = executor::Executor::new(Arc::clone(&client), Arc::clone(&session), Arc::clone(&town));
     let engine_hosted = Arc::new(AtomicBool::new(false));
     let admin = admin::AdminServer::new(
         Arc::clone(&client),

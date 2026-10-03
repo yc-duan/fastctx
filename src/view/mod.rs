@@ -105,9 +105,15 @@ fn remember(shown: Vec<(Seen, bool)>) -> Result<(), String> {
     let config = crate::world::load_config(&paths)?.ok_or("this machine is not in a World")?;
     let query = crate::town::who::Query { ids: vec![resident.clone()], ..Default::default() };
     let found = crate::town::who::answer(&paths.dir, &config.name, &query);
-    let dir = crate::town::who::current(found.residents.iter().collect())
-        .map(|facts| facts.dir.clone())
-        .ok_or_else(|| format!("resident {resident} has no records on this machine"))?;
+    // A resident of this machine is wherever its records are now; one living on another
+    // machine has here only the directory of the town its `run` named.
+    let dir = match crate::town::who::current(found.residents.iter().collect()) {
+        Some(facts) => facts.dir.clone(),
+        None => {
+            let town = std::env::var(crate::town::cli::TOWN_VARIABLE).ok().filter(|town| !town.is_empty());
+            crate::town::records::resident_dir(&paths.dir, town.as_deref(), &resident)
+        }
+    };
     let mut records = Vec::with_capacity(shown.len());
     for (opened, whole) in shown {
         if whole {

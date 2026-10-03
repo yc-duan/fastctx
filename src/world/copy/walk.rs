@@ -151,7 +151,7 @@ fn entry_for(
     metadata: &std::fs::Metadata,
     index: u64,
 ) -> Result<Entry, String> {
-    let sha256 = crate::world::remote_edit::sha256_of(path)?;
+    let sha256 = crate::world::file_hash::sha256_of(path)?;
     Ok(Entry {
         index,
         path: path.to_path_buf(),

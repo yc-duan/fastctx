@@ -41,7 +41,7 @@ pub(super) fn render_towns(frame: &mut Frame<'_>, app: &mut WorldApp, m: &WorldM
         .split(area);
     let list = panes[0];
     let heading = fill(m.towns_heading, &[("n", &census.residents.len().to_string())]);
-    title_rule(frame, list, &heading, Some(&safe(&census.machine)));
+    title_rule(frame, list, &heading, Some(&reach(census, m)));
     let selected = app.selected[Page::Towns.index()];
     let table_area = Rect { y: list.y + 1, height: list.height.saturating_sub(1), ..list };
     let window = table_window(census.residents.len(), selected, table_area.height);
@@ -52,9 +52,17 @@ pub(super) fn render_towns(frame: &mut Frame<'_>, app: &mut WorldApp, m: &WorldM
     let agent_width = agents.iter().map(|agent| width(agent)).max().unwrap_or(6).clamp(6, 24);
     let towns: Vec<String> = census.residents.iter().map(|facts| town_label(facts.about.town.as_deref(), census, m)).collect();
     let town_width = towns.iter().map(|town| width(town)).max().unwrap_or(6).clamp(6, 18);
-    let with_town = list.width >= 60;
+    let machines: Vec<String> = census.residents.iter().map(|facts| safe(&facts.about.machine)).collect();
+    let machine_width = machines.iter().map(|machine| width(machine)).max().unwrap_or(6).clamp(6, 16);
+    // Residents of one machine need no machine column; residents of several do, before their
+    // town, which the detail pane names too.
+    let with_machine = list.width >= 60 && machines.iter().any(|machine| machine != &machines[0]);
+    let with_town = list.width >= if with_machine { 78 } else { 60 };
     let with_agent = list.width >= 110;
     let mut fixed = vec![state_width, id_width];
+    if with_machine {
+        fixed.push(machine_width);
+    }
     if with_agent {
         fixed.push(agent_width);
     }
@@ -77,6 +85,9 @@ pub(super) fn render_towns(frame: &mut Frame<'_>, app: &mut WorldApp, m: &WorldM
                 ])),
                 Cell::from(Span::styled(clipped(&ids[index], id_width), Style::default().fg(theme::fg()).add_modifier(Modifier::BOLD))),
             ];
+            if with_machine {
+                cells.push(Cell::from(Span::styled(clipped(&machines[index], machine_width), Style::default().fg(theme::muted()))));
+            }
             if with_agent {
                 cells.push(Cell::from(Span::styled(clipped(&agents[index], agent_width), Style::default().fg(theme::muted()))));
             }
@@ -88,6 +99,9 @@ pub(super) fn render_towns(frame: &mut Frame<'_>, app: &mut WorldApp, m: &WorldM
         })
         .collect::<Vec<_>>();
     let mut header = vec![m.col_state, m.col_resident];
+    if with_machine {
+        header.push(m.col_machine);
+    }
     if with_agent {
         header.push(m.col_agent);
     }
@@ -435,6 +449,23 @@ fn state_word<'a>(state: &str, m: &'a WorldMessages) -> &'a str {
     }
 }
 
+/// Which machines the census covers: "desk · lab · hangzhou offline", or this machine alone
+/// when its node is not running.
+fn reach(census: &Census, m: &WorldMessages) -> String {
+    if census.alone {
+        return fill(m.node_alone, &[("machine", &safe(&census.machine))]);
+    }
+    let mut parts: Vec<String> = census.machines.iter().map(|machine| safe(machine)).collect();
+    for silent in &census.silent {
+        let machine = safe(&silent.machine);
+        parts.push(match &silent.why {
+            crate::town::w::Silence::Offline(_) => fill(m.machine_offline, &[("machine", &machine)]),
+            crate::town::w::Silence::NoAnswer(_) => fill(m.machine_silent, &[("machine", &machine)]),
+        });
+    }
+    parts.join(" · ")
+}
+
 fn agent_line(about: &About) -> String {
     let agent = match about.agent.as_str() {
         "codex" | "codex-mcp-client" => "Codex",
@@ -468,7 +499,7 @@ fn town_label(town: Option<&str>, census: &Census, m: &WorldMessages) -> String 
 fn came(about: &About, m: &WorldMessages) -> String {
     match &about.birth {
         Birth::User => m.opened_by_user.to_string(),
-        Birth::Colleague { requester, label } => fill(m.asked_by, &[("requester", &safe(requester)), ("label", &safe(label))]),
+        Birth::Colleague { requester, label, .. } => fill(m.asked_by, &[("requester", &safe(requester)), ("label", &safe(label))]),
     }
 }
 

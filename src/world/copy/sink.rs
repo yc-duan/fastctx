@@ -213,7 +213,7 @@ async fn same_content(target: &Path, size: u64, sha256: &str) -> bool {
     let target = target.to_path_buf();
     let expected = sha256.to_string();
     tokio::task::spawn_blocking(move || {
-        crate::world::remote_edit::sha256_of(&target).is_ok_and(|actual| actual == expected)
+        crate::world::file_hash::sha256_of(&target).is_ok_and(|actual| actual == expected)
     })
     .await
     .unwrap_or(false)

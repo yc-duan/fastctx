@@ -8,17 +8,18 @@ use serde::{Deserialize, Serialize};
 const GRANTS_FILE_VERSION: u32 = 3;
 /// Signature domain of a grant snapshot.
 pub(crate) const GRANT_SET_DOMAIN: &str = "grant_set";
-/// Every verb a grant can name: the five node-taking tools plus the World-only ones. A verb is
-/// a tool name; a new primitive joins this table when it ships.
+/// Every verb a grant can name: the World's tools that reach another machine, plus `w` and
+/// `talk`, the two things only commands and people do there. A new primitive joins this table
+/// when it ships.
 pub(crate) const ALL_VERBS: [&str; 8] = [
-    "inspect_local_file",
-    "grep",
-    "glob",
-    "replace",
     "run",
+    "edit",
+    "write",
+    "apply_patch",
     "copy",
-    "remote_write",
-    "remote_edit",
+    "w",
+    "ask_colleague",
+    "talk",
 ];
 
 /// One grant shape.

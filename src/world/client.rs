@@ -1301,18 +1301,32 @@ impl WorldClient {
         let _lock = self.inbox_lock.lock();
         super::mail::list(&self.paths)
     }
-    /// Waits for a nonempty durable inbox; registration precedes the scan to avoid lost wakeups.
-    pub(crate) async fn wait_inbox(&self) -> Result<Vec<super::mail::InboxItem>, String> {
+    /// Waits until the durable inbox holds letters other than `skipped` (receipts the consumer
+    /// already opened but could not acknowledge), and returns those. Registration precedes the
+    /// scan to avoid lost wakeups.
+    pub(crate) async fn next_mail(
+        &self,
+        skipped: &std::collections::HashSet<String>,
+    ) -> Result<Vec<super::mail::InboxItem>, String> {
         loop {
             let notified = self.inbox_changed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            let inbox = self.inbox()?;
+            let inbox: Vec<_> = self
+                .inbox()?
+                .into_iter()
+                .filter(|item| !skipped.contains(&item.receipt))
+                .collect();
             if !inbox.is_empty() {
                 return Ok(inbox);
             }
             notified.await;
         }
+    }
+
+    /// Waits for the inbox to change.
+    pub(crate) async fn mail_changed(&self) {
+        self.inbox_changed.notified().await;
     }
     /// Commits consumer completion before deleting the inbox file. Idempotent.
     pub(crate) fn acknowledge_mail(&self, receipt: &str) -> Result<(), String> {

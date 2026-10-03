@@ -2,7 +2,9 @@
 //! own environment, budgets carried by the caller, and a cancel path from the hub.
 //!
 //! The same `execute` serves a World call that names this very machine (`dispatch.rs`), so a
-//! verb behaves identically whether it was asked for from here or from another member.
+//! verb behaves identically whether it was asked for from here or from another member. Calls
+//! from another machine's town (a resident's hands, `fastctx w`, colleagues, talking) go to this
+//! machine's town (`town::remote::verbs`).
 
 use crate::model::ToolResponse;
 use crate::session::SessionContext;
@@ -52,14 +54,20 @@ impl VerbOutcome {
 pub(crate) struct Executor {
     client: Arc<WorldClient>,
     session: Arc<SessionContext>,
+    town: Arc<crate::town::core::Town>,
     running: Mutex<HashMap<u64, CancellationToken>>,
 }
 
 impl Executor {
-    pub(crate) fn new(client: Arc<WorldClient>, session: Arc<SessionContext>) -> Arc<Self> {
+    pub(crate) fn new(
+        client: Arc<WorldClient>,
+        session: Arc<SessionContext>,
+        town: Arc<crate::town::core::Town>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             client,
             session,
+            town,
             running: Mutex::new(HashMap::new()),
         })
     }
@@ -101,6 +109,9 @@ impl Executor {
         let from = opened.header.from.clone();
         let started = Instant::now();
         let outcome = match self.prepare(&opened) {
+            Ok((call, session)) if crate::town::remote::grant_verb(&call.verb).is_some() => {
+                crate::town::remote::verbs::answer(&self.town, &from, call, &session).await
+            }
             Ok((call, session)) => {
                 let token = CancellationToken::new();
                 self.running.lock().insert(hub_id, token.clone());
@@ -189,9 +200,6 @@ impl Executor {
             None => self.session.control_paths.home.clone(),
         };
         let budget_variable = match call.verb.as_str() {
-            "inspect_local_file" => crate::budget::READ_TOKEN_BUDGET_ENV,
-            "grep" => crate::budget::GREP_TOKEN_BUDGET_ENV,
-            "glob" => crate::budget::GLOB_TOKEN_BUDGET_ENV,
             "run" => crate::budget::RUN_TOKEN_BUDGET_ENV,
             _ => crate::budget::GLOBAL_TOKEN_BUDGET_ENV,
         };
@@ -255,11 +263,12 @@ impl Executor {
 }
 
 /// The grant verb a wire verb is judged by. The receiving side of a copy is still `copy`: the
-/// bytes a member writes are the bytes another member sends it.
+/// bytes a member writes are the bytes another member sends it. A town's call is judged by the
+/// tool or command it serves.
 pub(crate) fn grant_verb(verb: &str) -> &str {
     match verb {
         "copy_receive" => "copy",
-        other => other,
+        other => crate::town::remote::grant_verb(other).unwrap_or(other),
     }
 }
 
@@ -309,48 +318,6 @@ pub(crate) async fn execute(
 fn run_verb(call: &Call, session: &Arc<SessionContext>, token: &CancellationToken) -> VerbOutcome {
     let args = call.args.clone();
     session.activate(|| match call.verb.as_str() {
-        "inspect_local_file" => match serde_json::from_value::<crate::read_tool::ReadRequest>(args)
-        {
-            Ok(request) => {
-                let path = request.file_path.clone();
-                let response = crate::read_tool::read_file(request);
-                let facts = if response.is_error {
-                    BTreeMap::new()
-                } else {
-                    crate::world::remote_edit::file_facts(&path)
-                };
-                VerbOutcome { response, facts }
-            }
-            Err(error) => {
-                VerbOutcome::error(format!("Invalid inspect_local_file arguments: {error}"))
-            }
-        },
-        "grep" => match serde_json::from_value::<crate::grep_tool::GrepRequest>(args) {
-            Ok(request) => VerbOutcome::plain(crate::grep_tool::grep_files(request, token.clone())),
-            Err(error) => VerbOutcome::error(format!("Invalid grep arguments: {error}")),
-        },
-        "glob" => match serde_json::from_value::<crate::glob_tool::GlobRequest>(args) {
-            Ok(request) => VerbOutcome::plain(crate::glob_tool::glob_files(request, token.clone())),
-            Err(error) => VerbOutcome::error(format!("Invalid glob arguments: {error}")),
-        },
-        "replace" => match serde_json::from_value::<crate::edit::ReplaceRequest>(args) {
-            Ok(request) => {
-                let limit = match crate::control::settings::load(&session.control_paths)
-                    .and_then(|settings| settings.replace_file_limit_mib())
-                {
-                    Ok(limit) => limit,
-                    Err(error) => {
-                        return VerbOutcome::error(format!(
-                            "Cannot use replace settings on this node: {error}."
-                        ));
-                    }
-                };
-                VerbOutcome::plain(
-                    crate::edit::ReplaceService::new().replace_with_limit(request, limit),
-                )
-            }
-            Err(error) => VerbOutcome::error(format!("Invalid replace arguments: {error}")),
-        },
         "run" => match serde_json::from_value::<crate::shell::RunRequest>(args) {
             Ok(request) => {
                 let ceiling = match call.origin {
@@ -375,14 +342,6 @@ fn run_verb(call: &Call, session: &Arc<SessionContext>, token: &CancellationToke
                 VerbOutcome { response, facts }
             }
             Err(error) => VerbOutcome::error(format!("Invalid run arguments: {error}")),
-        },
-        "remote_write" => match serde_json::from_value(args) {
-            Ok(request) => crate::world::remote_edit::write(request),
-            Err(error) => VerbOutcome::error(format!("Invalid remote_write arguments: {error}")),
-        },
-        "remote_edit" => match serde_json::from_value(args) {
-            Ok(request) => crate::world::remote_edit::edit(request, &session.control_paths),
-            Err(error) => VerbOutcome::error(format!("Invalid remote_edit arguments: {error}")),
         },
         other => VerbOutcome::error(format!("This node does not execute \"{other}\".")),
     })

@@ -49,15 +49,8 @@ impl FastCtxServer {
             Ok(found) => found,
             Err(error) => return failed(error),
         };
-        if let Some(node) = request.node.as_deref().map(str::trim).filter(|node| !node.is_empty())
-            && node != town.machine()
-        {
-            return failed(format!(
-                "ask_colleague cannot start a colleague on {node} in this build; only this machine ({}) can host one.",
-                town.machine()
-            ));
-        }
-        match town.ask_colleague(&requester, &request.prompt, request.description.trim()).await {
+        let node = request.node.as_deref().map(str::trim).filter(|node| !node.is_empty());
+        match town.ask_for(&requester, node, &request.prompt, request.description.trim()).await {
             Ok(asked) => CallToolResult::success(vec![ContentBlock::text(text::colleague_started(&asked.id, &asked.machine))]),
             Err(error) => failed(error),
         }
@@ -79,15 +72,16 @@ impl FastCtxServer {
             Err(error) => return failed(error),
         };
         let to = request.to.trim();
-        match town.speak(&from, to, &request.message).await {
-            Ok(spoken) => {
+        match town.message_for(&from, to, &request.message).await {
+            Ok((machine, Some(spoken))) => {
                 let how = match spoken {
                     Spoken::NewTurn => "started a new turn",
                     Spoken::JoinedTurn => "joined its current turn",
                     Spoken::Queued => "waiting for it to read",
                 };
-                CallToolResult::success(vec![ContentBlock::text(text::message_landed(to, town.machine(), how))])
+                CallToolResult::success(vec![ContentBlock::text(text::message_landed(to, &machine, how))])
             }
+            Ok((machine, None)) => CallToolResult::success(vec![ContentBlock::text(text::message_sent(to, &machine))]),
             Err(error) => failed(error),
         }
     }

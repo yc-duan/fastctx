@@ -9,6 +9,7 @@ use super::{
 use crate::control::codex_config;
 use crate::hands::text;
 use crate::town::codex::host::{HostEvent, Input, ThreadSpec};
+use crate::town::remote::{Letter, Peer};
 use crate::town::talk::TalkEvent;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -16,17 +17,66 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 impl Town {
-    /// Starts a Codex colleague for `requester` on this machine, in the requester's town.
-    pub(crate) async fn ask_colleague(&self, requester: &str, prompt: &str, label: &str) -> Result<Asked, String> {
-        let town = {
-            let state = self.state.lock();
-            let live = state.residents.get(requester).ok_or_else(|| format!("{requester} is not a resident of this machine."))?;
-            live.about.town.clone()
+    /// Starts a Codex colleague on this machine for `requester`, who lives here or on another
+    /// machine, in the requester's town, which must reach this machine.
+    pub(crate) async fn ask_colleague(&self, requester: &Peer, town: Option<String>, prompt: &str, label: &str) -> Result<Asked, String> {
+        if let Some(town) = &town {
+            let charter = crate::town::project::charter(&self.config.world_dir, town)?;
+            if !charter.machines.iter().any(|machine| machine == &self.config.machine) {
+                return Err(format!(
+                    "{} is not one of {town}'s machines ({}); the user can add it to the project first.",
+                    self.config.machine,
+                    charter.machines.join(", ")
+                ));
+            }
+        }
+        let elsewhere = requester.machine != self.config.machine;
+        let birth = Birth::Colleague {
+            requester: requester.id.clone(),
+            label: label.to_string(),
+            machine: elsewhere.then(|| requester.machine.clone()),
         };
-        let birth = Birth::Colleague { requester: requester.to_string(), label: label.to_string() };
-        let first = format!("=== from {requester} ===\n{prompt}");
-        let id = self.start_codex(birth, town, BTreeSet::from([requester.to_string()]), first, (requester, prompt)).await?;
+        let name = self.peer_name(requester);
+        let first = format!("=== from {name} ===\n{prompt}");
+        let id = self.start_codex(birth, town, BTreeSet::from([requester.clone()]), first, (&name, prompt)).await?;
         Ok(Asked { id, machine: self.config.machine.clone() })
+    }
+
+    /// The town a resident of this machine is in, for a colleague it asks for.
+    pub(crate) fn requester_town(&self, id: &str) -> Result<Option<String>, String> {
+        self.town_of(id).ok_or_else(|| format!("{id} is not a resident of this machine."))
+    }
+
+    /// A resident of another machine that asked for colleagues here has left, as its machine
+    /// wrote: those not in a turn sleep, and the others sleep when their turn ends, until it
+    /// speaks again.
+    pub(crate) fn requester_left(&self, requester: Peer) {
+        let mut state = self.state.lock();
+        for colleague in state.residents.values() {
+            if let (Birth::Colleague { requester: id, machine: Some(machine), .. }, Route::CodexThread(thread)) =
+                (&colleague.about.birth, &colleague.route)
+                && *id == requester.id
+                && *machine == requester.machine
+                && !self.codex.is_running(thread)
+            {
+                self.set_state(&colleague.records, "asleep");
+            }
+        }
+        state.departed.insert(requester);
+    }
+
+    /// A resident of this machine left: every other machine where it asked for colleagues
+    /// hears, so they sleep there as they do here.
+    pub(super) fn tell_colleagues_left(&self, id: &str, records: &Records) {
+        let machines: BTreeSet<String> = match records.colleagues_asked() {
+            Ok(asked) => asked.into_iter().map(|(machine, _)| machine).filter(|machine| *machine != self.config.machine).collect(),
+            Err(error) => return (self.log)(format!("cannot tell where {id} asked for colleagues: {error}")),
+        };
+        for machine in machines {
+            if let Err(error) = self.mail(&machine, &Letter::Left { requester: id.to_string() }) {
+                (self.log)(format!("cannot tell {machine} that {id} left: {error}"));
+            }
+        }
     }
 
     /// Opens a resident for the user on this machine, in a town or outside every town, and
@@ -53,7 +103,7 @@ impl Town {
         &self,
         birth: Birth,
         town: Option<String>,
-        readers: BTreeSet<String>,
+        readers: BTreeSet<Peer>,
         first: String,
         (asker, asked): (&str, &str),
     ) -> Result<String, String> {
@@ -227,7 +277,7 @@ impl Town {
     }
 
     /// The residents whose words went into a turn, taken once it ended; the turn is over.
-    async fn take_readers(&self, thread: &str, turn: &str) -> Vec<String> {
+    async fn take_readers(&self, thread: &str, turn: &str) -> Vec<Peer> {
         let _turns = self.turns.lock().await;
         let mut state = self.state.lock();
         let Some(id) = state.threads.get(thread).cloned() else { return Vec::new() };
@@ -242,7 +292,7 @@ impl Town {
     /// recorded as interrupted, those whose words went into the turn hear so, and the Computer
     /// Use desk is free.
     async fn server_gone(&self) {
-        let dying: Vec<(String, Vec<(String, Vec<String>)>)> = {
+        let dying: Vec<(String, Vec<(String, Vec<Peer>)>)> = {
             let _turns = self.turns.lock().await;
             let mut state = self.state.lock();
             state
@@ -254,7 +304,7 @@ impl Town {
                     if running.is_none() && live.readers.is_empty() {
                         return None;
                     }
-                    let mut turns: Vec<(String, Vec<String>)> =
+                    let mut turns: Vec<(String, Vec<Peer>)> =
                         live.readers.drain().map(|(turn, readers)| (turn, readers.into_iter().collect())).collect();
                     if let Some(running) = running
                         && !turns.iter().any(|(turn, _)| *turn == running)
@@ -345,12 +395,15 @@ impl Town {
             let Some(id) = state.threads.get(thread).cloned() else { return };
             let Some(live) = state.residents.get(&id) else { return };
             let requester_here = match &live.about.birth {
-                Birth::Colleague { requester, .. } => self.present(&state, requester),
+                Birth::Colleague { requester, machine: None, .. } => self.present(&state, requester),
+                // A requester on another machine is here until its machine writes that it left.
+                Birth::Colleague { requester, machine: Some(machine), .. } => !state.departed.contains(&Peer::new(machine, requester)),
                 Birth::User => true,
             };
             (id, live.records.clone(), requester_here)
         };
         let ended = crate::world::now_rfc3339();
+        let names: Vec<String> = readers.iter().map(|reader| self.peer_name(reader)).collect();
         let changed = records.update_now(|now| {
             // A turn the app-server took down with it stays interrupted until the next words;
             // one that ended on its own, even when the user stopped it, leaves the resident idle.
@@ -363,8 +416,8 @@ impl Town {
             }
             .to_string();
             now.since = ended.clone();
-            if !readers.is_empty() {
-                now.last_action = Some(format!("answered {}", readers.join(", ")));
+            if !names.is_empty() {
+                now.last_action = Some(format!("answered {}", names.join(", ")));
                 now.last_action_at = Some(ended.clone());
             }
         });
@@ -374,7 +427,7 @@ impl Town {
         let written = records.append_message(&MessageLine {
             at: ended.clone(),
             kind: if status == "completed" { "answered".to_string() } else { status.clone() },
-            peer: readers.join(","),
+            peer: names.join(","),
             turn: Some(turn.to_string()),
             text: last_message.clone().or_else(|| reason.clone()),
         });
@@ -401,11 +454,17 @@ impl Town {
                     continue;
                 }
             };
-            let outcome = self.deliver(&reader, delivery).await;
+            // A reader on another machine gets the answer by mail: it is sent once its letter is
+            // committed here, and its machine delivers or holds it.
+            let (outcome, done) = if reader.machine == self.config.machine {
+                (self.deliver(&reader.id, delivery).await, "delivered")
+            } else {
+                (self.mail(&reader.machine, &Letter::Deliver { to: reader.id.clone(), delivery }), "sent")
+            };
             let _ = records.append_message(&MessageLine {
                 at: crate::world::now_rfc3339(),
-                kind: if outcome.is_ok() { "delivered".into() } else { "undelivered".into() },
-                peer: reader.clone(),
+                kind: if outcome.is_ok() { done.into() } else { "undelivered".into() },
+                peer: self.peer_name(&reader),
                 turn: Some(turn.to_string()),
                 text: outcome.err(),
             });
@@ -420,7 +479,7 @@ struct TurnEnd {
     reason: Option<String>,
     duration_ms: Option<u64>,
     last_message: Option<String>,
-    readers: Vec<String>,
+    readers: Vec<Peer>,
     /// The app-server stopped under the turn, rather than the turn ending.
     outage: bool,
 }
