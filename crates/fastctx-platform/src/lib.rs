@@ -6,9 +6,15 @@
 //! the differences between platforms appear in this crate only.
 
 pub mod atomic;
+#[cfg(windows)]
+mod command_line;
+pub mod detach;
+pub mod identity;
 pub mod lock;
 pub mod private;
 
 pub use atomic::{Permissions, publish, publish_new};
+pub use detach::{Detached, spawn_detached};
+pub use identity::ProcessIdentity;
 pub use lock::FileLock;
 pub use private::ensure_private_dir;
