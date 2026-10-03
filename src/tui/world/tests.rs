@@ -332,6 +332,7 @@ fn export_world_render_scenes() {
         ("overview-40", Language::ZhCn, 40, 9, Page::Overview, 3),
         ("overview-de", Language::De, 100, 30, Page::Overview, 4),
         ("machines-zh", Language::ZhCn, 120, 36, Page::Machines, 5),
+        ("machines-en", Language::En, 120, 36, Page::Machines, 3),
         ("machines-80", Language::ZhCn, 80, 24, Page::Machines, 5),
         ("machines-40", Language::ZhCn, 40, 9, Page::Machines, 5),
         ("service-zh", Language::ZhCn, 100, 30, Page::Service, 3),

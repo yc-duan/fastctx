@@ -486,8 +486,12 @@ fn render_machines(
         .max()
         .unwrap_or(6);
     // A narrow terminal keeps state, name and latency; a note column too narrow to read is
-    // noise, and the detail pane carries the note anyway.
-    let with_system = list.width >= 60;
+    // noise, and the detail pane carries the note anyway. The system column comes only when
+    // every column fits whole: the table squeezes columns that do not, and a name cut short
+    // reads as another machine. Cells are two apart and the focus marker takes two.
+    let whole = |widths: &[usize]| widths.iter().sum::<usize>() + 2 * widths.len();
+    let with_system =
+        usize::from(list.width) >= whole(&[state_width, name_width, system_width, 10]);
     let fixed = if with_system {
         vec![state_width, name_width, system_width, 10]
     } else {
