@@ -10,6 +10,16 @@ use windows_sys::Win32::System::Threading::{
 };
 
 pub(super) fn launch(executable: &Path, request: &Path) -> io::Result<()> {
+    match create(executable, request, CREATE_BREAKAWAY_FROM_JOB) {
+        // A job may forbid its processes to leave it; a node that Task Scheduler started runs
+        // in such a job. The supervisor then stays in the caller's job and ends with it, and
+        // the node's next start records its command as interrupted.
+        Err(error) if error.raw_os_error() == Some(5) => create(executable, request, 0),
+        outcome => outcome,
+    }
+}
+
+fn create(executable: &Path, request: &Path, breakaway: u32) -> io::Result<()> {
     let application: Vec<u16> = executable
         .as_os_str()
         .encode_wide()
@@ -36,7 +46,7 @@ pub(super) fn launch(executable: &Path, request: &Path) -> io::Result<()> {
             std::ptr::null(),
             std::ptr::null(),
             0,
-            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | breakaway,
             std::ptr::null(),
             std::ptr::null(),
             &startup,
