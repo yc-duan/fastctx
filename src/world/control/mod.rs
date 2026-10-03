@@ -214,6 +214,11 @@ pub(crate) enum Action {
         data: PathBuf,
         name: String,
     },
+    /// Opens a project: the first version of a town's charter, written by the user.
+    OpenProject {
+        town: String,
+        change: crate::town::ledger::CharterChange,
+    },
     ExportInvite {
         path: PathBuf,
         text: String,

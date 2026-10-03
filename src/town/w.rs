@@ -171,7 +171,7 @@ fn doing(facts: &ResidentFacts, jobs: &[&JobFacts], now: OffsetDateTime) -> Stri
         "waiting" => format!("waiting for input {since}"),
         "asleep" => format!("asleep {since}"),
         "left" => format!("left {since} ago"),
-        "interrupted" => format!("interrupted {since} ago, when its node restarted mid-turn"),
+        "interrupted" => format!("interrupted {since} ago"),
         "error" => format!("failed to start {since} ago"),
         _ => String::new(),
     };
@@ -189,7 +189,8 @@ fn doing(facts: &ResidentFacts, jobs: &[&JobFacts], now: OffsetDateTime) -> Stri
         },
     };
     let desk = if facts.now.desk { " · at this machine's Computer Use desk" } else { "" };
-    if state.is_empty() { format!("{activity}{desk}") } else { format!("{state} · {activity}{desk}") }
+    let trouble = facts.now.trouble.as_ref().map(|trouble| format!(" · {} {}", clock(&trouble.at), first_line(&trouble.text))).unwrap_or_default();
+    if state.is_empty() { format!("{activity}{desk}{trouble}") } else { format!("{state} · {activity}{desk}{trouble}") }
 }
 
 /// Running things whose starter is not here.

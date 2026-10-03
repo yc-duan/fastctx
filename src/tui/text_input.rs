@@ -251,6 +251,41 @@ impl TextInput {
         true
     }
 
+    pub(crate) fn mode(&self) -> InputMode {
+        self.mode
+    }
+
+    /// A multiline input as rows, one per line of its text: the row holding the cursor scrolls
+    /// to keep it in view, the others show their start. Selection shows on the cursor's row.
+    pub(crate) fn rows(&self, width: usize) -> Vec<Vec<InputCell>> {
+        let mut rows = Vec::new();
+        let mut start = 0;
+        for line in self.text.split('\n') {
+            let end = start + line.len();
+            let here = (start..=end).contains(&self.cursor);
+            let view = Self {
+                text: line.to_string(),
+                character_count: line.chars().count(),
+                cursor: if here { self.cursor - start } else { 0 },
+                anchor: if here { self.anchor.map(|anchor| anchor.clamp(start, end) - start) } else { None },
+                limit: self.limit,
+                mode: InputMode::SingleLine,
+                secret: self.secret,
+                revealed: self.revealed,
+                error: None,
+            };
+            let mut cells = view.cells(width);
+            if !here {
+                for cell in &mut cells {
+                    cell.cursor = false;
+                }
+            }
+            rows.push(cells);
+            start = end + 1;
+        }
+        rows
+    }
+
     /// Builds visible graphemes with a reserved cursor cell. No secret or control byte is
     /// handed to the terminal renderer; selection remains visible in monochrome terminals.
     pub(crate) fn cells(&self, width: usize) -> Vec<InputCell> {

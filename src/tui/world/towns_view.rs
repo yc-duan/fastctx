@@ -4,7 +4,7 @@
 use super::i18n::{WorldMessages, fill};
 use super::model::{Tone, relative};
 use super::talk::{Closed, Entry, ToolState};
-use super::towns::{Census, CensusError, Chat};
+use super::towns::{Census, CensusError, Chat, Field};
 use super::widgets::{
     Lines, button, clipped, muted, notice, pair, plain, safe, section, table, table_window, title_rule,
     width, wrapped,
@@ -167,6 +167,13 @@ fn resident_lines(facts: &ResidentFacts, census: &Census, m: &WorldMessages, act
     if facts.now.desk {
         lines.push(muted(m.using_desk));
     }
+    if let Some(trouble) = &facts.now.trouble {
+        let line = Line::from(vec![
+            Span::styled(format!("{} ", Tone::Warn.symbol()), Style::default().fg(theme::warning()).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{} · {}", relative(&trouble.at, m), safe(&trouble.text)), Style::default().fg(theme::warning())),
+        ]);
+        lines.extend(wrapped(vec![line], width));
+    }
     if !detail.actions.is_empty() {
         lines.push(Line::raw(""));
         lines.push(section(&fill(m.section_actions, &[("n", &detail.actions.len().min(actions).to_string()), ("total", &detail.actions_total.to_string())])));
@@ -205,7 +212,14 @@ pub(super) fn render_chat(frame: &mut Frame<'_>, app: &mut WorldApp, m: &WorldMe
         Some(facts) => format!("{} · {}", safe(&facts.about.id), agent_line(&facts.about)),
         None => app.towns.chat_resident().map_or_else(|| m.new_resident.to_string(), safe),
     };
-    let towns: Vec<(String, String)> = census.map(|census| census.towns.iter().map(|town| (town.slug.clone(), town.name.clone())).collect()).unwrap_or_default();
+    // What the new-resident rows offer: the machines that answered, this one first, and the
+    // towns that reach the chosen one.
+    let chosen = app.towns.chat.as_ref().and_then(|chat| chat.compose.as_ref()).map_or(0, |compose| compose.machine);
+    let machines: Vec<String> = census.map(|census| census.machines.clone()).unwrap_or_default();
+    let towns: Vec<(String, String)> = match (census, machines.get(chosen)) {
+        (Some(census), Some(machine)) => census.towns_on(machine).iter().map(|town| (town.slug.clone(), town.name.clone())).collect(),
+        _ => Vec::new(),
+    };
     let Some(chat) = &mut app.towns.chat else { return };
     let busy = chat.client.as_ref().is_some_and(|client| client.transcript.busy);
     let state = chat.client.as_ref().and_then(|client| client.transcript.state.clone());
@@ -218,7 +232,7 @@ pub(super) fn render_chat(frame: &mut Frame<'_>, app: &mut WorldApp, m: &WorldMe
     let parts = Layout::vertical([Constraint::Length(2), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).split(area);
     let conversation = parts[1];
     let lines = match &chat.client {
-        None => compose_lines(chat, &towns, m),
+        None => compose_lines(chat, &machines, &towns, m, usize::from(conversation.width)),
         Some(_) => transcript_lines(chat, m, usize::from(conversation.width)),
     };
     let rows = usize::from(conversation.height);
@@ -241,32 +255,44 @@ pub(super) fn chat_context(app: &WorldApp, m: &WorldMessages) -> String {
     app.towns.chat_resident().map_or_else(|| m.new_resident.to_string(), safe)
 }
 
-fn compose_lines(chat: &Chat, towns: &[(String, String)], m: &WorldMessages) -> Lines {
+fn compose_lines(chat: &Chat, machines: &[String], towns: &[(String, String)], m: &WorldMessages, columns: usize) -> Lines {
     let Some(compose) = &chat.compose else { return Vec::new() };
-    let agents = [m.agent_codex, m.agent_claude];
-    // Both labels take the width of the wider one on screen, then two cells, so the choices line up.
-    let label_width = width(m.col_agent).max(width(m.col_town)) + 2;
-    let label = |text: &str| Span::styled(format!("{text}{}", " ".repeat(label_width - width(text))), Style::default().fg(theme::muted()));
-    let mut agent_spans = vec![label(m.col_agent)];
-    for (index, label) in agents.iter().enumerate() {
-        agent_spans.push(button(label, index == compose.agent, theme::accent()));
-        agent_spans.push(Span::raw(" "));
-    }
-    agent_spans.push(Span::styled("  Tab", Style::default().fg(theme::border())));
-    let mut town_spans = vec![label(m.col_town)];
-    let choices = std::iter::once(m.outside.to_string()).chain(towns.iter().map(|(slug, name)| if name == slug { safe(slug) } else { format!("{} · {}", safe(name), safe(slug)) }));
-    for (index, label) in choices.enumerate() {
-        town_spans.push(button(&label, index == compose.town, theme::accent()));
-        town_spans.push(Span::raw(" "));
-    }
-    town_spans.push(Span::styled("  Shift-Tab", Style::default().fg(theme::border())));
-    vec![
-        Line::from(agent_spans),
-        Line::raw(""),
-        Line::from(town_spans),
-        Line::raw(""),
-        muted(m.compose_hint),
-    ]
+    // The labels take the width of the widest on screen, then two cells, so the choices line
+    // up; the row the arrow keys change wears the accent and a marker.
+    let label_width = [m.col_agent, m.col_machine, m.col_town].iter().map(|text| width(text)).max().unwrap_or(0) + 2;
+    let row = |field: Field, text: &str, choices: Vec<String>, chosen: usize| {
+        let focused = compose.focus == field;
+        let (marker, color) = if focused { ("› ", theme::accent()) } else { ("  ", theme::muted()) };
+        let mut spans = vec![
+            Span::styled(marker, Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{text}{}", " ".repeat(label_width - width(text))), Style::default().fg(color)),
+        ];
+        for (index, choice) in choices.iter().enumerate() {
+            spans.push(button(choice, index == chosen, theme::accent()));
+            spans.push(Span::raw(" "));
+        }
+        if focused {
+            spans.push(Span::styled(" ←/→", Style::default().fg(theme::border())));
+        }
+        Line::from(spans)
+    };
+    let agents = vec![m.agent_codex.to_string(), m.agent_claude.to_string()];
+    let machines: Vec<String> = if machines.is_empty() { vec![m.this_machine.to_string()] } else { machines.iter().map(|machine| safe(machine)).collect() };
+    let towns: Vec<String> = std::iter::once(m.outside.to_string())
+        .chain(towns.iter().map(|(slug, name)| if name == slug { safe(slug) } else { format!("{} · {}", safe(name), safe(slug)) }))
+        .collect();
+    wrapped(
+        vec![
+            row(Field::Agent, m.col_agent, agents, compose.agent),
+            Line::raw(""),
+            row(Field::Machine, m.col_machine, machines, compose.machine),
+            Line::raw(""),
+            row(Field::Town, m.col_town, towns, compose.town),
+            Line::raw(""),
+            muted(m.compose_hint),
+        ],
+        columns,
+    )
 }
 
 fn transcript_lines(chat: &Chat, m: &WorldMessages, width: usize) -> Lines {
@@ -318,7 +344,7 @@ fn transcript_lines(chat: &Chat, m: &WorldMessages, width: usize) -> Lines {
                 ]));
                 previous_was_text = false;
             }
-            Entry::TurnEnded { status } => {
+            Entry::TurnEnded { status, reason } => {
                 let (label, color) = match status.as_str() {
                     "completed" => (m.turn_completed, theme::border()),
                     "interrupted" => (m.turn_interrupted, theme::warning()),
@@ -326,6 +352,17 @@ fn transcript_lines(chat: &Chat, m: &WorldMessages, width: usize) -> Lines {
                 };
                 lines.push(Line::raw(""));
                 lines.push(centered_rule(label, color, width));
+                if let Some(reason) = reason {
+                    lines.extend(wrapped(vec![Line::from(Span::styled(safe(reason), Style::default().fg(color)))], width));
+                }
+                previous_was_text = false;
+            }
+            Entry::Health(text) => {
+                let line = Line::from(vec![
+                    Span::styled(format!("{} ", Tone::Warn.symbol()), Style::default().fg(theme::warning()).add_modifier(Modifier::BOLD)),
+                    Span::styled(safe(text), Style::default().fg(theme::warning())),
+                ]);
+                lines.extend(wrapped(vec![line], width));
                 previous_was_text = false;
             }
             Entry::Refused(reason) => {

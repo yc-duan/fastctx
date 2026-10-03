@@ -9,6 +9,7 @@
 mod claude_side;
 mod codex_side;
 mod delivery;
+mod turns;
 mod watch;
 
 use super::codex::host::{CodexHost, HostEvent};
@@ -66,6 +67,8 @@ struct Live {
     /// The Codex turn running now, as the host reported or answered it. Kept here rather than
     /// read from `now`, whose write can fail while someone reads it.
     turn: Option<String>,
+    /// What its host reported this turn that everyone owed the turn's end was already told.
+    told: BTreeSet<&'static str>,
 }
 
 #[derive(Default)]
@@ -146,7 +149,8 @@ impl Town {
             inbox: Mutex::new(()),
             watches: super::remote::watch::Watches::default(),
         });
-        town.restore();
+        let restored = town.restore();
+        tokio::spawn(Arc::clone(&town).after_restart(restored));
         tokio::spawn(Arc::clone(&town).follow_codex(events));
         tokio::spawn(Arc::clone(&town).follow_claude());
         tokio::spawn(Arc::clone(&town).reconcile_jobs());
@@ -292,7 +296,7 @@ impl Town {
             {
                 let route = route_for(&about.agent);
                 let inbox_address = inbox_address.map(str::to_string);
-                state.residents.insert(id.clone(), Live { records, about, route, inbox_address, sessions: 0, readers: HashMap::new(), turn: None });
+                state.residents.insert(id.clone(), Live::new(records, about, route, inbox_address, 0));
             }
             if let Some(live) = state.residents.get_mut(id) {
                 live.sessions += 1;
@@ -326,7 +330,7 @@ impl Town {
         let route = route_for(agent);
         state.residents.insert(
             id.clone(),
-            Live { records, about, route, inbox_address: inbox_address.map(str::to_string), sessions: 1, readers: HashMap::new(), turn: None },
+            Live::new(records, about, route, inbox_address.map(str::to_string), 1),
         );
         drop(state);
         self.pair_claude_sessions();
@@ -469,9 +473,10 @@ impl Town {
 
     /// Takes back what this machine's town held before the node restarted. A Codex resident
     /// the World holds sleeps in its thread and wakes at the next words; a turn it was running
-    /// died with the old app-server. Every other resident's session ended with the old node.
-    /// A resident that moved between towns left records in each; only the current ones count.
-    fn restore(&self) {
+    /// died with the old app-server, and is ended in [`Self::after_restart`]. Every other
+    /// resident's session ended with the old node. A resident that moved between towns left
+    /// records in each; only the current ones count.
+    fn restore(&self) -> Restored {
         let mut current: BTreeMap<String, ((bool, Option<time::OffsetDateTime>), Records, About, Now)> = BTreeMap::new();
         for dir in self.record_dirs() {
             let records = Records::new(dir);
@@ -490,44 +495,55 @@ impl Town {
                 current.insert(about.id.clone(), (rank, records, about, now));
             }
         }
+        let mut restored = Restored::default();
         let mut state = self.state.lock();
         for (id, (_, records, about, now)) in current {
             let thread = match (about.agent.as_str(), about.surface.as_str(), &about.session) {
                 ("codex", "world", Some(thread)) => Some(thread.clone()),
                 _ => None,
             };
-            let state_now = match (&thread, now.state.as_str()) {
-                (Some(_), "busy") => Some("interrupted"),
-                (Some(_), "interrupted" | "asleep" | "error") => None,
-                (Some(_), _) => Some("asleep"),
-                (None, "left") => None,
-                (None, _) => Some("left"),
-            };
-            if let Some(word) = state_now {
-                self.set_state(&records, word);
+            match (&thread, now.state.as_str()) {
+                (Some(_), "busy") => restored.unfinished.push((id.clone(), now.turn.clone(), now.owed.clone())),
+                (Some(_), "interrupted" | "asleep" | "error") | (None, "left") => {}
+                (Some(_), _) => self.set_state(&records, "asleep"),
+                (None, _) => {
+                    self.set_state(&records, "left");
+                    restored.left.push((id.clone(), records.clone()));
+                }
             }
             // Nobody sits at the desk of a node that just started.
             if now.desk {
                 self.set_desk(&records, false);
             }
-            if state_now == Some("interrupted") {
-                let _ = records.append_message(&MessageLine {
-                    at: crate::world::now_rfc3339(),
-                    kind: "interrupted".into(),
-                    peer: String::new(),
-                    turn: None,
-                    text: Some("The node restarted while this turn ran; the turn did not finish.".into()),
-                });
-            }
             let Some(thread) = thread else { continue };
             self.codex.adopt(&thread, self.codex_spec(&about));
             state.threads.insert(thread.clone(), id.clone());
-            state.residents.insert(
-                id,
-                Live { records, about, route: Route::CodexThread(thread), inbox_address: None, sessions: 0, readers: HashMap::new(), turn: None },
-            );
+            state.residents.insert(id, Live::new(records, about, Route::CodexThread(thread), None, 0));
+        }
+        restored
+    }
+
+    /// Tells what the node's restart ended: the colleagues of residents that left hear it on
+    /// their machines, and every turn that was running ends as interrupted, told to everyone
+    /// owed its end.
+    async fn after_restart(self: Arc<Self>, restored: Restored) {
+        for (id, records) in &restored.left {
+            self.tell_colleagues_left(id, records);
+        }
+        for (id, turn, owed) in restored.unfinished {
+            let reason = format!("the node on {} restarted while it ran", self.config.machine);
+            let end = turns::TurnEnd { turn, status: "interrupted".into(), reason: Some(reason), duration_ms: None, last_message: None, readers: owed, outage: true };
+            self.turn_ended(&id, end).await;
         }
     }
+}
+
+/// What a node's restart found: turns that were running, with who is owed each one's end, and
+/// residents whose sessions ended with the old node.
+#[derive(Default)]
+struct Restored {
+    unfinished: Vec<(String, Option<String>, Vec<Peer>)>,
+    left: Vec<(String, Records)>,
 }
 
 impl std::fmt::Debug for Town {

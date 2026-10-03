@@ -1055,6 +1055,10 @@ fn render_actions(
 }
 
 fn input_line(field: &super::forms::Field, focused: bool, width: usize) -> Line<'static> {
+    cells_line(field.input.cells(width.saturating_sub(2)), focused, width)
+}
+
+fn cells_line(cells: Vec<crate::tui::text_input::InputCell>, focused: bool, width: usize) -> Line<'static> {
     let ground = Style::default().fg(theme::fg()).bg(theme::surface());
     let mut spans = vec![Span::styled(
         if focused { "▌" } else { " " },
@@ -1066,7 +1070,6 @@ fn input_line(field: &super::forms::Field, focused: bool, width: usize) -> Line<
             })
             .bg(theme::surface()),
     )];
-    let cells = field.input.cells(width.saturating_sub(2));
     for cell in cells {
         let mut style = ground;
         if cell.selected || (cell.cursor && focused) {
@@ -1185,6 +1188,11 @@ fn form_body(
                 lines.push(Line::from(label));
                 if field.kind.is_choice() {
                     lines.push(choice_line(field, focused, m));
+                } else if field.input.mode() == crate::tui::text_input::InputMode::Multiline && !field.input.secret {
+                    // Each line of a multiline field on its own row.
+                    for row in field.input.rows(input_width.saturating_sub(2)) {
+                        lines.push(cells_line(row, focused, input_width));
+                    }
                 } else {
                     lines.push(input_line(field, focused, input_width));
                 }
@@ -1704,6 +1712,24 @@ fn preview(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
             pair(m.directory, data.to_string_lossy()),
             Line::raw(""),
         ],
+        Action::OpenProject { town, change } => {
+            let place = |location: &crate::town::project::Location| format!("{} {}", location.machine, location.path);
+            let mut lines = vec![
+                pair(m.town_slug, town),
+                pair(m.project_name, change.name.as_deref().unwrap_or_default()),
+                pair(m.project_what, change.what.as_deref().unwrap_or_default()),
+                pair(m.machines, change.machines.as_deref().unwrap_or_default().join(", ")),
+            ];
+            for item in change.places.as_deref().unwrap_or_default() {
+                lines.push(pair(m.places, format!("{} · {}", item.what, place(&item.location))));
+            }
+            if let Some(canon) = &change.canon {
+                lines.push(pair(m.canon, place(canon)));
+            }
+            lines.push(Line::raw(""));
+            lines.push(plain(m.open_project_subtitle));
+            lines
+        }
         _ => vec![plain(m.continue_action)],
     }
 }

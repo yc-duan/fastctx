@@ -2,10 +2,10 @@
 
 use super::talk::{TalkClient, Transcript};
 use super::tests::{draw, export_scene, fixture};
-use super::towns::{Census, Chat, Compose, TownName};
+use super::towns::{Census, Chat, Compose, Field, TownName};
 use super::{Page, Screen, WorldApp};
 use crate::control::i18n::{ALL_LANGUAGES, Language};
-use crate::town::records::{About, Birth, MessageLine, Now};
+use crate::town::records::{About, Birth, MessageLine, Now, Trouble};
 use crate::town::talk::TalkEvent;
 use crate::town::w::{Silence, Silent};
 use crate::town::who::{ActionLine, JobFacts, ResidentFacts};
@@ -37,7 +37,7 @@ fn resident(id: &str, agent: &str, model: Option<&str>, town: Option<&str>, stat
             running: None,
             last_action: Some("write D:/mark50/specs/world-town.md".into()),
             last_action_at: Some(ago(65)),
-            desk: false,
+            ..Now::default()
         },
         dir: std::path::PathBuf::from("C:/Users/Ada/.fastctx/world/towns/mark50/residents").join(id),
         actions: Vec::new(),
@@ -55,7 +55,10 @@ pub(super) fn census(residents: Vec<ResidentFacts>) -> Census {
         alone: false,
         residents,
         running: Vec::new(),
-        towns: vec![TownName { slug: "mark50".into(), name: "mark50 研发".into() }, TownName { slug: "probe".into(), name: "probe".into() }],
+        towns: vec![
+            TownName { slug: "mark50".into(), name: "mark50 研发".into(), machines: vec!["desktop".into(), "laptop".into()] },
+            TownName { slug: "probe".into(), name: "probe".into(), machines: vec!["desktop".into()] },
+        ],
         detail: None,
     }
 }
@@ -70,6 +73,10 @@ fn populated() -> Census {
         resident("claude-5e77", "claude-code", None, None, "unknown", Birth::User, "cli"),
     ];
     residents[0].now.desk = true;
+    residents[0].now.trouble = Some(Trouble {
+        at: ago(240),
+        text: "OpenAI is holding this turn's output for extra safety processing (use: cyber; reason: probes).".into(),
+    });
     residents[2].about.machine = "laptop".into();
     let mut census = census(residents);
     census.running.push(JobFacts {
@@ -121,7 +128,7 @@ fn transcript() -> Transcript {
         TalkEvent::Message { item: "i2".into(), text: "Found 14 callers. The loop in src/ctrl/loop.rs is the only one on the hot path.\nI'll start there.".into() },
         TalkEvent::Tool { item: "i3".into(), name: "fastctx.apply_patch".into(), summary: "D:/mark50/src/ctrl/fixed.rs".into(), done: true, failed: false },
         TalkEvent::Tool { item: "i4".into(), name: "fastctx.run".into(), summary: "cargo test -p ctrl".into(), done: true, failed: true },
-        TalkEvent::TurnEnded { turn: "t1".into(), status: "completed".into() },
+        TalkEvent::TurnEnded { turn: "t1".into(), status: "completed".into(), reason: None },
         TalkEvent::Words { from: "claude-2b1c".into(), text: "Saturation tests matter most; keep the old float path behind a feature.".into(), item: None },
         TalkEvent::Live,
         TalkEvent::TurnStarted { turn: "t2".into() },
@@ -149,7 +156,7 @@ fn chat_app() -> WorldApp {
 
 fn compose_app() -> WorldApp {
     let mut app = towns_app();
-    app.towns.chat = Some(Chat::new(None, Some(Compose { agent: 0, town: 1 })));
+    app.towns.chat = Some(Chat::new(None, Some(Compose { agent: 0, machine: 0, town: 1, focus: Field::Machine })));
     app.screen = Screen::Talk;
     app
 }
@@ -191,4 +198,33 @@ fn export_town_render_scenes() {
         export_scene(name, language, width, height, chat_app());
     }
     export_scene("chat-compose-zh", Language::ZhCn, 100, 30, compose_app());
+    let mut elsewhere = compose_app();
+    if let Some(compose) = elsewhere.towns.chat.as_mut().and_then(|chat| chat.compose.as_mut()) {
+        compose.machine = 1;
+        compose.town = 1;
+    }
+    export_scene("chat-compose-laptop-en-80", Language::En, 80, 24, elsewhere);
+    let mut ended = towns_app();
+    let mut transcript = transcript();
+    for event in [
+        TalkEvent::Health { text: "OpenAI is holding this turn's output for extra safety processing (use: cyber; reason: probes).".into() },
+        TalkEvent::TurnEnded { turn: "t2".into(), status: "failed".into(), reason: Some("This content was flagged for possible cybersecurity risk.".into()) },
+    ] {
+        transcript.push(event);
+    }
+    ended.towns.chat = Some(Chat::new(Some(TalkClient::detached("codex-7f3a", transcript)), None));
+    ended.screen = Screen::Talk;
+    export_scene("chat-ended-zh", Language::ZhCn, 100, 30, ended);
+    for (name, language, width, height) in [("project-form-zh", Language::ZhCn, 100, 30), ("project-form-en-80", Language::En, 80, 24)] {
+        let mut app = towns_app();
+        let mut form = super::forms::Form::new(super::forms::FormKind::Project, "desktop, laptop");
+        for (index, value) in ["mark50", "mark50 研发", "为 Mark 50 战衣研发纳米单元的控制固件，并在真机上验证。"].iter().enumerate() {
+            form.fields[index].input.replace((*value).to_string());
+        }
+        form.fields[4].input.replace("固件源码 | desktop | D:/work/mark50
+仿真数据 | laptop | /data/mark50-sim".to_string());
+        app.form = Some(form);
+        app.screen = Screen::Form;
+        export_scene(name, language, width, height, app);
+    }
 }

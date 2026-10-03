@@ -29,9 +29,19 @@ pub(crate) enum TalkEvent {
     Message { item: String, text: String },
     /// A tool started (`done` false) or ended (`done` true).
     Tool { item: String, name: String, summary: String, done: bool, failed: bool },
-    TurnEnded { turn: String, status: String },
+    /// A turn ended: `completed`, `failed` or `interrupted`, and why when it did not complete
+    /// and the host or the World knows why.
+    TurnEnded {
+        turn: String,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     /// Its state changed: busy, idle, asleep, left.
     State { state: String },
+    /// Something its host reported about the session itself rather than its work: a retry, a
+    /// safety review holding the model's output, tools that did not start.
+    Health { text: String },
     /// Everything before this came from the history; everything after happens now.
     Live,
     /// The watched resident does not exist here, or the watch cannot continue.
@@ -139,7 +149,8 @@ pub(crate) fn codex_history(thread: &Value, running: Option<&str>) -> Vec<TalkEv
         }
         let status = turn.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string();
         if status != "inProgress" && running != Some(id.as_str()) {
-            events.push(TalkEvent::TurnEnded { turn: id, status });
+            let reason = turn.pointer("/error/message").and_then(Value::as_str).map(str::to_string);
+            events.push(TalkEvent::TurnEnded { turn: id, status, reason });
         }
     }
     events

@@ -9,9 +9,15 @@ use super::journal::{self, Attachment, Description, Stamp};
 use super::project::{self, Charter, Location, Place};
 use super::remote::valid_town;
 use crate::world::ledger::{self as shared, LedgerFile, ProjectUpdate};
+use crate::world::messages::{CallBudget, CallOrigin};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// How long fetching an attachment from another machine may take: what `copy` gives a copy
+/// when its caller names no limit.
+const FETCH_TIMEOUT: Duration = Duration::from_millis(crate::world::surface::DEFAULT_COPY_TIMEOUT_MS);
 
 /// A charter as its writer gives it; on an edit, the fields left out stay as they are.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -41,14 +47,28 @@ pub(crate) struct EntryDraft {
     /// Absolute paths of files on this machine to attach.
     #[serde(default)]
     pub(crate) attachments: Vec<PathBuf>,
+    /// Files on other machines of the World to attach.
+    #[serde(default)]
+    pub(crate) remote_attachments: Vec<RemoteFile>,
 }
 
-/// An attachment ready to be written: inside the entry, or named where it stays.
+/// A file on another machine: the machine, and the file's native path there.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct RemoteFile {
+    pub(crate) machine: String,
+    pub(crate) path: String,
+}
+
+/// An attachment on its way into an entry: inside it while it fits, else kept on this machine.
 struct Attached {
     name: String,
-    bytes: Vec<u8>,
+    size: u64,
+    /// Where its bytes are on this machine now.
     origin: PathBuf,
-    inline: bool,
+    /// Its bytes, read when it may still travel inside the entry.
+    bytes: Option<Vec<u8>>,
+    /// Already a copy under the World's keeping, not the writer's own file.
+    kept: bool,
 }
 
 impl Town {
@@ -108,10 +128,23 @@ impl Town {
     }
 
     /// Adds an entry to a journal, starting the journal when it is new. Returns the entry's id.
-    /// Attachments travel inside the entry while it fits the one message the hub takes it in;
-    /// the largest of the rest stay where they are and the entry names them.
+    /// Attachments come from this machine or from others; they travel inside the entry while
+    /// it fits the one message the hub takes it in, and the largest of the rest are copied
+    /// into this machine's keeping, where the entry names them. Either way the evidence is
+    /// fixed when the entry is written.
     pub(crate) async fn add_entry(&self, writer: Option<&str>, draft: EntryDraft) -> Result<String, String> {
-        let EntryDraft { town, journal: name, text, description, cites, attachments } = draft;
+        let (id, kept) = self.entry_id(&draft.town, &draft.journal)?;
+        let written = self.write_entry(writer, draft, &id, &kept).await;
+        if written.is_err() {
+            // Nothing names what was kept for an entry that was not written.
+            let _ = std::fs::remove_dir_all(&kept);
+        }
+        written
+    }
+
+    async fn write_entry(&self, writer: Option<&str>, draft: EntryDraft, id: &str, kept: &Path) -> Result<String, String> {
+        let EntryDraft { town, journal: name, text, description, cites, attachments, remote_attachments } = draft;
+        let id = id.to_string();
         journal::validate_name(&name)?;
         project::charter(self.world_dir(), &town)?;
         let fresh = journal::descriptions(self.world_dir(), &town, &name).is_empty() && journal::entries(self.world_dir(), &town, &name).is_empty();
@@ -133,16 +166,33 @@ impl Town {
         if let Some(unknown) = cites.iter().find(|cited| !known.contains(*cited)) {
             return Err(format!("The town {town} has no entry {unknown} to answer."));
         }
-        let mut attached = Vec::new();
+        let mut attached: Vec<Attached> = Vec::new();
         for path in attachments {
             let name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| format!("{} has no file name.", path.display()))?.to_string();
-            if attached.iter().any(|existing: &Attached| existing.name == name) {
+            if attached_names(&attached).contains(&name) {
                 return Err(format!("Two attachments are named {name}; attach files with different names."));
             }
-            let bytes = std::fs::read(&path).map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&path)))?;
-            attached.push(Attached { name, bytes, origin: path, inline: true });
+            attached.push(Attached::read(name, path, false)?);
         }
-        let id = self.entry_id(&town, &name);
+        for file in remote_attachments {
+            let name = file
+                .path
+                .rsplit(['/', '\\'])
+                .next()
+                .filter(|name| !name.is_empty() && *name != "." && *name != ".." && !name.contains(':'))
+                .ok_or_else(|| format!("{} on {} does not end in a file name.", file.path, file.machine))?
+                .to_string();
+            if attached_names(&attached).contains(&name) {
+                return Err(format!("Two attachments are named {name}; attach files with different names."));
+            }
+            let path = if file.machine == self.machine() {
+                PathBuf::from(&file.path)
+            } else {
+                self.fetch(&file, &kept.join(&name)).await?
+            };
+            let fetched = file.machine != self.machine();
+            attached.push(Attached::read(name, path, fetched)?);
+        }
         let about = writer.and_then(|resident| self.about_of(resident));
         let at = crate::world::now_rfc3339();
         let author = writer.unwrap_or("user");
@@ -166,9 +216,9 @@ impl Town {
                     .iter()
                     .map(|file| Attachment {
                         name: file.name.clone(),
-                        bytes: file.bytes.len() as u64,
+                        bytes: file.size,
                         machine: self.machine().to_string(),
-                        path: (!file.inline).then(|| crate::paths::display_path(&file.origin)),
+                        path: file.bytes.is_none().then(|| crate::paths::display_path(&kept.join(&file.name))),
                     })
                     .collect(),
             };
@@ -180,8 +230,10 @@ impl Town {
                     bytes: serde_json::to_vec_pretty(&stamp).map_err(|error| format!("Cannot encode the entry's stamp: {error}"))?,
                 },
             ];
-            for file in attached.iter().filter(|file| file.inline) {
-                files.push(LedgerFile { path: format!("{base}/attachments/{}", file.name), bytes: file.bytes.clone() });
+            for file in &attached {
+                if let Some(bytes) = &file.bytes {
+                    files.push(LedgerFile { path: format!("{base}/attachments/{}", file.name), bytes: bytes.clone() });
+                }
             }
             if let Some(description) = &description {
                 let first = Description {
@@ -198,11 +250,19 @@ impl Town {
             }
             let entry = shared::Entry { scope: town.clone(), id: String::new(), author: self.machine().to_string(), files: files.clone(), project: None };
             if shared::fits(&entry)? {
+                for file in attached.iter().filter(|file| file.bytes.is_none() && !file.kept) {
+                    keep(&file.origin, &kept.join(&file.name))?;
+                }
                 self.world().append_ledger(town.clone(), files, None).await?;
+                // A file fetched from elsewhere that travels inside the entry needs no keeping.
+                for file in attached.iter().filter(|file| file.bytes.is_some() && file.kept) {
+                    let _ = std::fs::remove_file(&file.origin);
+                }
+                let _ = std::fs::remove_dir(kept);
                 return Ok(id);
             }
-            match attached.iter_mut().filter(|file| file.inline).max_by_key(|file| file.bytes.len()) {
-                Some(largest) => largest.inline = false,
+            match attached.iter_mut().filter(|file| file.bytes.is_some()).max_by_key(|file| file.size) {
+                Some(largest) => largest.bytes = None,
                 None => {
                     return Err(format!(
                         "The entry's text is {} bytes, more than one journal entry carries; split it into several entries.",
@@ -210,6 +270,27 @@ impl Town {
                     ));
                 }
             }
+        }
+    }
+
+    /// Fetches a file another machine holds into `to` on this machine, through `copy`.
+    async fn fetch(&self, file: &RemoteFile, to: &Path) -> Result<PathBuf, String> {
+        let args = serde_json::to_value(crate::world::copy::CopyArgs {
+            from: file.path.clone(),
+            to: crate::paths::display_path(to),
+            to_node: self.machine().to_string(),
+            caller: self.machine().to_string(),
+            timeout_ms: Some(crate::world::surface::DEFAULT_COPY_TIMEOUT_MS),
+        })
+        .map_err(|error| format!("Cannot encode the copy of {}: {error}", file.path))?;
+        let outcome = self
+            .world()
+            .call("copy", &file.machine, args, CallBudget::default(), FETCH_TIMEOUT, CallOrigin::Tool)
+            .await
+            .map_err(|error| format!("Cannot fetch {} from {}: {error}", file.path, file.machine))?;
+        match &outcome.response {
+            Some(response) if outcome.status == "ok" && !response.is_error && to.is_file() => Ok(to.to_path_buf()),
+            _ => Err(format!("Cannot fetch {} from {}: {}", file.path, file.machine, super::remote::calls::outcome_error(&outcome))),
         }
     }
 
@@ -237,18 +318,52 @@ impl Town {
         Ok(version)
     }
 
-    /// A new entry's id: the second it is written and this machine, the next second when that
-    /// one is taken here.
-    fn entry_id(&self, town: &str, journal: &str) -> String {
+    /// A new entry's id, and the directory this machine keeps its attachments in: the second
+    /// it is written and this machine, or the next second free here. Making the directory
+    /// takes the id, so entries written at the same time never share one; it is left once
+    /// the entry is in the ledger, which then holds the id.
+    fn entry_id(&self, town: &str, journal: &str) -> Result<(String, PathBuf), String> {
         let format = time::macros::format_description!("[year][month][day]T[hour][minute][second]Z");
         let entries = journal::journals_dir(self.world_dir(), town).join(journal).join("entries");
+        let keeping = self.world_dir().join("towns").join(town).join("attachments");
+        std::fs::create_dir_all(&keeping).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&keeping)))?;
         let mut at = time::OffsetDateTime::now_utc();
         loop {
             let id = format!("{}-{}", at.format(&format).expect("a UTC time formats"), self.machine());
+            let kept = keeping.join(&id);
             if !entries.join(&id).exists() {
-                return id;
+                match std::fs::create_dir(&kept) {
+                    Ok(()) => return Ok((id, kept)),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => return Err(format!("Cannot create {}: {error}", crate::paths::display_path(&kept))),
+                }
             }
             at += time::Duration::seconds(1);
         }
     }
+}
+
+impl Attached {
+    /// An attachment at `origin`; its bytes are read only when it may travel inside the entry.
+    fn read(name: String, origin: PathBuf, kept: bool) -> Result<Self, String> {
+        let size = std::fs::metadata(&origin).map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&origin)))?.len();
+        let bytes = if size <= crate::world::envelope::MAX_CONTROL_MESSAGE_BYTES as u64 {
+            Some(std::fs::read(&origin).map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&origin)))?)
+        } else {
+            None
+        };
+        Ok(Self { name, size, origin, bytes, kept })
+    }
+}
+
+fn attached_names(attached: &[Attached]) -> Vec<String> {
+    attached.iter().map(|file| file.name.clone()).collect()
+}
+
+/// Copies an attachment into the World's keeping on this machine, where the entry names it.
+fn keep(from: &Path, to: &Path) -> Result<(), String> {
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(parent)))?;
+    }
+    std::fs::copy(from, to).map(|_| ()).map_err(|error| format!("Cannot keep {} in {}: {error}", crate::paths::display_path(from), crate::paths::display_path(to)))
 }

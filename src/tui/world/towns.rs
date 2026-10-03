@@ -51,6 +51,8 @@ pub(super) struct Census {
 pub(super) struct TownName {
     pub(super) slug: String,
     pub(super) name: String,
+    /// The machines its charter names: a resident can be opened in it on these.
+    pub(super) machines: Vec<String>,
 }
 
 pub(super) enum CensusError {
@@ -58,11 +60,41 @@ pub(super) enum CensusError {
     Failed(String),
 }
 
-/// A new resident before its first words: which agent, in which town.
+/// A new resident before its first words: which agent, on which machine, in which town.
 pub(super) struct Compose {
     pub(super) agent: usize,
-    /// 0 is outside every town; `n` is the census's town `n - 1`.
+    /// An index into the census's machines, which lists this machine first.
+    pub(super) machine: usize,
+    /// 0 is outside every town; `n` is town `n - 1` of those that reach the chosen machine.
     pub(super) town: usize,
+    /// The row the arrow keys change; on `Words`, keys type the first words.
+    pub(super) focus: Field,
+}
+
+/// A row of the new-resident screen.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Field {
+    Agent,
+    Machine,
+    Town,
+    Words,
+}
+
+impl Field {
+    const ORDER: [Field; 4] = [Field::Agent, Field::Machine, Field::Town, Field::Words];
+
+    fn step(self, forward: bool) -> Self {
+        let at = Self::ORDER.iter().position(|field| *field == self).unwrap_or(0);
+        let next = if forward { at + 1 } else { at + Self::ORDER.len() - 1 };
+        Self::ORDER[next % Self::ORDER.len()]
+    }
+}
+
+impl Census {
+    /// The towns a resident can be opened in on `machine`.
+    pub(super) fn towns_on(&self, machine: &str) -> Vec<&TownName> {
+        self.towns.iter().filter(|town| town.machines.iter().any(|name| name == machine)).collect()
+    }
 }
 
 pub(super) struct Chat {
@@ -154,7 +186,7 @@ impl Towns {
 
     /// Opens the chat screen on a resident yet to be opened; its first words open it.
     pub(super) fn compose(&mut self) {
-        self.chat = Some(Chat::new(None, Some(Compose { agent: 0, town: 0 })));
+        self.chat = Some(Chat::new(None, Some(Compose { agent: 0, machine: 0, town: 0, focus: Field::Words })));
     }
 
     /// Stops the running turn of a resident from the page, without opening a conversation.
@@ -185,27 +217,29 @@ impl Towns {
             self.chat = None;
             return ChatKey::Leave;
         }
-        let town_names: Vec<String> = self.census().map(|census| census.towns.iter().map(|town| town.slug.clone()).collect()).unwrap_or_default();
-        let towns = town_names.len();
+        // What the new-resident rows choose from: the machines that answered, this one first,
+        // and for each the towns that reach it.
+        let (machines, towns): (Vec<String>, Vec<Vec<String>>) = match self.census() {
+            Some(census) => (
+                census.machines.clone(),
+                census.machines.iter().map(|machine| census.towns_on(machine).iter().map(|town| town.slug.clone()).collect()).collect(),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
         let Some(chat) = &mut self.chat else { return ChatKey::Leave };
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        if let Some(compose) = &mut chat.compose
+            && compose.choose(key, machines.len(), &towns)
+        {
+            return ChatKey::Stay;
+        }
         match key.code {
-            KeyCode::Enter if !control => chat.submit(&town_names),
+            KeyCode::Enter if !control => chat.submit(&machines, &towns),
             KeyCode::Char('x') if control => {
                 if let Some(client) = &mut chat.client
                     && client.transcript.busy
                 {
                     client.stop();
-                }
-            }
-            KeyCode::Tab if chat.compose.is_some() => {
-                if let Some(compose) = &mut chat.compose {
-                    compose.agent = (compose.agent + 1) % AGENTS.len();
-                }
-            }
-            KeyCode::BackTab if chat.compose.is_some() => {
-                if let Some(compose) = &mut chat.compose {
-                    compose.town = (compose.town + 1) % (towns + 1);
                 }
             }
             KeyCode::PageUp => chat.back = chat.back.saturating_add(chat.page_rows.max(1)).min(chat.max_back),
@@ -245,14 +279,16 @@ impl Chat {
     }
 
     /// Says what was typed, or opens the new resident with it as its first words.
-    fn submit(&mut self, towns: &[String]) {
+    fn submit(&mut self, machines: &[String], towns: &[Vec<String>]) {
         let text = self.input.text().trim().to_string();
         if text.is_empty() {
             return;
         }
         if let Some(compose) = self.compose.take() {
-            let town = compose.town.checked_sub(1).and_then(|index| towns.get(index)).cloned();
-            self.client = Some(TalkClient::open(Target::New { agent: AGENTS[compose.agent].to_string(), town, words: text }));
+            let town = compose.town.checked_sub(1).and_then(|index| towns.get(compose.machine)?.get(index)).cloned();
+            // The census lists this machine first; any other is where the resident opens.
+            let node = (compose.machine > 0).then(|| machines.get(compose.machine).cloned()).flatten();
+            self.client = Some(TalkClient::open(Target::New { agent: AGENTS[compose.agent].to_string(), town, node, words: text }));
         } else if let Some(client) = &mut self.client {
             client.say(text);
         } else {
@@ -260,6 +296,36 @@ impl Chat {
         }
         self.input.replace(String::new());
         self.back = 0;
+    }
+}
+
+impl Compose {
+    /// Moves between the rows or changes the focused one; `false` when the key is not for
+    /// them, and a printable key on a row starts typing the first words.
+    fn choose(&mut self, key: KeyEvent, machines: usize, towns: &[Vec<String>]) -> bool {
+        match key.code {
+            KeyCode::Tab => self.focus = self.focus.step(true),
+            KeyCode::BackTab => self.focus = self.focus.step(false),
+            KeyCode::Left | KeyCode::Right if self.focus != Field::Words => {
+                let forward = key.code == KeyCode::Right;
+                let cycle = |at: usize, count: usize| if count == 0 { 0 } else if forward { (at + 1) % count } else { (at + count - 1) % count };
+                match self.focus {
+                    Field::Agent => self.agent = cycle(self.agent, AGENTS.len()),
+                    Field::Machine => {
+                        self.machine = cycle(self.machine, machines.max(1));
+                        self.town = 0;
+                    }
+                    Field::Town => self.town = cycle(self.town, towns.get(self.machine).map_or(0, Vec::len) + 1),
+                    Field::Words => {}
+                }
+            }
+            KeyCode::Char(_) if self.focus != Field::Words && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.focus = Field::Words;
+                return false;
+            }
+            _ => return false,
+        }
+        true
     }
 }
 
@@ -308,9 +374,9 @@ fn read(paths: &ControlPaths, detail: Option<String>) -> Result<Census, CensusEr
     });
     let towns = crate::town::project::towns(&world.dir)
         .into_iter()
-        .map(|slug| {
-            let name = crate::town::project::charter(&world.dir, &slug).map_or_else(|_| slug.clone(), |charter| charter.name);
-            TownName { slug, name }
+        .map(|slug| match crate::town::project::charter(&world.dir, &slug) {
+            Ok(charter) => TownName { slug, name: charter.name, machines: charter.machines },
+            Err(_) => TownName { name: slug.clone(), slug, machines: Vec::new() },
         })
         .collect();
     let detail = match detail {

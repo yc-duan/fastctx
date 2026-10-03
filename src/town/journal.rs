@@ -56,8 +56,8 @@ pub(crate) struct Stamp {
 pub(crate) struct Attachment {
     pub(crate) name: String,
     pub(crate) bytes: u64,
-    /// Where its bytes are: inside the entry, or left on the machine it came from because it is
-    /// too large to travel in the ledger.
+    /// Where its bytes are: inside the entry, or, when it is too large to travel in the ledger,
+    /// in the keeping of the machine that wrote the entry, at `path`.
     pub(crate) machine: String,
     #[serde(default)]
     pub(crate) path: Option<String>,

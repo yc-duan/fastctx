@@ -23,7 +23,7 @@ pub(crate) const NODE_ONE_MACHINE: &str = "node names one machine per call; call
 pub(crate) const NODE_SERVICE_NOT_RUNNING: &str =
     "The FastCtx node service is not running on this machine; run 'fastctx node status'.";
 /// `copy`'s default when `timeout_ms` is omitted: the host's own ceiling for a tool call.
-const DEFAULT_COPY_TIMEOUT_MS: u64 = 240_000;
+pub(crate) const DEFAULT_COPY_TIMEOUT_MS: u64 = 240_000;
 const COPY_NEEDS_TWO_MACHINES: &str =
     "copy moves a file or directory between two machines; name from_node or to_node.";
 const COPY_SAME_MACHINE: &str =

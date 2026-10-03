@@ -176,6 +176,10 @@ pub(crate) enum JournalCommand {
         /// A file to attach as evidence. Repeat for each.
         #[arg(long = "attach", value_name = "FILE")]
         attachments: Vec<PathBuf>,
+        /// A file on another machine of the World to attach: the machine, then the file's
+        /// path there. Repeat for each.
+        #[arg(long = "attach-from", num_args = 2, value_names = ["MACHINE", "FILE"])]
+        attach_from: Vec<String>,
         #[arg(long)]
         town: Option<String>,
     },
@@ -337,7 +341,7 @@ pub(crate) async fn run_journal(command: JournalCommand) -> Result<ExitCode, Str
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
             print!("{}", super::journal::render(&paths.dir, &town, &name, before.as_deref())?);
         }
-        JournalCommand::Add { name, file, description, cites, attachments, town } => {
+        JournalCommand::Add { name, file, description, cites, attachments, attach_from, town } => {
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
             let text = if file.as_os_str() == "-" {
                 std::io::read_to_string(std::io::stdin()).map_err(|error| format!("Cannot read the draft from standard input: {error}"))?
@@ -349,7 +353,20 @@ pub(crate) async fn run_journal(command: JournalCommand) -> Result<ExitCode, Str
                 .iter()
                 .map(|path| std::path::absolute(path).map_err(|error| format!("Cannot resolve {}: {error}", path.display())))
                 .collect::<Result<Vec<_>, _>>()?;
-            let draft = super::ledger::EntryDraft { town: town.clone(), journal: name.clone(), text, description, cites, attachments };
+            // A file named on this machine is found from here, like one attached with --attach.
+            let remote_attachments = attach_from
+                .chunks(2)
+                .map(|pair| {
+                    let path = if pair[0] == machine {
+                        let absolute = std::path::absolute(&pair[1]).map_err(|error| format!("Cannot resolve {}: {error}", pair[1]))?;
+                        crate::paths::display_path(&absolute)
+                    } else {
+                        pair[1].clone()
+                    };
+                    Ok(super::ledger::RemoteFile { machine: pair[0].clone(), path })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let draft = super::ledger::EntryDraft { town: town.clone(), journal: name.clone(), text, description, cites, attachments, remote_attachments };
             let request = crate::world::node::admin::AdminRequest::Town { request: super::admin::TownRequest::JournalAdd { draft, resident: caller } };
             let data = ask_node(&request).await?;
             let entry = data.get("entry").and_then(serde_json::Value::as_str).unwrap_or_default();

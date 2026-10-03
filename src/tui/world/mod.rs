@@ -124,6 +124,7 @@ pub(super) enum MenuAction {
     Talk,
     OpenResident,
     StopTurn,
+    OpenProject,
 }
 impl MenuAction {
     fn from_action(action: &Action) -> Self {
@@ -143,6 +144,7 @@ impl MenuAction {
             Action::DeleteGrant { .. } => Self::DeleteGrant,
             Action::Leave => Self::Leave,
             Action::ExportInvite { .. } => Self::Export,
+            Action::OpenProject { .. } => Self::OpenProject,
             Action::Service { action } => match action {
                 ServiceAction::Install => Self::Install,
                 ServiceAction::Start => Self::Start,
@@ -184,6 +186,7 @@ impl MenuAction {
             Self::Talk => m.talk,
             Self::OpenResident => m.open_resident,
             Self::StopTurn => m.stop_turn,
+            Self::OpenProject => m.open_project,
         }
     }
     /// The single letter that runs this action from a page, shown next to its label.
@@ -200,6 +203,7 @@ impl MenuAction {
             Self::Talk => Some('t'),
             Self::OpenResident => Some('o'),
             Self::StopTurn => Some('x'),
+            Self::OpenProject => Some('p'),
             _ => None,
         }
     }
@@ -696,6 +700,7 @@ impl WorldApp {
                     list.push(A::StopTurn);
                 }
             }
+            list.push(A::OpenProject);
             list.push(A::Details);
             return list;
         }
@@ -1083,6 +1088,11 @@ impl WorldApp {
             A::OpenResident => {
                 self.towns.compose();
                 self.screen = Screen::Talk;
+            }
+            A::OpenProject => {
+                // The machines that answered the census are offered to start with.
+                let machines = self.towns.census().map(|census| census.machines.join(", ")).unwrap_or_default();
+                self.open_form(FormKind::Project, &machines);
             }
             A::StopTurn => {
                 if let Some(id) = self.selected_resident() {

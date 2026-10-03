@@ -104,6 +104,25 @@ pub(crate) struct Now {
     /// Holding this machine's Computer Use desk for the current turn.
     #[serde(default)]
     pub(crate) desk: bool,
+    /// The turn running now, as its host named it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) turn: Option<String>,
+    /// Whose words went into the running turn: each is told how it ends. Kept here so that a
+    /// node which restarts mid-turn still knows whom to tell.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) owed: Vec<crate::town::remote::Peer>,
+    /// What went wrong with the session: the latest thing its host reported about the session
+    /// rather than its work, or why its last turn did not finish. A turn that completes
+    /// clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) trouble: Option<Trouble>,
+}
+
+/// Something wrong with a session, and when it was seen.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct Trouble {
+    pub(crate) at: String,
+    pub(crate) text: String,
 }
 
 /// One line of `messages`.

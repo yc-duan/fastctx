@@ -138,6 +138,19 @@ pub(super) async fn execute(paths: &ControlPaths, action: Action) -> Result<Repl
                     })?;
                     return Ok(Reply::Events(events));
                 }
+                Action::OpenProject { town, change } => {
+                    let request = crate::town::admin::TownRequest::Charter {
+                        town: town.clone(),
+                        change: change.clone(),
+                        opening: true,
+                        resident: None,
+                    };
+                    let data = mutate(&AdminRequest::Town { request }, &action).await?;
+                    receipt.facts.push(("town".into(), town.clone()));
+                    if let Some(version) = data.get("version") {
+                        receipt.facts.push(("charter version".into(), version.to_string()));
+                    }
+                }
                 Action::Invite { name, hours, hubs } => {
                     if let Some(name) = name {
                         crate::world::validate_node_name(name).map_err(Failure::from)?;

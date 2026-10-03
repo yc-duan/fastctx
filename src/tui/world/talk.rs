@@ -14,8 +14,8 @@ use std::sync::mpsc;
 /// Who the conversation is with.
 pub(super) enum Target {
     Resident(String),
-    /// A resident to open on this machine first; `words` are the first it hears.
-    New { agent: String, town: Option<String>, words: String },
+    /// A resident to open first, on this machine or `node`; `words` are the first it hears.
+    New { agent: String, town: Option<String>, node: Option<String>, words: String },
 }
 
 /// Why a conversation ended.
@@ -133,8 +133,8 @@ async fn converse(target: Target, updates: &mpsc::Sender<Update>, commands: &mut
     };
     let resident = match target {
         Target::Resident(resident) => resident,
-        Target::New { agent, town, words } => {
-            let opened = match ask(TownRequest::Open { agent, town, words, node: None }).await {
+        Target::New { agent, town, node, words } => {
+            let opened = match ask(TownRequest::Open { agent, town, words, node }).await {
                 Ok(data) => data.get("resident").and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
                 Err(closed) => return closed,
             };
@@ -216,7 +216,10 @@ pub(super) enum Entry {
     /// A message of the model; `streaming` while its text is still arriving.
     Message { item: String, text: String, streaming: bool },
     Tool { item: String, name: String, summary: String, state: ToolState },
-    TurnEnded { status: String },
+    /// A turn ended, and why when it did not complete.
+    TurnEnded { status: String, reason: Option<String> },
+    /// What the host or the World reported about the session itself.
+    Health(String),
     Refused(String),
 }
 
@@ -264,15 +267,16 @@ impl Transcript {
                     None => self.entries.push(Entry::Tool { item, name, summary, state }),
                 }
             }
-            TalkEvent::TurnEnded { status, .. } => {
+            TalkEvent::TurnEnded { status, reason, .. } => {
                 self.busy = false;
                 for entry in &mut self.entries {
                     if let Entry::Message { streaming, .. } = entry {
                         *streaming = false;
                     }
                 }
-                self.entries.push(Entry::TurnEnded { status });
+                self.entries.push(Entry::TurnEnded { status, reason });
             }
+            TalkEvent::Health { text } => self.entries.push(Entry::Health(text)),
             TalkEvent::State { state } => {
                 self.busy = state == "busy";
                 self.state = Some(state);

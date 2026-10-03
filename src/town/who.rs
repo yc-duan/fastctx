@@ -121,12 +121,14 @@ pub(crate) fn answer(world_dir: &Path, machine: &str, query: &Query) -> MachineA
         for (town, residents_dir) in &places {
             for dir in subdirectories(residents_dir) {
                 let id = file_name(&dir);
-                if query.ids.contains(&id) {
-                    if let Some(facts) = resident(&dir, true) {
-                        answer.residents.push(facts);
-                    }
+                let asked = query.ids.contains(&id);
+                if asked && let Some(facts) = resident(&dir, true) {
+                    answer.residents.push(facts);
                 }
-                answer.jobs.extend(jobs(&dir, &id, town.as_deref()).into_iter().filter(|job| query.ids.contains(&job.id)));
+                // A job asked for by its id, and whatever an asked-for resident is running here.
+                answer.jobs.extend(
+                    jobs(&dir, &id, town.as_deref()).into_iter().filter(|job| query.ids.contains(&job.id) || (asked && job.running())),
+                );
             }
         }
         return answer;

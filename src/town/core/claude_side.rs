@@ -1,7 +1,7 @@
 //! Claude residents: sessions that carry the World's mod. Starting background ones, pairing a
 //! session's MCP connection with its mod's registration, and following what the mods report.
 
-use super::{About, Birth, HashMap, Live, MessageLine, Now, Records, Route, Town, new_resident_id, resident_instructions};
+use super::{About, Birth, Live, MessageLine, Now, Records, Route, Town, new_resident_id, resident_instructions};
 use crate::town::claude::ModEvent;
 use crate::town::talk::TalkEvent;
 use serde_json::Value;
@@ -52,7 +52,7 @@ impl Town {
         records.write_now(&Now { state: "busy".into(), since: about.since.clone(), ..Now::default() })?;
         self.state.lock().residents.insert(
             id.clone(),
-            Live { records, about, route: Route::ClaudeMod(None), inbox_address: None, sessions: 0, readers: HashMap::new(), turn: None },
+            Live::new(records, about, Route::ClaudeMod(None), None, 0),
         );
         Ok(id)
     }
@@ -191,7 +191,7 @@ impl Town {
                     events.push(TalkEvent::Message { item: format!("{turn}/answer"), text: answer.clone() });
                 }
                 let status = if event.aborted == Some(true) { "interrupted" } else { "completed" };
-                events.push(TalkEvent::TurnEnded { turn, status: status.into() });
+                events.push(TalkEvent::TurnEnded { turn, status: status.into(), reason: None });
                 events
             }
             "tool" => vec![TalkEvent::Tool {

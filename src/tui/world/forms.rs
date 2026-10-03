@@ -19,6 +19,7 @@ pub(super) enum FormKind {
     Invite,
     Description,
     PrivateNote(String),
+    Project,
     Grant(u64),
     Cursor,
     HubDirectory,
@@ -45,11 +46,17 @@ pub(super) enum FieldKind {
     Cursor,
     Directory,
     Path,
+    Town,
+    What,
+    Machines,
+    Places,
+    Canon,
 }
 
 impl FieldKind {
     pub(super) fn label(self, m: &WorldMessages, form: &FormKind) -> &'static str {
         match self {
+            Self::Name if matches!(form, FormKind::Project) => m.project_name,
             Self::Name => m.name,
             Self::Hub => m.hub_address,
             Self::Bootstrap => m.bootstrap,
@@ -74,10 +81,16 @@ impl FieldKind {
             Self::Cursor => m.cursor,
             Self::Directory => m.directory,
             Self::Path => m.path,
+            Self::Town => m.town_slug,
+            Self::What => m.project_what,
+            Self::Machines => m.machines,
+            Self::Places => m.places,
+            Self::Canon => m.canon,
         }
     }
     pub(super) fn help(self, m: &WorldMessages, form: &FormKind) -> &'static str {
         match self {
+            Self::Name if matches!(form, FormKind::Project) => m.project_name_help,
             Self::Name => m.name_help,
             Self::Hub => m.hub_field_help,
             Self::Bootstrap => m.bootstrap_help,
@@ -102,6 +115,11 @@ impl FieldKind {
             Self::Cursor => m.cursor_help,
             Self::Directory => m.hub_help,
             Self::Path => m.path_help,
+            Self::Town => m.town_slug_help,
+            Self::What => m.project_what_help,
+            Self::Machines => m.machines_help,
+            Self::Places => m.places_help,
+            Self::Canon => m.canon_help,
         }
     }
     /// A field chosen with Left/Right rather than typed.
@@ -130,6 +148,9 @@ impl FieldKind {
                 | Self::Cursor
                 | Self::Directory
                 | Self::Path
+                | Self::Town
+                | Self::What
+                | Self::Machines
         )
     }
 }
@@ -221,6 +242,14 @@ impl Form {
                 field(F::Verbs, "", 512),
                 field(F::Expires, "", 64),
             ],
+            FormKind::Project => vec![
+                field(F::Town, "", 64),
+                field(F::Name, "", 200),
+                Field::new(F::What, "", 2000, I::Multiline, false),
+                field(F::Machines, initial, 2048),
+                Field::new(F::Places, "", 8000, I::Multiline, false),
+                field(F::Canon, "", 2048),
+            ],
             FormKind::Cursor => vec![field(F::Cursor, initial, 20)],
             FormKind::HubDirectory => vec![field(F::Directory, initial, 4096)],
             FormKind::Export(_) => vec![field(F::Path, initial, 4096)],
@@ -249,6 +278,7 @@ impl Form {
             FormKind::Invite => m.invite,
             FormKind::Description => m.edit_description,
             FormKind::PrivateNote(_) => m.edit_note,
+            FormKind::Project => m.open_project,
             FormKind::Grant(_) => m.add_grant,
             FormKind::Cursor => m.event_cursor,
             FormKind::HubDirectory => m.choose_hub,
@@ -261,6 +291,7 @@ impl Form {
             FormKind::Create => Some(m.create_subtitle),
             FormKind::Join => Some(m.join_subtitle),
             FormKind::Invite => Some(m.invite_subtitle),
+            FormKind::Project => Some(m.open_project_subtitle),
             FormKind::Grant(_) => Some(m.grant_subtitle),
             _ => None,
         }
@@ -507,6 +538,47 @@ impl Form {
                     text: self.value(F::Text).to_string(),
                 }))
             }
+            FormKind::Project => {
+                let town = self.value(F::Town).trim().to_string();
+                if !crate::town::remote::valid_town(&town) {
+                    return Err(bad(F::Town, "Use lowercase letters, digits and hyphens, such as mark50.".into()));
+                }
+                let name = self.optional(F::Name).ok_or_else(|| bad(F::Name, "Give the project a name.".into()))?;
+                let what = self.optional(F::What).ok_or_else(|| bad(F::What, "Say what the project is for.".into()))?;
+                let machines = self.list(F::Machines);
+                if machines.is_empty() {
+                    return Err(bad(F::Machines, "Name at least one machine.".into()));
+                }
+                for machine in &machines {
+                    crate::world::validate_node_name(machine).map_err(|e| bad(F::Machines, e))?;
+                }
+                let mut places = Vec::new();
+                for line in self.value(F::Places).lines().filter(|line| !line.trim().is_empty()) {
+                    let parts: Vec<&str> = line.split('|').map(str::trim).collect();
+                    let [what, machine, path] = parts[..] else {
+                        return Err(bad(F::Places, format!("Write \"what it is | machine | path\": {line}")));
+                    };
+                    places.push(crate::town::project::Place { what: what.to_string(), location: location(machine, path).map_err(|e| bad(F::Places, e))? });
+                }
+                let canon = match self.optional(F::Canon) {
+                    Some(text) => match text.split('|').map(str::trim).collect::<Vec<_>>()[..] {
+                        [machine, path] => Some(location(machine, path).map_err(|e| bad(F::Canon, e))?),
+                        _ => return Err(bad(F::Canon, "Write \"machine | path\".".into())),
+                    },
+                    None => None,
+                };
+                Ok(Submission::Action(Action::OpenProject {
+                    town,
+                    change: crate::town::ledger::CharterChange {
+                        name: Some(name),
+                        what: Some(what),
+                        machines: Some(machines),
+                        places: Some(places),
+                        canon,
+                        no_canon: false,
+                    },
+                }))
+            }
             FormKind::Cursor => self
                 .value(F::Cursor)
                 .parse::<u64>()
@@ -628,4 +700,16 @@ impl Form {
             }
         }
     }
+}
+
+/// A place on one of the World's machines, as a project's charter names it: the machine's name
+/// and an absolute path in that machine's own spelling.
+fn location(machine: &str, path: &str) -> Result<crate::town::project::Location, String> {
+    crate::world::validate_node_name(machine)?;
+    let bytes = path.as_bytes();
+    let absolute = path.starts_with('/') || (bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'/' | b'\\'));
+    if !absolute {
+        return Err(format!("{path} is not an absolute path."));
+    }
+    Ok(crate::town::project::Location { machine: machine.to_string(), path: path.to_string() })
 }

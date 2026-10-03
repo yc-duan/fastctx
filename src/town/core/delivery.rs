@@ -38,15 +38,7 @@ impl Town {
         match route {
             Route::CodexThread(thread) => {
                 // A Codex thread echoes its input as an item, which watchers see.
-                let _turns = self.turns.lock().await;
-                let (landed, turn) = self.codex.send(&thread, Input::Text(text)).await?;
-                if let Some(live) = self.state.lock().residents.get_mut(to) {
-                    if landed == Landed::NewTurn {
-                        self.set_state(&live.records, "busy");
-                    }
-                    live.turn = Some(turn.clone());
-                    live.readers.entry(turn).or_default().insert(from.clone());
-                }
+                let (landed, _) = self.codex_words(to, &thread, Input::Text(text), [from.clone()]).await?;
                 Ok(match landed {
                     Landed::NewTurn => Spoken::NewTurn,
                     Landed::Steered => Spoken::JoinedTurn,
@@ -64,17 +56,22 @@ impl Town {
     /// Mails a letter to another machine's town. It is committed here before this returns, and
     /// reaches that machine when it is online, in the order letters were sent.
     pub(crate) fn mail(&self, machine: &str, letter: &Letter) -> Result<(), String> {
-        let body = serde_json::to_value(letter).map_err(|error| format!("Cannot encode a letter: {error}"))?;
-        self.world.send_mail(machine, body).map(|_| ())
+        self.world.send_mail(machine, letter_body(letter)?).map(|_| ())
     }
 
-    /// Delivers words that came for a resident of this machine from elsewhere. A resident that
-    /// is not here, or whose host cannot take them now, keeps them waiting in its records until
-    /// its next World tool response or its return.
-    pub(crate) async fn deliver_or_hold(&self, to: &str, delivery: Delivery) -> Result<(), String> {
+    /// Mails a letter under an id of the caller's: sending the same letter again under it
+    /// reaches that machine once.
+    fn mail_once(&self, machine: &str, id: &str, letter: &Letter) -> Result<(), String> {
+        self.world.send_mail_as(machine, id, letter_body(letter)?)
+    }
+
+    /// Delivers words for a resident of this machine. A resident that is not here, or whose
+    /// host cannot take them now, keeps them waiting in its records until its next World tool
+    /// response or its return. `true` when they were delivered now, `false` when they wait.
+    pub(crate) async fn deliver_or_hold(&self, to: &str, delivery: Delivery) -> Result<bool, String> {
         if self.state.lock().residents.contains_key(to) {
             match self.deliver(to, delivery.clone()).await {
-                Ok(()) => return Ok(()),
+                Ok(()) => return Ok(true),
                 Err(error) => (self.log)(format!("cannot deliver to {to} now, so it waits in its records: {error}")),
             }
         }
@@ -86,7 +83,7 @@ impl Town {
                 .map(|(records, _)| records.dir.join("inbox"))
                 .ok_or_else(|| format!("No resident named {to} has records on {}.", self.config.machine))?,
         };
-        write_waiting(&dir, &delivery)
+        write_waiting(&dir, &delivery).map(|()| false)
     }
 
     /// Puts the user's own words into a resident's session, as the user. Only words the user
@@ -97,17 +94,11 @@ impl Town {
         let mut turn = None;
         let spoken = match route {
             Some(Route::CodexThread(thread)) => {
-                let _turns = self.turns.lock().await;
-                let (landed, into) = self.codex.send(&thread, Input::Text(text.to_string())).await?;
-                turn = Some(into.clone());
+                // The user watches the turn live; nobody is owed its end.
+                let (landed, into) = self.codex_words(id, &thread, Input::Text(text.to_string()), []).await?;
+                turn = Some(into);
                 match landed {
-                    Landed::NewTurn => {
-                        if let Some(live) = self.state.lock().residents.get_mut(id) {
-                            self.set_state(&live.records, "busy");
-                            live.turn = Some(into.clone());
-                        }
-                        Spoken::NewTurn
-                    }
+                    Landed::NewTurn => Spoken::NewTurn,
                     Landed::Steered => Spoken::JoinedTurn,
                 }
             }
@@ -156,7 +147,13 @@ impl Town {
                 } else {
                     Input::Text(delivery.text)
                 };
-                self.codex.send(&thread, input).await.map(|_| ())
+                self.codex_send(to, &thread, input, []).await?;
+                // Nobody is owed the end of a turn a delivery starts; that its tools are
+                // missing is recorded and shown to its watchers.
+                if let Some(text) = self.codex.tools_missing(&thread) {
+                    self.trouble(to, &super::turns::Report { text, tell: None });
+                }
+                Ok(())
             }
             Route::ClaudeMod(Some(session)) => {
                 // A background resident whose process the supervisor stopped is woken with the
@@ -216,8 +213,11 @@ impl Town {
     /// started it. A marker beside the record says so, and names the machine that resident
     /// lives on when it is not this one. Whoever claims the marker first delivers the notice:
     /// the command's end hook, this look if the command ended before the marker was written,
-    /// or the node's next start if the node was down when it ended. So a notice is given once,
-    /// never lost, and never given for a command whose end its caller already saw.
+    /// or the node's next start if the node was down when it ended. So a notice is never lost
+    /// and never given for a command whose end its caller already saw. A notice that goes by
+    /// mail is given once even when the node stops between sending it and settling its claim:
+    /// it is sent again as the same letter. One delivered on this machine is given a second
+    /// time if the node stops in that instant.
     pub(crate) async fn owe_end(&self, record: &Path, home: Option<&str>) -> Result<(), String> {
         let marker = record.with_extension(OWED);
         std::fs::write(&marker, home.unwrap_or_default())
@@ -282,22 +282,30 @@ impl Town {
             (state, _) => state.to_string(),
         };
         let rfc3339 = &time::format_description::well_known::Rfc3339;
-        let elapsed = match (time::OffsetDateTime::parse(&job.started_at, rfc3339), job.ended_at.as_deref().map(|at| time::OffsetDateTime::parse(at, rfc3339))) {
-            (Ok(start), Some(Ok(end))) => format_duration(u64::try_from((end - start).whole_milliseconds()).unwrap_or_default()),
+        let start = time::OffsetDateTime::parse(&job.started_at, rfc3339).ok();
+        let end = job.ended_at.as_deref().and_then(|at| time::OffsetDateTime::parse(at, rfc3339).ok());
+        let elapsed = match (start, end) {
+            (Some(start), Some(end)) => format_duration(u64::try_from((end - start).whole_milliseconds()).unwrap_or_default()),
             _ => "?".to_string(),
         };
         let command = job.command.lines().find(|line| !line.trim().is_empty()).unwrap_or_default().trim().to_string();
         let log = crate::paths::display_path(&job.output_path);
         let text = crate::hands::text::job_ended_notice(&job.id, &job.machine, &ended, &elapsed, &command, &log);
-        let delivered = match delivery_id() {
-            Ok(id) => {
-                let delivery = Delivery { id, from: "world".into(), kind: "notice".into(), text, as_tool_output: true };
-                match &home {
-                    None => self.deliver(resident, delivery).await,
-                    Some(home) => self.mail(home, &Letter::Deliver { to: resident.to_string(), delivery }),
-                }
-            }
-            Err(error) => Err(error),
+        // Everything in the notice comes from the finished record, its ids included, so a
+        // notice sent again is the same letter.
+        let letter = hex::encode(crate::world::crypto::sha256(format!("job ended
+{}", record.to_string_lossy()).as_bytes()));
+        let nanos = end.or(start).map(time::OffsetDateTime::unix_timestamp_nanos).unwrap_or_default();
+        let delivery = Delivery {
+            id: format!("{nanos:024}-{}", &letter[..8]),
+            from: "world".into(),
+            kind: "notice".into(),
+            text,
+            as_tool_output: true,
+        };
+        let delivered = match &home {
+            None => self.deliver(resident, delivery).await,
+            Some(home) => self.mail_once(home, &letter, &Letter::Deliver { to: resident.to_string(), delivery }),
         };
         // Delivered, the claim becomes the record that it was; failed, it is owed again. A
         // delivery cut off between the two leaves the claim, owed again at the node's start.
@@ -360,6 +368,10 @@ pub(super) fn move_waiting(from: &Path, to: &Path) -> Result<(), String> {
         moved.push(name);
     }
     Ok(())
+}
+
+fn letter_body(letter: &Letter) -> Result<serde_json::Value, String> {
+    serde_json::to_value(letter).map_err(|error| format!("Cannot encode a letter: {error}"))
 }
 
 /// Leaves a delivery waiting in a resident's queue directory.

@@ -7,7 +7,14 @@
 //!
 //! The host turns the protocol into the operations the town needs: start a thread with its
 //! first words, send words to a thread, interrupt it, and read its history. Everything the
-//! app-server reports about a thread comes out as a `HostEvent`.
+//! app-server reports about a thread comes out as a `HostEvent`; what Codex's notifications
+//! mean is known here and nowhere else.
+//!
+//! Codex writes no compatibility promise for the app-server protocol, so only the fields the
+//! town needs are read, each where the protocol marks it stable, and anything not recognized
+//! (a new notification, item type or status) is passed on as it is or left alone, never
+//! guessed at. One dependency is experimental: `environments: []`, which takes away a
+//! thread's own shell; if Codex changes it, starting a turn fails loudly.
 
 use super::rpc::{AppServer, Inbound};
 use parking_lot::Mutex;
@@ -66,10 +73,16 @@ pub(crate) enum HostEvent {
         /// The last agent message of the turn, verbatim; what goes back to whoever asked.
         last_message: Option<String>,
     },
+    /// The app-server reported something about a thread rather than its work: a reconnect, a
+    /// safety hold on the model's output, a switch of model, a tool server that did not start,
+    /// a warning. `urgent` names the kind when whoever is owed the turn's end must hear it at
+    /// once: the session cannot do its work, or the model's provider stepped into the turn.
+    Health { thread: String, text: String, urgent: Option<&'static str> },
     /// The app-server asked something the World does not answer; it was declined.
     Declined { thread: Option<String>, method: String },
-    /// The app-server stopped; threads come back on the next send.
-    ServerGone { reason: String },
+    /// The app-server stopped, and with it the turns it was running, as (thread, turn); threads
+    /// come back on the next send.
+    ServerGone { reason: String, turns: Vec<(String, String)> },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -81,6 +94,19 @@ struct ThreadState {
     /// Turns the app-server reported completed: an answer to `turn/start` that arrives after
     /// its turn already finished must not make it run again.
     finished: std::collections::HashSet<String>,
+    /// Turns the app-server reported started and not yet completed. A turn the app-server
+    /// accepted but could not set up never starts; the error it reports instead is its end.
+    started: std::collections::HashSet<String>,
+    /// The app-server said how the thread's fastctx server started (ready, failed or
+    /// cancelled) since the thread was last started or resumed. Codex fixes a turn's tools
+    /// when the turn starts and does not wait for a server still starting, so a turn started
+    /// before this would find the World's hands missing.
+    tools_settled: bool,
+    /// Why the thread's fastctx tools are not there in its current load, when they are not.
+    tools_missing: Option<String>,
+    /// Errors the app-server reported for turns its answer to `turn/start` had not named yet:
+    /// such a turn ended before it began, which is known once the answer names it.
+    failed_early: HashMap<String, Value>,
 }
 
 /// Where the binary comes from and how it is launched.
@@ -105,6 +131,11 @@ pub(crate) struct CodexHost {
     state: Mutex<HostState>,
     /// Serializes starting the app-server so two sends never launch two of them.
     starting: tokio::sync::Mutex<()>,
+    /// Woken whenever the app-server reports how a thread's fastctx server started.
+    tools_changed: tokio::sync::Notify,
+    /// Serializes resuming threads: a second resume of a loaded thread starts none of its
+    /// servers again, so nothing would ever say how they started.
+    loading: tokio::sync::Mutex<()>,
 }
 
 #[derive(Default)]
@@ -129,6 +160,8 @@ impl CodexHost {
             events,
             state: Mutex::new(HostState::default()),
             starting: tokio::sync::Mutex::new(()),
+            tools_changed: tokio::sync::Notify::new(),
+            loading: tokio::sync::Mutex::new(()),
         });
         (host, receiver)
     }
@@ -163,16 +196,63 @@ impl CodexHost {
             .ok_or_else(|| "thread/start answered without a thread id.".to_string())?
             .to_string();
         let model = result.get("model").and_then(Value::as_str).map(str::to_string);
-        self.state.lock().threads.insert(
-            thread.clone(),
-            ThreadState { spec: Some(spec), loaded: true, ..ThreadState::default() },
-        );
+        // What the app-server already said about this thread, its servers' start included,
+        // may have arrived before its answer.
+        let mut state = self.state.lock();
+        let entry = state.threads.entry(thread.clone()).or_default();
+        entry.spec = Some(spec);
+        entry.loaded = true;
         Ok((thread, model))
+    }
+
+    /// Makes a thread ready for words: loaded in the app-server, and its fastctx server
+    /// started or given up on. Callers that hold a lock others wait on call this first.
+    pub(crate) async fn prepare(self: &Arc<Self>, thread: &str) -> Result<(), String> {
+        let server = self.server().await?;
+        self.ensure_loaded(&server, thread).await?;
+        self.tools_settled(thread).await;
+        Ok(())
+    }
+
+    /// Why a thread's fastctx tools are not there in its current load, when they are not. A
+    /// turn of such a thread works without the World's hands.
+    pub(crate) fn tools_missing(&self, thread: &str) -> Option<String> {
+        self.state.lock().threads.get(thread).and_then(|entry| entry.tools_missing.clone())
+    }
+
+    /// Waits until the app-server says how the thread's fastctx server started. Codex stops
+    /// waiting for a server after its startup timeout, which the World sets, and then reports
+    /// it failed; a thread it said nothing about by then is taken as one whose tools may be
+    /// missing until it says otherwise, and its words go in.
+    async fn tools_settled(&self, thread: &str) {
+        let settled = async {
+            loop {
+                let notified = self.tools_changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.state.lock().threads.get(thread).is_none_or(|entry| entry.tools_settled) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        let limit = std::time::Duration::from_secs(crate::control::codex_config::STARTUP_TIMEOUT_SECONDS.unsigned_abs());
+        if tokio::time::timeout(limit, settled).await.is_err() {
+            let text = format!(
+                "Codex said nothing about starting its fastctx tools within {}s; its turn starts without knowing whether they are there.",
+                limit.as_secs()
+            );
+            let mut state = self.state.lock();
+            let entry = state.threads.entry(thread.to_string()).or_default();
+            entry.tools_settled = true;
+            entry.tools_missing = Some(text);
+        }
     }
 
     /// Sends words to a thread. `turn/start` starts a turn when the thread is idle and folds
     /// the input into the running turn when it is busy; which one happened is read off the
-    /// turn id it answers with. A thread the app-server no longer has loaded is resumed first.
+    /// turn id it answers with. A thread the app-server no longer has loaded is resumed first;
+    /// callers that want its tools there call [`Self::prepare`] before.
     pub(crate) async fn send(self: &Arc<Self>, thread: &str, input: Input) -> Result<(Landed, String), String> {
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
@@ -208,7 +288,7 @@ impl CodexHost {
     }
 
     /// Starts a turn (or steers the running one) and returns the turn id the server names.
-    async fn turn(&self, server: &AppServer, thread: &str, input: &Input) -> Result<Option<String>, String> {
+    async fn turn(&self, server: &Arc<AppServer>, thread: &str, input: &Input) -> Result<Option<String>, String> {
         let mut params = json!({
             "threadId": thread,
             "input": [],
@@ -224,17 +304,40 @@ impl CodexHost {
         let result = server.request("turn/start", params).await?;
         let turn = result.pointer("/turn/id").and_then(Value::as_str).map(str::to_string);
         if let Some(turn) = &turn {
-            let mut state = self.state.lock();
-            let entry = state.threads.entry(thread.to_string()).or_default();
-            if entry.turn.as_deref() != Some(turn.as_str()) && !entry.finished.contains(turn) {
-                entry.turn = Some(turn.clone());
-                entry.last_message = None;
+            let failed = {
+                let mut state = self.state.lock();
+                // An app-server that stopped or was replaced while it answered runs nothing
+                // more; its turns already ended with it.
+                if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, server)) {
+                    return Err("The Codex app-server stopped as it took the words; they went into no turn.".to_string());
+                }
+                let entry = state.threads.entry(thread.to_string()).or_default();
+                if entry.turn.as_deref() != Some(turn.as_str()) && !entry.finished.contains(turn) {
+                    entry.turn = Some(turn.clone());
+                    entry.last_message = None;
+                }
+                entry.failed_early.remove(turn)
+            };
+            if let Some(error) = failed {
+                let last_message = self.finish(thread, turn);
+                let _ = self.events.send(HostEvent::TurnCompleted {
+                    thread: thread.to_string(),
+                    turn: turn.clone(),
+                    status: "failed".to_string(),
+                    error: Some(error),
+                    duration_ms: None,
+                    last_message,
+                });
             }
         }
         Ok(turn)
     }
 
     async fn ensure_loaded(&self, server: &AppServer, thread: &str) -> Result<(), String> {
+        if self.state.lock().threads.get(thread).is_some_and(|entry| entry.loaded) {
+            return Ok(());
+        }
+        let _loading = self.loading.lock().await;
         let spec = {
             let state = self.state.lock();
             match state.threads.get(thread) {
@@ -244,6 +347,11 @@ impl CodexHost {
             }
         };
         let spec = spec.ok_or_else(|| format!("No Codex resident thread {thread} is known on this machine."))?;
+        // Resuming starts the thread's servers again; what they report from here on counts.
+        if let Some(entry) = self.state.lock().threads.get_mut(thread) {
+            entry.tools_settled = false;
+            entry.tools_missing = None;
+        }
         server
             .request(
                 "thread/resume",
@@ -339,21 +447,24 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                 // A server replaced on purpose exits after it was taken out of the state, maybe
                 // after its successor already started turns; only the current one's exit is an
                 // outage that ends the turns.
-                let current = {
+                let (current, turns) = {
                     let mut state = host.state.lock();
                     let current = matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server));
+                    let mut turns = Vec::new();
                     if current {
                         state.server = None;
-                        for thread in state.threads.values_mut() {
-                            thread.loaded = false;
-                            thread.turn = None;
+                        for (thread, entry) in state.threads.iter_mut() {
+                            entry.loaded = false;
+                            if let Some(turn) = entry.turn.take() {
+                                turns.push((thread.clone(), turn));
+                            }
                         }
                     }
-                    current
+                    (current, turns)
                 };
                 (host.log)(reason.clone());
                 if current {
-                    let _ = host.events.send(HostEvent::ServerGone { reason });
+                    let _ = host.events.send(HostEvent::ServerGone { reason, turns });
                 }
                 return;
             }
@@ -364,15 +475,18 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
 impl CodexHost {
     fn translate(&self, method: &str, params: &Value) -> Option<HostEvent> {
         let thread = params.get("threadId").and_then(Value::as_str)?.to_string();
+        let text = |pointer: &str| params.pointer(pointer).and_then(Value::as_str).map(str::to_string);
+        let health = |text: String, urgent: Option<&'static str>| Some(HostEvent::Health { thread: thread.clone(), text, urgent });
         match method {
             "turn/started" => {
-                let turn = params.pointer("/turn/id").and_then(Value::as_str)?.to_string();
+                let turn = text("/turn/id")?;
                 let mut state = self.state.lock();
                 let entry = state.threads.entry(thread.clone()).or_default();
                 if entry.turn.as_deref() != Some(turn.as_str()) {
                     entry.turn = Some(turn.clone());
                     entry.last_message = None;
                 }
+                entry.started.insert(turn.clone());
                 Some(HostEvent::TurnStarted { thread, turn })
             }
             "item/started" => Some(HostEvent::ItemStarted { thread, item: params.get("item")?.clone() }),
@@ -386,31 +500,127 @@ impl CodexHost {
             }
             "item/agentMessage/delta" => Some(HostEvent::Delta {
                 thread,
-                item: params.get("itemId").and_then(Value::as_str).unwrap_or_default().to_string(),
-                delta: params.get("delta").and_then(Value::as_str).unwrap_or_default().to_string(),
+                item: text("/itemId").unwrap_or_default(),
+                delta: text("/delta").unwrap_or_default(),
             }),
             "turn/completed" => {
                 let turn = params.get("turn")?;
-                let last_message = {
-                    let mut state = self.state.lock();
-                    let entry = state.threads.entry(thread.clone()).or_default();
-                    if let Some(id) = turn.get("id").and_then(Value::as_str) {
-                        entry.finished.insert(id.to_string());
-                    }
-                    entry.turn = None;
-                    entry.last_message.take()
-                };
+                let id = turn.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                let last_message = self.finish(&thread, &id);
                 Some(HostEvent::TurnCompleted {
                     thread,
-                    turn: turn.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    turn: id,
                     status: turn.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string(),
                     error: turn.get("error").filter(|error| !error.is_null()).cloned(),
                     duration_ms: turn.get("durationMs").and_then(Value::as_u64),
                     last_message,
                 })
             }
+            "error" => {
+                let message = text("/error/message").unwrap_or_default();
+                if params.get("willRetry").and_then(Value::as_bool) == Some(true) {
+                    return health(format!("Codex is reconnecting to the model: {message}"), None);
+                }
+                // An error during a turn is followed by the turn's end, which carries it. One
+                // for a turn that was accepted but never started is that turn's only end, and
+                // may come before the answer to `turn/start` that names the turn.
+                let turn = text("/turnId").unwrap_or_default();
+                let (awaited, started) = {
+                    let mut state = self.state.lock();
+                    let entry = state.threads.entry(thread.clone()).or_default();
+                    let awaited = entry.turn.as_deref() == Some(turn.as_str());
+                    let started = entry.started.contains(&turn);
+                    if !awaited && !started && !turn.is_empty() && !entry.finished.contains(&turn) {
+                        entry.failed_early.insert(turn, params.get("error").cloned().unwrap_or(Value::Null));
+                        return None;
+                    }
+                    (awaited, started)
+                };
+                match (awaited, started) {
+                    (true, false) => {
+                        let last_message = self.finish(&thread, &turn);
+                        Some(HostEvent::TurnCompleted {
+                            thread,
+                            turn,
+                            status: "failed".to_string(),
+                            error: params.get("error").cloned(),
+                            duration_ms: None,
+                            last_message,
+                        })
+                    }
+                    (true, true) => None,
+                    (false, _) => health(format!("Codex reported an error: {message}"), None),
+                }
+            }
+            "model/safetyBuffering/updated" => {
+                let list = |key: &str| {
+                    let words: Vec<&str> = params.get(key).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+                    if words.is_empty() { "not given".to_string() } else { words.join(", ") }
+                };
+                health(
+                    format!("OpenAI is holding this turn's output for extra safety processing (use: {}; reason: {}).", list("useCases"), list("reasons")),
+                    Some("safety"),
+                )
+            }
+            "model/rerouted" => health(
+                format!(
+                    "OpenAI moved this turn from {} to {} ({}).",
+                    text("/fromModel").unwrap_or_default(),
+                    text("/toModel").unwrap_or_default(),
+                    text("/reason").unwrap_or_default()
+                ),
+                Some("rerouted"),
+            ),
+            "mcpServer/startupStatus/updated" => {
+                let server = text("/name").unwrap_or_default();
+                let status = text("/status").unwrap_or_default();
+                let why = || text("/error").or_else(|| text("/failureReason")).unwrap_or_else(|| "no reason given".to_string());
+                if server == "fastctx" {
+                    // A thread the World starts works through its fastctx server alone. Its
+                    // start comes before any words, so it is told with the words that find it
+                    // missing (`Town::codex_words`).
+                    let missing = match status.as_str() {
+                        "failed" => Some(format!("Its fastctx tools did not start: {}", why())),
+                        "cancelled" => Some("Codex cancelled starting its fastctx tools.".to_string()),
+                        _ => None,
+                    };
+                    let mut state = self.state.lock();
+                    let entry = state.threads.entry(thread.clone()).or_default();
+                    entry.tools_settled = matches!(status.as_str(), "ready" | "failed" | "cancelled");
+                    entry.tools_missing = missing;
+                    drop(state);
+                    self.tools_changed.notify_waiters();
+                    return None;
+                }
+                if status != "failed" {
+                    return None;
+                }
+                health(format!("Its {server} tools did not start: {}", why()), None)
+            }
+            "warning" => health(format!("Codex warns: {}", text("/message").unwrap_or_default()), None),
+            "thread/closed" => {
+                // Unloaded: the next words resume it.
+                if let Some(entry) = self.state.lock().threads.get_mut(&thread) {
+                    entry.loaded = false;
+                }
+                None
+            }
             _ => None,
         }
+    }
+
+    /// Records that a turn ended; returns its last message.
+    fn finish(&self, thread: &str, turn: &str) -> Option<String> {
+        let mut state = self.state.lock();
+        let entry = state.threads.entry(thread.to_string()).or_default();
+        if !turn.is_empty() {
+            entry.finished.insert(turn.to_string());
+        }
+        entry.started.remove(turn);
+        if entry.turn.as_deref() == Some(turn) || turn.is_empty() {
+            entry.turn = None;
+        }
+        entry.last_message.take()
     }
 }
 

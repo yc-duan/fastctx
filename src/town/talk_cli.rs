@@ -211,7 +211,9 @@ impl Printer {
                 let line = match other {
                     TalkEvent::Words { from, text, .. } => format!("> {from}: {text}"),
                     TalkEvent::TurnStarted { .. } => "── turn started".to_string(),
-                    TalkEvent::TurnEnded { status, .. } => format!("── turn {status}"),
+                    TalkEvent::TurnEnded { status, reason: None, .. } => format!("── turn {status}"),
+                    TalkEvent::TurnEnded { status, reason: Some(reason), .. } => format!("── turn {status}: {reason}"),
+                    TalkEvent::Health { text } => format!("── {text}"),
                     TalkEvent::Tool { name, summary, done: false, .. } => format!("  {name} {summary}"),
                     TalkEvent::Tool { name, failed: true, .. } => format!("  {name} failed"),
                     TalkEvent::Tool { .. } => return,
