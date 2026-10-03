@@ -28,7 +28,10 @@ pub(crate) fn ensure(fastctx_dir: &Path) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     // The launcher starts fastctx. A program of another name that embeds this code, such as a
     // test harness, would point the user's `fastctx` command at itself.
-    if !exe.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case(SHIM_NAME)) {
+    if !exe
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case(SHIM_NAME))
+    {
         return None;
     }
     let directory = fastctx_dir.join(SHIM_DIRECTORY);
