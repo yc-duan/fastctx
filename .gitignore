@@ -1,12 +1,7 @@
 # Rust
 /target
-/tools/compat-v011-capture/target/
-/.pdfium-archive-cache
-/dist
-/packages/fastctx-*/bin/
-/packages/*/licenses/
 
-# Python verification caches
+# Python caches
 __pycache__/
 *.py[cod]
 
@@ -15,3 +10,5 @@ AGENTS.md
 CLAUDE.md
 .sisyphus/
 dev-notes/
+specs/
+atlas/

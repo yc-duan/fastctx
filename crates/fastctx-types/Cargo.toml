@@ -1,0 +1,14 @@
+[package]
+name = "fastctx-types"
+description = "The World's contracts: every name, record, event and request has one type, defined here"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
