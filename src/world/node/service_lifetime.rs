@@ -125,7 +125,7 @@ pub(super) async fn wait(parent: Option<ServiceParent>) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
-        let _ = parent;
+        let () = parent;
         Err("A headless task host is supported only on Windows.".into())
     }
 }

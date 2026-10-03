@@ -195,6 +195,8 @@ pub(super) struct Form {
 pub(super) enum ErrorHint {
     Field(FieldKind),
     Choice,
+    /// The terminal did not finish a paste; only a Windows console reports that.
+    #[cfg_attr(not(windows), allow(dead_code))]
     IncompletePaste,
 }
 
