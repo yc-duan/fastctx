@@ -15,6 +15,12 @@ pub mod identity;
 pub mod ipc;
 pub mod lock;
 pub mod private;
+#[cfg(target_os = "linux")]
+pub mod procfs;
+#[cfg(target_os = "linux")]
+pub mod tree;
+#[cfg(unix)]
+mod unix_fds;
 #[cfg(windows)]
 mod windows_user;
 
@@ -24,3 +30,5 @@ pub use home::{fastctx_root, user_home};
 pub use identity::ProcessIdentity;
 pub use lock::FileLock;
 pub use private::ensure_private_dir;
+#[cfg(target_os = "linux")]
+pub use tree::ProcessTree;

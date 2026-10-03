@@ -35,38 +35,17 @@ impl ProcessIdentity {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use std::fs;
     use std::io;
-    use std::sync::OnceLock;
+
+    use crate::procfs;
 
     /// `boot_id:starttime`: the start time counts clock ticks since boot, so
     /// the boot it belongs to is part of it.
     pub fn token(pid: u32) -> io::Result<Option<String>> {
-        let stat = match fs::read(format!("/proc/{pid}/stat")) {
-            Ok(stat) => stat,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        // The command name may contain anything, parentheses included; the
-        // fields after it start after its last closing parenthesis.
-        let close = stat.iter().rposition(|&b| b == b')').ok_or_else(|| io::Error::other("malformed /proc stat"))?;
-        let fields: Vec<&[u8]> = stat[close + 2..].split(|&b| b == b' ').collect();
-        // Field 3 is the state, field 22 the start time; `fields` starts at 3.
-        let state = fields.first().copied().unwrap_or_default();
-        if state == b"Z" || state == b"X" {
-            return Ok(None);
+        match procfs::stat(pid)? {
+            Some(stat) if !stat.has_exited() => Ok(Some(format!("{}:{}", procfs::boot_id()?, stat.start))),
+            _ => Ok(None),
         }
-        let start = fields.get(19).ok_or_else(|| io::Error::other("malformed /proc stat"))?;
-        Ok(Some(format!("{}:{}", boot_id()?, String::from_utf8_lossy(start))))
-    }
-
-    fn boot_id() -> io::Result<&'static str> {
-        static BOOT_ID: OnceLock<String> = OnceLock::new();
-        if let Some(id) = BOOT_ID.get() {
-            return Ok(id);
-        }
-        let id = fs::read_to_string("/proc/sys/kernel/random/boot_id")?.trim().to_string();
-        Ok(BOOT_ID.get_or_init(|| id))
     }
 }
 
