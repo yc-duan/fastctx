@@ -17,7 +17,8 @@ const SHIM_DIRECTORY: &str = "bin";
 const SHIM_NAME: &str = "fastctx";
 
 /// Writes the shim for the running binary when it is missing or names another binary, and
-/// returns its directory. `None` on other platforms, or when the directory cannot be written;
+/// returns its directory. `None` on other platforms, when the running program is not named
+/// fastctx, or when the directory cannot be written;
 /// the binary's own directory is still on the path then, so `fastctx` keeps resolving and only
 /// the Bash path rewriting stays in effect.
 pub(crate) fn ensure(fastctx_dir: &Path) -> Option<PathBuf> {
@@ -25,6 +26,11 @@ pub(crate) fn ensure(fastctx_dir: &Path) -> Option<PathBuf> {
         return None;
     }
     let exe = std::env::current_exe().ok()?;
+    // The launcher starts fastctx. A program of another name that embeds this code, such as a
+    // test harness, would point the user's `fastctx` command at itself.
+    if !exe.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case(SHIM_NAME)) {
+        return None;
+    }
     let directory = fastctx_dir.join(SHIM_DIRECTORY);
     let shim = directory.join(SHIM_NAME);
     let wanted = content(&exe);
