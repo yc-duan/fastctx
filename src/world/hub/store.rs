@@ -1,10 +1,7 @@
-//! Hub storage: one redb file holding metadata the hub routes on and ciphertext it keeps
-//! for members. Every write is one transaction; redb serializes writers, so the hub never
-//! has to reason about interleaved updates.
+//! Transactional hub storage for admitted identities, signed statements and durable queues.
 
 use crate::world::envelope::Envelope;
 use crate::world::grant::SignedGrantSet;
-use crate::world::keys::SealedKey;
 use crate::world::messages::{Event, SignedRecord, SignedRevocation};
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::de::DeserializeOwned;
@@ -12,26 +9,26 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+#[path = "ledger_store.rs"]
+mod ledger_store;
+
 const META: TableDefinition<&str, &[u8]> = TableDefinition::new("meta");
 const MEMBERS: TableDefinition<&str, &[u8]> = TableDefinition::new("members");
 const MEMBER_KEYS: TableDefinition<&str, &str> = TableDefinition::new("member_keys");
 const SESSIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("sessions");
 const OUTBOX: TableDefinition<(&str, u64), &[u8]> = TableDefinition::new("outbox");
+const DELIVERY_IDS: TableDefinition<&str, &[u8]> = TableDefinition::new("delivery_ids");
 const INVITES: TableDefinition<&str, &[u8]> = TableDefinition::new("invites");
-const KEYS: TableDefinition<(u32, &str), &[u8]> = TableDefinition::new("keys");
 const GRANTS: TableDefinition<&str, &[u8]> = TableDefinition::new("grants");
 const INVENTORY: TableDefinition<&str, &[u8]> = TableDefinition::new("inventory");
 const EVENTS: TableDefinition<u64, &[u8]> = TableDefinition::new("events");
 
-/// Format version of the whole database; readers refuse a newer one. Format 2 stores the
-/// grant set as one signed snapshot and sealed keys with their publisher's signature.
-const STORE_FORMAT: u64 = 2;
+/// Protocol v2 database format; earlier protocol databases are rejected.
+const STORE_FORMAT: u64 = 3;
 /// The single row of the grants table.
 const GRANT_SNAPSHOT_KEY: &str = "snapshot";
 /// Events kept before the oldest are dropped.
 pub(crate) const EVENT_RETENTION: u64 = 100_000;
-/// Reliable messages queued per member before new ones are refused.
-pub(crate) const OUTBOX_LIMIT: u64 = 10_000;
 
 pub(crate) mod meta {
     pub(crate) const FORMAT: &str = "format";
@@ -41,8 +38,6 @@ pub(crate) mod meta {
     pub(crate) const MEMBERS_VERSION: &str = "members_version";
     pub(crate) const GRANT_VERSION: &str = "grant_version";
     pub(crate) const EVENT_SEQ: &str = "event_seq";
-    pub(crate) const KEY_EPOCH: &str = "key_epoch";
-    pub(crate) const ROTATION_PENDING: &str = "rotation_pending";
     pub(crate) const HUB_N: &str = "hub_n";
 }
 
@@ -51,8 +46,6 @@ pub(crate) struct MemberRow {
     pub(crate) name: String,
     /// Ed25519 public key, base64.
     pub(crate) node_pub: String,
-    /// X25519 wrap public key, base64.
-    pub(crate) wrap_pub: String,
     #[serde(default)]
     pub(crate) tags: Vec<String>,
     pub(crate) admitted_at: String,
@@ -106,21 +99,8 @@ pub(crate) struct OutboxRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct InviteRow {
-    /// `sha256(admission_token)` hex.
-    pub(crate) admission: String,
-    pub(crate) wrapped_keys: String,
-    #[serde(default)]
-    pub(crate) name: Option<String>,
-    pub(crate) exp: String,
-    pub(crate) inviter: String,
-    pub(crate) created_at: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct SealedKeyRow {
-    pub(crate) key: SealedKey,
-    pub(crate) published_by: String,
-    pub(crate) published_at: String,
+    pub(crate) endorsement: crate::world::admission::Endorsement,
+    pub(crate) used: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -231,34 +211,33 @@ impl Store {
         })?;
         let store = Self { db };
         store.write(|txn| {
-            txn.open_table(META).map_err(|error| store_error("cannot open meta", error))?;
-            txn.open_table(MEMBERS).map_err(|error| store_error("cannot open members", error))?;
-            txn.open_table(MEMBER_KEYS).map_err(|error| store_error("cannot open member_keys", error))?;
-            txn.open_table(SESSIONS).map_err(|error| store_error("cannot open sessions", error))?;
-            txn.open_table(OUTBOX).map_err(|error| store_error("cannot open outbox", error))?;
-            txn.open_table(INVITES).map_err(|error| store_error("cannot open invites", error))?;
-            txn.open_table(KEYS).map_err(|error| store_error("cannot open keys", error))?;
-            txn.open_table(GRANTS).map_err(|error| store_error("cannot open grants", error))?;
-            txn.open_table(INVENTORY).map_err(|error| store_error("cannot open inventory", error))?;
-            txn.open_table(EVENTS).map_err(|error| store_error("cannot open events", error))?;
-            let mut meta = txn.open_table(META).map_err(|error| store_error("cannot open meta", error))?;
+            ledger_store::initialize(txn)?;
+            txn.open_table(META)
+                .map_err(|error| store_error("cannot open meta", error))?;
+            txn.open_table(MEMBERS)
+                .map_err(|error| store_error("cannot open members", error))?;
+            txn.open_table(MEMBER_KEYS)
+                .map_err(|error| store_error("cannot open member_keys", error))?;
+            txn.open_table(SESSIONS)
+                .map_err(|error| store_error("cannot open sessions", error))?;
+            txn.open_table(OUTBOX)
+                .map_err(|error| store_error("cannot open outbox", error))?;
+            txn.open_table(DELIVERY_IDS)
+                .map_err(|e| store_error("open delivery ids", e))?;
+            txn.open_table(INVITES)
+                .map_err(|error| store_error("cannot open invites", error))?;
+            txn.open_table(GRANTS)
+                .map_err(|error| store_error("cannot open grants", error))?;
+            txn.open_table(INVENTORY)
+                .map_err(|error| store_error("cannot open inventory", error))?;
+            txn.open_table(EVENTS)
+                .map_err(|error| store_error("cannot open events", error))?;
+            let mut meta = txn
+                .open_table(META)
+                .map_err(|error| store_error("cannot open meta", error))?;
             let format = get_u64(&meta, meta::FORMAT)?;
-            if format > STORE_FORMAT {
-                return Err(format!(
-                    "The hub database {} was written by a newer fastctx (format {format}); this build reads format {STORE_FORMAT} at most.",
-                    crate::paths::display_path(path)
-                ));
-            }
-            if format == 1 {
-                // Format 1 held per-grant rows and unsigned sealed keys, neither of which a
-                // format-2 member accepts. Members re-publish grants; any holder of the newest
-                // epoch reseals it for whoever lacks it (`members_result.missing_key`).
-                let mut keys = txn.open_table(KEYS).map_err(|error| store_error("cannot open keys", error))?;
-                keys.retain(|_, _| false).map_err(|error| store_error("cannot clear keys", error))?;
-                let mut grants = txn.open_table(GRANTS).map_err(|error| store_error("cannot open grants", error))?;
-                grants.retain(|_, _| false).map_err(|error| store_error("cannot clear grants", error))?;
-                put_u64(&mut meta, meta::GRANT_VERSION, 0)?;
-                super::log("migrated the hub database from format 1: grants and sealed keys were cleared");
+            if format != 0 && format != STORE_FORMAT {
+                return Err("Protocol v2 requires a new hub database".into());
             }
             if format != STORE_FORMAT {
                 put_u64(&mut meta, meta::FORMAT, STORE_FORMAT)?;
@@ -487,13 +466,30 @@ impl Store {
                     let mut invites = txn
                         .open_table(INVITES)
                         .map_err(|error| store_error("cannot open invites", error))?;
-                    let consumed = invites
-                        .remove(code_id)
-                        .map_err(|error| store_error("cannot consume an invite", error))?
-                        .is_some();
-                    if !consumed {
+                    let Some(mut invite) = get_json::<InviteRow>(&invites, code_id)? else {
+                        return Ok(AdmissionOutcome::InviteGone);
+                    };
+                    if invite.used
+                        || crate::world::parse_rfc3339(&invite.endorsement.expires)?
+                            <= time::OffsetDateTime::now_utc()
+                    {
                         return Ok(AdmissionOutcome::InviteGone);
                     }
+                    let inviter = get_json::<MemberRow>(&members, &invite.endorsement.inviter)?
+                        .ok_or("Invitation author missing")?;
+                    if inviter.is_revoked() {
+                        return Ok(AdmissionOutcome::Revoked);
+                    }
+                    let signed = row.signed.as_ref().ok_or("Member has no admission proof")?;
+                    signed.admission.verify(
+                        &row.name,
+                        &row.node_pub,
+                        &crate::world::crypto::b64_array(&inviter.node_pub, "inviter")?,
+                    )?;
+                    invite.used = true;
+                    invites
+                        .insert(code_id, encode(&invite)?.as_slice())
+                        .map_err(|e| store_error("consume invite", e))?;
                 }
                 Admission::Bootstrap => {
                     let used = meta
@@ -506,6 +502,13 @@ impl Store {
                     if used || count > 0 {
                         return Ok(AdmissionOutcome::NotFirst);
                     }
+                    if row.signed.as_ref().is_none_or(|signed| {
+                        signed.admission != crate::world::admission::Credential::Founder
+                    }) {
+                        return Err("Bootstrap needs a founder record".into());
+                    }
+                    meta.insert("founder", row.node_pub.as_bytes())
+                        .map_err(|e| store_error("pin founder", e))?;
                     meta.insert(meta::BOOTSTRAP_USED, b"1".as_slice())
                         .map_err(|error| store_error("cannot write meta", error))?;
                 }
@@ -584,7 +587,35 @@ impl Store {
         id: Option<u64>,
         queued_at: &str,
     ) -> Result<u64, String> {
+        crate::world::wire::Frame::reliable(u64::MAX, env.clone()).encode()?;
+        let header = env.header()?;
+        let letter = if header.t == crate::world::messages::kind::MAIL {
+            Some(
+                crate::world::messages::decode::<crate::world::mail::Letter>(
+                    &env.body_bytes()?,
+                    "mail",
+                )?,
+            )
+        } else {
+            None
+        };
+        let dedup = letter
+            .as_ref()
+            .map(|letter| format!("{}:{}:{}", header.from, name, letter.id));
+        let hash = hex::encode(crate::world::crypto::sha256(&encode(env)?));
         self.write(|txn| {
+            let mut ids = txn
+                .open_table(DELIVERY_IDS)
+                .map_err(|e| store_error("open delivery ids", e))?;
+            if let Some(id) = &dedup
+                && let Some((previous, seq)) = get_json::<(String, u64)>(&ids, id)?
+            {
+                if previous != hash {
+                    return Err("mail id reused with different bytes".into());
+                }
+                return Ok(seq);
+            }
+
             let mut sessions = txn
                 .open_table(SESSIONS)
                 .map_err(|error| store_error("cannot open sessions", error))?;
@@ -592,15 +623,6 @@ impl Store {
             let mut outbox = txn
                 .open_table(OUTBOX)
                 .map_err(|error| store_error("cannot open outbox", error))?;
-            let depth = outbox
-                .range::<(&str, u64)>((name, 0)..=(name, u64::MAX))
-                .map_err(|error| store_error("cannot scan outbox", error))?
-                .count() as u64;
-            if depth >= OUTBOX_LIMIT {
-                return Err(format!(
-                    "outbox_full: {OUTBOX_LIMIT} messages are already waiting for \"{name}\"."
-                ));
-            }
             row.send_seq += 1;
             let seq = row.send_seq;
             let bytes = encode(&OutboxRow {
@@ -615,6 +637,10 @@ impl Store {
             sessions
                 .insert(name, session_bytes.as_slice())
                 .map_err(|error| store_error("cannot write a session", error))?;
+            if let Some(id) = &dedup {
+                ids.insert(id.as_str(), encode(&(hash.clone(), seq))?.as_slice())
+                    .map_err(|e| store_error("store delivery id", e))?;
+            }
             Ok(seq)
         })
     }
@@ -688,6 +714,13 @@ impl Store {
             let mut table = txn
                 .open_table(INVITES)
                 .map_err(|error| store_error("cannot open invites", error))?;
+            if let Some(previous) = get_json::<InviteRow>(&table, code_id)? {
+                return if previous.endorsement == row.endorsement {
+                    Ok(())
+                } else {
+                    Err("Invitation public key already registered or consumed".into())
+                };
+            }
             table
                 .insert(code_id, bytes.as_slice())
                 .map(|_| ())
@@ -716,10 +749,11 @@ impl Store {
             let mut removed = 0;
             table
                 .retain(|_, value| {
-                    let keep = decode::<InviteRow>(value)
-                        .ok()
-                        .and_then(|row| crate::world::parse_rfc3339(&row.exp).ok())
-                        .is_some_and(|exp| exp > now);
+                    let keep = decode::<InviteRow>(value).ok().is_some_and(|row| {
+                        row.used
+                            || crate::world::parse_rfc3339(&row.endorsement.expires)
+                                .is_ok_and(|exp| exp > now)
+                    });
                     if !keep {
                         removed += 1;
                     }
@@ -735,96 +769,20 @@ impl Store {
             let table = txn
                 .open_table(INVITES)
                 .map_err(|error| store_error("cannot open invites", error))?;
-            table
-                .len()
-                .map_err(|error| store_error("cannot count invites", error))
-        })
-    }
-
-    // ----- sealed keys -----
-
-    pub(crate) fn put_sealed_key(
-        &self,
-        epoch: u32,
-        name: &str,
-        row: &SealedKeyRow,
-    ) -> Result<(), String> {
-        let bytes = encode(row)?;
-        self.write(|txn| {
-            let mut table = txn
-                .open_table(KEYS)
-                .map_err(|error| store_error("cannot open keys", error))?;
-            table
-                .insert((epoch, name), bytes.as_slice())
-                .map(|_| ())
-                .map_err(|error| store_error("cannot write a sealed key", error))
-        })
-    }
-
-    /// Every sealed key addressed to `name`, ordered by epoch.
-    pub(crate) fn sealed_keys_for(&self, name: &str) -> Result<Vec<(u32, SealedKeyRow)>, String> {
-        self.read(|txn| {
-            let table = txn
-                .open_table(KEYS)
-                .map_err(|error| store_error("cannot open keys", error))?;
-            let mut rows = Vec::new();
+            let mut count = 0;
+            let now = time::OffsetDateTime::now_utc();
             for entry in table
                 .iter()
-                .map_err(|error| store_error("cannot iterate keys", error))?
-            {
-                let (key, value) =
-                    entry.map_err(|error| store_error("cannot iterate keys", error))?;
-                let (epoch, owner) = key.value();
-                if owner == name {
-                    rows.push((epoch, decode::<SealedKeyRow>(value.value())?));
-                }
-            }
-            Ok(rows)
-        })
-    }
-
-    pub(crate) fn remove_sealed_keys_for(&self, name: &str) -> Result<(), String> {
-        self.write(|txn| {
-            let mut table = txn
-                .open_table(KEYS)
-                .map_err(|error| store_error("cannot open keys", error))?;
-            table
-                .retain(|(_, owner), _| owner != name)
-                .map_err(|error| store_error("cannot remove sealed keys", error))?;
-            Ok(())
-        })
-    }
-
-    /// Admitted, unrevoked members with no sealed copy of `epoch`.
-    pub(crate) fn members_missing_epoch(&self, epoch: u32) -> Result<Vec<String>, String> {
-        self.read(|txn| {
-            let keys = txn
-                .open_table(KEYS)
-                .map_err(|error| store_error("cannot open keys", error))?;
-            let mut holders = std::collections::BTreeSet::new();
-            for entry in keys
-                .range::<(u32, &str)>((epoch, "")..=(epoch, "\u{10ffff}"))
-                .map_err(|error| store_error("cannot scan keys", error))?
-            {
-                let (key, _) = entry.map_err(|error| store_error("cannot scan keys", error))?;
-                holders.insert(key.value().1.to_string());
-            }
-            let members = txn
-                .open_table(MEMBERS)
-                .map_err(|error| store_error("cannot open members", error))?;
-            let mut missing = Vec::new();
-            for entry in members
-                .iter()
-                .map_err(|error| store_error("cannot iterate members", error))?
+                .map_err(|error| store_error("cannot count invites", error))?
             {
                 let (_, value) =
-                    entry.map_err(|error| store_error("cannot iterate members", error))?;
-                let row = decode::<MemberRow>(value.value())?;
-                if !row.is_revoked() && !holders.contains(&row.name) {
-                    missing.push(row.name);
+                    entry.map_err(|error| store_error("cannot count invites", error))?;
+                let row: InviteRow = decode(value.value())?;
+                if !row.used && crate::world::parse_rfc3339(&row.endorsement.expires)? > now {
+                    count += 1;
                 }
             }
-            Ok(missing)
+            Ok(count)
         })
     }
 

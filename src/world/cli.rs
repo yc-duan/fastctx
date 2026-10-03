@@ -37,7 +37,7 @@ pub enum HubCommand {
         #[arg(long, value_name = "DIR")]
         data: Option<PathBuf>,
     },
-    /// Remove a member's admission. Key rotation completes on the next member that connects.
+    /// Remove a member's admission.
     Revoke {
         /// Member name.
         name: String,
@@ -76,7 +76,9 @@ impl From<NetworkChoice> for NetworkMode {
 /// World-wide commands, run on any member machine.
 #[derive(Debug, Subcommand)]
 pub enum WorldCommand {
-    /// Create the World from this machine: the first member, holding the first World key.
+    /// Send a resident network operation as JSON on stdin; emit a JSON response.
+    Network,
+    /// Create the World from this machine: the founding member.
     Init {
         /// Hub address, `host:port` (port 443 when omitted).
         hub: String,
@@ -111,7 +113,7 @@ pub enum WorldCommand {
         #[arg(long = "hub", value_name = "HOST:PORT")]
         hubs: Vec<String>,
     },
-    /// Remove a member from the World and rotate the World key.
+    /// Revoke a member with this device's signature.
     Revoke {
         /// Member name.
         name: String,
@@ -224,7 +226,7 @@ pub enum GrantsCommand {
 pub enum NodeCommand {
     /// Join a World with an invite from a member.
     Enroll {
-        /// The invite string (`fxw1.…`).
+        /// The invite string (`fxw2.…`).
         invite: String,
         /// This machine's name; defaults to the invite's suggestion.
         #[arg(long, value_name = "NAME")]
@@ -332,7 +334,7 @@ pub async fn run_hub(command: HubCommand) -> Result<ExitCode, String> {
                         status.binding, status.started_at, status.written_at
                     );
                     println!(
-                        "Members: {} ({} online), open invites {}, data connections {}, events {}{}{}",
+                        "Members: {} ({} online), open invites {}, data connections {}, events {}{}",
                         status.members.len(),
                         status
                             .members
@@ -342,11 +344,6 @@ pub async fn run_hub(command: HubCommand) -> Result<ExitCode, String> {
                         status.open_invites,
                         status.data_connections,
                         status.events,
-                        if status.rotation_pending {
-                            ", key rotation pending"
-                        } else {
-                            ""
-                        },
                         if status.bootstrap_used {
                             ""
                         } else {
@@ -394,6 +391,31 @@ pub async fn run_hub(command: HubCommand) -> Result<ExitCode, String> {
 pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
     let paths = ControlPaths::discover()?;
     match command {
+        WorldCommand::Network => {
+            use std::io::Read;
+            let mut json = String::new();
+            std::io::stdin()
+                .read_to_string(&mut json)
+                .map_err(|e| e.to_string())?;
+            let request: super::resident::Request =
+                serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            let response = super::node::admin::network_call(
+                &crate::runtime::node_admin_endpoint(
+                    &crate::session::SessionEnvironment::capture()?,
+                )?,
+                &request,
+            )
+            .await?;
+            println!(
+                "{}",
+                serde_json::to_string(&response).map_err(|e| e.to_string())?
+            );
+            Ok(if response.ok {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
+        }
         WorldCommand::Init {
             hub,
             bootstrap,
@@ -432,12 +454,8 @@ pub async fn run_world(command: WorldCommand) -> Result<ExitCode, String> {
         }
         WorldCommand::Revoke { name } => {
             let response = ask_daemon(&AdminRequest::Revoke { name: name.clone() }).await?;
-            let epoch = response
-                .data
-                .get("epoch")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            println!("\"{name}\" was revoked; the World key rotated to epoch {epoch}.");
+            let _ = response;
+            println!("\"{name}\" was revoked.");
             Ok(ExitCode::SUCCESS)
         }
         WorldCommand::Grants {
@@ -888,12 +906,7 @@ fn print_enrollment(summary: &super::enroll::EnrollSummary) {
         summary.hub.join(", "),
         summary.path
     );
-    println!(
-        "Hub key {}  TLS {}  World key epoch {}",
-        summary.hub_key,
-        summary.tls.as_str(),
-        summary.key_epoch
-    );
+    println!("Hub key {}  TLS {}", summary.hub_key, summary.tls.as_str());
 }
 
 fn finish_enrollment(paths: &ControlPaths, no_service: bool) -> Result<ExitCode, String> {
@@ -1044,9 +1057,8 @@ fn print_node_status(status: &super::node::admin::NodeStatus, source: &str) {
         );
     }
     println!(
-        "TLS {}  key epoch {}  outbox {}  replaced {}",
+        "TLS {}  outbox {}  replaced {}",
         link.tls.as_str(),
-        link.key_epoch,
         link.outbox_depth,
         link.replaced_count
     );

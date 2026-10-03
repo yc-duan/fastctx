@@ -1,13 +1,9 @@
-//! Joining a World: `fastctx world init` for the first machine and `fastctx node enroll` for
-//! every later one. Both dial the hub once with a learning TLS verifier, authenticate the
-//! hub against the invite (or the bootstrap password), obtain the World keys, and write the
-//! enrollment files. The daemon takes over from there.
+//! Bootstrap pins the founding device; invited devices prove possession of one-time signing keys.
 
 use super::client::Inventory;
 use super::crypto::{b64_array, b64_decode, b64_encode};
 use super::identity::{Fingerprint, Identity, verify};
 use super::invite::Invite;
-use super::keys::KeyRing;
 use super::link::{self, DialPlan, Dialed, Endpoint, Learned, Verify};
 use super::messages::{self, kind};
 use super::wire::{self, Auth, BindingMode, Enrollment, Frame, Hello, Intent, Welcome};
@@ -37,15 +33,14 @@ pub(crate) struct EnrollSummary {
     pub(crate) hub_key: Fingerprint,
     pub(crate) tls: TlsMode,
     pub(crate) path: String,
-    pub(crate) key_epoch: u32,
 }
 
 enum Admission {
     Bootstrap { password: String },
-    Invite(Invite),
+    Invite(Box<Invite>),
 }
 
-/// The first machine: creates the World key and admits itself with the bootstrap password.
+/// The first device pins its own public key as the admission root.
 pub(crate) async fn bootstrap(
     paths: &ControlPaths,
     hub: &str,
@@ -65,7 +60,7 @@ pub(crate) async fn bootstrap(
     .await
 }
 
-/// Every later machine: presents an invite and receives the World keys wrapped under it.
+/// Later devices present one-time admission proofs and pin the invited root.
 pub(crate) async fn enroll(
     paths: &ControlPaths,
     invite_text: &str,
@@ -75,11 +70,11 @@ pub(crate) async fn enroll(
     if invite.is_expired_at(time::OffsetDateTime::now_utc()) {
         return Err(format!(
             "That invite expired at {}. Ask a member for a new one.",
-            invite.exp
+            invite.endorsement.expires
         ));
     }
     if options.name.is_empty() {
-        options.name = invite.name.clone().ok_or_else(|| {
+        options.name = invite.endorsement.name.clone().ok_or_else(|| {
             "The invite carries no suggested name; pass --name <machine-name>.".to_string()
         })?;
     }
@@ -88,12 +83,12 @@ pub(crate) async fn enroll(
         .iter()
         .map(|text| Endpoint::parse(text))
         .collect::<Result<Vec<_>, _>>()?;
-    let hub_key = invite.hub_key;
+    let hub_key = Fingerprint::parse(&invite.hub_key)?;
     enroll_with(
         paths,
         endpoints,
         Some(hub_key),
-        Admission::Invite(invite),
+        Admission::Invite(Box::new(invite)),
         options,
     )
     .await
@@ -135,6 +130,10 @@ async fn enroll_with(
     )
     .await
     .map_err(|failure| format!("Cannot reach the hub: {failure}"))?;
+    let learned = learned
+        .lock()
+        .clone()
+        .ok_or_else(|| "The TLS handshake recorded no certificate.".to_string())?;
     let outcome = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
         handshake(
@@ -143,6 +142,7 @@ async fn enroll_with(
             expected_hub_key,
             &admission,
             &options,
+            &learned,
         ),
     )
     .await
@@ -154,27 +154,28 @@ async fn enroll_with(
             return Err(error);
         }
     };
-    let learned = learned
-        .lock()
-        .clone()
-        .ok_or_else(|| "The TLS handshake recorded no certificate.".to_string())?;
     let tls = decide_tls(&learned, &welcome_binding_mode(&dialed))?;
-    let (keys, grant_floor) = match (
-        &admission,
-        welcome
-            .enrolled
-            .as_ref()
-            .and_then(|enrolled| enrolled.wrapped_keys.as_ref()),
-    ) {
-        (Admission::Bootstrap { .. }, _) => (KeyRing::new_initial()?, 0),
-        (Admission::Invite(invite), Some(wrapped)) => invite.unwrap_keys(wrapped)?,
-        (Admission::Invite(_), None) => {
-            dialed.close().await;
-            return Err("The hub admitted this machine but sent no World keys; the invite may have been created by a hub without members.".to_string());
+    let (founder, credential, grant_floor) = match &admission {
+        Admission::Bootstrap { .. } => (
+            b64_encode(&identity.public_key()),
+            super::admission::Credential::Founder,
+            0,
+        ),
+        Admission::Invite(invite) => {
+            if invite.endorsement.world != welcome.world_id {
+                return Err("Invite belongs to another world".into());
+            }
+            (
+                invite.founder.clone(),
+                invite.credential(&options.name, &b64_encode(&identity.public_key()))?,
+                invite.endorsement.grant_floor,
+            )
         }
     };
     let config = WorldConfig {
-        version: 1,
+        version: 2,
+        founder,
+        admission: credential,
         name: options.name.clone(),
         world_id: welcome.world_id.clone(),
         hub: endpoints.iter().map(ToString::to_string).collect(),
@@ -186,7 +187,6 @@ async fn enroll_with(
         enrolled_at: super::now_rfc3339(),
     };
     identity.save(&world_paths)?;
-    keys.save(&world_paths)?;
     let mut state = super::state::NodeState::load(&world_paths)?;
     state.last_network = Some(dialed.path.mode());
     // The inviter's grant revision: until a snapshot at least this new is verified, this
@@ -204,7 +204,6 @@ async fn enroll_with(
         let record = messages::MemberRecord {
             name: config.name.clone(),
             node_pub: b64_encode(&identity.public_key()),
-            wrap_pub: b64_encode(&identity.wrap_public()),
             tags: options.tags.clone(),
             kind: "stateful".to_string(),
             os: inventory.os.clone(),
@@ -212,13 +211,13 @@ async fn enroll_with(
             version: env!("CARGO_PKG_VERSION").to_string(),
             enrolled_at: config.enrolled_at.clone(),
         };
-        let signed = super::members::publish_record(&identity, &keys, &record)?;
+        let signed = super::members::publish_record(&identity, &config.admission, &record)?;
         let header =
             super::envelope::Header::new(kind::MEMBER_PUBLISH, &config.name, super::HUB_NAME, 0);
-        client.send_reliable(header, &messages::MemberPublish { signed }, false, true)?;
+        client.send_reliable(header, &messages::MemberPublish { signed })?;
         let header =
             super::envelope::Header::new(kind::INVENTORY, &config.name, super::HUB_NAME, 0);
-        client.send_reliable(header, &inventory, true, false)?;
+        client.send_reliable(header, &inventory)?;
         client.outbox_after(0)?
     };
     let mut expected_acks = Vec::new();
@@ -250,7 +249,6 @@ async fn enroll_with(
         hub_key,
         tls,
         path: dialed.path.describe(),
-        key_epoch: keys.current().epoch(),
     })
 }
 
@@ -282,6 +280,7 @@ async fn handshake(
     expected_hub_key: Option<Fingerprint>,
     admission: &Admission,
     options: &EnrollOptions,
+    learned: &Learned,
 ) -> Result<(Welcome, Fingerprint), String> {
     let node_nonce = super::crypto::random_bytes::<32>()?;
     let intent = match admission {
@@ -291,11 +290,10 @@ async fn handshake(
     dialed
         .send(&Frame::Hello(Hello {
             protocol: PROTOCOL_VERSION,
-            min_protocol: PROTOCOL_VERSION.saturating_sub(1).max(1),
+            min_protocol: PROTOCOL_VERSION,
             version: env!("CARGO_PKG_VERSION").to_string(),
             nonce: b64_encode(&node_nonce),
             node_pub: b64_encode(&identity.public_key()),
-            wrap_pub: b64_encode(&identity.wrap_public()),
             intent,
         }))
         .await?;
@@ -321,6 +319,9 @@ async fn handshake(
             dialed.endpoint
         ));
     }
+    // Fronted mode has no exporter binding, so its public TLS identity must verify before
+    // any admission material is sent, not merely before saving the enrollment afterward.
+    decide_tls(learned, &challenge.binding)?;
     let binding = match challenge.binding {
         BindingMode::Exporter => dialed.binding.clone(),
         BindingMode::None => {
@@ -335,25 +336,47 @@ async fn handshake(
     verify(&hub_pub, wire::HUB_HANDSHAKE_DOMAIN, &transcript, &signature).map_err(|_| {
         "hub_identity_mismatch: the hub's challenge signature does not verify; the connection may be intercepted. Refusing to enroll.".to_string()
     })?;
+    if let Admission::Bootstrap { password } = admission {
+        let verifier = super::crypto::sha256(&super::crypto::hmac_sha256(
+            password.as_bytes(),
+            b"admission",
+        ));
+        let proof = challenge
+            .bootstrap_proof
+            .as_deref()
+            .ok_or("bootstrap_hub_mismatch: the hub provided no bootstrap proof")?;
+        if !super::crypto::hmac_verify(
+            &verifier,
+            &wire::bootstrap_transcript(&transcript, &challenge.world_id),
+            &b64_decode(proof)?,
+        ) {
+            return Err("bootstrap_hub_mismatch: the hub did not prove knowledge of this bootstrap password".into());
+        }
+    }
     let node_transcript =
         wire::node_transcript(&hub_nonce, &node_nonce, &node_pub, &hub_pub, &binding);
     let (code_id, admission_token) = match admission {
         Admission::Bootstrap { password } => (
             "bootstrap".to_string(),
-            super::crypto::hmac_sha256(password.as_bytes(), b"admission"),
+            Some(b64_encode(&super::crypto::hmac_sha256(
+                password.as_bytes(),
+                b"admission",
+            ))),
         ),
-        Admission::Invite(invite) => (invite.code_id(), invite.admission_token()),
+        Admission::Invite(invite) => (invite.endorsement.invite_pub.clone(), None),
     };
     dialed
         .send(&Frame::Auth(Auth {
             sig: b64_encode(&identity.sign(wire::NODE_HANDSHAKE_DOMAIN, &node_transcript)),
             recv_seq: 0,
-            enrollment: Some(Enrollment {
+            ticket: None,
+            enrollment: Some(Box::new(Enrollment {
                 code_id,
-                admission_token: b64_encode(&admission_token),
+                admission_token,
+                record: enrollment_record(identity, admission, options)?,
                 name: options.name.clone(),
                 tags: options.tags.clone(),
-            }),
+            })),
         }))
         .await?;
     match dialed.recv().await? {
@@ -362,4 +385,30 @@ async fn handshake(
         Some(_) => Err("The hub answered auth with something other than welcome.".to_string()),
         None => Err("The hub closed the connection after auth.".to_string()),
     }
+}
+
+fn enrollment_record(
+    identity: &Identity,
+    admission: &Admission,
+    options: &EnrollOptions,
+) -> Result<messages::SignedRecord, String> {
+    let public = b64_encode(&identity.public_key());
+    let credential = match admission {
+        Admission::Bootstrap { .. } => super::admission::Credential::Founder,
+        Admission::Invite(invite) => invite.credential(&options.name, &public)?,
+    };
+    super::members::publish_record(
+        identity,
+        &credential,
+        &messages::MemberRecord {
+            name: options.name.clone(),
+            node_pub: public,
+            tags: options.tags.clone(),
+            kind: "stateful".into(),
+            os: std::env::consts::OS.into(),
+            arch: std::env::consts::ARCH.into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            enrolled_at: super::now_rfc3339(),
+        },
+    )
 }

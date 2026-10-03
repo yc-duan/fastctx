@@ -1,35 +1,20 @@
-//! Data connections on the member side: the record every `copy` byte travels in, sealed end to
-//! end, and opening one end of a stream to the hub (`design-transport.md` §5.2, §9).
-//!
-//! A record is one WebSocket message: `[index u64][nonce 24][ciphertext]`, the ciphertext an
-//! XChaCha20-Poly1305 seal of `[type u8][payload]` under the World key's `blob` sub-key with
-//! the stream id, the sender's role, and the index as additional data. Each direction numbers
-//! its records from zero and the reader insists on the next number, so the hub can neither
-//! reorder nor replay a record it cannot read.
-
+//! Signed stream records, including a cumulative digest through the final record.
 use super::client::WorldClient;
-use super::crypto::{self, Key32, NONCE_LEN};
+use super::crypto::{self, Key32};
+use super::identity::{self, SigningIdentity};
 use super::link::{self, Dialed, WsTarget};
+use super::stream_ticket::Ticket;
 use super::wire::{Frame, Intent, StreamRole};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::Duration;
-
-/// HTTP path the hub upgrades data connections on.
-pub(crate) const STREAM_PATH: &str = "/fastctx/world/v1/stream";
-/// Bytes of file content one data record carries.
+use sha2::{Digest, Sha256};
+use tokio_tungstenite::tungstenite::Message;
+pub(crate) const STREAM_PATH: &str = "/fastctx/world/v2/stream";
 pub(crate) const CHUNK_BYTES: usize = 1024 * 1024;
-/// Largest sealed record.
-pub(crate) const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
-/// WebSocket message limit on a data connection: a record plus its framing.
-pub(crate) const MAX_MESSAGE_BYTES: usize = MAX_RECORD_BYTES + 4096;
-/// Dial, handshake, and the hub's wait for the other end.
-pub(crate) const ATTACH_TIMEOUT: Duration = Duration::from_secs(45);
-
+// One chunk plus its type byte, u64 sequence and Ed25519 signature.
+pub(crate) const MAX_MESSAGE_BYTES: usize = CHUNK_BYTES + 1 + 8 + 64;
 const RECORD_CONTROL: u8 = 1;
 const RECORD_DATA: u8 = 2;
-const AAD_LABEL: &[u8] = b"stream";
-
 /// One file the sink could not finish, as reported in `done`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Failure {
@@ -97,172 +82,227 @@ pub(crate) enum Record {
     Data(Vec<u8>),
 }
 
-fn aad(stream: u64, role: StreamRole, index: u64) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(AAD_LABEL.len() + 8 + 1 + 8);
-    bytes.extend_from_slice(AAD_LABEL);
-    bytes.extend_from_slice(&stream.to_be_bytes());
-    bytes.push(match role {
-        StreamRole::Source => 0,
-        StreamRole::Sink => 1,
-    });
-    bytes.extend_from_slice(&index.to_be_bytes());
-    bytes
+fn proof(ticket: &Ticket, role: StreamRole, index: u64, digest: &[u8]) -> Result<Vec<u8>, String> {
+    super::messages::encode(&(ticket, role, index, crypto::b64_encode(digest)))
 }
-
-/// Seals the records one end sends, numbering them.
 pub(crate) struct Sealer {
-    key: Key32,
-    stream: u64,
+    identity: SigningIdentity,
+    ticket: Ticket,
     role: StreamRole,
     next: u64,
+    hash: Sha256,
 }
-
 impl Sealer {
-    pub(crate) fn new(key: Key32, stream: u64, role: StreamRole) -> Self {
+    pub(crate) fn new(identity: SigningIdentity, ticket: Ticket, role: StreamRole) -> Self {
         Self {
-            key,
-            stream,
+            identity,
+            ticket,
             role,
             next: 0,
+            hash: Sha256::new(),
         }
     }
-
     pub(crate) fn seal(&mut self, record: &Record) -> Result<Vec<u8>, String> {
-        let plaintext = match record {
-            Record::Control(control) => {
-                let mut bytes = vec![RECORD_CONTROL];
-                bytes.extend(
-                    serde_json::to_vec(control)
-                        .map_err(|error| format!("Cannot encode a stream record: {error}"))?,
-                );
-                bytes
-            }
+        let mut payload = match record {
             Record::Data(data) => {
-                let mut bytes = Vec::with_capacity(data.len() + 1);
-                bytes.push(RECORD_DATA);
-                bytes.extend_from_slice(data);
-                bytes
+                let mut v = vec![RECORD_DATA];
+                v.extend(data);
+                v
+            }
+            Record::Control(control) => {
+                let mut v = vec![RECORD_CONTROL];
+                v.extend(super::messages::encode(control)?);
+                v
             }
         };
-        let index = self.next;
+        if payload.len() + 8 + 64 > MAX_MESSAGE_BYTES {
+            return Err("stream record exceeds chunk framing size".into());
+        }
+        self.hash.update((payload.len() as u64).to_be_bytes());
+        self.hash.update(&payload);
+        let sig = self.identity.sign(
+            "stream_digest",
+            &proof(
+                &self.ticket,
+                self.role,
+                self.next,
+                &self.hash.clone().finalize(),
+            )?,
+        );
+        let mut bytes = self.next.to_be_bytes().to_vec();
+        bytes.extend(sig);
+        bytes.append(&mut payload);
         self.next += 1;
-        let nonce = crypto::random_bytes::<NONCE_LEN>()?;
-        let ciphertext = crypto::seal_with_nonce(
-            &self.key,
-            &nonce,
-            &aad(self.stream, self.role, index),
-            &plaintext,
-        )?;
-        let mut bytes = Vec::with_capacity(8 + NONCE_LEN + ciphertext.len());
-        bytes.extend_from_slice(&index.to_be_bytes());
-        bytes.extend_from_slice(&nonce);
-        bytes.extend_from_slice(&ciphertext);
         Ok(bytes)
     }
 }
-
-/// Opens the records the other end sends, refusing anything out of order.
 pub(crate) struct Opener {
     key: Key32,
-    stream: u64,
-    peer_role: StreamRole,
+    ticket: Ticket,
+    role: StreamRole,
     next: u64,
+    hash: Sha256,
 }
-
 impl Opener {
-    pub(crate) fn new(key: Key32, stream: u64, peer_role: StreamRole) -> Self {
+    pub(crate) fn new(key: Key32, ticket: Ticket, role: StreamRole) -> Self {
         Self {
             key,
-            stream,
-            peer_role,
+            ticket,
+            role,
             next: 0,
+            hash: Sha256::new(),
         }
     }
-
     pub(crate) fn open(&mut self, bytes: &[u8]) -> Result<Record, String> {
-        if bytes.len() < 8 + NONCE_LEN {
-            return Err("a stream record is too short".to_string());
+        if bytes.len() < 73 || bytes.len() > MAX_MESSAGE_BYTES {
+            return Err("invalid stream record size".into());
         }
         let index = u64::from_be_bytes(bytes[..8].try_into().expect("eight bytes"));
         if index != self.next {
-            return Err(format!(
-                "stream record {index} arrived where {} was expected",
-                self.next
-            ));
+            return Err("stream record sequence mismatch".into());
         }
-        let mut nonce = [0_u8; NONCE_LEN];
-        nonce.copy_from_slice(&bytes[8..8 + NONCE_LEN]);
-        let plaintext = crypto::open(
+        let payload = &bytes[72..];
+        self.hash.update((payload.len() as u64).to_be_bytes());
+        self.hash.update(payload);
+        identity::verify(
             &self.key,
-            &nonce,
-            &aad(self.stream, self.peer_role, index),
-            &bytes[8 + NONCE_LEN..],
+            "stream_digest",
+            &proof(
+                &self.ticket,
+                self.role,
+                index,
+                &self.hash.clone().finalize(),
+            )?,
+            &bytes[8..72],
         )?;
         self.next += 1;
-        match plaintext.split_first() {
-            Some((&RECORD_CONTROL, payload)) => serde_json::from_slice(payload)
-                .map(Record::Control)
-                .map_err(|error| format!("Malformed stream record: {error}")),
-            Some((&RECORD_DATA, payload)) => Ok(Record::Data(payload.to_vec())),
-            _ => Err("a stream record has an unknown type".to_string()),
+        match payload[0] {
+            RECORD_DATA => Ok(Record::Data(payload[1..].to_vec())),
+            RECORD_CONTROL => {
+                super::messages::decode(&payload[1..], "stream control").map(Record::Control)
+            }
+            _ => Err("unknown stream record type".into()),
         }
     }
 }
-
-/// The `blob` sub-key of one World key epoch.
-pub(crate) fn blob_key(client: &WorldClient, epoch: u32) -> Result<Key32, String> {
-    client
-        .keys
-        .read()
-        .subkeys(epoch)
-        .map(|subkeys| subkeys.blob)
-        .ok_or_else(|| {
-            format!("key_epoch_unknown: this member holds no World key for epoch {epoch}.")
-        })
+pub(crate) fn ticket(
+    client: &WorldClient,
+    sink: &str,
+    principal: &str,
+    target: &str,
+    verb: &str,
+) -> Result<Ticket, String> {
+    let mut ticket = Ticket {
+        world: client.config.read().world_id.clone(),
+        stream: u64::from_be_bytes(crypto::random_bytes()?),
+        source: client.name(),
+        sink: sink.into(),
+        principal: principal.into(),
+        target: target.into(),
+        verb: verb.into(),
+        sig: String::new(),
+    };
+    ticket.sign(client.identity.signing())?;
+    Ok(ticket)
 }
-
-/// Opens one end of a data connection: dials the hub's stream path over the same network path
-/// as the control connection, authenticates as this member, and waits for the hub to pair it.
 pub(crate) async fn open(
-    client: &Arc<WorldClient>,
-    stream: u64,
+    client: &WorldClient,
+    ticket: &Ticket,
     role: StreamRole,
 ) -> Result<Dialed, String> {
+    if ticket.endpoint(role) != client.name() || ticket.world != client.config.read().world_id {
+        return Err("stream ticket endpoint/world mismatch".into());
+    }
+    let key = client
+        .members
+        .read()
+        .trusted_key(&ticket.source)
+        .ok_or("Untrusted stream author")?;
+    ticket.verify(&key)?;
     let (plan, verify, config) = super::session::dial_plan(client)?;
     let mut dialed = link::dial(&plan, &verify, WsTarget::STREAM)
         .await
-        .map_err(|failure| format!("cannot open a data connection: {failure}"))?;
-    let admission = tokio::time::timeout(
-        ATTACH_TIMEOUT,
-        super::session::authenticate(
-            client,
-            &mut dialed,
-            &config,
-            0,
-            Intent::Stream { stream, role },
-        ),
+        .map_err(|e| e.to_string())?;
+    match super::session::authenticate(
+        client,
+        &mut dialed,
+        &config,
+        0,
+        Intent::Stream {
+            stream: ticket.stream,
+            role,
+        },
+        Some(ticket.clone()),
     )
-    .await;
-    match admission {
-        Ok(Ok(Frame::Attached { stream: attached })) if attached == stream => Ok(dialed),
-        Ok(Ok(Frame::Bye { reason })) => {
-            dialed.close().await;
-            Err(format!("the hub refused the data connection: {reason}"))
+    .await
+    .map_err(|e| e.into_message())?
+    {
+        Frame::Attached { stream } if stream == ticket.stream => Ok(dialed),
+        Frame::Bye { reason } => Err(reason),
+        _ => Err("Unexpected stream admission".into()),
+    }
+}
+
+pub(crate) struct Channel<'a> {
+    client: &'a WorldClient,
+    peer: String,
+    socket: super::link::ws::Socket,
+    sealer: Sealer,
+    opener: Opener,
+}
+impl<'a> Channel<'a> {
+    pub(crate) fn new(
+        client: &'a WorldClient,
+        dialed: Dialed,
+        ticket: Ticket,
+        role: StreamRole,
+    ) -> Result<Self, String> {
+        let peer_role = match role {
+            StreamRole::Source => StreamRole::Sink,
+            StreamRole::Sink => StreamRole::Source,
+        };
+        let key = client
+            .members
+            .read()
+            .trusted_key(ticket.endpoint(peer_role))
+            .ok_or("Stream peer is not trusted")?;
+        Ok(Self {
+            client,
+            peer: ticket.endpoint(peer_role).to_string(),
+            socket: dialed.socket,
+            sealer: Sealer::new(client.identity.signing().clone(), ticket.clone(), role),
+            opener: Opener::new(key, ticket, peer_role),
+        })
+    }
+    pub(crate) async fn send(&mut self, record: Record) -> Result<(), String> {
+        self.verify_peer()?;
+        self.socket
+            .send(Message::Binary(self.sealer.seal(&record)?.into()))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    pub(crate) async fn recv(&mut self) -> Result<Record, String> {
+        loop {
+            match self.socket.next().await {
+                Some(Ok(Message::Binary(bytes))) => {
+                    self.verify_peer()?;
+                    return self.opener.open(&bytes);
+                }
+                Some(Ok(Message::Ping(bytes))) => self
+                    .socket
+                    .send(Message::Pong(bytes))
+                    .await
+                    .map_err(|e| e.to_string())?,
+                Some(Ok(Message::Pong(_))) => {}
+                Some(Err(e)) => return Err(e.to_string()),
+                _ => return Err("Stream closed before its signed end".into()),
+            }
         }
-        Ok(Ok(_)) => {
-            dialed.close().await;
-            Err("the hub answered the data connection with an unexpected frame".to_string())
+    }
+    fn verify_peer(&self) -> Result<(), String> {
+        if self.client.members.read().trusted_key(&self.peer) != Some(self.opener.key) {
+            return Err("Stream peer is revoked or its admission is no longer trusted".into());
         }
-        Ok(Err(failure)) => {
-            dialed.close().await;
-            Err(failure.into_message())
-        }
-        Err(_) => {
-            dialed.close().await;
-            Err(format!(
-                "the other end did not attach within {} s",
-                ATTACH_TIMEOUT.as_secs()
-            ))
-        }
+        Ok(())
     }
 }

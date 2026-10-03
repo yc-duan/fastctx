@@ -1,6 +1,6 @@
 //! User-authored machine descriptions and controller-private notes.
 //!
-//! Descriptions enter the encrypted inventory; private notes are overlaid only when a local
+//! Descriptions enter the signed inventory; private notes are overlaid only when a local
 //! surface renders a node. Each file belongs to one World and one value, so editing one
 //! machine cannot overwrite another machine's note. No private note enters a network frame.
 
@@ -118,7 +118,7 @@ pub(crate) fn description(paths: &WorldPaths) -> Result<String, String> {
     read(&description_path(paths), &world_id(paths)?)
 }
 
-/// Persists the description; the caller separately requests an encrypted inventory publish.
+/// Persists the description; the caller separately requests an signed inventory publish.
 pub(crate) fn save_description(paths: &WorldPaths, text: &str) -> Result<(), String> {
     let world = world_id(paths)?;
     paths.ensure()?;

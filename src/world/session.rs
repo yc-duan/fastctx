@@ -60,7 +60,7 @@ pub(crate) async fn run(client: Arc<WorldClient>, executor: Arc<Executor>) {
                             .unwrap_or(1);
                         client.update_link(|link| link.replaced_count = count);
                         log(format!(
-                            "this connection was replaced by another process using the same World key ({count} time(s))"
+                            "this connection was replaced by another process using the same device identity ({count} time(s))"
                         ));
                         if count >= REPLACED_LIMIT {
                             pause(&client, "replaced by another process three times; another fastctx node may be running with this identity", REPLACED_PAUSE).await;
@@ -78,7 +78,7 @@ pub(crate) async fn run(client: Arc<WorldClient>, executor: Arc<Executor>) {
                             link.last_error = Some(reason.clone());
                         });
                         log(format!("link stopped: {reason}"));
-                        client.wake.notified().await;
+                        tokio::select! { () = client.shutdown.cancelled() => return, () = client.wake.notified() => {} }
                         attempt = 0;
                         continue;
                     }
@@ -188,7 +188,14 @@ async fn connect_once(
         .map_err(|failure| failure.to_string())?;
     let welcome = match tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
-        authenticate(client, &mut dialed, &config, state.recv_seq, Intent::Auth),
+        authenticate(
+            client,
+            &mut dialed,
+            &config,
+            state.recv_seq,
+            Intent::Auth,
+            None,
+        ),
     )
     .await
     {
@@ -292,15 +299,15 @@ pub(crate) async fn authenticate(
     config: &super::WorldConfig,
     recv_seq: u64,
     intent: Intent,
+    ticket: Option<super::stream_ticket::Ticket>,
 ) -> Result<Frame, Handshake> {
     let node_nonce = super::crypto::random_bytes::<32>()?;
     let hello = Hello {
         protocol: PROTOCOL_VERSION,
-        min_protocol: PROTOCOL_VERSION.saturating_sub(1).max(1),
+        min_protocol: PROTOCOL_VERSION,
         version: env!("CARGO_PKG_VERSION").to_string(),
         nonce: b64_encode(&node_nonce),
         node_pub: b64_encode(&client.identity.public_key()),
-        wrap_pub: b64_encode(&client.identity.wrap_public()),
         intent,
     };
     dialed.send(&Frame::Hello(hello)).await?;
@@ -349,6 +356,7 @@ pub(crate) async fn authenticate(
             challenge.world_id, config.world_id
         )));
     }
+    *client.hub_public.write() = Some(hub_pub);
     let node_transcript =
         wire::node_transcript(&hub_nonce, &node_nonce, &node_pub, &hub_pub, &binding);
     let auth = Auth {
@@ -358,6 +366,7 @@ pub(crate) async fn authenticate(
                 .sign(wire::NODE_HANDSHAKE_DOMAIN, &node_transcript),
         ),
         recv_seq,
+        ticket: ticket.map(Box::new),
         enrollment: None,
     };
     dialed.send(&Frame::Auth(auth)).await?;
@@ -391,16 +400,8 @@ async fn run_connected(
 ) -> SessionEnd {
     let (mut sink, mut stream) = dialed.socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
-    client.attach_sender(tx.clone());
-
-    // Resync: drop what the hub already has, resend what it lacks.
-    match client.outbox_after(welcome.recv_seq) {
-        Ok(entries) => {
-            for (seq, entry) in entries {
-                let _ = tx.send(Frame::reliable(seq, entry.env));
-            }
-        }
-        Err(error) => log(format!("cannot replay the outbox: {error}")),
+    if let Err(error) = client.attach_sender(tx.clone(), welcome.recv_seq) {
+        return SessionEnd::Lost(format!("outbox replay failed: {error}"));
     }
     let name = client.name();
     let started = Instant::now();
@@ -408,19 +409,8 @@ async fn run_connected(
         let client = Arc::clone(client);
         let welcome = welcome.clone();
         async move {
-            // Members first: a rotated key is adopted only from a member already verified, and
-            // a grant snapshot only from its verified publisher.
-            let behind_on_keys = welcome.key_epoch > client.keys.read().current().epoch();
-            if (welcome.members_version != client.state_snapshot().members_version
-                || client.members.read().members.is_empty()
-                || behind_on_keys)
-                && let Err(error) = client.refresh_members().await
-            {
-                log(format!("member refresh failed: {error}"));
-            }
-            if behind_on_keys && let Err(error) = client.refresh_keys().await {
-                log(format!("key refresh failed: {error}"));
-            }
+            client.refresh_members().await?;
+            client.raise_grant_floor(welcome.grant_version)?;
             let revision = client.grant_revision();
             if welcome.grant_version > revision || client.is_grant_stale() {
                 if let Err(error) = client.refresh_grants().await {
@@ -432,24 +422,23 @@ async fn run_connected(
                     welcome.grant_version
                 ));
             }
+            if let Err(error) = client.sync_ledger().await {
+                log(format!("ledger sync failed: {error}"));
+            }
             if let Err(error) = client.refresh_inventories().await {
                 log(format!("inventory refresh failed: {error}"));
             }
             if let Err(error) = super::node::inventory::publish(&client, true).await {
                 log(format!("cannot publish the inventory: {error}"));
             }
-            if welcome.rotation_pending {
-                match client.complete_rotation().await {
-                    Ok(epoch) => log(format!(
-                        "completed the pending World key rotation (epoch {epoch})"
-                    )),
-                    Err(error) => log(format!("cannot complete the pending key rotation: {error}")),
-                }
-            }
+            Ok::<(), String>(())
         }
     };
     tokio::pin!(after_welcome);
     let mut after_welcome_done = false;
+    let mut deferred = std::collections::VecDeque::<(Option<u64>, Option<u64>, Envelope)>::new();
+    let (members_tx, mut members_rx) = mpsc::unbounded_channel();
+    let mut members_refreshing = false;
 
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -463,15 +452,42 @@ async fn run_connected(
     let mut last_direct_probe = Instant::now();
     let mut ack_deadline: Option<Instant> = None;
 
-    let end = loop {
+    let end = 'connected: loop {
+        if after_welcome_done && !members_refreshing {
+            while let Some((seq, id, env)) = deferred.pop_front() {
+                if let Some(seq) = seq {
+                    match receive_reliable(client, executor, &tx, &mut recv_seq, seq, id, env).await
+                    {
+                        Err(error) => break 'connected SessionEnd::Lost(error),
+                        Ok(true) => {
+                            members_refreshing = true;
+                            let client = Arc::clone(client);
+                            let done = members_tx.clone();
+                            tokio::spawn(async move {
+                                let result = client.refresh_members().await.map(|_| ());
+                                let _ = done.send(result);
+                            });
+                            break;
+                        }
+                        Ok(false) => {}
+                    }
+                } else {
+                    handle_request_frame(client, executor, id, env);
+                }
+            }
+        }
         tokio::select! {
             () = client.shutdown.cancelled() => {
                 let bye = Frame::Bye { reason: "node shutting down".to_string() }.encode().unwrap_or_default();
                 let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Binary(bye.into()))).await;
                 break SessionEnd::Shutdown;
             }
-            () = &mut after_welcome, if !after_welcome_done => {
+            result = &mut after_welcome, if !after_welcome_done => {
+                if let Err(error) = result { break SessionEnd::Lost(format!("member synchronization failed: {error}")); }
                 after_welcome_done = true;
+            }
+            result = members_rx.recv(), if members_refreshing => {
+                match result { Some(Ok(())) => members_refreshing = false, Some(Err(error)) => break SessionEnd::Lost(error), None => break SessionEnd::Lost("member refresh task closed".into()) }
             }
             () = client.grants_wanted.notified() => {
                 let client = Arc::clone(client);
@@ -631,22 +647,10 @@ async fn run_connected(
                         ack_deadline = (client.link().outbox_depth > 0)
                             .then(|| Instant::now() + super::client::ACK_TIMEOUT);
                     }
-                    Frame::Msg { seq: Some(seq), id, env } => {
-                        if seq <= recv_seq {
-                            let _ = tx.send(Frame::Ack { seq });
-                        } else if seq == recv_seq + 1 {
-                            handle_reliable(client, executor, id, env).await;
-                            recv_seq = seq;
-                            if let Err(error) = client.with_state(|state| state.recv_seq = seq) {
-                                log(format!("cannot advance the receive cursor: {error}"));
-                            }
-                            let _ = tx.send(Frame::Ack { seq });
-                        } else {
-                            break SessionEnd::Lost(format!("sequence gap from the hub: expected {}, got {seq}", recv_seq + 1));
-                        }
-                    }
+                    Frame::Msg { seq: Some(seq), id, env } => { deferred.push_back((Some(seq), id, env)); }
                     Frame::Msg { seq: None, id, env } => {
-                        handle_request_frame(client, executor, id, env);
+                        if env.header().is_ok_and(|header| header.from != HUB_NAME) { deferred.push_back((None, id, env)); }
+                        else { handle_request_frame(client, executor, id, env); }
                     }
                     Frame::Replaced => break SessionEnd::Replaced,
                     Frame::Bye { reason } => break SessionEnd::Lost(format!("the hub said bye: {reason}")),
@@ -695,47 +699,54 @@ async fn handle_reliable(
     executor: &Arc<Executor>,
     _id: Option<u64>,
     env: Envelope,
-) {
-    let opened = match env.open(Some(&client.keys.read())) {
+) -> Result<bool, String> {
+    let opened = match client.open_envelope(&env) {
         Ok(opened) => opened,
         Err(error) => {
-            log(format!(
-                "dropping a reliable message this member cannot open: {error}"
-            ));
-            return;
+            super::delivery::record(&client.paths, "inbound", &error, &env)?;
+            log(format!("reliable envelope rejected: {error}"));
+            return Ok(false);
         }
     };
     let header = &opened.header;
-    if !opened.encrypted && !messages::plaintext_allowed(&header.t, &header.from) {
-        log(format!(
-            "dropping a plaintext {} from \"{}\"",
-            header.t, header.from
-        ));
-        return;
-    }
     if !addressed_here(client, header) {
-        return;
+        return Err("reliable message rejected".into());
+    }
+    if header.t == kind::MAIL {
+        let key = client
+            .members
+            .read()
+            .trusted_key(&header.from)
+            .ok_or("Untrusted mail author")?;
+        let _lock = client.inbox_lock.lock();
+        if super::mail::accept(&client.paths, &env, &key)? {
+            client.inbox_changed.notify_waiters();
+        }
+        return Ok(false);
     }
     if header.from != HUB_NAME
         && let Err(error) = client.accept_counter(&header.from, header.n)
     {
         log(format!("dropping {}: {error}", header.t));
-        return;
+        return Err("reliable message rejected".into());
     }
     // Anything that asks the hub a question runs off the read loop: the answer arrives
     // through this very loop, so awaiting it here would deadlock until the request timed out.
     match header.t.as_str() {
-        kind::MEMBERS_CHANGED => {
+        kind::DELIVERY_REJECTED if header.from == HUB_NAME => {
+            let rejected = messages::decode(&opened.body, kind::DELIVERY_REJECTED)?;
+            client.record_rejection(&rejected)?;
+        }
+
+        kind::LEDGER_CHANGED => {
             let client = Arc::clone(client);
             tokio::spawn(async move {
-                if let Err(error) = client.refresh_members().await {
-                    log(format!("member refresh failed: {error}"));
-                }
-                if let Err(error) = client.refresh_inventories().await {
-                    log(format!("inventory refresh failed: {error}"));
+                if let Err(error) = client.sync_ledger().await {
+                    log(format!("ledger sync failed: {error}"));
                 }
             });
         }
+        kind::MEMBERS_CHANGED => return Ok(true),
         kind::GRANT_SYNC => {
             match messages::decode::<messages::GrantSync>(&opened.body, kind::GRANT_SYNC) {
                 Ok(sync) => match client.apply_grant_sync(sync) {
@@ -748,19 +759,6 @@ async fn handle_reliable(
                 },
                 Err(error) => log(error),
             }
-        }
-        kind::KEY_ROTATED => {
-            // The rotated key is adopted only from a verified member, so the listing that
-            // names the rotating member (and any revocation that motivated it) comes first.
-            let client = Arc::clone(client);
-            tokio::spawn(async move {
-                if let Err(error) = client.refresh_members().await {
-                    log(format!("member refresh failed: {error}"));
-                }
-                if let Err(error) = client.refresh_keys().await {
-                    log(format!("key refresh failed: {error}"));
-                }
-            });
         }
         kind::HUB_ERROR => {
             match messages::decode::<messages::HubError>(&opened.body, kind::HUB_ERROR) {
@@ -777,6 +775,7 @@ async fn handle_reliable(
             header.from
         )),
     }
+    Ok(false)
 }
 
 /// Routes a request frame: requests addressed to this member go to the executor, answers go
@@ -787,7 +786,7 @@ fn handle_request_frame(
     id: Option<u64>,
     env: Envelope,
 ) {
-    let opened = match env.open(Some(&client.keys.read())) {
+    let opened = match client.open_envelope(&env) {
         Ok(opened) => opened,
         Err(error) => {
             log(format!(
@@ -797,17 +796,22 @@ fn handle_request_frame(
         }
     };
     let header = opened.header.clone();
-    if !opened.encrypted && !messages::plaintext_allowed(&header.t, &header.from) {
-        log(format!(
-            "dropping a plaintext {} from \"{}\"",
-            header.t, header.from
-        ));
-        return;
-    }
     if !addressed_here(client, &header) {
         return;
     }
     match header.t.as_str() {
+        kind::SUBSCRIBE
+        | kind::UNSUBSCRIBE
+        | kind::SUBSCRIPTION_EVENT
+        | kind::SUBSCRIPTION_CLOSED => {
+            if let Err(error) = client
+                .accept_counter(&header.from, header.n)
+                .and_then(|()| client.receive_subscription(&opened))
+            {
+                log(format!("subscription rejected: {error}"));
+            }
+        }
+
         kind::CALL => {
             if let Err(error) = client.accept_counter(&header.from, header.n) {
                 log(format!("dropping a call: {error}"));
@@ -830,4 +834,29 @@ fn handle_request_frame(
             }
         }
     }
+}
+
+async fn receive_reliable(
+    client: &Arc<WorldClient>,
+    executor: &Arc<Executor>,
+    tx: &mpsc::UnboundedSender<Frame>,
+    recv_seq: &mut u64,
+    seq: u64,
+    id: Option<u64>,
+    env: Envelope,
+) -> Result<bool, String> {
+    let mut refresh = false;
+    if seq > *recv_seq {
+        if seq != *recv_seq + 1 {
+            return Err(format!(
+                "hub sequence gap: expected {}, got {seq}",
+                *recv_seq + 1
+            ));
+        }
+        refresh = handle_reliable(client, executor, id, env).await?;
+        client.with_state(|state| state.recv_seq = seq)?;
+        *recv_seq = seq;
+    }
+    tx.send(Frame::Ack { seq }).map_err(|e| e.to_string())?;
+    Ok(refresh)
 }

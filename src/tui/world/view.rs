@@ -1517,7 +1517,6 @@ fn render_receipt(frame: &mut Frame<'_>, app: &mut WorldApp, m: &i18n::WorldMess
             "world" => m.title,
             "hub" => m.hub_address,
             "tls" => m.tls,
-            "epoch" => m.epoch,
             "service" => m.service,
             "description" => m.description,
             "private_note" => m.private_note,
@@ -1636,7 +1635,7 @@ fn preview(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
             Line::raw(""),
             plain(m.hours_help),
         ],
-        Action::Revoke { name } => vec![pair(m.name, name), Line::raw(""), warn(m.revoke_warning)],
+        Action::Revoke { name } => vec![pair(m.name, name)],
         Action::Leave => vec![
             pair(m.this_machine, this_machine),
             Line::raw(""),
@@ -1698,7 +1697,6 @@ fn preview(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
             pair(m.name, name),
             pair(m.directory, data.to_string_lossy()),
             Line::raw(""),
-            warn(m.hub_revoke_warning),
         ],
         _ => vec![plain(m.continue_action)],
     }
@@ -1986,7 +1984,6 @@ fn connection_lines(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
         pair(m.outbox, link.outbox_depth),
         Line::raw(""),
         section(m.grants),
-        pair(m.epoch, link.key_epoch),
         pair(m.replaced, link.replaced_count),
         pair(m.grant_revision, status.grant_revision),
         pair(m.grant_stale, yes(status.grant_stale, m)),
@@ -2227,7 +2224,6 @@ fn help_lines(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
                     pair(m.title, &hub.world_id),
                     pair(m.pending_invites, hub.open_invites),
                     pair(m.data_connections, hub.data_connections),
-                    pair(m.rotation_pending, yes(hub.rotation_pending, m)),
                     pair(m.data_time, relative(&hub.written_at, m)),
                 ]);
             }

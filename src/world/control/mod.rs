@@ -120,7 +120,7 @@ impl<T> ReadState<T> {
     }
 }
 
-/// A node-owned, authenticated local view. No identity or World key is serialized here.
+/// A node-owned, authenticated local view. Private signing material is never serialized here.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct NodeSnapshot {
     pub(crate) status: NodeStatus,

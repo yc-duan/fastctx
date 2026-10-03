@@ -1,258 +1,97 @@
-//! Invites: the pasteable string that tells a new machine where the hub is, which hub to
-//! trust, and how to prove its admission, and the derived values the hub is allowed to hold.
-//!
-//! The hub never learns the invite secret. It stores `code_id` (to find the invite),
-//! `admission` (to check the one-time token), and the World keys wrapped under a key only the
-//! secret can derive. Knowing all three still cannot unwrap the keys or forge a member.
-
-use super::crypto::{self, Key32, b64url_decode, b64url_encode, sha256};
-use super::identity::Fingerprint;
-use super::keys::KeyRing;
-use super::{format_rfc3339, parse_rfc3339};
+//! A one-time signing seed delivered to the joining device, never to the hub.
+use super::admission::{Credential, Endorsement};
+use super::crypto::{self, b64url_decode, b64url_encode};
+use super::identity::{Fingerprint, Identity, SigningIdentity};
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// Prefix of every invite string; the digit is the invite format version.
-pub(crate) const INVITE_PREFIX: &str = "fxw1.";
-const INVITE_FORMAT_VERSION: u32 = 1;
-
-/// A decoded invite.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub(crate) const INVITE_PREFIX: &str = "fxw2.";
+#[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Invite {
-    /// Hub addresses (`host:port`), tried in order.
-    #[zeroize(skip)]
     pub(crate) hub: Vec<String>,
-    /// The hub identity the new machine must see in `challenge`.
-    #[zeroize(skip)]
-    pub(crate) hub_key: Fingerprint,
-    /// 32 random bytes; everything else is derived from them.
-    secret: Key32,
-    /// Suggested member name.
-    #[zeroize(skip)]
-    pub(crate) name: Option<String>,
-    /// Expiry, RFC 3339 UTC.
-    #[zeroize(skip)]
-    pub(crate) exp: String,
+    pub(crate) hub_key: String,
+    pub(crate) founder: String,
+    pub(crate) inviter_key: String,
+    seed: [u8; 32],
+    pub(crate) endorsement: Endorsement,
 }
-
-#[derive(Deserialize, Serialize)]
-struct InviteWire {
-    v: u32,
-    hub: Vec<String>,
-    hub_key: String,
-    secret: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    exp: String,
-}
-
-const WRAPPED_FORMAT_VERSION: u32 = 1;
-
-/// The plaintext the invite secret wraps: what a new member receives from the inviter alone.
-#[derive(Deserialize, Serialize)]
-struct WrappedEnrollment {
-    v: u32,
-    /// `[{ epoch, key }]`, every epoch the inviter holds.
-    keys: serde_json::Value,
-    /// Grant snapshot revision in force when the invite was made; 0 when none exists.
-    #[serde(default)]
-    grant_revision: u64,
-}
-
-impl Invite {
-    /// Creates a fresh invite expiring `ttl` from now.
-    pub(crate) fn new(
-        hub: Vec<String>,
-        hub_key: Fingerprint,
-        name: Option<String>,
-        ttl: time::Duration,
-    ) -> Result<Self, String> {
-        if hub.is_empty() {
-            return Err("An invite needs at least one hub address.".to_string());
-        }
-        Ok(Self {
-            hub,
-            hub_key,
-            secret: crypto::random_bytes::<32>()?,
-            name,
-            exp: format_rfc3339(time::OffsetDateTime::now_utc() + ttl),
-        })
-    }
-
-    /// The pasteable form: `fxw1.` plus base64url JSON.
-    pub(crate) fn encode(&self) -> String {
-        let wire = InviteWire {
-            v: INVITE_FORMAT_VERSION,
-            hub: self.hub.clone(),
-            hub_key: self.hub_key.to_string(),
-            secret: b64url_encode(&self.secret),
-            name: self.name.clone(),
-            exp: self.exp.clone(),
-        };
-        let json = serde_json::to_vec(&wire).expect("an invite serializes");
-        format!("{INVITE_PREFIX}{}", b64url_encode(&json))
-    }
-
-    /// Parses a pasted invite string (surrounding whitespace tolerated).
-    pub(crate) fn parse(text: &str) -> Result<Self, String> {
-        let text = text.trim();
-        let Some(payload) = text.strip_prefix(INVITE_PREFIX) else {
-            return Err(format!(
-                "That is not a FastCtx World invite: it must start with \"{INVITE_PREFIX}\"."
-            ));
-        };
-        let json = b64url_decode(payload)
-            .map_err(|_| "That invite is not intact; paste the whole string.".to_string())?;
-        let wire: InviteWire = serde_json::from_slice(&json)
-            .map_err(|_| "That invite is not intact; paste the whole string.".to_string())?;
-        if wire.v != INVITE_FORMAT_VERSION {
-            return Err(format!(
-                "That invite uses format {} but this fastctx understands format {INVITE_FORMAT_VERSION}. Upgrade the older side.",
-                wire.v
-            ));
-        }
-        if wire.hub.is_empty() {
-            return Err("That invite names no hub address.".to_string());
-        }
-        parse_rfc3339(&wire.exp)?;
-        Ok(Self {
-            hub: wire.hub,
-            hub_key: Fingerprint::parse(&wire.hub_key)?,
-            secret: b64url_decode(&wire.secret)
-                .ok()
-                .and_then(|bytes| Key32::try_from(bytes).ok())
-                .ok_or_else(|| "That invite is not intact; paste the whole string.".to_string())?,
-            name: wire.name,
-            exp: wire.exp,
-        })
-    }
-
-    pub(crate) fn is_expired_at(&self, now: time::OffsetDateTime) -> bool {
-        parse_rfc3339(&self.exp)
-            .map(|exp| exp <= now)
-            .unwrap_or(true)
-    }
-
-    /// `sha256("invite" ‖ secret)`, hex: how the hub files the invite.
-    pub(crate) fn code_id(&self) -> String {
-        hex::encode(crypto::sha256_parts(&[b"invite", &self.secret]))
-    }
-
-    /// `HMAC(secret, "admission")`: the one-time bearer presented at enrollment.
-    pub(crate) fn admission_token(&self) -> Key32 {
-        crypto::hmac_sha256(&self.secret, b"admission")
-    }
-
-    /// `sha256(admission_token)`, hex: what the hub stores to check the token.
-    pub(crate) fn admission(&self) -> String {
-        hex::encode(sha256(&self.admission_token()))
-    }
-
-    /// Hex of the hash the hub stores for a presented admission token.
-    pub(crate) fn admission_of_token(token: &[u8]) -> String {
-        hex::encode(sha256(token))
-    }
-
-    /// Wraps every World key epoch and the grant revision in force under
-    /// `HKDF(secret, "wrap")`, bound to the code id.
-    ///
-    /// The grant revision rides along so the new member knows, from a source the hub cannot
-    /// edit, that a grant snapshot exists and how new it must be before the member trusts its
-    /// own copy.
-    pub(crate) fn wrap_keys(&self, ring: &KeyRing, grant_revision: u64) -> Result<String, String> {
-        let payload = WrappedEnrollment {
-            v: WRAPPED_FORMAT_VERSION,
-            keys: ring.to_entries_json(),
-            grant_revision,
-        };
-        let plain = serde_json::to_vec(&payload)
-            .map_err(|error| format!("Cannot encode the wrapped enrollment: {error}"))?;
-        super::keys::seal_blob(&self.wrap_key(), self.code_id().as_bytes(), &plain)
-    }
-
-    /// Unwraps what the hub handed back at enrollment: the key ring and the grant revision
-    /// the inviter held.
-    pub(crate) fn unwrap_keys(&self, wrapped: &str) -> Result<(KeyRing, u64), String> {
-        let plain = super::keys::open_blob(&self.wrap_key(), self.code_id().as_bytes(), wrapped)
-            .map_err(|_| "The World keys in the hub's answer do not unwrap with this invite; the invite and the hub disagree.".to_string())?;
-        let payload: WrappedEnrollment = serde_json::from_slice(&plain)
-            .map_err(|error| format!("Cannot parse the wrapped enrollment: {error}"))?;
-        if payload.v > WRAPPED_FORMAT_VERSION {
-            return Err(format!(
-                "The invite was created by a newer fastctx (wrapped format {}); this build reads format {WRAPPED_FORMAT_VERSION} at most.",
-                payload.v
-            ));
-        }
-        Ok((
-            KeyRing::from_entries_json(payload.keys)?,
-            payload.grant_revision,
-        ))
-    }
-
-    fn wrap_key(&self) -> Key32 {
-        crypto::hkdf_derive(&self.secret, b"wrap")
-    }
-}
-
 impl std::fmt::Debug for Invite {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Invite")
-            .field("hub", &self.hub)
-            .field("hub_key", &self.hub_key)
-            .field("name", &self.name)
-            .field("exp", &self.exp)
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Invite")
+            .field("endorsement", &self.endorsement)
             .finish_non_exhaustive()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Invite;
-
-    const DEFAULT_INVITE_TTL: time::Duration = time::Duration::hours(24);
-    use crate::world::identity::Fingerprint;
-    use crate::world::keys::KeyRing;
-
-    #[test]
-    fn an_invite_round_trips_and_only_its_secret_unwraps_the_keys() {
-        let hub_key = Fingerprint::of(&[3_u8; 32]);
-        let invite = Invite::new(
-            vec!["hub.example:443".to_string(), "203.0.113.5:443".to_string()],
-            hub_key,
-            Some("laptop".to_string()),
-            DEFAULT_INVITE_TTL,
+impl Invite {
+    pub(crate) fn new(
+        config: &super::WorldConfig,
+        identity: &Identity,
+        name: Option<String>,
+        ttl: time::Duration,
+        grant_floor: u64,
+        hub: Vec<String>,
+    ) -> Result<Self, String> {
+        if hub.is_empty() {
+            return Err("An invite needs a hub address".into());
+        }
+        let seed = crypto::random_bytes()?;
+        let mut endorsement = Endorsement {
+            world: config.world_id.clone(),
+            inviter: config.name.clone(),
+            invite_pub: crypto::b64_encode(&SigningIdentity::from_seed(&seed).public_key()),
+            expires: super::format_rfc3339(time::OffsetDateTime::now_utc() + ttl),
+            grant_floor,
+            name,
+            sig: String::new(),
+        };
+        endorsement.sign(identity)?;
+        Ok(Self {
+            hub,
+            hub_key: config.hub_key.clone(),
+            founder: config.founder.clone(),
+            inviter_key: crypto::b64_encode(&identity.public_key()),
+            seed,
+            endorsement,
+        })
+    }
+    pub(crate) fn encode(&self) -> String {
+        format!(
+            "{INVITE_PREFIX}{}",
+            b64url_encode(&serde_json::to_vec(self).expect("invite serializes"))
         )
-        .unwrap();
-        let encoded = invite.encode();
-        assert!(encoded.starts_with("fxw1."));
-        let parsed = Invite::parse(&format!("  {encoded}\n")).unwrap();
-        assert_eq!(parsed.hub, invite.hub);
-        assert_eq!(parsed.hub_key, hub_key);
-        assert_eq!(parsed.name.as_deref(), Some("laptop"));
-        assert_eq!(parsed.code_id(), invite.code_id());
-        assert_eq!(parsed.admission(), invite.admission());
-        assert_eq!(
-            Invite::admission_of_token(&parsed.admission_token()),
-            invite.admission()
-        );
-        assert!(!parsed.is_expired_at(time::OffsetDateTime::now_utc()));
+    }
+    pub(crate) fn parse(text: &str) -> Result<Self, String> {
+        let payload = text
+            .trim()
+            .strip_prefix(INVITE_PREFIX)
+            .ok_or("Expected a protocol v2 invite")?;
+        let invite: Self = serde_json::from_slice(&b64url_decode(payload)?)
+            .map_err(|e| format!("Invalid invite: {e}"))?;
+        Fingerprint::parse(&invite.hub_key)?;
+        crypto::b64_array::<32>(&invite.founder, "founder")?;
+        invite
+            .endorsement
+            .verify(&crypto::b64_array(&invite.inviter_key, "inviter")?)?;
+        if crypto::b64_encode(&SigningIdentity::from_seed(&invite.seed).public_key())
+            != invite.endorsement.invite_pub
+        {
+            return Err("Invitation seed does not match its endorsement".into());
+        }
+        Ok(invite)
+    }
+    pub(crate) fn is_expired_at(&self, now: time::OffsetDateTime) -> bool {
+        super::parse_rfc3339(&self.endorsement.expires).map_or(true, |expiry| expiry <= now)
+    }
+    pub(crate) fn credential(&self, name: &str, public: &str) -> Result<Credential, String> {
+        Credential::invited(self.endorsement.clone(), &self.seed, name, public)
+    }
+    pub(crate) fn admission_of_token(token: &[u8]) -> String {
+        hex::encode(crypto::sha256(token))
+    }
+}
 
-        let ring = KeyRing::new_initial().unwrap();
-        let wrapped = invite.wrap_keys(&ring, 7).unwrap();
-        let (unwrapped, grant_revision) = parsed.unwrap_keys(&wrapped).unwrap();
-        assert_eq!(unwrapped.epochs(), vec![1]);
-        assert_eq!(grant_revision, 7);
-        let other = Invite::new(
-            vec!["hub.example:443".to_string()],
-            hub_key,
-            None,
-            DEFAULT_INVITE_TTL,
-        )
-        .unwrap();
-        assert!(other.unwrap_keys(&wrapped).is_err());
-
-        assert!(Invite::parse("fxw2.abc").is_err());
-        assert!(Invite::parse(&encoded[..encoded.len() - 3]).is_err());
+impl std::ops::Deref for Invite {
+    type Target = Endorsement;
+    fn deref(&self) -> &Endorsement {
+        &self.endorsement
     }
 }

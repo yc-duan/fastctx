@@ -1,33 +1,24 @@
-//! The receiving end of a `copy`: accepts a `copy_receive` call by naming a stream, then, on
-//! its own task, attaches to that stream, answers which files it already has, writes the rest
-//! beside their final names, and renames each into place once its hash checks out.
-
+//! A copy receiver publishes files only after the final cumulative stream signature verifies.
 use super::{ObjectKind, ReceiveArgs, safe_relative};
 use crate::model::ToolResponse;
 use crate::paths::{display_path, parse_input_path};
-use crate::world::client::WorldClient;
-use crate::world::messages::Call;
-use crate::world::node::executor::VerbOutcome;
-use crate::world::stream::{self, Control, Failure, Opener, Record, Sealer};
-use crate::world::wire::StreamRole;
-use futures_util::{SinkExt, StreamExt};
+use crate::world::{
+    client::WorldClient,
+    messages::Call,
+    node::executor::VerbOutcome,
+    stream::{self, Control, Record},
+    wire::StreamRole,
+};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
-use tokio_tungstenite::tungstenite::Message;
-
-/// Copies this machine receives at once.
-const RECEIVE_LIMIT: usize = 4;
-
-static ACTIVE: AtomicUsize = AtomicUsize::new(0);
-
+use std::{
+    collections::BTreeMap,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 struct FileInfo {
     target: PathBuf,
-    relative: String,
     size: u64,
     mode: Option<u32>,
     mtime: Option<i64>,
@@ -42,344 +33,175 @@ struct Current {
     written: u64,
 }
 
-#[derive(Default)]
-struct Tally {
-    wanted: u64,
-    finalized: u64,
-    copied: u64,
-    bytes: u64,
-    skipped: u64,
-    links_skipped: u64,
-    failed: Vec<Failure>,
-    ended: bool,
-}
-
-/// Answers `copy_receive`: checks the destination, names a stream, and starts receiving. The
-/// call's own timeout does not bound the transfer; the source's declared deadline does.
 pub(crate) fn accept(client: &Arc<WorldClient>, call: &Call, _timeout: Duration) -> VerbOutcome {
-    let args: ReceiveArgs = match serde_json::from_value(call.args.clone()) {
-        Ok(args) => args,
-        Err(error) => {
-            return VerbOutcome::error_text(format!("Invalid copy_receive arguments: {error}"));
-        }
-    };
-    let to = parse_input_path(&args.to);
-    let shown = display_path(&to);
-    if !to.is_absolute() {
-        return VerbOutcome::error_text(format!(
-            "to must be an absolute path on the receiving machine: {shown}"
-        ));
-    }
-    match (std::fs::symlink_metadata(&to), args.kind) {
-        (Ok(metadata), ObjectKind::File) if metadata.is_dir() => {
-            return VerbOutcome::error_text(format!(
-                "{shown} is a directory; to must name the file."
-            ));
-        }
-        (Ok(metadata), ObjectKind::Dir) if !metadata.is_dir() => {
-            return VerbOutcome::error_text(format!(
-                "{shown} is a file; to must name the directory that receives the tree."
-            ));
-        }
-        (Err(error), _) if error.kind() != std::io::ErrorKind::NotFound => {
-            return VerbOutcome::error_text(format!("Cannot use {shown}: {error}"));
-        }
-        _ => {}
-    }
-    let created = match args.kind {
-        ObjectKind::Dir => std::fs::create_dir_all(&to),
-        ObjectKind::File => match to.parent() {
-            Some(parent) => std::fs::create_dir_all(parent),
-            None => Ok(()),
-        },
-    };
-    if let Err(error) = created {
-        return VerbOutcome::error_text(format!("Cannot create {shown}: {error}"));
-    }
-    if ACTIVE.load(Ordering::Relaxed) >= RECEIVE_LIMIT {
-        return VerbOutcome::error_text(format!(
-            "busy: this machine is receiving {RECEIVE_LIMIT} copies already; retry shortly."
-        ));
-    }
-    let stream_id = match crate::world::crypto::random_bytes::<8>() {
-        Ok(bytes) => u64::from_be_bytes(bytes).max(1),
-        Err(error) => return VerbOutcome::error_text(error),
-    };
-    let epoch = client.keys.read().current().epoch();
-    let key = match stream::blob_key(client, epoch) {
-        Ok(key) => key,
-        Err(error) => return VerbOutcome::error_text(error),
-    };
-    let deadline = Instant::now()
-        + Duration::from_millis(args.deadline_ms).clamp(
-            Duration::from_secs(5),
-            Duration::from_millis(crate::shell::MAX_SCRIPT_CALL_MS),
-        );
-    let client = Arc::clone(client);
-    tokio::spawn(async move {
-        ACTIVE.fetch_add(1, Ordering::Relaxed);
-        receive(client, stream_id, key, to, args, deadline).await;
-        ACTIVE.fetch_sub(1, Ordering::Relaxed);
-    });
-    VerbOutcome {
-        response: ToolResponse::text("receiving"),
-        facts: BTreeMap::from([
-            ("stream".to_string(), serde_json::json!(stream_id)),
-            ("epoch".to_string(), serde_json::json!(epoch)),
-            ("path".to_string(), serde_json::json!(shown)),
-        ]),
+    match prepare(client, call) {
+        Ok(outcome) => outcome,
+        Err(error) => VerbOutcome::error_text(error),
     }
 }
-
-async fn receive(
-    client: Arc<WorldClient>,
-    stream_id: u64,
-    key: crate::world::crypto::Key32,
-    to: PathBuf,
-    args: ReceiveArgs,
-    deadline: Instant,
-) {
-    let dialed = match stream::open(&client, stream_id, StreamRole::Sink).await {
-        Ok(dialed) => dialed,
-        Err(error) => {
-            crate::world::node::log(format!(
-                "copy from \"{}\": cannot open the data connection: {error}",
-                args.from_node
-            ));
-            return;
+fn prepare(client: &Arc<WorldClient>, call: &Call) -> Result<VerbOutcome, String> {
+    let args: ReceiveArgs = serde_json::from_value(call.args.clone()).map_err(|e| e.to_string())?;
+    let to = parse_input_path(&args.to);
+    if !to.is_absolute() {
+        return Err("copy destination must be absolute".into());
+    }
+    if args.ticket.source != args.from_node
+        || args.ticket.sink != client.name()
+        || args.ticket.verb != "copy"
+        || args.ticket.principal != args.from_node
+        || args.ticket.target != client.name()
+    {
+        return Err("copy ticket does not authorize these endpoints".into());
+    }
+    let key = client
+        .members
+        .read()
+        .trusted_key(&args.from_node)
+        .ok_or("Untrusted copy source")?;
+    args.ticket.verify(&key)?;
+    let client = Arc::clone(client);
+    let shown = display_path(&to);
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(
+            Duration::from_millis(args.deadline_ms),
+            receive(&client, &to, &args),
+        )
+        .await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => crate::world::node::log(format!("copy rejected: {error}")),
+            Err(_) => crate::world::node::log("copy exceeded caller deadline"),
         }
-    };
-    let (mut writer, mut reader) = dialed.socket.split();
-    let mut sealer = Sealer::new(key, stream_id, StreamRole::Sink);
-    let mut opener = Opener::new(key, stream_id, StreamRole::Source);
-    let mut pending: HashMap<u64, FileInfo> = HashMap::new();
+    });
+    Ok(VerbOutcome {
+        response: ToolResponse::text("receiving"),
+        facts: BTreeMap::from([("path".into(), serde_json::json!(shown))]),
+    })
+}
+async fn receive(client: &WorldClient, to: &Path, args: &ReceiveArgs) -> Result<(), String> {
+    let dialed = stream::open(client, &args.ticket, StreamRole::Sink).await?;
+    let mut channel = stream::Channel::new(client, dialed, args.ticket.clone(), StreamRole::Sink)?;
+    let mut staged: Vec<(Current, FileInfo)> = Vec::new();
+    let mut pending: Option<FileInfo> = None;
     let mut current: Option<Current> = None;
-    let mut tally = Tally::default();
-    let deadline = tokio::time::Instant::from_std(deadline);
-    let outcome: Result<(), String> = loop {
-        let bytes = tokio::select! {
-            () = tokio::time::sleep_until(deadline) => break Err("the copy ran past its deadline".to_string()),
-            next = reader.next() => match next {
-                None | Some(Ok(Message::Close(_))) => break Err("the source closed the data connection".to_string()),
-                Some(Err(error)) => break Err(format!("the data connection failed: {error}")),
-                Some(Ok(Message::Binary(bytes))) => bytes,
-                Some(Ok(_)) => continue,
-            },
-        };
-        let record = match opener.open(&bytes) {
-            Ok(record) => record,
-            Err(error) => break Err(error),
-        };
-        let reply = match record {
-            Record::Control(Control::File {
-                index,
-                path,
-                size,
-                mode,
-                mtime,
-                sha256,
-            }) => {
-                let target = match args.kind {
-                    ObjectKind::File => Ok(to.clone()),
-                    ObjectKind::Dir => safe_relative(&path).map(|components| {
-                        let mut target = to.clone();
-                        for component in components {
-                            target.push(component);
-                        }
-                        target
-                    }),
-                };
-                match target {
-                    Err(reason) => {
-                        tally.failed.push(Failure { path, reason });
-                        Some(Control::Skip { index })
+    let mut directories = Vec::new();
+    let (mut skipped, mut links, mut files, mut total_bytes) = (0, 0, 0, 0);
+    let outcome = async {
+        loop {
+            match channel.recv().await? {
+                Record::Control(Control::File {
+                    index,
+                    path,
+                    size,
+                    mode,
+                    mtime,
+                    sha256,
+                }) => {
+                    if pending.is_some() || current.is_some() {
+                        return Err("overlapping stream files".into());
                     }
-                    Ok(target) => {
-                        let identical = same_content(&target, size, &sha256).await;
-                        if identical {
-                            tally.skipped += 1;
-                            Some(Control::Skip { index })
-                        } else {
-                            tally.wanted += 1;
-                            pending.insert(
-                                index,
-                                FileInfo {
-                                    target,
-                                    relative: path,
-                                    size,
-                                    mode,
-                                    mtime,
-                                    sha256,
-                                },
-                            );
-                            Some(Control::Want { index })
-                        }
-                    }
-                }
-            }
-            Record::Control(Control::Dir { path }) => {
-                if args.kind == ObjectKind::Dir {
-                    match safe_relative(&path) {
-                        Ok(components) => {
-                            let mut target = to.clone();
-                            for component in components {
-                                target.push(component);
-                            }
-                            if let Err(error) = std::fs::create_dir_all(&target) {
-                                tally.failed.push(Failure {
-                                    path,
-                                    reason: format!("cannot create the directory: {error}"),
-                                });
-                            }
-                        }
-                        Err(reason) => tally.failed.push(Failure { path, reason }),
-                    }
-                }
-                None
-            }
-            Record::Control(Control::LinkSkipped { .. }) => {
-                tally.links_skipped += 1;
-                None
-            }
-            Record::Control(Control::FileBegin { index }) => {
-                if let Some(previous) = current.take() {
-                    discard(previous);
-                }
-                if let Some(info) = pending.get(&index) {
-                    match open_temporary(&info.target) {
-                        Ok((temporary, file)) => {
-                            current = Some(Current {
-                                index,
-                                temporary,
-                                file,
-                                hasher: Sha256::new(),
-                                written: 0,
-                            });
-                        }
-                        Err(reason) => {
-                            tally.failed.push(Failure {
-                                path: info.relative.clone(),
-                                reason,
-                            });
-                        }
-                    }
-                }
-                None
-            }
-            Record::Data(data) => {
-                if let Some(state) = current.as_mut() {
-                    if let Err(error) = state.file.write_all(&data) {
-                        let info = pending.get(&state.index);
-                        tally.failed.push(Failure {
-                            path: info.map(|info| info.relative.clone()).unwrap_or_default(),
-                            reason: format!("cannot write: {error}"),
-                        });
-                        if let Some(state) = current.take() {
-                            discard(state);
-                        }
+                    let target = if args.kind == ObjectKind::File {
+                        to.to_path_buf()
                     } else {
-                        state.hasher.update(&data);
-                        state.written += data.len() as u64;
+                        safe_relative(&path)?
+                            .iter()
+                            .fold(to.to_path_buf(), |p, c| p.join(c))
+                    };
+                    files += 1;
+                    total_bytes += size;
+                    if same_content(&target, size, &sha256).await {
+                        skipped += 1;
+                        channel
+                            .send(Record::Control(Control::Skip { index }))
+                            .await?;
+                    } else {
+                        pending = Some(FileInfo {
+                            target,
+                            size,
+                            mode,
+                            mtime,
+                            sha256,
+                        });
+                        channel
+                            .send(Record::Control(Control::Want { index }))
+                            .await?;
                     }
                 }
-                None
-            }
-            Record::Control(Control::FileEnd { index }) => {
-                tally.finalized += 1;
-                match (current.take(), pending.remove(&index)) {
-                    (Some(state), Some(info)) if state.index == index => {
-                        match finalize(state, &info).await {
-                            Ok(written) => {
-                                tally.copied += 1;
-                                tally.bytes += written;
-                                Some(Control::Received {
-                                    index,
-                                    bytes: written,
-                                })
-                            }
-                            Err(reason) => {
-                                tally.failed.push(Failure {
-                                    path: info.relative,
-                                    reason,
-                                });
-                                None
-                            }
-                        }
-                    }
-                    (state, info) => {
-                        if let Some(state) = state {
-                            discard(state);
-                        }
-                        if let Some(info) = info
-                            && !tally
-                                .failed
-                                .iter()
-                                .any(|failure| failure.path == info.relative)
-                        {
-                            tally.failed.push(Failure {
-                                path: info.relative,
-                                reason: "the file did not arrive whole".to_string(),
-                            });
-                        }
-                        None
-                    }
+                Record::Control(Control::FileBegin { index }) => {
+                    let info = pending.as_ref().ok_or("file began without a manifest")?;
+                    let (temporary, file) = open_temporary(&info.target)?;
+                    current = Some(Current {
+                        index,
+                        temporary,
+                        file,
+                        hasher: Sha256::new(),
+                        written: 0,
+                    });
                 }
+                Record::Data(data) => {
+                    let state = current.as_mut().ok_or("bytes outside a file")?;
+                    state.file.write_all(&data).map_err(|e| e.to_string())?;
+                    state.hasher.update(&data);
+                    state.written += data.len() as u64;
+                }
+                Record::Control(Control::FileEnd { index }) => {
+                    let state = current.take().ok_or("file end without file")?;
+                    if state.index != index {
+                        return Err("file index mismatch".into());
+                    }
+                    staged.push((state, pending.take().ok_or("file has no manifest")?));
+                }
+                Record::Control(Control::Dir { path }) => directories.push(
+                    safe_relative(&path)?
+                        .iter()
+                        .fold(to.to_path_buf(), |p, c| p.join(c)),
+                ),
+                Record::Control(Control::LinkSkipped { .. }) => links += 1,
+                Record::Control(Control::End {
+                    files: expected_files,
+                    bytes,
+                }) => {
+                    if expected_files != files
+                        || bytes != total_bytes
+                        || current.is_some()
+                        || pending.is_some()
+                    {
+                        return Err("incomplete stream".into());
+                    }
+                    break;
+                }
+                _ => return Err("unexpected copy stream record".into()),
             }
-            Record::Control(Control::End { .. }) => {
-                tally.ended = true;
-                None
-            }
-            Record::Control(_) => None,
-        };
-        if let Some(reply) = reply
-            && let Err(error) = send(&mut writer, &mut sealer, reply).await
-        {
-            break Err(error);
         }
-        if tally.ended && tally.finalized >= tally.wanted {
-            let done = Control::Done {
-                copied: tally.copied,
-                bytes: tally.bytes,
-                skipped: tally.skipped,
-                links_skipped: tally.links_skipped,
-                failed: std::mem::take(&mut tally.failed),
-            };
-            break send(&mut writer, &mut sealer, done).await;
+        // The final record authenticates the complete transcript, including every byte and
+        // both roles via the ticket. Nothing becomes a destination file before this point.
+        for directory in directories {
+            std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
         }
-    };
-    if let Some(state) = current.take() {
+        let (mut copied, mut bytes) = (0, 0);
+        for (state, info) in staged.drain(..) {
+            bytes += finalize(state, &info).await?;
+            copied += 1;
+        }
+        channel
+            .send(Record::Control(Control::Done {
+                copied,
+                bytes,
+                skipped,
+                links_skipped: links,
+                failed: Vec::new(),
+            }))
+            .await
+    }
+    .await;
+    for (state, _) in staged {
         discard(state);
     }
-    let _ = writer.close().await;
-    match outcome {
-        Ok(()) => crate::world::node::log(format!(
-            "copy from \"{}\" into {}: {} files, {} bytes",
-            args.from_node,
-            display_path(&to),
-            tally.copied,
-            tally.bytes
-        )),
-        Err(error) => crate::world::node::log(format!(
-            "copy from \"{}\" into {} stopped after {} files: {error}",
-            args.from_node,
-            display_path(&to),
-            tally.copied
-        )),
+    if let Some(state) = current {
+        discard(state);
     }
+    outcome
 }
-
-async fn send(
-    writer: &mut futures_util::stream::SplitSink<crate::world::link::ws::Socket, Message>,
-    sealer: &mut Sealer,
-    control: Control,
-) -> Result<(), String> {
-    let bytes = sealer.seal(&Record::Control(control))?;
-    writer
-        .send(Message::Binary(bytes.into()))
-        .await
-        .map_err(|error| format!("the data connection closed while replying: {error}"))
-}
-
 /// Whether the file already at `target` has the manifest's size and hash.
 async fn same_content(target: &Path, size: u64, sha256: &str) -> bool {
     let Ok(metadata) = std::fs::symlink_metadata(target) else {
@@ -412,17 +234,6 @@ fn open_temporary(target: &Path) -> Result<(PathBuf, std::fs::File), String> {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "file".to_string());
     let stale_prefix = format!(".{name}.fastctx-part-");
-    if let Ok(entries) = std::fs::read_dir(parent) {
-        for entry in entries.flatten() {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(&stale_prefix)
-            {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    }
     let suffix = crate::world::crypto::random_bytes::<3>()
         .map(hex::encode)
         .unwrap_or_else(|_| std::process::id().to_string());

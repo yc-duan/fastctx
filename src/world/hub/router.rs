@@ -2,9 +2,8 @@
 //! messages are checked against grant shapes and forwarded on their headers.
 
 use super::session::Peer;
-use super::store::{InventoryRow, InviteRow, SealedKeyRow};
+use super::store::{InventoryRow, InviteRow};
 use super::{Hub, log};
-use crate::world::crypto::b64_array;
 use crate::world::envelope::{Envelope, Header};
 use crate::world::grant::GrantSet;
 use crate::world::messages::{self, SignedRevocation, kind};
@@ -21,6 +20,17 @@ pub(crate) fn handle_reliable(
 ) -> Result<(), String> {
     let header = env.header()?;
     check_author(peer, &header)?;
+    if hub.member_table()?.trusted_key(&peer.name) != Some(peer.node_pub) {
+        return Err("author admission is not trusted".into());
+    }
+    require_signature(peer, &env, &header)?;
+    if hub
+        .store
+        .member(&peer.name)?
+        .is_none_or(|row| row.is_revoked())
+    {
+        return Err("revoked author".into());
+    }
     if header.to == HUB_NAME {
         return handle_hub_bound(hub, peer, &header, &env);
     }
@@ -36,6 +46,23 @@ pub(crate) fn handle_request(
 ) -> Result<(), String> {
     let header = env.header()?;
     check_author(peer, &header)?;
+    if hub.member_table()?.trusted_key(&peer.name) != Some(peer.node_pub) {
+        return Err("author admission is not trusted".into());
+    }
+    require_signature(peer, &env, &header)?;
+    if hub
+        .store
+        .member(&peer.name)?
+        .is_none_or(|row| row.is_revoked())
+    {
+        return Err("revoked author".into());
+    }
+    if matches!(
+        header.t.as_str(),
+        kind::SUBSCRIBE | kind::UNSUBSCRIBE | kind::SUBSCRIPTION_EVENT
+    ) {
+        return hub.route_subscription(peer, id, &header, env);
+    }
     // A cancel withdraws a request the hub already holds, and it names that request inside its
     // own header, so it carries no transport id of its own: demanding one here would reject
     // every cancel and leave the call running on the target long after the caller gave up.
@@ -49,7 +76,7 @@ pub(crate) fn handle_request(
         return answer_hub_request(hub, peer, id, &header, &env);
     }
     match header.t.as_str() {
-        kind::CALL_RESULT => {
+        kind::CALL_RESULT | kind::CALL_RESULT_STREAM => {
             let id =
                 id.ok_or_else(|| "A call_result needs the transport id it answers.".to_string())?;
             hub.complete_pending(id, &peer.name, env);
@@ -73,10 +100,8 @@ fn check_author(peer: &Peer, header: &Header) -> Result<(), String> {
 }
 
 fn require_signature(peer: &Peer, env: &Envelope, header: &Header) -> Result<(), String> {
-    if messages::signature_required(&header.t) {
-        env.verify_signature(&peer.node_pub)
-            .map_err(|error| format!("{} must be signed by its author: {error}", header.t))?;
-    }
+    env.verify_signature(&peer.node_pub)
+        .map_err(|error| format!("{} must be signed by its author: {error}", header.t))?;
     Ok(())
 }
 
@@ -101,7 +126,7 @@ fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> 
     require_signature(peer, env, header)?;
     match header.t.as_str() {
         kind::MEMBER_PUBLISH => {
-            let opened = env.open(None)?;
+            let opened = env.open()?;
             let body: messages::MemberPublish = messages::decode(&opened.body, &header.t)?;
             let record: messages::MemberRecord = serde_json::from_str(&body.signed.record)
                 .map_err(|error| format!("member_publish carries an unreadable record: {error}"))?;
@@ -120,7 +145,14 @@ fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> 
                     "member_publish carries a public key other than the enrolled one.".to_string(),
                 );
             }
-            row.wrap_pub = record.wrap_pub.clone();
+            members::verify_record(&body.signed)?;
+            if row
+                .signed
+                .as_ref()
+                .is_none_or(|known| known.admission != body.signed.admission)
+            {
+                return Err("Cannot replace an admission proof".into());
+            }
             row.tags = record.tags.clone();
             row.signed = Some(body.signed);
             let version = hub.store.put_member(&row)?;
@@ -128,105 +160,24 @@ fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> 
             Ok(())
         }
         kind::INVITE_CREATE => {
-            let opened = env.open(None)?;
+            let opened = env.open()?;
             let body: messages::InviteCreate = messages::decode(&opened.body, &header.t)?;
-            crate::world::parse_rfc3339(&body.exp)?;
-            if body.code_id.len() != 64 || hex::decode(&body.code_id).is_err() {
-                return Err("invite_create carries a malformed code id.".to_string());
+            let endorsement = body.endorsement;
+            if endorsement.inviter != peer.name || endorsement.world != hub.world_id {
+                return Err("Invitation author/world mismatch".into());
             }
+            endorsement.verify(&peer.node_pub)?;
+            crate::world::parse_rfc3339(&endorsement.expires)?;
             hub.store.put_invite(
-                &body.code_id,
+                &endorsement.invite_pub.clone(),
                 &InviteRow {
-                    admission: body.admission,
-                    wrapped_keys: body.wrapped_keys,
-                    name: body.name.clone(),
-                    exp: body.exp,
-                    inviter: peer.name.clone(),
-                    created_at: crate::world::now_rfc3339(),
+                    endorsement,
+                    used: false,
                 },
             )?;
-            hub.append_event(
-                &peer.name,
-                "invite.created",
-                [(
-                    "name",
-                    serde_json::Value::String(body.name.unwrap_or_default()),
-                )],
-            );
-            Ok(())
-        }
-        kind::KEY_PUBLISH => {
-            let opened = env.open(None)?;
-            let body: messages::KeyPublish = messages::decode(&opened.body, &header.t)?;
-            if body.epoch == 0 {
-                return Err("key_publish needs an epoch above zero.".to_string());
-            }
-            let now = crate::world::now_rfc3339();
-            // Each sealed key names its publisher and carries that publisher's signature;
-            // the hub checks both against the connection so a member cannot publish keys in
-            // another member's name, and members re-check the signature on receipt.
-            for entry in &body.sealed {
-                if entry.key.epoch != body.epoch {
-                    return Err("key_publish mixes epochs.".to_string());
-                }
-                if entry.key.published_by != peer.name {
-                    return Err(format!(
-                        "key_publish names \"{}\" as the publisher but the connection belongs to \"{}\".",
-                        entry.key.published_by, peer.name
-                    ));
-                }
-                let Some(recipient) = hub.store.member(&entry.name)? else {
-                    return Err(format!(
-                        "key_publish seals a key for \"{}\", which is not a member.",
-                        entry.name
-                    ));
-                };
-                let wrap = b64_array::<32>(&recipient.wrap_pub, "member wrap key")?;
-                entry.key.verify_publisher(&wrap, &peer.node_pub)?;
-            }
-            for entry in &body.sealed {
-                hub.store.put_sealed_key(
-                    body.epoch,
-                    &entry.name,
-                    &SealedKeyRow {
-                        key: entry.key.clone(),
-                        published_by: peer.name.clone(),
-                        published_at: now.clone(),
-                    },
-                )?;
-            }
-            let newest = hub.store.meta_u64(super::store::meta::KEY_EPOCH)? as u32;
-            if body.epoch > newest {
-                hub.store
-                    .set_meta_u64(super::store::meta::KEY_EPOCH, u64::from(body.epoch))?;
-                hub.store
-                    .remove_meta(super::store::meta::ROTATION_PENDING)?;
-                hub.append_event(
-                    &peer.name,
-                    "key.rotated",
-                    [
-                        ("epoch", serde_json::Value::from(body.epoch)),
-                        ("members", serde_json::Value::from(body.sealed.len())),
-                    ],
-                );
-                let names = body
-                    .sealed
-                    .iter()
-                    .map(|entry| entry.name.clone())
-                    .collect::<Vec<_>>();
-                hub.broadcast_reliable(
-                    kind::KEY_ROTATED,
-                    &messages::KeyRotated { epoch: body.epoch },
-                    Some(&names),
-                    Some(&peer.name),
-                );
-            }
             Ok(())
         }
         kind::INVENTORY => {
-            if header.epoch == 0 {
-                return Err("inventory must be encrypted.".to_string());
-            }
             hub.store.put_inventory(
                 &peer.name,
                 &InventoryRow {
@@ -240,7 +191,7 @@ fn handle_hub_bound(hub: &Hub, peer: &Peer, header: &Header, env: &Envelope) -> 
             Ok(())
         }
         kind::LEAVE => {
-            let opened = env.open(None)?;
+            let opened = env.open()?;
             let body: messages::Revoke = messages::decode(&opened.body, &header.t)?;
             let statement = verify_peer_revocation(peer, &body.revocation)?;
             if statement.name != peer.name {
@@ -267,12 +218,71 @@ fn answer_hub_request(
 ) -> Result<(), String> {
     require_signature(peer, env, header)?;
     match header.t.as_str() {
+        kind::LEDGER_APPEND => {
+            let signed: crate::world::ledger::SignedEntry =
+                messages::decode(&env.body_bytes()?, &header.t)?;
+            let table = hub.member_table()?;
+            let entry = signed.verify(&table)?;
+            if entry.author != peer.name {
+                return Err("Ledger author differs from connection".into());
+            }
+            // The accepted entry must also fit the exact response framing when fetched.
+            let candidate = crate::world::ledger::Row {
+                seq: u64::MAX,
+                signed: signed.clone(),
+            };
+            let response = hub.hub_envelope(
+                kind::HUB_RESULT,
+                &"x".repeat(crate::world::MAX_NODE_NAME_LEN),
+                Some(u64::MAX),
+                &Some(candidate),
+            )?;
+            crate::world::wire::Frame::request(u64::MAX, response).encode()?;
+            let row = hub.store.append_ledger(&signed)?;
+            hub.answer(&peer.name, id, kind::HUB_RESULT, &row);
+            let towns = hub.store.towns_for(&peer.name)?;
+            if let Some(town) = towns.get(&entry.scope) {
+                hub.broadcast_reliable(
+                    kind::LEDGER_CHANGED,
+                    &serde_json::json!({"scope": entry.scope}),
+                    Some(&town.machines),
+                    None,
+                );
+            } else {
+                for name in table.members.keys() {
+                    if let Some(town) = hub.store.towns_for(name)?.get(&entry.scope) {
+                        hub.broadcast_reliable(
+                            kind::LEDGER_CHANGED,
+                            &serde_json::json!({"scope": entry.scope}),
+                            Some(&town.machines),
+                            None,
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+        kind::LEDGER_TOWNS => hub.answer(
+            &peer.name,
+            id,
+            kind::HUB_RESULT,
+            &hub.store.towns_for(&peer.name)?,
+        ),
+        kind::LEDGER_NEXT => {
+            let (scope, after): (String, u64) = messages::decode(&env.body_bytes()?, &header.t)?;
+            hub.answer(
+                &peer.name,
+                id,
+                kind::HUB_RESULT,
+                &hub.store.ledger_next(&peer.name, &scope, after)?,
+            );
+        }
         kind::MEMBERS_GET => {
             let result = hub.members_result()?;
             hub.answer(&peer.name, id, kind::MEMBERS_RESULT, &result);
         }
         kind::INVENTORY_GET => {
-            let opened = env.open(None)?;
+            let opened = env.open()?;
             let body: messages::InventoryGet =
                 messages::decode(&opened.body, &header.t).unwrap_or_default();
             let mut entries = Vec::new();
@@ -301,7 +311,7 @@ fn answer_hub_request(
             );
         }
         kind::EVENTS_GET => {
-            let opened = env.open(None)?;
+            let opened = env.open()?;
             let body: messages::EventsGet = messages::decode(&opened.body, &header.t)?;
             let limit = body.limit.unwrap_or(200).clamp(1, 1000) as usize;
             let (events, latest) = hub.store.events_after(body.since, limit)?;
@@ -325,7 +335,7 @@ fn answer_hub_request(
             );
         }
         kind::GRANT_PUBLISH => {
-            let opened = env.open(None)?;
+            let opened = env.open()?;
             let body: messages::GrantPublish = messages::decode(&opened.body, &header.t)?;
             let snapshot = body.set.parse()?;
             if snapshot.published_by != peer.name {
@@ -370,29 +380,8 @@ fn answer_hub_request(
                 &messages::HubResult { facts },
             );
         }
-        kind::KEYS_GET => {
-            let opened = env.open(None)?;
-            let body: messages::KeysGet = messages::decode(&opened.body, &header.t)?;
-            let sealed = hub
-                .store
-                .sealed_keys_for(&peer.name)?
-                .into_iter()
-                .filter(|(epoch, _)| !body.have.contains(epoch))
-                .map(|(_, row)| row.key)
-                .collect();
-            let newest_epoch = hub.store.meta_u64(super::store::meta::KEY_EPOCH)? as u32;
-            hub.answer(
-                &peer.name,
-                id,
-                kind::KEYS_RESULT,
-                &messages::KeysResult {
-                    sealed,
-                    newest_epoch,
-                },
-            );
-        }
         kind::REVOKE => {
-            let opened = env.open(None)?;
+            let opened = env.open()?;
             let body: messages::Revoke = messages::decode(&opened.body, &header.t)?;
             let statement = verify_peer_revocation(peer, &body.revocation)?;
             validate_node_name(&statement.name)?;
@@ -431,11 +420,15 @@ fn forward_reliable(
     id: Option<u64>,
     env: Envelope,
 ) -> Result<(), String> {
-    if header.epoch == 0 {
-        return Err(format!(
-            "A {} message between members must be encrypted.",
-            header.t
-        ));
+    if header.t != kind::MAIL {
+        return Err("Only mail may be queued between members".into());
+    }
+    let target = hub
+        .store
+        .member(&header.to)?
+        .ok_or("Unknown mail recipient")?;
+    if target.is_revoked() {
+        return Err("Mail recipient is revoked".into());
     }
     let targets = targets_of(header);
     for target in targets {
@@ -455,11 +448,12 @@ fn forward_request(
     id: u64,
     env: Envelope,
 ) -> Result<(), String> {
-    if header.epoch == 0 {
-        return Err(format!(
-            "A {} request between members must be encrypted.",
-            header.t
-        ));
+    if header.t != kind::CALL || header.wait_s.is_none() {
+        return Err("Only calls with a caller deadline may be forwarded".into());
+    }
+    let call: messages::Call = messages::decode(&env.body_bytes()?, kind::CALL)?;
+    if header.verb.as_deref() != Some(crate::world::node::executor::grant_verb(&call.verb)) {
+        return Err("Call verb differs from signed routing header".into());
     }
     for target in targets_of(header) {
         // Each message completes "<node>: <status> (…)" on the caller, so it names neither the
@@ -502,7 +496,7 @@ fn forward_request(
                     &peer.name,
                     id,
                     &target,
-                    header.wait_s.map(std::time::Duration::from_secs),
+                    std::time::Duration::from_secs(header.wait_s.ok_or("Call deadline missing")?),
                 );
                 if hub.send_to_online(
                     &target,
@@ -545,9 +539,123 @@ fn targets_of(header: &Header) -> Vec<String> {
 }
 
 impl Hub {
-    /// Grant shapes the hub enforces, from the snapshot in force: the publisher's signature
-    /// was checked when it was stored, the MAC is not (the hub has no World key); members
-    /// re-check both on their copies.
+    fn route_subscription(
+        &self,
+        peer: &Peer,
+        id: Option<u64>,
+        header: &Header,
+        env: Envelope,
+    ) -> Result<(), String> {
+        let body: crate::world::subscription::Message =
+            messages::decode(&env.body_bytes()?, &header.t)?;
+        let mut active = self.subscriptions.lock();
+        match header.t.as_str() {
+            kind::SUBSCRIBE => {
+                if !self.is_online(&header.to) {
+                    return Err(format!(
+                        "offline: last seen {}",
+                        self.last_seen_text(&header.to)
+                    ));
+                }
+                if active.contains_key(&body.id) {
+                    return Err("Subscription id already registered".into());
+                }
+                active.insert(body.id.clone(), (peer.name.clone(), header.to.clone()));
+                if !self.send_to_online(
+                    &header.to,
+                    crate::world::wire::Frame::Msg {
+                        seq: None,
+                        id: None,
+                        env,
+                    },
+                ) {
+                    active.remove(&body.id);
+                    return Err("subscriber peer disconnected".into());
+                }
+                self.answer(
+                    &peer.name,
+                    id.ok_or("subscribe requires a request id")?,
+                    kind::HUB_RESULT,
+                    &(),
+                );
+            }
+            kind::UNSUBSCRIBE | kind::SUBSCRIPTION_EVENT => {
+                let (subscriber, publisher) = active.get(&body.id).ok_or("Unknown subscription")?;
+                let valid = if header.t == kind::SUBSCRIPTION_EVENT {
+                    &peer.name == publisher && &header.to == subscriber
+                } else {
+                    (&peer.name == publisher && &header.to == subscriber)
+                        || (&peer.name == subscriber && &header.to == publisher)
+                };
+                if !valid {
+                    return Err("Subscription endpoints do not match".into());
+                }
+                self.send_to_online(
+                    &header.to,
+                    crate::world::wire::Frame::Msg {
+                        seq: None,
+                        id: None,
+                        env,
+                    },
+                );
+                if header.t == kind::UNSUBSCRIBE {
+                    active.remove(&body.id);
+                }
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+    pub(crate) fn close_subscriptions(&self, name: &str) {
+        let mut active = self.subscriptions.lock();
+        active.retain(|id, (subscriber, publisher)| {
+            if subscriber != name && publisher != name {
+                return true;
+            }
+            let other = if subscriber == name {
+                publisher
+            } else {
+                subscriber
+            };
+            match self.hub_envelope(
+                kind::SUBSCRIPTION_CLOSED,
+                other,
+                None,
+                &crate::world::subscription::Message {
+                    id: id.clone(),
+                    value: serde_json::json!("peer disconnected"),
+                },
+            ) {
+                Ok(env) => {
+                    self.send_to_online(
+                        other,
+                        crate::world::wire::Frame::Msg {
+                            seq: None,
+                            id: None,
+                            env,
+                        },
+                    );
+                }
+                Err(error) => log(error),
+            }
+            false
+        });
+    }
+    pub(crate) fn member_table(&self) -> Result<crate::world::members::MemberTable, String> {
+        let listing = self.members_result()?;
+        let founder = self
+            .store
+            .meta_string("founder")?
+            .ok_or("Founding key missing")?;
+        Ok(crate::world::members::MemberTable::from_entries(
+            listing.version,
+            &listing.members,
+            &founder,
+            &self.world_id,
+            &Default::default(),
+        ))
+    }
+    /// Loads the signed grant snapshot that the hub enforces.
     pub(crate) fn reload_grants(&self) {
         let set = match self.store.grant_snapshot() {
             Ok(Some(signed)) => match signed.parse() {
@@ -623,24 +731,13 @@ impl Hub {
                 revocation: row.revocation,
             });
         }
-        let key_epoch = self.store.meta_u64(super::store::meta::KEY_EPOCH)? as u32;
-        let missing_key = if key_epoch > 0 {
-            self.store.members_missing_epoch(key_epoch)?
-        } else {
-            Vec::new()
-        };
         Ok(messages::MembersResult {
             version: self.store.meta_u64(super::store::meta::MEMBERS_VERSION)?,
             members,
-            missing_key,
-            key_epoch,
         })
     }
 
-    /// Revokes a member: admission removed, keys and inventory dropped, connection closed,
-    /// rotation flagged for the next member able to rotate. `revocation` is the member-signed
-    /// statement when a member asked; the hub operator has none, and the next member to
-    /// rotate countersigns for them.
+    /// Persists a signed revocation and disconnects the affected device.
     pub(crate) fn revoke(
         &self,
         name: &str,
@@ -648,6 +745,9 @@ impl Hub {
         reason: &str,
         revocation: Option<SignedRevocation>,
     ) -> Result<(), String> {
+        if revocation.is_none() {
+            return Err("Revocation requires a member signature".into());
+        }
         let Some(mut row) = self.store.member(name)? else {
             return Err(format!("No member named \"{name}\"."));
         };
@@ -664,13 +764,8 @@ impl Hub {
         row.revoke_reason = Some(reason.to_string());
         row.revocation = revocation;
         let version = self.store.put_member(&row)?;
-        self.store.remove_sealed_keys_for(name)?;
         self.store.remove_inventory(name)?;
         self.store.outbox_clear(name)?;
-        if reason != "left" {
-            self.store
-                .set_meta_u64(super::store::meta::ROTATION_PENDING, 1)?;
-        }
         self.append_event(
             name,
             "node.revoked",
@@ -778,7 +873,9 @@ impl Hub {
         if let Some(id) = id {
             header = header.with_id(id);
         }
-        Envelope::seal_plain(header, &messages::encode(body)?)
+        let mut env = Envelope::seal_plain(header, &messages::encode(body)?)?;
+        env.sign(&self.identity)?;
+        Ok(env)
     }
 
     pub(crate) fn append_event<const N: usize>(

@@ -54,11 +54,7 @@ pub(crate) fn checks(paths: &ControlPaths) -> Vec<DoctorCheck> {
     };
     let live = status.as_ref().is_some_and(status_is_fresh);
     let mut missing = Vec::new();
-    for path in [
-        &world_paths.identity_key,
-        &world_paths.wrap_key,
-        &world_paths.world_keys,
-    ] {
+    for path in [&world_paths.identity_key] {
         match std::fs::metadata(path) {
             Ok(metadata) if metadata.is_file() && metadata.len() > 0 => {}
             Ok(_) => missing.push(format!(
@@ -78,7 +74,16 @@ pub(crate) fn checks(paths: &ControlPaths) -> Vec<DoctorCheck> {
             "Repair the enrollment files, or leave and join with a fresh invite.",
         ));
     } else if let Some(status) = status.as_ref().filter(|_| live) {
-        checks.push(DoctorCheck::pass("World enrollment",format!("Enrolled as \"{}\" in World {} via {} (node-reported member key {}, World key epoch {}).",config.name,config.world_id,config.hub.join(", "),status.fingerprint,status.link.key_epoch)));
+        checks.push(DoctorCheck::pass(
+            "World enrollment",
+            format!(
+                "Enrolled as \"{}\" in World {} via {} (node-reported member key {}).",
+                config.name,
+                config.world_id,
+                config.hub.join(", "),
+                status.fingerprint
+            ),
+        ));
     } else {
         checks.push(DoctorCheck::info("World enrollment",format!("Enrolled as \"{}\" in World {} via {}. Key files are present; start the node to validate them. Control interfaces never load private keys.",config.name,config.world_id,config.hub.join(", "))));
     }
@@ -279,13 +284,12 @@ pub(crate) fn link_checks(status: &NodeStatus) -> Vec<DoctorCheck> {
     };
     let health_detail = |heartbeat_age: Option<i64>, ack_age: Option<i64>| {
         format!(
-            "Heartbeat {} ago, ack {} ago, rtt {}, outbox {}, key epoch {}, replaced {} time(s).",
+            "Heartbeat {} ago, ack {} ago, rtt {}, outbox {}, replaced {} time(s).",
             heartbeat_age.map_or("never".to_string(), |age| format!("{age} s")),
             ack_age.map_or("never".to_string(), |age| format!("{age} s")),
             link.rtt_ms
                 .map_or("?".to_string(), |rtt| format!("{rtt} ms")),
             link.outbox_depth,
-            link.key_epoch,
             link.replaced_count
         )
     };

@@ -168,12 +168,9 @@ pub(super) async fn execute(paths: &ControlPaths, action: Action) -> Result<Repl
                     receipt.facts.push(("delivery".into(), "queued".into()));
                 }
                 Action::Revoke { name } => {
-                    let data =
+                    let _data =
                         mutate(&AdminRequest::Revoke { name: name.clone() }, &action).await?;
                     receipt.facts.push(("member".into(), name.clone()));
-                    if let Some(epoch) = data.get("epoch") {
-                        receipt.facts.push(("epoch".into(), epoch.to_string()));
-                    }
                 }
                 Action::Grant {
                     grant,
@@ -268,7 +265,6 @@ async fn enrollment_result(
                 ("world".into(), summary.world_id),
                 ("hub".into(), summary.hub.join(", ")),
                 ("tls".into(), summary.tls.as_str().into()),
-                ("epoch".into(), summary.key_epoch.to_string()),
             ];
         }
         Err(error) => match load_config(&WorldPaths::from_control(paths)) {
