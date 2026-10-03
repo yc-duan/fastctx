@@ -37,6 +37,25 @@ pub(crate) fn record(
         )?,
     )
 }
+/// Records a letter this machine took from its inbox but could not carry out, with why, beside
+/// the letters the network itself could not deliver.
+pub(crate) fn record_unopened(
+    paths: &WorldPaths,
+    item: &super::mail::InboxItem,
+    reason: &str,
+) -> Result<(), String> {
+    let directory = paths.dir.join("delivery-failures");
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    super::write_atomic(
+        &directory.join(format!("unopened-{}.json", item.receipt)),
+        &messages::encode(&serde_json::json!({
+            "direction": "inbound",
+            "from": item.from,
+            "reason": reason,
+            "letter": item.letter,
+        }))?,
+    )
+}
 pub(crate) fn failures(paths: &WorldPaths) -> Result<Vec<serde_json::Value>, String> {
     let directory = paths.dir.join("delivery-failures");
     if !directory.exists() {

@@ -35,10 +35,9 @@ pub(crate) struct Watches {
 
 #[derive(Default)]
 struct Inner {
-    /// Subscriptions this machine opened: where each one's events go.
+    /// Subscriptions this machine opened: where each one's events go. A relay is in place
+    /// before its subscription is asked for, so nothing that comes under it finds no one.
     relays: HashMap<String, mpsc::UnboundedSender<TalkEvent>>,
-    /// Events that came for a subscription before its watcher was registered here.
-    early: HashMap<String, Vec<TalkEvent>>,
     /// Subscriptions other machines opened here, and how to stop serving each.
     serving: HashMap<String, CancellationToken>,
 }
@@ -62,14 +61,12 @@ impl Town {
     /// Watches a resident who lives on `machine`: its history, then its events, as a watch
     /// there would give them.
     pub(crate) async fn watch_elsewhere(self: &Arc<Self>, machine: &str, id: &str) -> Result<RemoteWatch, String> {
-        let subscription = self.world().subscribe(machine, json!(Topic { watch: id.to_string() })).await?;
+        let subscription = crate::world::client::WorldClient::subscription_id()?;
         let (sender, events) = mpsc::unbounded_channel();
-        {
-            let mut inner = self.watches.inner.lock();
-            for event in inner.early.remove(&subscription).unwrap_or_default() {
-                let _ = sender.send(event);
-            }
-            inner.relays.insert(subscription.clone(), sender);
+        self.watches.inner.lock().relays.insert(subscription.clone(), sender);
+        if let Err(error) = self.world().subscribe(machine, &subscription, json!(Topic { watch: id.to_string() })).await {
+            self.watches.inner.lock().relays.remove(&subscription);
+            return Err(error);
         }
         Ok(RemoteWatch { town: Arc::clone(self), subscription, events })
     }
@@ -97,23 +94,20 @@ impl Town {
         }
     }
 
+    /// An event of a subscription this machine opened goes to its watcher; one whose watcher
+    /// already went away has nowhere to go.
     fn relay(&self, subscription: &str, event: TalkEvent) {
         let mut inner = self.watches.inner.lock();
-        match inner.relays.get(subscription) {
-            Some(relay) => {
-                if relay.send(event).is_err() {
-                    inner.relays.remove(subscription);
-                }
-            }
-            None => inner.early.entry(subscription.to_string()).or_default().push(event),
+        if let Some(relay) = inner.relays.get(subscription)
+            && relay.send(event).is_err()
+        {
+            inner.relays.remove(subscription);
         }
     }
 
     /// A subscription this machine opened has ended: its watcher hears why.
     fn relay_end(&self, subscription: &str, reason: String) {
-        let mut inner = self.watches.inner.lock();
-        inner.early.remove(subscription);
-        if let Some(relay) = inner.relays.remove(subscription) {
+        if let Some(relay) = self.watches.inner.lock().relays.remove(subscription) {
             let _ = relay.send(TalkEvent::Gone { reason });
         }
     }
@@ -139,7 +133,12 @@ impl Town {
     }
 
     async fn serve_watch(&self, subscription: &str, resident: &str, stop: CancellationToken) {
-        let (history, mut events) = match self.watch(resident).await {
+        // The watcher can leave while the history is still being read.
+        let watched = tokio::select! {
+            () = stop.cancelled() => return,
+            watched = self.watch(resident) => watched,
+        };
+        let (history, mut events) = match watched {
             Ok(watch) => watch,
             Err(reason) => return self.refuse(subscription, reason),
         };

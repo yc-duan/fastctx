@@ -15,23 +15,44 @@ pub(crate) struct InboxItem {
     pub(crate) from: String,
     pub(crate) letter: Letter,
     pub(crate) path: PathBuf,
+    /// Where the letter stands in the order the hub delivered this machine's mail.
+    pub(crate) arrival: u64,
 }
 #[derive(Deserialize, Serialize)]
 struct Receipt {
+    /// The inbox file's bytes, hashed, so a damaged file is recognized.
     hash: String,
     consumed: bool,
+    /// The letter itself (its id and body), hashed. A letter sent again under its id is the
+    /// same letter when this matches, whatever envelope it came in.
+    #[serde(default)]
+    letter: String,
+    /// The hub's sequence number of the frame that brought the letter.
+    #[serde(default)]
+    arrival: u64,
 }
 
+/// The identity of a letter's content: the same letter sent twice hashes the same, though each
+/// envelope carries its own message counter.
+pub(crate) fn letter_hash(letter: &Letter) -> Result<String, String> {
+    Ok(hex::encode(super::crypto::sha256(&messages::encode(letter)?)))
+}
+
+/// Commits a letter to the inbox; `false` when this author's letter with this id was already
+/// accepted. `arrival` is the hub's sequence number of the frame that brought it: letters are
+/// opened in that order, which keeps the order each sender sent them in.
 pub(crate) fn accept(
     paths: &WorldPaths,
     env: &Envelope,
     author: &[u8; 32],
+    arrival: u64,
 ) -> Result<bool, String> {
     let opened = env.open()?;
     let letter: Letter = messages::decode(&opened.body, "mail")?;
     let id = hex::encode(super::crypto::sha256(&messages::encode(&(
         author, &letter.id,
     ))?));
+    let content = letter_hash(&letter)?;
     let bytes = messages::encode(env)?;
     let hash = hex::encode(super::crypto::sha256(&bytes));
     let receipts = paths.dir.join("mail-receipts");
@@ -42,33 +63,29 @@ pub(crate) fn accept(
     let receipt = receipts.join(format!("{id}.json"));
     if let Some(bytes) = super::read_optional(&receipt)? {
         let previous: Receipt = messages::decode(&bytes, "mail receipt")?;
-        if previous.hash != hash {
-            return Err("mail id reused with different bytes".into());
+        let same = if previous.letter.is_empty() { previous.hash == hash } else { previous.letter == content };
+        if !same {
+            return Err("mail id reused for a different letter".into());
         }
         return Ok(false);
     }
-    let path = inbox.join(format!("{id}.json"));
-    if let Some(previous) = super::read_optional(&path)? {
-        if previous != bytes {
-            return Err("inbox publication conflict".into());
-        }
-    } else {
-        write_atomic(&path, &bytes)?;
-    }
-    // Only receipt-backed files are exposed by list(). A crash before this commit leaves
-    // an unpublished file that the same reliable delivery completes on reconnect.
+    // Only receipt-backed files are exposed by list(). A crash before the receipt leaves an
+    // unpublished file, which the same letter arriving again replaces.
+    write_atomic(&inbox.join(format!("{id}.json")), &bytes)?;
     write_atomic(
         &receipt,
         &messages::encode(&Receipt {
             hash,
             consumed: false,
+            letter: content,
+            arrival,
         })?,
     )?;
     Ok(true)
 }
-/// The letters waiting in the inbox, in receipt order. A letter whose file or receipt cannot
-/// be read is set aside with its reason among the delivery failures, so one damaged file never
-/// holds up the letters after it.
+/// The letters waiting in the inbox, in the order the hub delivered them. A letter whose file
+/// or receipt cannot be read is set aside with its reason among the delivery failures, so one
+/// damaged file never holds up the letters after it.
 pub(crate) fn list(paths: &WorldPaths) -> Result<Vec<InboxItem>, String> {
     let inbox = paths.dir.join("inbox");
     if !inbox.exists() {
@@ -90,7 +107,7 @@ pub(crate) fn list(paths: &WorldPaths) -> Result<Vec<InboxItem>, String> {
             Err(reason) => set_aside(paths, &path, &id, &reason)?,
         }
     }
-    items.sort_by(|a, b| a.receipt.cmp(&b.receipt));
+    items.sort_by(|a, b| (a.arrival, &a.receipt).cmp(&(b.arrival, &b.receipt)));
     Ok(items)
 }
 
@@ -116,6 +133,7 @@ fn read_item(paths: &WorldPaths, path: &std::path::Path, id: &str) -> Result<Opt
         from: opened.header.from,
         letter: messages::decode(&opened.body, "mail")?,
         path: path.to_path_buf(),
+        arrival: receipt.arrival,
     }))
 }
 

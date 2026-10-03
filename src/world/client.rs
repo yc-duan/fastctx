@@ -1286,16 +1286,23 @@ impl WorldClient {
 
     /// Commits an opaque JSON letter locally before returning its globally unique id.
     pub(crate) fn send_mail(&self, to: &str, body: serde_json::Value) -> Result<String, String> {
-        self.resolve_target(to)?;
         let id = hex::encode(super::crypto::random_bytes::<32>()?);
+        self.send_mail_as(to, &id, body)?;
+        Ok(id)
+    }
+
+    /// Commits a letter under an id the sender chose. The same letter sent again under the same
+    /// id is delivered once; a different letter under an id already used is refused.
+    pub(crate) fn send_mail_as(&self, to: &str, id: &str, body: serde_json::Value) -> Result<(), String> {
+        self.resolve_target(to)?;
         self.send_reliable(
             Header::new(kind::MAIL, &self.name(), to, 0),
             &super::mail::Letter {
-                id: id.clone(),
+                id: id.to_string(),
                 body,
             },
-        )?;
-        Ok(id)
+        )
+        .map(|_| ())
     }
     pub(crate) fn inbox(&self) -> Result<Vec<super::mail::InboxItem>, String> {
         let _lock = self.inbox_lock.lock();
@@ -1425,46 +1432,55 @@ impl WorldClient {
         super::ledger::read_local(&self.paths, scope, &self.members.read())
     }
 
+    /// A fresh subscription id for [`Self::subscribe`].
+    pub(crate) fn subscription_id() -> Result<String, String> {
+        Ok(hex::encode(super::crypto::random_bytes::<32>()?))
+    }
+
+    /// Subscribes to `peer` under `id`. The caller names the subscription before asking, so it
+    /// can be ready for whatever comes under that id, its end included, before any of it can
+    /// arrive.
     pub(crate) async fn subscribe(
         &self,
         peer: &str,
+        id: &str,
         topic: serde_json::Value,
-    ) -> Result<String, String> {
+    ) -> Result<(), String> {
         self.resolve_target(peer)?;
-        let id = hex::encode(super::crypto::random_bytes::<32>()?);
-        self.subscriptions.active.lock().insert(
-            id.clone(),
-            super::subscription::Active {
-                peer: peer.into(),
-                publishing: false,
-            },
-        );
+        {
+            let mut active = self.subscriptions.active.lock();
+            if active.contains_key(id) {
+                return Err("Subscription id already used".into());
+            }
+            active.insert(
+                id.to_string(),
+                super::subscription::Active {
+                    peer: peer.into(),
+                    publishing: false,
+                },
+            );
+        }
         let mut attempt = SubscriptionAttempt {
             client: self,
-            id: id.clone(),
+            id: id.to_string(),
             accepted: false,
         };
         let result = self
             .request(
                 Header::new(kind::SUBSCRIBE, &self.name(), peer, 0),
                 &super::subscription::Message {
-                    id: id.clone(),
+                    id: id.to_string(),
                     value: topic,
                 },
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
             .await;
-        match result
+        result
             .and_then(|answers| answers.single(kind::SUBSCRIBE))
-            .and_then(|answer| expect_kind(&answer, kind::HUB_RESULT))
-        {
-            Ok(()) => {
-                attempt.accepted = true;
-                Ok(id)
-            }
-            Err(error) => Err(error),
-        }
+            .and_then(|answer| expect_kind(&answer, kind::HUB_RESULT))?;
+        attempt.accepted = true;
+        Ok(())
     }
     pub(crate) fn unsubscribe(&self, id: &str) -> Result<(), String> {
         let peer = self

@@ -8,9 +8,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 impl Town {
-    /// Opens this machine's letters as they arrive, for as long as the node runs. A letter is
-    /// acknowledged once opened, so it is opened once; one that cannot be read or carried out is
-    /// logged, not opened again, since a second try would find the same.
+    /// Opens this machine's letters as they arrive, in the order the hub delivered them, for as
+    /// long as the node runs. A letter is acknowledged once opened, so it is opened once; one
+    /// that cannot be read or carried out is kept among the delivery failures with the reason,
+    /// not opened again, since a second try would find the same.
     pub(crate) async fn read_mail(self: Arc<Self>) {
         // Letters opened whose acknowledgement failed: still in the inbox, not to open twice.
         let mut opened: HashSet<String> = HashSet::new();
@@ -24,7 +25,12 @@ impl Town {
                 }
             };
             for item in letters {
-                self.open_letter(&item).await;
+                if let Err(reason) = self.open_letter(&item).await {
+                    self.log(format!("a letter from {} was not carried out: {reason}", item.from));
+                    if let Err(error) = crate::world::delivery::record_unopened(&self.world().paths, &item, &reason) {
+                        self.log(format!("cannot keep the letter from {} among the delivery failures: {error}", item.from));
+                    }
+                }
                 if let Err(error) = self.world().acknowledge_mail(&item.receipt) {
                     self.log(format!("cannot mark a letter from {} as read: {error}", item.from));
                     opened.insert(item.receipt.clone());
@@ -33,24 +39,28 @@ impl Town {
         }
     }
 
-    async fn open_letter(&self, item: &InboxItem) {
-        let letter: Letter = match serde_json::from_value(item.letter.body.clone()) {
-            Ok(letter) => letter,
-            Err(error) => return self.log(format!("a letter from {} is not one a town writes: {error}", item.from)),
-        };
+    /// Carries out one letter. Words another resident could not be given are told back to it;
+    /// anything else that fails is the error.
+    async fn open_letter(&self, item: &InboxItem) -> Result<(), String> {
+        let letter: Letter = serde_json::from_value(item.letter.body.clone()).map_err(|error| format!("it is not a letter a town writes: {error}"))?;
         match letter {
             Letter::Deliver { to, delivery } => {
-                if let Err(error) = self.deliver_or_hold(&to, delivery).await {
-                    self.log(format!("cannot deliver words from {} to {to}: {error}", item.from));
-                }
+                // The delivery waits under this machine's own id: an id another machine chose
+                // never names a file here.
+                let delivery = Delivery { id: crate::town::core::delivery_id()?, ..delivery };
+                self.deliver_or_hold(&to, delivery).await.map(|_| ()).map_err(|error| format!("cannot deliver words to {to}: {error}"))
             }
             Letter::Speak { from, to, message } => {
                 let speaker = Peer::new(&item.from, &from);
                 if let Err(error) = self.speak(&speaker, &to, &message).await {
                     self.undelivered(&speaker, &to, &error);
                 }
+                Ok(())
             }
-            Letter::Left { requester } => self.requester_left(Peer::new(&item.from, &requester)),
+            Letter::Left { requester } => {
+                self.requester_left(Peer::new(&item.from, &requester));
+                Ok(())
+            }
         }
     }
 

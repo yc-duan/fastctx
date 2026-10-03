@@ -602,7 +602,12 @@ impl Store {
         let dedup = letter
             .as_ref()
             .map(|letter| format!("{}:{}:{}", header.from, name, letter.id));
-        let hash = hex::encode(crate::world::crypto::sha256(&encode(env)?));
+        // A letter is the same letter when its id and body are; each envelope carries its own
+        // message counter, so a sender that sends a letter again never repeats the bytes.
+        let hash = match &letter {
+            Some(letter) => crate::world::mail::letter_hash(letter)?,
+            None => String::new(),
+        };
         self.write(|txn| {
             let mut ids = txn
                 .open_table(DELIVERY_IDS)
@@ -611,7 +616,7 @@ impl Store {
                 && let Some((previous, seq)) = get_json::<(String, u64)>(&ids, id)?
             {
                 if previous != hash {
-                    return Err("mail id reused with different bytes".into());
+                    return Err("mail id reused for a different letter".into());
                 }
                 return Ok(seq);
             }

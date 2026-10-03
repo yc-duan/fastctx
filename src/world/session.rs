@@ -456,7 +456,7 @@ async fn run_connected(
         if after_welcome_done && !members_refreshing {
             while let Some((seq, id, env)) = deferred.pop_front() {
                 if let Some(seq) = seq {
-                    match receive_reliable(client, executor, &tx, &mut recv_seq, seq, id, env).await
+                    match receive_reliable(client, executor, &tx, &mut recv_seq, seq, env).await
                     {
                         Err(error) => break 'connected SessionEnd::Lost(error),
                         Ok(true) => {
@@ -697,7 +697,7 @@ fn addressed_here(client: &Arc<WorldClient>, header: &Header) -> bool {
 async fn handle_reliable(
     client: &Arc<WorldClient>,
     executor: &Arc<Executor>,
-    _id: Option<u64>,
+    seq: u64,
     env: Envelope,
 ) -> Result<bool, String> {
     let opened = match client.open_envelope(&env) {
@@ -719,7 +719,7 @@ async fn handle_reliable(
             .trusted_key(&header.from)
             .ok_or("Untrusted mail author")?;
         let _lock = client.inbox_lock.lock();
-        if super::mail::accept(&client.paths, &env, &key)? {
+        if super::mail::accept(&client.paths, &env, &key, seq)? {
             client.inbox_changed.notify_waiters();
         }
         return Ok(false);
@@ -842,7 +842,6 @@ async fn receive_reliable(
     tx: &mpsc::UnboundedSender<Frame>,
     recv_seq: &mut u64,
     seq: u64,
-    id: Option<u64>,
     env: Envelope,
 ) -> Result<bool, String> {
     let mut refresh = false;
@@ -853,7 +852,7 @@ async fn receive_reliable(
                 *recv_seq + 1
             ));
         }
-        refresh = handle_reliable(client, executor, id, env).await?;
+        refresh = handle_reliable(client, executor, seq, env).await?;
         client.with_state(|state| state.recv_seq = seq)?;
         *recv_seq = seq;
     }
