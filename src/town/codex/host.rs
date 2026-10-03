@@ -42,7 +42,11 @@ pub(crate) enum Input {
     /// Text the model reads as the next user message.
     Text(String),
     /// A fact shaped as the output of a tool, for notices such as a finished command.
-    ToolOutput { name: String, namespace: Option<String>, output: String },
+    ToolOutput {
+        name: String,
+        namespace: Option<String>,
+        output: String,
+    },
 }
 
 /// How a send landed.
@@ -57,13 +61,26 @@ pub(crate) enum Landed {
 /// Everything the town hears about Codex threads.
 #[derive(Clone, Debug)]
 pub(crate) enum HostEvent {
-    TurnStarted { thread: String, turn: String },
+    TurnStarted {
+        thread: String,
+        turn: String,
+    },
     /// An item of a turn started, raw as the app-server sent it.
-    ItemStarted { thread: String, item: Value },
+    ItemStarted {
+        thread: String,
+        item: Value,
+    },
     /// A finished item of a turn, raw as the app-server sent it.
-    Item { thread: String, item: Value },
+    Item {
+        thread: String,
+        item: Value,
+    },
     /// A piece of text the model is writing, for live views.
-    Delta { thread: String, item: String, delta: String },
+    Delta {
+        thread: String,
+        item: String,
+        delta: String,
+    },
     TurnCompleted {
         thread: String,
         turn: String,
@@ -77,12 +94,22 @@ pub(crate) enum HostEvent {
     /// safety hold on the model's output, a switch of model, a tool server that did not start,
     /// a warning. `urgent` names the kind when whoever is owed the turn's end must hear it at
     /// once: the session cannot do its work, or the model's provider stepped into the turn.
-    Health { thread: String, text: String, urgent: Option<&'static str> },
+    Health {
+        thread: String,
+        text: String,
+        urgent: Option<&'static str>,
+    },
     /// The app-server asked something the World does not answer; it was declined.
-    Declined { thread: Option<String>, method: String },
+    Declined {
+        thread: Option<String>,
+        method: String,
+    },
     /// The app-server stopped, and with it the turns it was running, as (thread, turn); threads
     /// come back on the next send.
-    ServerGone { reason: String, turns: Vec<(String, String)> },
+    ServerGone {
+        reason: String,
+        turns: Vec<(String, String)>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -168,13 +195,21 @@ impl CodexHost {
 
     /// Makes a thread the World started earlier known again, after the node restarted.
     pub(crate) fn adopt(&self, thread: &str, spec: ThreadSpec) {
-        self.state.lock().threads.entry(thread.to_string()).or_default().spec = Some(spec);
+        self.state
+            .lock()
+            .threads
+            .entry(thread.to_string())
+            .or_default()
+            .spec = Some(spec);
     }
 
     /// Creates a resident's thread without starting a turn; the caller records the thread id
     /// before sending the first words, so no event of the first turn can outrun it. Returns the
     /// thread id and the model the app-server chose from the user's configuration.
-    pub(crate) async fn create_thread(self: &Arc<Self>, spec: ThreadSpec) -> Result<(String, Option<String>), String> {
+    pub(crate) async fn create_thread(
+        self: &Arc<Self>,
+        spec: ThreadSpec,
+    ) -> Result<(String, Option<String>), String> {
         let server = self.server().await?;
         let result = server
             .request(
@@ -195,7 +230,10 @@ impl CodexHost {
             .and_then(Value::as_str)
             .ok_or_else(|| "thread/start answered without a thread id.".to_string())?
             .to_string();
-        let model = result.get("model").and_then(Value::as_str).map(str::to_string);
+        let model = result
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         // What the app-server already said about this thread, its servers' start included,
         // may have arrived before its answer.
         let mut state = self.state.lock();
@@ -217,7 +255,11 @@ impl CodexHost {
     /// Why a thread's fastctx tools are not there in its current load, when they are not. A
     /// turn of such a thread works without the World's hands.
     pub(crate) fn tools_missing(&self, thread: &str) -> Option<String> {
-        self.state.lock().threads.get(thread).and_then(|entry| entry.tools_missing.clone())
+        self.state
+            .lock()
+            .threads
+            .get(thread)
+            .and_then(|entry| entry.tools_missing.clone())
     }
 
     /// Waits until the app-server says how the thread's fastctx server started. Codex stops
@@ -230,13 +272,21 @@ impl CodexHost {
                 let notified = self.tools_changed.notified();
                 tokio::pin!(notified);
                 notified.as_mut().enable();
-                if self.state.lock().threads.get(thread).is_none_or(|entry| entry.tools_settled) {
+                if self
+                    .state
+                    .lock()
+                    .threads
+                    .get(thread)
+                    .is_none_or(|entry| entry.tools_settled)
+                {
                     return;
                 }
                 notified.await;
             }
         };
-        let limit = std::time::Duration::from_secs(crate::control::codex_config::STARTUP_TIMEOUT_SECONDS.unsigned_abs());
+        let limit = std::time::Duration::from_secs(
+            crate::control::codex_config::STARTUP_TIMEOUT_SECONDS.unsigned_abs(),
+        );
         if tokio::time::timeout(limit, settled).await.is_err() {
             let text = format!(
                 "Codex said nothing about starting its fastctx tools within {}s; its turn starts without knowing whether they are there.",
@@ -253,28 +303,59 @@ impl CodexHost {
     /// the input into the running turn when it is busy; which one happened is read off the
     /// turn id it answers with. A thread the app-server no longer has loaded is resumed first;
     /// callers that want its tools there call [`Self::prepare`] before.
-    pub(crate) async fn send(self: &Arc<Self>, thread: &str, input: Input) -> Result<(Landed, String), String> {
+    pub(crate) async fn send(
+        self: &Arc<Self>,
+        thread: &str,
+        input: Input,
+    ) -> Result<(Landed, String), String> {
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
-        let running = self.state.lock().threads.get(thread).and_then(|state| state.turn.clone());
-        let turn = self.turn(&server, thread, &input).await?.ok_or_else(|| "turn/start answered without a turn id.".to_string())?;
-        let landed = if running.as_deref() == Some(turn.as_str()) { Landed::Steered } else { Landed::NewTurn };
+        let running = self
+            .state
+            .lock()
+            .threads
+            .get(thread)
+            .and_then(|state| state.turn.clone());
+        let turn = self
+            .turn(&server, thread, &input)
+            .await?
+            .ok_or_else(|| "turn/start answered without a turn id.".to_string())?;
+        let landed = if running.as_deref() == Some(turn.as_str()) {
+            Landed::Steered
+        } else {
+            Landed::NewTurn
+        };
         Ok((landed, turn))
     }
 
     /// Stops the running turn of a thread; `false` when none was running.
     pub(crate) async fn interrupt(self: &Arc<Self>, thread: &str) -> Result<bool, String> {
-        let turn = self.state.lock().threads.get(thread).and_then(|state| state.turn.clone());
+        let turn = self
+            .state
+            .lock()
+            .threads
+            .get(thread)
+            .and_then(|state| state.turn.clone());
         let Some(turn) = turn else { return Ok(false) };
         let server = self.server().await?;
-        server.request("turn/interrupt", json!({"threadId": thread, "turnId": turn})).await?;
+        server
+            .request(
+                "turn/interrupt",
+                json!({"threadId": thread, "turnId": turn}),
+            )
+            .await?;
         Ok(true)
     }
 
     /// The thread's recorded history, as the app-server returns it.
     pub(crate) async fn history(self: &Arc<Self>, thread: &str) -> Result<Value, String> {
         let server = self.server().await?;
-        server.request("thread/read", json!({"threadId": thread, "includeTurns": true})).await
+        server
+            .request(
+                "thread/read",
+                json!({"threadId": thread, "includeTurns": true}),
+            )
+            .await
     }
 
     /// Whether this thread has a turn running.
@@ -284,11 +365,20 @@ impl CodexHost {
 
     /// The id of the turn running in this thread, if one is.
     pub(crate) fn running_turn(&self, thread: &str) -> Option<String> {
-        self.state.lock().threads.get(thread).and_then(|state| state.turn.clone())
+        self.state
+            .lock()
+            .threads
+            .get(thread)
+            .and_then(|state| state.turn.clone())
     }
 
     /// Starts a turn (or steers the running one) and returns the turn id the server names.
-    async fn turn(&self, server: &Arc<AppServer>, thread: &str, input: &Input) -> Result<Option<String>, String> {
+    async fn turn(
+        &self,
+        server: &Arc<AppServer>,
+        thread: &str,
+        input: &Input,
+    ) -> Result<Option<String>, String> {
         let mut params = json!({
             "threadId": thread,
             "input": [],
@@ -297,12 +387,20 @@ impl CodexHost {
         });
         match input {
             Input::Text(text) => params["input"] = json!([{"type": "text", "text": text}]),
-            Input::ToolOutput { name, namespace, output } => {
-                params["toolOutput"] = json!({"name": name, "namespace": namespace, "output": output});
+            Input::ToolOutput {
+                name,
+                namespace,
+                output,
+            } => {
+                params["toolOutput"] =
+                    json!({"name": name, "namespace": namespace, "output": output});
             }
         }
         let result = server.request("turn/start", params).await?;
-        let turn = result.pointer("/turn/id").and_then(Value::as_str).map(str::to_string);
+        let turn = result
+            .pointer("/turn/id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         if let Some(turn) = &turn {
             let failed = {
                 let mut state = self.state.lock();
@@ -334,7 +432,13 @@ impl CodexHost {
     }
 
     async fn ensure_loaded(&self, server: &AppServer, thread: &str) -> Result<(), String> {
-        if self.state.lock().threads.get(thread).is_some_and(|entry| entry.loaded) {
+        if self
+            .state
+            .lock()
+            .threads
+            .get(thread)
+            .is_some_and(|entry| entry.loaded)
+        {
             return Ok(());
         }
         let _loading = self.loading.lock().await;
@@ -346,7 +450,9 @@ impl CodexHost {
                 None => None,
             }
         };
-        let spec = spec.ok_or_else(|| format!("No Codex resident thread {thread} is known on this machine."))?;
+        let spec = spec.ok_or_else(|| {
+            format!("No Codex resident thread {thread} is known on this machine.")
+        })?;
         // Resuming starts the thread's servers again; what they report from here on counts.
         if let Some(entry) = self.state.lock().threads.get_mut(thread) {
             entry.tools_settled = false;
@@ -384,9 +490,14 @@ impl CodexHost {
             let mut state = self.state.lock();
             let busy = state.threads.values().any(|thread| thread.turn.is_some());
             match &state.server {
-                Some((server, launch)) if launch.config == config || busy => return Ok(Arc::clone(server)),
+                Some((server, launch)) if launch.config == config || busy => {
+                    return Ok(Arc::clone(server));
+                }
                 Some((server, _)) => {
-                    (self.log)("the user's Codex configuration changed; restarting the app-server".to_string());
+                    (self.log)(
+                        "the user's Codex configuration changed; restarting the app-server"
+                            .to_string(),
+                    );
                     server.kill();
                     state.server = None;
                 }
@@ -394,9 +505,18 @@ impl CodexHost {
             }
         }
         let launch = resolve_launch(&self.codex_home)?;
-        std::fs::create_dir_all(&self.workdir)
-            .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&self.workdir)))?;
-        let (server, inbound) = AppServer::spawn(&launch.binary, &launch.args, &self.workdir, Arc::clone(&self.log))?;
+        std::fs::create_dir_all(&self.workdir).map_err(|error| {
+            format!(
+                "Cannot create {}: {error}",
+                crate::paths::display_path(&self.workdir)
+            )
+        })?;
+        let (server, inbound) = AppServer::spawn(
+            &launch.binary,
+            &launch.args,
+            &self.workdir,
+            Arc::clone(&self.log),
+        )?;
         let init = server
             .request(
                 "initialize",
@@ -426,7 +546,11 @@ impl CodexHost {
     }
 }
 
-async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbound>, host: Weak<CodexHost>) {
+async fn pump(
+    server: Arc<AppServer>,
+    mut inbound: mpsc::UnboundedReceiver<Inbound>,
+    host: Weak<CodexHost>,
+) {
     while let Some(message) = inbound.recv().await {
         let Some(host) = host.upgrade() else { return };
         match message {
@@ -436,10 +560,19 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                 }
             }
             Inbound::Request { id, method, params } => {
-                let thread = params.get("threadId").and_then(Value::as_str).map(str::to_string);
+                let thread = params
+                    .get("threadId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
                 (host.log)(format!("declined the app-server's {method} request"));
                 let _ = server
-                    .respond(id, Err((-32601, "The World does not answer this request.".to_string())))
+                    .respond(
+                        id,
+                        Err((
+                            -32601,
+                            "The World does not answer this request.".to_string(),
+                        )),
+                    )
                     .await;
                 let _ = host.events.send(HostEvent::Declined { thread, method });
             }
@@ -475,8 +608,19 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
 impl CodexHost {
     fn translate(&self, method: &str, params: &Value) -> Option<HostEvent> {
         let thread = params.get("threadId").and_then(Value::as_str)?.to_string();
-        let text = |pointer: &str| params.pointer(pointer).and_then(Value::as_str).map(str::to_string);
-        let health = |text: String, urgent: Option<&'static str>| Some(HostEvent::Health { thread: thread.clone(), text, urgent });
+        let text = |pointer: &str| {
+            params
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        let health = |text: String, urgent: Option<&'static str>| {
+            Some(HostEvent::Health {
+                thread: thread.clone(),
+                text,
+                urgent,
+            })
+        };
         match method {
             "turn/started" => {
                 let turn = text("/turn/id")?;
@@ -489,12 +633,20 @@ impl CodexHost {
                 entry.started.insert(turn.clone());
                 Some(HostEvent::TurnStarted { thread, turn })
             }
-            "item/started" => Some(HostEvent::ItemStarted { thread, item: params.get("item")?.clone() }),
+            "item/started" => Some(HostEvent::ItemStarted {
+                thread,
+                item: params.get("item")?.clone(),
+            }),
             "item/completed" => {
                 let item = params.get("item")?.clone();
                 if item.get("type").and_then(Value::as_str) == Some("agentMessage") {
                     let text = item.get("text").and_then(Value::as_str).map(str::to_string);
-                    self.state.lock().threads.entry(thread.clone()).or_default().last_message = text;
+                    self.state
+                        .lock()
+                        .threads
+                        .entry(thread.clone())
+                        .or_default()
+                        .last_message = text;
                 }
                 Some(HostEvent::Item { thread, item })
             }
@@ -505,12 +657,20 @@ impl CodexHost {
             }),
             "turn/completed" => {
                 let turn = params.get("turn")?;
-                let id = turn.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                let id = turn
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
                 let last_message = self.finish(&thread, &id);
                 Some(HostEvent::TurnCompleted {
                     thread,
                     turn: id,
-                    status: turn.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string(),
+                    status: turn
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string(),
                     error: turn.get("error").filter(|error| !error.is_null()).cloned(),
                     duration_ms: turn.get("durationMs").and_then(Value::as_u64),
                     last_message,
@@ -519,7 +679,10 @@ impl CodexHost {
             "error" => {
                 let message = text("/error/message").unwrap_or_default();
                 if params.get("willRetry").and_then(Value::as_bool) == Some(true) {
-                    return health(format!("Codex is reconnecting to the model: {message}"), None);
+                    return health(
+                        format!("Codex is reconnecting to the model: {message}"),
+                        None,
+                    );
                 }
                 // An error during a turn is followed by the turn's end, which carries it. One
                 // for a turn that was accepted but never started is that turn's only end, and
@@ -531,7 +694,9 @@ impl CodexHost {
                     let awaited = entry.turn.as_deref() == Some(turn.as_str());
                     let started = entry.started.contains(&turn);
                     if !awaited && !started && !turn.is_empty() && !entry.finished.contains(&turn) {
-                        entry.failed_early.insert(turn, params.get("error").cloned().unwrap_or(Value::Null));
+                        entry
+                            .failed_early
+                            .insert(turn, params.get("error").cloned().unwrap_or(Value::Null));
                         return None;
                     }
                     (awaited, started)
@@ -554,11 +719,25 @@ impl CodexHost {
             }
             "model/safetyBuffering/updated" => {
                 let list = |key: &str| {
-                    let words: Vec<&str> = params.get(key).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
-                    if words.is_empty() { "not given".to_string() } else { words.join(", ") }
+                    let words: Vec<&str> = params
+                        .get(key)
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .collect();
+                    if words.is_empty() {
+                        "not given".to_string()
+                    } else {
+                        words.join(", ")
+                    }
                 };
                 health(
-                    format!("OpenAI is holding this turn's output for extra safety processing (use: {}; reason: {}).", list("useCases"), list("reasons")),
+                    format!(
+                        "OpenAI is holding this turn's output for extra safety processing (use: {}; reason: {}).",
+                        list("useCases"),
+                        list("reasons")
+                    ),
                     Some("safety"),
                 )
             }
@@ -574,19 +753,26 @@ impl CodexHost {
             "mcpServer/startupStatus/updated" => {
                 let server = text("/name").unwrap_or_default();
                 let status = text("/status").unwrap_or_default();
-                let why = || text("/error").or_else(|| text("/failureReason")).unwrap_or_else(|| "no reason given".to_string());
+                let why = || {
+                    text("/error")
+                        .or_else(|| text("/failureReason"))
+                        .unwrap_or_else(|| "no reason given".to_string())
+                };
                 if server == "fastctx" {
                     // A thread the World starts works through its fastctx server alone. Its
                     // start comes before any words, so it is told with the words that find it
                     // missing (`Town::codex_words`).
                     let missing = match status.as_str() {
                         "failed" => Some(format!("Its fastctx tools did not start: {}", why())),
-                        "cancelled" => Some("Codex cancelled starting its fastctx tools.".to_string()),
+                        "cancelled" => {
+                            Some("Codex cancelled starting its fastctx tools.".to_string())
+                        }
                         _ => None,
                     };
                     let mut state = self.state.lock();
                     let entry = state.threads.entry(thread.clone()).or_default();
-                    entry.tools_settled = matches!(status.as_str(), "ready" | "failed" | "cancelled");
+                    entry.tools_settled =
+                        matches!(status.as_str(), "ready" | "failed" | "cancelled");
                     entry.tools_missing = missing;
                     drop(state);
                     self.tools_changed.notify_waiters();
@@ -597,7 +783,10 @@ impl CodexHost {
                 }
                 health(format!("Its {server} tools did not start: {}", why()), None)
             }
-            "warning" => health(format!("Codex warns: {}", text("/message").unwrap_or_default()), None),
+            "warning" => health(
+                format!("Codex warns: {}", text("/message").unwrap_or_default()),
+                None,
+            ),
             "thread/closed" => {
                 // Unloaded: the next words resume it.
                 if let Some(entry) = self.state.lock().threads.get_mut(&thread) {
@@ -638,7 +827,8 @@ pub(crate) fn resolve_launch(codex_home: &Path) -> Result<Launch, String> {
                 // Both Computer Use services name their tool `js` and Codex keeps whichever
                 // registers first; keep only the Windows-native one.
                 "-c".to_string(),
-                "plugins.unified-computer-use@openai-bundled.mcp_servers.cua_repl.enabled=false".to_string(),
+                "plugins.unified-computer-use@openai-bundled.mcp_servers.cua_repl.enabled=false"
+                    .to_string(),
                 "app-server".to_string(),
             ],
             config: read_config(codex_home)?,
@@ -647,7 +837,11 @@ pub(crate) fn resolve_launch(codex_home: &Path) -> Result<Launch, String> {
     let binary = find_on_path(if cfg!(windows) { "codex.exe" } else { "codex" }).ok_or_else(|| {
         "Codex is not installed on this machine: neither the ChatGPT desktop app nor a codex command was found.".to_string()
     })?;
-    Ok(Launch { binary, args: vec!["app-server".to_string()], config: read_config(codex_home)? })
+    Ok(Launch {
+        binary,
+        args: vec!["app-server".to_string()],
+        config: read_config(codex_home)?,
+    })
 }
 
 fn read_config(codex_home: &Path) -> Result<Option<Vec<u8>>, String> {
@@ -655,17 +849,30 @@ fn read_config(codex_home: &Path) -> Result<Option<Vec<u8>>, String> {
     match std::fs::read(&path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+        Err(error) => Err(format!(
+            "Cannot read {}: {error}",
+            crate::paths::display_path(&path)
+        )),
     }
 }
 
 fn app_binary(codex_home: &Path) -> Result<Option<PathBuf>, String> {
     let path = codex_home.join("config.toml");
-    let Some(bytes) = read_config(codex_home)? else { return Ok(None) };
-    let text = String::from_utf8(bytes).map_err(|error| format!("{} is not UTF-8: {error}", crate::paths::display_path(&path)))?;
-    let document: toml_edit::DocumentMut = text
-        .parse()
-        .map_err(|error| format!("Cannot parse {}: {error}", crate::paths::display_path(&path)))?;
+    let Some(bytes) = read_config(codex_home)? else {
+        return Ok(None);
+    };
+    let text = String::from_utf8(bytes).map_err(|error| {
+        format!(
+            "{} is not UTF-8: {error}",
+            crate::paths::display_path(&path)
+        )
+    })?;
+    let document: toml_edit::DocumentMut = text.parse().map_err(|error| {
+        format!(
+            "Cannot parse {}: {error}",
+            crate::paths::display_path(&path)
+        )
+    })?;
     let binary = document
         .get("mcp_servers")
         .and_then(|servers| servers.get("node_repl"))
@@ -678,5 +885,7 @@ fn app_binary(codex_home: &Path) -> Result<Option<PathBuf>, String> {
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths).map(|directory| directory.join(name)).find(|candidate| candidate.is_file())
+    std::env::split_paths(&paths)
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
 }

@@ -456,8 +456,7 @@ async fn run_connected(
         if after_welcome_done && !members_refreshing {
             while let Some((seq, id, env)) = deferred.pop_front() {
                 if let Some(seq) = seq {
-                    match receive_reliable(client, executor, &tx, &mut recv_seq, seq, env).await
-                    {
+                    match receive_reliable(client, executor, &tx, &mut recv_seq, seq, env).await {
                         Err(error) => break 'connected SessionEnd::Lost(error),
                         Ok(true) => {
                             members_refreshing = true;

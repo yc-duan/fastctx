@@ -37,7 +37,14 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
             if words.is_empty() {
                 return Err("Give the first words for the new resident.".to_string());
             }
-            let request = AdminRequest::Town { request: TownRequest::Open { agent, town: args.town, words: words.join(" "), node: args.node } };
+            let request = AdminRequest::Town {
+                request: TownRequest::Open {
+                    agent,
+                    town: args.town,
+                    words: words.join(" "),
+                    node: args.node,
+                },
+            };
             let resident = match admin::call(&endpoint, &request, admin::ADMIN_TIMEOUT).await? {
                 Some(response) if response.ok => response.data.get("resident").and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
                 Some(response) => return Err(response.error.unwrap_or_else(|| "The node could not open the resident.".to_string())),
@@ -46,16 +53,33 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
             println!("=== opened {resident} ===");
             (resident, Vec::new(), true)
         }
-        None => (args.resident.ok_or("Name the resident to talk to, or open one with --open.")?, args.words, false),
+        None => (
+            args.resident
+                .ok_or("Name the resident to talk to, or open one with --open.")?,
+            args.words,
+            false,
+        ),
     };
     let mut watch = crate::runtime::local_ipc::connect(&endpoint)
         .await
-        .map_err(|_| "The FastCtx node service is not running on this machine; run 'fastctx node status'.".to_string())?;
-    let request = AdminRequest::Town { request: TownRequest::Watch { resident: resident.clone() } };
-    admin::write_frame(&mut watch, &serde_json::to_vec(&request).map_err(|error| error.to_string())?).await?;
+        .map_err(|_| {
+            "The FastCtx node service is not running on this machine; run 'fastctx node status'."
+                .to_string()
+        })?;
+    let request = AdminRequest::Town {
+        request: TownRequest::Watch {
+            resident: resident.clone(),
+        },
+    };
+    admin::write_frame(
+        &mut watch,
+        &serde_json::to_vec(&request).map_err(|error| error.to_string())?,
+    )
+    .await?;
     // Frames are read by their own task: reading one must never be cut short by a typed line,
     // or the rest of the frame would be read as the start of the next.
-    let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel::<Result<TalkEvent, String>>();
+    let (events_tx, mut events) =
+        tokio::sync::mpsc::unbounded_channel::<Result<TalkEvent, String>>();
     tokio::spawn(async move {
         loop {
             let event = next(&mut watch).await;
@@ -65,7 +89,12 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
             }
         }
     });
-    let mut next_event = async || events.recv().await.unwrap_or_else(|| Err("The node closed the watch.".to_string()));
+    let mut next_event = async || {
+        events
+            .recv()
+            .await
+            .unwrap_or_else(|| Err("The node closed the watch.".to_string()))
+    };
 
     let mut printer = Printer::default();
     // The history comes first; words said before it ends would show twice.
@@ -91,10 +120,18 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
         let endpoint = endpoint.clone();
         let resident = resident.clone();
         async move {
-            let request = AdminRequest::Town { request: TownRequest::Say { resident, text } };
+            let request = AdminRequest::Town {
+                request: TownRequest::Say { resident, text },
+            };
             match admin::call(&endpoint, &request, admin::ADMIN_TIMEOUT).await? {
-                Some(response) if response.ok => Ok(response.data.get("turn").and_then(serde_json::Value::as_str).map(str::to_string)),
-                Some(response) => Err(response.error.unwrap_or_else(|| "The node refused the words.".to_string())),
+                Some(response) if response.ok => Ok(response
+                    .data
+                    .get("turn")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)),
+                Some(response) => Err(response
+                    .error
+                    .unwrap_or_else(|| "The node refused the words.".to_string())),
                 None => Err("The FastCtx node service stopped.".to_string()),
             }
         }
@@ -102,26 +139,27 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
 
     // Follows the session until `turn` ends; without a known turn id (a Claude resident), until
     // the first turn that starts from now on ends.
-    let mut follow = async |turn: Option<String>, printer: &mut Printer| -> Result<ExitCode, String> {
-        let mut target = turn;
-        loop {
-            let event = next_event().await?;
-            if target.is_none()
-                && let TalkEvent::TurnStarted { turn } = &event
-            {
-                target = Some(turn.clone());
+    let mut follow =
+        async |turn: Option<String>, printer: &mut Printer| -> Result<ExitCode, String> {
+            let mut target = turn;
+            loop {
+                let event = next_event().await?;
+                if target.is_none()
+                    && let TalkEvent::TurnStarted { turn } = &event
+                {
+                    target = Some(turn.clone());
+                }
+                let done = match &event {
+                    TalkEvent::TurnEnded { turn, .. } => target.as_ref() == Some(turn),
+                    TalkEvent::Gone { .. } => true,
+                    _ => false,
+                };
+                printer.show(&event);
+                if done {
+                    return Ok(ExitCode::SUCCESS);
+                }
             }
-            let done = match &event {
-                TalkEvent::TurnEnded { turn, .. } => target.as_ref() == Some(turn),
-                TalkEvent::Gone { .. } => true,
-                _ => false,
-            };
-            printer.show(&event);
-            if done {
-                return Ok(ExitCode::SUCCESS);
-            }
-        }
-    };
+        };
 
     if opened {
         // Its first turn started before the watch; follow it unless it already ended.
@@ -165,8 +203,11 @@ pub(crate) async fn run(args: TalkArgs) -> Result<ExitCode, String> {
 }
 
 async fn next(watch: &mut crate::runtime::local_ipc::BoxedStream) -> Result<TalkEvent, String> {
-    let bytes = admin::read_frame(watch).await.map_err(|_| "The node closed the watch.".to_string())?;
-    serde_json::from_slice(&bytes).map_err(|error| format!("Unreadable event from the node: {error}"))
+    let bytes = admin::read_frame(watch)
+        .await
+        .map_err(|_| "The node closed the watch.".to_string())?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Unreadable event from the node: {error}"))
 }
 
 /// Prints events as a plain transcript: streamed text inline, tools and turn edges on their
@@ -211,11 +252,26 @@ impl Printer {
                 let line = match other {
                     TalkEvent::Words { from, text, .. } => format!("> {from}: {text}"),
                     TalkEvent::TurnStarted { .. } => "── turn started".to_string(),
-                    TalkEvent::TurnEnded { status, reason: None, .. } => format!("── turn {status}"),
-                    TalkEvent::TurnEnded { status, reason: Some(reason), .. } => format!("── turn {status}: {reason}"),
+                    TalkEvent::TurnEnded {
+                        status,
+                        reason: None,
+                        ..
+                    } => format!("── turn {status}"),
+                    TalkEvent::TurnEnded {
+                        status,
+                        reason: Some(reason),
+                        ..
+                    } => format!("── turn {status}: {reason}"),
                     TalkEvent::Health { text } => format!("── {text}"),
-                    TalkEvent::Tool { name, summary, done: false, .. } => format!("  {name} {summary}"),
-                    TalkEvent::Tool { name, failed: true, .. } => format!("  {name} failed"),
+                    TalkEvent::Tool {
+                        name,
+                        summary,
+                        done: false,
+                        ..
+                    } => format!("  {name} {summary}"),
+                    TalkEvent::Tool {
+                        name, failed: true, ..
+                    } => format!("  {name} failed"),
                     TalkEvent::Tool { .. } => return,
                     TalkEvent::State { state } => format!("── {state}"),
                     TalkEvent::Gone { reason } => format!("── {reason}"),

@@ -6,13 +6,13 @@ pub(super) mod i18n;
 mod model;
 mod status_pages;
 mod talk;
-mod towns;
-mod towns_view;
 #[cfg(test)]
 mod tests;
+mod topology;
+mod towns;
 #[cfg(test)]
 mod towns_tests;
-mod topology;
+mod towns_view;
 mod view;
 mod widgets;
 mod worker;
@@ -631,7 +631,11 @@ impl WorldApp {
     pub(super) fn primary_action(&self) -> Option<MenuAction> {
         use MenuAction as A;
         if self.page == Page::Towns {
-            return Some(if self.count() > 0 { A::Talk } else { A::OpenResident });
+            return Some(if self.count() > 0 {
+                A::Talk
+            } else {
+                A::OpenResident
+            });
         }
         if self.page == Page::Hub {
             return (self.count() == 0).then_some(
@@ -694,7 +698,11 @@ impl WorldApp {
         }
         if self.page == Page::Towns {
             let mut list = vec![A::OpenResident];
-            if let Some(facts) = self.towns.residents().get(self.selected[Page::Towns.index()]) {
+            if let Some(facts) = self
+                .towns
+                .residents()
+                .get(self.selected[Page::Towns.index()])
+            {
                 list.insert(0, A::Talk);
                 if facts.now.state == "busy" {
                     list.push(A::StopTurn);
@@ -1091,7 +1099,11 @@ impl WorldApp {
             }
             A::OpenProject => {
                 // The machines that answered the census are offered to start with.
-                let machines = self.towns.census().map(|census| census.machines.join(", ")).unwrap_or_default();
+                let machines = self
+                    .towns
+                    .census()
+                    .map(|census| census.machines.join(", "))
+                    .unwrap_or_default();
                 self.open_form(FormKind::Project, &machines);
             }
             A::StopTurn => {

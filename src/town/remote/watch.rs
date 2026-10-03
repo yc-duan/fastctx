@@ -51,7 +51,12 @@ pub(crate) struct RemoteWatch {
 
 impl Drop for RemoteWatch {
     fn drop(&mut self) {
-        self.town.watches.inner.lock().relays.remove(&self.subscription);
+        self.town
+            .watches
+            .inner
+            .lock()
+            .relays
+            .remove(&self.subscription);
         // The subscription may already be closed by the other side; then there is nothing to end.
         let _ = self.town.world().unsubscribe(&self.subscription);
     }
@@ -60,15 +65,37 @@ impl Drop for RemoteWatch {
 impl Town {
     /// Watches a resident who lives on `machine`: its history, then its events, as a watch
     /// there would give them.
-    pub(crate) async fn watch_elsewhere(self: &Arc<Self>, machine: &str, id: &str) -> Result<RemoteWatch, String> {
+    pub(crate) async fn watch_elsewhere(
+        self: &Arc<Self>,
+        machine: &str,
+        id: &str,
+    ) -> Result<RemoteWatch, String> {
         let subscription = crate::world::client::WorldClient::subscription_id()?;
         let (sender, events) = mpsc::unbounded_channel();
-        self.watches.inner.lock().relays.insert(subscription.clone(), sender);
-        if let Err(error) = self.world().subscribe(machine, &subscription, json!(Topic { watch: id.to_string() })).await {
+        self.watches
+            .inner
+            .lock()
+            .relays
+            .insert(subscription.clone(), sender);
+        if let Err(error) = self
+            .world()
+            .subscribe(
+                machine,
+                &subscription,
+                json!(Topic {
+                    watch: id.to_string()
+                }),
+            )
+            .await
+        {
             self.watches.inner.lock().relays.remove(&subscription);
             return Err(error);
         }
-        Ok(RemoteWatch { town: Arc::clone(self), subscription, events })
+        Ok(RemoteWatch {
+            town: Arc::clone(self),
+            subscription,
+            events,
+        })
     }
 
     /// Follows this machine's subscriptions for as long as the node runs: other machines
@@ -79,8 +106,12 @@ impl Town {
             match self.world().subscriptions.next().await {
                 Notice::Started { id, from, topic } => self.serve(id, from, topic),
                 Notice::Event { id, value, .. } => {
-                    let event = serde_json::from_value::<TalkEvent>(value)
-                        .unwrap_or_else(|error| TalkEvent::Gone { reason: format!("an unreadable event arrived: {error}") });
+                    let event =
+                        serde_json::from_value::<TalkEvent>(value).unwrap_or_else(|error| {
+                            TalkEvent::Gone {
+                                reason: format!("an unreadable event arrived: {error}"),
+                            }
+                        });
                     self.relay(&id, event);
                 }
                 Notice::Closed { id, reason, .. } => {
@@ -116,15 +147,29 @@ impl Town {
     /// to residents here (the `talk` grant).
     fn serve(self: &Arc<Self>, subscription: String, from: String, topic: Value) {
         let world = self.world();
-        let allowed = world.grants.read().allows(&from, "talk", self.machine(), &world.own_tags());
+        let allowed = world
+            .grants
+            .read()
+            .allows(&from, "talk", self.machine(), &world.own_tags());
         let watched = serde_json::from_value::<Topic>(topic).map(|topic| topic.watch);
         let resident = match (allowed, watched) {
             (true, Ok(resident)) => resident,
-            (false, _) => return self.refuse(&subscription, format!("{} does not allow talk for \"{from}\".", self.machine())),
-            (_, Err(error)) => return self.refuse(&subscription, format!("unreadable watch request: {error}")),
+            (false, _) => {
+                return self.refuse(
+                    &subscription,
+                    format!("{} does not allow talk for \"{from}\".", self.machine()),
+                );
+            }
+            (_, Err(error)) => {
+                return self.refuse(&subscription, format!("unreadable watch request: {error}"));
+            }
         };
         let stop = CancellationToken::new();
-        self.watches.inner.lock().serving.insert(subscription.clone(), stop.clone());
+        self.watches
+            .inner
+            .lock()
+            .serving
+            .insert(subscription.clone(), stop.clone());
         let town = Arc::clone(self);
         tokio::spawn(async move {
             town.serve_watch(&subscription, &resident, stop).await;
@@ -154,7 +199,10 @@ impl Town {
                 event = events.recv() => event,
             };
             let Some(event) = event else {
-                self.refuse(subscription, format!("{resident}'s events ended on {}.", self.machine()));
+                self.refuse(
+                    subscription,
+                    format!("{resident}'s events ended on {}.", self.machine()),
+                );
                 return;
             };
             if !seen.repeats(&event) && !self.publish_to(subscription, resident, &event) {
@@ -178,7 +226,9 @@ impl Town {
     /// The event itself, or, when its text is more than one control message carries, the same
     /// event with a note saying so in place of the text.
     fn fitted(&self, resident: &str, event: &TalkEvent) -> TalkEvent {
-        let size = serde_json::to_vec(event).map(|bytes| bytes.len()).unwrap_or(usize::MAX);
+        let size = serde_json::to_vec(event)
+            .map(|bytes| bytes.len())
+            .unwrap_or(usize::MAX);
         if size <= EVENT_BYTES {
             return event.clone();
         }
@@ -190,12 +240,32 @@ impl Town {
             )
         };
         match event {
-            TalkEvent::Words { from, text, item } => TalkEvent::Words { from: from.clone(), text: note(text), item: item.clone() },
-            TalkEvent::Message { item, text } => TalkEvent::Message { item: item.clone(), text: note(text) },
-            TalkEvent::Delta { item, text } => TalkEvent::Delta { item: item.clone(), text: note(text) },
-            TalkEvent::Tool { item, name, summary, done, failed } => {
-                TalkEvent::Tool { item: item.clone(), name: name.clone(), summary: note(summary), done: *done, failed: *failed }
-            }
+            TalkEvent::Words { from, text, item } => TalkEvent::Words {
+                from: from.clone(),
+                text: note(text),
+                item: item.clone(),
+            },
+            TalkEvent::Message { item, text } => TalkEvent::Message {
+                item: item.clone(),
+                text: note(text),
+            },
+            TalkEvent::Delta { item, text } => TalkEvent::Delta {
+                item: item.clone(),
+                text: note(text),
+            },
+            TalkEvent::Tool {
+                item,
+                name,
+                summary,
+                done,
+                failed,
+            } => TalkEvent::Tool {
+                item: item.clone(),
+                name: name.clone(),
+                summary: note(summary),
+                done: *done,
+                failed: *failed,
+            },
             // The rest carry no free text and are a few bytes long.
             other => other.clone(),
         }
@@ -203,7 +273,9 @@ impl Town {
 
     /// Ends a watch served here, telling the watcher why.
     fn refuse(&self, subscription: &str, reason: String) {
-        let _ = self.world().publish_event(subscription, json!(TalkEvent::Gone { reason }));
+        let _ = self
+            .world()
+            .publish_event(subscription, json!(TalkEvent::Gone { reason }));
         let _ = self.world().unsubscribe(subscription);
     }
 }

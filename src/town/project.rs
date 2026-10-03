@@ -83,21 +83,33 @@ pub(crate) fn charters(world_dir: &Path, town: &str) -> Result<Vec<Charter>, Str
         })?
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .collect();
     names.sort();
     names
         .iter()
         .map(|path| {
-            let bytes = std::fs::read(path).map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(path)))?;
-            serde_json::from_slice(&bytes).map_err(|error| format!("{} is not a charter ({error})", crate::paths::display_path(path)))
+            let bytes = std::fs::read(path).map_err(|error| {
+                format!("Cannot read {}: {error}", crate::paths::display_path(path))
+            })?;
+            serde_json::from_slice(&bytes).map_err(|error| {
+                format!(
+                    "{} is not a charter ({error})",
+                    crate::paths::display_path(path)
+                )
+            })
         })
         .collect()
 }
 
 /// The current charter: the newest version.
 pub(crate) fn charter(world_dir: &Path, town: &str) -> Result<Charter, String> {
-    charters(world_dir, town)?.pop().ok_or_else(|| format!("The town {town} has no charter yet."))
+    charters(world_dir, town)?
+        .pop()
+        .ok_or_else(|| format!("The town {town} has no charter yet."))
 }
 
 /// The charter as the top of the map and as `fastctx project show` prints it.
@@ -106,22 +118,52 @@ pub(crate) fn render_charter(town: &str, charter: &Charter) -> String {
     let _ = writeln!(out, "Project: {} (town {town})", charter.name);
     let _ = writeln!(out, "What it is: {}", charter.what);
     let _ = writeln!(out, "Machines: {}", charter.machines.join(", "));
-    let mut places: Vec<(&str, &Location)> = charter.places.iter().map(|place| (place.what.as_str(), &place.location)).collect();
+    let mut places: Vec<(&str, &Location)> = charter
+        .places
+        .iter()
+        .map(|place| (place.what.as_str(), &place.location))
+        .collect();
     if let Some(canon) = &charter.canon {
         places.push(("canon (specs)", canon));
     }
     if !places.is_empty() {
         out.push_str("Where to find things:\n");
-        let what_width = places.iter().map(|(what, _)| what.width()).max().unwrap_or(0);
-        let machine_width = places.iter().map(|(_, location)| location.machine.len()).max().unwrap_or(0);
+        let what_width = places
+            .iter()
+            .map(|(what, _)| what.width())
+            .max()
+            .unwrap_or(0);
+        let machine_width = places
+            .iter()
+            .map(|(_, location)| location.machine.len())
+            .max()
+            .unwrap_or(0);
         for (what, location) in places {
             let pad = what_width - what.width();
-            let _ = writeln!(out, "  {what}{}   {:<machine_width$}   {}", " ".repeat(pad), location.machine, location.path);
+            let _ = writeln!(
+                out,
+                "  {what}{}   {:<machine_width$}   {}",
+                " ".repeat(pad),
+                location.machine,
+                location.path
+            );
         }
     }
-    let _ = write!(out, "Opened by {} on {}", charter.opened_by, date(&charter.opened_at));
+    let _ = write!(
+        out,
+        "Opened by {} on {}",
+        charter.opened_by,
+        date(&charter.opened_at)
+    );
     if charter.version > 1 {
-        let _ = write!(out, "; version {}, written by {} on {} at {}", charter.version, charter.written_by, charter.written_on, date(&charter.written_at));
+        let _ = write!(
+            out,
+            "; version {}, written by {} on {} at {}",
+            charter.version,
+            charter.written_by,
+            charter.written_on,
+            date(&charter.written_at)
+        );
     }
     out.push('\n');
     out
@@ -139,7 +181,11 @@ pub(crate) fn render_map(world_dir: &Path, town: &str, machine: &str) -> Result<
     if journals.is_empty() {
         out.push_str("Journals: none yet. Add one with fastctx journal.\n");
     } else {
-        let _ = writeln!(out, "Journals ({}, most recently added first):", journals.len());
+        let _ = writeln!(
+            out,
+            "Journals ({}, most recently added first):",
+            journals.len()
+        );
         for summary in &journals {
             let last = match (&summary.last_by, &summary.last_at) {
                 (Some(by), Some(at)) => format!("; last by {by} {}", date(at)),
@@ -151,9 +197,17 @@ pub(crate) fn render_map(world_dir: &Path, town: &str, machine: &str) -> Result<
                 summary.slug,
                 summary.description,
                 summary.entries,
-                if summary.entries == 1 { "entry" } else { "entries" },
+                if summary.entries == 1 {
+                    "entry"
+                } else {
+                    "entries"
+                },
                 summary.writers,
-                if summary.writers == 1 { "resident" } else { "residents" }
+                if summary.writers == 1 {
+                    "resident"
+                } else {
+                    "residents"
+                }
             );
         }
     }
@@ -161,14 +215,22 @@ pub(crate) fn render_map(world_dir: &Path, town: &str, machine: &str) -> Result<
         None => {}
         Some(canon) if canon.machine == machine => {
             let documents = canon_lines(Path::new(&canon.path));
-            let count = if documents.len() == 1 { "1 document".to_string() } else { format!("{} documents", documents.len()) };
+            let count = if documents.len() == 1 {
+                "1 document".to_string()
+            } else {
+                format!("{} documents", documents.len())
+            };
             let _ = writeln!(out, "Canon ({} {}, {count}):", canon.machine, canon.path);
             for (file, line) in documents {
                 let _ = writeln!(out, "  {file} — {line}");
             }
         }
         Some(canon) => {
-            let _ = writeln!(out, "Canon: on {} at {}; read it there with run.", canon.machine, canon.path);
+            let _ = writeln!(
+                out,
+                "Canon: on {} at {}; read it there with run.",
+                canon.machine, canon.path
+            );
         }
     }
     Ok(out)
@@ -187,7 +249,10 @@ fn canon_lines(dir: &Path) -> Vec<(String, String)> {
     files
         .into_iter()
         .map(|path| {
-            let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             (name, describe(&text))
         })
@@ -197,9 +262,22 @@ fn canon_lines(dir: &Path) -> Vec<(String, String)> {
 /// The title and the first paragraph after it, on one line.
 fn describe(text: &str) -> String {
     let mut lines = text.lines().map(str::trim);
-    let title = lines.by_ref().find(|line| !line.is_empty()).unwrap_or_default().trim_start_matches('#').trim().to_string();
-    let paragraph: Vec<&str> = lines.skip_while(|line| line.is_empty()).take_while(|line| !line.is_empty()).collect();
-    if paragraph.is_empty() { title } else { format!("{title}: {}", paragraph.join(" ")) }
+    let title = lines
+        .by_ref()
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+        .trim_start_matches('#')
+        .trim()
+        .to_string();
+    let paragraph: Vec<&str> = lines
+        .skip_while(|line| line.is_empty())
+        .take_while(|line| !line.is_empty())
+        .collect();
+    if paragraph.is_empty() {
+        title
+    } else {
+        format!("{title}: {}", paragraph.join(" "))
+    }
 }
 
 fn date(at: &str) -> &str {

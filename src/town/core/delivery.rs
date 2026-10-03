@@ -2,7 +2,9 @@
 //! offers, the durable queue for residents without a channel, and the notice that a command
 //! ended.
 
-use super::{Delivery, MessageLine, Route, Spoken, Town, delivery_id, format_duration, mod_delivery};
+use super::{
+    Delivery, MessageLine, Route, Spoken, Town, delivery_id, format_duration, mod_delivery,
+};
 use crate::town::codex::host::{Input, Landed};
 use crate::town::remote::{Letter, Peer};
 use crate::town::talk::TalkEvent;
@@ -12,19 +14,30 @@ impl Town {
     /// How a resident is named to residents of this machine: its id, and its machine when that
     /// is another one.
     pub(crate) fn peer_name(&self, peer: &Peer) -> String {
-        if peer.machine == self.config.machine { peer.id.clone() } else { format!("{} on {}", peer.id, peer.machine) }
+        if peer.machine == self.config.machine {
+            peer.id.clone()
+        } else {
+            format!("{} on {}", peer.id, peer.machine)
+        }
     }
 
     /// Speaks to a resident on this machine on behalf of `from`, who lives here or elsewhere.
     /// For a Codex resident, `from` then receives the last message of the turn its words went
     /// into.
-    pub(crate) async fn speak(&self, from: &Peer, to: &str, message: &str) -> Result<Spoken, String> {
+    pub(crate) async fn speak(
+        &self,
+        from: &Peer,
+        to: &str,
+        message: &str,
+    ) -> Result<Spoken, String> {
         let name = self.peer_name(from);
         let route = {
             let mut state = self.state.lock();
             // A requester that speaks again is back.
             state.departed.remove(from);
-            let live = state.residents.get(to).ok_or_else(|| format!("No resident named {to} lives on {}.", self.config.machine))?;
+            let live = state.residents.get(to).ok_or_else(|| {
+                format!("No resident named {to} lives on {}.", self.config.machine)
+            })?;
             let _ = live.records.append_message(&MessageLine {
                 at: crate::world::now_rfc3339(),
                 kind: "said".into(),
@@ -38,15 +51,30 @@ impl Town {
         match route {
             Route::CodexThread(thread) => {
                 // A Codex thread echoes its input as an item, which watchers see.
-                let (landed, _) = self.codex_words(to, &thread, Input::Text(text), [from.clone()]).await?;
+                let (landed, _) = self
+                    .codex_words(to, &thread, Input::Text(text), [from.clone()])
+                    .await?;
                 Ok(match landed {
                     Landed::NewTurn => Spoken::NewTurn,
                     Landed::Steered => Spoken::JoinedTurn,
                 })
             }
             Route::ClaudeMod(_) | Route::Piggyback => {
-                self.publish(to, TalkEvent::Words { from: name.clone(), text: message.to_string(), item: None });
-                let delivery = Delivery { id: delivery_id()?, from: name, kind: "message".into(), text, as_tool_output: false };
+                self.publish(
+                    to,
+                    TalkEvent::Words {
+                        from: name.clone(),
+                        text: message.to_string(),
+                        item: None,
+                    },
+                );
+                let delivery = Delivery {
+                    id: delivery_id()?,
+                    from: name,
+                    kind: "message".into(),
+                    text,
+                    as_tool_output: false,
+                };
                 self.deliver(to, delivery).await?;
                 Ok(Spoken::Queued)
             }
@@ -56,7 +84,9 @@ impl Town {
     /// Mails a letter to another machine's town. It is committed here before this returns, and
     /// reaches that machine when it is online, in the order letters were sent.
     pub(crate) fn mail(&self, machine: &str, letter: &Letter) -> Result<(), String> {
-        self.world.send_mail(machine, letter_body(letter)?).map(|_| ())
+        self.world
+            .send_mail(machine, letter_body(letter)?)
+            .map(|_| ())
     }
 
     /// Mails a letter under an id of the caller's: sending the same letter again under it
@@ -68,11 +98,17 @@ impl Town {
     /// Delivers words for a resident of this machine. A resident that is not here, or whose
     /// host cannot take them now, keeps them waiting in its records until its next World tool
     /// response or its return. `true` when they were delivered now, `false` when they wait.
-    pub(crate) async fn deliver_or_hold(&self, to: &str, delivery: Delivery) -> Result<bool, String> {
+    pub(crate) async fn deliver_or_hold(
+        &self,
+        to: &str,
+        delivery: Delivery,
+    ) -> Result<bool, String> {
         if self.state.lock().residents.contains_key(to) {
             match self.deliver(to, delivery.clone()).await {
                 Ok(()) => return Ok(true),
-                Err(error) => (self.log)(format!("cannot deliver to {to} now, so it waits in its records: {error}")),
+                Err(error) => (self.log)(format!(
+                    "cannot deliver to {to} now, so it waits in its records: {error}"
+                )),
             }
         }
         let _inbox = self.inbox.lock();
@@ -81,7 +117,12 @@ impl Town {
             None => self
                 .current_records(to)
                 .map(|(records, _)| records.dir.join("inbox"))
-                .ok_or_else(|| format!("No resident named {to} has records on {}.", self.config.machine))?,
+                .ok_or_else(|| {
+                    format!(
+                        "No resident named {to} has records on {}.",
+                        self.config.machine
+                    )
+                })?,
         };
         write_waiting(&dir, &delivery).map(|()| false)
     }
@@ -89,13 +130,24 @@ impl Town {
     /// Puts the user's own words into a resident's session, as the user. Only words the user
     /// typed on one of the user's devices come here (`specs/world.md`, the first rule).
     /// Returns how they landed and, for a Codex resident, the turn they went into.
-    pub(crate) async fn say_as_user(&self, id: &str, text: &str) -> Result<(Spoken, Option<String>), String> {
-        let route = self.state.lock().residents.get(id).map(|live| live.route.clone());
+    pub(crate) async fn say_as_user(
+        &self,
+        id: &str,
+        text: &str,
+    ) -> Result<(Spoken, Option<String>), String> {
+        let route = self
+            .state
+            .lock()
+            .residents
+            .get(id)
+            .map(|live| live.route.clone());
         let mut turn = None;
         let spoken = match route {
             Some(Route::CodexThread(thread)) => {
                 // The user watches the turn live; nobody is owed its end.
-                let (landed, into) = self.codex_words(id, &thread, Input::Text(text.to_string()), []).await?;
+                let (landed, into) = self
+                    .codex_words(id, &thread, Input::Text(text.to_string()), [])
+                    .await?;
                 turn = Some(into);
                 match landed {
                     Landed::NewTurn => Spoken::NewTurn,
@@ -113,8 +165,17 @@ impl Town {
                 crate::town::claude::deliver(&self.config.world_dir, &session, &delivery)?;
                 Spoken::Queued
             }
-            Some(_) => return Err(format!("{id}'s host offers the World no way to put words into its session.")),
-            None => return Err(format!("No resident named {id} lives on {}.", self.config.machine)),
+            Some(_) => {
+                return Err(format!(
+                    "{id}'s host offers the World no way to put words into its session."
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "No resident named {id} lives on {}.",
+                    self.config.machine
+                ));
+            }
         };
         if let Some(live) = self.state.lock().residents.get(id) {
             let _ = live.records.append_message(&MessageLine {
@@ -126,7 +187,14 @@ impl Town {
             });
         }
         if spoken == Spoken::Queued {
-            self.publish(id, TalkEvent::Words { from: "user".into(), text: text.to_string(), item: None });
+            self.publish(
+                id,
+                TalkEvent::Words {
+                    from: "user".into(),
+                    text: text.to_string(),
+                    item: None,
+                },
+            );
         }
         Ok((spoken, turn))
     }
@@ -137,13 +205,22 @@ impl Town {
             let state = self.state.lock();
             match state.residents.get(to) {
                 Some(live) => (live.route.clone(), live.about.clone()),
-                None => return Err(format!("No resident named {to} lives on {}.", self.config.machine)),
+                None => {
+                    return Err(format!(
+                        "No resident named {to} lives on {}.",
+                        self.config.machine
+                    ));
+                }
             }
         };
         match route {
             Route::CodexThread(thread) => {
                 let input = if delivery.as_tool_output {
-                    Input::ToolOutput { name: "world".into(), namespace: Some("fastctx".into()), output: delivery.text }
+                    Input::ToolOutput {
+                        name: "world".into(),
+                        namespace: Some("fastctx".into()),
+                        output: delivery.text,
+                    }
                 } else {
                     Input::Text(delivery.text)
                 };
@@ -158,11 +235,17 @@ impl Town {
             Route::ClaudeMod(Some(session)) => {
                 // A background resident whose process the supervisor stopped is woken with the
                 // words; any other Claude session reads them from its mod's inbox.
-                if about.surface == "bg" && !crate::town::claude::background_running(&session).await? {
+                if about.surface == "bg"
+                    && !crate::town::claude::background_running(&session).await?
+                {
                     let cwd = self.standing_dir(about.town.as_deref());
                     return crate::town::claude::wake(&session, &delivery.text, &cwd).await;
                 }
-                crate::town::claude::deliver(&self.config.world_dir, &session, &mod_delivery(delivery))
+                crate::town::claude::deliver(
+                    &self.config.world_dir,
+                    &session,
+                    &mod_delivery(delivery),
+                )
             }
             Route::ClaudeMod(None) | Route::Piggyback => self.enqueue(to, delivery),
         }
@@ -171,12 +254,17 @@ impl Town {
     /// Takes everything waiting for a resident, oldest first; the caller delivers it.
     pub(crate) fn take_waiting(&self, id: &str) -> Vec<Delivery> {
         let _inbox = self.inbox.lock();
-        let Some(dir) = self.inbox_dir(id) else { return Vec::new() };
+        let Some(dir) = self.inbox_dir(id) else {
+            return Vec::new();
+        };
         let mut taken = Vec::new();
         for (path, delivery) in waiting(&dir) {
             match std::fs::remove_file(&path) {
                 Ok(()) => taken.push(delivery),
-                Err(error) => (self.log)(format!("cannot take the waiting {}: {error}", crate::paths::display_path(&path))),
+                Err(error) => (self.log)(format!(
+                    "cannot take the waiting {}: {error}",
+                    crate::paths::display_path(&path)
+                )),
             }
         }
         taken
@@ -184,7 +272,9 @@ impl Town {
 
     fn enqueue(&self, to: &str, delivery: Delivery) -> Result<(), String> {
         let _inbox = self.inbox.lock();
-        let dir = self.inbox_dir(to).ok_or_else(|| format!("No resident named {to} lives on {}.", self.config.machine))?;
+        let dir = self
+            .inbox_dir(to)
+            .ok_or_else(|| format!("No resident named {to} lives on {}.", self.config.machine))?;
         write_waiting(&dir, &delivery)
     }
 
@@ -192,21 +282,36 @@ impl Town {
     /// registered. Each delivery leaves the queue only after it is in the session's inbox.
     pub(super) fn migrate_waiting(&self, id: &str, session: &str) {
         let _inbox = self.inbox.lock();
-        let Some(dir) = self.inbox_dir(id) else { return };
+        let Some(dir) = self.inbox_dir(id) else {
+            return;
+        };
         for (path, delivery) in waiting(&dir) {
-            match crate::town::claude::deliver(&self.config.world_dir, session, &mod_delivery(delivery)) {
+            match crate::town::claude::deliver(
+                &self.config.world_dir,
+                session,
+                &mod_delivery(delivery),
+            ) {
                 Ok(()) => {
                     if let Err(error) = std::fs::remove_file(&path) {
-                        (self.log)(format!("cannot remove the moved {}: {error}", crate::paths::display_path(&path)));
+                        (self.log)(format!(
+                            "cannot remove the moved {}: {error}",
+                            crate::paths::display_path(&path)
+                        ));
                     }
                 }
-                Err(error) => (self.log)(format!("cannot move a waiting delivery into {id}'s session: {error}")),
+                Err(error) => (self.log)(format!(
+                    "cannot move a waiting delivery into {id}'s session: {error}"
+                )),
             }
         }
     }
 
     fn inbox_dir(&self, id: &str) -> Option<PathBuf> {
-        self.state.lock().residents.get(id).map(|live| live.records.dir.join("inbox"))
+        self.state
+            .lock()
+            .residents
+            .get(id)
+            .map(|live| live.records.dir.join("inbox"))
     }
 
     /// `run` gave a command back while it still ran, so its end is owed to the resident that
@@ -220,8 +325,12 @@ impl Town {
     /// time if the node stops in that instant.
     pub(crate) async fn owe_end(&self, record: &Path, home: Option<&str>) -> Result<(), String> {
         let marker = record.with_extension(OWED);
-        std::fs::write(&marker, home.unwrap_or_default())
-            .map_err(|error| format!("Cannot write {}: {error}", crate::paths::display_path(&marker)))?;
+        std::fs::write(&marker, home.unwrap_or_default()).map_err(|error| {
+            format!(
+                "Cannot write {}: {error}",
+                crate::paths::display_path(&marker)
+            )
+        })?;
         self.job_ended(record).await
     }
 
@@ -230,10 +339,23 @@ impl Town {
     /// delivery is running then.
     pub(crate) async fn owed_ends(&self, resident_dir: &Path, starting: bool) {
         let jobs = resident_dir.join("jobs");
-        let markers: Vec<PathBuf> = std::fs::read_dir(&jobs).into_iter().flatten().flatten().map(|entry| entry.path()).collect();
-        for claim in markers.iter().filter(|path| starting && path.extension().is_some_and(|extension| extension == CLAIMED)) {
+        let markers: Vec<PathBuf> = std::fs::read_dir(&jobs)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        for claim in markers.iter().filter(|path| {
+            starting
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == CLAIMED)
+        }) {
             if let Err(error) = std::fs::rename(claim, claim.with_extension(OWED)) {
-                (self.log)(format!("cannot owe {} again: {error}", crate::paths::display_path(claim)));
+                (self.log)(format!(
+                    "cannot owe {} again: {error}",
+                    crate::paths::display_path(claim)
+                ));
             }
         }
         let owed: Vec<PathBuf> = std::fs::read_dir(&jobs)
@@ -245,7 +367,10 @@ impl Town {
             .collect();
         for marker in owed {
             if let Err(error) = self.job_ended(&marker.with_extension("json")).await {
-                (self.log)(format!("cannot deliver the end of {}: {error}", crate::paths::display_path(&marker)));
+                (self.log)(format!(
+                    "cannot deliver the end of {}: {error}",
+                    crate::paths::display_path(&marker)
+                ));
             }
         }
     }
@@ -256,25 +381,48 @@ impl Town {
     /// resident of this machine that is not here keeps its notice owed until it comes back; one
     /// living elsewhere is mailed, and its machine holds the notice for it.
     pub(crate) async fn job_ended(&self, record: &Path) -> Result<(), String> {
-        let jobs = record.parent().ok_or("A job record sits in a jobs directory.")?;
-        let resident_dir = jobs.parent().ok_or("A jobs directory sits in a resident's directory.")?;
-        let resident = resident_dir.file_name().and_then(|name| name.to_str()).ok_or("A resident directory is named by its id.")?;
-        let job = crate::town::who::read_job(record, resident, None)
-            .ok_or_else(|| format!("{} is not a job record.", crate::paths::display_path(record)))?;
+        let jobs = record
+            .parent()
+            .ok_or("A job record sits in a jobs directory.")?;
+        let resident_dir = jobs
+            .parent()
+            .ok_or("A jobs directory sits in a resident's directory.")?;
+        let resident = resident_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("A resident directory is named by its id.")?;
+        let job = crate::town::who::read_job(record, resident, None).ok_or_else(|| {
+            format!(
+                "{} is not a job record.",
+                crate::paths::display_path(record)
+            )
+        })?;
         let marker = record.with_extension(OWED);
         let home = match std::fs::read_to_string(&marker) {
             Ok(home) => Some(home).filter(|home| !home.is_empty() && *home != self.config.machine),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&marker))),
+            Err(error) => {
+                return Err(format!(
+                    "Cannot read {}: {error}",
+                    crate::paths::display_path(&marker)
+                ));
+            }
         };
-        if matches!(job.state.as_str(), "starting" | "running") || (home.is_none() && !self.state.lock().residents.contains_key(resident)) {
+        if matches!(job.state.as_str(), "starting" | "running")
+            || (home.is_none() && !self.state.lock().residents.contains_key(resident))
+        {
             return Ok(());
         }
         let claimed = record.with_extension(CLAIMED);
         match std::fs::rename(&marker, &claimed) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(format!("Cannot claim {}: {error}", crate::paths::display_path(&marker))),
+            Err(error) => {
+                return Err(format!(
+                    "Cannot claim {}: {error}",
+                    crate::paths::display_path(&marker)
+                ));
+            }
         }
         let ended = match (job.state.as_str(), job.exit_code) {
             ("exited", Some(code)) => format!("exited {code}"),
@@ -283,19 +431,46 @@ impl Town {
         };
         let rfc3339 = &time::format_description::well_known::Rfc3339;
         let start = time::OffsetDateTime::parse(&job.started_at, rfc3339).ok();
-        let end = job.ended_at.as_deref().and_then(|at| time::OffsetDateTime::parse(at, rfc3339).ok());
+        let end = job
+            .ended_at
+            .as_deref()
+            .and_then(|at| time::OffsetDateTime::parse(at, rfc3339).ok());
         let elapsed = match (start, end) {
-            (Some(start), Some(end)) => format_duration(u64::try_from((end - start).whole_milliseconds()).unwrap_or_default()),
+            (Some(start), Some(end)) => format_duration(
+                u64::try_from((end - start).whole_milliseconds()).unwrap_or_default(),
+            ),
             _ => "?".to_string(),
         };
-        let command = job.command.lines().find(|line| !line.trim().is_empty()).unwrap_or_default().trim().to_string();
+        let command = job
+            .command
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let log = crate::paths::display_path(&job.output_path);
-        let text = crate::hands::text::job_ended_notice(&job.id, &job.machine, &ended, &elapsed, &command, &log);
+        let text = crate::hands::text::job_ended_notice(
+            &job.id,
+            &job.machine,
+            &ended,
+            &elapsed,
+            &command,
+            &log,
+        );
         // Everything in the notice comes from the finished record, its ids included, so a
         // notice sent again is the same letter.
-        let letter = hex::encode(crate::world::crypto::sha256(format!("job ended
-{}", record.to_string_lossy()).as_bytes()));
-        let nanos = end.or(start).map(time::OffsetDateTime::unix_timestamp_nanos).unwrap_or_default();
+        let letter = hex::encode(crate::world::crypto::sha256(
+            format!(
+                "job ended
+{}",
+                record.to_string_lossy()
+            )
+            .as_bytes(),
+        ));
+        let nanos = end
+            .or(start)
+            .map(time::OffsetDateTime::unix_timestamp_nanos)
+            .unwrap_or_default();
         let delivery = Delivery {
             id: format!("{nanos:024}-{}", &letter[..8]),
             from: "world".into(),
@@ -305,13 +480,27 @@ impl Town {
         };
         let delivered = match &home {
             None => self.deliver(resident, delivery).await,
-            Some(home) => self.mail_once(home, &letter, &Letter::Deliver { to: resident.to_string(), delivery }),
+            Some(home) => self.mail_once(
+                home,
+                &letter,
+                &Letter::Deliver {
+                    to: resident.to_string(),
+                    delivery,
+                },
+            ),
         };
         // Delivered, the claim becomes the record that it was; failed, it is owed again. A
         // delivery cut off between the two leaves the claim, owed again at the node's start.
-        let settled = if delivered.is_ok() { record.with_extension(DELIVERED) } else { marker };
+        let settled = if delivered.is_ok() {
+            record.with_extension(DELIVERED)
+        } else {
+            marker
+        };
         if let Err(error) = std::fs::rename(&claimed, &settled) {
-            (self.log)(format!("cannot settle {}: {error}", crate::paths::display_path(&claimed)));
+            (self.log)(format!(
+                "cannot settle {}: {error}",
+                crate::paths::display_path(&claimed)
+            ));
         }
         delivered
     }
@@ -332,8 +521,14 @@ impl Town {
             let scanned = dir.clone();
             match tokio::task::spawn_blocking(move || crate::run::reconcile(&scanned)).await {
                 Ok(Ok(_)) => {}
-                Ok(Err(error)) => (self.log)(format!("cannot reconcile the commands in {}: {error}", crate::paths::display_path(&dir))),
-                Err(error) => (self.log)(format!("reconciling {} stopped: {error}", crate::paths::display_path(&dir))),
+                Ok(Err(error)) => (self.log)(format!(
+                    "cannot reconcile the commands in {}: {error}",
+                    crate::paths::display_path(&dir)
+                )),
+                Err(error) => (self.log)(format!(
+                    "reconciling {} stopped: {error}",
+                    crate::paths::display_path(&dir)
+                )),
             }
             self.owed_ends(&dir, true).await;
         }
@@ -347,20 +542,36 @@ pub(super) fn move_waiting(from: &Path, to: &Path) -> Result<(), String> {
     let names: Vec<std::ffi::OsString> = match std::fs::read_dir(&source) {
         Ok(entries) => entries.flatten().map(|entry| entry.file_name()).collect(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("Cannot list {}: {error}", crate::paths::display_path(&source))),
+        Err(error) => {
+            return Err(format!(
+                "Cannot list {}: {error}",
+                crate::paths::display_path(&source)
+            ));
+        }
     };
     if names.is_empty() {
         return Ok(());
     }
     let target = to.join("inbox");
-    std::fs::create_dir_all(&target).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&target)))?;
+    std::fs::create_dir_all(&target).map_err(|error| {
+        format!(
+            "Cannot create {}: {error}",
+            crate::paths::display_path(&target)
+        )
+    })?;
     let mut moved = Vec::new();
     for name in names {
         if let Err(error) = std::fs::rename(source.join(&name), target.join(&name)) {
-            let failure = format!("Cannot move {}: {error}", crate::paths::display_path(&source.join(&name)));
+            let failure = format!(
+                "Cannot move {}: {error}",
+                crate::paths::display_path(&source.join(&name))
+            );
             for name in moved.iter().rev() {
                 if let Err(back) = std::fs::rename(target.join(name), source.join(name)) {
-                    return Err(format!("{failure}; and cannot move {} back: {back}", crate::paths::display_path(&target.join(name))));
+                    return Err(format!(
+                        "{failure}; and cannot move {} back: {back}",
+                        crate::paths::display_path(&target.join(name))
+                    ));
                 }
             }
             return Err(failure);
@@ -376,8 +587,10 @@ fn letter_body(letter: &Letter) -> Result<serde_json::Value, String> {
 
 /// Leaves a delivery waiting in a resident's queue directory.
 fn write_waiting(dir: &Path, delivery: &Delivery) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(dir)))?;
-    let bytes = serde_json::to_vec(delivery).map_err(|error| format!("Cannot encode a delivery: {error}"))?;
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(dir)))?;
+    let bytes = serde_json::to_vec(delivery)
+        .map_err(|error| format!("Cannot encode a delivery: {error}"))?;
     crate::world::write_atomic(&dir.join(format!("{}.json", delivery.id)), &bytes)
 }
 

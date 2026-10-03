@@ -375,7 +375,10 @@ impl ToolManifest {
     /// name `run`, so the groups come from the one that is published.
     pub fn contracts(tools: &[Tool], world: bool) -> Result<Vec<ToolContract>, String> {
         let entries: &[ToolManifestEntry] = if world { &WORLD_ENTRIES } else { &TOOL_ENTRIES };
-        let groups = entries.iter().map(|entry| (entry.name, entry.group)).collect::<BTreeMap<_, _>>();
+        let groups = entries
+            .iter()
+            .map(|entry| (entry.name, entry.group))
+            .collect::<BTreeMap<_, _>>();
         let mut seen = BTreeSet::new();
         let mut contracts = tools
             .iter()
@@ -590,10 +593,18 @@ mod tests {
     /// Every legal server configuration: each enabled set locally, and the World surface with
     /// each writer, for a resident and for a colleague.
     fn legal_configurations() -> Vec<ServerOptions> {
-        let mut configurations: Vec<ServerOptions> = legal_tool_sets().into_iter().map(ServerOptions::local).collect();
+        let mut configurations: Vec<ServerOptions> = legal_tool_sets()
+            .into_iter()
+            .map(ServerOptions::local)
+            .collect();
         for writer in [Writer::Edit, Writer::ApplyPatch] {
             for colleague in [false, true] {
-                configurations.push(ServerOptions { world: true, writer, colleague, ..ServerOptions::default() });
+                configurations.push(ServerOptions {
+                    world: true,
+                    writer,
+                    colleague,
+                    ..ServerOptions::default()
+                });
             }
         }
         configurations

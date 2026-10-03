@@ -32,12 +32,21 @@ impl Seen {
         let metadata = match std::fs::metadata(&self.path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-            Err(error) => return Err(format!("Cannot inspect {}: {error}", crate::paths::display_path(&self.path))),
+            Err(error) => {
+                return Err(format!(
+                    "Cannot inspect {}: {error}",
+                    crate::paths::display_path(&self.path)
+                ));
+            }
         };
         match &self.hash {
             Some(hash) => {
-                let bytes = std::fs::read(&self.path)
-                    .map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&self.path)))?;
+                let bytes = std::fs::read(&self.path).map_err(|error| {
+                    format!(
+                        "Cannot read {}: {error}",
+                        crate::paths::display_path(&self.path)
+                    )
+                })?;
                 Ok(&hex::encode(crate::world::crypto::sha256(&bytes)) != hash)
             }
             None => Ok(metadata.len() != self.size || modified(&metadata) != self.modified),
@@ -46,14 +55,32 @@ impl Seen {
 }
 
 /// The record of a file as it is now; `hash` when its whole content was shown.
-pub(crate) fn observe(path: &Path, whole: Option<&[u8]>, encoding: Option<&str>) -> Result<Seen, String> {
-    let metadata = std::fs::metadata(path).map_err(|error| format!("Cannot inspect {}: {error}", crate::paths::display_path(path)))?;
-    Ok(Seen { hash: whole.map(|bytes| hex::encode(crate::world::crypto::sha256(bytes))), ..measure(path, &metadata, encoding) })
+pub(crate) fn observe(
+    path: &Path,
+    whole: Option<&[u8]>,
+    encoding: Option<&str>,
+) -> Result<Seen, String> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        format!(
+            "Cannot inspect {}: {error}",
+            crate::paths::display_path(path)
+        )
+    })?;
+    Ok(Seen {
+        hash: whole.map(|bytes| hex::encode(crate::world::crypto::sha256(bytes))),
+        ..measure(path, &metadata, encoding)
+    })
 }
 
 /// The record of a file by its size and modification time, as `metadata` reports them.
 pub(crate) fn measure(path: &Path, metadata: &std::fs::Metadata, encoding: Option<&str>) -> Seen {
-    Seen { path: path.to_path_buf(), hash: None, size: metadata.len(), modified: modified(metadata), encoding: encoding.map(str::to_string) }
+    Seen {
+        path: path.to_path_buf(),
+        hash: None,
+        size: metadata.len(),
+        modified: modified(metadata),
+        encoding: encoding.map(str::to_string),
+    }
 }
 
 /// Appends what was seen to the resident's `seen` file.
@@ -61,11 +88,19 @@ pub(crate) fn record(resident_dir: &Path, seen: &[Seen]) -> Result<(), String> {
     if seen.is_empty() {
         return Ok(());
     }
-    std::fs::create_dir_all(resident_dir).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(resident_dir)))?;
+    std::fs::create_dir_all(resident_dir).map_err(|error| {
+        format!(
+            "Cannot create {}: {error}",
+            crate::paths::display_path(resident_dir)
+        )
+    })?;
     let path = resident_dir.join("seen");
     let mut lines = String::new();
     for entry in seen {
-        lines.push_str(&serde_json::to_string(entry).map_err(|error| format!("Cannot encode a seen line: {error}"))?);
+        lines.push_str(
+            &serde_json::to_string(entry)
+                .map_err(|error| format!("Cannot encode a seen line: {error}"))?,
+        );
         lines.push('\n');
     }
     std::fs::OpenOptions::new()
@@ -73,23 +108,38 @@ pub(crate) fn record(resident_dir: &Path, seen: &[Seen]) -> Result<(), String> {
         .append(true)
         .open(&path)
         .and_then(|mut file| file.write_all(lines.as_bytes()))
-        .map_err(|error| format!("Cannot append to {}: {error}", crate::paths::display_path(&path)))
+        .map_err(|error| {
+            format!(
+                "Cannot append to {}: {error}",
+                crate::paths::display_path(&path)
+            )
+        })
 }
 
 /// The latest record of `path` in a resident's `seen` file.
 pub(crate) fn latest(resident_dir: &Path, path: &Path) -> Option<Seen> {
     let text = std::fs::read_to_string(resident_dir.join("seen")).ok()?;
-    text.lines().rev().filter_map(|line| serde_json::from_str::<Seen>(line).ok()).find(|seen| same_path(&seen.path, path))
+    text.lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<Seen>(line).ok())
+        .find(|seen| same_path(&seen.path, path))
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
     if cfg!(windows) {
-        left.to_string_lossy().replace('\\', "/").eq_ignore_ascii_case(&right.to_string_lossy().replace('\\', "/"))
+        left.to_string_lossy()
+            .replace('\\', "/")
+            .eq_ignore_ascii_case(&right.to_string_lossy().replace('\\', "/"))
     } else {
         left == right
     }
 }
 
 fn modified(metadata: &std::fs::Metadata) -> Option<u128> {
-    metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|elapsed| elapsed.as_nanos())
+    metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|elapsed| elapsed.as_nanos())
 }

@@ -86,17 +86,28 @@ pub(crate) fn journals_dir(world_dir: &Path, town: &str) -> PathBuf {
 pub(crate) fn validate_name(name: &str) -> Result<(), String> {
     let valid = !name.is_empty()
         && name.len() <= 64
-        && name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         && !name.starts_with('-')
         && !name.ends_with('-');
-    if valid { Ok(()) } else { Err(format!("A journal name is lowercase words joined by hyphens, such as webrtc-weak-network; got \"{name}\".")) }
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "A journal name is lowercase words joined by hyphens, such as webrtc-weak-network; got \"{name}\"."
+        ))
+    }
 }
 
 pub(crate) fn descriptions(world_dir: &Path, town: &str, name: &str) -> Vec<Description> {
     let dir = journals_dir(world_dir, town).join(name).join("description");
     let mut files = json_files(&dir);
     files.sort();
-    files.iter().filter_map(|path| serde_json::from_slice(&std::fs::read(path).ok()?).ok()).collect()
+    files
+        .iter()
+        .filter_map(|path| serde_json::from_slice(&std::fs::read(path).ok()?).ok())
+        .collect()
 }
 
 /// Every entry of a journal, in time order.
@@ -108,15 +119,24 @@ pub(crate) fn entries(world_dir: &Path, town: &str, name: &str) -> Vec<Entry> {
         .flatten()
         .filter_map(|item| {
             let dir = item.path();
-            let stamp: Stamp = serde_json::from_slice(&std::fs::read(dir.join("entry.json")).ok()?).ok()?;
+            let stamp: Stamp =
+                serde_json::from_slice(&std::fs::read(dir.join("entry.json")).ok()?).ok()?;
             let body = dir.join("text.md");
             let text = std::fs::read_to_string(&body).unwrap_or_else(|error| {
-                format!("(the text of this entry cannot be read: {}: {error})", crate::paths::display_path(&body))
+                format!(
+                    "(the text of this entry cannot be read: {}: {error})",
+                    crate::paths::display_path(&body)
+                )
             });
             Some(Entry { stamp, text, dir })
         })
         .collect();
-    entries.sort_by(|left, right| left.stamp.at.cmp(&right.stamp.at).then_with(|| left.stamp.id.cmp(&right.stamp.id)));
+    entries.sort_by(|left, right| {
+        left.stamp
+            .at
+            .cmp(&right.stamp.at)
+            .then_with(|| left.stamp.id.cmp(&right.stamp.id))
+    });
     entries
 }
 
@@ -137,10 +157,16 @@ pub(crate) fn summaries(world_dir: &Path, town: &str) -> Result<Vec<JournalSumma
         .into_iter()
         .map(|slug| {
             let entries = entries(world_dir, town, &slug);
-            let writers: BTreeSet<&str> = entries.iter().map(|entry| entry.stamp.resident.as_str()).collect();
+            let writers: BTreeSet<&str> = entries
+                .iter()
+                .map(|entry| entry.stamp.resident.as_str())
+                .collect();
             let last = entries.last();
             JournalSummary {
-                description: descriptions(world_dir, town, &slug).pop().map(|description| description.text).unwrap_or_default(),
+                description: descriptions(world_dir, town, &slug)
+                    .pop()
+                    .map(|description| description.text)
+                    .unwrap_or_default(),
                 entries: entries.len(),
                 writers: writers.len(),
                 last_by: last.map(|entry| writer(&entry.stamp)),
@@ -154,7 +180,12 @@ pub(crate) fn summaries(world_dir: &Path, town: &str) -> Result<Vec<JournalSumma
 /// Reads a journal the way a model reads it: the head says which entries are shown, then the
 /// description, then the entries in time order with the World's stamp and who mentioned them
 /// later. When it does not all fit, the newest entries that fit are shown; `before` pages back.
-pub(crate) fn render(world_dir: &Path, town: &str, name: &str, before: Option<&str>) -> Result<String, String> {
+pub(crate) fn render(
+    world_dir: &Path,
+    town: &str,
+    name: &str,
+    before: Option<&str>,
+) -> Result<String, String> {
     validate_name(name)?;
     let all = entries(world_dir, town, name);
     let descriptions = descriptions(world_dir, town, name);
@@ -162,16 +193,28 @@ pub(crate) fn render(world_dir: &Path, town: &str, name: &str, before: Option<&s
         return Err(format!("The town {town} has no journal named {name}."));
     }
     let end = match before {
-        Some(id) => all.iter().position(|entry| entry.stamp.id == id).ok_or_else(|| format!("{name} has no entry {id}."))?,
+        Some(id) => all
+            .iter()
+            .position(|entry| entry.stamp.id == id)
+            .ok_or_else(|| format!("{name} has no entry {id}."))?,
         None => all.len(),
     };
     let mentioned = mentions(world_dir, town);
-    let blocks: Vec<String> = all[..end].iter().map(|entry| entry_block(entry, mentioned.get(&entry.stamp.id))).collect();
+    let blocks: Vec<String> = all[..end]
+        .iter()
+        .map(|entry| entry_block(entry, mentioned.get(&entry.stamp.id)))
+        .collect();
     let mut description = String::new();
     if let Some(last) = descriptions.last() {
         let _ = write!(description, "About: {}", last.text);
         if last.version > 1 {
-            let _ = write!(description, " (edited {} by {} on {})", &last.written_at[..last.written_at.len().min(10)], last.written_by, last.written_on);
+            let _ = write!(
+                description,
+                " (edited {} by {} on {})",
+                &last.written_at[..last.written_at.len().min(10)],
+                last.written_by,
+                last.written_on
+            );
         }
         description.push('\n');
     }
@@ -194,17 +237,39 @@ pub(crate) fn render(world_dir: &Path, town: &str, name: &str, before: Option<&s
         blocks[start] = cut;
     }
     let shown = &all[start..end];
-    let residents: BTreeSet<&str> = all.iter().map(|entry| entry.stamp.resident.as_str()).collect();
-    let hidden_attachments: usize = shown.iter().map(|entry| entry.stamp.attachments.len()).sum();
-    let range = if shown.is_empty() { "no entries".to_string() } else { format!("entries {}-{} of {}", start + 1, end, all.len()) };
+    let residents: BTreeSet<&str> = all
+        .iter()
+        .map(|entry| entry.stamp.resident.as_str())
+        .collect();
+    let hidden_attachments: usize = shown
+        .iter()
+        .map(|entry| entry.stamp.attachments.len())
+        .sum();
+    let range = if shown.is_empty() {
+        "no entries".to_string()
+    } else {
+        format!("entries {}-{} of {}", start + 1, end, all.len())
+    };
     let mut out = format!(
         "=== journal {name} · {town} ({range}; {} {}; {hidden_attachments} {} not shown) ===\n",
         residents.len(),
-        if residents.len() == 1 { "resident" } else { "residents" },
-        if hidden_attachments == 1 { "attachment" } else { "attachments" },
+        if residents.len() == 1 {
+            "resident"
+        } else {
+            "residents"
+        },
+        if hidden_attachments == 1 {
+            "attachment"
+        } else {
+            "attachments"
+        },
     );
     if start > 0 {
-        let _ = writeln!(out, "(earlier entries: fastctx journal read {name} --before {})", all[start].stamp.id);
+        let _ = writeln!(
+            out,
+            "(earlier entries: fastctx journal read {name} --before {})",
+            all[start].stamp.id
+        );
     }
     out.push_str(&description);
     for block in &blocks[start..end] {
@@ -221,7 +286,12 @@ fn entry_block(entry: &Entry, mentioned_by: Option<&Vec<String>>) -> String {
         (Some(model), _) => format!(" · model {model} (self-reported)"),
         (None, _) => String::new(),
     };
-    let mut out = format!("── {} · {}{model} · {}\n", minute(&stamp.at), writer(stamp), stamp.id);
+    let mut out = format!(
+        "── {} · {}{model} · {}\n",
+        minute(&stamp.at),
+        writer(stamp),
+        stamp.id
+    );
     out.push_str(entry.text.trim_end());
     out.push('\n');
     if !stamp.cites.is_empty() {
@@ -232,12 +302,19 @@ fn entry_block(entry: &Entry, mentioned_by: Option<&Vec<String>>) -> String {
             .attachments
             .iter()
             .map(|attachment| match &attachment.path {
-                Some(path) => format!("{} ({}, on {} at {path})", attachment.name, size(attachment.bytes), attachment.machine),
+                Some(path) => format!(
+                    "{} ({}, on {} at {path})",
+                    attachment.name,
+                    size(attachment.bytes),
+                    attachment.machine
+                ),
                 None => format!(
                     "{} ({}; {})",
                     attachment.name,
                     size(attachment.bytes),
-                    crate::paths::display_path(&entry.dir.join("attachments").join(&attachment.name))
+                    crate::paths::display_path(
+                        &entry.dir.join("attachments").join(&attachment.name)
+                    )
                 ),
             })
             .collect();
@@ -255,7 +332,10 @@ fn mentions(world_dir: &Path, town: &str) -> BTreeMap<String, Vec<String>> {
     for name in names(world_dir, town) {
         for entry in entries(world_dir, town, &name) {
             for cited in &entry.stamp.cites {
-                mentioned.entry(cited.clone()).or_default().push(entry.stamp.id.clone());
+                mentioned
+                    .entry(cited.clone())
+                    .or_default()
+                    .push(entry.stamp.id.clone());
             }
         }
     }
@@ -273,7 +353,9 @@ fn writer(stamp: &Stamp) -> String {
 }
 
 fn minute(at: &str) -> String {
-    at.get(..16).map(|text| text.replace('T', " ")).unwrap_or_else(|| at.to_string())
+    at.get(..16)
+        .map(|text| text.replace('T', " "))
+        .unwrap_or_else(|| at.to_string())
 }
 
 fn size(bytes: u64) -> String {
@@ -290,6 +372,9 @@ fn json_files(dir: &Path) -> Vec<PathBuf> {
         .flatten()
         .flatten()
         .map(|item| item.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .collect()
 }

@@ -373,7 +373,9 @@ fn keys<'a>(app: &WorldApp, m: &'a i18n::WorldMessages) -> Vec<(&'a str, &'a str
                         keys.push(("F2", m.key_reveal));
                     }
                     let multiline = match field.kind {
-                        FieldKind::Text => matches!(form.kind, FormKind::Description | FormKind::PrivateNote(_)),
+                        FieldKind::Text => {
+                            matches!(form.kind, FormKind::Description | FormKind::PrivateNote(_))
+                        }
                         FieldKind::What | FieldKind::Places => true,
                         _ => false,
                     };
@@ -423,10 +425,23 @@ fn keys<'a>(app: &WorldApp, m: &'a i18n::WorldMessages) -> Vec<(&'a str, &'a str
                 return vec![("Esc", m.back)];
             };
             if chat.client.is_none() {
-                return vec![("Tab", m.key_next), ("←→", m.key_select), ("Enter", m.open_resident), ("Esc", m.back)];
+                return vec![
+                    ("Tab", m.key_next),
+                    ("←→", m.key_select),
+                    ("Enter", m.open_resident),
+                    ("Esc", m.back),
+                ];
             }
-            let mut keys = vec![("Enter", m.send), ("Ctrl-J", m.key_newline), ("PgUp", m.key_scroll)];
-            if chat.client.as_ref().is_some_and(|client| client.transcript.busy) {
+            let mut keys = vec![
+                ("Enter", m.send),
+                ("Ctrl-J", m.key_newline),
+                ("PgUp", m.key_scroll),
+            ];
+            if chat
+                .client
+                .as_ref()
+                .is_some_and(|client| client.transcript.busy)
+            {
                 keys.push(("Ctrl-X", m.stop_turn));
             }
             keys.push(("Esc", m.back));

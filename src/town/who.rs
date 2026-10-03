@@ -115,7 +115,10 @@ pub(crate) fn is_here(state: &str) -> bool {
 
 /// Answers a query from this machine's records under `world_dir`.
 pub(crate) fn answer(world_dir: &Path, machine: &str, query: &Query) -> MachineAnswer {
-    let mut answer = MachineAnswer { machine: machine.to_string(), ..MachineAnswer::default() };
+    let mut answer = MachineAnswer {
+        machine: machine.to_string(),
+        ..MachineAnswer::default()
+    };
     let places = places(world_dir);
     if !query.ids.is_empty() {
         for (town, residents_dir) in &places {
@@ -127,7 +130,9 @@ pub(crate) fn answer(world_dir: &Path, machine: &str, query: &Query) -> MachineA
                 }
                 // A job asked for by its id, and whatever an asked-for resident is running here.
                 answer.jobs.extend(
-                    jobs(&dir, &id, town.as_deref()).into_iter().filter(|job| query.ids.contains(&job.id) || (asked && job.running())),
+                    jobs(&dir, &id, town.as_deref())
+                        .into_iter()
+                        .filter(|job| query.ids.contains(&job.id) || (asked && job.running())),
                 );
             }
         }
@@ -142,10 +147,17 @@ pub(crate) fn answer(world_dir: &Path, machine: &str, query: &Query) -> MachineA
             // At the World level a town shows as a count, its residents stay inside it.
             (None, Some(_)) => false,
         };
-        let mut count = TownCount { town: town.clone().unwrap_or_default(), here: 0, busy: 0 };
+        let mut count = TownCount {
+            town: town.clone().unwrap_or_default(),
+            here: 0,
+            busy: 0,
+        };
         for dir in subdirectories(residents_dir) {
             let id = file_name(&dir);
-            let running: Vec<JobFacts> = jobs(&dir, &id, town.as_deref()).into_iter().filter(JobFacts::running).collect();
+            let running: Vec<JobFacts> = jobs(&dir, &id, town.as_deref())
+                .into_iter()
+                .filter(JobFacts::running)
+                .collect();
             let facts = resident(&dir, false);
             if let Some(facts) = &facts
                 && is_here(&facts.now.state)
@@ -165,10 +177,7 @@ pub(crate) fn answer(world_dir: &Path, machine: &str, query: &Query) -> MachineA
             }
             answer.jobs.extend(running);
         }
-        if query.town.is_none()
-            && town.is_some()
-            && (count.here > 0 || query.all)
-        {
+        if query.town.is_none() && town.is_some() && (count.here > 0 || query.all) {
             answer.towns.push(count);
         }
     }
@@ -232,7 +241,12 @@ fn jobs(dir: &Path, resident: &str, town: Option<&str>) -> Vec<JobFacts> {
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .filter_map(|entry| read_job(&entry.path(), resident, town))
         .collect()
 }
@@ -284,5 +298,7 @@ fn subdirectories(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn file_name(path: &Path) -> String {
-    path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }

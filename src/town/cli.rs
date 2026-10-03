@@ -1,7 +1,7 @@
 //! `fastctx w`: who is in this town and what they are doing (`specs/world-town.md`).
 
-use super::who::{self, Query};
 use super::w::{self, View};
+use super::who::{self, Query};
 use crate::control::paths::ControlPaths;
 use crate::world::WorldPaths;
 use std::path::PathBuf;
@@ -25,45 +25,88 @@ pub(crate) struct WArgs {
 pub(crate) async fn run(args: WArgs) -> Result<ExitCode, String> {
     let paths = WorldPaths::from_control(&ControlPaths::discover()?);
     let config = crate::world::load_config(&paths)?.ok_or_else(|| {
-        "This machine is not in a World; fastctx w looks at the residents of a World's towns.".to_string()
+        "This machine is not in a World; fastctx w looks at the residents of a World's towns."
+            .to_string()
     })?;
-    let caller = std::env::var(RESIDENT_VARIABLE).ok().filter(|id| !id.is_empty());
-    let (ids, towns): (Vec<String>, Vec<String>) = args.targets.into_iter().partition(|target| is_id(target));
+    let caller = std::env::var(RESIDENT_VARIABLE)
+        .ok()
+        .filter(|id| !id.is_empty());
+    let (ids, towns): (Vec<String>, Vec<String>) =
+        args.targets.into_iter().partition(|target| is_id(target));
     let query = match (ids.is_empty(), towns.as_slice()) {
-        (false, []) => Query { ids, ..Query::default() },
-        (true, []) => Query { town: own_town(&paths.dir, &config.name, caller.as_deref()), all: args.all, ..Query::default() },
-        (true, [town]) => Query { town: Some(town.clone()), all: args.all, ..Query::default() },
-        _ => return Err("fastctx w takes one town, or one or more resident and job ids.".to_string()),
+        (false, []) => Query {
+            ids,
+            ..Query::default()
+        },
+        (true, []) => Query {
+            town: own_town(&paths.dir, &config.name, caller.as_deref()),
+            all: args.all,
+            ..Query::default()
+        },
+        (true, [town]) => Query {
+            town: Some(town.clone()),
+            all: args.all,
+            ..Query::default()
+        },
+        _ => {
+            return Err(
+                "fastctx w takes one town, or one or more resident and job ids.".to_string(),
+            );
+        }
     };
     // The node asks every other machine the query covers; without it, only this machine's
     // records can be read, and the view says so.
     let (answers, silent, alone) = match gather(&query).await? {
         Some((answers, silent)) => (answers, silent, false),
-        None => (vec![who::answer(&paths.dir, &config.name, &query)], Vec::new(), true),
+        None => (
+            vec![who::answer(&paths.dir, &config.name, &query)],
+            Vec::new(),
+            true,
+        ),
     };
-    let view = View { caller: caller.as_deref(), query: &query, answers: &answers, silent: &silent };
+    let view = View {
+        caller: caller.as_deref(),
+        query: &query,
+        answers: &answers,
+        silent: &silent,
+    };
     print!("{}", w::render(&view, time::OffsetDateTime::now_utc()));
     if alone {
-        println!("(only {}: its node is not running, so no other machine was asked)", config.name);
+        println!(
+            "(only {}: its node is not running, so no other machine was asked)",
+            config.name
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
 
 /// The answers of every machine the query covers, as the node gathers them; `None` when the
 /// node is not running.
-pub(crate) async fn gather(query: &Query) -> Result<Option<(Vec<who::MachineAnswer>, Vec<w::Silent>)>, String> {
+pub(crate) async fn gather(
+    query: &Query,
+) -> Result<Option<(Vec<who::MachineAnswer>, Vec<w::Silent>)>, String> {
     use crate::world::node::admin;
     let environment = crate::session::SessionEnvironment::capture()?;
     let endpoint = crate::runtime::node_admin_endpoint(&environment)?;
-    let request = admin::AdminRequest::Town { request: super::admin::TownRequest::Who { query: query.clone() } };
+    let request = admin::AdminRequest::Town {
+        request: super::admin::TownRequest::Who {
+            query: query.clone(),
+        },
+    };
     let wait = super::remote::calls::CALL_TIMEOUT + admin::ADMIN_TIMEOUT;
-    let Some(response) = admin::call(&endpoint, &request, wait).await? else { return Ok(None) };
+    let Some(response) = admin::call(&endpoint, &request, wait).await? else {
+        return Ok(None);
+    };
     if !response.ok {
-        return Err(response.error.unwrap_or_else(|| "The node refused the request.".to_string()));
+        return Err(response
+            .error
+            .unwrap_or_else(|| "The node refused the request.".to_string()));
     }
     let field = |name: &str| response.data.get(name).cloned().unwrap_or_default();
-    let answers = serde_json::from_value(field("answers")).map_err(|error| format!("Unreadable answers from the node: {error}"))?;
-    let silent = serde_json::from_value(field("silent")).map_err(|error| format!("Unreadable answers from the node: {error}"))?;
+    let answers = serde_json::from_value(field("answers"))
+        .map_err(|error| format!("Unreadable answers from the node: {error}"))?;
+    let silent = serde_json::from_value(field("silent"))
+        .map_err(|error| format!("Unreadable answers from the node: {error}"))?;
     Ok(Some((answers, silent)))
 }
 
@@ -78,7 +121,14 @@ fn own_town(world_dir: &std::path::Path, machine: &str, caller: Option<&str>) ->
         return Some(town).filter(|town| !town.is_empty());
     }
     let caller = caller?;
-    let found = who::answer(world_dir, machine, &Query { ids: vec![caller.to_string()], ..Query::default() });
+    let found = who::answer(
+        world_dir,
+        machine,
+        &Query {
+            ids: vec![caller.to_string()],
+            ..Query::default()
+        },
+    );
     who::current(found.residents.iter().collect()).and_then(|facts| facts.about.town.clone())
 }
 
@@ -231,7 +281,9 @@ one. Journal files are read-only copies; write only through fastctx journal.";
 
 pub(crate) async fn run_project(command: ProjectCommand) -> Result<ExitCode, String> {
     let (paths, machine) = enrolled()?;
-    let caller = std::env::var(RESIDENT_VARIABLE).ok().filter(|id| !id.is_empty());
+    let caller = std::env::var(RESIDENT_VARIABLE)
+        .ok()
+        .filter(|id| !id.is_empty());
     match command {
         ProjectCommand::List => {
             let towns = super::project::towns(&paths.dir);
@@ -249,11 +301,17 @@ pub(crate) async fn run_project(command: ProjectCommand) -> Result<ExitCode, Str
         }
         ProjectCommand::Show { town } => {
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
-            print!("{}", super::project::render_charter(&town, &super::project::charter(&paths.dir, &town)?));
+            print!(
+                "{}",
+                super::project::render_charter(&town, &super::project::charter(&paths.dir, &town)?)
+            );
         }
         ProjectCommand::Map { town } => {
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
-            print!("{}", super::project::render_map(&paths.dir, &town, &machine)?);
+            print!(
+                "{}",
+                super::project::render_map(&paths.dir, &town, &machine)?
+            );
         }
         ProjectCommand::Enter { town } => {
             let resident = caller.ok_or_else(|| {
@@ -263,9 +321,21 @@ pub(crate) async fn run_project(command: ProjectCommand) -> Result<ExitCode, Str
                 request: super::admin::TownRequest::Enter { resident, town },
             };
             let data = ask_node(&request).await?;
-            print!("{}", data.get("map").and_then(serde_json::Value::as_str).unwrap_or_default());
+            print!(
+                "{}",
+                data.get("map")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            );
         }
-        ProjectCommand::New { town, name, what, machines, place, canon } => {
+        ProjectCommand::New {
+            town,
+            name,
+            what,
+            machines,
+            place,
+            canon,
+        } => {
             let change = super::ledger::CharterChange {
                 name: Some(name),
                 what: Some(what),
@@ -276,7 +346,15 @@ pub(crate) async fn run_project(command: ProjectCommand) -> Result<ExitCode, Str
             };
             write_charter(town, change, true, caller).await?;
         }
-        ProjectCommand::Edit { town, name, what, machines, place, canon, no_canon } => {
+        ProjectCommand::Edit {
+            town,
+            name,
+            what,
+            machines,
+            place,
+            canon,
+            no_canon,
+        } => {
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
             let change = super::ledger::CharterChange {
                 name,
@@ -299,7 +377,10 @@ fn places(values: &[String]) -> Vec<super::project::Place> {
         .filter_map(|line| match line {
             [what, machine, path] => Some(super::project::Place {
                 what: what.clone(),
-                location: super::project::Location { machine: machine.clone(), path: path.clone() },
+                location: super::project::Location {
+                    machine: machine.clone(),
+                    path: path.clone(),
+                },
             }),
             _ => None,
         })
@@ -309,76 +390,151 @@ fn places(values: &[String]) -> Vec<super::project::Place> {
 /// `--canon MACHINE PATH`.
 fn location(values: &[String]) -> Option<super::project::Location> {
     match values {
-        [machine, path] => Some(super::project::Location { machine: machine.clone(), path: path.clone() }),
+        [machine, path] => Some(super::project::Location {
+            machine: machine.clone(),
+            path: path.clone(),
+        }),
         _ => None,
     }
 }
 
-async fn write_charter(town: String, change: super::ledger::CharterChange, opening: bool, resident: Option<String>) -> Result<(), String> {
+async fn write_charter(
+    town: String,
+    change: super::ledger::CharterChange,
+    opening: bool,
+    resident: Option<String>,
+) -> Result<(), String> {
     let request = crate::world::node::admin::AdminRequest::Town {
-        request: super::admin::TownRequest::Charter { town: town.clone(), change, opening, resident },
+        request: super::admin::TownRequest::Charter {
+            town: town.clone(),
+            change,
+            opening,
+            resident,
+        },
     };
     let data = ask_node(&request).await?;
-    let version = data.get("version").and_then(serde_json::Value::as_u64).unwrap_or_default();
+    let version = data
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
     println!("=== project {town}: charter version {version} written ===");
-    print!("{}", data.get("charter").and_then(serde_json::Value::as_str).unwrap_or_default());
+    print!(
+        "{}",
+        data.get("charter")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+    );
     Ok(())
 }
 
 pub(crate) async fn run_journal(command: JournalCommand) -> Result<ExitCode, String> {
     let (paths, machine) = enrolled()?;
-    let caller = std::env::var(RESIDENT_VARIABLE).ok().filter(|id| !id.is_empty());
+    let caller = std::env::var(RESIDENT_VARIABLE)
+        .ok()
+        .filter(|id| !id.is_empty());
     match command {
         JournalCommand::List { town } => {
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
             let summaries = super::journal::summaries(&paths.dir, &town)?;
             println!("=== journals of {town} ({}) ===", summaries.len());
             for summary in summaries {
-                println!("{}  {} ({} entries)", summary.slug, summary.description, summary.entries);
+                println!(
+                    "{}  {} ({} entries)",
+                    summary.slug, summary.description, summary.entries
+                );
             }
         }
         JournalCommand::Read { name, town, before } => {
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
-            print!("{}", super::journal::render(&paths.dir, &town, &name, before.as_deref())?);
+            print!(
+                "{}",
+                super::journal::render(&paths.dir, &town, &name, before.as_deref())?
+            );
         }
-        JournalCommand::Add { name, file, description, cites, attachments, attach_from, town } => {
+        JournalCommand::Add {
+            name,
+            file,
+            description,
+            cites,
+            attachments,
+            attach_from,
+            town,
+        } => {
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
             let text = if file.as_os_str() == "-" {
-                std::io::read_to_string(std::io::stdin()).map_err(|error| format!("Cannot read the draft from standard input: {error}"))?
+                std::io::read_to_string(std::io::stdin()).map_err(|error| {
+                    format!("Cannot read the draft from standard input: {error}")
+                })?
             } else {
-                std::fs::read_to_string(&file).map_err(|error| format!("Cannot read the draft {}: {error}", crate::paths::display_path(&file)))?
+                std::fs::read_to_string(&file).map_err(|error| {
+                    format!(
+                        "Cannot read the draft {}: {error}",
+                        crate::paths::display_path(&file)
+                    )
+                })?
             };
             // The node reads the attachments, from where this command was run.
             let attachments = attachments
                 .iter()
-                .map(|path| std::path::absolute(path).map_err(|error| format!("Cannot resolve {}: {error}", path.display())))
+                .map(|path| {
+                    std::path::absolute(path)
+                        .map_err(|error| format!("Cannot resolve {}: {error}", path.display()))
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             // A file named on this machine is found from here, like one attached with --attach.
             let remote_attachments = attach_from
                 .chunks(2)
                 .map(|pair| {
                     let path = if pair[0] == machine {
-                        let absolute = std::path::absolute(&pair[1]).map_err(|error| format!("Cannot resolve {}: {error}", pair[1]))?;
+                        let absolute = std::path::absolute(&pair[1])
+                            .map_err(|error| format!("Cannot resolve {}: {error}", pair[1]))?;
                         crate::paths::display_path(&absolute)
                     } else {
                         pair[1].clone()
                     };
-                    Ok(super::ledger::RemoteFile { machine: pair[0].clone(), path })
+                    Ok(super::ledger::RemoteFile {
+                        machine: pair[0].clone(),
+                        path,
+                    })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            let draft = super::ledger::EntryDraft { town: town.clone(), journal: name.clone(), text, description, cites, attachments, remote_attachments };
-            let request = crate::world::node::admin::AdminRequest::Town { request: super::admin::TownRequest::JournalAdd { draft, resident: caller } };
+            let draft = super::ledger::EntryDraft {
+                town: town.clone(),
+                journal: name.clone(),
+                text,
+                description,
+                cites,
+                attachments,
+                remote_attachments,
+            };
+            let request = crate::world::node::admin::AdminRequest::Town {
+                request: super::admin::TownRequest::JournalAdd {
+                    draft,
+                    resident: caller,
+                },
+            };
             let data = ask_node(&request).await?;
-            let entry = data.get("entry").and_then(serde_json::Value::as_str).unwrap_or_default();
+            let entry = data
+                .get("entry")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
             println!("=== journal {name} · {town}: entry {entry} added ===");
         }
         JournalCommand::Describe { name, text, town } => {
             let town = chosen_town(&paths.dir, &machine, caller.as_deref(), town)?;
             let request = crate::world::node::admin::AdminRequest::Town {
-                request: super::admin::TownRequest::Describe { town: town.clone(), journal: name.clone(), text, resident: caller },
+                request: super::admin::TownRequest::Describe {
+                    town: town.clone(),
+                    journal: name.clone(),
+                    text,
+                    resident: caller,
+                },
             };
             let data = ask_node(&request).await?;
-            let version = data.get("version").and_then(serde_json::Value::as_u64).unwrap_or_default();
+            let version = data
+                .get("version")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default();
             println!("=== journal {name} · {town}: description version {version} written ===");
         }
     }
@@ -387,30 +543,53 @@ pub(crate) async fn run_journal(command: JournalCommand) -> Result<ExitCode, Str
 
 /// The run engine's end hook: tells the node that the job whose record is given has ended.
 pub(crate) async fn run_job_ended(record: std::path::PathBuf) -> Result<ExitCode, String> {
-    let request = crate::world::node::admin::AdminRequest::Town { request: super::admin::TownRequest::JobEnded { record } };
+    let request = crate::world::node::admin::AdminRequest::Town {
+        request: super::admin::TownRequest::JobEnded { record },
+    };
     ask_node(&request).await?;
     Ok(ExitCode::SUCCESS)
 }
 
 fn enrolled() -> Result<(WorldPaths, String), String> {
     let paths = WorldPaths::from_control(&ControlPaths::discover()?);
-    let config = crate::world::load_config(&paths)?
-        .ok_or_else(|| "This machine is not in a World; projects and journals live in a World's towns.".to_string())?;
+    let config = crate::world::load_config(&paths)?.ok_or_else(|| {
+        "This machine is not in a World; projects and journals live in a World's towns.".to_string()
+    })?;
     Ok((paths, config.name))
 }
 
 /// The town named on the command line, else the caller's own.
-fn chosen_town(world_dir: &std::path::Path, machine: &str, caller: Option<&str>, named: Option<String>) -> Result<String, String> {
+fn chosen_town(
+    world_dir: &std::path::Path,
+    machine: &str,
+    caller: Option<&str>,
+    named: Option<String>,
+) -> Result<String, String> {
     named
         .or_else(|| own_town(world_dir, machine, caller))
         .ok_or_else(|| "You are outside every town; name one. fastctx project list shows the towns on this machine.".to_string())
 }
 
-async fn ask_node(request: &crate::world::node::admin::AdminRequest) -> Result<serde_json::Value, String> {
+async fn ask_node(
+    request: &crate::world::node::admin::AdminRequest,
+) -> Result<serde_json::Value, String> {
     let environment = crate::session::SessionEnvironment::capture()?;
     let endpoint = crate::runtime::node_admin_endpoint(&environment)?;
-    let response = crate::world::node::admin::call(&endpoint, request, crate::world::node::admin::ADMIN_TIMEOUT)
-        .await?
-        .ok_or_else(|| "The FastCtx node service is not running on this machine; run 'fastctx node status'.".to_string())?;
-    if response.ok { Ok(response.data) } else { Err(response.error.unwrap_or_else(|| "The node refused the request.".to_string())) }
+    let response = crate::world::node::admin::call(
+        &endpoint,
+        request,
+        crate::world::node::admin::ADMIN_TIMEOUT,
+    )
+    .await?
+    .ok_or_else(|| {
+        "The FastCtx node service is not running on this machine; run 'fastctx node status'."
+            .to_string()
+    })?;
+    if response.ok {
+        Ok(response.data)
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "The node refused the request.".to_string()))
+    }
 }

@@ -71,24 +71,44 @@ impl TownRequest {
 
 pub(crate) async fn handle(town: &Arc<Town>, request: TownRequest) -> Result<Value, String> {
     match request {
-        TownRequest::Enter { resident, town: name } => Ok(json!({ "map": town.enter(&resident, &name)? })),
+        TownRequest::Enter {
+            resident,
+            town: name,
+        } => Ok(json!({ "map": town.enter(&resident, &name)? })),
         TownRequest::Say { resident, text } => {
             let machine = town.locate(&resident).await?;
             if machine == town.machine() {
                 let (spoken, turn) = town.say_as_user(&resident, &text).await?;
                 return Ok(json!({ "landed": landed(spoken), "turn": turn }));
             }
-            let outcome = town.call_town(&machine, "talk_say", json!(SayCall { resident, text })).await;
+            let outcome = town
+                .call_town(&machine, "talk_say", json!(SayCall { resident, text }))
+                .await;
             if outcome.status != "ok" {
                 return Err(outcome_error(&outcome));
             }
             Ok(json!({ "landed": outcome.facts.get("landed"), "turn": outcome.facts.get("turn") }))
         }
         TownRequest::Watch { .. } => Err("A watch streams; it is not answered once.".to_string()),
-        TownRequest::Open { agent, town: place, words, node } => match node.filter(|node| node != town.machine()) {
+        TownRequest::Open {
+            agent,
+            town: place,
+            words,
+            node,
+        } => match node.filter(|node| node != town.machine()) {
             None => Ok(json!({ "resident": town.open_resident(&agent, place, &words).await? })),
             Some(machine) => {
-                let outcome = town.call_town(&machine, "talk_open", json!(OpenCall { agent, town: place, words })).await;
+                let outcome = town
+                    .call_town(
+                        &machine,
+                        "talk_open",
+                        json!(OpenCall {
+                            agent,
+                            town: place,
+                            words
+                        }),
+                    )
+                    .await;
                 if outcome.status != "ok" {
                     return Err(outcome_error(&outcome));
                 }
@@ -100,7 +120,9 @@ pub(crate) async fn handle(town: &Arc<Town>, request: TownRequest) -> Result<Val
             if machine == town.machine() {
                 return Ok(json!({ "stopped": town.interrupt(&resident).await? }));
             }
-            let outcome = town.call_town(&machine, "talk_stop", json!(StopCall { resident })).await;
+            let outcome = town
+                .call_town(&machine, "talk_stop", json!(StopCall { resident }))
+                .await;
             if outcome.status != "ok" {
                 return Err(outcome_error(&outcome));
             }
@@ -114,14 +136,30 @@ pub(crate) async fn handle(town: &Arc<Town>, request: TownRequest) -> Result<Val
             let (answers, silent) = town.gather(&query).await;
             Ok(json!({ "answers": answers, "silent": silent }))
         }
-        TownRequest::Charter { town: name, change, opening, resident } => {
-            let charter = town.write_charter(&name, resident.as_deref(), change, opening).await?;
-            Ok(json!({ "charter": super::project::render_charter(&name, &charter), "version": charter.version }))
+        TownRequest::Charter {
+            town: name,
+            change,
+            opening,
+            resident,
+        } => {
+            let charter = town
+                .write_charter(&name, resident.as_deref(), change, opening)
+                .await?;
+            Ok(
+                json!({ "charter": super::project::render_charter(&name, &charter), "version": charter.version }),
+            )
         }
-        TownRequest::JournalAdd { draft, resident } => Ok(json!({ "entry": town.add_entry(resident.as_deref(), draft).await? })),
-        TownRequest::Describe { town: name, journal, text, resident } => {
-            Ok(json!({ "version": town.describe_journal(resident.as_deref(), &name, &journal, &text).await? }))
+        TownRequest::JournalAdd { draft, resident } => {
+            Ok(json!({ "entry": town.add_entry(resident.as_deref(), draft).await? }))
         }
+        TownRequest::Describe {
+            town: name,
+            journal,
+            text,
+            resident,
+        } => Ok(
+            json!({ "version": town.describe_journal(resident.as_deref(), &name, &journal, &text).await? }),
+        ),
     }
 }
 
@@ -129,7 +167,9 @@ pub(crate) async fn handle(town: &Arc<Town>, request: TownRequest) -> Result<Val
 /// machine is watched here; one living elsewhere through a subscription to its machine. Ends
 /// when the watcher goes away or the resident's events end.
 pub(crate) async fn stream(town: &Arc<Town>, request: TownRequest, connection: BoxedStream) {
-    let TownRequest::Watch { resident } = request else { return };
+    let TownRequest::Watch { resident } = request else {
+        return;
+    };
     let (mut reader, mut writer) = tokio::io::split(connection);
     // A watcher sends nothing after its request; reading returns only when it goes away.
     let mut gone = [0_u8; 1];
@@ -144,7 +184,13 @@ pub(crate) async fn stream(town: &Arc<Town>, request: TownRequest, connection: B
         let mut watch = match town.watch_elsewhere(&machine, &resident).await {
             Ok(watch) => watch,
             Err(reason) => {
-                let _ = send(&mut writer, &TalkEvent::Gone { reason: format!("{machine}: {reason}") }).await;
+                let _ = send(
+                    &mut writer,
+                    &TalkEvent::Gone {
+                        reason: format!("{machine}: {reason}"),
+                    },
+                )
+                .await;
                 return;
             }
         };
@@ -188,7 +234,10 @@ pub(crate) async fn stream(town: &Arc<Town>, request: TownRequest, connection: B
     }
 }
 
-async fn send(writer: &mut tokio::io::WriteHalf<BoxedStream>, event: &TalkEvent) -> Result<(), String> {
+async fn send(
+    writer: &mut tokio::io::WriteHalf<BoxedStream>,
+    event: &TalkEvent,
+) -> Result<(), String> {
     let bytes = serde_json::to_vec(event).map_err(|error| error.to_string())?;
     crate::world::node::admin::write_frame(writer, &bytes).await
 }

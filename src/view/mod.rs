@@ -67,7 +67,12 @@ struct Reading {
 
 impl Reading {
     fn of(blocks: Vec<Block>, complete: bool, content: bool) -> Self {
-        Self { blocks, complete, content, encoding: None }
+        Self {
+            blocks,
+            complete,
+            content,
+            encoding: None,
+        }
     }
 }
 
@@ -77,7 +82,9 @@ pub fn run(args: &ViewArgs) -> Result<ExitCode, String> {
     let node = node_name()?;
     let (failed, shown) = view(args, &node, &mut std::io::stdout().lock())?;
     if let Err(error) = remember(shown) {
-        eprintln!("fastctx view: cannot record what was seen, so a later whole-file write cannot check whether these files changed since: {error}");
+        eprintln!(
+            "fastctx view: cannot record what was seen, so a later whole-file write cannot check whether these files changed since: {error}"
+        );
     }
     Ok(if failed {
         ExitCode::FAILURE
@@ -98,26 +105,40 @@ pub fn write(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<boo
 /// its size and modification time are still those it had when opened; otherwise, and for a
 /// file shown in part, by that earlier size and time, which a later whole-file write compares.
 fn remember(shown: Vec<(Seen, bool)>) -> Result<(), String> {
-    let Some(resident) = std::env::var(crate::town::session::RESIDENT_VARIABLE).ok().filter(|id| !id.is_empty()) else {
+    let Some(resident) = std::env::var(crate::town::session::RESIDENT_VARIABLE)
+        .ok()
+        .filter(|id| !id.is_empty())
+    else {
         return Ok(());
     };
-    let paths = crate::world::WorldPaths::from_control(&crate::control::paths::ControlPaths::discover()?);
+    let paths =
+        crate::world::WorldPaths::from_control(&crate::control::paths::ControlPaths::discover()?);
     let config = crate::world::load_config(&paths)?.ok_or("this machine is not in a World")?;
-    let query = crate::town::who::Query { ids: vec![resident.clone()], ..Default::default() };
+    let query = crate::town::who::Query {
+        ids: vec![resident.clone()],
+        ..Default::default()
+    };
     let found = crate::town::who::answer(&paths.dir, &config.name, &query);
     // A resident of this machine is wherever its records are now; one living on another
     // machine has here only the directory of the town its `run` named.
     let dir = match crate::town::who::current(found.residents.iter().collect()) {
         Some(facts) => facts.dir.clone(),
         None => {
-            let town = std::env::var(crate::town::cli::TOWN_VARIABLE).ok().filter(|town| !town.is_empty());
+            let town = std::env::var(crate::town::cli::TOWN_VARIABLE)
+                .ok()
+                .filter(|town| !town.is_empty());
             crate::town::records::resident_dir(&paths.dir, town.as_deref(), &resident)
         }
     };
     let mut records = Vec::with_capacity(shown.len());
     for (opened, whole) in shown {
         if whole {
-            let bytes = fs::read(&opened.path).map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&opened.path)))?;
+            let bytes = fs::read(&opened.path).map_err(|error| {
+                format!(
+                    "Cannot read {}: {error}",
+                    crate::paths::display_path(&opened.path)
+                )
+            })?;
             let now = seen::observe(&opened.path, Some(&bytes), opened.encoding.as_deref())?;
             if (now.size, now.modified) == (opened.size, opened.modified) {
                 records.push(now);
@@ -131,7 +152,11 @@ fn remember(shown: Vec<(Seen, bool)>) -> Result<(), String> {
 
 /// Shows the files, and returns whether any failed and, for each file shown, the file as it
 /// was when opened and whether all of its content was shown.
-fn view(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<(bool, Vec<(Seen, bool)>), String> {
+fn view(
+    args: &ViewArgs,
+    node: &str,
+    output: &mut impl Write,
+) -> Result<(bool, Vec<(Seen, bool)>), String> {
     let paths = args::paths(args)?;
     let mut entries: Vec<_> = paths.into_iter().map(|path| entry(path, node)).collect();
     let count = entries.len();
@@ -148,7 +173,15 @@ fn view(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<(bool, V
         let available = remaining + entries[index].fallback.chars().count();
         let result = read(&entries[index], args, available);
         match result {
-            Ok((Reading { blocks, complete, content, encoding }, opened)) if !blocks.is_empty() => {
+            Ok((
+                Reading {
+                    blocks,
+                    complete,
+                    content,
+                    encoding,
+                },
+                opened,
+            )) if !blocks.is_empty() => {
                 let pictures: Vec<_> = entries
                     .iter()
                     .flat_map(|entry| &entry.blocks)
@@ -165,9 +198,13 @@ fn view(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<(bool, V
                 let before_resizing = resizing.then(|| entries.clone());
                 entries[index].blocks = blocks;
                 entries[index].shown = true;
-                entries[index].opened = Some(Seen { encoding: encoding.map(str::to_string), ..opened });
+                entries[index].opened = Some(Seen {
+                    encoding: encoding.map(str::to_string),
+                    ..opened
+                });
                 // A range of lines or pages is not the whole file, even when all of it fits.
-                entries[index].whole = complete && content && args.lines.is_none() && args.pages.is_none();
+                entries[index].whole =
+                    complete && content && args.lines.is_none() && args.pages.is_none();
                 shrink_images(&mut entries);
                 let cost = entries
                     .iter()
@@ -331,12 +368,18 @@ fn entry(path: PathBuf, node: &str) -> Entry {
 fn read(entry: &Entry, args: &ViewArgs, budget: usize) -> Result<(Reading, Seen), String> {
     let (file, metadata) = open_regular(&entry.path)?;
     // Recorded absolute, as the write tools name files.
-    let absolute = std::path::absolute(&entry.path).map_err(|error| format!("Cannot resolve path: {error}"))?;
+    let absolute = std::path::absolute(&entry.path)
+        .map_err(|error| format!("Cannot resolve path: {error}"))?;
     let opened = seen::measure(&absolute, &metadata, None);
     Ok((decode(entry, args, budget, file)?, opened))
 }
 
-fn decode(entry: &Entry, args: &ViewArgs, budget: usize, mut file: File) -> Result<Reading, String> {
+fn decode(
+    entry: &Entry,
+    args: &ViewArgs,
+    budget: usize,
+    mut file: File,
+) -> Result<Reading, String> {
     let mut prefix = [0_u8; 512];
     let length = file.read(&mut prefix).map_err(|error| io_error(&error))?;
     file.rewind().map_err(|error| io_error(&error))?;
@@ -348,7 +391,8 @@ fn decode(entry: &Entry, args: &ViewArgs, budget: usize, mut file: File) -> Resu
             .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
     {
         #[cfg(feature = "pdf")]
-        return pdf::read(file, &entry.subject, entry.bytes, args, budget).map(|(blocks, complete)| Reading::of(blocks, complete, true));
+        return pdf::read(file, &entry.subject, entry.bytes, args, budget)
+            .map(|(blocks, complete)| Reading::of(blocks, complete, true));
         #[cfg(not(feature = "pdf"))]
         return Err("PDF support is not enabled in this build.".to_string());
     }
@@ -383,11 +427,15 @@ fn decode(entry: &Entry, args: &ViewArgs, budget: usize, mut file: File) -> Resu
         OpenedText::Text(mut reader) => {
             let total = reader.total_lines;
             let window = text::TextWindow::read(|| reader.next_char(), args.lines, budget, total)?;
-            let reading = match window.fit(&entry.subject, entry.bytes, reader.fact.as_deref(), budget) {
-                Some((text, complete)) => Reading::of(vec![Block::Text(text)], complete, true),
-                None => Reading::of(Vec::new(), false, true),
-            };
-            Ok(Reading { encoding: Some(reader.label()), ..reading })
+            let reading =
+                match window.fit(&entry.subject, entry.bytes, reader.fact.as_deref(), budget) {
+                    Some((text, complete)) => Reading::of(vec![Block::Text(text)], complete, true),
+                    None => Reading::of(Vec::new(), false, true),
+                };
+            Ok(Reading {
+                encoding: Some(reader.label()),
+                ..reading
+            })
         }
     }
 }

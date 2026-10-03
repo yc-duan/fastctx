@@ -22,13 +22,27 @@ pub(crate) enum TalkEvent {
         #[serde(default)]
         item: Option<String>,
     },
-    TurnStarted { turn: String },
+    TurnStarted {
+        turn: String,
+    },
     /// A piece of the text the model is writing.
-    Delta { item: String, text: String },
+    Delta {
+        item: String,
+        text: String,
+    },
     /// A finished message of the model.
-    Message { item: String, text: String },
+    Message {
+        item: String,
+        text: String,
+    },
     /// A tool started (`done` false) or ended (`done` true).
-    Tool { item: String, name: String, summary: String, done: bool, failed: bool },
+    Tool {
+        item: String,
+        name: String,
+        summary: String,
+        done: bool,
+        failed: bool,
+    },
     /// A turn ended: `completed`, `failed` or `interrupted`, and why when it did not complete
     /// and the host or the World knows why.
     TurnEnded {
@@ -38,14 +52,20 @@ pub(crate) enum TalkEvent {
         reason: Option<String>,
     },
     /// Its state changed: busy, idle, asleep, left.
-    State { state: String },
+    State {
+        state: String,
+    },
     /// Something its host reported about the session itself rather than its work: a retry, a
     /// safety review holding the model's output, tools that did not start.
-    Health { text: String },
+    Health {
+        text: String,
+    },
     /// Everything before this came from the history; everything after happens now.
     Live,
     /// The watched resident does not exist here, or the watch cannot continue.
-    Gone { reason: String },
+    Gone {
+        reason: String,
+    },
 }
 
 /// What a watcher already got from the history. A watch registers before it reads the
@@ -64,7 +84,13 @@ impl HistoryKeys {
         let mut keys = Self::default();
         for event in history {
             match event {
-                TalkEvent::Message { item, .. } | TalkEvent::Tool { item, done: true, .. } | TalkEvent::Words { item: Some(item), .. } => {
+                TalkEvent::Message { item, .. }
+                | TalkEvent::Tool {
+                    item, done: true, ..
+                }
+                | TalkEvent::Words {
+                    item: Some(item), ..
+                } => {
                     keys.items.insert(item.clone());
                 }
                 TalkEvent::TurnEnded { turn, .. } => {
@@ -82,8 +108,12 @@ impl HistoryKeys {
             TalkEvent::Message { item, .. }
             | TalkEvent::Tool { item, .. }
             | TalkEvent::Delta { item, .. }
-            | TalkEvent::Words { item: Some(item), .. } => self.items.contains(item),
-            TalkEvent::TurnStarted { turn } | TalkEvent::TurnEnded { turn, .. } => self.ended.contains(turn),
+            | TalkEvent::Words {
+                item: Some(item), ..
+            } => self.items.contains(item),
+            TalkEvent::TurnStarted { turn } | TalkEvent::TurnEnded { turn, .. } => {
+                self.ended.contains(turn)
+            }
             _ => false,
         }
     }
@@ -93,13 +123,27 @@ impl HistoryKeys {
 /// that just started. Items without anything to show (reasoning summaries are not shown) give
 /// nothing.
 pub(crate) fn codex_item(item: &Value, done: bool) -> Option<TalkEvent> {
-    let id = item.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let kind = item.get("type").and_then(Value::as_str).unwrap_or_default();
-    let text = |key: &str| item.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
-    let failed = matches!(item.get("status").and_then(Value::as_str), Some("failed" | "declined"))
-        || item.get("error").is_some_and(|error| !error.is_null());
+    let text = |key: &str| {
+        item.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let failed = matches!(
+        item.get("status").and_then(Value::as_str),
+        Some("failed" | "declined")
+    ) || item.get("error").is_some_and(|error| !error.is_null());
     match kind {
-        "agentMessage" if done => Some(TalkEvent::Message { item: id, text: text("text") }),
+        "agentMessage" if done => Some(TalkEvent::Message {
+            item: id,
+            text: text("text"),
+        }),
         "agentMessage" => None,
         "userMessage" if done => {
             let words: Vec<&str> = item
@@ -110,14 +154,33 @@ pub(crate) fn codex_item(item: &Value, done: bool) -> Option<TalkEvent> {
                 .filter_map(|part| part.get("text").and_then(Value::as_str))
                 .collect();
             let (from, text) = speaker(&words.join("\n"));
-            Some(TalkEvent::Words { from, text, item: Some(id) })
+            Some(TalkEvent::Words {
+                from,
+                text,
+                item: Some(id),
+            })
         }
         "userMessage" => None,
-        "commandExecution" => Some(TalkEvent::Tool { item: id, name: "shell".into(), summary: first_line(&text("command")), done, failed }),
+        "commandExecution" => Some(TalkEvent::Tool {
+            item: id,
+            name: "shell".into(),
+            summary: first_line(&text("command")),
+            done,
+            failed,
+        }),
         "mcpToolCall" => {
             let name = format!("{}.{}", text("server"), text("tool"));
-            let summary = item.get("arguments").map(arguments_summary).unwrap_or_default();
-            Some(TalkEvent::Tool { item: id, name, summary, done, failed })
+            let summary = item
+                .get("arguments")
+                .map(arguments_summary)
+                .unwrap_or_default();
+            Some(TalkEvent::Tool {
+                item: id,
+                name,
+                summary,
+                done,
+                failed,
+            })
         }
         "fileChange" => {
             let files: Vec<String> = item
@@ -125,13 +188,36 @@ pub(crate) fn codex_item(item: &Value, done: bool) -> Option<TalkEvent> {
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .filter_map(|change| change.get("path").and_then(Value::as_str).map(str::to_string))
+                .filter_map(|change| {
+                    change
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
                 .collect();
-            Some(TalkEvent::Tool { item: id, name: "apply_patch".into(), summary: files.join(", "), done, failed })
+            Some(TalkEvent::Tool {
+                item: id,
+                name: "apply_patch".into(),
+                summary: files.join(", "),
+                done,
+                failed,
+            })
         }
-        "webSearch" => Some(TalkEvent::Tool { item: id, name: "web_search".into(), summary: text("query"), done, failed }),
+        "webSearch" => Some(TalkEvent::Tool {
+            item: id,
+            name: "web_search".into(),
+            summary: text("query"),
+            done,
+            failed,
+        }),
         "" | "reasoning" | "contextCompaction" => None,
-        other => Some(TalkEvent::Tool { item: id, name: other.to_string(), summary: String::new(), done, failed }),
+        other => Some(TalkEvent::Tool {
+            item: id,
+            name: other.to_string(),
+            summary: String::new(),
+            done,
+            failed,
+        }),
     }
 }
 
@@ -140,17 +226,41 @@ pub(crate) fn codex_item(item: &Value, done: bool) -> Option<TalkEvent> {
 /// turn as interrupted, so it is left open.
 pub(crate) fn codex_history(thread: &Value, running: Option<&str>) -> Vec<TalkEvent> {
     let mut events = Vec::new();
-    let turns = thread.pointer("/thread/turns").and_then(Value::as_array).cloned().unwrap_or_default();
+    let turns = thread
+        .pointer("/thread/turns")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     for turn in turns {
-        let id = turn.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+        let id = turn
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         events.push(TalkEvent::TurnStarted { turn: id.clone() });
-        for item in turn.get("items").and_then(Value::as_array).into_iter().flatten() {
+        for item in turn
+            .get("items")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             events.extend(codex_item(item, true));
         }
-        let status = turn.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string();
+        let status = turn
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
         if status != "inProgress" && running != Some(id.as_str()) {
-            let reason = turn.pointer("/error/message").and_then(Value::as_str).map(str::to_string);
-            events.push(TalkEvent::TurnEnded { turn: id, status, reason });
+            let reason = turn
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            events.push(TalkEvent::TurnEnded {
+                turn: id,
+                status,
+                reason,
+            });
         }
     }
     events
@@ -180,5 +290,9 @@ fn arguments_summary(arguments: &Value) -> String {
 fn first_line(text: &str) -> String {
     let mut lines = text.lines().filter(|line| !line.trim().is_empty());
     let first = lines.next().unwrap_or_default().trim().to_string();
-    if lines.next().is_some() { format!("{first} …") } else { first }
+    if lines.next().is_some() {
+        format!("{first} …")
+    } else {
+        first
+    }
 }

@@ -44,14 +44,31 @@ impl FastCtxServer {
             open_world_hint = false
         )
     )]
-    async fn ask_colleague(&self, Parameters(request): Parameters<AskColleagueRequest>) -> CallToolResult {
+    async fn ask_colleague(
+        &self,
+        Parameters(request): Parameters<AskColleagueRequest>,
+    ) -> CallToolResult {
         let (town, requester) = match self.resident_for_tools() {
             Ok(found) => found,
             Err(error) => return failed(error),
         };
-        let node = request.node.as_deref().map(str::trim).filter(|node| !node.is_empty());
-        match town.ask_for(&requester, node, &request.prompt, request.description.trim()).await {
-            Ok(asked) => CallToolResult::success(vec![ContentBlock::text(text::colleague_started(&asked.id, &asked.machine))]),
+        let node = request
+            .node
+            .as_deref()
+            .map(str::trim)
+            .filter(|node| !node.is_empty());
+        match town
+            .ask_for(
+                &requester,
+                node,
+                &request.prompt,
+                request.description.trim(),
+            )
+            .await
+        {
+            Ok(asked) => CallToolResult::success(vec![ContentBlock::text(
+                text::colleague_started(&asked.id, &asked.machine),
+            )]),
             Err(error) => failed(error),
         }
     }
@@ -66,7 +83,10 @@ impl FastCtxServer {
             open_world_hint = false
         )
     )]
-    async fn message_colleague(&self, Parameters(request): Parameters<MessageColleagueRequest>) -> CallToolResult {
+    async fn message_colleague(
+        &self,
+        Parameters(request): Parameters<MessageColleagueRequest>,
+    ) -> CallToolResult {
         let (town, from) = match self.resident_for_tools() {
             Ok(found) => found,
             Err(error) => return failed(error),
@@ -79,9 +99,13 @@ impl FastCtxServer {
                     Spoken::JoinedTurn => "joined its current turn",
                     Spoken::Queued => "waiting for it to read",
                 };
-                CallToolResult::success(vec![ContentBlock::text(text::message_landed(to, &machine, how))])
+                CallToolResult::success(vec![ContentBlock::text(text::message_landed(
+                    to, &machine, how,
+                ))])
             }
-            Ok((machine, None)) => CallToolResult::success(vec![ContentBlock::text(text::message_sent(to, &machine))]),
+            Ok((machine, None)) => {
+                CallToolResult::success(vec![ContentBlock::text(text::message_sent(to, &machine))])
+            }
             Err(error) => failed(error),
         }
     }
@@ -94,7 +118,12 @@ pub(crate) fn router() -> ToolRouter<FastCtxServer> {
         ("ask_colleague", text::ASK_COLLEAGUE_DESCRIPTION),
         ("message_colleague", text::MESSAGE_COLLEAGUE_DESCRIPTION),
     ] {
-        router.map.get_mut(name).expect("the colleague router contains both tools").attr.description = Some(description.into());
+        router
+            .map
+            .get_mut(name)
+            .expect("the colleague router contains both tools")
+            .attr
+            .description = Some(description.into());
     }
     router
 }

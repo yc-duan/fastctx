@@ -35,7 +35,9 @@ struct Receipt {
 /// The identity of a letter's content: the same letter sent twice hashes the same, though each
 /// envelope carries its own message counter.
 pub(crate) fn letter_hash(letter: &Letter) -> Result<String, String> {
-    Ok(hex::encode(super::crypto::sha256(&messages::encode(letter)?)))
+    Ok(hex::encode(super::crypto::sha256(&messages::encode(
+        letter,
+    )?)))
 }
 
 /// Commits a letter to the inbox; `false` when this author's letter with this id was already
@@ -63,7 +65,11 @@ pub(crate) fn accept(
     let receipt = receipts.join(format!("{id}.json"));
     if let Some(bytes) = super::read_optional(&receipt)? {
         let previous: Receipt = messages::decode(&bytes, "mail receipt")?;
-        let same = if previous.letter.is_empty() { previous.hash == hash } else { previous.letter == content };
+        let same = if previous.letter.is_empty() {
+            previous.hash == hash
+        } else {
+            previous.letter == content
+        };
         if !same {
             return Err("mail id reused for a different letter".into());
         }
@@ -97,7 +103,11 @@ pub(crate) fn list(paths: &WorldPaths) -> Result<Vec<InboxItem>, String> {
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
+        let Some(id) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+        else {
             set_aside(paths, &path, "unnamed", "the inbox file name is not text")?;
             continue;
         };
@@ -112,7 +122,11 @@ pub(crate) fn list(paths: &WorldPaths) -> Result<Vec<InboxItem>, String> {
 }
 
 /// One inbox letter; `None` while it has no receipt yet, or once it was consumed.
-fn read_item(paths: &WorldPaths, path: &std::path::Path, id: &str) -> Result<Option<InboxItem>, String> {
+fn read_item(
+    paths: &WorldPaths,
+    path: &std::path::Path,
+    id: &str,
+) -> Result<Option<InboxItem>, String> {
     let Some(bytes) =
         super::read_optional(&paths.dir.join("mail-receipts").join(format!("{id}.json")))?
     else {
@@ -138,11 +152,17 @@ fn read_item(paths: &WorldPaths, path: &std::path::Path, id: &str) -> Result<Opt
 }
 
 /// Moves an unreadable inbox file beside the delivery failures, with a record of why.
-fn set_aside(paths: &WorldPaths, path: &std::path::Path, id: &str, reason: &str) -> Result<(), String> {
+fn set_aside(
+    paths: &WorldPaths,
+    path: &std::path::Path,
+    id: &str,
+    reason: &str,
+) -> Result<(), String> {
     let directory = paths.dir.join("delivery-failures");
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let kept = directory.join(format!("inbound-{id}.letter"));
-    std::fs::rename(path, &kept).map_err(|e| format!("Cannot set aside {}: {e}", path.display()))?;
+    std::fs::rename(path, &kept)
+        .map_err(|e| format!("Cannot set aside {}: {e}", path.display()))?;
     write_atomic(
         &directory.join(format!("inbound-{id}.json")),
         &messages::encode(&serde_json::json!({

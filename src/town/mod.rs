@@ -38,11 +38,27 @@ pub(crate) fn start(
     world: Arc<crate::world::client::WorldClient>,
     log: Arc<dyn Fn(String) + Send + Sync>,
 ) -> Result<Arc<core::Town>, String> {
-    let fastctx = std::env::current_exe().map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?;
+    let fastctx = std::env::current_exe()
+        .map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?;
     let workdir = world_dir.join("codex");
-    std::fs::create_dir_all(&workdir)
-        .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&workdir)))?;
+    std::fs::create_dir_all(&workdir).map_err(|error| {
+        format!(
+            "Cannot create {}: {error}",
+            crate::paths::display_path(&workdir)
+        )
+    })?;
     claude::write_plugin(&world_dir)?;
     let (codex, events) = codex::host::CodexHost::new(codex_home, workdir, Arc::clone(&log));
-    Ok(core::Town::new(core::TownConfig { machine, world_dir, fastctx, home }, world, codex, events, log))
+    Ok(core::Town::new(
+        core::TownConfig {
+            machine,
+            world_dir,
+            fastctx,
+            home,
+        },
+        world,
+        codex,
+        events,
+        log,
+    ))
 }

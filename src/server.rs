@@ -45,7 +45,17 @@ pub struct ServerOptions {
 
 /// The World's write tools for one host: Claude Code's `edit` and `write`, or Codex's
 /// `apply_patch`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, clap::ValueEnum)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    serde::Deserialize,
+    serde::Serialize,
+    clap::ValueEnum,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Writer {
     #[default]
@@ -164,7 +174,11 @@ impl FastCtxServer {
         session: Arc<SessionContext>,
         runtime: Arc<SharedRuntime>,
     ) -> Self {
-        let mut tool_router = if options.world { crate::hands::surface::router(options) } else { Self::local_router(options) };
+        let mut tool_router = if options.world {
+            crate::hands::surface::router(options)
+        } else {
+            Self::local_router(options)
+        };
         // Every consumer of a tool definition reads it back out of this router — the
         // stdio `tools/list` answer, `tool_definitions`, and the contract hashes doctor
         // compares across processes. Normalizing here keeps all of them on one shape;
@@ -262,15 +276,17 @@ impl FastCtxServer {
     }
 
     /// The town and this session's resident id, for tools that act as the resident.
-    pub(crate) fn resident_for_tools(&self) -> Result<(Arc<crate::town::core::Town>, String), String> {
+    pub(crate) fn resident_for_tools(
+        &self,
+    ) -> Result<(Arc<crate::town::core::Town>, String), String> {
         // Only an engine hosted by the node has a town; anywhere else the node is not running.
         let slot = self
             .resident
             .as_ref()
             .ok_or_else(|| crate::world::surface::NODE_SERVICE_NOT_RUNNING.to_string())?;
-        let id = slot
-            .id()
-            .ok_or_else(|| "This session is not registered as a resident of the World yet.".to_string())?;
+        let id = slot.id().ok_or_else(|| {
+            "This session is not registered as a resident of the World yet.".to_string()
+        })?;
         Ok((Arc::clone(slot.town()), id))
     }
 }
@@ -427,7 +443,12 @@ impl ServerHandler for FastCtxServer {
         let (agent, version) = context
             .peer
             .peer_info()
-            .map(|info| (info.client_info.name.clone(), info.client_info.version.clone()))
+            .map(|info| {
+                (
+                    info.client_info.name.clone(),
+                    info.client_info.version.clone(),
+                )
+            })
             .unwrap_or_default();
         slot.attach(&self.session.environment, &agent, &version);
     }

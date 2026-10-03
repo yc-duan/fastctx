@@ -8,22 +8,34 @@ impl Town {
     /// Starts watching a resident on this machine: its history so far, then its events as they
     /// happen. The watcher is registered before the history is read so nothing falls between;
     /// what appears in both is for the caller to drop (`talk::HistoryKeys`).
-    pub(crate) async fn watch(&self, id: &str) -> Result<(Vec<TalkEvent>, mpsc::UnboundedReceiver<TalkEvent>), String> {
+    pub(crate) async fn watch(
+        &self,
+        id: &str,
+    ) -> Result<(Vec<TalkEvent>, mpsc::UnboundedReceiver<TalkEvent>), String> {
         let (route, receiver) = {
             let mut state = self.state.lock();
             let route = state
                 .residents
                 .get(id)
                 .map(|live| live.route.clone())
-                .ok_or_else(|| format!("No resident named {id} lives on {}.", self.config.machine))?;
+                .ok_or_else(|| {
+                    format!("No resident named {id} lives on {}.", self.config.machine)
+                })?;
             let (sender, receiver) = mpsc::unbounded_channel();
-            state.watchers.entry(id.to_string()).or_default().push(sender);
+            state
+                .watchers
+                .entry(id.to_string())
+                .or_default()
+                .push(sender);
             (route, receiver)
         };
         let history = match route {
             Route::CodexThread(thread) => {
                 let history = self.codex.history(&thread).await?;
-                crate::town::talk::codex_history(&history, self.codex.running_turn(&thread).as_deref())
+                crate::town::talk::codex_history(
+                    &history,
+                    self.codex.running_turn(&thread).as_deref(),
+                )
             }
             Route::ClaudeMod(_) | Route::Piggyback => Vec::new(),
         };

@@ -2,7 +2,8 @@
 
 use super::WriteContext;
 use crate::encoding::{
-    ByteSource, EncodingDecision, EncodingRejection, ValidatedFileEncoding, validate_source_encoding,
+    ByteSource, EncodingDecision, EncodingRejection, ValidatedFileEncoding,
+    validate_source_encoding,
 };
 use std::path::Path;
 
@@ -81,7 +82,9 @@ fn rejection(reason: &EncodingRejection, path: &str) -> String {
         EncodingRejection::ExplicitMalformed { encoding } => format!(
             "Cannot decode {path} as {encoding}, the encoding it was last viewed in: it is no longer valid {encoding}. View it again, with `--encoding` if it needs another one. {VIEWED}"
         ),
-        EncodingRejection::MixedOrInconsistent { conflict_hex_offset } => {
+        EncodingRejection::MixedOrInconsistent {
+            conflict_hex_offset,
+        } => {
             // The rejection names a one-based row of a 16-byte hex dump; `xxd` labels rows by
             // their first byte.
             let conflict = conflict_hex_offset.map_or_else(String::new, |row| {
@@ -93,7 +96,9 @@ fn rejection(reason: &EncodingRejection, path: &str) -> String {
             )
         }
         EncodingRejection::Undecodable => {
-            format!("Cannot write {path} as text: no supported encoding decodes it cleanly. Inspect its raw bytes with `xxd`.")
+            format!(
+                "Cannot write {path} as text: no supported encoding decodes it cleanly. Inspect its raw bytes with `xxd`."
+            )
         }
         EncodingRejection::BomMismatch { encoding } => format!(
             "Cannot write {path}: it has a {encoding} byte order mark but the content is not valid {encoding}. Inspect its raw bytes with `xxd`."

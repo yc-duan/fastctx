@@ -270,7 +270,6 @@ impl FastCtxServer {
         self.world_call("copy", from_node, args, GLOBAL_TOKEN_BUDGET_ENV)
             .await
     }
-
 }
 
 /// Parameters of `copy`.
@@ -336,7 +335,10 @@ impl FastCtxServer {
         let timeout = args
             .get("timeout_ms")
             .and_then(serde_json::Value::as_u64)
-            .map_or(Duration::from_millis(DEFAULT_COPY_TIMEOUT_MS), Duration::from_millis);
+            .map_or(
+                Duration::from_millis(DEFAULT_COPY_TIMEOUT_MS),
+                Duration::from_millis,
+            );
         let call = NodeCall {
             verb: verb.to_string(),
             node,

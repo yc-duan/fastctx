@@ -23,7 +23,10 @@ pub(crate) struct Peer {
 
 impl Peer {
     pub(crate) fn new(machine: &str, id: &str) -> Self {
-        Self { machine: machine.to_string(), id: id.to_string() }
+        Self {
+            machine: machine.to_string(),
+            id: id.to_string(),
+        }
     }
 }
 
@@ -36,7 +39,11 @@ pub(crate) enum Letter {
     Deliver { to: String, delivery: Delivery },
     /// A resident of the sending machine speaks to a resident of the receiving one; the
     /// answer to the turn its words go into goes back to it.
-    Speak { from: String, to: String, message: String },
+    Speak {
+        from: String,
+        to: String,
+        message: String,
+    },
     /// A resident of the sending machine left; the colleagues it asked for on the receiving
     /// machine sleep once their turn is over.
     Left { requester: String },
@@ -58,7 +65,10 @@ const VERBS: [(&str, &str); 9] = [
 
 /// The grant verb a town's call is judged by; `None` for a verb that is not a town's.
 pub(crate) fn grant_verb(wire: &str) -> Option<&'static str> {
-    VERBS.iter().find(|(name, _)| *name == wire).map(|(_, grant)| *grant)
+    VERBS
+        .iter()
+        .find(|(name, _)| *name == wire)
+        .map(|(_, grant)| *grant)
 }
 
 /// Whether a town name another machine sent can name a directory here: a town's short name,
@@ -66,6 +76,8 @@ pub(crate) fn grant_verb(wire: &str) -> Option<&'static str> {
 pub(crate) fn valid_town(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
-        && name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         && !name.starts_with('-')
 }

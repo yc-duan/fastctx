@@ -1293,7 +1293,12 @@ impl WorldClient {
 
     /// Commits a letter under an id the sender chose. The same letter sent again under the same
     /// id is delivered once; a different letter under an id already used is refused.
-    pub(crate) fn send_mail_as(&self, to: &str, id: &str, body: serde_json::Value) -> Result<(), String> {
+    pub(crate) fn send_mail_as(
+        &self,
+        to: &str,
+        id: &str,
+        body: serde_json::Value,
+    ) -> Result<(), String> {
         self.resolve_target(to)?;
         self.send_reliable(
             Header::new(kind::MAIL, &self.name(), to, 0),

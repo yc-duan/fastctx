@@ -40,10 +40,10 @@ pub(crate) const RUN_DESCRIPTION: &str = concat!(
     "To stop a background command, kill the process id that `fastctx w <id>` shows."
 );
 
-pub(crate) const RUN_COMMAND: &str = "The bash script to run, exactly as you would type it in a terminal.";
+pub(crate) const RUN_COMMAND: &str =
+    "The bash script to run, exactly as you would type it in a terminal.";
 pub(crate) const RUN_CWD: &str = "Absolute directory to start in. Omitted: that machine's home.";
-pub(crate) const NODE: &str =
-    "Machine to act on, by name. Omitted: this machine. The first line of the result names the machine it happened on.";
+pub(crate) const NODE: &str = "Machine to act on, by name. Omitted: this machine. The first line of the result names the machine it happened on.";
 
 pub(crate) const EDIT_DESCRIPTION: &str = concat!(
     "Replace exact text in a file on this machine or, with node, on another machine of this ",
@@ -74,7 +74,8 @@ pub(crate) const APPLY_PATCH_DESCRIPTION: &str = concat!(
     "`*** Move to: <path>` and `@@` hunks with context lines), then `*** End Patch`. Every path ",
     "is absolute. Files keep their encoding and line endings. Returns the files it changed."
 );
-pub(crate) const APPLY_PATCH_INPUT: &str = "The whole patch, from *** Begin Patch to *** End Patch.";
+pub(crate) const APPLY_PATCH_INPUT: &str =
+    "The whole patch, from *** Begin Patch to *** End Patch.";
 
 pub(crate) const ASK_COLLEAGUE_DESCRIPTION: &str = concat!(
     "Ask a colleague, a GPT resident of this World, to take on a piece of work. Your own ",
@@ -98,8 +99,10 @@ pub(crate) const ASK_COLLEAGUE_DESCRIPTION: &str = concat!(
     "enforcement with you; do it yourself. If a colleague's turn is stopped by that enforcement, ",
     "leave that colleague."
 );
-pub(crate) const ASK_PROMPT: &str = "Everything the colleague needs, in your own words; delivered verbatim.";
-pub(crate) const ASK_DESCRIPTION: &str = "A three-to-eight-word label for the work, shown next to its name in fastctx w.";
+pub(crate) const ASK_PROMPT: &str =
+    "Everything the colleague needs, in your own words; delivered verbatim.";
+pub(crate) const ASK_DESCRIPTION: &str =
+    "A three-to-eight-word label for the work, shown next to its name in fastctx w.";
 pub(crate) const ASK_NODE: &str = "Machine it works on. Omitted: this machine.";
 
 pub(crate) const MESSAGE_COLLEAGUE_DESCRIPTION: &str = concat!(
@@ -112,8 +115,17 @@ pub(crate) const MESSAGE_TO: &str = "The resident's id, such as codex-7f3a.";
 pub(crate) const MESSAGE_TEXT: &str = "What you want to say; delivered verbatim with your name.";
 
 /// The notice a resident receives when a command it started has ended.
-pub(crate) fn job_ended_notice(job: &str, machine: &str, ended: &str, elapsed: &str, command: &str, log: &str) -> String {
-    format!("=== {job} on {machine} {ended} after {elapsed}: {command} ===\noutput: {machine} {log}")
+pub(crate) fn job_ended_notice(
+    job: &str,
+    machine: &str,
+    ended: &str,
+    elapsed: &str,
+    command: &str,
+    log: &str,
+) -> String {
+    format!(
+        "=== {job} on {machine} {ended} after {elapsed}: {command} ===\noutput: {machine} {log}"
+    )
 }
 
 /// What `ask_colleague` returns.

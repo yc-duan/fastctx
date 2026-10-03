@@ -72,7 +72,8 @@ async fn run_daemon_inner(
         Arc::clone(&client),
         Arc::new(|line: String| log(format!("town: {line}"))),
     )?;
-    let executor = executor::Executor::new(Arc::clone(&client), Arc::clone(&session), Arc::clone(&town));
+    let executor =
+        executor::Executor::new(Arc::clone(&client), Arc::clone(&session), Arc::clone(&town));
     let engine_hosted = Arc::new(AtomicBool::new(false));
     let admin = admin::AdminServer::new(
         Arc::clone(&client),

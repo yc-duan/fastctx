@@ -194,7 +194,9 @@ pub(crate) fn generated_guidance(target: AgentTarget, tools: EnabledTools, world
     } else {
         "filesystem work"
     };
-    let mut text = format!("## FastCtx local tools\n\nUse FastCtx for local {work}. Enabled tools: {names}.\n");
+    let mut text = format!(
+        "## FastCtx local tools\n\nUse FastCtx for local {work}. Enabled tools: {names}.\n"
+    );
     if tools.contains("inspect_local_file") {
         text.push_str(
             "Each inspect_local_file call accepts one path; issue independent read-only calls in parallel when the host supports it.\n",
@@ -223,7 +225,11 @@ pub(crate) fn generated_guidance(target: AgentTarget, tools: EnabledTools, world
 /// in its shell (`specs/world-run.md`, "模型怎样知道"). Codex writes with `apply_patch`, every
 /// other host with `edit` and `write` (`specs/world-write.md`).
 fn world_guidance(target: AgentTarget) -> String {
-    let writer = if target == AgentTarget::Codex { "`apply_patch` changes files" } else { "`edit` and `write` change files" };
+    let writer = if target == AgentTarget::Codex {
+        "`apply_patch` changes files"
+    } else {
+        "`edit` and `write` change files"
+    };
     format!(
         "## FastCtx World\n\n\
 This machine is one of your machines woven into a World. FastCtx's tools here are the World's: `run` runs every command and search in POSIX bash, {writer}, `nodes` lists the machines, `copy` moves files between them, and `ask_colleague` and `message_colleague` bring in a colleague. A call with `node` acts on that machine and its first line names it; one call names one machine. Paths are absolute.\n\

@@ -77,7 +77,9 @@ pub fn edit(request: EditRequest, context: &WriteContext<'_>) -> Result<WriteRes
     let mut text = head_note("edit", context, ranges.len());
     let mut changed_since_observation = Vec::new();
     if let Some(observed_hash) = stale {
-        text.push_str("\nThe file changed since you last viewed it; the edit matched its current contents.");
+        text.push_str(
+            "\nThe file changed since you last viewed it; the edit matched its current contents.",
+        );
         changed_since_observation.push(ChangedSinceObservation {
             file_path: target.requested,
             observed_hash: observed_hash.into(),

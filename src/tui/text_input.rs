@@ -267,7 +267,11 @@ impl TextInput {
                 text: line.to_string(),
                 character_count: line.chars().count(),
                 cursor: if here { self.cursor - start } else { 0 },
-                anchor: if here { self.anchor.map(|anchor| anchor.clamp(start, end) - start) } else { None },
+                anchor: if here {
+                    self.anchor.map(|anchor| anchor.clamp(start, end) - start)
+                } else {
+                    None
+                },
                 limit: self.limit,
                 mode: InputMode::SingleLine,
                 secret: self.secret,

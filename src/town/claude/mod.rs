@@ -59,8 +59,12 @@ pub(crate) fn write_plugin(world_dir: &Path) -> Result<(), String> {
     ];
     for (path, text) in files {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(parent)))?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "Cannot create {}: {error}",
+                    crate::paths::display_path(parent)
+                )
+            })?;
         }
         crate::world::write_atomic(&path, text.as_bytes())?;
     }
@@ -82,8 +86,19 @@ pub(crate) fn plugin_dir(world_dir: &Path) -> PathBuf {
 /// runs them; Claude Code itself does the installing.
 pub(crate) fn install_commands(world_dir: &Path) -> [Vec<String>; 2] {
     [
-        vec!["plugin".into(), "marketplace".into(), "add".into(), marketplace_dir(world_dir).to_string_lossy().into_owned()],
-        vec!["plugin".into(), "install".into(), format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}"), "--scope".into(), "user".into()],
+        vec![
+            "plugin".into(),
+            "marketplace".into(),
+            "add".into(),
+            marketplace_dir(world_dir).to_string_lossy().into_owned(),
+        ],
+        vec![
+            "plugin".into(),
+            "install".into(),
+            format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}"),
+            "--scope".into(),
+            "user".into(),
+        ],
     ]
 }
 
@@ -126,10 +141,20 @@ pub(crate) struct ModDelivery {
 }
 
 /// Puts a delivery in the session's inbox; the mod hands it over and writes a receipt.
-pub(crate) fn deliver(world_dir: &Path, session: &str, delivery: &ModDelivery) -> Result<(), String> {
+pub(crate) fn deliver(
+    world_dir: &Path,
+    session: &str,
+    delivery: &ModDelivery,
+) -> Result<(), String> {
     let inbox = session_dir(world_dir, session).join("inbox");
-    std::fs::create_dir_all(&inbox).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&inbox)))?;
-    let bytes = serde_json::to_vec(delivery).map_err(|error| format!("Cannot encode a delivery: {error}"))?;
+    std::fs::create_dir_all(&inbox).map_err(|error| {
+        format!(
+            "Cannot create {}: {error}",
+            crate::paths::display_path(&inbox)
+        )
+    })?;
+    let bytes = serde_json::to_vec(delivery)
+        .map_err(|error| format!("Cannot encode a delivery: {error}"))?;
     crate::world::write_atomic(&inbox.join(format!("{}.json", delivery.id)), &bytes)
 }
 
@@ -171,14 +196,23 @@ pub(crate) struct Harvest {
     pub(crate) problem: Option<String>,
 }
 
-pub(crate) fn registration(world_dir: &Path, session: &str) -> Result<Option<Registration>, String> {
+pub(crate) fn registration(
+    world_dir: &Path,
+    session: &str,
+) -> Result<Option<Registration>, String> {
     let path = session_dir(world_dir, session).join("session.json");
     match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|error| format!("Cannot parse {}: {error}", crate::paths::display_path(&path))),
+        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+            format!(
+                "Cannot parse {}: {error}",
+                crate::paths::display_path(&path)
+            )
+        }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+        Err(error) => Err(format!(
+            "Cannot read {}: {error}",
+            crate::paths::display_path(&path)
+        )),
     }
 }
 
@@ -195,7 +229,11 @@ pub(crate) fn sessions(world_dir: &Path) -> Vec<String> {
 
 pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
     let dir = session_dir(world_dir, session);
-    let mut harvest = Harvest { events: Vec::new(), delivered: Vec::new(), problem: None };
+    let mut harvest = Harvest {
+        events: Vec::new(),
+        delivered: Vec::new(),
+        problem: None,
+    };
     let mut names = match list(&dir.join("events")) {
         Ok(names) => names,
         Err(error) => {
@@ -204,7 +242,10 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
         }
     };
     names.sort();
-    let stems: Vec<&str> = names.iter().filter_map(|name| name.strip_suffix(".json")).collect();
+    let stems: Vec<&str> = names
+        .iter()
+        .filter_map(|name| name.strip_suffix(".json"))
+        .collect();
     // Events are taken in order and each is removed once taken. The mod writes one event at a
     // time, then its marker: an unmarked event is still being written only while it is the
     // newest, and stops the look until it is marked; an older unmarked one was abandoned by a
@@ -221,8 +262,12 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
         let parsed = std::fs::read(&path)
             .map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&path)))
             .and_then(|bytes| {
-                serde_json::from_slice::<ModEvent>(&bytes)
-                    .map_err(|error| format!("{} is not a mod event ({error})", crate::paths::display_path(&path)))
+                serde_json::from_slice::<ModEvent>(&bytes).map_err(|error| {
+                    format!(
+                        "{} is not a mod event ({error})",
+                        crate::paths::display_path(&path)
+                    )
+                })
             });
         // The marker goes first: an event whose own file could not be removed is still there,
         // unmarked, for the next look, and never taken twice.
@@ -231,12 +276,20 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
             Err(_) => set_aside(&dir, &path, &marker),
         };
         if let Err(error) = taken {
-            harvest.problem = Some(format!("Cannot take {}: {error}", crate::paths::display_path(&path)));
+            harvest.problem = Some(format!(
+                "Cannot take {}: {error}",
+                crate::paths::display_path(&path)
+            ));
             break;
         }
         match parsed {
             Ok(event) => harvest.events.push(event),
-            Err(problem) => harvest.problem = Some(format!("{problem}; set aside in {}", crate::paths::display_path(&dir.join("damaged")))),
+            Err(problem) => {
+                harvest.problem = Some(format!(
+                    "{problem}; set aside in {}",
+                    crate::paths::display_path(&dir.join("damaged"))
+                ))
+            }
         }
     }
     let receipts = match list(&dir.join("receipts")) {
@@ -256,7 +309,9 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
         };
         match removed {
             Ok(()) => harvest.delivered.push(id),
-            Err(error) => harvest.problem = Some(format!("Cannot clear the delivered {id}: {error}")),
+            Err(error) => {
+                harvest.problem = Some(format!("Cannot clear the delivered {id}: {error}"))
+            }
         }
     }
     harvest
@@ -287,9 +342,15 @@ fn remove_present(path: &Path) -> std::io::Result<()> {
 
 fn list(dir: &Path) -> Result<Vec<String>, String> {
     match std::fs::read_dir(dir) {
-        Ok(entries) => Ok(entries.flatten().filter_map(|entry| entry.file_name().to_str().map(str::to_string)).collect()),
+        Ok(entries) => Ok(entries
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+            .collect()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(format!("Cannot list {}: {error}", crate::paths::display_path(dir))),
+        Err(error) => Err(format!(
+            "Cannot list {}: {error}",
+            crate::paths::display_path(dir)
+        )),
     }
 }
 
@@ -328,7 +389,12 @@ pub(crate) fn launch_args(launch: &Launch<'_>) -> Vec<String> {
 /// `claude --resume <session> --bg "<words>"`: wakes a background resident whose process the
 /// supervisor stopped. Nothing else may be passed, or Claude Code starts a copy.
 pub(crate) fn wake_args(session: &str, words: &str) -> Vec<String> {
-    vec!["--resume".into(), session.into(), "--bg".into(), words.into()]
+    vec![
+        "--resume".into(),
+        session.into(),
+        "--bg".into(),
+        words.into(),
+    ]
 }
 
 /// Settings for a background resident: the host's own read, write, search and shell tools are
@@ -351,7 +417,14 @@ pub(crate) fn new_session_id() -> Result<String, String> {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     let hex = hex::encode(bytes);
-    Ok(format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..]))
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
 }
 
 /// What a background Claude resident is started from.
@@ -374,7 +447,12 @@ pub(crate) struct Background<'a> {
 /// session runs under Claude Code's own supervisor; the World talks to it through the mod.
 pub(crate) async fn start_background(background: &Background<'_>) -> Result<(), String> {
     let dir = background.records.join("claude");
-    std::fs::create_dir_all(&dir).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&dir)))?;
+    std::fs::create_dir_all(&dir).map_err(|error| {
+        format!(
+            "Cannot create {}: {error}",
+            crate::paths::display_path(&dir)
+        )
+    })?;
     let mcp_config = dir.join("mcp.json");
     let settings = dir.join("settings.json");
     let prompt = dir.join("instructions.md");
@@ -385,7 +463,8 @@ pub(crate) async fn start_background(background: &Background<'_>) -> Result<(), 
             "env": {"FASTCTX_RESIDENT": background.resident, "HOME": background.home, "USERPROFILE": background.home},
         }}
     });
-    let encode = |value: &serde_json::Value| serde_json::to_vec_pretty(value).expect("JSON values encode");
+    let encode =
+        |value: &serde_json::Value| serde_json::to_vec_pretty(value).expect("JSON values encode");
     crate::world::write_atomic(&mcp_config, &encode(&config))?;
     crate::world::write_atomic(&settings, &encode(&resident_settings()))?;
     crate::world::write_atomic(&prompt, background.instructions.as_bytes())?;
@@ -399,13 +478,21 @@ pub(crate) async fn start_background(background: &Background<'_>) -> Result<(), 
         first_words: background.words,
     });
     // The session's environment names its resident, which the mod reports when it registers.
-    claude(&args, Some(background.cwd), Some(background.resident)).await.map(|_| ())
+    claude(&args, Some(background.cwd), Some(background.resident))
+        .await
+        .map(|_| ())
 }
 
 pub(crate) fn claude_binary() -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
-    let names: &[&str] = if cfg!(windows) { &["claude.exe", "claude.cmd"] } else { &["claude"] };
-    std::env::split_paths(&paths).flat_map(|dir| names.iter().map(move |name| dir.join(name))).find(|path| path.is_file())
+    let names: &[&str] = if cfg!(windows) {
+        &["claude.exe", "claude.cmd"]
+    } else {
+        &["claude"]
+    };
+    std::env::split_paths(&paths)
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+        .find(|path| path.is_file())
 }
 
 /// Whether Claude Code's supervisor still runs a background session's process. A session idle
@@ -413,9 +500,15 @@ pub(crate) fn claude_binary() -> Option<PathBuf> {
 /// it then wake it rather than wait in an inbox nobody reads. `claude agents --json --all`
 /// lists every background session with the process it runs in, if any.
 pub(crate) async fn background_running(session: &str) -> Result<bool, String> {
-    let output = claude(&["agents".into(), "--json".into(), "--all".into()], None, None).await?;
-    let agents: serde_json::Value = serde_json::from_slice(&output)
-        .map_err(|error| format!("claude agents --json answered with something that is not JSON: {error}"))?;
+    let output = claude(
+        &["agents".into(), "--json".into(), "--all".into()],
+        None,
+        None,
+    )
+    .await?;
+    let agents: serde_json::Value = serde_json::from_slice(&output).map_err(|error| {
+        format!("claude agents --json answered with something that is not JSON: {error}")
+    })?;
     Ok(agents
         .as_array()
         .into_iter()
@@ -428,13 +521,21 @@ pub(crate) async fn background_running(session: &str) -> Result<bool, String> {
 /// Wakes a stopped background session with words, which arrive as the user's prompt
 /// (`claude --resume <session> --bg "<words>"`, nothing else, or Claude Code starts a copy).
 pub(crate) async fn wake(session: &str, words: &str, cwd: &Path) -> Result<(), String> {
-    claude(&wake_args(session, words), Some(cwd), None).await.map(|_| ())
+    claude(&wake_args(session, words), Some(cwd), None)
+        .await
+        .map(|_| ())
 }
 
 /// Runs the claude command and returns its standard output, or its complaint. `resident`
 /// names the resident in the environment of a session it starts.
-async fn claude(args: &[String], cwd: Option<&Path>, resident: Option<&str>) -> Result<Vec<u8>, String> {
-    let binary = claude_binary().ok_or_else(|| "Claude Code is not installed on this machine: no claude command was found.".to_string())?;
+async fn claude(
+    args: &[String],
+    cwd: Option<&Path>,
+    resident: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let binary = claude_binary().ok_or_else(|| {
+        "Claude Code is not installed on this machine: no claude command was found.".to_string()
+    })?;
     let mut command = tokio::process::Command::new(&binary);
     command.args(args).stdin(std::process::Stdio::null());
     if let Some(cwd) = cwd {
@@ -445,10 +546,12 @@ async fn claude(args: &[String], cwd: Option<&Path>, resident: Option<&str>) -> 
     }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
-    let output = command
-        .output()
-        .await
-        .map_err(|error| format!("Cannot start {}: {error}", crate::paths::display_path(&binary)))?;
+    let output = command.output().await.map_err(|error| {
+        format!(
+            "Cannot start {}: {error}",
+            crate::paths::display_path(&binary)
+        )
+    })?;
     if output.status.success() {
         return Ok(output.stdout);
     }

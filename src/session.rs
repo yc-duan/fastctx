@@ -333,7 +333,7 @@ impl SessionContext {
                 settings,
                 provider,
                 effective_output,
-                })
+            })
         })
     }
 

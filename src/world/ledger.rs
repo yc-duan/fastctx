@@ -19,7 +19,9 @@ mod base64_bytes {
         serializer.serialize_str(&super::crypto::b64_encode(bytes))
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<u8>, D::Error> {
         super::crypto::b64_decode(&String::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }

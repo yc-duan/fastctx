@@ -66,7 +66,18 @@ impl Town {
     /// Calls another machine's town. A machine that is offline, forbidden, or silent answers
     /// with a status, not an error.
     pub(crate) async fn call_town(&self, node: &str, verb: &str, args: Value) -> NodeOutcome {
-        match self.world().call(verb, node, args, CallBudget::default(), CALL_TIMEOUT, CallOrigin::Tool).await {
+        match self
+            .world()
+            .call(
+                verb,
+                node,
+                args,
+                CallBudget::default(),
+                CALL_TIMEOUT,
+                CallOrigin::Tool,
+            )
+            .await
+        {
             Ok(outcome) => outcome,
             Err(error) => NodeOutcome::status(node, "error", error),
         }
@@ -75,10 +86,22 @@ impl Town {
     /// One of a resident's hands on another machine: `hand` is the tool, `what` what it acts
     /// on, `request` the tool's own arguments. The resident's action line is written here, with
     /// the machine the hand reached.
-    pub(crate) async fn hand_elsewhere(&self, resident: &str, node: &str, hand: &str, what: &str, request: Value) -> ToolResponse {
-        let guest = Guest { resident: resident.to_string(), town: self.town_of(resident).flatten() };
+    pub(crate) async fn hand_elsewhere(
+        &self,
+        resident: &str,
+        node: &str,
+        hand: &str,
+        what: &str,
+        request: Value,
+    ) -> ToolResponse {
+        let guest = Guest {
+            resident: resident.to_string(),
+            town: self.town_of(resident).flatten(),
+        };
         let mut args = request;
-        if let (Value::Object(args), Ok(Value::Object(guest))) = (&mut args, serde_json::to_value(&guest)) {
+        if let (Value::Object(args), Ok(Value::Object(guest))) =
+            (&mut args, serde_json::to_value(&guest))
+        {
             args.extend(guest);
         }
         let outcome = self.call_town(node, &format!("hand_{hand}"), args).await;
@@ -92,16 +115,31 @@ impl Town {
 
     /// `ask_colleague` for a resident of this machine: a colleague here, or on the machine it
     /// names. The ask is one of its actions, recorded with where the colleague lives.
-    pub(crate) async fn ask_for(&self, requester: &str, node: Option<&str>, prompt: &str, label: &str) -> Result<Asked, String> {
+    pub(crate) async fn ask_for(
+        &self,
+        requester: &str,
+        node: Option<&str>,
+        prompt: &str,
+        label: &str,
+    ) -> Result<Asked, String> {
         let town = self.requester_town(requester)?;
         let machine = node.unwrap_or(self.machine()).to_string();
         let asked = if machine == self.machine() {
-            self.ask_colleague(&Peer::new(self.machine(), requester), town, prompt, label).await
+            self.ask_colleague(&Peer::new(self.machine(), requester), town, prompt, label)
+                .await
         } else {
-            let call = ColleagueCall { requester: requester.to_string(), town, prompt: prompt.to_string(), label: label.to_string() };
+            let call = ColleagueCall {
+                requester: requester.to_string(),
+                town,
+                prompt: prompt.to_string(),
+                label: label.to_string(),
+            };
             let outcome = self.call_town(&machine, "colleague_ask", json!(call)).await;
             match (outcome.status.as_str(), outcome.facts.get("id")) {
-                ("ok", Some(Value::String(id))) => Ok(Asked { id: id.clone(), machine: machine.clone() }),
+                ("ok", Some(Value::String(id))) => Ok(Asked {
+                    id: id.clone(),
+                    machine: machine.clone(),
+                }),
                 _ => Err(outcome_error(&outcome)),
             }
         };
@@ -116,14 +154,34 @@ impl Town {
     /// `message_colleague` for a resident of this machine. Words for a resident here go
     /// straight into its session; words for one elsewhere go by mail to its machine. Returns
     /// that machine, and how the words landed when they landed here.
-    pub(crate) async fn message_for(&self, from: &str, to: &str, message: &str) -> Result<(String, Option<Spoken>), String> {
+    pub(crate) async fn message_for(
+        &self,
+        from: &str,
+        to: &str,
+        message: &str,
+    ) -> Result<(String, Option<Spoken>), String> {
         let machine = self.colleague_machine(from, to).await?;
         if machine == self.machine() {
-            let spoken = self.speak(&Peer::new(self.machine(), from), to, message).await?;
-            self.record_action(from, &machine, "message_colleague", to, super::verbs::landed(spoken));
+            let spoken = self
+                .speak(&Peer::new(self.machine(), from), to, message)
+                .await?;
+            self.record_action(
+                from,
+                &machine,
+                "message_colleague",
+                to,
+                super::verbs::landed(spoken),
+            );
             return Ok((machine, Some(spoken)));
         }
-        let sent = self.mail(&machine, &Letter::Speak { from: from.to_string(), to: to.to_string(), message: message.to_string() });
+        let sent = self.mail(
+            &machine,
+            &Letter::Speak {
+                from: from.to_string(),
+                to: to.to_string(),
+                message: message.to_string(),
+            },
+        );
         let result = match &sent {
             Ok(()) => "sent".to_string(),
             Err(error) => format!("failed: {}", error.lines().next().unwrap_or_default()),
@@ -138,7 +196,12 @@ impl Town {
         if self.lives_here(id) {
             return Ok(self.machine().to_string());
         }
-        if let Some((machine, _)) = self.colleagues_of(speaker).into_iter().rev().find(|(_, colleague)| colleague == id) {
+        if let Some((machine, _)) = self
+            .colleagues_of(speaker)
+            .into_iter()
+            .rev()
+            .find(|(_, colleague)| colleague == id)
+        {
             return Ok(machine);
         }
         self.locate(id).await
@@ -150,21 +213,34 @@ impl Town {
         if self.lives_here(id) {
             return Ok(self.machine().to_string());
         }
-        let query = Query { ids: vec![id.to_string()], ..Query::default() };
+        let query = Query {
+            ids: vec![id.to_string()],
+            ..Query::default()
+        };
         let (answers, silent) = self.ask_others(self.other_members(), &query).await;
         let found: Vec<String> = answers
             .into_iter()
-            .filter(|answer| answer.residents.iter().any(|facts| facts.about.id == id && facts.about.machine == answer.machine))
+            .filter(|answer| {
+                answer
+                    .residents
+                    .iter()
+                    .any(|facts| facts.about.id == id && facts.about.machine == answer.machine)
+            })
             .map(|answer| answer.machine)
             .collect();
         match found.as_slice() {
             [machine] => Ok(machine.clone()),
-            [] if silent.is_empty() => Err(format!("No machine of this World has a resident named {id}.")),
+            [] if silent.is_empty() => Err(format!(
+                "No machine of this World has a resident named {id}."
+            )),
             [] => Err(format!(
                 "No machine that answered has a resident named {id}; these did not answer: {}.",
                 silent.iter().map(silence).collect::<Vec<_>>().join("; ")
             )),
-            several => Err(format!("{id} names residents on several machines: {}.", several.join(", "))),
+            several => Err(format!(
+                "{id} names residents on several machines: {}.",
+                several.join(", ")
+            )),
         }
     }
 
@@ -175,7 +251,11 @@ impl Town {
         let here = crate::town::who::answer(self.world_dir(), self.machine(), query);
         let machines = match (&query.town, query.ids.is_empty() && !query.everywhere) {
             (Some(town), true) => match project::charter(self.world_dir(), town) {
-                Ok(charter) => charter.machines.into_iter().filter(|machine| machine != self.machine()).collect(),
+                Ok(charter) => charter
+                    .machines
+                    .into_iter()
+                    .filter(|machine| machine != self.machine())
+                    .collect(),
                 Err(_) => self.other_members(),
             },
             _ => self.other_members(),
@@ -187,33 +267,56 @@ impl Town {
 
     /// Every current member of the World but this machine.
     fn other_members(&self) -> Vec<String> {
-        self.world().nodes().into_iter().map(|node| node.name).filter(|name| name != self.machine()).collect()
+        self.world()
+            .nodes()
+            .into_iter()
+            .map(|node| node.name)
+            .filter(|name| name != self.machine())
+            .collect()
     }
 
     /// Asks other machines `who` at once.
-    async fn ask_others(&self, machines: Vec<String>, query: &Query) -> (Vec<MachineAnswer>, Vec<Silent>) {
+    async fn ask_others(
+        &self,
+        machines: Vec<String>,
+        query: &Query,
+    ) -> (Vec<MachineAnswer>, Vec<Silent>) {
         if machines.is_empty() {
             return (Vec::new(), Vec::new());
         }
         let views = self.world().all_node_views();
-        let outcomes = self.world().call_many(machines, "who", json!(query), CALL_TIMEOUT).await;
+        let outcomes = self
+            .world()
+            .call_many(machines, "who", json!(query), CALL_TIMEOUT)
+            .await;
         let mut answers = Vec::new();
         let mut silent = Vec::new();
         for outcome in outcomes {
             let why = match (outcome.status.as_str(), outcome.facts.get("answer")) {
-                ("ok", Some(answer)) => match serde_json::from_value::<MachineAnswer>(answer.clone()) {
-                    Ok(answer) => {
-                        answers.push(answer);
-                        continue;
+                ("ok", Some(answer)) => {
+                    match serde_json::from_value::<MachineAnswer>(answer.clone()) {
+                        Ok(answer) => {
+                            answers.push(answer);
+                            continue;
+                        }
+                        Err(error) => {
+                            Silence::NoAnswer(format!("its answer could not be read: {error}"))
+                        }
                     }
-                    Err(error) => Silence::NoAnswer(format!("its answer could not be read: {error}")),
-                },
+                }
                 ("offline", _) => Silence::Offline(
-                    views.iter().find(|view| view.name == outcome.node).map(|view| view.last_seen.clone()).filter(|seen| !seen.is_empty()),
+                    views
+                        .iter()
+                        .find(|view| view.name == outcome.node)
+                        .map(|view| view.last_seen.clone())
+                        .filter(|seen| !seen.is_empty()),
                 ),
                 _ => Silence::NoAnswer(outcome_error(&outcome)),
             };
-            silent.push(Silent { machine: outcome.node, why });
+            silent.push(Silent {
+                machine: outcome.node,
+                why,
+            });
         }
         (answers, silent)
     }

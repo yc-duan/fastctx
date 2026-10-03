@@ -61,7 +61,10 @@ impl Desk {
         }
         // Who is at the desk, as far as the World can see: whoever sits there, else whoever's
         // call is in flight now, which is the one the helper is serving.
-        let user = self.holder.clone().or_else(|| self.calling.iter().next().cloned());
+        let user = self
+            .holder
+            .clone()
+            .or_else(|| self.calling.iter().next().cloned());
         match user {
             Some(user) if user == resident => Change::Nothing,
             Some(user) => {
@@ -85,8 +88,15 @@ nothing else to do meanwhile, end your turn now; you will be woken."
 the World cannot see when it becomes free."
                 );
                 self.waiting.remove(resident);
-                let told = std::iter::once(resident.to_string()).chain(std::mem::take(&mut self.waiting));
-                Change::Notices(told.map(|to| Notice { to, text: outside.clone() }).collect())
+                let told =
+                    std::iter::once(resident.to_string()).chain(std::mem::take(&mut self.waiting));
+                Change::Notices(
+                    told.map(|to| Notice {
+                        to,
+                        text: outside.clone(),
+                    })
+                    .collect(),
+                )
             }
         }
     }

@@ -273,7 +273,12 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
                 None if enable_shell => EnabledTools::all(),
                 None => EnabledTools::files(),
             };
-            run_server_with_options(ServerOptions { tools, writer, ..world_options() }).await
+            run_server_with_options(ServerOptions {
+                tools,
+                writer,
+                ..world_options()
+            })
+            .await
         }
         Some(Command::Ui) => {
             require_tty()?;
@@ -478,7 +483,8 @@ fn world_mode() -> bool {
 fn world_options() -> ServerOptions {
     ServerOptions {
         world: world_mode(),
-        colleague: std::env::var_os(crate::town::session::COLLEAGUE_VARIABLE).is_some_and(|value| !value.is_empty()),
+        colleague: std::env::var_os(crate::town::session::COLLEAGUE_VARIABLE)
+            .is_some_and(|value| !value.is_empty()),
         ..ServerOptions::default()
     }
 }

@@ -84,8 +84,15 @@ impl Field {
     const ORDER: [Field; 4] = [Field::Agent, Field::Machine, Field::Town, Field::Words];
 
     fn step(self, forward: bool) -> Self {
-        let at = Self::ORDER.iter().position(|field| *field == self).unwrap_or(0);
-        let next = if forward { at + 1 } else { at + Self::ORDER.len() - 1 };
+        let at = Self::ORDER
+            .iter()
+            .position(|field| *field == self)
+            .unwrap_or(0);
+        let next = if forward {
+            at + 1
+        } else {
+            at + Self::ORDER.len() - 1
+        };
         Self::ORDER[next % Self::ORDER.len()]
     }
 }
@@ -93,7 +100,10 @@ impl Field {
 impl Census {
     /// The towns a resident can be opened in on `machine`.
     pub(super) fn towns_on(&self, machine: &str) -> Vec<&TownName> {
-        self.towns.iter().filter(|town| town.machines.iter().any(|name| name == machine)).collect()
+        self.towns
+            .iter()
+            .filter(|town| town.machines.iter().any(|name| name == machine))
+            .collect()
     }
 }
 
@@ -130,7 +140,12 @@ pub(super) struct Towns {
 impl Towns {
     /// Takes in a finished read and starts the next one when it is due; true when anything on
     /// screen changed.
-    pub(super) fn tick(&mut self, paths: &ControlPaths, visible: bool, selected: Option<String>) -> bool {
+    pub(super) fn tick(
+        &mut self,
+        paths: &ControlPaths,
+        visible: bool,
+        selected: Option<String>,
+    ) -> bool {
         let mut changed = false;
         if let Some(reader) = &self.reader
             && let Ok(census) = reader.try_recv()
@@ -150,14 +165,19 @@ impl Towns {
                 _ => {}
             }
         }
-        let due = self.last_read.is_none_or(|last| last.elapsed() >= CENSUS_EVERY) || selected != self.asked_detail;
+        let due = self
+            .last_read
+            .is_none_or(|last| last.elapsed() >= CENSUS_EVERY)
+            || selected != self.asked_detail;
         if visible && self.reader.is_none() && due {
             let (sender, receiver) = mpsc::channel();
             let paths = paths.clone();
             let detail = selected.clone();
-            let spawned = std::thread::Builder::new().name("fastctx-world-towns".into()).spawn(move || {
-                let _ = sender.send(read(&paths, detail));
-            });
+            let spawned = std::thread::Builder::new()
+                .name("fastctx-world-towns".into())
+                .spawn(move || {
+                    let _ = sender.send(read(&paths, detail));
+                });
             match spawned {
                 Ok(_) => self.reader = Some(receiver),
                 Err(error) => self.census = Some(Err(CensusError::Failed(error.to_string()))),
@@ -181,28 +201,55 @@ impl Towns {
 
     /// Opens the chat screen on a resident.
     pub(super) fn talk_to(&mut self, resident: &str) {
-        self.chat = Some(Chat::new(Some(TalkClient::open(Target::Resident(resident.to_string()))), None));
+        self.chat = Some(Chat::new(
+            Some(TalkClient::open(Target::Resident(resident.to_string()))),
+            None,
+        ));
     }
 
     /// Opens the chat screen on a resident yet to be opened; its first words open it.
     pub(super) fn compose(&mut self) {
-        self.chat = Some(Chat::new(None, Some(Compose { agent: 0, machine: 0, town: 0, focus: Field::Words })));
+        self.chat = Some(Chat::new(
+            None,
+            Some(Compose {
+                agent: 0,
+                machine: 0,
+                town: 0,
+                focus: Field::Words,
+            }),
+        ));
     }
 
     /// Stops the running turn of a resident from the page, without opening a conversation.
     pub(super) fn stop(&mut self, resident: &str) {
         let resident = resident.to_string();
-        let _ = std::thread::Builder::new().name("fastctx-world-stop".into()).spawn(move || {
-            let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
-            runtime.block_on(async move {
-                let Ok(environment) = crate::session::SessionEnvironment::capture() else { return };
-                let Ok(endpoint) = crate::runtime::node_admin_endpoint(&environment) else { return };
-                let request = crate::world::node::admin::AdminRequest::Town {
-                    request: crate::town::admin::TownRequest::Interrupt { resident },
+        let _ = std::thread::Builder::new()
+            .name("fastctx-world-stop".into())
+            .spawn(move || {
+                let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    return;
                 };
-                let _ = crate::world::node::admin::call(&endpoint, &request, crate::world::node::admin::ADMIN_TIMEOUT).await;
+                runtime.block_on(async move {
+                    let Ok(environment) = crate::session::SessionEnvironment::capture() else {
+                        return;
+                    };
+                    let Ok(endpoint) = crate::runtime::node_admin_endpoint(&environment) else {
+                        return;
+                    };
+                    let request = crate::world::node::admin::AdminRequest::Town {
+                        request: crate::town::admin::TownRequest::Interrupt { resident },
+                    };
+                    let _ = crate::world::node::admin::call(
+                        &endpoint,
+                        &request,
+                        crate::world::node::admin::ADMIN_TIMEOUT,
+                    )
+                    .await;
+                });
             });
-        });
     }
 
     pub(super) fn paste(&mut self, text: &str) {
@@ -222,11 +269,23 @@ impl Towns {
         let (machines, towns): (Vec<String>, Vec<Vec<String>>) = match self.census() {
             Some(census) => (
                 census.machines.clone(),
-                census.machines.iter().map(|machine| census.towns_on(machine).iter().map(|town| town.slug.clone()).collect()).collect(),
+                census
+                    .machines
+                    .iter()
+                    .map(|machine| {
+                        census
+                            .towns_on(machine)
+                            .iter()
+                            .map(|town| town.slug.clone())
+                            .collect()
+                    })
+                    .collect(),
             ),
             None => (Vec::new(), Vec::new()),
         };
-        let Some(chat) = &mut self.chat else { return ChatKey::Leave };
+        let Some(chat) = &mut self.chat else {
+            return ChatKey::Leave;
+        };
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
         if let Some(compose) = &mut chat.compose
             && compose.choose(key, machines.len(), &towns)
@@ -242,10 +301,19 @@ impl Towns {
                     client.stop();
                 }
             }
-            KeyCode::PageUp => chat.back = chat.back.saturating_add(chat.page_rows.max(1)).min(chat.max_back),
+            KeyCode::PageUp => {
+                chat.back = chat
+                    .back
+                    .saturating_add(chat.page_rows.max(1))
+                    .min(chat.max_back)
+            }
             KeyCode::PageDown => chat.back = chat.back.saturating_sub(chat.page_rows.max(1)),
-            KeyCode::Up if chat.input.text().is_empty() => chat.back = chat.back.saturating_add(1).min(chat.max_back),
-            KeyCode::Down if chat.input.text().is_empty() => chat.back = chat.back.saturating_sub(1),
+            KeyCode::Up if chat.input.text().is_empty() => {
+                chat.back = chat.back.saturating_add(1).min(chat.max_back)
+            }
+            KeyCode::Down if chat.input.text().is_empty() => {
+                chat.back = chat.back.saturating_sub(1)
+            }
             _ => {
                 chat.input.handle_key(key);
             }
@@ -285,10 +353,21 @@ impl Chat {
             return;
         }
         if let Some(compose) = self.compose.take() {
-            let town = compose.town.checked_sub(1).and_then(|index| towns.get(compose.machine)?.get(index)).cloned();
+            let town = compose
+                .town
+                .checked_sub(1)
+                .and_then(|index| towns.get(compose.machine)?.get(index))
+                .cloned();
             // The census lists this machine first; any other is where the resident opens.
-            let node = (compose.machine > 0).then(|| machines.get(compose.machine).cloned()).flatten();
-            self.client = Some(TalkClient::open(Target::New { agent: AGENTS[compose.agent].to_string(), town, node, words: text }));
+            let node = (compose.machine > 0)
+                .then(|| machines.get(compose.machine).cloned())
+                .flatten();
+            self.client = Some(TalkClient::open(Target::New {
+                agent: AGENTS[compose.agent].to_string(),
+                town,
+                node,
+                words: text,
+            }));
         } else if let Some(client) = &mut self.client {
             client.say(text);
         } else {
@@ -308,18 +387,31 @@ impl Compose {
             KeyCode::BackTab => self.focus = self.focus.step(false),
             KeyCode::Left | KeyCode::Right if self.focus != Field::Words => {
                 let forward = key.code == KeyCode::Right;
-                let cycle = |at: usize, count: usize| if count == 0 { 0 } else if forward { (at + 1) % count } else { (at + count - 1) % count };
+                let cycle = |at: usize, count: usize| {
+                    if count == 0 {
+                        0
+                    } else if forward {
+                        (at + 1) % count
+                    } else {
+                        (at + count - 1) % count
+                    }
+                };
                 match self.focus {
                     Field::Agent => self.agent = cycle(self.agent, AGENTS.len()),
                     Field::Machine => {
                         self.machine = cycle(self.machine, machines.max(1));
                         self.town = 0;
                     }
-                    Field::Town => self.town = cycle(self.town, towns.get(self.machine).map_or(0, Vec::len) + 1),
+                    Field::Town => {
+                        self.town =
+                            cycle(self.town, towns.get(self.machine).map_or(0, Vec::len) + 1)
+                    }
                     Field::Words => {}
                 }
             }
-            KeyCode::Char(_) if self.focus != Field::Words && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char(_)
+                if self.focus != Field::Words && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.focus = Field::Words;
                 return false;
             }
@@ -333,28 +425,63 @@ impl Compose {
 /// this machine's own records when its node is not running.
 fn read(paths: &ControlPaths, detail: Option<String>) -> Result<Census, CensusError> {
     let world = crate::world::WorldPaths::from_control(paths);
-    let config = crate::world::load_config(&world).map_err(CensusError::Failed)?.ok_or(CensusError::NotEnrolled)?;
+    let config = crate::world::load_config(&world)
+        .map_err(CensusError::Failed)?
+        .ok_or(CensusError::NotEnrolled)?;
     let machine = config.name;
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|error| CensusError::Failed(error.to_string()))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| CensusError::Failed(error.to_string()))?;
     let ask = |query: Query| -> Result<(Vec<MachineAnswer>, Vec<Silent>, bool), CensusError> {
-        match runtime.block_on(crate::town::cli::gather(&query)).map_err(CensusError::Failed)? {
+        match runtime
+            .block_on(crate::town::cli::gather(&query))
+            .map_err(CensusError::Failed)?
+        {
             Some((answers, silent)) => Ok((answers, silent, false)),
-            None => Ok((vec![who::answer(&world.dir, &machine, &query)], Vec::new(), true)),
+            None => Ok((
+                vec![who::answer(&world.dir, &machine, &query)],
+                Vec::new(),
+                true,
+            )),
         }
     };
-    let (answers, silent, alone) = ask(Query { all: true, everywhere: true, ..Query::default() })?;
-    let machines: Vec<String> = answers.iter().map(|answer| answer.machine.clone()).collect();
-    let every: Vec<ResidentFacts> = answers.iter().flat_map(|answer| answer.residents.iter().cloned()).collect();
-    let running: Vec<JobFacts> = answers.into_iter().flat_map(|answer| answer.jobs).filter(JobFacts::running).collect();
+    let (answers, silent, alone) = ask(Query {
+        all: true,
+        everywhere: true,
+        ..Query::default()
+    })?;
+    let machines: Vec<String> = answers
+        .iter()
+        .map(|answer| answer.machine.clone())
+        .collect();
+    let every: Vec<ResidentFacts> = answers
+        .iter()
+        .flat_map(|answer| answer.residents.iter().cloned())
+        .collect();
+    let running: Vec<JobFacts> = answers
+        .into_iter()
+        .flat_map(|answer| answer.jobs)
+        .filter(JobFacts::running)
+        .collect();
     // A resident that moved between towns left records in each; the current ones count. Ids
     // are each machine's own, so a resident is its machine and its id.
-    let mut keys: Vec<(String, String)> = every.iter().map(|facts| (facts.about.machine.clone(), facts.about.id.clone())).collect();
+    let mut keys: Vec<(String, String)> = every
+        .iter()
+        .map(|facts| (facts.about.machine.clone(), facts.about.id.clone()))
+        .collect();
     keys.sort();
     keys.dedup();
     let mut residents: Vec<ResidentFacts> = keys
         .iter()
         .filter_map(|(home, id)| {
-            who::current(every.iter().filter(|facts| facts.about.machine == *home && facts.about.id == *id).collect()).cloned()
+            who::current(
+                every
+                    .iter()
+                    .filter(|facts| facts.about.machine == *home && facts.about.id == *id)
+                    .collect(),
+            )
+            .cloned()
         })
         .filter(|facts| facts.now.state != "left")
         .collect();
@@ -365,32 +492,68 @@ fn read(paths: &ControlPaths, detail: Option<String>) -> Result<Census, CensusEr
         _ => 3,
     };
     residents.sort_by(|left, right| {
-        (left.about.town.is_none(), &left.about.town, rank(&left.now.state), std::cmp::Reverse(activity(left))).cmp(&(
-            right.about.town.is_none(),
-            &right.about.town,
-            rank(&right.now.state),
-            std::cmp::Reverse(activity(right)),
-        ))
+        (
+            left.about.town.is_none(),
+            &left.about.town,
+            rank(&left.now.state),
+            std::cmp::Reverse(activity(left)),
+        )
+            .cmp(&(
+                right.about.town.is_none(),
+                &right.about.town,
+                rank(&right.now.state),
+                std::cmp::Reverse(activity(right)),
+            ))
     });
     let towns = crate::town::project::towns(&world.dir)
         .into_iter()
-        .map(|slug| match crate::town::project::charter(&world.dir, &slug) {
-            Ok(charter) => TownName { slug, name: charter.name, machines: charter.machines },
-            Err(_) => TownName { name: slug.clone(), slug, machines: Vec::new() },
-        })
+        .map(
+            |slug| match crate::town::project::charter(&world.dir, &slug) {
+                Ok(charter) => TownName {
+                    slug,
+                    name: charter.name,
+                    machines: charter.machines,
+                },
+                Err(_) => TownName {
+                    name: slug.clone(),
+                    slug,
+                    machines: Vec::new(),
+                },
+            },
+        )
         .collect();
     let detail = match detail {
         Some(id) => {
-            let (answers, _, _) = ask(Query { ids: vec![id], ..Query::default() })?;
-            let found: Vec<&ResidentFacts> = answers.iter().flat_map(|answer| &answer.residents).collect();
+            let (answers, _, _) = ask(Query {
+                ids: vec![id],
+                ..Query::default()
+            })?;
+            let found: Vec<&ResidentFacts> = answers
+                .iter()
+                .flat_map(|answer| &answer.residents)
+                .collect();
             who::current(found).cloned()
         }
         None => None,
     };
-    Ok(Census { machine, machines, silent, alone, residents, running, towns, detail })
+    Ok(Census {
+        machine,
+        machines,
+        silent,
+        alone,
+        residents,
+        running,
+        towns,
+        detail,
+    })
 }
 
 /// When a resident last did anything the records show.
 fn activity(facts: &ResidentFacts) -> String {
-    facts.now.last_action_at.clone().unwrap_or_default().max(facts.now.since.clone())
+    facts
+        .now
+        .last_action_at
+        .clone()
+        .unwrap_or_default()
+        .max(facts.now.since.clone())
 }

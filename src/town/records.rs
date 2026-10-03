@@ -29,18 +29,32 @@ pub(crate) fn agent_prefix(agent: &str) -> String {
     } else if lower.contains("codex") {
         "codex".to_string()
     } else {
-        let word: String = lower.chars().filter(char::is_ascii_alphanumeric).take(12).collect();
-        if word.is_empty() { "agent".to_string() } else { word }
+        let word: String = lower
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .take(12)
+            .collect();
+        if word.is_empty() {
+            "agent".to_string()
+        } else {
+            word
+        }
     }
 }
 
 /// Whether a text is shaped like a resident id.
 pub(crate) fn is_resident_id(text: &str) -> bool {
-    let Some((prefix, suffix)) = text.rsplit_once('-') else { return false };
+    let Some((prefix, suffix)) = text.rsplit_once('-') else {
+        return false;
+    };
     !prefix.is_empty()
-        && prefix.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        && prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
         && suffix.len() == 4
-        && suffix.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// How a resident came to be.
@@ -154,14 +168,21 @@ pub(crate) type Currency = (bool, Option<time::OffsetDateTime>);
 /// Orders records of one resident: those it has not left first, then the latest change. The
 /// times are compared as moments, not as text, so precisions can mix.
 pub(crate) fn currency(now: &Now) -> Currency {
-    (now.state != "left", crate::world::parse_rfc3339(&now.since).ok())
+    (
+        now.state != "left",
+        crate::world::parse_rfc3339(&now.since).ok(),
+    )
 }
 
 /// Where a resident's records are on a machine: in its town's directory, or outside every
 /// town. A resident living elsewhere has the same directory here for what it runs here.
 pub(crate) fn resident_dir(world_dir: &Path, town: Option<&str>, id: &str) -> PathBuf {
     match town {
-        Some(town) => world_dir.join("towns").join(town).join("residents").join(id),
+        Some(town) => world_dir
+            .join("towns")
+            .join(town)
+            .join("residents")
+            .join(id),
         None => world_dir.join("outside").join("residents").join(id),
     }
 }
@@ -180,7 +201,12 @@ impl Records {
     pub(crate) fn create(&self) -> Result<(), String> {
         std::fs::create_dir_all(self.dir.join("jobs"))
             .and_then(|()| std::fs::create_dir_all(self.dir.join("out")))
-            .map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&self.dir)))
+            .map_err(|error| {
+                format!(
+                    "Cannot create {}: {error}",
+                    crate::paths::display_path(&self.dir)
+                )
+            })
     }
 
     pub(crate) fn about(&self) -> Result<Option<About>, String> {
@@ -211,14 +237,26 @@ impl Records {
     }
 
     /// Appends one action: when, where, which hand, what, and the result.
-    pub(crate) fn append_action(&self, at: &str, machine: &str, hand: &str, what: &str, result: &str) -> Result<String, String> {
-        let line = format!("{at}\t{machine}\t{hand}\t{}\t{}", one_line(what), one_line(result));
+    pub(crate) fn append_action(
+        &self,
+        at: &str,
+        machine: &str,
+        hand: &str,
+        what: &str,
+        result: &str,
+    ) -> Result<String, String> {
+        let line = format!(
+            "{at}\t{machine}\t{hand}\t{}\t{}",
+            one_line(what),
+            one_line(result)
+        );
         append_line(&self.dir.join("actions"), &line)?;
         Ok(line)
     }
 
     pub(crate) fn append_message(&self, message: &MessageLine) -> Result<(), String> {
-        let line = serde_json::to_string(message).map_err(|error| format!("Cannot encode a message line: {error}"))?;
+        let line = serde_json::to_string(message)
+            .map_err(|error| format!("Cannot encode a message line: {error}"))?;
         append_line(&self.dir.join("messages"), &line)
     }
 
@@ -228,13 +266,23 @@ impl Records {
         let path = self.dir.join("messages");
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
-            Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Vec::new(), 0));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Cannot read {}: {error}",
+                    crate::paths::display_path(&path)
+                ));
+            }
         };
         // Line by line, so a line cut off mid-character costs only that line.
         let mut lines = Vec::new();
         let mut damaged = 0;
-        for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.trim_ascii().is_empty()) {
+        for line in bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.trim_ascii().is_empty())
+        {
             match serde_json::from_slice(line) {
                 Ok(message) => lines.push(message),
                 Err(_) => damaged += 1,
@@ -248,13 +296,26 @@ impl Records {
         let path = self.dir.join("actions");
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
-            Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Vec::new(), 0));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Cannot read {}: {error}",
+                    crate::paths::display_path(&path)
+                ));
+            }
         };
         let lines: Vec<&str> = text.lines().filter(|line| !line.is_empty()).collect();
         let total = lines.len();
         let start = total.saturating_sub(count);
-        Ok((lines[start..].iter().map(|line| (*line).to_string()).collect(), total))
+        Ok((
+            lines[start..]
+                .iter()
+                .map(|line| (*line).to_string())
+                .collect(),
+            total,
+        ))
     }
 
     /// The colleagues this resident asked for, each with the machine it lives on, as its
@@ -264,14 +325,21 @@ impl Records {
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
+            Err(error) => {
+                return Err(format!(
+                    "Cannot read {}: {error}",
+                    crate::paths::display_path(&path)
+                ));
+            }
         };
         Ok(text
             .lines()
             .filter_map(|line| {
                 let fields: Vec<&str> = line.splitn(5, '\t').collect();
                 match fields.as_slice() {
-                    [_, machine, "ask_colleague", _, id] if is_resident_id(id) => Some((machine.to_string(), id.to_string())),
+                    [_, machine, "ask_colleague", _, id] if is_resident_id(id) => {
+                        Some((machine.to_string(), id.to_string()))
+                    }
                     _ => None,
                 }
             })
@@ -281,7 +349,10 @@ impl Records {
 
 /// Collapses newlines and tabs so an action stays one line with five fields.
 fn one_line(text: &str) -> String {
-    text.split(['\n', '\r', '\t']).filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ")
+    text.split(['\n', '\r', '\t'])
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, String> {
@@ -290,7 +361,10 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, Str
             .map(Some)
             .map_err(|error| format!("Cannot parse {}: {error}", crate::paths::display_path(path))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("Cannot read {}: {error}", crate::paths::display_path(path))),
+        Err(error) => Err(format!(
+            "Cannot read {}: {error}",
+            crate::paths::display_path(path)
+        )),
     }
 }
 
@@ -298,7 +372,12 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, Str
 /// ending while an action is recorded), so each writes its own temporary file and the last
 /// rename wins; none fails because another one was writing.
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(|error| format!("Cannot encode {}: {error}", crate::paths::display_path(path)))?;
+    let bytes = serde_json::to_vec_pretty(value).map_err(|error| {
+        format!(
+            "Cannot encode {}: {error}",
+            crate::paths::display_path(path)
+        )
+    })?;
     crate::atomic_file::publish(path, &bytes)
 }
 
@@ -309,5 +388,10 @@ fn append_line(path: &Path, line: &str) -> Result<(), String> {
         .open(path)
         .map_err(|error| format!("Cannot open {}: {error}", crate::paths::display_path(path)))?;
     file.write_all(format!("{line}\n").as_bytes())
-        .map_err(|error| format!("Cannot append to {}: {error}", crate::paths::display_path(path)))
+        .map_err(|error| {
+            format!(
+                "Cannot append to {}: {error}",
+                crate::paths::display_path(path)
+            )
+        })
 }

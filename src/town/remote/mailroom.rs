@@ -26,13 +26,24 @@ impl Town {
             };
             for item in letters {
                 if let Err(reason) = self.open_letter(&item).await {
-                    self.log(format!("a letter from {} was not carried out: {reason}", item.from));
-                    if let Err(error) = crate::world::delivery::record_unopened(&self.world().paths, &item, &reason) {
-                        self.log(format!("cannot keep the letter from {} among the delivery failures: {error}", item.from));
+                    self.log(format!(
+                        "a letter from {} was not carried out: {reason}",
+                        item.from
+                    ));
+                    if let Err(error) =
+                        crate::world::delivery::record_unopened(&self.world().paths, &item, &reason)
+                    {
+                        self.log(format!(
+                            "cannot keep the letter from {} among the delivery failures: {error}",
+                            item.from
+                        ));
                     }
                 }
                 if let Err(error) = self.world().acknowledge_mail(&item.receipt) {
-                    self.log(format!("cannot mark a letter from {} as read: {error}", item.from));
+                    self.log(format!(
+                        "cannot mark a letter from {} as read: {error}",
+                        item.from
+                    ));
                     opened.insert(item.receipt.clone());
                 }
             }
@@ -42,13 +53,20 @@ impl Town {
     /// Carries out one letter. Words another resident could not be given are told back to it;
     /// anything else that fails is the error.
     async fn open_letter(&self, item: &InboxItem) -> Result<(), String> {
-        let letter: Letter = serde_json::from_value(item.letter.body.clone()).map_err(|error| format!("it is not a letter a town writes: {error}"))?;
+        let letter: Letter = serde_json::from_value(item.letter.body.clone())
+            .map_err(|error| format!("it is not a letter a town writes: {error}"))?;
         match letter {
             Letter::Deliver { to, delivery } => {
                 // The delivery waits under this machine's own id: an id another machine chose
                 // never names a file here.
-                let delivery = Delivery { id: crate::town::core::delivery_id()?, ..delivery };
-                self.deliver_or_hold(&to, delivery).await.map(|_| ()).map_err(|error| format!("cannot deliver words to {to}: {error}"))
+                let delivery = Delivery {
+                    id: crate::town::core::delivery_id()?,
+                    ..delivery
+                };
+                self.deliver_or_hold(&to, delivery)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| format!("cannot deliver words to {to}: {error}"))
             }
             Letter::Speak { from, to, message } => {
                 let speaker = Peer::new(&item.from, &from);
@@ -71,13 +89,30 @@ impl Town {
                 id,
                 from: "world".into(),
                 kind: "notice".into(),
-                text: format!("=== message to {to} on {} (not delivered) ===\n{error}", self.machine()),
+                text: format!(
+                    "=== message to {to} on {} (not delivered) ===\n{error}",
+                    self.machine()
+                ),
                 as_tool_output: false,
             },
-            Err(id_error) => return self.log(format!("cannot tell {} on {} that its words to {to} failed ({error}): {id_error}", speaker.id, speaker.machine)),
+            Err(id_error) => {
+                return self.log(format!(
+                    "cannot tell {} on {} that its words to {to} failed ({error}): {id_error}",
+                    speaker.id, speaker.machine
+                ));
+            }
         };
-        if let Err(mail_error) = self.mail(&speaker.machine, &Letter::Deliver { to: speaker.id.clone(), delivery: notice }) {
-            self.log(format!("cannot tell {} on {} that its words to {to} failed ({error}): {mail_error}", speaker.id, speaker.machine));
+        if let Err(mail_error) = self.mail(
+            &speaker.machine,
+            &Letter::Deliver {
+                to: speaker.id.clone(),
+                delivery: notice,
+            },
+        ) {
+            self.log(format!(
+                "cannot tell {} on {} that its words to {to} failed ({error}): {mail_error}",
+                speaker.id, speaker.machine
+            ));
         }
     }
 }

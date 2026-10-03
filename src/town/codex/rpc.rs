@@ -20,9 +20,16 @@ use tokio::sync::{mpsc, oneshot};
 /// Something the app-server sent that is not an answer to one of our requests.
 #[derive(Debug)]
 pub(crate) enum Inbound {
-    Notification { method: String, params: Value },
+    Notification {
+        method: String,
+        params: Value,
+    },
     /// The server asks the client something and waits for `respond`.
-    Request { id: Value, method: String, params: Value },
+    Request {
+        id: Value,
+        method: String,
+        params: Value,
+    },
     /// The process is gone; every pending request has already failed.
     Exited(String),
 }
@@ -113,11 +120,16 @@ impl AppServer {
     }
 
     pub(crate) async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
-        self.write(&json!({"method": method, "params": params})).await
+        self.write(&json!({"method": method, "params": params}))
+            .await
     }
 
     /// Answers a request the server sent.
-    pub(crate) async fn respond(&self, id: Value, outcome: Result<Value, (i64, String)>) -> Result<(), String> {
+    pub(crate) async fn respond(
+        &self,
+        id: Value,
+        outcome: Result<Value, (i64, String)>,
+    ) -> Result<(), String> {
         let message = match outcome {
             Ok(result) => json!({"id": id, "result": result}),
             Err((code, message)) => json!({"id": id, "error": {"code": code, "message": message}}),
@@ -160,7 +172,9 @@ async fn read_stdout(
                 }
                 match serde_json::from_str::<Value>(&line) {
                     Ok(message) => route(message, &pending, &sender),
-                    Err(error) => log(format!("app-server wrote a line that is not JSON ({error}): {line}")),
+                    Err(error) => log(format!(
+                        "app-server wrote a line that is not JSON ({error}): {line}"
+                    )),
                 }
             }
             Ok(None) => break "its output closed".to_string(),
@@ -175,7 +189,10 @@ async fn read_stdout(
 }
 
 fn route(message: Value, pending: &Pending, sender: &mpsc::UnboundedSender<Inbound>) {
-    let method = message.get("method").and_then(Value::as_str).map(str::to_string);
+    let method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let id = message.get("id").cloned();
     match (method, id) {
         (Some(method), Some(id)) => {
@@ -188,7 +205,9 @@ fn route(message: Value, pending: &Pending, sender: &mpsc::UnboundedSender<Inbou
         }
         (None, Some(id)) => {
             let Some(id) = id.as_u64() else { return };
-            let Some(waiter) = pending.lock().remove(&id) else { return };
+            let Some(waiter) = pending.lock().remove(&id) else {
+                return;
+            };
             let outcome = match message.get("error") {
                 Some(error) => Err(error
                     .get("message")

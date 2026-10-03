@@ -58,7 +58,11 @@ pub(crate) fn server_instructions(options: crate::server::ServerOptions) -> Stri
     if options.world {
         return crate::hands::text::server_instructions(options.writer);
     }
-    let guidance = if options.tools.files_enabled() { LOCAL_FILE_ROUTE_GUIDANCE } else { LOCAL_SHELL_ROUTE_GUIDANCE };
+    let guidance = if options.tools.files_enabled() {
+        LOCAL_FILE_ROUTE_GUIDANCE
+    } else {
+        LOCAL_SHELL_ROUTE_GUIDANCE
+    };
     guidance.replace('\n', " ")
 }
 
@@ -119,7 +123,9 @@ pub(crate) fn run_background_tool_description(tools: EnabledTools) -> String {
         Some(readers) => format!("; {readers} that path for anything job_output does not show. "),
         None => ". ".to_string(),
     };
-    flow(&format!("{RUN_BACKGROUND_HEAD}{clause}{RUN_BACKGROUND_TAIL}"))
+    flow(&format!(
+        "{RUN_BACKGROUND_HEAD}{clause}{RUN_BACKGROUND_TAIL}"
+    ))
 }
 
 pub(crate) fn job_output_tool_description(tools: EnabledTools) -> String {

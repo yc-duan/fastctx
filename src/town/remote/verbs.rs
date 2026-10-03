@@ -75,33 +75,57 @@ pub(crate) struct StopCall {
 }
 
 /// Answers one town call from the machine `from`.
-pub(crate) async fn answer(town: &Arc<Town>, from: &str, call: Call, session: &Arc<SessionContext>) -> VerbOutcome {
-    dispatch(town, from, call, session).await.unwrap_or_else(VerbOutcome::error_text)
+pub(crate) async fn answer(
+    town: &Arc<Town>,
+    from: &str,
+    call: Call,
+    session: &Arc<SessionContext>,
+) -> VerbOutcome {
+    dispatch(town, from, call, session)
+        .await
+        .unwrap_or_else(VerbOutcome::error_text)
 }
 
-async fn dispatch(town: &Arc<Town>, from: &str, call: Call, session: &Arc<SessionContext>) -> Result<VerbOutcome, String> {
+async fn dispatch(
+    town: &Arc<Town>,
+    from: &str,
+    call: Call,
+    session: &Arc<SessionContext>,
+) -> Result<VerbOutcome, String> {
     let args = call.args;
     match call.verb.as_str() {
         "hand_run" => hand_run_here(town, from, decode(args)?, session).await,
         "hand_edit" => {
             let call: WriteCall<EditRequest> = decode(args)?;
             let what = call.request.file_path.clone();
-            write_here(town, from, call.guest, what, move |writer| hand_write::edit(writer, call.request)).await
+            write_here(town, from, call.guest, what, move |writer| {
+                hand_write::edit(writer, call.request)
+            })
+            .await
         }
         "hand_write" => {
             let call: WriteCall<WriteRequest> = decode(args)?;
             let what = call.request.file_path.clone();
-            write_here(town, from, call.guest, what, move |writer| hand_write::write(writer, call.request)).await
+            write_here(town, from, call.guest, what, move |writer| {
+                hand_write::write(writer, call.request)
+            })
+            .await
         }
         "hand_apply_patch" => {
             let call: WriteCall<ApplyPatchRequest> = decode(args)?;
             let what = hand_write::patch_files(&call.request.input);
-            write_here(town, from, call.guest, what, move |writer| hand_write::apply_patch(writer, call.request)).await
+            write_here(town, from, call.guest, what, move |writer| {
+                hand_write::apply_patch(writer, call.request)
+            })
+            .await
         }
         "who" => {
             let query: Query = decode(args)?;
             let answer = crate::town::who::answer(town.world_dir(), town.machine(), &query);
-            Ok(VerbOutcome { response: ToolResponse::text(String::new()), facts: fact("answer", json!(answer)) })
+            Ok(VerbOutcome {
+                response: ToolResponse::text(String::new()),
+                facts: fact("answer", json!(answer)),
+            })
         }
         "colleague_ask" => {
             let call: ColleagueCall = decode(args)?;
@@ -116,14 +140,22 @@ async fn dispatch(town: &Arc<Town>, from: &str, call: Call, session: &Arc<Sessio
             let requester = Peer::new(from, &call.requester);
             town.ask_colleague(&requester, call.town, &call.prompt, call.label.trim())
                 .await
-                .map(|asked| VerbOutcome { response: ToolResponse::text(String::new()), facts: fact("id", json!(asked.id)) })
+                .map(|asked| VerbOutcome {
+                    response: ToolResponse::text(String::new()),
+                    facts: fact("id", json!(asked.id)),
+                })
         }
         "talk_say" => {
             let call: SayCall = decode(args)?;
-            town.say_as_user(&call.resident, &call.text).await.map(|(spoken, turn)| VerbOutcome {
-                response: ToolResponse::text(String::new()),
-                facts: BTreeMap::from([("landed".to_string(), json!(landed(spoken))), ("turn".to_string(), json!(turn))]),
-            })
+            town.say_as_user(&call.resident, &call.text)
+                .await
+                .map(|(spoken, turn)| VerbOutcome {
+                    response: ToolResponse::text(String::new()),
+                    facts: BTreeMap::from([
+                        ("landed".to_string(), json!(landed(spoken))),
+                        ("turn".to_string(), json!(turn)),
+                    ]),
+                })
         }
         "talk_open" => {
             let call: OpenCall = decode(args)?;
@@ -134,13 +166,19 @@ async fn dispatch(town: &Arc<Town>, from: &str, call: Call, session: &Arc<Sessio
             }
             town.open_resident(&call.agent, call.town, &call.words)
                 .await
-                .map(|resident| VerbOutcome { response: ToolResponse::text(String::new()), facts: fact("resident", json!(resident)) })
+                .map(|resident| VerbOutcome {
+                    response: ToolResponse::text(String::new()),
+                    facts: fact("resident", json!(resident)),
+                })
         }
         "talk_stop" => {
             let call: StopCall = decode(args)?;
             town.interrupt(&call.resident)
                 .await
-                .map(|stopped| VerbOutcome { response: ToolResponse::text(String::new()), facts: fact("stopped", json!(stopped)) })
+                .map(|stopped| VerbOutcome {
+                    response: ToolResponse::text(String::new()),
+                    facts: fact("stopped", json!(stopped)),
+                })
         }
         other => Err(format!("This machine's town does not answer \"{other}\".")),
     }
@@ -155,16 +193,33 @@ pub(crate) fn landed(spoken: Spoken) -> &'static str {
     }
 }
 
-async fn hand_run_here(town: &Arc<Town>, from: &str, call: RunCall, session: &Arc<SessionContext>) -> Result<VerbOutcome, String> {
+async fn hand_run_here(
+    town: &Arc<Town>,
+    from: &str,
+    call: RunCall,
+    session: &Arc<SessionContext>,
+) -> Result<VerbOutcome, String> {
     let starter = starter(from, call.guest)?;
-    let runner = Runner { town: Arc::clone(town), starter };
-    let result = hand_run::run(&runner, &session.command_environment, call.command.clone(), call.cwd).await;
+    let runner = Runner {
+        town: Arc::clone(town),
+        starter,
+    };
+    let result = hand_run::run(
+        &runner,
+        &session.command_environment,
+        call.command.clone(),
+        call.cwd,
+    )
+    .await;
     let (what, outcome) = hand_run::action(&call.command, &result);
     let response = match &result {
         Ok(result) => hand_run::response(result),
         Err(error) => ToolResponse::error(error.clone()),
     };
-    Ok(VerbOutcome { response, facts: action_facts(what, outcome) })
+    Ok(VerbOutcome {
+        response,
+        facts: action_facts(what, outcome),
+    })
 }
 
 async fn write_here(
@@ -175,13 +230,18 @@ async fn write_here(
     operation: impl FnOnce(&Writer) -> Result<WriteResult, WriteError> + Send + 'static,
 ) -> Result<VerbOutcome, String> {
     let writer = Writer::new(Arc::clone(town), starter(from, guest)?);
-    let outcome = tokio::task::spawn_blocking(move || operation(&writer)).await.map_err(|error| format!("The write stopped: {error}"))?;
+    let outcome = tokio::task::spawn_blocking(move || operation(&writer))
+        .await
+        .map_err(|error| format!("The write stopped: {error}"))?;
     let result = hand_write::action(&outcome);
     let response = match outcome {
         Ok(written) => ToolResponse::text(written.text),
         Err(error) => ToolResponse::error(error.to_string()),
     };
-    Ok(VerbOutcome { response, facts: action_facts(what, result) })
+    Ok(VerbOutcome {
+        response,
+        facts: action_facts(what, result),
+    })
 }
 
 /// The resident a hand from `from` acts for here. Its id and town become directory names on
@@ -195,12 +255,18 @@ fn starter(from: &str, guest: Guest) -> Result<Starter, String> {
     {
         return Err(format!("{name} is not a town's name."));
     }
-    Ok(Starter::Guest { peer: Peer::new(from, &guest.resident), town: guest.town })
+    Ok(Starter::Guest {
+        peer: Peer::new(from, &guest.resident),
+        town: guest.town,
+    })
 }
 
 /// The two last fields of the action line the caller's machine records.
 fn action_facts(what: String, result: String) -> BTreeMap<String, Value> {
-    BTreeMap::from([("what".to_string(), json!(what)), ("result".to_string(), json!(result))])
+    BTreeMap::from([
+        ("what".to_string(), json!(what)),
+        ("result".to_string(), json!(result)),
+    ])
 }
 
 fn fact(name: &str, value: Value) -> BTreeMap<String, Value> {

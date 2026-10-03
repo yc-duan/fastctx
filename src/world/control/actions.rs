@@ -148,7 +148,9 @@ pub(super) async fn execute(paths: &ControlPaths, action: Action) -> Result<Repl
                     let data = mutate(&AdminRequest::Town { request }, &action).await?;
                     receipt.facts.push(("town".into(), town.clone()));
                     if let Some(version) = data.get("version") {
-                        receipt.facts.push(("charter version".into(), version.to_string()));
+                        receipt
+                            .facts
+                            .push(("charter version".into(), version.to_string()));
                     }
                 }
                 Action::Invite { name, hours, hubs } => {

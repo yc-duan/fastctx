@@ -541,10 +541,17 @@ impl Form {
             FormKind::Project => {
                 let town = self.value(F::Town).trim().to_string();
                 if !crate::town::remote::valid_town(&town) {
-                    return Err(bad(F::Town, "Use lowercase letters, digits and hyphens, such as mark50.".into()));
+                    return Err(bad(
+                        F::Town,
+                        "Use lowercase letters, digits and hyphens, such as mark50.".into(),
+                    ));
                 }
-                let name = self.optional(F::Name).ok_or_else(|| bad(F::Name, "Give the project a name.".into()))?;
-                let what = self.optional(F::What).ok_or_else(|| bad(F::What, "Say what the project is for.".into()))?;
+                let name = self
+                    .optional(F::Name)
+                    .ok_or_else(|| bad(F::Name, "Give the project a name.".into()))?;
+                let what = self
+                    .optional(F::What)
+                    .ok_or_else(|| bad(F::What, "Say what the project is for.".into()))?;
                 let machines = self.list(F::Machines);
                 if machines.is_empty() {
                     return Err(bad(F::Machines, "Name at least one machine.".into()));
@@ -553,16 +560,28 @@ impl Form {
                     crate::world::validate_node_name(machine).map_err(|e| bad(F::Machines, e))?;
                 }
                 let mut places = Vec::new();
-                for line in self.value(F::Places).lines().filter(|line| !line.trim().is_empty()) {
+                for line in self
+                    .value(F::Places)
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                {
                     let parts: Vec<&str> = line.split('|').map(str::trim).collect();
                     let [what, machine, path] = parts[..] else {
-                        return Err(bad(F::Places, format!("Write \"what it is | machine | path\": {line}")));
+                        return Err(bad(
+                            F::Places,
+                            format!("Write \"what it is | machine | path\": {line}"),
+                        ));
                     };
-                    places.push(crate::town::project::Place { what: what.to_string(), location: location(machine, path).map_err(|e| bad(F::Places, e))? });
+                    places.push(crate::town::project::Place {
+                        what: what.to_string(),
+                        location: location(machine, path).map_err(|e| bad(F::Places, e))?,
+                    });
                 }
                 let canon = match self.optional(F::Canon) {
                     Some(text) => match text.split('|').map(str::trim).collect::<Vec<_>>()[..] {
-                        [machine, path] => Some(location(machine, path).map_err(|e| bad(F::Canon, e))?),
+                        [machine, path] => {
+                            Some(location(machine, path).map_err(|e| bad(F::Canon, e))?)
+                        }
                         _ => return Err(bad(F::Canon, "Write \"machine | path\".".into())),
                     },
                     None => None,
@@ -707,9 +726,16 @@ impl Form {
 fn location(machine: &str, path: &str) -> Result<crate::town::project::Location, String> {
     crate::world::validate_node_name(machine)?;
     let bytes = path.as_bytes();
-    let absolute = path.starts_with('/') || (bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'/' | b'\\'));
+    let absolute = path.starts_with('/')
+        || (bytes.len() > 2
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\'));
     if !absolute {
         return Err(format!("{path} is not an absolute path."));
     }
-    Ok(crate::town::project::Location { machine: machine.to_string(), path: path.to_string() })
+    Ok(crate::town::project::Location {
+        machine: machine.to_string(),
+        path: path.to_string(),
+    })
 }

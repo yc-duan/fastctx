@@ -27,20 +27,31 @@ pub(crate) struct ResidentSlot {
 
 impl ResidentSlot {
     pub(crate) fn new(town: Arc<Town>) -> Arc<Self> {
-        Arc::new(Self { town, id: Mutex::new(None), introduced: std::sync::atomic::AtomicBool::new(false) })
+        Arc::new(Self {
+            town,
+            id: Mutex::new(None),
+            introduced: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 
     /// On the first World tool response of the session, one more head line says who the
     /// resident is and where (`specs/world-projects.md`, "世界请居民进来").
     pub(crate) fn introduce(&self, result: &mut rmcp::model::CallToolResult) {
-        if self.introduced.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        if self
+            .introduced
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
             return;
         }
         let Some(id) = self.id() else { return };
-        let Some(town) = self.town.town_of(&id) else { return };
+        let Some(town) = self.town.town_of(&id) else {
+            return;
+        };
         let machine = self.town.machine();
         let line = match town {
-            Some(town) => format!("=== you are {id} on {machine}, in the town {town}; fastctx w shows who else is here ==="),
+            Some(town) => format!(
+                "=== you are {id} on {machine}, in the town {town}; fastctx w shows who else is here ==="
+            ),
             None => format!(
                 "=== you are {id} on {machine}, outside every town; fastctx w shows the towns, and fastctx project enter <town> enters one when the user tells you which project to work on ==="
             ),
@@ -51,7 +62,9 @@ impl ResidentSlot {
                 Some((head, rest)) => text.text = format!("{head}\n{line}\n{rest}"),
                 None => text.text = format!("{}\n{line}", text.text),
             },
-            _ => result.content.insert(0, rmcp::model::ContentBlock::text(line)),
+            _ => result
+                .content
+                .insert(0, rmcp::model::ContentBlock::text(line)),
         }
     }
 
@@ -65,7 +78,12 @@ impl ResidentSlot {
     }
 
     /// Registers the session; called once its handshake completed.
-    pub(crate) fn attach(&self, environment: &SessionEnvironment, agent: &str, agent_version: &str) {
+    pub(crate) fn attach(
+        &self,
+        environment: &SessionEnvironment,
+        agent: &str,
+        agent_version: &str,
+    ) {
         if self.id.lock().is_some() {
             return;
         }
@@ -73,10 +91,17 @@ impl ResidentSlot {
         let surface = if named.is_some() {
             "world".to_string()
         } else {
-            variable(environment, CLAUDE_ENTRYPOINT_VARIABLE).unwrap_or_else(|| "unknown".to_string())
+            variable(environment, CLAUDE_ENTRYPOINT_VARIABLE)
+                .unwrap_or_else(|| "unknown".to_string())
         };
         let inbox = variable(environment, super::claude::INBOX_ADDRESS_VARIABLE);
-        match self.town.attach(agent, Some(agent_version), named.as_deref(), &surface, inbox.as_deref()) {
+        match self.town.attach(
+            agent,
+            Some(agent_version),
+            named.as_deref(),
+            &surface,
+            inbox.as_deref(),
+        ) {
             Ok(id) => {
                 // A resident that comes back is told what ended while it was away, in every place
                 // it has records.
@@ -89,7 +114,9 @@ impl ResidentSlot {
                 });
                 *self.id.lock() = Some(id);
             }
-            Err(error) => self.town.log(format!("cannot register a session of {agent}: {error}")),
+            Err(error) => self
+                .town
+                .log(format!("cannot register a session of {agent}: {error}")),
         }
     }
 
@@ -98,7 +125,9 @@ impl ResidentSlot {
     pub(crate) fn piggyback(&self, result: &mut rmcp::model::CallToolResult) {
         let Some(id) = self.id() else { return };
         for delivery in self.town.take_waiting(&id) {
-            result.content.push(rmcp::model::ContentBlock::text(delivery.text));
+            result
+                .content
+                .push(rmcp::model::ContentBlock::text(delivery.text));
         }
     }
 }

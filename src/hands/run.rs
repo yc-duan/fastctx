@@ -7,10 +7,10 @@
 //! resident's directory on this machine, and its end hook tells the node, which tells the
 //! resident: directly when it lives here, by mail when it lives elsewhere.
 
+use super::Starter;
 use crate::model::{ToolContent, ToolResponse};
 use crate::run::{ContentBlock, RunRequest, RunResult};
 use crate::session::SessionEnvironment;
-use super::Starter;
 use crate::town::core::Town;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -45,18 +45,25 @@ pub(crate) async fn run(
         .iter()
         .filter_map(|(name, value)| Some((name.to_str()?.to_string(), value.to_str()?.to_string())))
         .collect();
-    env.insert(crate::town::session::RESIDENT_VARIABLE.to_string(), id.to_string());
+    env.insert(
+        crate::town::session::RESIDENT_VARIABLE.to_string(),
+        id.to_string(),
+    );
     match &place {
         Some(place) => env.insert(crate::town::cli::TOWN_VARIABLE.to_string(), place.clone()),
         None => env.remove(crate::town::cli::TOWN_VARIABLE),
     };
-    let fastctx = std::env::current_exe().map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?;
+    let fastctx = std::env::current_exe()
+        .map_err(|error| format!("Cannot locate the running fastctx binary: {error}"))?;
     let request = RunRequest {
         command: command.clone(),
         cwd,
         env,
         directory: town.resident_dir(place.as_deref(), id),
-        hook: Some(format!("'{}' job-ended", fastctx.to_string_lossy().replace('\\', "/"))),
+        hook: Some(format!(
+            "'{}' job-ended",
+            fastctx.to_string_lossy().replace('\\', "/")
+        )),
         machine: town.machine().to_string(),
     };
     let result = tokio::task::spawn_blocking(move || crate::run::execute(request))
@@ -75,7 +82,10 @@ pub(crate) async fn run(
         && result.job.exit_code.is_none()
         && let Err(error) = town.owe_end(&result.record_path, home).await
     {
-        town.log(format!("cannot promise {id} the end of {}: {error}", result.job.id));
+        town.log(format!(
+            "cannot promise {id} the end of {}: {error}",
+            result.job.id
+        ));
     }
     result
 }
@@ -85,11 +95,19 @@ pub(crate) fn action(command: &str, result: &Result<RunResult, String>) -> (Stri
     let outcome = match result {
         Ok(result) => match result.job.exit_code {
             Some(code) => format!("exit {code}"),
-            None => format!("{} {}", format!("{:?}", result.job.state).to_lowercase(), result.job.id),
+            None => format!(
+                "{} {}",
+                format!("{:?}", result.job.state).to_lowercase(),
+                result.job.id
+            ),
         },
         Err(error) => format!("failed: {}", error.lines().next().unwrap_or_default()),
     };
-    let first = command.lines().find(|line| !line.trim().is_empty()).unwrap_or_default().trim();
+    let first = command
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .trim();
     (first.to_string(), outcome)
 }
 
@@ -99,10 +117,17 @@ pub(crate) fn response(result: &RunResult) -> ToolResponse {
         .iter()
         .map(|block| match block {
             ContentBlock::Text { text } => ToolContent::Text(text.clone()),
-            ContentBlock::Image { data, mime_type, .. } => {
-                ToolContent::Image { data: data.clone(), mime_type: mime_type.clone(), detail: None }
-            }
+            ContentBlock::Image {
+                data, mime_type, ..
+            } => ToolContent::Image {
+                data: data.clone(),
+                mime_type: mime_type.clone(),
+                detail: None,
+            },
         })
         .collect();
-    ToolResponse { content, is_error: false }
+    ToolResponse {
+        content,
+        is_error: false,
+    }
 }

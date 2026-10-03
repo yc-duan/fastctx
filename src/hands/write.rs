@@ -11,7 +11,9 @@
 use super::Starter;
 use crate::town::core::Town;
 use crate::town::seen::{self, Seen};
-use crate::write::{ApplyPatchRequest, EditRequest, WriteContext, WriteError, WriteRequest, WriteResult};
+use crate::write::{
+    ApplyPatchRequest, EditRequest, WriteContext, WriteError, WriteRequest, WriteResult,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -25,10 +27,18 @@ pub(crate) struct Writer {
 impl Writer {
     pub(crate) fn new(town: Arc<Town>, starter: Starter) -> Self {
         let records = match &starter {
-            Starter::Here(id) => town.town_of(id).map(|place| town.resident_dir(place.as_deref(), id)),
-            Starter::Guest { peer, town: place } => Some(town.resident_dir(place.as_deref(), &peer.id)),
+            Starter::Here(id) => town
+                .town_of(id)
+                .map(|place| town.resident_dir(place.as_deref(), id)),
+            Starter::Guest { peer, town: place } => {
+                Some(town.resident_dir(place.as_deref(), &peer.id))
+            }
         };
-        Self { town, starter, records }
+        Self {
+            town,
+            starter,
+            records,
+        }
     }
 
     fn seen(&self, path: &Path) -> Option<Seen> {
@@ -37,15 +47,20 @@ impl Writer {
 
     fn record(&self, hand: &str, what: &str, outcome: &Result<WriteResult, WriteError>) {
         if let Starter::Here(id) = &self.starter {
-            self.town.record_action(id, self.town.machine(), hand, what, &action(outcome));
+            self.town
+                .record_action(id, self.town.machine(), hand, what, &action(outcome));
         }
     }
 
     /// Whether a path lies in a town's ledger, which only the World writes.
     fn ledger(&self, path: &Path) -> bool {
         let towns = self.town.world_dir().join("towns");
-        let Ok(rest) = path.strip_prefix(&towns) else { return false };
-        rest.components().nth(1).is_some_and(|component| component.as_os_str() == "ledger")
+        let Ok(rest) = path.strip_prefix(&towns) else {
+            return false;
+        };
+        rest.components()
+            .nth(1)
+            .is_some_and(|component| component.as_os_str() == "ledger")
     }
 }
 
@@ -53,7 +68,9 @@ pub(crate) fn edit(writer: &Writer, request: EditRequest) -> Result<WriteResult,
     let path = PathBuf::from(&request.file_path);
     let seen = writer.seen(&path);
     let what = request.file_path.clone();
-    let outcome = run(writer, seen.as_ref(), |context| crate::write::edit(request, context));
+    let outcome = run(writer, seen.as_ref(), |context| {
+        crate::write::edit(request, context)
+    });
     writer.record("edit", &what, &outcome);
     outcome
 }
@@ -75,14 +92,21 @@ pub(crate) fn write(writer: &Writer, request: WriteRequest) -> Result<WriteResul
         writer.record("write", &what, &outcome);
         return outcome;
     }
-    let outcome = run(writer, seen.as_ref(), |context| crate::write::write(request, context));
+    let outcome = run(writer, seen.as_ref(), |context| {
+        crate::write::write(request, context)
+    });
     writer.record("write", &what, &outcome);
     outcome
 }
 
-pub(crate) fn apply_patch(writer: &Writer, request: ApplyPatchRequest) -> Result<WriteResult, WriteError> {
+pub(crate) fn apply_patch(
+    writer: &Writer,
+    request: ApplyPatchRequest,
+) -> Result<WriteResult, WriteError> {
     let what = patch_files(&request.input);
-    let outcome = run(writer, None, |context| crate::write::apply_patch(request, context));
+    let outcome = run(writer, None, |context| {
+        crate::write::apply_patch(request, context)
+    });
     writer.record("apply_patch", &what, &outcome);
     outcome
 }
@@ -107,7 +131,10 @@ fn run(
 pub(crate) fn action(outcome: &Result<WriteResult, WriteError>) -> String {
     match outcome {
         Ok(result) => format!("{} changed", result.changes.len()),
-        Err(error) => format!("refused: {}", error.message.lines().next().unwrap_or_default()),
+        Err(error) => format!(
+            "refused: {}",
+            error.message.lines().next().unwrap_or_default()
+        ),
     }
 }
 
@@ -116,7 +143,10 @@ pub(crate) fn patch_files(input: &str) -> String {
     let files: Vec<&str> = input
         .lines()
         .filter_map(|line| {
-            ["*** Add File: ", "*** Update File: ", "*** Delete File: "].iter().find_map(|head| line.strip_prefix(head)).map(str::trim)
+            ["*** Add File: ", "*** Update File: ", "*** Delete File: "]
+                .iter()
+                .find_map(|head| line.strip_prefix(head))
+                .map(str::trim)
         })
         .collect();
     files.join(", ")

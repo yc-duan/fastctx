@@ -15,7 +15,12 @@ use std::sync::mpsc;
 pub(super) enum Target {
     Resident(String),
     /// A resident to open first, on this machine or `node`; `words` are the first it hears.
-    New { agent: String, town: Option<String>, node: Option<String>, words: String },
+    New {
+        agent: String,
+        town: Option<String>,
+        node: Option<String>,
+        words: String,
+    },
 }
 
 /// Why a conversation ended.
@@ -64,7 +69,12 @@ impl TalkClient {
         if let Err(error) = spawned {
             let _ = failed.send(Update::Closed(Closed::Failed(error.to_string())));
         }
-        Self { resident, updates, commands, transcript: Transcript::default() }
+        Self {
+            resident,
+            updates,
+            commands,
+            transcript: Transcript::default(),
+        }
     }
 
     /// A client with a given transcript and no conversation behind it, for drawing.
@@ -72,7 +82,12 @@ impl TalkClient {
     pub(super) fn detached(resident: &str, transcript: Transcript) -> Self {
         let (_, updates) = mpsc::channel();
         let (commands, _) = tokio::sync::mpsc::unbounded_channel();
-        Self { resident: Some(resident.to_string()), updates, commands, transcript }
+        Self {
+            resident: Some(resident.to_string()),
+            updates,
+            commands,
+            transcript,
+        }
     }
 
     /// Says one line the user typed, as the user.
@@ -103,8 +118,15 @@ impl TalkClient {
     }
 }
 
-fn serve(target: Target, updates: &mpsc::Sender<Update>, mut commands: tokio::sync::mpsc::UnboundedReceiver<Command>) {
-    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+fn serve(
+    target: Target,
+    updates: &mpsc::Sender<Update>,
+    mut commands: tokio::sync::mpsc::UnboundedReceiver<Command>,
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(error) => {
             let _ = updates.send(Update::Closed(Closed::Failed(error.to_string())));
@@ -118,13 +140,25 @@ fn serve(target: Target, updates: &mpsc::Sender<Update>, mut commands: tokio::sy
 }
 
 /// Holds one conversation until it ends, and says why it ended.
-async fn converse(target: Target, updates: &mpsc::Sender<Update>, commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>) -> Closed {
-    let endpoint = match crate::session::SessionEnvironment::capture().and_then(|environment| crate::runtime::node_admin_endpoint(&environment)) {
+async fn converse(
+    target: Target,
+    updates: &mpsc::Sender<Update>,
+    commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+) -> Closed {
+    let endpoint = match crate::session::SessionEnvironment::capture()
+        .and_then(|environment| crate::runtime::node_admin_endpoint(&environment))
+    {
         Ok(endpoint) => endpoint,
         Err(error) => return Closed::Failed(error),
     };
     let ask = async |request: TownRequest| -> Result<serde_json::Value, Closed> {
-        match admin::call(&endpoint, &AdminRequest::Town { request }, admin::ADMIN_TIMEOUT).await {
+        match admin::call(
+            &endpoint,
+            &AdminRequest::Town { request },
+            admin::ADMIN_TIMEOUT,
+        )
+        .await
+        {
             Ok(Some(response)) if response.ok => Ok(response.data),
             Ok(Some(response)) => Err(Closed::Failed(response.error.unwrap_or_default())),
             Ok(None) => Err(Closed::NodeDown),
@@ -133,9 +167,25 @@ async fn converse(target: Target, updates: &mpsc::Sender<Update>, commands: &mut
     };
     let resident = match target {
         Target::Resident(resident) => resident,
-        Target::New { agent, town, node, words } => {
-            let opened = match ask(TownRequest::Open { agent, town, words, node }).await {
-                Ok(data) => data.get("resident").and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
+        Target::New {
+            agent,
+            town,
+            node,
+            words,
+        } => {
+            let opened = match ask(TownRequest::Open {
+                agent,
+                town,
+                words,
+                node,
+            })
+            .await
+            {
+                Ok(data) => data
+                    .get("resident")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
                 Err(closed) => return closed,
             };
             if updates.send(Update::Opened(opened.clone())).is_err() {
@@ -144,19 +194,27 @@ async fn converse(target: Target, updates: &mpsc::Sender<Update>, commands: &mut
             opened
         }
     };
-    let Ok(mut watch) = crate::runtime::local_ipc::connect(&endpoint).await else { return Closed::NodeDown };
-    let request = AdminRequest::Town { request: TownRequest::Watch { resident: resident.clone() } };
+    let Ok(mut watch) = crate::runtime::local_ipc::connect(&endpoint).await else {
+        return Closed::NodeDown;
+    };
+    let request = AdminRequest::Town {
+        request: TownRequest::Watch {
+            resident: resident.clone(),
+        },
+    };
     let bytes = serde_json::to_vec(&request).expect("an admin request encodes");
     if let Err(error) = admin::write_frame(&mut watch, &bytes).await {
         return Closed::Failed(error);
     }
     // Frames are read by their own task: a read cut short by a typed line would leave the rest
     // of the frame to be read as the start of the next.
-    let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel::<Result<TalkEvent, Closed>>();
+    let (events_tx, mut events) =
+        tokio::sync::mpsc::unbounded_channel::<Result<TalkEvent, Closed>>();
     tokio::spawn(async move {
         loop {
             let event = match admin::read_frame(&mut watch).await {
-                Ok(bytes) => serde_json::from_slice::<TalkEvent>(&bytes).map_err(|error| Closed::Failed(error.to_string())),
+                Ok(bytes) => serde_json::from_slice::<TalkEvent>(&bytes)
+                    .map_err(|error| Closed::Failed(error.to_string())),
                 Err(_) => Err(Closed::Ended(None)),
             };
             let failed = event.is_err();
@@ -212,12 +270,27 @@ pub(super) struct Transcript {
 }
 
 pub(super) enum Entry {
-    Words { from: String, text: String },
+    Words {
+        from: String,
+        text: String,
+    },
     /// A message of the model; `streaming` while its text is still arriving.
-    Message { item: String, text: String, streaming: bool },
-    Tool { item: String, name: String, summary: String, state: ToolState },
+    Message {
+        item: String,
+        text: String,
+        streaming: bool,
+    },
+    Tool {
+        item: String,
+        name: String,
+        summary: String,
+        state: ToolState,
+    },
     /// A turn ended, and why when it did not complete.
-    TurnEnded { status: String, reason: Option<String> },
+    TurnEnded {
+        status: String,
+        reason: Option<String>,
+    },
     /// What the host or the World reported about the session itself.
     Health(String),
     Refused(String),
@@ -237,11 +310,19 @@ impl Transcript {
             TalkEvent::TurnStarted { .. } => self.busy = true,
             TalkEvent::Delta { item, text } => match self.streaming(&item) {
                 Some(so_far) => so_far.push_str(&text),
-                None => self.entries.push(Entry::Message { item, text, streaming: true }),
+                None => self.entries.push(Entry::Message {
+                    item,
+                    text,
+                    streaming: true,
+                }),
             },
             TalkEvent::Message { item, text } => {
                 let found = self.entries.iter_mut().rev().find_map(|entry| match entry {
-                    Entry::Message { item: current, text: so_far, streaming } if *current == item => Some((so_far, streaming)),
+                    Entry::Message {
+                        item: current,
+                        text: so_far,
+                        streaming,
+                    } if *current == item => Some((so_far, streaming)),
                     _ => None,
                 });
                 match found {
@@ -249,22 +330,41 @@ impl Transcript {
                         *so_far = text;
                         *streaming = false;
                     }
-                    None => self.entries.push(Entry::Message { item, text, streaming: false }),
+                    None => self.entries.push(Entry::Message {
+                        item,
+                        text,
+                        streaming: false,
+                    }),
                 }
             }
-            TalkEvent::Tool { item, name, summary, done, failed } => {
+            TalkEvent::Tool {
+                item,
+                name,
+                summary,
+                done,
+                failed,
+            } => {
                 let state = match (done, failed) {
                     (false, _) => ToolState::Running,
                     (true, false) => ToolState::Done,
                     (true, true) => ToolState::Failed,
                 };
                 let started = self.entries.iter_mut().rev().find_map(|entry| match entry {
-                    Entry::Tool { item: current, state, .. } if *current == item => Some(state),
+                    Entry::Tool {
+                        item: current,
+                        state,
+                        ..
+                    } if *current == item => Some(state),
                     _ => None,
                 });
                 match started {
                     Some(current) => *current = state,
-                    None => self.entries.push(Entry::Tool { item, name, summary, state }),
+                    None => self.entries.push(Entry::Tool {
+                        item,
+                        name,
+                        summary,
+                        state,
+                    }),
                 }
             }
             TalkEvent::TurnEnded { status, reason, .. } => {
@@ -289,7 +389,11 @@ impl Transcript {
     /// The text of a message still arriving for `item`, if there is one.
     fn streaming(&mut self, item: &str) -> Option<&mut String> {
         self.entries.iter_mut().rev().find_map(|entry| match entry {
-            Entry::Message { item: current, text, streaming: true } if current == item => Some(text),
+            Entry::Message {
+                item: current,
+                text,
+                streaming: true,
+            } if current == item => Some(text),
             _ => None,
         })
     }

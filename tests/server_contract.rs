@@ -780,10 +780,23 @@ fn a_world_appears_in_the_published_surface_only_after_this_machine_is_enrolled(
     // An enrolled machine publishes the World's hands instead of the 1.0 set, whatever that
     // enables.
     let tools = published_tools(enrolled.path());
-    let names = tools.iter().filter_map(|tool| tool["name"].as_str()).collect::<std::collections::BTreeSet<_>>();
+    let names = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         names,
-        ["ask_colleague", "copy", "edit", "message_colleague", "nodes", "run", "write"].into_iter().collect(),
+        [
+            "ask_colleague",
+            "copy",
+            "edit",
+            "message_colleague",
+            "nodes",
+            "run",
+            "write"
+        ]
+        .into_iter()
+        .collect(),
         "an enrolled machine published the wrong surface"
     );
     for name in ["run", "edit", "write"] {
