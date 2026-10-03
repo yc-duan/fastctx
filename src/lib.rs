@@ -46,6 +46,7 @@ pub(crate) mod traversal;
 pub(crate) mod town;
 pub mod tui;
 pub(crate) mod update;
+pub mod view;
 pub(crate) mod world;
 pub mod write;
 
