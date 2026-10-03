@@ -1,5 +1,8 @@
 //! Command-line parsing, dual-mode TTY dispatch, and non-interactive control commands.
 
+#[path = "../view/mod.rs"]
+pub mod view;
+
 use crate::control::apply::{UnapplyOptions, commit_unapply, plan_unapply};
 use crate::control::doctor;
 use crate::control::i18n::{ALL_LANGUAGES, Language};
@@ -34,6 +37,8 @@ pub struct Cli {
 /// All scriptable commands.
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Show text, images, or PDF pages from one or more files in argument order.
+    View(view::ViewArgs),
     /// Force the stdio MCP server.
     Serve {
         /// Comma-separated enabled tools; file tools are independent and shell tools are atomic.
@@ -193,6 +198,9 @@ pub async fn run() -> Result<ExitCode, String> {
 }
 
 async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
+    if let Some(Command::View(args)) = &cli.command {
+        return view::run(args);
+    }
     let implicit_tui =
         cli.command.is_none() && io::stdin().is_terminal() && io::stdout().is_terminal();
     let internal = is_internal_command(&cli.command);
@@ -200,6 +208,7 @@ async fn run_cli(cli: Cli) -> Result<ExitCode, String> {
         crate::update::cleanup_replaced_binaries(&paths);
     }
     match cli.command {
+        Some(Command::View(_)) => unreachable!("view is dispatched before control initialization"),
         Some(Command::Serve {
             tools,
             enable_shell,

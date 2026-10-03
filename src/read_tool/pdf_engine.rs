@@ -122,7 +122,7 @@ pub(super) fn run_pdf_operation<T: Send + 'static>(
     PDF_RUNTIME.run(PDF_OPERATION_TIMEOUT, operation)
 }
 
-pub(super) fn pdfium_session() -> Result<(MutexGuard<'static, ()>, &'static Pdfium), String> {
+pub(crate) fn pdfium_session() -> Result<(MutexGuard<'static, ()>, &'static Pdfium), String> {
     if let Some(reason) = PDF_RUNTIME.degraded_reason() {
         return Err(reason);
     }

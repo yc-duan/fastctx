@@ -8,7 +8,7 @@ mod pdf;
 #[path = "pdf_disabled.rs"]
 mod pdf;
 #[cfg(feature = "pdf")]
-mod pdf_engine;
+pub(crate) mod pdf_engine;
 mod text_file;
 
 use crate::binary::detect_binary_type;

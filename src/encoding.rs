@@ -12,6 +12,7 @@ use std::path::Path;
 #[cfg(test)]
 mod reference_v011;
 mod snapshot_pipeline;
+pub(crate) mod view;
 
 pub(crate) use snapshot_pipeline::{EncodingPipelineFailure, validate_snapshot_encoding};
 
