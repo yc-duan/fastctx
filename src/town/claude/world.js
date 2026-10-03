@@ -19,26 +19,57 @@ const POLL_MS = 2000
 let dir = null
 let busy = false
 let sequence = 0
+// Inbox files handed to the model, or held for it, in this session.
 const handled = new Set()
 const failing = new Set()
+// Deliveries waiting for the next tool boundary or the end of the turn.
 const held = []
+// Receipts that could not be written yet; written at the next look.
+const owed = []
 
 function stamp() {
   return new Date().toISOString()
 }
 
 // The marker is written after the event, so an event with a marker is whole: the node waits
-// for an event without one, and sets aside one that has a marker yet does not parse.
+// for an event without one, and sets aside one that has a marker yet does not parse. An event
+// that cannot be written cannot be reported through these same files; the next one tries again.
 async function event($, kind, fields) {
   if (!dir) return
   sequence += 1
   const name = String(Date.now()).padStart(15, '0') + '-' + String(sequence).padStart(6, '0')
-  await $.fs.write(dir + '/events/' + name + '.json', JSON.stringify({ kind, at: stamp(), ...fields }))
-  await $.fs.write(dir + '/events/' + name + '.done', '')
+  try {
+    await $.fs.write(dir + '/events/' + name + '.json', JSON.stringify({ kind, at: stamp(), ...fields }))
+    await $.fs.write(dir + '/events/' + name + '.done', '')
+  } catch (error) {}
 }
 
+// A receipt tells the node the model has the delivery. One that cannot be written is owed and
+// written at the next look; the delivery is not handed over again meanwhile.
 async function receipt($, delivery, how) {
-  await $.fs.write(dir + '/receipts/' + delivery.id, JSON.stringify({ at: stamp(), how }))
+  try {
+    await $.fs.write(dir + '/receipts/' + delivery.id, JSON.stringify({ at: stamp(), how }))
+  } catch (error) {
+    owed.push([delivery, how])
+  }
+}
+
+async function settle($) {
+  for (const [delivery, how] of owed.splice(0, owed.length)) await receipt($, delivery, how)
+}
+
+// Hands every held delivery to the model in one new turn; on failure they stay held.
+async function flush($, how) {
+  if (held.length === 0) return
+  const deliveries = held.slice()
+  try {
+    await $.prompt.submit({ text: deliveries.map(framed).join('\n\n') })
+  } catch (error) {
+    await trouble($, deliveries[0].id, 'undelivered', error)
+    return
+  }
+  held.splice(0, deliveries.length)
+  for (const delivery of deliveries) await receipt($, delivery, how)
 }
 
 // What the model reads when the World speaks on its own account; the user's own words are
@@ -47,11 +78,12 @@ function framed(delivery) {
   return 'The fastctx plugin delivers a message from the World.\n\n' + delivery.text
 }
 
-async function names($, sub) {
+// The names in one of the session's directories, or null when they cannot be listed.
+async function listing($, sub) {
   try {
     return (await $.fs.list(dir + '/' + sub)).map((entry) => entry.name)
   } catch (error) {
-    return []
+    return null
   }
 }
 
@@ -64,9 +96,14 @@ async function trouble($, name, kind, error) {
 }
 
 async function poll($) {
+  await settle($)
   // A delivery with a receipt was handed over already, perhaps before this mod restarted.
-  const receipted = new Set(await names($, 'receipts'))
-  const fresh = (await names($, 'inbox'))
+  // Without knowing which have receipts, handing anything over could repeat it.
+  const receipts = await listing($, 'receipts')
+  if (receipts === null) return
+  if (!busy) await flush($, 'submitted')
+  const receipted = new Set(receipts)
+  const fresh = ((await listing($, 'inbox')) || [])
     .filter((name) => name.endsWith('.json') && !handled.has(name) && !receipted.has(name.slice(0, -5)))
     .sort()
   for (const name of fresh) {
@@ -77,22 +114,21 @@ async function poll($) {
       await trouble($, name, 'unreadable', error)
       continue
     }
-    try {
-      if (delivery.as_user === true) {
-        // The user's own words, typed on one of the user's devices: only these go in as the user.
-        await $.prompt.submit({ text: delivery.text, asUser: true })
-        await receipt($, delivery, 'submitted as the user')
-      } else if (busy) {
-        held.push(delivery)
-      } else {
-        await $.prompt.submit({ text: framed(delivery) })
-        await receipt($, delivery, 'submitted')
-      }
+    if (delivery.as_user !== true && busy) {
+      held.push(delivery)
       handled.add(name)
-      failing.delete(name)
+      continue
+    }
+    try {
+      // The user's own words, typed on one of the user's devices: only these go in as the user.
+      await $.prompt.submit(delivery.as_user === true ? { text: delivery.text, asUser: true } : { text: framed(delivery) })
     } catch (error) {
       await trouble($, name, 'undelivered', error)
+      continue
     }
+    handled.add(name)
+    failing.delete(name)
+    await receipt($, delivery, delivery.as_user === true ? 'submitted as the user' : 'submitted')
   }
 }
 
@@ -110,6 +146,9 @@ export function register(on) {
     try { registration.model = await $.session.model() } catch (error) { registration.model = null }
     try { registration.surfaces = await $.session.surfaces() } catch (error) { registration.surfaces = null }
     try { registration.version = await $.session.version() } catch (error) { registration.version = null }
+    // The receipts directory exists from the start, so failing to list it means a failure,
+    // never "nothing handed over yet".
+    await $.fs.write(dir + '/receipts/.created', '')
     await $.fs.write(dir + '/session.json', JSON.stringify(registration))
     // Deliveries already waiting when the session (re)starts are delivered, not skipped: a
     // closed session's answers are exactly what it should see when the user opens it again.
@@ -126,11 +165,7 @@ export function register(on) {
   on('turn.complete', async ($, e, next) => {
     busy = false
     await event($, 'turn_complete', { aborted: e.isAborted === true, ms: e.durationMs || null, answer: e.answer || null })
-    if (held.length > 0) {
-      const deliveries = held.splice(0, held.length)
-      await $.prompt.submit({ text: deliveries.map(framed).join('\n\n') })
-      for (const delivery of deliveries) await receipt($, delivery, 'submitted at the end of a turn')
-    }
+    await flush($, 'submitted at the end of a turn')
     return next(e)
   })
 

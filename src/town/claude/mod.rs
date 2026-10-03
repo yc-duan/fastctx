@@ -136,6 +136,9 @@ pub(crate) struct ModEvent {
     pub(crate) answer: Option<String>,
     #[serde(default)]
     pub(crate) tool: Option<String>,
+    /// The turn id Claude Code gives a starting turn, when it gives one.
+    #[serde(default)]
+    pub(crate) turn: Option<String>,
 }
 
 /// Everything new under one session's directory since the last look: its events (removed once
@@ -218,7 +221,8 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
             return harvest;
         }
     };
-    for id in receipts {
+    // Names starting with a dot are the mod's own, such as the file that creates the directory.
+    for id in receipts.into_iter().filter(|id| !id.starts_with('.')) {
         let delivery = dir.join("inbox").join(format!("{id}.json"));
         let receipt = dir.join("receipts").join(&id);
         let removed = match std::fs::remove_file(&delivery) {

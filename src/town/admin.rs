@@ -69,7 +69,7 @@ pub(crate) async fn stream(town: &Town, request: TownRequest, mut connection: Bo
             return;
         }
     }
-    let seen = super::talk::HistoryKeys::of(&history);
+    let mut seen = super::talk::HistoryKeys::of(&history);
     while let Some(event) = events.recv().await {
         if seen.repeats(&event) {
             continue;

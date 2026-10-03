@@ -52,7 +52,7 @@ impl Town {
         records.write_now(&Now { state: "busy".into(), since: about.since.clone(), ..Now::default() })?;
         self.state.lock().residents.insert(
             id.clone(),
-            Live { records, about, route: Route::ClaudeMod(None), inbox_address: None, sessions: 0, readers: HashMap::new() },
+            Live { records, about, route: Route::ClaudeMod(None), inbox_address: None, sessions: 0, readers: HashMap::new(), turn: None },
         );
         Ok(id)
     }
@@ -111,7 +111,9 @@ impl Town {
     }
 
     /// Reads what the Claude mods wrote: pairs new sessions, turns their events into the
-    /// residents' `now`, and records which deliveries reached the model.
+    /// residents' `now`, and records which deliveries reached the model. Words that wait for a
+    /// paired resident move into its session's inbox at every look, so a move that failed once
+    /// is tried again.
     pub(super) async fn follow_claude(self: Arc<Self>) {
         // The mod looks at its inbox every 2 s; looking back at the same pace keeps `now` at
         // most one look behind what the mod reported.
@@ -119,24 +121,25 @@ impl Town {
         loop {
             ticker.tick().await;
             self.pair_claude_sessions();
-            let sessions: Vec<(String, Records)> = {
+            let sessions: Vec<(String, String, Records)> = {
                 let state = self.state.lock();
                 state
                     .residents
-                    .values()
-                    .filter_map(|live| match &live.route {
-                        Route::ClaudeMod(Some(session)) => Some((session.clone(), live.records.clone())),
+                    .iter()
+                    .filter_map(|(id, live)| match &live.route {
+                        Route::ClaudeMod(Some(session)) => Some((id.clone(), session.clone(), live.records.clone())),
                         _ => None,
                     })
                     .collect()
             };
-            for (session, records) in sessions {
+            for (id, session, records) in sessions {
+                self.migrate_waiting(&id, &session);
                 let harvest = crate::town::claude::harvest(&self.config.world_dir, &session);
                 if let Some(problem) = &harvest.problem {
                     (self.log)(problem.clone());
                 }
                 for event in &harvest.events {
-                    if let Some(talk) = claude_event(event) {
+                    for talk in self.claude_event(&id, event) {
                         self.publish_session(&session, talk);
                     }
                 }
@@ -147,10 +150,13 @@ impl Town {
                         "session_end" => "left",
                         _ => continue,
                     };
-                    let mut now = records.now().ok().flatten().unwrap_or_default();
-                    now.state = state.to_string();
-                    now.since = event.at;
-                    let _ = records.write_now(&now);
+                    let changed = records.update_now(|now| {
+                        now.state = state.to_string();
+                        now.since = event.at;
+                    });
+                    if let Err(error) = changed {
+                        (self.log)(format!("cannot record the state {state} in {}: {error}", crate::paths::display_path(&records.dir)));
+                    }
                 }
                 for delivered in harvest.delivered {
                     let _ = records.append_message(&MessageLine {
@@ -166,25 +172,40 @@ impl Town {
     }
 }
 
-/// What a watcher sees of a Claude mod's event; the mod reports turns and tools, not text.
-fn claude_event(event: &ModEvent) -> Option<TalkEvent> {
-    match event.kind.as_str() {
-        "turn_start" => Some(TalkEvent::TurnStarted { turn: event.at.clone() }),
-        "turn_complete" => match &event.answer {
-            Some(answer) => Some(TalkEvent::Message { item: event.at.clone(), text: answer.clone() }),
-            None => Some(TalkEvent::TurnEnded {
-                turn: event.at.clone(),
-                status: if event.aborted == Some(true) { "interrupted".into() } else { "completed".into() },
-            }),
-        },
-        "tool" => Some(TalkEvent::Tool {
-            item: event.at.clone(),
-            name: event.tool.clone().unwrap_or_default(),
-            summary: String::new(),
-            done: false,
-            failed: false,
-        }),
-        "session_end" => Some(TalkEvent::State { state: "left".into() }),
-        _ => None,
+impl Town {
+    /// What a watcher sees of a Claude mod's event; the mod reports turns and tools, not text.
+    /// A turn keeps the id it started with, which the mod's end of turn does not repeat.
+    fn claude_event(&self, id: &str, event: &ModEvent) -> Vec<TalkEvent> {
+        let mut state = self.state.lock();
+        let Some(live) = state.residents.get_mut(id) else { return Vec::new() };
+        match event.kind.as_str() {
+            "turn_start" => {
+                let turn = event.turn.clone().unwrap_or_else(|| event.at.clone());
+                live.turn = Some(turn.clone());
+                vec![TalkEvent::TurnStarted { turn }]
+            }
+            "turn_complete" => {
+                let turn = live.turn.take().unwrap_or_else(|| event.at.clone());
+                let mut events = Vec::new();
+                if let Some(answer) = &event.answer {
+                    events.push(TalkEvent::Message { item: format!("{turn}/answer"), text: answer.clone() });
+                }
+                let status = if event.aborted == Some(true) { "interrupted" } else { "completed" };
+                events.push(TalkEvent::TurnEnded { turn, status: status.into() });
+                events
+            }
+            "tool" => vec![TalkEvent::Tool {
+                item: event.at.clone(),
+                name: event.tool.clone().unwrap_or_default(),
+                summary: String::new(),
+                done: false,
+                failed: false,
+            }],
+            "session_end" => {
+                live.turn = None;
+                vec![TalkEvent::State { state: "left".into() }]
+            }
+            _ => Vec::new(),
+        }
     }
 }

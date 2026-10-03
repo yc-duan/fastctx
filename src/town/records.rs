@@ -148,6 +148,17 @@ impl Records {
         write_json(&self.dir.join("now"), now)
     }
 
+    /// Changes part of `now` and keeps the rest. Every such change in this process goes through
+    /// here one at a time, so two made at once (a turn ending while an action is recorded)
+    /// never undo each other.
+    pub(crate) fn update_now(&self, change: impl FnOnce(&mut Now)) -> Result<(), String> {
+        static CHANGING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+        let _changing = CHANGING.lock();
+        let mut now = self.now()?.unwrap_or_default();
+        change(&mut now);
+        self.write_now(&now)
+    }
+
     /// Appends one action: when, where, which hand, what, and the result.
     pub(crate) fn append_action(&self, at: &str, machine: &str, hand: &str, what: &str, result: &str) -> Result<String, String> {
         let line = format!("{at}\t{machine}\t{hand}\t{}\t{}", one_line(what), one_line(result));
@@ -164,15 +175,16 @@ impl Records {
     /// partial last line, which must not hide the lines before it.
     pub(crate) fn messages(&self) -> Result<(Vec<MessageLine>, usize), String> {
         let path = self.dir.join("messages");
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
             Err(error) => return Err(format!("Cannot read {}: {error}", crate::paths::display_path(&path))),
         };
+        // Line by line, so a line cut off mid-character costs only that line.
         let mut lines = Vec::new();
         let mut damaged = 0;
-        for line in text.lines().filter(|line| !line.trim().is_empty()) {
-            match serde_json::from_str(line) {
+        for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.trim_ascii().is_empty()) {
+            match serde_json::from_slice(line) {
                 Ok(message) => lines.push(message),
                 Err(_) => damaged += 1,
             }
@@ -215,15 +227,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, Str
 /// rename wins; none fails because another one was writing.
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(value).map_err(|error| format!("Cannot encode {}: {error}", crate::paths::display_path(path)))?;
-    let parent = path.parent().ok_or_else(|| format!("{} has no directory", crate::paths::display_path(path)))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("Cannot create a temporary file in {}: {error}", crate::paths::display_path(parent)))?;
-    temporary
-        .write_all(&bytes)
-        .and_then(|()| temporary.as_file().sync_all())
-        .map_err(|error| format!("Cannot write {}: {error}", crate::paths::display_path(path)))?;
-    temporary.persist(path).map_err(|error| format!("Cannot replace {}: {}", crate::paths::display_path(path), error.error))?;
-    Ok(())
+    crate::atomic_file::publish(path, &bytes)
 }
 
 fn append_line(path: &Path, line: &str) -> Result<(), String> {

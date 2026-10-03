@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// One thing that happened in a resident's session, for whoever is watching it.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -33,12 +33,14 @@ pub(crate) enum TalkEvent {
 }
 
 /// What a watcher already got from the history. A watch registers before it reads the
-/// history, so whatever finished while the history was read arrives a second time live; these
-/// keys recognize it.
+/// history, so whatever happened while the history was read arrives a second time live; these
+/// keys recognize it: words already shown (each once), anything of an item the history shows
+/// complete, and the start or end of a turn the history shows ended.
 #[derive(Default)]
 pub(crate) struct HistoryKeys {
     items: HashSet<String>,
     ended: HashSet<String>,
+    words: HashMap<(String, String), usize>,
 }
 
 impl HistoryKeys {
@@ -52,6 +54,7 @@ impl HistoryKeys {
                 TalkEvent::TurnEnded { turn, .. } => {
                     keys.ended.insert(turn.clone());
                 }
+                TalkEvent::Words { from, text } => *keys.words.entry((from.clone(), text.clone())).or_default() += 1,
                 _ => {}
             }
         }
@@ -59,10 +62,17 @@ impl HistoryKeys {
     }
 
     /// Whether a live event only repeats something the history already showed.
-    pub(crate) fn repeats(&self, event: &TalkEvent) -> bool {
+    pub(crate) fn repeats(&mut self, event: &TalkEvent) -> bool {
         match event {
-            TalkEvent::Message { item, .. } | TalkEvent::Tool { item, done: true, .. } => self.items.contains(item),
-            TalkEvent::TurnEnded { turn, .. } => self.ended.contains(turn),
+            TalkEvent::Message { item, .. } | TalkEvent::Tool { item, .. } | TalkEvent::Delta { item, .. } => self.items.contains(item),
+            TalkEvent::TurnStarted { turn } | TalkEvent::TurnEnded { turn, .. } => self.ended.contains(turn),
+            TalkEvent::Words { from, text } => match self.words.get_mut(&(from.clone(), text.clone())) {
+                Some(count) if *count > 0 => {
+                    *count -= 1;
+                    true
+                }
+                _ => false,
+            },
             _ => false,
         }
     }

@@ -4,7 +4,7 @@
 
 use super::{
     About, Asked, Birth, Delivery, HashMap, Live, MessageLine, Now, Records, Route, Town, delivery_id, format_duration,
-    new_resident_id, resident_instructions, set_desk, set_state,
+    new_resident_id, resident_instructions,
 };
 use crate::control::codex_config;
 use crate::hands::text;
@@ -95,11 +95,12 @@ impl Town {
                 inbox_address: None,
                 sessions: 0,
                 readers: HashMap::new(),
+                turn: None,
             },
         );
         let failed = |error: String| {
             self.state.lock().residents.remove(&id);
-            set_state(&records, "error");
+            self.set_state(&records, "error");
             error
         };
         let (thread, model) = self.codex.create_thread(spec).await.map_err(failed)?;
@@ -119,6 +120,7 @@ impl Town {
         let _turns = self.turns.lock().await;
         let (_, turn) = self.codex.send(&thread, Input::Text(first)).await.map_err(failed)?;
         if let Some(live) = self.state.lock().residents.get_mut(&id) {
+            live.turn = Some(turn.clone());
             live.readers.insert(turn, readers);
         }
         Ok(id)
@@ -175,8 +177,8 @@ impl Town {
     async fn on_codex(&self, event: HostEvent) {
         match event {
             HostEvent::TurnStarted { thread, turn } => {
-                if let Some(records) = self.records_for_thread(&thread) {
-                    set_state(&records, "busy");
+                if let Some(records) = self.turn_started(&thread, &turn) {
+                    self.set_state(&records, "busy");
                 }
                 self.publish_thread(&thread, TalkEvent::TurnStarted { turn });
             }
@@ -184,9 +186,16 @@ impl Town {
                 let readers = self.take_readers(&thread, &turn).await;
                 self.publish_thread(&thread, TalkEvent::TurnEnded { turn: turn.clone(), status: status.clone() });
                 self.desk_turn_ended(&thread).await;
-                self.answer(&thread, &turn, &status, error, duration_ms, last_message, readers).await;
+                let reason = error.as_ref().and_then(|error| error.get("message")).and_then(Value::as_str).map(str::to_string);
+                self.answer(&thread, TurnEnd { turn, status, reason, duration_ms, last_message, readers, outage: false }).await;
             }
             HostEvent::ItemStarted { thread, item, .. } => {
+                {
+                    let mut state = self.state.lock();
+                    if let Some(resident) = state.threads.get(&thread).cloned() {
+                        state.desk.item_started(&resident, &item);
+                    }
+                }
                 if let Some(event) = crate::town::talk::codex_item(&item, false) {
                     self.publish_thread(&thread, event);
                 }
@@ -208,23 +217,30 @@ impl Town {
         }
     }
 
-    fn records_for_thread(&self, thread: &str) -> Option<Records> {
-        let state = self.state.lock();
-        let id = state.threads.get(thread)?;
-        state.residents.get(id).map(|live| live.records.clone())
+    /// Notes the turn a thread started; returns its resident's records.
+    fn turn_started(&self, thread: &str, turn: &str) -> Option<Records> {
+        let mut state = self.state.lock();
+        let id = state.threads.get(thread).cloned()?;
+        let live = state.residents.get_mut(&id)?;
+        live.turn = Some(turn.to_string());
+        Some(live.records.clone())
     }
 
-    /// The residents whose words went into a turn, taken once it ended.
+    /// The residents whose words went into a turn, taken once it ended; the turn is over.
     async fn take_readers(&self, thread: &str, turn: &str) -> Vec<String> {
         let _turns = self.turns.lock().await;
         let mut state = self.state.lock();
         let Some(id) = state.threads.get(thread).cloned() else { return Vec::new() };
         let Some(live) = state.residents.get_mut(&id) else { return Vec::new() };
+        if live.turn.as_deref() == Some(turn) {
+            live.turn = None;
+        }
         live.readers.remove(turn).unwrap_or_default().into_iter().collect()
     }
 
-    /// The app-server stopped, and every turn it was running with it. Their readers hear that
-    /// the turn was interrupted, and the Computer Use desk is free.
+    /// The app-server stopped, and every turn it was running with it. Each such resident is
+    /// recorded as interrupted, those whose words went into the turn hear so, and the Computer
+    /// Use desk is free.
     async fn server_gone(&self) {
         let dying: Vec<(String, Vec<(String, Vec<String>)>)> = {
             let _turns = self.turns.lock().await;
@@ -234,24 +250,27 @@ impl Town {
                 .values_mut()
                 .filter_map(|live| {
                     let Route::CodexThread(thread) = &live.route else { return None };
-                    let busy = live.records.now().ok().flatten().is_some_and(|now| now.state == "busy");
-                    if !busy && live.readers.is_empty() {
+                    let running = live.turn.take();
+                    if running.is_none() && live.readers.is_empty() {
                         return None;
                     }
                     let mut turns: Vec<(String, Vec<String>)> =
                         live.readers.drain().map(|(turn, readers)| (turn, readers.into_iter().collect())).collect();
-                    if turns.is_empty() {
-                        turns.push((String::new(), Vec::new()));
+                    if let Some(running) = running
+                        && !turns.iter().any(|(turn, _)| *turn == running)
+                    {
+                        turns.push((running, Vec::new()));
                     }
                     Some((thread.clone(), turns))
                 })
                 .collect()
         };
-        let reason = Some(json!({"message": "its app-server stopped"}));
         for (thread, turns) in dying {
             for (turn, readers) in turns {
                 self.publish_thread(&thread, TalkEvent::TurnEnded { turn: turn.clone(), status: "interrupted".into() });
-                self.answer(&thread, &turn, "interrupted", reason.clone(), None, None, readers).await;
+                let reason = Some("its app-server stopped".to_string());
+                self.answer(&thread, TurnEnd { turn, status: "interrupted".into(), reason, duration_ms: None, last_message: None, readers, outage: true })
+                    .await;
             }
         }
         let (holder, notices) = {
@@ -260,7 +279,7 @@ impl Town {
             (holder.and_then(|holder| state.residents.get(&holder).map(|live| live.records.clone())), notices)
         };
         if let Some(records) = holder {
-            set_desk(&records, false);
+            self.set_desk(&records, false);
         }
         for notice in notices {
             self.desk_notice(notice).await;
@@ -275,13 +294,17 @@ impl Town {
             let Some(resident) = state.threads.get(thread).cloned() else { return };
             match state.desk.item_completed(&resident, item, &self.config.machine) {
                 crate::town::desk::Change::Sat => state.residents.get(&resident).map(|live| Err(live.records.clone())),
-                crate::town::desk::Change::Notice(notice) => Some(Ok(notice)),
+                crate::town::desk::Change::Notices(notices) => Some(Ok(notices)),
                 crate::town::desk::Change::Nothing => None,
             }
         };
         match change {
-            Some(Err(records)) => set_desk(&records, true),
-            Some(Ok(notice)) => self.desk_notice(notice).await,
+            Some(Err(records)) => self.set_desk(&records, true),
+            Some(Ok(notices)) => {
+                for notice in notices {
+                    self.desk_notice(notice).await;
+                }
+            }
             None => {}
         }
     }
@@ -295,7 +318,7 @@ impl Town {
             (held.then(|| state.residents.get(&resident).map(|live| live.records.clone())).flatten(), notices)
         };
         if let Some(records) = records {
-            set_desk(&records, false);
+            self.set_desk(&records, false);
         }
         for notice in notices {
             self.desk_notice(notice).await;
@@ -313,18 +336,10 @@ impl Town {
     }
 
     /// A Codex resident's turn ended: its last message goes, verbatim, to everyone whose words
-    /// went into the turn.
-    #[allow(clippy::too_many_arguments)]
-    async fn answer(
-        &self,
-        thread: &str,
-        turn: &str,
-        status: &str,
-        error: Option<Value>,
-        duration_ms: Option<u64>,
-        last_message: Option<String>,
-        readers: Vec<String>,
-    ) {
+    /// went into the turn, and its records say how the turn ended.
+    async fn answer(&self, thread: &str, end: TurnEnd) {
+        let TurnEnd { turn, status, reason, duration_ms, last_message, readers, outage } = end;
+        let turn = turn.as_str();
         let (id, records, requester_here) = {
             let state = self.state.lock();
             let Some(id) = state.threads.get(thread).cloned() else { return };
@@ -336,25 +351,37 @@ impl Town {
             (id, live.records.clone(), requester_here)
         };
         let ended = crate::world::now_rfc3339();
-        {
-            let mut now = records.now().ok().flatten().unwrap_or_default();
-            now.state = if requester_here { "idle" } else { "asleep" }.to_string();
+        let changed = records.update_now(|now| {
+            // A turn the app-server took down with it stays interrupted until the next words;
+            // one that ended on its own, even when the user stopped it, leaves the resident idle.
+            now.state = if outage {
+                "interrupted"
+            } else if requester_here {
+                "idle"
+            } else {
+                "asleep"
+            }
+            .to_string();
             now.since = ended.clone();
             if !readers.is_empty() {
                 now.last_action = Some(format!("answered {}", readers.join(", ")));
                 now.last_action_at = Some(ended.clone());
             }
-            let _ = records.write_now(&now);
+        });
+        if let Err(error) = changed {
+            (self.log)(format!("cannot record the end of {id}'s turn: {error}"));
         }
-        let _ = records.append_message(&MessageLine {
+        let written = records.append_message(&MessageLine {
             at: ended.clone(),
-            kind: "answered".into(),
+            kind: if status == "completed" { "answered".to_string() } else { status.clone() },
             peer: readers.join(","),
             turn: Some(turn.to_string()),
-            text: last_message.clone(),
+            text: last_message.clone().or_else(|| reason.clone()),
         });
-        let reason = error.as_ref().and_then(|error| error.get("message")).and_then(Value::as_str);
-        let how = match (status, reason) {
+        if let Err(error) = written {
+            (self.log)(format!("cannot record how {id}'s turn ended: {error}"));
+        }
+        let how = match (status.as_str(), reason.as_deref()) {
             ("completed", _) => "turn completed".to_string(),
             (other, Some(reason)) => format!("turn {other}: {reason}"),
             (other, None) => format!("turn {other}"),
@@ -384,4 +411,16 @@ impl Town {
             });
         }
     }
+}
+
+/// How a Codex turn ended, and who is owed its last message.
+struct TurnEnd {
+    turn: String,
+    status: String,
+    reason: Option<String>,
+    duration_ms: Option<u64>,
+    last_message: Option<String>,
+    readers: Vec<String>,
+    /// The app-server stopped under the turn, rather than the turn ending.
+    outage: bool,
 }

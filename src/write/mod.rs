@@ -3,7 +3,6 @@
 //! Each file is published atomically. Patch sections run in order, as in Codex;
 //! an error carries the changes already committed, without rolling them back.
 
-mod atomic;
 mod document;
 mod edit;
 mod patch;

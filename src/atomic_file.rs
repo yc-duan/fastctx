@@ -1,9 +1,13 @@
-//! Publish a complete file with one same-directory rename.
+//! Publish a complete file with one same-directory rename: any reader sees the whole old file
+//! or the whole new one, never part of either, and concurrent writers each win or lose whole.
+//!
+//! On Windows the rename has POSIX semantics, so a reader holding the old file open does not
+//! make the replacement fail; a plain replacing rename is refused while anyone reads.
 
 use std::io::Write;
 use std::path::Path;
 
-pub(super) fn publish(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn publish(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("File path has no parent: {}", path.display()))?;

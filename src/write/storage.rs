@@ -87,7 +87,7 @@ impl Target {
         context: &WriteContext<'_>,
     ) -> Result<FileChange, String> {
         self.verify(before, context)?;
-        super::atomic::publish(&self.resolved, after)?;
+        crate::atomic_file::publish(&self.resolved, after)?;
         Ok(FileChange {
             file_path: self.requested.clone(),
             kind: if before.is_some() {

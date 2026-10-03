@@ -2,7 +2,7 @@
 //! offers, the durable queue for residents without a channel, and the notice that a command
 //! ended.
 
-use super::{Delivery, MessageLine, Route, Spoken, Town, delivery_id, format_duration, mod_delivery, set_state};
+use super::{Delivery, MessageLine, Route, Spoken, Town, delivery_id, format_duration, mod_delivery};
 use crate::town::codex::host::{Input, Landed};
 use crate::town::talk::TalkEvent;
 use std::path::{Path, PathBuf};
@@ -31,8 +31,9 @@ impl Town {
                 let (landed, turn) = self.codex.send(&thread, Input::Text(text)).await?;
                 if let Some(live) = self.state.lock().residents.get_mut(to) {
                     if landed == Landed::NewTurn {
-                        set_state(&live.records, "busy");
+                        self.set_state(&live.records, "busy");
                     }
+                    live.turn = Some(turn.clone());
                     live.readers.entry(turn).or_default().insert(from.to_string());
                 }
                 Ok(match landed {
@@ -58,11 +59,12 @@ impl Town {
         let spoken = match route {
             Some(Route::CodexThread(thread)) => {
                 let (landed, into) = self.codex.send(&thread, Input::Text(text.to_string())).await?;
-                turn = Some(into);
+                turn = Some(into.clone());
                 match landed {
                     Landed::NewTurn => {
-                        if let Some(live) = self.state.lock().residents.get(id) {
-                            set_state(&live.records, "busy");
+                        if let Some(live) = self.state.lock().residents.get_mut(id) {
+                            self.set_state(&live.records, "busy");
+                            live.turn = Some(into.clone());
                         }
                         Spoken::NewTurn
                     }
@@ -267,20 +269,32 @@ impl Town {
     }
 }
 
-/// Moves a resident's waiting words to its new records directory when it changes towns.
+/// Moves a resident's waiting words to its new records directory when it changes towns: all
+/// of them or none, so every word waits in one place.
 pub(super) fn move_waiting(from: &Path, to: &Path) -> Result<(), String> {
     let source = from.join("inbox");
-    let entries = match std::fs::read_dir(&source) {
-        Ok(entries) => entries,
+    let names: Vec<std::ffi::OsString> = match std::fs::read_dir(&source) {
+        Ok(entries) => entries.flatten().map(|entry| entry.file_name()).collect(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(format!("Cannot list {}: {error}", crate::paths::display_path(&source))),
     };
+    if names.is_empty() {
+        return Ok(());
+    }
     let target = to.join("inbox");
     std::fs::create_dir_all(&target).map_err(|error| format!("Cannot create {}: {error}", crate::paths::display_path(&target)))?;
-    for entry in entries.flatten() {
-        let destination = target.join(entry.file_name());
-        std::fs::rename(entry.path(), &destination)
-            .map_err(|error| format!("Cannot move {}: {error}", crate::paths::display_path(&entry.path())))?;
+    let mut moved = Vec::new();
+    for name in names {
+        if let Err(error) = std::fs::rename(source.join(&name), target.join(&name)) {
+            let failure = format!("Cannot move {}: {error}", crate::paths::display_path(&source.join(&name)));
+            for name in moved.iter().rev() {
+                if let Err(back) = std::fs::rename(target.join(name), source.join(name)) {
+                    return Err(format!("{failure}; and cannot move {} back: {back}", crate::paths::display_path(&target.join(name))));
+                }
+            }
+            return Err(failure);
+        }
+        moved.push(name);
     }
     Ok(())
 }

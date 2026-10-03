@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-const MAX_ADMIN_FRAME: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_ADMIN_FRAME: usize = 16 * 1024 * 1024;
 /// How long a control command waits for the daemon's answer.
 pub(crate) const ADMIN_TIMEOUT: Duration = Duration::from_secs(40);
 

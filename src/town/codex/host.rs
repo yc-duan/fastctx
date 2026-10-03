@@ -333,14 +333,12 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                 let _ = host.events.send(HostEvent::Declined { thread, method });
             }
             Inbound::Exited(reason) => {
-                {
+                // A server replaced on purpose exits after it was taken out of the state, maybe
+                // after its successor already started turns; only the current one's exit is an
+                // outage that ends the turns.
+                let current = {
                     let mut state = host.state.lock();
-                    // A server replaced on purpose may exit after its successor loaded threads;
-                    // only the current one's exit unloads them.
-                    let current = match &state.server {
-                        Some((current, _)) => Arc::ptr_eq(current, &server),
-                        None => true,
-                    };
+                    let current = matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server));
                     if current {
                         state.server = None;
                         for thread in state.threads.values_mut() {
@@ -348,9 +346,12 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                             thread.turn = None;
                         }
                     }
-                }
+                    current
+                };
                 (host.log)(reason.clone());
-                let _ = host.events.send(HostEvent::ServerGone { reason });
+                if current {
+                    let _ = host.events.send(HostEvent::ServerGone { reason });
+                }
                 return;
             }
         }
