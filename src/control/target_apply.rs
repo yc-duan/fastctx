@@ -4,6 +4,7 @@ use crate::control::agents;
 use crate::control::apply::{
     self, ApplyPlan, OperationReceipt, PreviewAction, PreviewDetail, PreviewItem, PreviewTarget,
 };
+use crate::control::claude_world::{self, ClaudeWorldPlan};
 use crate::control::codex_config::{self, ExpectedConfig};
 use crate::control::paths::ControlPaths;
 use crate::control::settings::{
@@ -48,7 +49,10 @@ impl TargetApplyPlan {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Codex(plan) => plan.is_empty(),
-            Self::Generic(plan) => plan.changes.iter().all(|change| !change.is_changed()),
+            Self::Generic(plan) => {
+                plan.changes.iter().all(|change| !change.is_changed())
+                    && plan.world.as_deref().is_none_or(ClaudeWorldPlan::is_empty)
+            }
         }
     }
 
@@ -62,6 +66,8 @@ pub struct GenericApplyPlan {
     target: AgentTarget,
     changes: Vec<FileChange>,
     preview: Vec<PreviewItem>,
+    world: Option<Box<ClaudeWorldPlan>>,
+    enrollment: (PathBuf, bool),
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +76,7 @@ pub struct TargetDisconnectPlan {
     changes: Vec<FileChange>,
     preview: Vec<PreviewItem>,
     created_directories: Vec<PathBuf>,
+    world: Option<ClaudeWorldPlan>,
 }
 
 impl TargetDisconnectPlan {
@@ -79,15 +86,20 @@ impl TargetDisconnectPlan {
 
     pub fn is_empty(&self) -> bool {
         self.changes.iter().all(|change| !change.is_changed())
+            && self.world.as_ref().is_none_or(ClaudeWorldPlan::is_empty)
     }
 
-    pub(crate) fn into_host_changes(self, settings_path: &Path) -> (Vec<FileChange>, Vec<PathBuf>) {
+    pub(crate) fn into_host_changes(
+        self,
+        settings_path: &Path,
+    ) -> (Vec<FileChange>, Vec<PathBuf>, Option<ClaudeWorldPlan>) {
         (
             self.changes
                 .into_iter()
                 .filter(|change| change.target != settings_path)
                 .collect(),
             self.created_directories,
+            self.world,
         )
     }
 }
@@ -161,6 +173,17 @@ pub fn plan_target_apply(
             .and_then(|receipt| receipt.jsonc_config.as_ref()),
     })?;
     let world = crate::world::is_enrolled(control);
+    let world_plan = if options.target == AgentTarget::ClaudeCode {
+        claude_world::plan(
+            control,
+            world,
+            previous
+                .as_ref()
+                .and_then(|receipt| receipt.claude_world.as_ref()),
+        )?
+    } else {
+        None
+    };
     let guidance_edit = apply_guidance(
         options.target,
         guidance_original.as_deref(),
@@ -174,6 +197,11 @@ pub fn plan_target_apply(
         .unwrap_or_default();
     for path in [&target_paths.config, &target_paths.guidance] {
         created_directories.extend(missing_parent_directories(path, &control.home)?);
+    }
+    if let Some(world) = &world_plan {
+        for path in world.paths() {
+            created_directories.extend(missing_parent_directories(path, &control.home)?);
+        }
     }
     created_directories.sort();
     created_directories.dedup();
@@ -210,6 +238,7 @@ pub fn plan_target_apply(
         created_directories,
         jsonc_config: config_edit.jsonc_receipt,
         codex: None,
+        claude_world: world_plan.as_ref().and_then(ClaudeWorldPlan::receipt),
     };
     current.set_target_receipt(options.target, receipt);
     let settings_bytes = settings::encode(&current)?;
@@ -243,7 +272,7 @@ pub fn plan_target_apply(
             false,
         ),
     ];
-    let preview = generic_apply_preview(GenericApplyPreview {
+    let mut preview = generic_apply_preview(GenericApplyPreview {
         target: options.target,
         tools: options.enabled_tools,
         budget: global_budget,
@@ -253,10 +282,15 @@ pub fn plan_target_apply(
         binary: &control.installed_binary,
         settings: &control.fastctx_config,
     });
+    if let Some(world) = &world_plan {
+        preview.extend(world.preview());
+    }
     Ok(TargetApplyPlan::Generic(GenericApplyPlan {
         target: options.target,
         changes,
         preview,
+        world: world_plan.map(Box::new),
+        enrollment: (control.fastctx_dir.join("world.toml"), world),
     }))
 }
 
@@ -267,12 +301,17 @@ pub fn commit_target_apply(
     match plan {
         TargetApplyPlan::Codex(plan) => apply::commit_apply(plan, token_limit_confirmed),
         TargetApplyPlan::Generic(plan) => {
-            let changed_targets = plan
+            apply::validate_enrollment(&plan.enrollment)?;
+            let mut changed_targets = plan
                 .changes
                 .iter()
                 .filter(|change| change.is_changed())
                 .count();
-            transaction::commit(&plan.changes)?;
+            if let Some(world) = &plan.world {
+                changed_targets += world.commit(&plan.changes)?;
+            } else {
+                transaction::commit(&plan.changes)?;
+            }
             Ok(OperationReceipt {
                 changed_targets,
                 notes: vec![if changed_targets == 0 {
@@ -305,6 +344,11 @@ pub fn plan_target_disconnect(
         )
     })?;
     validate_receipt_paths(Some(&receipt), &target_paths.config, &target_paths.guidance)?;
+    let world = if target == AgentTarget::ClaudeCode {
+        claude_world::plan(control, false, receipt.claude_world.as_ref())?
+    } else {
+        None
+    };
     let config_original = transaction::read_snapshot(&target_paths.config)?.ok_or_else(|| {
         format!(
             "Managed config {} is missing; Disconnect stopped before changing anything.",
@@ -367,16 +411,20 @@ pub fn plan_target_disconnect(
             false,
         ),
     ];
-    let preview = disconnect_preview(
+    let mut preview = disconnect_preview(
         target,
         &changes,
         &target_paths.config,
         &target_paths.guidance,
     );
+    if let Some(world) = &world {
+        preview.extend(world.preview());
+    }
     Ok(TargetDisconnectPlan {
         target,
         changes,
         preview,
+        world,
         created_directories: receipt
             .created_directories
             .into_iter()
@@ -386,12 +434,16 @@ pub fn plan_target_disconnect(
 }
 
 pub fn commit_target_disconnect(plan: TargetDisconnectPlan) -> Result<OperationReceipt, String> {
-    let changed_targets = plan
+    let mut changed_targets = plan
         .changes
         .iter()
         .filter(|change| change.is_changed())
         .count();
-    transaction::commit(&plan.changes)?;
+    if let Some(world) = &plan.world {
+        changed_targets += world.commit(&plan.changes)?;
+    } else {
+        transaction::commit(&plan.changes)?;
+    }
     let mut directories = plan.created_directories;
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     let mut notes = Vec::new();
@@ -441,6 +493,7 @@ fn plan_codex_disconnect(control: &ControlPaths) -> Result<TargetDisconnectPlan,
         command: record.command.clone(),
         tier: record.tier,
         host_limit: record.tool_output_token_limit,
+        run_output_token_limit: record.run_output_token_limit,
         fastctx_budget: record.fastctx_token_budget,
         tool_budgets: record.tool_budgets,
         enabled_tools: receipt.enabled_tools,
@@ -465,6 +518,7 @@ fn plan_codex_disconnect(control: &ControlPaths) -> Result<TargetDisconnectPlan,
         codex_config::CodexConfigOwnership {
             server_entry_owned: record.codex_server_entry_owned,
             direct_namespace_inserted: record.codex_direct_namespace_inserted,
+            run_output_token_limit: record.run_output_token_limit,
         },
         restore_token_limit,
         record.previous_token_limit_present,
@@ -533,6 +587,7 @@ fn plan_codex_disconnect(control: &ControlPaths) -> Result<TargetDisconnectPlan,
         target: AgentTarget::Codex,
         changes,
         preview,
+        world: None,
         created_directories: receipt
             .created_directories
             .into_iter()

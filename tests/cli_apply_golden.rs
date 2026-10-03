@@ -45,6 +45,7 @@ fn micro_edit_golden_preserves_every_unowned_byte_and_writes_the_exact_private_s
             command: "C:/Users/test/.fastctx/bin/fastctx.exe".to_string(),
             tier: Tier::Standard,
             host_limit: Tier::Standard.host_limit(),
+            run_output_token_limit: None,
             fastctx_budget: Tier::Standard.fastctx_budget(),
             tool_budgets: ToolBudgets {
                 read: ToolBudgetLevel::Inherit,
@@ -78,6 +79,7 @@ fn malformed_toml_and_ambiguous_agents_markers_fail_before_producing_bytes() {
         command: "/home/test/.fastctx/bin/fastctx".to_string(),
         tier: Tier::Standard,
         host_limit: Tier::Standard.host_limit(),
+        run_output_token_limit: None,
         fastctx_budget: Tier::Standard.fastctx_budget(),
         tool_budgets: ToolBudgets::default(),
         enabled_tools: fastctx::server_manifest::EnabledTools::files(),

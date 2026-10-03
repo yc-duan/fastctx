@@ -13,6 +13,7 @@ const LEGACY_FASTEDIT_NAMESPACE: &str = "mcp__fastedit";
 pub(crate) const STARTUP_TIMEOUT_SECONDS: i64 = 120;
 /// MCP tool timeout written by Apply so 240-second tool waits retain a 60-second return margin.
 pub(crate) const TOOL_TIMEOUT_SECONDS: i64 = 300;
+pub(crate) const WORLD_OUTPUT_TOKEN_LIMIT: i64 = 125_000;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct LegacyRemoval {
@@ -30,6 +31,8 @@ pub struct ExpectedConfig {
     pub tier: Tier,
     /// Effective host output limit; may be Guarded independently from the selected tier.
     pub host_limit: i64,
+    /// Per-tool Codex output budget, present only for World connections.
+    pub run_output_token_limit: Option<i64>,
     /// Effective global FastCtx budget; may be Guarded independently from the selected tier.
     pub fastctx_budget: usize,
     /// Five long-output tools' relative budgets.
@@ -43,17 +46,19 @@ pub struct ExpectedConfig {
 pub struct TokenLimitConflict {
     /// Current user setting.
     pub current: i64,
-    /// Setting required by the FastCtx tier.
+    /// Setting required by the selected host connection.
     pub requested: i64,
 }
 
-/// Independent ownership evidence for the two Codex configuration values managed by Apply.
+/// Ownership evidence for the Codex server, its run budget, and the legacy direct namespace.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CodexConfigOwnership {
     /// Whether the `mcp_servers.fastctx` entry is owned by a FastCtx receipt.
     pub server_entry_owned: bool,
     /// Whether FastCtx inserted the surviving `mcp__fastctx` namespace occurrence.
     pub direct_namespace_inserted: bool,
+    /// Whether the receipt owns the World-only run budget.
+    pub run_output_token_limit: Option<i64>,
 }
 
 /// Immutable Codex-config edit result.
@@ -106,7 +111,7 @@ pub fn apply(
                     .to_string(),
             );
         }
-        validate_owned_fastctx_entry(existing)?;
+        validate_owned_fastctx_entry(existing, previous_ownership.run_output_token_limit)?;
         let existing = existing
             .as_table()
             .expect("validated receipt-owned FastCtx entry must be a table");
@@ -130,6 +135,7 @@ pub fn apply(
         ownership: CodexConfigOwnership {
             server_entry_owned: true,
             direct_namespace_inserted: false,
+            run_output_token_limit: expected.run_output_token_limit,
         },
     })
 }
@@ -220,7 +226,7 @@ pub fn unapply(
                         .to_string()
                 })?;
             if let Some(existing) = mcp_servers.get("fastctx") {
-                validate_owned_fastctx_entry(existing)?;
+                validate_owned_fastctx_entry(existing, ownership.run_output_token_limit)?;
             }
             let removed = mcp_servers.remove("fastctx").is_some();
             (removed, mcp_servers.is_empty())
@@ -387,7 +393,7 @@ fn drift_with_limits(
     match fastctx {
         Some(table) => {
             for (key, _) in table.iter() {
-                if ![
+                if !([
                     "command",
                     "args",
                     "startup_timeout_sec",
@@ -395,6 +401,7 @@ fn drift_with_limits(
                     "env",
                 ]
                 .contains(&key)
+                    || (key == "tools" && expected.run_output_token_limit.is_some()))
                 {
                     drift.push(format!("mcp_servers.fastctx.{key}"));
                 }
@@ -448,6 +455,25 @@ fn drift_with_limits(
             });
             if !args_match {
                 drift.push("mcp_servers.fastctx.args".to_string());
+            }
+            if let Some(limit) = expected.run_output_token_limit {
+                let matches = table
+                    .get("tools")
+                    .and_then(Item::as_table_like)
+                    .is_some_and(|tools| {
+                        tools.len() == 1
+                            && tools
+                                .get("run")
+                                .and_then(Item::as_table_like)
+                                .is_some_and(|run| {
+                                    run.len() == 1
+                                        && run.get("output_token_limit").and_then(Item::as_integer)
+                                            == Some(limit)
+                                })
+                    });
+                if !matches {
+                    drift.push("mcp_servers.fastctx.tools.run.output_token_limit".to_string());
+                }
             }
         }
         None => drift.push("mcp_servers.fastctx".to_string()),
@@ -584,10 +610,24 @@ fn build_fastctx_table(expected: &ExpectedConfig) -> Table {
         }
     }
     table.insert("env", Item::Table(env));
+    if let Some(tools) = run_tools(expected.run_output_token_limit) {
+        table.insert("tools", tools);
+    }
     table
 }
 
-fn validate_owned_fastctx_entry(item: &Item) -> Result<(), String> {
+fn run_tools(limit: Option<i64>) -> Option<Item> {
+    limit.map(|limit| {
+        let mut run = Table::new();
+        run.insert("output_token_limit", value(limit));
+        let mut tools = Table::new();
+        tools.set_implicit(true);
+        tools.insert("run", Item::Table(run));
+        Item::Table(tools)
+    })
+}
+
+fn validate_owned_fastctx_entry(item: &Item, run_limit: Option<i64>) -> Result<(), String> {
     let table = item.as_table().ok_or_else(|| {
         "The receipt-owned Codex key mcp_servers.fastctx is no longer a table. Repair or remove the drifted entry manually and retry Apply."
             .to_string()
@@ -601,13 +641,31 @@ fn validate_owned_fastctx_entry(item: &Item) -> Result<(), String> {
     ];
     let unknown = table
         .iter()
-        .filter_map(|(key, _)| (!allowed.contains(&key)).then_some(key.to_string()))
+        .filter_map(|(key, _)| {
+            (!(allowed.contains(&key) || (key == "tools" && run_limit.is_some())))
+                .then_some(key.to_string())
+        })
         .collect::<Vec<_>>();
     if !unknown.is_empty() {
         return Err(format!(
             "The receipt-owned Codex entry mcp_servers.fastctx contains unknown keys ({}). Move or remove those user values before Apply; FastCtx will not overwrite them.",
             unknown.join(", ")
         ));
+    }
+    if let Some(tools) = table.get("tools") {
+        let owned = tools.as_table_like().is_some_and(|tools| {
+            tools.len() == 1
+                && tools
+                    .get("run")
+                    .and_then(Item::as_table_like)
+                    .is_some_and(|run| {
+                        run.len() == 1
+                            && run.get("output_token_limit").and_then(Item::as_integer) == run_limit
+                    })
+        });
+        if !owned {
+            return Err("The receipt-owned Codex key mcp_servers.fastctx.tools contains user-changed values; FastCtx will not overwrite them.".to_string());
+        }
     }
     if table.get("env").is_some() && table.get("env").and_then(Item::as_table_like).is_none() {
         return Err(

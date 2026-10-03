@@ -2,7 +2,7 @@
 
 mod config;
 mod guidance;
-mod json_config;
+pub(crate) mod json_config;
 mod paths;
 mod trae_config;
 

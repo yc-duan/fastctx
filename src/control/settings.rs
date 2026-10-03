@@ -651,6 +651,8 @@ pub struct AppliedRecord {
     /// Explicit Codex MCP tool timeout written by Apply; absent in pre-2026-07-23 receipts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_timeout_sec: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_output_token_limit: Option<i64>,
     /// Whether the shared host key existed before Apply.
     pub previous_token_limit_present: bool,
     /// Pre-Apply value of the shared host key, present only when the key existed.
@@ -666,8 +668,8 @@ pub struct AppliedRecord {
     /// Exact 1.0 tool set; older receipts derive it from fastshell_enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_tools: Option<EnabledTools>,
-    /// Whether this machine was enrolled in a World when Apply wrote the guidance block; the
-    /// block's World section follows it, so a later enrollment change needs another Apply.
+    /// Whether this machine was enrolled when Apply wrote the host connection; a later
+    /// enrollment change needs another Apply.
     #[serde(default)]
     pub world: bool,
     /// Legacy receipt field accepted so older installations can be re-applied safely.
@@ -719,6 +721,8 @@ pub struct CodexReceipt {
     pub tool_output_token_limit: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_timeout_sec: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_output_token_limit: Option<i64>,
     pub previous_token_limit_present: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_token_limit: Option<i64>,
@@ -753,7 +757,7 @@ pub struct TargetReceipt {
     pub applied_at_utc: String,
     pub version: String,
     pub enabled_tools: EnabledTools,
-    /// Whether this machine was enrolled in a World when Apply wrote the guidance.
+    /// Whether this machine was enrolled in a World when Apply wrote the host connection.
     #[serde(default)]
     pub world: bool,
     pub fastctx_token_budget: usize,
@@ -769,6 +773,8 @@ pub struct TargetReceipt {
     pub jsonc_config: Option<JsoncConfigReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<CodexReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_world: Option<super::claude_world::ClaudeWorldReceipt>,
 }
 
 fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {
@@ -978,10 +984,12 @@ impl FastCtxSettings {
                     Vec::new()
                 },
                 jsonc_config: None,
+                claude_world: None,
                 codex: Some(CodexReceipt {
                     tier: record.tier,
                     tool_output_token_limit: record.tool_output_token_limit,
                     tool_timeout_sec: record.tool_timeout_sec,
+                    run_output_token_limit: record.run_output_token_limit,
                     previous_token_limit_present: record.previous_token_limit_present,
                     previous_token_limit: record.previous_token_limit,
                     tool_budgets: record.tool_budgets,
@@ -1014,6 +1022,7 @@ impl FastCtxSettings {
             tier: codex.tier,
             tool_output_token_limit: codex.tool_output_token_limit,
             tool_timeout_sec: codex.tool_timeout_sec,
+            run_output_token_limit: codex.run_output_token_limit,
             previous_token_limit_present: codex.previous_token_limit_present,
             previous_token_limit: codex.previous_token_limit,
             fastctx_token_budget: receipt.fastctx_token_budget,

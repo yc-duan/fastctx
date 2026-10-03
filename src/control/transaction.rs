@@ -104,6 +104,11 @@ pub fn validate(changes: &[FileChange]) -> Result<(), String> {
     validate_changes(&changes)
 }
 
+/// Validates files an external installer can modify, including unchanged preview snapshots.
+pub(crate) fn validate_external(changes: &[FileChange]) -> Result<(), String> {
+    validate_changes(&changes.iter().collect::<Vec<_>>())
+}
+
 fn commit_with_hook(
     changes: &[FileChange],
     mut before_apply: impl FnMut(usize),
