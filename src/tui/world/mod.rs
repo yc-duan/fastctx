@@ -6,8 +6,12 @@ pub(super) mod i18n;
 mod model;
 mod status_pages;
 mod talk;
+mod towns;
+mod towns_view;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod towns_tests;
 mod topology;
 mod view;
 mod widgets;
@@ -30,6 +34,7 @@ use worker::Worker;
 pub(super) enum Page {
     #[default]
     Overview,
+    Towns,
     Machines,
     Grants,
     Connection,
@@ -38,8 +43,9 @@ pub(super) enum Page {
     Hub,
 }
 impl Page {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Overview,
+        Self::Towns,
         Self::Machines,
         Self::Grants,
         Self::Connection,
@@ -53,6 +59,7 @@ impl Page {
     fn title(self, m: &i18n::WorldMessages) -> &'static str {
         match self {
             Self::Overview => m.overview,
+            Self::Towns => m.towns,
             Self::Machines => m.machines,
             Self::Grants => m.grants,
             Self::Connection => m.connection,
@@ -81,6 +88,8 @@ pub(super) enum Screen {
     Failed,
     Discard,
     Help,
+    /// A live conversation with one resident, or a new one being opened.
+    Talk,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,6 +121,9 @@ pub(super) enum MenuAction {
     ConnectionPage,
     HubPage,
     Export,
+    Talk,
+    OpenResident,
+    StopTurn,
 }
 impl MenuAction {
     fn from_action(action: &Action) -> Self {
@@ -169,6 +181,9 @@ impl MenuAction {
             Self::ConnectionPage => m.connection,
             Self::HubPage => m.hub,
             Self::Export => m.export,
+            Self::Talk => m.talk,
+            Self::OpenResident => m.open_resident,
+            Self::StopTurn => m.stop_turn,
         }
     }
     /// The single letter that runs this action from a page, shown next to its label.
@@ -182,6 +197,9 @@ impl MenuAction {
             Self::Reconnect => Some('c'),
             Self::AddGrant | Self::Cursor | Self::ChooseHub => Some('e'),
             Self::NextEvents => Some('l'),
+            Self::Talk => Some('t'),
+            Self::OpenResident => Some('o'),
+            Self::StopTurn => Some('x'),
             _ => None,
         }
     }
@@ -216,7 +234,8 @@ pub(super) struct WorldApp {
     pub(super) event_gap: bool,
     pub(super) events_loaded: bool,
     pub(super) event_error: Option<Failure>,
-    pub(super) selected: [usize; 7],
+    pub(super) selected: [usize; 8],
+    towns: towns::Towns,
     pub(super) menu_selected: usize,
     pub(super) scroll: usize,
     pub(super) max_scroll: usize,
@@ -257,7 +276,8 @@ impl WorldApp {
             event_gap: false,
             events_loaded: false,
             event_error: None,
-            selected: [0; 7],
+            selected: [0; 8],
+            towns: towns::Towns::default(),
             menu_selected: 0,
             scroll: 0,
             max_scroll: 0,
@@ -324,7 +344,13 @@ impl WorldApp {
     }
 
     pub(super) fn tick(&mut self, paths: &ControlPaths, visible: bool) -> bool {
-        let mut changed = false;
+        let census_visible = visible && (self.page == Page::Towns || self.screen == Screen::Talk);
+        let selected = self
+            .towns
+            .residents()
+            .get(self.selected[Page::Towns.index()])
+            .map(|facts| facts.about.id.clone());
+        let mut changed = self.towns.tick(paths, census_visible, selected);
         if let Some(reply) = self.worker.as_ref().and_then(Worker::poll) {
             changed = true;
             self.worker = None;
@@ -600,6 +626,9 @@ impl WorldApp {
     /// Healthy services default to a read, so entering a page can never suggest a needless restart.
     pub(super) fn primary_action(&self) -> Option<MenuAction> {
         use MenuAction as A;
+        if self.page == Page::Towns {
+            return Some(if self.count() > 0 { A::Talk } else { A::OpenResident });
+        }
         if self.page == Page::Hub {
             return (self.count() == 0).then_some(
                 if self
@@ -658,6 +687,17 @@ impl WorldApp {
                 .is_some_and(|receipt| receipt.invite.is_some())
         {
             return vec![A::Export];
+        }
+        if self.page == Page::Towns {
+            let mut list = vec![A::OpenResident];
+            if let Some(facts) = self.towns.residents().get(self.selected[Page::Towns.index()]) {
+                list.insert(0, A::Talk);
+                if facts.now.state == "busy" {
+                    list.push(A::StopTurn);
+                }
+            }
+            list.push(A::Details);
+            return list;
         }
         if self.page == Page::Hub {
             let mut actions = vec![A::ChooseHub, A::Inspect];
@@ -746,7 +786,7 @@ impl WorldApp {
             }
             Page::Events => vec![A::NextEvents, A::Cursor],
             Page::Service => self.service_actions(),
-            Page::Hub => unreachable!(),
+            Page::Hub | Page::Towns => unreachable!(),
         };
         if let Some(action) = recommended
             && matches!(self.page, Page::Overview | Page::Service | Page::Connection)
@@ -786,6 +826,12 @@ impl WorldApp {
         list.push(A::Inspect);
         list
     }
+    fn selected_resident(&self) -> Option<String> {
+        self.towns
+            .residents()
+            .get(self.selected[Page::Towns.index()])
+            .map(|facts| facts.about.id.clone())
+    }
     fn grants_len(&self) -> usize {
         self.snapshot
             .as_ref()
@@ -793,11 +839,12 @@ impl WorldApp {
             .map_or(0, |node| node.grants.grants.len())
     }
     fn count(&self) -> usize {
-        if self.welcome() && self.page != Page::Hub {
+        if self.welcome() && !matches!(self.page, Page::Hub | Page::Towns) {
             return WELCOME_ACTIONS.len();
         }
         match self.page {
             Page::Overview | Page::Machines => self.nodes().len(),
+            Page::Towns => self.towns.residents().len(),
             Page::Grants => self.grants_len(),
             Page::Events => self.events.len(),
             Page::Hub => self
@@ -844,6 +891,9 @@ impl WorldApp {
         self.go_to(page, paths);
     }
     pub(super) fn paste(&mut self, text: &str) {
+        if self.screen == Screen::Talk {
+            self.towns.paste(text);
+        }
         if self.screen == Screen::Form
             && let Some(form) = &mut self.form
         {
@@ -1024,6 +1074,21 @@ impl WorldApp {
             A::ServicePage => self.go_to(Page::Service, paths),
             A::ConnectionPage => self.go_to(Page::Connection, paths),
             A::HubPage => self.go_to(Page::Hub, paths),
+            A::Talk => {
+                if let Some(id) = self.selected_resident() {
+                    self.towns.talk_to(&id);
+                    self.screen = Screen::Talk;
+                }
+            }
+            A::OpenResident => {
+                self.towns.compose();
+                self.screen = Screen::Talk;
+            }
+            A::StopTurn => {
+                if let Some(id) = self.selected_resident() {
+                    self.towns.stop(&id);
+                }
+            }
             A::Export => {
                 if let Some(invite) = self
                     .receipt
@@ -1047,11 +1112,13 @@ impl WorldApp {
                 Navigation::Stay
             };
         }
+        // On the chat screen and in forms `?` is text; F1 still opens the facts.
         if (key.code == KeyCode::F(1)
-            || (key.code == KeyCode::Char('?') && self.screen != Screen::Form))
+            || (key.code == KeyCode::Char('?')
+                && !matches!(self.screen, Screen::Form | Screen::Talk)))
             && matches!(
                 self.screen,
-                Screen::Page | Screen::Detail | Screen::Form | Screen::Receipt
+                Screen::Page | Screen::Detail | Screen::Form | Screen::Receipt | Screen::Talk
             )
         {
             self.help_from = self.screen;
@@ -1060,6 +1127,12 @@ impl WorldApp {
             return Navigation::Stay;
         }
         match self.screen {
+            Screen::Talk => {
+                if let towns::ChatKey::Leave = self.towns.chat_key(key) {
+                    self.screen = Screen::Page;
+                    self.scroll = 0;
+                }
+            }
             Screen::Help => match key.code {
                 KeyCode::Esc | KeyCode::Enter | KeyCode::F(1) | KeyCode::Char('?') => {
                     self.screen = self.help_from;
@@ -1246,7 +1319,7 @@ impl WorldApp {
                     self.change_page(false, paths)
                 }
                 KeyCode::Right | KeyCode::Tab if self.shows_tabs() => self.change_page(true, paths),
-                KeyCode::Char(digit @ '1'..='7') if self.shows_tabs() => {
+                KeyCode::Char(digit @ '1'..='8') if self.shows_tabs() => {
                     let index = usize::from(digit as u8 - b'1');
                     self.go_to(Page::ALL[index], paths);
                 }

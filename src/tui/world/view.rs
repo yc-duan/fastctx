@@ -51,6 +51,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut WorldApp, language: Langua
             let lines = help_lines(app, m);
             scroll(frame, app, body, Some(m.facts), lines);
         }
+        Screen::Talk => super::towns_view::render_chat(frame, app, m, body),
     }
     super::chrome::footer(frame, app, m, regions.footer);
 }
@@ -145,6 +146,11 @@ fn render_page(
         render_hub(frame, app, m, area);
         return;
     }
+    // The towns are read from the records, not from the World snapshot.
+    if app.page == Page::Towns {
+        super::towns_view::render_towns(frame, app, m, area, compact);
+        return;
+    }
     let Some(snapshot) = &app.snapshot else {
         if let Some(failure) = &app.load_error {
             let lines = failure_lines(failure, m);
@@ -175,7 +181,7 @@ fn render_page(
         Page::Connection => super::status_pages::connection(frame, app, m, area),
         Page::Events => render_events(frame, app, m, area),
         Page::Service => super::status_pages::service(frame, app, m, area),
-        Page::Hub => unreachable!(),
+        Page::Hub | Page::Towns => unreachable!(),
     }
 }
 
@@ -1885,6 +1891,7 @@ fn node_details(node: &NodeView, m: &i18n::WorldMessages) -> Lines {
 
 fn detail_title(app: &WorldApp, m: &i18n::WorldMessages) -> String {
     match app.page {
+        Page::Towns => super::towns_view::detail_title(app, m),
         Page::Overview | Page::Machines => app
             .focused_node()
             .map(|node| safe(&node.name))
@@ -2041,6 +2048,7 @@ fn service_lines(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
 
 fn detail(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
     match app.page {
+        Page::Towns => super::towns_view::detail(app, m),
         Page::Overview | Page::Machines => app
             .focused_node()
             .map(|node| node_details(node, m))
@@ -2156,6 +2164,9 @@ fn help_lines(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
         lines.push(muted(m.edit_keys));
         return lines;
     }
+    if app.help_from == Screen::Talk {
+        return vec![section(m.talk), plain(m.chat_help)];
+    }
     if app.page != Page::Hub && !app.enrolled() {
         return vec![
             section(m.welcome),
@@ -2187,6 +2198,11 @@ fn help_lines(app: &WorldApp, m: &i18n::WorldMessages) -> Lines {
             lines
         }
         Page::Machines => detail(app, m),
+        Page::Towns => {
+            let mut lines = vec![plain(m.towns_help), Line::raw("")];
+            lines.extend(detail(app, m));
+            lines
+        }
         Page::Grants => {
             let mut lines = vec![plain(m.grants_help), muted(m.grants_default), Line::raw("")];
             lines.extend(detail(app, m));

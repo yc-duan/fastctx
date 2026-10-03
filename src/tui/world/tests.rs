@@ -10,7 +10,7 @@ use crate::world::node::admin::NodeStatus;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-fn fixture() -> WorldApp {
+pub(super) fn fixture() -> WorldApp {
     fixture_with(3)
 }
 
@@ -137,7 +137,7 @@ fn fixture_with(machines: usize) -> WorldApp {
 
 use crate::world::NetworkMode;
 
-fn draw(app: &mut WorldApp, language: Language, width: u16, height: u16) -> Terminal<TestBackend> {
+pub(super) fn draw(app: &mut WorldApp, language: Language, width: u16, height: u16) -> Terminal<TestBackend> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| super::render(frame, app, language, frame.area()))
@@ -268,7 +268,7 @@ fn review_node(app: &mut WorldApp) -> &mut NodeSnapshot {
     }
 }
 
-fn export_scene(name: &str, language: Language, width: u16, height: u16, mut app: WorldApp) {
+pub(super) fn export_scene(name: &str, language: Language, width: u16, height: u16, mut app: WorldApp) {
     let scroll = app.scroll;
     let selected = app.selected;
     for (mode_name, mode) in [
@@ -396,6 +396,7 @@ fn export_world_render_scenes() {
                     Page::Service => {
                         app.snapshot.as_mut().unwrap().service_installed = ReadState::Ready(false)
                     }
+                    Page::Towns => app.towns.census = Some(Ok(super::towns_tests::census(Vec::new()))),
                 },
                 _ => unreachable!(),
             }

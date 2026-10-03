@@ -103,6 +103,7 @@ fn context(app: &WorldApp, m: &i18n::WorldMessages) -> String {
         .to_string(),
         Screen::Failed => m.failed.to_string(),
         Screen::Help => m.facts.to_string(),
+        Screen::Talk => super::towns_view::chat_context(app, m),
         Screen::Page | Screen::Detail | Screen::Actions => {
             if app.page == Page::Hub {
                 m.hub.to_string()
@@ -414,5 +415,24 @@ fn keys<'a>(app: &WorldApp, m: &'a i18n::WorldMessages) -> Vec<(&'a str, &'a str
             keys
         }
         Screen::Help => vec![("↑↓", m.key_scroll), ("Esc", m.back)],
+        Screen::Talk => {
+            let Some(chat) = app.towns.chat.as_ref() else {
+                return vec![("Esc", m.back)];
+            };
+            if chat.client.is_none() {
+                return vec![
+                    ("Tab", m.col_agent),
+                    ("Shift-Tab", m.col_town),
+                    ("Enter", m.open_resident),
+                    ("Esc", m.back),
+                ];
+            }
+            let mut keys = vec![("Enter", m.send), ("Ctrl-J", m.key_newline), ("PgUp", m.key_scroll)];
+            if chat.client.as_ref().is_some_and(|client| client.transcript.busy) {
+                keys.push(("Ctrl-X", m.stop_turn));
+            }
+            keys.push(("Esc", m.back));
+            keys
+        }
     }
 }
