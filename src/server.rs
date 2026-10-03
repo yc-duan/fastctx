@@ -428,6 +428,14 @@ impl ServerHandler for FastCtxServer {
         request: rmcp::model::CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if let Some(slot) = &self.resident {
+            // Codex names the thread of each call in `_meta.threadId`.
+            let thread = context
+                .meta
+                .get("threadId")
+                .and_then(|value| value.as_str());
+            slot.attach_on_call(thread);
+        }
         let context = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         let mut result = self.tool_router.call(context).await;
         if let (Some(slot), Ok(result)) = (&self.resident, &mut result) {

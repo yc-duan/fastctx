@@ -301,18 +301,26 @@ impl Town {
         named: Option<&str>,
         surface: &str,
         inbox_address: Option<&str>,
+        thread: Option<&str>,
     ) -> Result<String, String> {
         let mut state = self.state.lock();
-        let known = match named {
-            Some(id) => Some(id.to_string()),
-            None => inbox_address.and_then(|address| {
-                state
-                    .residents
-                    .iter()
-                    .find(|(_, live)| live.inbox_address.as_deref() == Some(address))
-                    .map(|(id, _)| id.clone())
-                    .or_else(|| self.resident_by_inbox(address))
-            }),
+        let known = match (named, inbox_address, thread) {
+            (Some(id), _, _) => Some(id.to_string()),
+            (None, Some(address), _) => state
+                .residents
+                .iter()
+                .find(|(_, live)| live.inbox_address.as_deref() == Some(address))
+                .map(|(id, _)| id.clone())
+                .or_else(|| self.resident_by_inbox(address)),
+            // A host's thread id is its own and unique: whichever connection carries it, and
+            // whichever host it is (the World's app-server or the user's app), it is one resident.
+            (None, None, Some(thread)) => state
+                .residents
+                .iter()
+                .find(|(_, live)| live.about.session.as_deref() == Some(thread))
+                .map(|(id, _)| id.clone())
+                .or_else(|| self.resident_by_session(thread)),
+            (None, None, None) => None,
         };
         if let Some(id) = &known {
             if !state.residents.contains_key(id)
@@ -355,7 +363,7 @@ impl Town {
             surface: surface.to_string(),
             birth: Birth::User,
             since: crate::world::now_rfc3339(),
-            session: None,
+            session: thread.map(str::to_string),
             town: None,
         };
         let records = Records::new(self.resident_dir(None, &id));
@@ -374,6 +382,17 @@ impl Town {
         drop(state);
         self.pair_claude_sessions();
         Ok(id)
+    }
+
+    /// The resident whose records on this machine name the host session `session`.
+    fn resident_by_session(&self, session: &str) -> Option<String> {
+        self.record_dirs()
+            .into_iter()
+            .filter_map(|dir| Records::new(dir).about().ok().flatten())
+            .find(|about| {
+                about.session.as_deref() == Some(session) && about.machine == self.config.machine
+            })
+            .map(|about| about.id)
     }
 
     /// The resident a Claude session was before this node started: its mod's registration

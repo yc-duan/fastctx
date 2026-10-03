@@ -1,9 +1,12 @@
 //! The resident behind one MCP session.
 //!
-//! A session becomes a resident when its MCP handshake completes: that is when the host has
-//! said what it is (`clientInfo`), and the session's environment says whether the World
-//! launched it (`FASTCTX_RESIDENT`). The slot lives as long as the session's server and
-//! detaches when the last clone of it is dropped.
+//! A session whose environment names it becomes a resident in its handshake: the World named
+//! the residents it launched (`FASTCTX_RESIDENT`), and Claude Code names each session's inbox.
+//! Any other session becomes one with its first tool call, under the thread its host names in
+//! that call when it names one: Codex starts the server of one thread more than once (a new
+//! working directory, a thread loaded again), and a status query starts one that never calls a
+//! tool, so the thread, not the connection, is the resident. The slot lives as long as the
+//! session's server and detaches when the last clone of it is dropped.
 
 use super::core::Town;
 use crate::session::SessionEnvironment;
@@ -21,8 +24,19 @@ const CLAUDE_ENTRYPOINT_VARIABLE: &str = "CLAUDE_CODE_ENTRYPOINT";
 pub(crate) struct ResidentSlot {
     town: Arc<Town>,
     id: Mutex<Option<String>>,
+    /// What the host said it is, kept for the first call of a session its environment does not
+    /// name; held while that call registers it, so calls made at once register it once.
+    host: Mutex<Option<Host>>,
     /// Whether the resident was already told who and where it is.
     introduced: std::sync::atomic::AtomicBool,
+}
+
+/// What a host said about itself in the handshake.
+#[derive(Debug)]
+struct Host {
+    agent: String,
+    version: String,
+    surface: String,
 }
 
 impl ResidentSlot {
@@ -30,6 +44,7 @@ impl ResidentSlot {
         Arc::new(Self {
             town,
             id: Mutex::new(None),
+            host: Mutex::new(None),
             introduced: std::sync::atomic::AtomicBool::new(false),
         })
     }
@@ -77,7 +92,8 @@ impl ResidentSlot {
         self.id.lock().clone()
     }
 
-    /// Registers the session; called while its host's `initialize` is answered, before any call.
+    /// Takes the handshake of the session; called while its host's `initialize` is answered,
+    /// before any call. A session its environment names registers now.
     pub(crate) fn attach(
         &self,
         environment: &SessionEnvironment,
@@ -95,12 +111,44 @@ impl ResidentSlot {
                 .unwrap_or_else(|| "unknown".to_string())
         };
         let inbox = variable(environment, super::claude::INBOX_ADDRESS_VARIABLE);
+        let host = Host {
+            agent: agent.to_string(),
+            version: agent_version.to_string(),
+            surface,
+        };
+        if named.is_none() && inbox.is_none() {
+            *self.host.lock() = Some(host);
+            return;
+        }
+        self.register(&host, named.as_deref(), inbox.as_deref(), None);
+    }
+
+    /// A session its environment did not name registers with its first call, under `thread`,
+    /// the host's own thread of the call when the host names one.
+    pub(crate) fn attach_on_call(&self, thread: Option<&str>) {
+        let mut host = self.host.lock();
+        if self.id.lock().is_some() {
+            return;
+        }
+        if let Some(host) = host.take() {
+            self.register(&host, None, None, thread);
+        }
+    }
+
+    fn register(
+        &self,
+        host: &Host,
+        named: Option<&str>,
+        inbox: Option<&str>,
+        thread: Option<&str>,
+    ) {
         match self.town.attach(
-            agent,
-            Some(agent_version),
-            named.as_deref(),
-            &surface,
-            inbox.as_deref(),
+            &host.agent,
+            Some(&host.version),
+            named,
+            &host.surface,
+            inbox,
+            thread,
         ) {
             Ok(id) => {
                 // A resident that comes back is told what ended while it was away, in every place
@@ -114,9 +162,10 @@ impl ResidentSlot {
                 });
                 *self.id.lock() = Some(id);
             }
-            Err(error) => self
-                .town
-                .log(format!("cannot register a session of {agent}: {error}")),
+            Err(error) => self.town.log(format!(
+                "cannot register a session of {}: {error}",
+                host.agent
+            )),
         }
     }
 
