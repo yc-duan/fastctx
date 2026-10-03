@@ -119,7 +119,13 @@ impl Executor {
         };
         let header =
             Header::new(kind::CALL_RESULT, &self.client.name(), &from, 0).with_id(request_id);
-        if let Err(error) = self.client.send_answer(hub_id, header, &result, true) {
+        if let Err(error) = self.client.send_answer(
+            hub_id,
+            header,
+            &result,
+            opened.header.verb.as_deref().unwrap_or(""),
+            Duration::from_secs(opened.header.wait_s.unwrap_or(0)),
+        ) {
             super::log(format!("cannot answer the call from \"{from}\": {error}"));
         }
         self.audit(&from, &opened, &outcome.response, started.elapsed());
@@ -128,9 +134,6 @@ impl Executor {
     fn prepare(&self, opened: &Opened) -> Result<(Call, Arc<SessionContext>), String> {
         // These sentences travel back inside the call result and reach the caller's model as
         // `<node>: <sentence>`, so they read as prose, not as error codes.
-        if !opened.encrypted {
-            return Err("Calls must be encrypted under the World key; nothing ran.".to_string());
-        }
         let from = &opened.header.from;
         if self.client.member(from).is_none() {
             return Err(format!(
@@ -139,10 +142,10 @@ impl Executor {
         }
         let call: Call = messages::decode(&opened.body, kind::CALL)?;
         let me = self.client.name();
-        // The caller's revision arrived inside the ciphertext; if it is newer than this node's,
+        // The caller's revision arrived inside the signed body; if it is newer than this node's,
         // a narrowing may exist that this node has not seen, and honouring the older set could
         // execute something already withdrawn.
-        if self.client.raise_grant_floor(call.grant_revision) {
+        if self.client.raise_grant_floor(call.grant_revision)? {
             return Err(format!(
                 "Node \"{me}\" holds grant revision {} but revision {} is in force; it is fetching the newer set. Retry shortly.",
                 self.client.grant_revision(),
@@ -150,6 +153,18 @@ impl Executor {
             ));
         }
         let grant_verb = grant_verb(&call.verb);
+        if opened.header.verb.as_deref() != Some(grant_verb) {
+            return Err("Call verb differs from signed header".into());
+        }
+        if call.verb == "copy_receive"
+            && call
+                .args
+                .get("from_node")
+                .and_then(serde_json::Value::as_str)
+                != Some(from.as_str())
+        {
+            return Err("Copy source differs from caller".into());
+        }
         if !self
             .client
             .grants

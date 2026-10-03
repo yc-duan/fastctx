@@ -398,7 +398,6 @@ pub(super) fn connection(
     if parts[4].height >= 6 {
         lines.push(plain(""));
         lines.push(pair(m.tls, status.link.tls.as_str()));
-        lines.push(pair(m.epoch, status.link.key_epoch));
         lines.push(pair(m.grant_revision, status.grant_revision));
     }
     super::widgets::scroll(frame, app, parts[4], None, lines);

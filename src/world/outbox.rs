@@ -1,13 +1,8 @@
-//! The member's persistent outbox: reliable envelopes written before they are sent and
-//! deleted only when the hub acknowledges their sequence number.
-
-use super::envelope::Envelope;
-use super::{WorldPaths, write_atomic};
+//! Durable outbound envelopes with an in-memory index of the files still awaiting an ACK.
+use super::{WorldPaths, envelope::Envelope, write_atomic};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-
-/// Reliable messages a member queues before refusing new ones.
-pub(crate) const OUTBOX_LIMIT: usize = 10_000;
+use std::{collections::BTreeSet, path::PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct OutboxEntry {
@@ -16,110 +11,79 @@ pub(crate) struct OutboxEntry {
     pub(crate) env: Envelope,
     pub(crate) queued_at: String,
 }
-
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct Outbox {
     directory: PathBuf,
+    sequences: Mutex<BTreeSet<u64>>,
 }
-
 impl Outbox {
-    pub(crate) fn new(paths: &WorldPaths) -> Self {
-        Self {
-            directory: paths.outbox_dir.clone(),
+    pub(crate) fn new(paths: &WorldPaths) -> Result<Self, String> {
+        let directory = paths.outbox_dir.clone();
+        let mut sequences = BTreeSet::new();
+        match std::fs::read_dir(&directory) {
+            Ok(entries) => {
+                for entry in entries {
+                    let path = entry
+                        .map_err(|e| format!("Cannot list outbox: {e}"))?
+                        .path();
+                    if let Some(seq) = path
+                        .file_stem()
+                        .and_then(|name| name.to_str())
+                        .and_then(|name| name.parse().ok())
+                    {
+                        sequences.insert(seq);
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Cannot list {}: {error}", directory.display())),
         }
+        Ok(Self {
+            directory,
+            sequences: Mutex::new(sequences),
+        })
     }
-
     fn path(&self, seq: u64) -> PathBuf {
         self.directory.join(format!("{seq:020}.json"))
     }
-
-    /// Stores one message under its sequence number.
     pub(crate) fn push(&self, seq: u64, entry: &OutboxEntry) -> Result<(), String> {
-        if self.depth()? >= OUTBOX_LIMIT {
-            return Err(format!(
-                "outbox_full: {OUTBOX_LIMIT} messages are already waiting for the hub."
-            ));
+        let mut sequences = self.sequences.lock();
+        if sequences.contains(&seq) {
+            return Err(format!("Outbox sequence {seq} is already committed"));
         }
-        let json = serde_json::to_vec(entry)
-            .map_err(|error| format!("Cannot encode an outbox entry: {error}"))?;
-        write_atomic(&self.path(seq), &json)
+        let bytes = serde_json::to_vec(entry).map_err(|e| e.to_string())?;
+        write_atomic(&self.path(seq), &bytes)?;
+        sequences.insert(seq);
+        Ok(())
     }
-
-    /// Removes every message at or below `seq`.
     pub(crate) fn ack(&self, seq: u64) -> Result<(), String> {
-        for (queued, _) in self.entries()? {
-            if queued <= seq {
-                let path = self.path(queued);
-                if let Err(error) = std::fs::remove_file(&path)
-                    && error.kind() != std::io::ErrorKind::NotFound
-                {
-                    return Err(format!(
-                        "Cannot remove {}: {error}",
-                        crate::paths::display_path(&path)
-                    ));
-                }
+        let mut sequences = self.sequences.lock();
+        let acknowledged = sequences.range(..=seq).copied().collect::<Vec<_>>();
+        for queued in acknowledged {
+            match std::fs::remove_file(self.path(queued)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("Cannot acknowledge outbox sequence {queued}: {e}")),
             }
+            sequences.remove(&queued);
         }
         Ok(())
     }
-
-    /// Every queued message in sequence order.
     pub(crate) fn entries(&self) -> Result<Vec<(u64, OutboxEntry)>, String> {
-        let mut entries = Vec::new();
-        let listing = match std::fs::read_dir(&self.directory) {
-            Ok(listing) => listing,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
-            Err(error) => {
-                return Err(format!(
-                    "Cannot list {}: {error}",
-                    crate::paths::display_path(&self.directory)
-                ));
-            }
-        };
-        for item in listing.flatten() {
-            let path = item.path();
-            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                continue;
-            };
-            let Ok(seq) = stem.parse::<u64>() else {
-                continue;
-            };
-            let bytes = std::fs::read(&path).map_err(|error| {
-                format!("Cannot read {}: {error}", crate::paths::display_path(&path))
-            })?;
-            let entry: OutboxEntry = serde_json::from_slice(&bytes).map_err(|error| {
-                format!(
-                    "Cannot parse {}: {error}",
-                    crate::paths::display_path(&path)
-                )
-            })?;
-            entries.push((seq, entry));
-        }
-        entries.sort_by_key(|(seq, _)| *seq);
-        Ok(entries)
-    }
-
-    /// How many messages are queued, by counting files: every push and every status read asks,
-    /// and parsing each entry to count them made both quadratic in the queue length.
-    pub(crate) fn depth(&self) -> Result<usize, String> {
-        let listing = match std::fs::read_dir(&self.directory) {
-            Ok(listing) => listing,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-            Err(error) => {
-                return Err(format!(
-                    "Cannot list {}: {error}",
-                    crate::paths::display_path(&self.directory)
-                ));
-            }
-        };
-        Ok(listing
-            .flatten()
-            .filter(|item| {
-                item.path()
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .is_some_and(|stem| stem.parse::<u64>().is_ok())
+        self.sequences
+            .lock()
+            .iter()
+            .map(|seq| {
+                let path = self.path(*seq);
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
+                let entry = serde_json::from_slice(&bytes)
+                    .map_err(|e| format!("Cannot parse {}: {e}", path.display()))?;
+                Ok((*seq, entry))
             })
-            .count())
+            .collect()
+    }
+    pub(crate) fn depth(&self) -> usize {
+        self.sequences.lock().len()
     }
 }

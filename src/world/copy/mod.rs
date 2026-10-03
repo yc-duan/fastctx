@@ -44,6 +44,7 @@ pub(crate) struct CopyArgs {
 /// `copy_receive`: what the source tells the destination before the stream opens.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ReceiveArgs {
+    pub(crate) ticket: crate::world::stream_ticket::Ticket,
     pub(crate) to: String,
     pub(crate) kind: ObjectKind,
     /// The machine that will attach as the stream's source.

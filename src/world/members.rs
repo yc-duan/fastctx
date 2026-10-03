@@ -1,15 +1,8 @@
-//! The member's view of who is in the World: records verified by MAC, revocations verified
-//! by signature, the selectors that name members in tool calls, and the local cache file.
-//!
-//! Identity is monotonic on the member side. A name whose record once verified is never
-//! forgotten because a later listing fails to verify it (a hub cannot un-know a member for
-//! us), and a key that a member revoked in a signed statement is never trusted again, whatever
-//! the hub lists afterwards. The hub only ever adds facts here: presence, and records or
-//! revocations that carry their own proof.
+//! Locally verified admission chains and permanent signed revocations.
 
-use super::crypto::{self, Key32, b64_array, b64_decode, b64_encode};
+use super::admission::Credential;
+use super::crypto::{Key32, b64_array, b64_decode, b64_encode};
 use super::identity::{self, Identity};
-use super::keys::KeyRing;
 use super::messages::{
     MemberEntry, MemberRecord, RevocationStatement, SignedRecord, SignedRevocation,
 };
@@ -17,7 +10,7 @@ use super::{WorldPaths, read_optional, write_atomic};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const MEMBERS_FILE_VERSION: u32 = 1;
+const MEMBERS_FILE_VERSION: u32 = 2;
 /// Signature domain of a member record.
 pub(crate) const MEMBER_RECORD_DOMAIN: &str = "member_record";
 /// Signature domain of a revocation.
@@ -27,10 +20,11 @@ pub(crate) const STATE_UNLISTED: &str = "unlisted";
 /// Presence word the hub reports for a revoked member.
 pub(crate) const STATE_REVOKED: &str = "revoked";
 
-/// A member whose record verified under the World key: the only kind other members act on.
+/// A device admitted through the locally pinned founding key.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct VerifiedMember {
     pub(crate) record: MemberRecord,
+    pub(crate) signed: SignedRecord,
     /// `online`, `offline`, `revoked` (reported by the hub without a signed statement), or
     /// `unlisted`.
     pub(crate) state: String,
@@ -54,10 +48,6 @@ impl VerifiedMember {
         b64_array::<32>(&self.record.node_pub, "member public key")
     }
 
-    pub(crate) fn wrap_public(&self) -> Result<Key32, String> {
-        b64_array::<32>(&self.record.wrap_pub, "member wrap key")
-    }
-
     pub(crate) fn is_online(&self) -> bool {
         self.state == "online"
     }
@@ -72,6 +62,10 @@ impl VerifiedMember {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct MemberTable {
     pub(crate) version: u64,
+    #[serde(default)]
+    pub(crate) records: BTreeMap<String, SignedRecord>,
+    #[serde(default)]
+    pub(crate) blocked: std::collections::BTreeSet<String>,
     /// Every identity this member has verified, including ones the hub reports revoked or no
     /// longer lists; `get` filters to current members.
     pub(crate) members: BTreeMap<String, VerifiedMember>,
@@ -82,6 +76,10 @@ pub(crate) struct MemberTable {
     /// Signed revocations by name; also index the revoked keys, which stay refused forever.
     #[serde(default)]
     pub(crate) revoked: BTreeMap<String, SignedRevocation>,
+    #[serde(default)]
+    pub(crate) invitations: BTreeMap<String, String>,
+    #[serde(default)]
+    pub(crate) conflicts: std::collections::BTreeSet<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -101,7 +99,7 @@ impl MemberTable {
                 crate::paths::display_path(&paths.members)
             )
         })?;
-        if file.v > MEMBERS_FILE_VERSION {
+        if file.v != MEMBERS_FILE_VERSION {
             return Err(format!(
                 "{} was written by a newer fastctx (format {}); this build reads format {} at most.",
                 crate::paths::display_path(&paths.members),
@@ -127,30 +125,88 @@ impl MemberTable {
     pub(crate) fn from_entries(
         version: u64,
         entries: &[MemberEntry],
-        keys: &KeyRing,
+        founder: &str,
+        world: &str,
         previous: &Self,
     ) -> Self {
         let mut table = Self {
             version,
+            records: previous.records.clone(),
+            blocked: previous.blocked.clone(),
             members: BTreeMap::new(),
             unverified: BTreeMap::new(),
             revoked: previous.revoked.clone(),
+            invitations: previous.invitations.clone(),
+            conflicts: previous.conflicts.clone(),
         };
 
-        // Pass one: which fresh records verify on their own.
+        let mut proofs = previous.records.clone();
+        let mut replacements = std::collections::BTreeSet::new();
+        for entry in entries {
+            if let Some(signed) = &entry.signed {
+                if let Some(known) = proofs.get(&entry.name)
+                    && (verify_record(known).ok().map(|r| r.node_pub)
+                        != verify_record(signed).ok().map(|r| r.node_pub)
+                        || known.admission != signed.admission)
+                {
+                    replacements.insert(entry.name.clone());
+                    continue;
+                }
+                proofs.insert(entry.name.clone(), signed.clone());
+            }
+        }
+        // Resolve the whole graph before accepting anything; a duplicate invitation poisons
+        // both claims, including a previously accepted claim, without forgetting its identity.
+        for signed in proofs.values() {
+            if let Ok(record) = verify_record(signed)
+                && let Credential::Invited { endorsement, .. } = &signed.admission
+                && let Some(inviter) = proofs.get(&endorsement.inviter)
+                && let Ok(inviter) = verify_record(inviter)
+                && signed
+                    .admission
+                    .verify(
+                        &record.name,
+                        &record.node_pub,
+                        &b64_array::<32>(&inviter.node_pub, "inviter").unwrap_or_default(),
+                    )
+                    .is_ok()
+            {
+                if let Some(key) = table.invitations.get(&endorsement.invite_pub) {
+                    if key != &record.node_pub {
+                        table.conflicts.insert(endorsement.invite_pub.clone());
+                    }
+                } else {
+                    table
+                        .invitations
+                        .insert(endorsement.invite_pub.clone(), record.node_pub);
+                }
+            }
+        }
         let mut fresh: BTreeMap<&str, Result<MemberRecord, String>> = BTreeMap::new();
         for entry in entries {
-            let outcome = match &entry.signed {
-                None => Err("the hub holds no published record for this member".to_string()),
-                Some(signed) => match verify_record(signed, keys) {
-                    Ok(record) if record.name == entry.name => Ok(record),
-                    Ok(record) => Err(format!(
-                        "the record is signed for \"{}\" but the hub lists it as \"{}\"",
-                        record.name, entry.name
-                    )),
-                    Err(error) => Err(error),
-                },
+            let outcome = if replacements.contains(&entry.name) {
+                Err("member identity/admission cannot be replaced".into())
+            } else {
+                verify_chain(
+                    &entry.name,
+                    &proofs,
+                    founder,
+                    world,
+                    &table.conflicts,
+                    &mut Vec::new(),
+                )
             };
+            if outcome.is_ok() {
+                table
+                    .records
+                    .insert(entry.name.clone(), proofs[&entry.name].clone());
+            }
+            if outcome
+                .as_ref()
+                .is_err_and(|reason| reason.contains("one invitation"))
+            {
+                table.blocked.insert(entry.name.clone());
+            }
             fresh.insert(entry.name.as_str(), outcome);
         }
 
@@ -233,6 +289,11 @@ impl MemberTable {
             table.members.insert(
                 entry.name.clone(),
                 VerifiedMember {
+                    signed: if stale.is_none() {
+                        entry.signed.clone().expect("verified record")
+                    } else {
+                        previous.members[&entry.name].signed.clone()
+                    },
                     record,
                     state: entry.state.clone(),
                     last_seen: entry.last_seen.clone(),
@@ -271,7 +332,18 @@ impl MemberTable {
 
     /// A current member: verified, not revoked by anyone's account.
     pub(crate) fn get(&self, name: &str) -> Option<&VerifiedMember> {
-        self.members.get(name).filter(|member| member.is_current())
+        self.members.get(name).filter(|member| {
+            member.is_current()
+                && !self.blocked.contains(name)
+                && !self.revoked.contains_key(name)
+                && !self.is_revoked_key(&member.record.node_pub)
+                && match &member.signed.admission {
+                    Credential::Founder => true,
+                    Credential::Invited { endorsement, .. } => {
+                        !self.conflicts.contains(&endorsement.invite_pub)
+                    }
+                }
+        })
     }
 
     /// Any verified identity, including one the hub reports revoked without a signed
@@ -316,36 +388,21 @@ impl MemberTable {
 /// Builds and signs this member's own record.
 pub(crate) fn publish_record(
     identity: &Identity,
-    keys: &KeyRing,
+    admission: &Credential,
     record: &MemberRecord,
 ) -> Result<SignedRecord, String> {
     let bytes = serde_json::to_vec(record)
         .map_err(|error| format!("Cannot encode the member record: {error}"))?;
-    let current = keys.current();
-    let mac = crypto::hmac_sha256(&current.subkeys().mac, &bytes);
     let sig = identity.sign(MEMBER_RECORD_DOMAIN, &bytes);
     Ok(SignedRecord {
         record: String::from_utf8(bytes).expect("serde_json produces UTF-8"),
-        mac: b64_encode(&mac),
-        mac_epoch: current.epoch(),
+        admission: admission.clone(),
         sig: b64_encode(&sig),
     })
 }
 
-/// Verifies a record's MAC (under the epoch it names) and the author's signature, returning
-/// the parsed record. The hub cannot produce either, so a record that passes was published
-/// by a member holding the World key and the private key it claims.
-pub(crate) fn verify_record(signed: &SignedRecord, keys: &KeyRing) -> Result<MemberRecord, String> {
-    let subkeys = keys.subkeys(signed.mac_epoch).ok_or_else(|| {
-        format!(
-            "the record is MAC'd under World key epoch {}, which this member does not hold",
-            signed.mac_epoch
-        )
-    })?;
-    let mac = b64_decode(&signed.mac).map_err(|error| format!("invalid record MAC: {error}"))?;
-    if !crypto::hmac_verify(&subkeys.mac, signed.record.as_bytes(), &mac) {
-        return Err("the record's MAC does not verify under the World key".to_string());
-    }
+/// Verifies a self-signed record; admission-chain verification is separate.
+pub(crate) fn verify_record(signed: &SignedRecord) -> Result<MemberRecord, String> {
     let record: MemberRecord = serde_json::from_str(&signed.record)
         .map_err(|error| format!("the record is not valid JSON: {error}"))?;
     let public_key = b64_array::<32>(&record.node_pub, "member public key")
@@ -401,139 +458,51 @@ pub(crate) fn verify_revocation(
     Ok(statement)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{MemberTable, publish_record, sign_revocation, verify_record};
-    use crate::world::identity::Identity;
-    use crate::world::keys::KeyRing;
-    use crate::world::messages::{MemberEntry, MemberRecord, RevocationStatement};
-
-    fn record(identity: &Identity, name: &str, tags: &[&str]) -> MemberRecord {
-        MemberRecord {
-            name: name.to_string(),
-            node_pub: crate::world::crypto::b64_encode(&identity.public_key()),
-            wrap_pub: crate::world::crypto::b64_encode(&identity.wrap_public()),
-            tags: tags.iter().map(|tag| tag.to_string()).collect(),
-            kind: "stateful".to_string(),
-            os: "linux".to_string(),
-            arch: "x86_64".to_string(),
-            version: "1.0.0".to_string(),
-            enrolled_at: "2026-09-04T00:00:00Z".to_string(),
+fn verify_chain(
+    name: &str,
+    proofs: &BTreeMap<String, SignedRecord>,
+    founder: &str,
+    world: &str,
+    conflicts: &std::collections::BTreeSet<String>,
+    visiting: &mut Vec<String>,
+) -> Result<MemberRecord, String> {
+    if visiting.iter().any(|seen| seen == name) {
+        return Err("admission cycle".into());
+    }
+    let signed = proofs
+        .get(name)
+        .ok_or_else(|| format!("missing admission record for {name}"))?;
+    let record = verify_record(signed)?;
+    if record.name != name {
+        return Err("record name differs from listing".into());
+    }
+    super::validate_node_name(name)?;
+    visiting.push(name.into());
+    match &signed.admission {
+        Credential::Founder if record.node_pub == founder => {}
+        Credential::Founder => return Err("founder key does not match pinned founder".into()),
+        Credential::Invited { endorsement, .. } => {
+            if endorsement.world != world {
+                return Err("invitation belongs to another world".into());
+            }
+            if conflicts.contains(&endorsement.invite_pub) {
+                return Err("one invitation endorsed different member keys".into());
+            }
+            let inviter = verify_chain(
+                &endorsement.inviter,
+                proofs,
+                founder,
+                world,
+                conflicts,
+                visiting,
+            )?;
+            signed.admission.verify(
+                name,
+                &record.node_pub,
+                &b64_array(&inviter.node_pub, "inviter")?,
+            )?;
         }
     }
-
-    fn entry(
-        identity: &Identity,
-        keys: &KeyRing,
-        name: &str,
-        tags: &[&str],
-        state: &str,
-    ) -> MemberEntry {
-        MemberEntry {
-            name: name.to_string(),
-            signed: Some(publish_record(identity, keys, &record(identity, name, tags)).unwrap()),
-            state: state.to_string(),
-            last_seen: "2026-09-04T00:00:00Z".to_string(),
-            hub_rtt_ms: None,
-            tls: None,
-            network: None,
-            version: None,
-            inventory_version: 0,
-            revocation: None,
-        }
-    }
-
-    #[test]
-    fn records_verify_only_under_the_world_key_and_their_own_signature() {
-        let keys = KeyRing::new_initial().unwrap();
-        let identity = Identity::generate().unwrap();
-        let signed = publish_record(&identity, &keys, &record(&identity, "desktop", &[])).unwrap();
-        assert_eq!(verify_record(&signed, &keys).unwrap().name, "desktop");
-        assert!(verify_record(&signed, &KeyRing::new_initial().unwrap()).is_err());
-        let mut renamed = signed.clone();
-        renamed.record = renamed.record.replace("desktop", "evil");
-        assert!(verify_record(&renamed, &keys).is_err());
-    }
-
-    #[test]
-    fn a_hub_cannot_unknow_a_member_and_a_signed_revocation_outlives_any_listing() {
-        let keys = KeyRing::new_initial().unwrap();
-        let desktop = Identity::generate().unwrap();
-        let laptop = Identity::generate().unwrap();
-        let first = vec![
-            entry(&desktop, &keys, "desktop", &[], "online"),
-            entry(&laptop, &keys, "laptop", &[], "online"),
-        ];
-        let table = MemberTable::from_entries(1, &first, &keys, &MemberTable::default());
-        assert_eq!(table.members.len(), 2);
-
-        // A later listing whose record for laptop is MAC'd under an epoch this member lacks
-        // keeps laptop's identity, marked stale; a name never seen stays unverified.
-        let mut later = KeyRing::new_initial().unwrap();
-        later.rotate().unwrap();
-        let mut second = vec![
-            entry(&desktop, &keys, "desktop", &[], "online"),
-            entry(&laptop, &later, "laptop", &[], "offline"),
-            entry(
-                &Identity::generate().unwrap(),
-                &later,
-                "ghost",
-                &[],
-                "online",
-            ),
-        ];
-        let table = MemberTable::from_entries(2, &second, &keys, &table);
-        assert!(table.get("laptop").unwrap().stale.is_some());
-        assert_eq!(table.get("laptop").unwrap().state, "offline");
-        assert!(table.get("ghost").is_none());
-        assert!(table.unverified.contains_key("ghost"));
-
-        // desktop revokes laptop; the statement verifies against desktop's known key, and a
-        // hub that later lists laptop as online again changes nothing.
-        let statement = RevocationStatement {
-            name: "laptop".to_string(),
-            node_pub: crate::world::crypto::b64_encode(&laptop.public_key()),
-            by: "desktop".to_string(),
-            at: "2026-09-04T01:00:00Z".to_string(),
-            reason: "revoked".to_string(),
-        };
-        second[1].state = "revoked".to_string();
-        second[1].revocation = Some(sign_revocation(&desktop, &statement).unwrap());
-        let table = MemberTable::from_entries(3, &second, &keys, &table);
-        assert!(table.revoked.contains_key("laptop"));
-        assert!(table.get("laptop").is_none());
-        let mut resurrected = vec![
-            entry(&desktop, &keys, "desktop", &[], "online"),
-            entry(&laptop, &keys, "laptop", &[], "online"),
-        ];
-        let table = MemberTable::from_entries(4, &resurrected, &keys, &table);
-        assert!(table.get("laptop").is_none());
-        assert!(
-            table
-                .resolve("laptop")
-                .unwrap_err()
-                .contains("was removed from this World")
-        );
-        // Nor under a new name.
-        resurrected[1] = entry(&laptop, &keys, "laptop2", &[], "online");
-        let table = MemberTable::from_entries(5, &resurrected, &keys, &table);
-        assert!(table.get("laptop2").is_none());
-
-        // A revocation signed by a stranger is ignored.
-        let stranger = Identity::generate().unwrap();
-        let bogus = RevocationStatement {
-            name: "desktop".to_string(),
-            node_pub: crate::world::crypto::b64_encode(&desktop.public_key()),
-            by: "nobody".to_string(),
-            at: "2026-09-04T01:00:00Z".to_string(),
-            reason: "revoked".to_string(),
-        };
-        let mut forged = vec![entry(&desktop, &keys, "desktop", &[], "revoked")];
-        forged[0].revocation = Some(sign_revocation(&stranger, &bogus).unwrap());
-        let table = MemberTable::from_entries(6, &forged, &keys, &table);
-        assert!(!table.revoked.contains_key("desktop"));
-        // Reported revoked without proof: identity kept, not current, not selectable.
-        assert!(table.identity("desktop").is_some());
-        assert!(table.get("desktop").is_none());
-    }
+    visiting.pop();
+    Ok(record)
 }

@@ -1,9 +1,4 @@
-//! Member and hub identities: Ed25519 signing keys, X25519 wrap keys, fingerprints, and the
-//! domain-separated signature scheme every World object uses.
-//!
-//! There are no certificates and no expiry. An identity is its public key; it dies only when
-//! the World revokes it. Seeds are stored as small JSON files inside the owner-only World
-//! directory.
+//! Device and hub Ed25519 identities with domain-separated signatures.
 
 use super::crypto::{Key32, hex_array, sha256};
 use super::{SIGNATURE_DOMAIN_PREFIX, WorldPaths, read_optional, write_atomic};
@@ -11,7 +6,6 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::Path;
-use x25519_dalek::{PublicKey as X25519Public, StaticSecret};
 use zeroize::Zeroizing;
 
 /// Length of an Ed25519 signature.
@@ -25,7 +19,7 @@ const KEY_FILE_VERSION: u32 = 1;
 pub(crate) struct Fingerprint([u8; 12]);
 
 impl Fingerprint {
-    /// Fingerprint of an Ed25519 or X25519 public key.
+    /// Fingerprint of an Ed25519 public key.
     pub(crate) fn of(public_key: &Key32) -> Self {
         let digest = sha256(public_key);
         let mut bytes = [0_u8; 12];
@@ -79,7 +73,7 @@ impl SigningIdentity {
     }
 
     /// Signs `message` under a domain so a signature made for one object type can never be
-    /// presented as another (`fastctx-world/v1/<domain>\0` is prefixed before signing).
+    /// presented as another (`fastctx-world/v2/<domain>\0` is prefixed before signing).
     pub(crate) fn sign(&self, domain: &str, message: &[u8]) -> Signature64 {
         self.signing
             .sign(&signing_input(domain, message))
@@ -101,20 +95,16 @@ impl fmt::Debug for SigningIdentity {
     }
 }
 
-/// A member's complete identity: the signing key plus the X25519 wrap key that receives
-/// rotated World keys.
+/// A member's signing identity.
 #[derive(Clone)]
 pub(crate) struct Identity {
     signing: SigningIdentity,
-    wrap: StaticSecret,
 }
 
 impl Identity {
     pub(crate) fn generate() -> Result<Self, String> {
-        let wrap_seed = Zeroizing::new(super::crypto::random_bytes::<32>()?);
         Ok(Self {
             signing: SigningIdentity::generate()?,
-            wrap: StaticSecret::from(*wrap_seed),
         })
     }
 
@@ -126,10 +116,6 @@ impl Identity {
         self.signing.public_key()
     }
 
-    pub(crate) fn wrap_public(&self) -> Key32 {
-        X25519Public::from(&self.wrap).to_bytes()
-    }
-
     pub(crate) fn fingerprint(&self) -> Fingerprint {
         self.signing.fingerprint()
     }
@@ -138,38 +124,11 @@ impl Identity {
         self.signing.sign(domain, message)
     }
 
-    /// X25519 agreement between this member's wrap key and a peer's public key. A
-    /// non-contributory result (a low-order peer point) is rejected rather than used.
-    pub(crate) fn agree(&self, their_public: &Key32) -> Result<Key32, String> {
-        agree(&self.wrap, their_public)
-    }
-
-    /// Loads both key files; `Ok(None)` when neither exists, an error when only one does.
     pub(crate) fn load(paths: &WorldPaths) -> Result<Option<Self>, String> {
-        let signing = SigningIdentity::load(&paths.identity_key)?;
-        let wrap = load_seed(&paths.wrap_key, "x25519")?;
-        match (signing, wrap) {
-            (Some(signing), Some(wrap)) => Ok(Some(Self {
-                signing,
-                wrap: StaticSecret::from(wrap),
-            })),
-            (None, None) => Ok(None),
-            (Some(_), None) => Err(format!(
-                "{} exists but {} is missing; the World identity is incomplete. Run 'fastctx node unenroll' and enroll again.",
-                crate::paths::display_path(&paths.identity_key),
-                crate::paths::display_path(&paths.wrap_key)
-            )),
-            (None, Some(_)) => Err(format!(
-                "{} exists but {} is missing; the World identity is incomplete. Run 'fastctx node unenroll' and enroll again.",
-                crate::paths::display_path(&paths.wrap_key),
-                crate::paths::display_path(&paths.identity_key)
-            )),
-        }
+        Ok(SigningIdentity::load(&paths.identity_key)?.map(|signing| Self { signing }))
     }
-
     pub(crate) fn save(&self, paths: &WorldPaths) -> Result<(), String> {
-        self.signing.save(&paths.identity_key)?;
-        save_seed(&paths.wrap_key, "x25519", self.wrap.as_bytes())
+        self.signing.save(&paths.identity_key)
     }
 }
 
@@ -196,25 +155,6 @@ pub(crate) fn verify(
             &Signature::from_bytes(&signature),
         )
         .map_err(|_| format!("The {domain} signature does not verify."))
-}
-
-/// X25519 agreement with a one-shot secret; used by the key-rotation sender.
-pub(crate) fn agree_ephemeral(their_public: &Key32) -> Result<(Key32, Key32), String> {
-    let seed = Zeroizing::new(super::crypto::random_bytes::<32>()?);
-    let secret = StaticSecret::from(*seed);
-    let public = X25519Public::from(&secret).to_bytes();
-    let shared = agree(&secret, their_public)?;
-    Ok((public, shared))
-}
-
-fn agree(secret: &StaticSecret, their_public: &Key32) -> Result<Key32, String> {
-    let shared = secret.diffie_hellman(&X25519Public::from(*their_public));
-    if !shared.was_contributory() {
-        return Err(
-            "The peer's wrap key is a low-order point; refusing the agreement.".to_string(),
-        );
-    }
-    Ok(shared.to_bytes())
 }
 
 fn signing_input(domain: &str, message: &[u8]) -> Vec<u8> {
@@ -273,45 +213,4 @@ fn save_seed(path: &Path, kind: &str, seed: &Key32) -> Result<(), String> {
     let json = serde_json::to_vec_pretty(&file)
         .map_err(|error| format!("Cannot encode the key file: {error}"))?;
     write_atomic(path, &json)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Fingerprint, Identity, SigningIdentity, agree_ephemeral, verify};
-
-    #[test]
-    fn signatures_bind_the_domain_and_the_message() {
-        let identity = SigningIdentity::generate().unwrap();
-        let signature = identity.sign("execute", b"payload");
-        assert!(verify(&identity.public_key(), "execute", b"payload", &signature).is_ok());
-        assert!(verify(&identity.public_key(), "call", b"payload", &signature).is_err());
-        assert!(verify(&identity.public_key(), "execute", b"payloaD", &signature).is_err());
-        let other = SigningIdentity::generate().unwrap();
-        assert!(verify(&other.public_key(), "execute", b"payload", &signature).is_err());
-    }
-
-    #[test]
-    fn identity_round_trips_through_its_key_files_and_agreements_match() {
-        let temp = tempfile::tempdir().unwrap();
-        let paths = super::super::WorldPaths::from_control(
-            &crate::control::paths::ControlPaths::for_home(temp.path()),
-        );
-        paths.ensure().unwrap();
-        assert!(Identity::load(&paths).unwrap().is_none());
-        let identity = Identity::generate().unwrap();
-        identity.save(&paths).unwrap();
-        let loaded = Identity::load(&paths).unwrap().unwrap();
-        assert_eq!(loaded.public_key(), identity.public_key());
-        assert_eq!(loaded.wrap_public(), identity.wrap_public());
-        assert_eq!(loaded.fingerprint().to_string().len(), 24);
-        assert_eq!(
-            Fingerprint::parse(&loaded.fingerprint().to_string()).unwrap(),
-            identity.fingerprint()
-        );
-
-        let (ephemeral_public, shared_sender) = agree_ephemeral(&identity.wrap_public()).unwrap();
-        let shared_receiver = identity.agree(&ephemeral_public).unwrap();
-        assert_eq!(shared_sender, shared_receiver);
-        assert!(identity.agree(&[0_u8; 32]).is_err());
-    }
 }

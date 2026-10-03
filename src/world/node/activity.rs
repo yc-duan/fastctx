@@ -1,4 +1,4 @@
-//! Non-content activity facts, distributed only as part of the encrypted inventory.
+//! Non-content activity facts, distributed only as part of the signed inventory.
 
 use serde::{Deserialize, Serialize};
 

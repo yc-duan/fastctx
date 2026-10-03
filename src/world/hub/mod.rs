@@ -1,6 +1,4 @@
-//! `fastctx hub`: the one process in a World that listens. It admits members, keeps the
-//! member table, grants, sealed keys, inventories, and the event log, and routes envelopes it
-//! cannot read. It never executes anything.
+//! Trusted hub: authenticated sessions, reliable forwarding, ledger storage and data pairing.
 
 pub(crate) mod http;
 pub(crate) mod router;
@@ -29,13 +27,6 @@ use tokio_util::sync::CancellationToken;
 /// Reserved `n` counter block written to the store at once; the hub burns at most this many
 /// values on a crash.
 const N_RESERVATION: u64 = 1_000;
-/// How long a pending request lives when its header does not say how long the caller waits.
-const PENDING_DEFAULT_WAIT: Duration = Duration::from_secs(600);
-/// Added to the caller's declared wait before a pending request is dropped, so an answer
-/// that arrives at the last second still finds its caller.
-const PENDING_MARGIN: Duration = Duration::from_secs(60);
-/// The longest wait a header may declare: a script's 24-hour call plus the margin.
-const PENDING_MAX_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
 const TLS_ACCEPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A connection that has not upgraded to the World protocol by then is closed. The hub is not
 /// a web server: a member upgrades on its first request, and anything else on this port is a
@@ -76,7 +67,6 @@ pub(crate) struct HubStatus {
     pub(crate) members: Vec<MemberStatus>,
     pub(crate) open_invites: u64,
     pub(crate) events: u64,
-    pub(crate) rotation_pending: bool,
     pub(crate) bootstrap_used: bool,
     /// Data connections being pumped right now.
     #[serde(default)]
@@ -116,9 +106,10 @@ pub(crate) struct Hub {
     tls_description: String,
     started_at: String,
     sessions: Mutex<HashMap<String, Connected>>,
+    delivery_lock: Mutex<()>,
     generations: Mutex<HashMap<String, u64>>,
     pending: Mutex<HashMap<u64, Pending>>,
-    enrollments: Mutex<HashMap<String, String>>,
+    pub(crate) subscriptions: Mutex<HashMap<String, (String, String)>>,
     next_hub_id: AtomicU64,
     next_n: AtomicU64,
     n_reserved_until: Mutex<u64>,
@@ -188,9 +179,10 @@ pub(crate) async fn run(options: HubOptions) -> Result<(), String> {
         ),
         started_at: crate::world::now_rfc3339(),
         sessions: Mutex::new(HashMap::new()),
+        delivery_lock: Mutex::new(()),
         generations: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
-        enrollments: Mutex::new(HashMap::new()),
+        subscriptions: Mutex::new(HashMap::new()),
         next_hub_id: AtomicU64::new(1),
         next_n: AtomicU64::new(n_start + 1),
         n_reserved_until: Mutex::new(n_start + N_RESERVATION),
@@ -429,6 +421,7 @@ impl Hub {
         match previous {
             Some(previous) => {
                 previous.cancel.cancel();
+                self.close_subscriptions(name);
                 true
             }
             None => false,
@@ -499,6 +492,7 @@ impl Hub {
         env: Envelope,
         id: Option<u64>,
     ) -> Result<u64, String> {
+        let _delivery = self.delivery_lock.lock();
         let seq = self
             .store
             .outbox_push(to, &env, id, &crate::world::now_rfc3339())?;
@@ -520,17 +514,16 @@ impl Hub {
         caller: &str,
         caller_id: u64,
         target: &str,
-        wait: Option<Duration>,
+        wait: Duration,
     ) -> u64 {
         let hub_id = self.next_hub_id.fetch_add(1, Ordering::Relaxed);
-        let wait = wait.unwrap_or(PENDING_DEFAULT_WAIT).min(PENDING_MAX_WAIT);
         self.pending.lock().insert(
             hub_id,
             Pending {
                 caller: caller.to_string(),
                 caller_id,
                 target: target.to_string(),
-                expires: Instant::now() + wait + PENDING_MARGIN,
+                expires: Instant::now() + wait,
             },
         );
         hub_id
@@ -542,16 +535,30 @@ impl Hub {
 
     /// Forwards a target's answer to the caller that asked.
     pub(crate) fn complete_pending(&self, hub_id: u64, from: &str, env: Envelope) {
-        let Some(pending) = self.pending.lock().remove(&hub_id) else {
+        let mut requests = self.pending.lock();
+        let Some(pending) = requests.get(&hub_id) else {
             return;
         };
-        if pending.target != from {
+        let header = match env.header() {
+            Ok(header) => header,
+            Err(error) => {
+                log(error);
+                return;
+            }
+        };
+        if pending.target != from
+            || header.to != pending.caller
+            || header.id != Some(pending.caller_id)
+        {
             log(format!(
-                "\"{from}\" answered request {hub_id} that belongs to \"{}\"; dropped",
-                pending.target
+                "answer rejected: author/recipient/correlation differs for request {hub_id}"
             ));
             return;
         }
+        let pending = requests
+            .remove(&hub_id)
+            .expect("request checked under the same lock");
+        drop(requests);
         self.send_to_online(&pending.caller, Frame::request(pending.caller_id, env));
     }
 
@@ -611,17 +618,6 @@ impl Hub {
         }
     }
 
-    pub(crate) fn remember_enrollment(&self, name: &str, wrapped_keys: String) {
-        self.enrollments
-            .lock()
-            .insert(name.to_string(), wrapped_keys);
-    }
-
-    pub(crate) fn take_enrollment(&self, name: &str) -> Option<String> {
-        self.enrollments.lock().remove(name)
-    }
-
-    /// The hub's own monotonic envelope counter, reserved in blocks so it survives restarts.
     pub(crate) fn next_n(&self) -> u64 {
         let n = self.next_n.fetch_add(1, Ordering::Relaxed);
         let mut reserved = self.n_reserved_until.lock();
@@ -736,11 +732,6 @@ impl Hub {
             open_invites: self.store.invite_count().unwrap_or(0),
             data_connections: self.streams.active_count(),
             events: self.store.event_count().unwrap_or(0),
-            rotation_pending: self
-                .store
-                .meta_u64(store::meta::ROTATION_PENDING)
-                .unwrap_or(0)
-                > 0,
             bootstrap_used: self
                 .store
                 .meta_string(store::meta::BOOTSTRAP_USED)
@@ -790,65 +781,6 @@ pub(crate) fn status_is_live(status: &HubStatus) -> bool {
 }
 
 /// Asks a running hub to revoke a member, or edits the store directly when no hub runs.
-pub(crate) fn revoke_from_cli(data: &Path, name: &str) -> Result<String, String> {
-    crate::world::validate_node_name(name)?;
-    let live = read_status(data)?.is_some_and(|status| status_is_live(&status));
-    if live {
-        let directory = data.join("control");
-        std::fs::create_dir_all(&directory)
-            .map_err(|error| format!("Cannot create the hub control directory: {error}"))?;
-        let stem = format!("revoke-{name}-{}", std::process::id());
-        let request = directory.join(format!("{stem}.request"));
-        let result = directory.join(format!("{stem}.result"));
-        crate::world::write_atomic(
-            &request,
-            &serde_json::to_vec(&ControlRequest::Revoke {
-                name: name.to_string(),
-            })
-            .map_err(|error| error.to_string())?,
-        )?;
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if let Some(bytes) = crate::world::read_optional(&result)? {
-                let _ = std::fs::remove_file(&result);
-                let response: ControlResponse = serde_json::from_slice(&bytes)
-                    .map_err(|error| format!("Cannot parse the hub's answer: {error}"))?;
-                return if response.ok {
-                    Ok(response.message)
-                } else {
-                    Err(response.message)
-                };
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        let _ = std::fs::remove_file(&request);
-        return Err("The hub is running but did not answer within 5 seconds.".to_string());
-    }
-    let store = Store::open(&data.join("hub.redb"))?;
-    let Some(mut row) = store.member(name)? else {
-        return Err(format!("No member named \"{name}\"."));
-    };
-    if row.is_revoked() {
-        return Ok(format!("\"{name}\" was already revoked."));
-    }
-    row.revoked_at = Some(crate::world::now_rfc3339());
-    row.revoke_reason = Some("revoked".to_string());
-    store.put_member(&row)?;
-    store.remove_sealed_keys_for(name)?;
-    store.remove_inventory(name)?;
-    store.outbox_clear(name)?;
-    store.set_meta_u64(store::meta::ROTATION_PENDING, 1)?;
-    let mut facts = std::collections::BTreeMap::new();
-    facts.insert(
-        "by".to_string(),
-        serde_json::Value::String("operator".to_string()),
-    );
-    facts.insert(
-        "reason".to_string(),
-        serde_json::Value::String("revoked".to_string()),
-    );
-    store.append_event(name, "node.revoked", facts)?;
-    Ok(format!(
-        "\"{name}\" revoked (the hub was not running; members learn of it when it starts)."
-    ))
+pub(crate) fn revoke_from_cli(_data: &Path, _name: &str) -> Result<String, String> {
+    Err("A revocation requires an enrolled member signature. Run fastctx world revoke on an enrolled device.".into())
 }

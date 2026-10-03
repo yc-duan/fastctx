@@ -1,26 +1,12 @@
-//! World: the user's trusted machines woven into one persistent environment for an AI.
-//!
-//! A World is one hub (`fastctx hub`) and any number of members (`fastctx node`). Every
-//! member holds an Ed25519 identity, an X25519 wrap key, and the shared World key that the
-//! hub never sees; the hub routes envelopes on their plaintext headers and stores ciphertext
-//! it cannot read. This module tree is inert on a machine that never enrolled: nothing here
-//! listens, dials out, or changes a model-visible byte until `~/.fastctx/world.toml` exists.
-//!
-//! Layout:
-//! - `crypto`, `identity`, `keys`, `invite`, `envelope`: pure functions and file formats.
-//! - `wire`, `messages`: the transport frames between a member and the hub, and the typed
-//!   bodies carried inside envelopes.
-//! - `members`, `grant`, `state`, `outbox`: the member's persistent view of the World.
-//! - `link`: the HTTPS + WebSocket link and the network path it is pinned to.
-//! - `session`, `client`: the member side of the hub connection and the API tool handlers use.
-//! - `node`, `hub`: the two long-running processes.
-//! - `surface`, `cli`: the World-mode tool surface and the control commands.
+//! Signed device messages, durable delivery, and hub-mediated streams. Inert until enrollment.
 
+pub(crate) mod admission;
 pub mod cli;
 pub(crate) mod client;
 pub(crate) mod control;
 pub(crate) mod copy;
 pub(crate) mod crypto;
+pub(crate) mod delivery;
 pub(crate) mod dispatch;
 pub(crate) mod doctor;
 pub(crate) mod enroll;
@@ -29,17 +15,22 @@ pub(crate) mod grant;
 pub(crate) mod hub;
 pub(crate) mod identity;
 pub(crate) mod invite;
-pub(crate) mod keys;
+pub(crate) mod ledger;
 pub(crate) mod link;
+pub(crate) mod mail;
 pub(crate) mod members;
 pub(crate) mod messages;
 pub(crate) mod node;
 pub(crate) mod notes;
 pub(crate) mod outbox;
 pub(crate) mod remote_edit;
+pub(crate) mod resident;
+pub(crate) mod result_stream;
 pub(crate) mod session;
 pub(crate) mod state;
 pub(crate) mod stream;
+pub(crate) mod stream_ticket;
+pub(crate) mod subscription;
 pub(crate) mod surface;
 pub(crate) mod wire;
 
@@ -47,19 +38,19 @@ use crate::control::paths::ControlPaths;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Wire protocol minor version carried in `hello` and `challenge`; readers accept N-1.
-pub(crate) const PROTOCOL_VERSION: u32 = 1;
+/// Wire protocol major version carried in the handshake; v1 is rejected.
+pub(crate) const PROTOCOL_VERSION: u32 = 2;
 /// HTTP path the hub upgrades to a WebSocket; the major version lives here.
-pub(crate) const WS_PATH: &str = "/fastctx/world/v1";
+pub(crate) const WS_PATH: &str = "/fastctx/world/v2";
 /// Prefix of every domain-separated signature input.
-pub(crate) const SIGNATURE_DOMAIN_PREFIX: &str = "fastctx-world/v1/";
+pub(crate) const SIGNATURE_DOMAIN_PREFIX: &str = "fastctx-world/v2/";
 /// Node names are words: `[a-z0-9-]{1,32}`.
 pub(crate) const MAX_NODE_NAME_LEN: usize = 32;
 /// The hub's own name in envelope headers; never a legal member name because of the reserved
 /// list in `validate_node_name`.
 pub(crate) const HUB_NAME: &str = "hub";
 
-const CONFIG_VERSION: u32 = 1;
+const CONFIG_VERSION: u32 = 2;
 
 /// TLS verification mode a member uses towards its hub.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -120,6 +111,10 @@ pub(crate) struct WorldConfig {
     pub(crate) hub: Vec<String>,
     /// Fingerprint of the hub's Ed25519 key, learned from the invite that enrolled this machine.
     pub(crate) hub_key: String,
+    /// Pinned founding member public key, base64.
+    pub(crate) founder: String,
+    /// This device's immutable admission proof.
+    pub(crate) admission: admission::Credential,
     /// How the hub's TLS certificate is verified.
     pub(crate) tls: TlsMode,
     /// SPKI SHA-256 (hex) pinned at enrollment; present only in `pinned` mode.
@@ -144,15 +139,11 @@ pub(crate) struct WorldPaths {
     pub(crate) dir: PathBuf,
     /// Ed25519 identity seed.
     pub(crate) identity_key: PathBuf,
-    /// X25519 wrap seed.
-    pub(crate) wrap_key: PathBuf,
-    /// Every World key epoch this member holds.
-    pub(crate) world_keys: PathBuf,
     /// Mutable link state: counters, cursors, last network mode.
     pub(crate) state: PathBuf,
-    /// MAC-verified member records.
+    /// Admission-verified member records.
     pub(crate) members: PathBuf,
-    /// MAC-verified grants.
+    /// Signature-verified grants.
     pub(crate) grants: PathBuf,
     /// Reliable messages awaiting the hub's ack, one file per sequence number.
     pub(crate) outbox_dir: PathBuf,
@@ -170,8 +161,6 @@ impl WorldPaths {
         Self {
             config: paths.fastctx_dir.join("world.toml"),
             identity_key: dir.join("identity.key"),
-            wrap_key: dir.join("wrap.key"),
-            world_keys: dir.join("world.keys"),
             state: dir.join("state.json"),
             members: dir.join("members.json"),
             grants: dir.join("grants.json"),
@@ -228,7 +217,7 @@ pub(crate) fn load_config(paths: &WorldPaths) -> Result<Option<WorldConfig>, Str
             crate::paths::display_path(&paths.config)
         )
     })?;
-    if config.version > CONFIG_VERSION {
+    if config.version != CONFIG_VERSION {
         return Err(format!(
             "{} was written by a newer fastctx (format {}); this build reads format {} at most.",
             crate::paths::display_path(&paths.config),
@@ -313,33 +302,20 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
             crate::paths::display_path(path)
         )
     })?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("file");
-    let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    use std::io::Write;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("Cannot stage {}: {error}", path.display()))?;
+    temporary
+        .write_all(bytes)
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|error| format!("Cannot write {}: {error}", path.display()))?;
+    temporary
+        .persist(path)
+        .map_err(|error| format!("Cannot commit {}: {error}", path.display()))?;
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let result = (|| {
-        use std::io::Write;
-        let mut file = options.open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temporary, path)
-    })();
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(format!(
-            "Cannot write {}: {error}",
-            crate::paths::display_path(path)
-        ));
-    }
+    std::fs::File::open(parent)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| format!("Cannot sync {}: {error}", parent.display()))?;
     Ok(())
 }
 

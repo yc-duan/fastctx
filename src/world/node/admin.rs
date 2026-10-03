@@ -13,13 +13,17 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) const MAX_ADMIN_FRAME: usize = 16 * 1024 * 1024;
+/// The largest admin frame: its length prefix is a u32.
+pub(crate) const MAX_ADMIN_FRAME: usize = u32::MAX as usize;
 /// How long a control command waits for the daemon's answer.
 pub(crate) const ADMIN_TIMEOUT: Duration = Duration::from_secs(40);
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum AdminRequest {
+    Network {
+        request: crate::world::resident::Request,
+    },
     Status,
     /// Reads the node's in-memory control view without contacting the hub.
     Snapshot,
@@ -46,7 +50,7 @@ pub(crate) enum AdminRequest {
     },
     Refresh,
     Reconnect,
-    /// Saves this machine's user-authored description and queues encrypted inventory.
+    /// Saves this machine's user-authored description and queues signed inventory.
     SetDescription {
         text: String,
     },
@@ -221,7 +225,13 @@ impl AdminServer {
                 crate::town::admin::stream(&self.town, request, stream).await;
                 return;
             }
-            Ok(request) => self.handle(request).await,
+            Ok(request) => {
+                let mut disconnected = [0];
+                tokio::select! {
+                    response = self.handle(request) => response,
+                    _ = stream.read(&mut disconnected) => return,
+                }
+            }
             Err(error) => AdminResponse {
                 ok: false,
                 error: Some(format!("Unreadable admin request: {error}")),
@@ -237,6 +247,7 @@ impl AdminServer {
 
     async fn handle(&self, request: AdminRequest) -> AdminResponse {
         let result: Result<serde_json::Value, String> = match request {
+            AdminRequest::Network { request } => crate::world::resident::handle(&self.client, request).await,
             AdminRequest::Status => {
                 serde_json::to_value(self.status()).map_err(|error| error.to_string())
             }
@@ -327,7 +338,7 @@ impl AdminServer {
                 .client
                 .revoke(&name)
                 .await
-                .map(|epoch| serde_json::json!({ "epoch": epoch })),
+                .map(|()| serde_json::json!({ "revoked": true })),
             AdminRequest::Events { since, limit } => self
                 .client
                 .fetch_events(since, limit)
@@ -429,9 +440,6 @@ pub(crate) async fn read_frame(stream: &mut BoxedStream) -> Result<Vec<u8>, Stri
         .await
         .map_err(|error| format!("cannot read the admin frame length: {error}"))?;
     let length = u32::from_be_bytes(length) as usize;
-    if length > MAX_ADMIN_FRAME {
-        return Err("the admin frame is too large".to_string());
-    }
     let mut bytes = vec![0_u8; length];
     stream
         .read_exact(&mut bytes)
@@ -487,4 +495,16 @@ pub(crate) async fn call(
     serde_json::from_slice(&response)
         .map(Some)
         .map_err(|error| format!("Unreadable answer from the node service: {error}"))
+}
+
+/// Resident operations may wait for an event; the caller controls cancellation by closing IPC.
+pub(crate) async fn network_call(
+    endpoint: &LocalEndpoint,
+    request: &crate::world::resident::Request,
+) -> Result<AdminResponse, String> {
+    let mut stream = local_ipc::connect(endpoint).await?;
+    let bytes = serde_json::to_vec(&serde_json::json!({"op": "network", "request": request}))
+        .map_err(|e| e.to_string())?;
+    write_frame(&mut stream, &bytes).await?;
+    serde_json::from_slice(&read_frame(&mut stream).await?).map_err(|e| e.to_string())
 }

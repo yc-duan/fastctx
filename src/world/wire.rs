@@ -1,20 +1,10 @@
-//! Transport frames between a member and the hub.
-//!
-//! One WebSocket binary message carries one JSON `Frame`. The link vocabulary (handshake,
-//! heartbeat, replacement, acks) lives here in plaintext because the hub is a party to it;
-//! everything applications say travels inside an `Envelope` in a `msg` frame, where the hub
-//! sees the header and, for content addressed to members, nothing else.
-//!
-//! Reliability is a transport property: a `msg` frame with `seq` is stored by its sender
-//! until the peer's `ack` names that `seq`, and every direction numbers its own sequence.
-//! Request correlation (`id`) is likewise per direction; the hub renumbers a request it
-//! forwards so that a target's answer can be matched back to the caller.
+//! WebSocket frames. Application envelopes carry mandatory author signatures; transport ids correlate delivery.
 
 use super::envelope::Envelope;
 use serde::{Deserialize, Serialize};
 
-/// Largest frame accepted on the control connection.
-pub(crate) const MAX_FRAME_BYTES: usize = super::envelope::MAX_CONTROL_MESSAGE_BYTES + 4096;
+/// The 256 KiB control budget includes the serialized envelope and transport fields.
+pub(crate) const MAX_FRAME_BYTES: usize = super::envelope::MAX_CONTROL_MESSAGE_BYTES;
 
 /// Which end of a `copy` data connection a member is.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -59,8 +49,6 @@ pub(crate) struct Hello {
     pub(crate) nonce: String,
     /// Member Ed25519 public key, base64.
     pub(crate) node_pub: String,
-    /// Member X25519 wrap public key, base64.
-    pub(crate) wrap_pub: String,
     pub(crate) intent: Intent,
 }
 
@@ -75,18 +63,32 @@ pub(crate) struct Challenge {
     pub(crate) binding: BindingMode,
     /// `Sign(hub, "hub", nonce_n ‖ nonce_h ‖ hub_pub ‖ node_pub ‖ binding)`, base64.
     pub(crate) sig: String,
+    /// Proves knowledge of the bootstrap verifier before the founding device sends admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) bootstrap_proof: Option<String>,
 }
 
 /// Enrollment material presented with `auth` when the intent is `enroll` or `bootstrap`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Enrollment {
-    /// `sha256("invite" ‖ secret)` hex, or `bootstrap` for the first member.
+    /// One-time invitation public key, or `bootstrap` for the founding device.
     pub(crate) code_id: String,
-    /// The one-time bearer, base64.
-    pub(crate) admission_token: String,
+    /// Bootstrap bearer only; invited devices use their admission signature instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) admission_token: Option<String>,
     pub(crate) name: String,
+    pub(crate) record: super::messages::SignedRecord,
     #[serde(default)]
     pub(crate) tags: Vec<String>,
+}
+
+pub(crate) fn bootstrap_transcript(handshake: &[u8], world: &str) -> Vec<u8> {
+    let mut bytes = super::SIGNATURE_DOMAIN_PREFIX.as_bytes().to_vec();
+    bytes.extend_from_slice(b"bootstrap_hub\0");
+    bytes.extend_from_slice(&(world.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(world.as_bytes());
+    bytes.extend_from_slice(handshake);
+    bytes
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -95,17 +97,9 @@ pub(crate) struct Auth {
     pub(crate) sig: String,
     /// Highest hub sequence number this member has processed; the hub resends above it.
     pub(crate) recv_seq: u64,
+    pub(crate) ticket: Option<Box<super::stream_ticket::Ticket>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) enrollment: Option<Enrollment>,
-}
-
-/// Material a freshly enrolled member receives once.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct Enrolled {
-    /// The World keys wrapped under the invite secret; absent for the bootstrap member, who
-    /// creates the first epoch itself.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) wrapped_keys: Option<String>,
+    pub(crate) enrollment: Option<Box<Enrollment>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -120,13 +114,6 @@ pub(crate) struct Welcome {
     pub(crate) send_seq: u64,
     pub(crate) members_version: u64,
     pub(crate) grant_version: u64,
-    /// Newest World key epoch any member has published to the hub.
-    pub(crate) key_epoch: u32,
-    /// A revocation happened while no member could rotate the key; the first member to see
-    /// this completes the rotation.
-    pub(crate) rotation_pending: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) enrolled: Option<Enrolled>,
 }
 
 /// Why the hub refused a connection. `code` is one of the `design-transport.md` §15 names.
@@ -212,7 +199,15 @@ pub(crate) enum Frame {
 
 impl Frame {
     pub(crate) fn encode(&self) -> Result<Vec<u8>, String> {
-        serde_json::to_vec(self).map_err(|error| format!("Cannot encode a World frame: {error}"))
+        let bytes = serde_json::to_vec(self)
+            .map_err(|error| format!("Cannot encode a World frame: {error}"))?;
+        if bytes.len() > MAX_FRAME_BYTES {
+            return Err(format!(
+                "frame_too_large: {} > {MAX_FRAME_BYTES}",
+                bytes.len()
+            ));
+        }
+        Ok(bytes)
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self, String> {

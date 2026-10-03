@@ -608,7 +608,6 @@ pub(super) fn event_label<'a>(kind: &'a str, m: &'a WorldMessages) -> (&'a str, 
         "node.enrolled" => (m.ev_node_enrolled, Tone::Ok),
         "node.revoked" => (m.ev_node_revoked, Tone::Fail),
         "invite.created" => (m.ev_invite_created, Tone::Info),
-        "key.rotated" => (m.ev_key_rotated, Tone::Warn),
         "grant.changed" => (m.ev_grant_changed, Tone::Warn),
         other => (other, Tone::Info),
     }

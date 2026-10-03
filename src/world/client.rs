@@ -1,20 +1,8 @@
-//! `WorldClient`: the member's live view of its World and the one place that sends.
-//!
-//! The session task owns the socket; everything else (tool handlers, the executor, the admin
-//! channel, status) goes through this handle: reliable sends land in the outbox first,
-//! requests get a correlation id and a timeout, caches of members, grants, keys, and
-//! inventories are refreshed from the hub and verified locally.
-//!
-//! Every fact that reaches this member through the hub is checked against something the hub
-//! does not control before it is acted on: a member record against the World key and its
-//! own signature, a revocation against a member already trusted, a rotated key against the
-//! member that sealed it, a grant snapshot against its publisher and the revision already
-//! held, and an answer against the id of the request it claims to answer.
+//! The shared member client: verified peers, signed messages, local durability and resident APIs.
 
 use super::envelope::{Envelope, Header, Opened};
 use super::grant::{self, GrantChange, GrantSet, GrantSnapshot};
 use super::identity::Identity;
-use super::keys::{KeyRing, SealedKey};
 use super::members::{self, MemberTable, VerifiedMember};
 use super::messages::{self, Call, CallBudget, CallOrigin, CallResult, CallStatus, kind};
 use super::outbox::{Outbox, OutboxEntry};
@@ -39,7 +27,7 @@ pub(crate) const LINK_MARGIN: Duration = Duration::from_secs(15);
 /// Reliable message ack window before the link is treated as dead.
 pub(crate) const ACK_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Facts a member publishes about itself, encrypted.
+/// Facts a member publishes about itself, signed.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Inventory {
     pub(crate) hostname: String,
@@ -64,7 +52,7 @@ pub(crate) struct Inventory {
     /// The user the node runs as.
     #[serde(default)]
     pub(crate) user: String,
-    /// User-authored description from this machine's local profile, encrypted with inventory.
+    /// User-authored description from this machine's local profile, signed with inventory.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) description: String,
     /// Last observed runtime usage; old nodes omit this rather than claiming zero activity.
@@ -132,7 +120,6 @@ pub(crate) struct LinkStatus {
     pub(crate) hub_time_offset_s: Option<i64>,
     pub(crate) last_error: Option<String>,
     pub(crate) replaced_count: u32,
-    pub(crate) key_epoch: u32,
     pub(crate) outbox_depth: usize,
     #[serde(skip)]
     pub(crate) last_contact: Option<Instant>,
@@ -229,10 +216,44 @@ impl Answers {
 }
 
 struct PendingRequest {
+    target: String,
     tx: mpsc::UnboundedSender<Opened>,
     /// Hub-terminated requests fail as soon as the link drops; member-terminated calls keep
     /// waiting, because the hub delivers their answers on the next connection.
     to_hub: bool,
+}
+
+struct RequestLifetime<'a> {
+    client: &'a WorldClient,
+    id: u64,
+}
+impl Drop for RequestLifetime<'_> {
+    fn drop(&mut self) {
+        if self.client.pending.lock().remove(&self.id).is_some() {
+            self.client.send_cancel(self.id);
+        }
+    }
+}
+
+struct SubscriptionAttempt<'a> {
+    client: &'a WorldClient,
+    id: String,
+    accepted: bool,
+}
+impl Drop for SubscriptionAttempt<'_> {
+    fn drop(&mut self) {
+        if !self.accepted {
+            let active = self
+                .client
+                .subscriptions
+                .active
+                .lock()
+                .contains_key(&self.id);
+            if active && let Err(error) = self.client.unsubscribe(&self.id) {
+                super::node::log(format!("subscription cancellation: {error}"));
+            }
+        }
+    }
 }
 
 struct Persistent {
@@ -244,7 +265,7 @@ pub(crate) struct WorldClient {
     pub(crate) paths: WorldPaths,
     pub(crate) config: RwLock<WorldConfig>,
     pub(crate) identity: Identity,
-    pub(crate) keys: RwLock<KeyRing>,
+    pub(crate) hub_public: RwLock<Option<[u8; 32]>>,
     pub(crate) members: RwLock<MemberTable>,
     pub(crate) grants: RwLock<GrantSet>,
     pub(crate) inventories: RwLock<BTreeMap<String, (u64, Inventory)>>,
@@ -269,6 +290,10 @@ pub(crate) struct WorldClient {
     /// Poked when this member learns a newer grant snapshot exists than the one it holds.
     pub(crate) grants_wanted: Notify,
     pub(crate) started_at: String,
+    pub(crate) inbox_changed: Notify,
+    pub(crate) subscriptions: super::subscription::Subscriptions,
+    pub(crate) inbox_lock: Mutex<()>,
+    ledger_sync: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for WorldClient {
@@ -289,16 +314,19 @@ impl WorldClient {
                 crate::paths::display_path(&paths.config)
             )
         })?;
-        let keys = KeyRing::load(&paths)?.ok_or_else(|| {
-            "not_enrolled: the World key file is missing. Run 'fastctx node unenroll' and enroll again.".to_string()
-        })?;
         let members = MemberTable::load(&paths)?.unwrap_or_default();
         let grants = GrantSet::load(&paths)?.unwrap_or_default();
         let mut state = NodeState::load(&paths)?;
+        state.send_seq = state.send_seq.max(
+            Outbox::new(&paths)?
+                .entries()?
+                .last()
+                .map_or(0, |(seq, _)| *seq),
+        );
         let counters = Counters::resume(&mut state);
         state.save(&paths)?;
-        let outbox = Outbox::new(&paths);
-        let outbox_depth = outbox.depth()?;
+        let outbox = Outbox::new(&paths)?;
+        let outbox_depth = outbox.depth();
         let link = LinkStatus {
             state: LinkState::Starting,
             network: state.last_network,
@@ -313,7 +341,6 @@ impl WorldClient {
             hub_time_offset_s: None,
             last_error: None,
             replaced_count: state.replaced_count,
-            key_epoch: keys.current().epoch(),
             outbox_depth,
             last_contact: None,
         };
@@ -321,7 +348,7 @@ impl WorldClient {
             paths,
             config: RwLock::new(config),
             identity,
-            keys: RwLock::new(keys),
+            hub_public: RwLock::new(None),
             members: RwLock::new(members),
             grants: RwLock::new(grants),
             inventories: RwLock::new(BTreeMap::new()),
@@ -339,6 +366,10 @@ impl WorldClient {
             wake: Notify::new(),
             grants_wanted: Notify::new(),
             started_at: super::now_rfc3339(),
+            inbox_changed: Notify::new(),
+            subscriptions: Default::default(),
+            inbox_lock: Mutex::new(()),
+            ledger_sync: tokio::sync::Mutex::new(()),
         })))
     }
 
@@ -358,8 +389,7 @@ impl WorldClient {
 
     pub(crate) fn link(&self) -> LinkStatus {
         let mut status = self.link.read().clone();
-        status.outbox_depth = self.outbox.depth().unwrap_or(status.outbox_depth);
-        status.key_epoch = self.keys.read().current().epoch();
+        status.outbox_depth = self.outbox.depth();
         status
     }
 
@@ -372,14 +402,26 @@ impl WorldClient {
     }
 
     /// Installs the outbound channel of a freshly authenticated connection.
-    pub(crate) fn attach_sender(&self, sender: mpsc::UnboundedSender<Frame>) {
+    pub(crate) fn attach_sender(
+        &self,
+        sender: mpsc::UnboundedSender<Frame>,
+        acknowledged: u64,
+    ) -> Result<(), String> {
+        let _persistent = self.persistent.lock();
+        for (seq, entry) in self.outbox_after(acknowledged)? {
+            sender
+                .send(Frame::reliable(seq, entry.env))
+                .map_err(|e| e.to_string())?;
+        }
         *self.sender.lock() = Some(sender);
+        Ok(())
     }
 
     /// Forgets the connection. Hub-bound requests fail now; calls to members keep their
     /// place, because the hub answers them on whichever connection this member has next.
     pub(crate) fn detach_sender(&self) {
         *self.sender.lock() = None;
+        self.subscriptions.disconnect();
         self.link_generation.fetch_add(1, Ordering::SeqCst);
         let mut pending = self.pending.lock();
         pending.retain(|_, request| !request.to_hub);
@@ -444,20 +486,16 @@ impl WorldClient {
         Ok(value)
     }
 
-    /// Accepts an envelope counter from `from` only if it is above everything seen so far.
+    /// Accepts a counter once, including messages reordered across concurrent requests.
     pub(crate) fn accept_counter(&self, from: &str, n: u64) -> Result<(), String> {
         if from == HUB_NAME {
             return Ok(());
         }
         let mut persistent = self.persistent.lock();
-        let seen = persistent.state.seen.entry(from.to_string()).or_insert(0);
-        if n <= *seen {
-            return Err(format!(
-                "replay: counter {n} from \"{from}\" is not above {}",
-                *seen
-            ));
+        let seen = persistent.state.seen.entry(from.to_string()).or_default();
+        if !seen.insert(n) {
+            return Err(format!("replay: counter {n} from {from}"));
         }
-        *seen = n;
         persistent.state.save(&self.paths)
     }
 
@@ -477,22 +515,35 @@ impl WorldClient {
 
     /// Records that a source the hub cannot edit says `revision` exists. Returns whether this
     /// member is now behind, in which case the caller wakes the session to fetch.
-    pub(crate) fn raise_grant_floor(&self, revision: u64) -> bool {
-        let raised = self
-            .with_state(|state| {
-                if revision > state.grant_floor {
-                    state.grant_floor = revision;
-                    true
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false);
+    pub(crate) fn raise_grant_floor(&self, revision: u64) -> Result<bool, String> {
+        let raised = self.with_state(|state| {
+            if revision > state.grant_floor {
+                state.grant_floor = revision;
+                true
+            } else {
+                false
+            }
+        })?;
         let behind = self.is_grant_stale();
         if raised && behind {
             self.grants_wanted.notify_one();
         }
-        behind
+        Ok(behind)
+    }
+
+    /// Verifies every envelope against the locally pinned hub or admitted member key.
+    pub(crate) fn open_envelope(&self, env: &Envelope) -> Result<Opened, String> {
+        let header = env.header()?;
+        let key = if header.from == HUB_NAME {
+            self.hub_public.read().ok_or("Hub has not authenticated")?
+        } else {
+            self.members
+                .read()
+                .trusted_key(&header.from)
+                .ok_or_else(|| format!("untrusted or revoked author {}", header.from))?
+        };
+        env.verify_signature(&key)?;
+        env.open()
     }
 
     // ----- envelopes -----
@@ -501,19 +552,11 @@ impl WorldClient {
         &self,
         mut header: Header,
         body: &T,
-        encrypt: bool,
-        sign: bool,
     ) -> Result<Envelope, String> {
         header.n = self.next_n()?;
         let bytes = messages::encode(body)?;
-        let mut env = if encrypt {
-            Envelope::seal(header, &bytes, &self.keys.read())?
-        } else {
-            Envelope::seal_plain(header, &bytes)?
-        };
-        if sign {
-            env.sign(self.identity.signing())?;
-        }
+        let mut env = Envelope::seal_plain(header, &bytes)?;
+        env.sign(self.identity.signing())?;
         Ok(env)
     }
 
@@ -522,14 +565,12 @@ impl WorldClient {
         &self,
         header: Header,
         body: &T,
-        encrypt: bool,
-        sign: bool,
     ) -> Result<u64, String> {
-        let env = self.build_envelope(header, body, encrypt, sign)?;
-        let seq = self.with_state(|state| {
-            state.send_seq += 1;
-            state.send_seq
-        })?;
+        let env = self.build_envelope(header, body)?;
+        // Queue bytes before committing their sequence; recovery takes the maximum of both.
+        let mut persistent = self.persistent.lock();
+        let seq = persistent.state.send_seq + 1;
+        Frame::reliable(u64::MAX, env.clone()).encode()?;
         self.outbox.push(
             seq,
             &OutboxEntry {
@@ -538,6 +579,8 @@ impl WorldClient {
                 queued_at: super::now_rfc3339(),
             },
         )?;
+        persistent.state.send_seq = seq;
+        persistent.state.save(&self.paths)?;
         self.send_frame(Frame::reliable(seq, env));
         Ok(seq)
     }
@@ -553,6 +596,24 @@ impl WorldClient {
             .collect())
     }
 
+    pub(crate) fn record_rejection(
+        &self,
+        rejection: &super::delivery::Rejection,
+    ) -> Result<(), String> {
+        if let Some((_, entry)) = self
+            .outbox
+            .entries()?
+            .into_iter()
+            .find(|(seq, _)| *seq == rejection.seq)
+        {
+            let hash = hex::encode(super::crypto::sha256(&messages::encode(&entry.env)?));
+            if hash != rejection.hash {
+                return Err("Delivery rejection names different envelope bytes".into());
+            }
+        }
+        super::delivery::record_outbound(&self.paths, rejection)
+    }
+
     pub(crate) fn outbox_ack(&self, seq: u64) -> Result<(), String> {
         self.outbox.ack(seq)
     }
@@ -564,8 +625,6 @@ impl WorldClient {
         &self,
         header: Header,
         body: &T,
-        encrypt: bool,
-        sign: bool,
         expected: usize,
         timeout: Duration,
     ) -> Result<Answers, String> {
@@ -573,12 +632,15 @@ impl WorldClient {
             return Err(self.unreachable_error());
         }
         let to_hub = header.to == HUB_NAME;
+        let target = header.to.clone();
         let id = self.next_request_id()?;
-        let env = self.build_envelope(header.with_id(id), body, encrypt, sign)?;
+        let env = self.build_envelope(header.with_id(id), body)?;
+        Frame::request(u64::MAX, env.clone()).encode()?;
         let (tx, mut rx) = mpsc::unbounded_channel();
         self.pending
             .lock()
-            .insert(id, PendingRequest { tx, to_hub });
+            .insert(id, PendingRequest { tx, to_hub, target });
+        let _lifetime = RequestLifetime { client: self, id };
         let generation = self.link_generation.load(Ordering::SeqCst);
         if !self.send_frame(Frame::request(id, env)) {
             self.pending.lock().remove(&id);
@@ -616,8 +678,7 @@ impl WorldClient {
 
     fn send_cancel(&self, id: u64) {
         let header = Header::new(kind::CANCEL, &self.name(), HUB_NAME, 0).with_id(id);
-        if let Ok(env) = self.build_envelope(header, &messages::HubResult::default(), false, false)
-        {
+        if let Ok(env) = self.build_envelope(header, &messages::HubResult::default()) {
             self.send_frame(Frame::Msg {
                 seq: None,
                 id: None,
@@ -637,126 +698,110 @@ impl WorldClient {
                 answer.header.from, answer.header.id
             ));
         }
-        match self.pending.lock().get(&id) {
-            Some(pending) => pending
-                .tx
-                .send(answer)
-                .map_err(|_| format!("request {id} is no longer waiting")),
-            None => Err(format!("no request is waiting for answer {id}")),
+        let pending = self.pending.lock();
+        let request = pending
+            .get(&id)
+            .ok_or_else(|| format!("no request is waiting for answer {id}"))?;
+        let hub_reply = answer.header.from == HUB_NAME
+            && (request.to_hub
+                || matches!(
+                    answer.header.t.as_str(),
+                    kind::CALL_STATUS | kind::HUB_ERROR | kind::HUB_RESULT
+                ));
+        let peer_reply = answer.header.from == request.target
+            && matches!(
+                answer.header.t.as_str(),
+                kind::CALL_RESULT | kind::CALL_RESULT_STREAM
+            );
+        if !hub_reply && !peer_reply {
+            return Err("Answer author/type does not match pending request".into());
         }
+        request
+            .tx
+            .send(answer)
+            .map_err(|_| format!("request {id} is no longer waiting"))
     }
 
     /// Answers a request that arrived from the hub with hub-side id `hub_id`.
-    pub(crate) fn send_answer<T: Serialize>(
-        &self,
+    pub(crate) fn send_answer(
+        self: &Arc<Self>,
         hub_id: u64,
-        header: Header,
-        body: &T,
-        encrypt: bool,
+        mut header: Header,
+        body: &CallResult,
+        verb: &str,
+        window: Duration,
     ) -> Result<(), String> {
-        let env = self.build_envelope(header, body, encrypt, false)?;
-        if self.send_frame(Frame::request(hub_id, env)) {
+        let env = self.build_envelope(header.clone(), body)?;
+        let frame = Frame::request(hub_id, env);
+        if frame.encode().is_ok() {
+            if self.send_frame(frame) {
+                return Ok(());
+            }
+            return Err(self.unreachable_error());
+        }
+        let bytes = messages::encode(body)?;
+        let ticket = super::stream::ticket(self, &header.to, &header.to, &self.name(), verb)?;
+        let description = super::result_stream::Description {
+            bytes: bytes.len() as u64,
+            sha256: hex::encode(super::crypto::sha256(&bytes)),
+            ticket: ticket.clone(),
+        };
+        header.t = kind::CALL_RESULT_STREAM.into();
+        let env = self.build_envelope(header, &description)?;
+        let frame = Frame::request(hub_id, env);
+        frame.encode()?;
+        let client = Arc::clone(self);
+        tokio::spawn(async move {
+            let result = tokio::select! {
+                result = tokio::time::timeout(window, super::result_stream::send(&client, ticket, bytes)) => result.unwrap_or_else(|_| Err("caller result deadline expired".into())),
+                () = client.shutdown.cancelled() => Err("node stopped".into()),
+            };
+            if let Err(error) = result {
+                super::node::log(format!("result stream failed: {error}"));
+            }
+        });
+        if self.send_frame(frame) {
             Ok(())
         } else {
-            Err("the hub link closed before the answer could be sent".to_string())
+            Err(self.unreachable_error())
         }
     }
 
     // ----- hub-backed caches -----
 
     /// Fetches the hub's member listing and rebuilds the verified table on top of the one
-    /// held. Also reseals the newest World key for listed members that lack it.
+    /// held, retaining historical admissions and permanent revocations.
     pub(crate) async fn refresh_members(&self) -> Result<u64, String> {
         let header = Header::new(kind::MEMBERS_GET, &self.name(), HUB_NAME, 0);
         let answer = self
-            .request(
-                header,
-                &serde_json::json!({}),
-                false,
-                false,
-                1,
-                HUB_REQUEST_TIMEOUT,
-            )
+            .request(header, &serde_json::json!({}), 1, HUB_REQUEST_TIMEOUT)
             .await?
             .single(kind::MEMBERS_GET)?;
         expect_kind(&answer, kind::MEMBERS_RESULT)?;
         let result: messages::MembersResult = messages::decode(&answer.body, kind::MEMBERS_RESULT)?;
         let version = self.install_members(&result)?;
         *self.members_raw.write() = Some(result.clone());
-        self.reseal_missing(&result);
         Ok(version)
     }
 
     fn install_members(&self, result: &messages::MembersResult) -> Result<u64, String> {
-        let previous = self.members.read().clone();
+        let mut members = self.members.write();
+        let previous = members.clone();
         let table = {
-            let keys = self.keys.read();
-            MemberTable::from_entries(result.version, &result.members, &keys, &previous)
+            let config = self.config.read();
+            MemberTable::from_entries(
+                result.version,
+                &result.members,
+                &config.founder,
+                &config.world_id,
+                &previous,
+            )
         };
         table.save(&self.paths)?;
         let version = table.version;
-        *self.members.write() = table;
+        *members = table;
         self.with_state(|state| state.members_version = version)?;
         Ok(version)
-    }
-
-    /// Re-verifies the last listing with the current key ring; called after the ring grows,
-    /// because records MAC'd under a newly adopted epoch verify only now.
-    pub(crate) fn reverify_members(&self) -> Result<(), String> {
-        let raw = self.members_raw.read().clone();
-        if let Some(result) = raw {
-            self.install_members(&result)?;
-        }
-        Ok(())
-    }
-
-    /// Seals the newest epoch for members the hub reports without a copy, when this member
-    /// holds that epoch. Any holder may do this; the hub keeps the last copy per member.
-    fn reseal_missing(&self, result: &messages::MembersResult) {
-        if result.missing_key.is_empty() || result.key_epoch == 0 {
-            return;
-        }
-        let me = self.name();
-        let (epoch, sealed) = {
-            let keys = self.keys.read();
-            let current = keys.current();
-            if current.epoch() != result.key_epoch {
-                return;
-            }
-            let members = self.members.read();
-            let mut sealed = Vec::new();
-            for name in &result.missing_key {
-                let Some(member) = members.get(name) else {
-                    continue;
-                };
-                match member
-                    .wrap_public()
-                    .and_then(|wrap| SealedKey::seal(current, &wrap, &self.identity, &me))
-                {
-                    Ok(key) => sealed.push(messages::SealedKeyFor {
-                        name: name.clone(),
-                        key,
-                    }),
-                    Err(error) => super::node::log(format!(
-                        "cannot seal the World key for \"{name}\": {error}"
-                    )),
-                }
-            }
-            (current.epoch(), sealed)
-        };
-        if sealed.is_empty() {
-            return;
-        }
-        let names = sealed
-            .iter()
-            .map(|entry| entry.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let header = Header::new(kind::KEY_PUBLISH, &me, HUB_NAME, 0);
-        match self.send_reliable(header, &messages::KeyPublish { epoch, sealed }, false, true) {
-            Ok(_) => super::node::log(format!("sealed World key epoch {epoch} for {names}")),
-            Err(error) => super::node::log(format!("cannot publish sealed keys: {error}")),
-        }
     }
 
     pub(crate) async fn refresh_inventories(&self) -> Result<usize, String> {
@@ -774,8 +819,6 @@ impl WorldClient {
                     names: Vec::new(),
                     have,
                 },
-                false,
-                false,
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
@@ -786,8 +829,8 @@ impl WorldClient {
             messages::decode(&answer.body, kind::INVENTORY_RESULT)?;
         let mut updated = 0;
         for entry in result.entries {
-            let opened = match entry.envelope.open(Some(&self.keys.read())) {
-                Ok(opened) if opened.encrypted && opened.header.from == entry.name => opened,
+            let opened = match self.open_envelope(&entry.envelope) {
+                Ok(opened) if opened.header.from == entry.name => opened,
                 Ok(_) => continue,
                 Err(_) => continue,
             };
@@ -804,95 +847,6 @@ impl WorldClient {
         Ok(updated)
     }
 
-    /// Fetches the World key epochs this member lacks and adopts those a verified member
-    /// sealed for it.
-    ///
-    /// Adoption is a fixed point: an epoch signed by a member whose record is MAC'd under a
-    /// newer epoch verifies only after that newer epoch is held, so after every adoption the
-    /// member table is re-verified and the remaining keys tried again.
-    pub(crate) async fn refresh_keys(&self) -> Result<u32, String> {
-        let have = self.keys.read().epochs();
-        let header = Header::new(kind::KEYS_GET, &self.name(), HUB_NAME, 0);
-        let answer = self
-            .request(
-                header,
-                &messages::KeysGet { have },
-                false,
-                false,
-                1,
-                HUB_REQUEST_TIMEOUT,
-            )
-            .await?
-            .single(kind::KEYS_GET)?;
-        expect_kind(&answer, kind::KEYS_RESULT)?;
-        let result: messages::KeysResult = messages::decode(&answer.body, kind::KEYS_RESULT)?;
-        let my_wrap = self.identity.wrap_public();
-        let mut remaining = result.sealed;
-        remaining.sort_by_key(|sealed| sealed.epoch);
-        let mut added = 0;
-        loop {
-            let mut progress = false;
-            let mut kept = Vec::new();
-            for sealed in remaining.drain(..) {
-                if self.keys.read().get(sealed.epoch).is_some() {
-                    continue;
-                }
-                let Some(publisher_key) = self.members.read().trusted_key(&sealed.published_by)
-                else {
-                    kept.push(sealed);
-                    continue;
-                };
-                if let Err(error) = sealed.verify_publisher(&my_wrap, &publisher_key) {
-                    super::node::log(format!("refusing a sealed World key: {error}"));
-                    continue;
-                }
-                match sealed.open(&self.identity) {
-                    Ok(key) => match self.keys.write().add(key) {
-                        Ok(()) => {
-                            added += 1;
-                            progress = true;
-                        }
-                        Err(error) => super::node::log(format!(
-                            "refusing a sealed World key from \"{}\": {error}",
-                            sealed.published_by
-                        )),
-                    },
-                    Err(error) => {
-                        super::node::log(format!("cannot open a sealed World key: {error}"))
-                    }
-                }
-            }
-            remaining = kept;
-            if !progress || remaining.is_empty() {
-                break;
-            }
-            self.reverify_members()?;
-        }
-        if added > 0 {
-            self.keys.read().save(&self.paths)?;
-            self.reverify_members()?;
-            let epoch = self.keys.read().current().epoch();
-            self.update_link(|link| link.key_epoch = epoch);
-            if self.is_grant_stale() {
-                self.grants_wanted.notify_one();
-            }
-        }
-        for sealed in &remaining {
-            super::node::log(format!(
-                "a sealed World key for epoch {} was not adopted: its publisher \"{}\" is not a verified member",
-                sealed.epoch, sealed.published_by
-            ));
-        }
-        let current = self.keys.read().current().epoch();
-        if result.newest_epoch > current {
-            return Err(format!(
-                "key_epoch_unknown: the World is on key epoch {} but this member only has epoch {current}; no copy it can trust exists yet.",
-                result.newest_epoch
-            ));
-        }
-        Ok(current)
-    }
-
     pub(crate) async fn fetch_events(
         &self,
         since: u64,
@@ -906,8 +860,6 @@ impl WorldClient {
                     since,
                     limit: Some(limit),
                 },
-                false,
-                false,
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
@@ -927,14 +879,7 @@ impl WorldClient {
     pub(crate) async fn refresh_grants(&self) -> Result<bool, String> {
         let header = Header::new(kind::GRANTS_GET, &self.name(), HUB_NAME, 0);
         let answer = self
-            .request(
-                header,
-                &serde_json::json!({}),
-                false,
-                false,
-                1,
-                HUB_REQUEST_TIMEOUT,
-            )
+            .request(header, &serde_json::json!({}), 1, HUB_REQUEST_TIMEOUT)
             .await?
             .single(kind::GRANTS_GET)?;
         expect_kind(&answer, kind::GRANT_SYNC)?;
@@ -957,8 +902,7 @@ impl WorldClient {
         };
         let snapshot = {
             let members = self.members.read();
-            let keys = self.keys.read();
-            grant::verify_snapshot(&signed, &keys, |name| members.trusted_key(name))?
+            grant::verify_snapshot(&signed, |name| members.trusted_key(name))?
         };
         if snapshot.revision < current.revision {
             return Err(format!(
@@ -988,10 +932,23 @@ impl WorldClient {
         snapshot: GrantSnapshot,
         signed: grant::SignedGrantSet,
     ) -> Result<(), String> {
+        let mut current = self.grants.write();
+        if snapshot.revision < current.revision {
+            return Err("Grant revision would roll back local state".into());
+        }
+        if snapshot.revision == current.revision
+            && current
+                .signed
+                .as_ref()
+                .is_some_and(|known| known != &signed)
+        {
+            return Err("Grant snapshot conflicts at the same revision".into());
+        }
         let set = GrantSet::from_verified(snapshot, signed);
         set.save(&self.paths)?;
         let revision = set.revision;
-        *self.grants.write() = set;
+        *current = set;
+        drop(current);
         self.with_state(|state| state.grant_revision = revision)?;
         Ok(())
     }
@@ -1017,7 +974,7 @@ impl WorldClient {
                 published_by: me.clone(),
                 published_at: super::now_rfc3339(),
             };
-            let signed = grant::sign_snapshot(&self.identity, &self.keys.read(), &snapshot)?;
+            let signed = grant::sign_snapshot(&self.identity, &snapshot)?;
             let header = Header::new(kind::GRANT_PUBLISH, &me, HUB_NAME, 0);
             let answer = self
                 .request(
@@ -1025,8 +982,6 @@ impl WorldClient {
                     &messages::GrantPublish {
                         set: signed.clone(),
                     },
-                    false,
-                    true,
                     1,
                     HUB_REQUEST_TIMEOUT,
                 )
@@ -1066,7 +1021,6 @@ impl WorldClient {
         let record = messages::MemberRecord {
             name: config.name.clone(),
             node_pub: super::crypto::b64_encode(&self.identity.public_key()),
-            wrap_pub: super::crypto::b64_encode(&self.identity.wrap_public()),
             tags: inventory.tags.clone(),
             kind: "stateful".to_string(),
             os: inventory.os.clone(),
@@ -1074,13 +1028,13 @@ impl WorldClient {
             version: env!("CARGO_PKG_VERSION").to_string(),
             enrolled_at: config.enrolled_at.clone(),
         };
-        let signed = members::publish_record(&self.identity, &self.keys.read(), &record)?;
+        let signed = members::publish_record(&self.identity, &config.admission, &record)?;
         let header = Header::new(kind::MEMBER_PUBLISH, &config.name, HUB_NAME, 0);
-        self.send_reliable(header, &messages::MemberPublish { signed }, false, true)?;
+        self.send_reliable(header, &messages::MemberPublish { signed })?;
         Ok(())
     }
 
-    /// Publishes the encrypted inventory as a reliable message.
+    /// Publishes the signed inventory as a reliable message.
     pub(crate) fn publish_inventory(&self, inventory: &Inventory) -> Result<(), String> {
         let mut inventory = inventory.clone();
         if inventory.activity.is_none() {
@@ -1093,7 +1047,7 @@ impl WorldClient {
         // A slow hardware probe may have begun before a user saved a newer description.
         inventory.description = super::notes::description(&self.paths)?;
         let header = Header::new(kind::INVENTORY, &self.name(), HUB_NAME, 0);
-        self.send_reliable(header, &inventory, true, false)?;
+        self.send_reliable(header, &inventory)?;
         *self.own_inventory.write() = Some(inventory);
         self.with_state(|state| state.inventory_version += 1)?;
         Ok(())
@@ -1107,22 +1061,19 @@ impl WorldClient {
         hubs: Option<Vec<String>>,
     ) -> Result<String, String> {
         let config = self.config.read().clone();
-        let hub_key = super::identity::Fingerprint::parse(&config.hub_key)?;
         let invite = super::invite::Invite::new(
-            hubs.unwrap_or(config.hub.clone()),
-            hub_key,
-            name.clone(),
+            &config,
+            &self.identity,
+            name,
             ttl,
+            self.grant_revision().max(self.state_snapshot().grant_floor),
+            hubs.unwrap_or(config.hub.clone()),
         )?;
         let body = messages::InviteCreate {
-            code_id: invite.code_id(),
-            admission: invite.admission(),
-            wrapped_keys: invite.wrap_keys(&self.keys.read(), self.grant_revision())?,
-            name,
-            exp: invite.exp.clone(),
+            endorsement: invite.endorsement.clone(),
         };
         let header = Header::new(kind::INVITE_CREATE, &config.name, HUB_NAME, 0);
-        self.send_reliable(header, &body, false, true)?;
+        self.send_reliable(header, &body)?;
         Ok(invite.encode())
     }
 
@@ -1145,7 +1096,7 @@ impl WorldClient {
         };
         let revocation = members::sign_revocation(&self.identity, &statement)?;
         let header = Header::new(kind::LEAVE, &me, HUB_NAME, 0);
-        self.send_reliable(header, &messages::Revoke { revocation }, false, true)?;
+        self.send_reliable(header, &messages::Revoke { revocation })?;
         Ok(())
     }
 
@@ -1173,8 +1124,6 @@ impl WorldClient {
             .request(
                 header,
                 &messages::Revoke { revocation },
-                false,
-                true,
                 1,
                 HUB_REQUEST_TIMEOUT,
             )
@@ -1183,82 +1132,15 @@ impl WorldClient {
         expect_kind(&answer, kind::HUB_RESULT)
     }
 
-    /// Revokes `name` with a signed statement, then rotates the World key for everyone who
-    /// remains.
-    pub(crate) async fn revoke(&self, name: &str) -> Result<u32, String> {
+    /// Revokes a device with a member signature; descendants retain their admissions.
+    pub(crate) async fn revoke(&self, name: &str) -> Result<(), String> {
         if name == self.name() {
             return Err(
                 "A member cannot revoke itself; run 'fastctx node unenroll' instead.".to_string(),
             );
         }
         self.send_revocation(name, "revoked").await?;
-        self.complete_rotation().await
-    }
-
-    /// Creates the next key epoch and seals it to every remaining member.
-    ///
-    /// A revocation the hub operator made without a World key is countersigned first: the
-    /// members left out of the new epoch should be out by a member's signature, which every
-    /// other member can verify, not by the hub's word.
-    pub(crate) async fn complete_rotation(&self) -> Result<u32, String> {
-        self.refresh_members().await?;
-        let unsigned = {
-            let members = self.members.read();
-            self.members_raw
-                .read()
-                .as_ref()
-                .map(|result| {
-                    result
-                        .members
-                        .iter()
-                        .filter(|entry| {
-                            entry.state == members::STATE_REVOKED
-                                && entry.revocation.is_none()
-                                && !members.revoked.contains_key(&entry.name)
-                                && members.identity(&entry.name).is_some()
-                        })
-                        .map(|entry| entry.name.clone())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        };
-        for name in &unsigned {
-            match self.send_revocation(name, "revoked").await {
-                Ok(()) => {
-                    super::node::log(format!("countersigned the hub's revocation of \"{name}\""))
-                }
-                Err(error) => super::node::log(format!(
-                    "cannot countersign the hub's revocation of \"{name}\": {error}"
-                )),
-            }
-        }
-        if !unsigned.is_empty() {
-            self.refresh_members().await?;
-        }
-        let me = self.name();
-        let members = self.members.read().clone();
-        let (epoch, sealed) = {
-            let mut keys = self.keys.write();
-            let key = keys.rotate()?.clone();
-            let mut sealed = Vec::new();
-            for member in members
-                .members
-                .values()
-                .filter(|member| member.is_current())
-            {
-                let wrap = member.wrap_public()?;
-                sealed.push(messages::SealedKeyFor {
-                    name: member.record.name.clone(),
-                    key: SealedKey::seal(&key, &wrap, &self.identity, &me)?,
-                });
-            }
-            keys.save(&self.paths)?;
-            (key.epoch(), sealed)
-        };
-        let header = Header::new(kind::KEY_PUBLISH, &me, HUB_NAME, 0);
-        self.send_reliable(header, &messages::KeyPublish { epoch, sealed }, false, true)?;
-        self.update_link(|link| link.key_epoch = epoch);
-        Ok(epoch)
+        self.refresh_members().await.map(|_| ())
     }
 
     // ----- views -----
@@ -1277,7 +1159,7 @@ impl WorldClient {
         }
     }
 
-    /// Updates the encrypted usage facts when counts change, and at least once per minute.
+    /// Updates the signed usage facts when counts change, and at least once per minute.
     /// Hardware collection retains its own timestamp and cadence.
     pub(crate) fn publish_activity(&self, remote_calls: usize) -> Result<(), String> {
         let Some(mut inventory) = self.own_inventory.read().clone() else {
@@ -1402,6 +1284,281 @@ impl WorldClient {
         self.members.read().resolve(name)
     }
 
+    /// Commits an opaque JSON letter locally before returning its globally unique id.
+    pub(crate) fn send_mail(&self, to: &str, body: serde_json::Value) -> Result<String, String> {
+        self.resolve_target(to)?;
+        let id = hex::encode(super::crypto::random_bytes::<32>()?);
+        self.send_reliable(
+            Header::new(kind::MAIL, &self.name(), to, 0),
+            &super::mail::Letter {
+                id: id.clone(),
+                body,
+            },
+        )?;
+        Ok(id)
+    }
+    pub(crate) fn inbox(&self) -> Result<Vec<super::mail::InboxItem>, String> {
+        let _lock = self.inbox_lock.lock();
+        super::mail::list(&self.paths)
+    }
+    /// Waits for a nonempty durable inbox; registration precedes the scan to avoid lost wakeups.
+    pub(crate) async fn wait_inbox(&self) -> Result<Vec<super::mail::InboxItem>, String> {
+        loop {
+            let notified = self.inbox_changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let inbox = self.inbox()?;
+            if !inbox.is_empty() {
+                return Ok(inbox);
+            }
+            notified.await;
+        }
+    }
+    /// Commits consumer completion before deleting the inbox file. Idempotent.
+    pub(crate) fn acknowledge_mail(&self, receipt: &str) -> Result<(), String> {
+        let _lock = self.inbox_lock.lock();
+        super::mail::acknowledge(&self.paths, receipt)
+    }
+    pub(crate) async fn call_many(
+        &self,
+        targets: Vec<String>,
+        verb: &str,
+        args: serde_json::Value,
+        timeout: Duration,
+    ) -> Vec<NodeOutcome> {
+        futures_util::future::join_all(targets.iter().map(|target| async {
+            self.call(
+                verb,
+                target,
+                args.clone(),
+                CallBudget::default(),
+                timeout,
+                CallOrigin::Script,
+            )
+            .await
+            .unwrap_or_else(|error| NodeOutcome::status(target, "error", error))
+        }))
+        .await
+    }
+
+    pub(crate) async fn hub_request<T: Serialize>(
+        &self,
+        kind: &str,
+        body: &T,
+    ) -> Result<Opened, String> {
+        let answer = self
+            .request(
+                Header::new(kind, &self.name(), HUB_NAME, 0),
+                body,
+                1,
+                HUB_REQUEST_TIMEOUT,
+            )
+            .await?
+            .single(kind)?;
+        expect_kind(&answer, messages::kind::HUB_RESULT)?;
+        Ok(answer)
+    }
+    pub(crate) async fn append_ledger(
+        &self,
+        scope: String,
+        files: Vec<super::ledger::LedgerFile>,
+        project: Option<super::ledger::ProjectUpdate>,
+    ) -> Result<super::ledger::Row, String> {
+        let mut entry = super::ledger::Entry {
+            scope,
+            id: String::new(),
+            author: self.name(),
+            files,
+            project,
+        };
+        entry.id = entry.content_id()?;
+        entry.validate()?;
+        let signed = super::ledger::SignedEntry::sign(&entry, self.identity.signing())?;
+        let answer = self.hub_request(kind::LEDGER_APPEND, &signed).await?;
+        let row = messages::decode(&answer.body, kind::LEDGER_APPEND)?;
+        self.sync_ledger().await?;
+        Ok(row)
+    }
+    pub(crate) async fn sync_ledger(&self) -> Result<(), String> {
+        let _lock = self.ledger_sync.lock().await;
+        let answer = self.hub_request(kind::LEDGER_TOWNS, &()).await?;
+        let towns: BTreeMap<String, super::ledger::Town> =
+            messages::decode(&answer.body, kind::LEDGER_TOWNS)?;
+        for (scope, town) in towns {
+            let mut cursor = super::ledger::cursors(&self.paths)?
+                .get(&scope)
+                .copied()
+                .unwrap_or(0);
+            while cursor < town.seq {
+                let answer = self
+                    .hub_request(kind::LEDGER_NEXT, &(scope.clone(), cursor))
+                    .await?;
+                let row: super::ledger::Row = messages::decode::<Option<super::ledger::Row>>(
+                    &answer.body,
+                    kind::LEDGER_NEXT,
+                )?
+                .ok_or("Hub omitted a ledger entry")?;
+                if row.signed.parse()?.scope != scope || row.seq != cursor + 1 {
+                    return Err("Hub returned a different ledger position".into());
+                }
+                super::ledger::apply(&self.paths, &row, &self.members.read())?;
+                cursor = row.seq;
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn read_ledger(&self, scope: &str) -> Result<super::ledger::View, String> {
+        super::ledger::read_local(&self.paths, scope, &self.members.read())
+    }
+
+    pub(crate) async fn subscribe(
+        &self,
+        peer: &str,
+        topic: serde_json::Value,
+    ) -> Result<String, String> {
+        self.resolve_target(peer)?;
+        let id = hex::encode(super::crypto::random_bytes::<32>()?);
+        self.subscriptions.active.lock().insert(
+            id.clone(),
+            super::subscription::Active {
+                peer: peer.into(),
+                publishing: false,
+            },
+        );
+        let mut attempt = SubscriptionAttempt {
+            client: self,
+            id: id.clone(),
+            accepted: false,
+        };
+        let result = self
+            .request(
+                Header::new(kind::SUBSCRIBE, &self.name(), peer, 0),
+                &super::subscription::Message {
+                    id: id.clone(),
+                    value: topic,
+                },
+                1,
+                HUB_REQUEST_TIMEOUT,
+            )
+            .await;
+        match result
+            .and_then(|answers| answers.single(kind::SUBSCRIBE))
+            .and_then(|answer| expect_kind(&answer, kind::HUB_RESULT))
+        {
+            Ok(()) => {
+                attempt.accepted = true;
+                Ok(id)
+            }
+            Err(error) => Err(error),
+        }
+    }
+    pub(crate) fn unsubscribe(&self, id: &str) -> Result<(), String> {
+        let peer = self
+            .subscriptions
+            .active
+            .lock()
+            .get(id)
+            .ok_or("Unknown subscription")?
+            .peer
+            .clone();
+        let result = self.send_ephemeral(
+            kind::UNSUBSCRIBE,
+            &peer,
+            &super::subscription::Message {
+                id: id.into(),
+                value: serde_json::Value::Null,
+            },
+        );
+        self.subscriptions.close(id, "unsubscribed");
+        result
+    }
+    pub(crate) fn publish_event(&self, id: &str, value: serde_json::Value) -> Result<(), String> {
+        let active = self
+            .subscriptions
+            .active
+            .lock()
+            .get(id)
+            .cloned()
+            .ok_or("Unknown subscription")?;
+        if !active.publishing {
+            return Err("This endpoint is the subscriber".into());
+        }
+        self.send_ephemeral(
+            kind::SUBSCRIPTION_EVENT,
+            &active.peer,
+            &super::subscription::Message {
+                id: id.into(),
+                value,
+            },
+        )
+    }
+    fn send_ephemeral<T: Serialize>(&self, kind: &str, to: &str, body: &T) -> Result<(), String> {
+        let env = self.build_envelope(Header::new(kind, &self.name(), to, 0), body)?;
+        let frame = Frame::Msg {
+            seq: None,
+            id: None,
+            env,
+        };
+        frame.encode()?;
+        if self.send_frame(frame) {
+            Ok(())
+        } else {
+            Err(self.unreachable_error())
+        }
+    }
+    pub(crate) fn receive_subscription(&self, opened: &Opened) -> Result<(), String> {
+        let body: super::subscription::Message = messages::decode(&opened.body, &opened.header.t)?;
+        let from = &opened.header.from;
+        match opened.header.t.as_str() {
+            kind::SUBSCRIBE => {
+                if self.subscriptions.active.lock().contains_key(&body.id) {
+                    return Err("Subscription id already used".into());
+                }
+                self.subscriptions.active.lock().insert(
+                    body.id.clone(),
+                    super::subscription::Active {
+                        peer: from.clone(),
+                        publishing: true,
+                    },
+                );
+                self.subscriptions
+                    .push(super::subscription::Notice::Started {
+                        id: body.id,
+                        from: from.clone(),
+                        topic: body.value,
+                    });
+            }
+            kind::SUBSCRIPTION_CLOSED if from == HUB_NAME => self
+                .subscriptions
+                .close(&body.id, body.value.as_str().unwrap_or("peer disconnected")),
+            kind::UNSUBSCRIBE | kind::SUBSCRIPTION_EVENT => {
+                let active = self
+                    .subscriptions
+                    .active
+                    .lock()
+                    .get(&body.id)
+                    .cloned()
+                    .ok_or("Unknown subscription")?;
+                if &active.peer != from {
+                    return Err("Subscription peer mismatch".into());
+                }
+                if opened.header.t == kind::UNSUBSCRIBE {
+                    self.subscriptions.close(&body.id, "peer unsubscribed");
+                } else if !active.publishing {
+                    self.subscriptions.push(super::subscription::Notice::Event {
+                        id: body.id,
+                        from: from.clone(),
+                        value: body.value,
+                    });
+                } else {
+                    return Err("Subscriber cannot publish events".into());
+                }
+            }
+            _ => return Err("Invalid subscription message".into()),
+        }
+        Ok(())
+    }
+
     // ----- direct calls -----
 
     /// Runs `verb` with `args` on `target` and returns its outcome. A target that is offline,
@@ -1421,6 +1578,7 @@ impl WorldClient {
         }
         let me = self.name();
         let window = tool_timeout + LINK_MARGIN;
+        let deadline = tokio::time::Instant::now() + window;
         // The hub judges grants by the verb in the header; the receiving side of a copy is
         // authorized as `copy`, whatever the wire verb says.
         let header = Header::new(kind::CALL, &me, target, 0)
@@ -1439,21 +1597,30 @@ impl WorldClient {
             answers,
             delivered,
             link_lost,
-        } = self.request(header, &body, true, false, 1, window).await?;
+        } = self.request(header, &body, 1, window).await?;
         for answer in answers {
             match answer.header.t.as_str() {
-                kind::CALL_RESULT if answer.encrypted => {
-                    let Ok(result) =
-                        messages::decode::<CallResult>(&answer.body, kind::CALL_RESULT)
-                    else {
-                        continue;
+                kind::CALL_RESULT | kind::CALL_RESULT_STREAM => {
+                    if answer.header.from != target {
+                        return Err("Answer author differs from called member".into());
+                    }
+                    let result: CallResult = if answer.header.t == kind::CALL_RESULT_STREAM {
+                        let description = messages::decode(&answer.body, kind::CALL_RESULT_STREAM)?;
+                        tokio::time::timeout_at(
+                            deadline,
+                            super::result_stream::receive(self, description, target),
+                        )
+                        .await
+                        .map_err(|_| "Call result stream exceeded caller deadline")??
+                    } else {
+                        messages::decode(&answer.body, kind::CALL_RESULT)?
                     };
                     // A result answers for the member that sent it, and only for the one this
-                    // call was addressed to; both fields sit inside the ciphertext.
+                    // call was addressed to; both fields sit inside the signed body.
                     if result.node != answer.header.from || result.node != target {
                         continue;
                     }
-                    self.raise_grant_floor(result.grant_revision);
+                    self.raise_grant_floor(result.grant_revision)?;
                     return Ok(NodeOutcome {
                         node: result.node,
                         status: if result.response.is_error {

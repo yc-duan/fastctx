@@ -1,26 +1,27 @@
-//! Typed bodies carried inside envelopes, and the message-type names on their headers.
-//!
-//! Two families exist. Hub-terminated messages (`to == "hub"` or `from == "hub"`) travel as
-//! plaintext bodies (epoch 0) because the hub has to read them; they carry metadata only.
-//! Member-to-member messages travel encrypted under the World key; the hub routes them on
-//! their headers and never opens them. The `plaintext_allowed` table below is what a
-//! receiver consults before trusting a body that arrived unencrypted.
-
 use super::envelope::Envelope;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub(crate) mod kind {
+    pub(crate) const DELIVERY_REJECTED: &str = "delivery_rejected";
+    pub(crate) const CALL_RESULT_STREAM: &str = "call_result_stream";
+    pub(crate) const SUBSCRIBE: &str = "subscribe";
+    pub(crate) const UNSUBSCRIBE: &str = "unsubscribe";
+    pub(crate) const SUBSCRIPTION_EVENT: &str = "subscription_event";
+    pub(crate) const SUBSCRIPTION_CLOSED: &str = "subscription_closed";
+    pub(crate) const LEDGER_APPEND: &str = "ledger_append";
+    pub(crate) const LEDGER_TOWNS: &str = "ledger_towns";
+    pub(crate) const LEDGER_NEXT: &str = "ledger_next";
+    pub(crate) const LEDGER_CHANGED: &str = "ledger_changed";
+    pub(crate) const MAIL: &str = "mail";
     // Member → hub, reliable.
     pub(crate) const MEMBER_PUBLISH: &str = "member_publish";
     pub(crate) const INVITE_CREATE: &str = "invite_create";
-    pub(crate) const KEY_PUBLISH: &str = "key_publish";
     pub(crate) const INVENTORY: &str = "inventory";
     pub(crate) const LEAVE: &str = "leave";
     // Hub → member, reliable.
     pub(crate) const GRANT_SYNC: &str = "grant_sync";
     pub(crate) const MEMBERS_CHANGED: &str = "members_changed";
-    pub(crate) const KEY_ROTATED: &str = "key_rotated";
     // Requests to the hub and their answers.
     pub(crate) const INVENTORY_GET: &str = "inventory_get";
     pub(crate) const INVENTORY_RESULT: &str = "inventory_result";
@@ -28,8 +29,6 @@ pub(crate) mod kind {
     pub(crate) const MEMBERS_RESULT: &str = "members_result";
     pub(crate) const EVENTS_GET: &str = "events_get";
     pub(crate) const EVENTS_RESULT: &str = "events_result";
-    pub(crate) const KEYS_GET: &str = "keys_get";
-    pub(crate) const KEYS_RESULT: &str = "keys_result";
     pub(crate) const GRANTS_GET: &str = "grants_get";
     /// A request rather than a reliable message: the hub accepts a snapshot only when its
     /// revision follows the stored one, and the publisher needs to hear a refusal.
@@ -37,51 +36,12 @@ pub(crate) mod kind {
     pub(crate) const REVOKE: &str = "revoke";
     pub(crate) const HUB_RESULT: &str = "hub_result";
     pub(crate) const HUB_ERROR: &str = "hub_error";
-    // Member ↔ member requests, encrypted.
+    // Member ↔ member requests, signed.
     pub(crate) const CALL: &str = "call";
     pub(crate) const CALL_RESULT: &str = "call_result";
     pub(crate) const CANCEL: &str = "cancel";
     /// Hub-originated answer to a request the target could not receive.
     pub(crate) const CALL_STATUS: &str = "call_status";
-}
-
-/// Whether a receiver may trust a plaintext body of this type from this sender.
-///
-/// Every hub-originated type and every hub-terminated type is plaintext by construction.
-/// Member-to-member types must arrive encrypted: a plaintext `call` would let a compromised
-/// hub run tools on members.
-pub(crate) fn plaintext_allowed(t: &str, from: &str) -> bool {
-    if from == super::HUB_NAME {
-        return true;
-    }
-    matches!(
-        t,
-        kind::MEMBER_PUBLISH
-            | kind::INVITE_CREATE
-            | kind::KEY_PUBLISH
-            | kind::GRANT_PUBLISH
-            | kind::LEAVE
-            | kind::INVENTORY_GET
-            | kind::MEMBERS_GET
-            | kind::EVENTS_GET
-            | kind::KEYS_GET
-            | kind::GRANTS_GET
-            | kind::REVOKE
-            | kind::CANCEL
-    )
-}
-
-/// Message types the hub verifies an author signature on before accepting.
-pub(crate) fn signature_required(t: &str) -> bool {
-    matches!(
-        t,
-        kind::MEMBER_PUBLISH
-            | kind::INVITE_CREATE
-            | kind::KEY_PUBLISH
-            | kind::GRANT_PUBLISH
-            | kind::REVOKE
-            | kind::LEAVE
-    )
 }
 
 /// The fields a revocation signs: which key, under which name, is out of the World.
@@ -115,14 +75,12 @@ impl SignedRevocation {
     }
 }
 
-/// The record a member publishes about itself; MAC'd under `K_mac`, signed by the member.
+/// The record a member signs about itself.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct MemberRecord {
     pub(crate) name: String,
     /// Ed25519 public key, base64.
     pub(crate) node_pub: String,
-    /// X25519 wrap public key, base64.
-    pub(crate) wrap_pub: String,
     #[serde(default)]
     pub(crate) tags: Vec<String>,
     pub(crate) kind: String,
@@ -133,15 +91,12 @@ pub(crate) struct MemberRecord {
 }
 
 /// A member record as stored by the hub and served to members: the exact JSON bytes the
-/// author MAC'd, the MAC, and the author's signature over the same bytes.
+/// author signed, together with its admission credential.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct SignedRecord {
+    pub(crate) admission: super::admission::Credential,
     /// JSON text of a `MemberRecord`, byte-exact.
     pub(crate) record: String,
-    /// HMAC-SHA256 under `K_mac`, base64.
-    pub(crate) mac: String,
-    /// World key epoch the MAC was made under.
-    pub(crate) mac_epoch: u32,
     /// Ed25519 signature by the record's `node_pub` over `record` bytes (domain
     /// `member_record`), base64.
     pub(crate) sig: String,
@@ -153,49 +108,10 @@ pub(crate) struct MemberPublish {
     pub(crate) signed: SignedRecord,
 }
 
-/// Body of `invite_create`: what the hub is allowed to know about an invite.
+/// The inviter's endorsement; no invitation seed reaches the hub.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct InviteCreate {
-    pub(crate) code_id: String,
-    /// `sha256(admission_token)` hex.
-    pub(crate) admission: String,
-    /// World keys wrapped under the invite secret, base64.
-    pub(crate) wrapped_keys: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) name: Option<String>,
-    pub(crate) exp: String,
-}
-
-/// Body of `key_publish`: one rotated epoch sealed to every remaining member.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct KeyPublish {
-    pub(crate) epoch: u32,
-    pub(crate) sealed: Vec<SealedKeyFor>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct SealedKeyFor {
-    pub(crate) name: String,
-    pub(crate) key: super::keys::SealedKey,
-}
-
-/// Body of `keys_get`: which epochs this member still lacks.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct KeysGet {
-    pub(crate) have: Vec<u32>,
-}
-
-/// Body of `keys_result`.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct KeysResult {
-    pub(crate) sealed: Vec<super::keys::SealedKey>,
-    pub(crate) newest_epoch: u32,
-}
-
-/// Body of `key_rotated` (hub → every online member).
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct KeyRotated {
-    pub(crate) epoch: u32,
+    pub(crate) endorsement: super::admission::Endorsement,
 }
 
 /// Body of `revoke` (member → hub, a signed request) and of `leave`: the signed revocation the
@@ -212,19 +128,11 @@ pub(crate) struct MembersChanged {
 }
 
 /// Body of `members_result`. Revoked members are listed too (state `revoked`), because a
-/// member must learn of a revocation and must be able to countersign one the hub operator
-/// made without a World key.
+/// member must retain signed revocations alongside historical admission records.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct MembersResult {
     pub(crate) version: u64,
     pub(crate) members: Vec<MemberEntry>,
-    /// Admitted members that hold no sealed copy of the newest World key epoch; any member
-    /// holding it seals one for them.
-    #[serde(default)]
-    pub(crate) missing_key: Vec<String>,
-    /// Newest World key epoch any member has published to the hub; 0 before any rotation.
-    #[serde(default)]
-    pub(crate) key_epoch: u32,
 }
 
 /// One member as the hub reports it: the signed record plus hub-side presence facts.
@@ -261,7 +169,7 @@ pub(crate) struct InventoryGet {
     pub(crate) have: BTreeMap<String, u64>,
 }
 
-/// Body of `inventory_result`: stored inventory envelopes, still sealed.
+/// Body of `inventory_result`: stored inventory envelopes, still signed.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct InventoryResult {
     pub(crate) entries: Vec<InventoryEntry>,
@@ -337,7 +245,7 @@ pub(crate) enum CallOrigin {
     Script,
 }
 
-/// Body of `call` (encrypted): a direct tool invocation on the target member.
+/// Body of `call` (signed): a direct tool invocation on the target member.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Call {
     pub(crate) verb: String,
@@ -349,7 +257,7 @@ pub(crate) struct Call {
     pub(crate) cwd: Option<String>,
     /// Caller-side deadline in milliseconds; the target stops work after it.
     pub(crate) timeout_ms: u64,
-    /// The grant snapshot revision the caller holds. It travels inside the ciphertext, so a
+    /// The grant snapshot revision the caller holds. It travels inside the signed body, so a
     /// target that is behind learns it from a source the hub cannot lower.
     #[serde(default)]
     pub(crate) grant_revision: u64,
@@ -357,7 +265,7 @@ pub(crate) struct Call {
     pub(crate) origin: CallOrigin,
 }
 
-/// Body of `call_result` (encrypted): the target's rendered response.
+/// Body of `call_result` (signed): the target's rendered response.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct CallResult {
     pub(crate) node: String,

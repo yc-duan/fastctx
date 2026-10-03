@@ -21,7 +21,7 @@ fn fixture_with(machines: usize) -> WorldApp {
     let status: NodeStatus = serde_json::from_value(serde_json::json!({
         "name":"desktop", "world_id":"world-demo", "hub":["example.test:443"], "hub_key":"public fingerprint", "fingerprint":"public fingerprint", "pid":1234,
         "version":"1.0.0", "started_at":now, "written_at":now,
-        "link":{"state":"connected","network":"direct","path":"direct via Ethernet","interface":"Ethernet", "tunnels":[],"tls":"pinned", "connected_since":now,"last_heartbeat_at":now,"last_ack_at":now,"rtt_ms":18,"hub_time_offset_s":0,"last_error":null,"replaced_count":0,"key_epoch":2,"outbox_depth":0},
+        "link":{"state":"connected","network":"direct","path":"direct via Ethernet","interface":"Ethernet", "tunnels":[],"tls":"pinned", "connected_since":now,"last_heartbeat_at":now,"last_ack_at":now,"rtt_ms":18,"hub_time_offset_s":0,"last_error":null,"replaced_count":0,"outbox_depth":0},
         "members":machines,"members_online":machines.saturating_sub(machines / 3),"grant_revision":1,"grant_stale":false,"running_calls":1,"engine_hosted":true,"agent_connections":2
     })).unwrap();
     let inventory = Inventory {
@@ -76,7 +76,7 @@ fn fixture_with(machines: usize) -> WorldApp {
         }
         nodes.push(other);
     }
-    let mut config: crate::world::WorldConfig=serde_json::from_value(serde_json::json!({"version":1,"name":"desktop","world_id":"world-demo","hub":["example.test:443"],"hub_key":"public fingerprint","tls":"pinned","enrolled_at":now})).unwrap();
+    let mut config: crate::world::WorldConfig=serde_json::from_value(serde_json::json!({"version":2,"founder":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","admission":{"kind":"founder"},"name":"desktop","world_id":"world-demo","hub":["example.test:443"],"hub_key":"public fingerprint","tls":"pinned","enrolled_at":now})).unwrap();
     config.network = NetworkMode::Direct;
     let node = NodeSnapshot {
         status: status.clone(),
@@ -98,7 +98,7 @@ fn fixture_with(machines: usize) -> WorldApp {
         description: ReadState::Ready("办公台式机 · builds and experiments".into()),
         unverified: Vec::new(),
     };
-    let hub:crate::world::hub::HubStatus=serde_json::from_value(serde_json::json!({"version":"1.0.0","pid":1000,"written_at":now,"started_at":now,"listen":"0.0.0.0:443","world_id":"world-demo","hub_key":"public fingerprint","tls":"pinned","binding":"direct","members":[{"name":"desktop","state":"online","last_seen":now,"outbox":0,"version":"1.0.0"}],"open_invites":2,"events":30,"rotation_pending":false,"bootstrap_used":true,"data_connections":2})).unwrap();
+    let hub:crate::world::hub::HubStatus=serde_json::from_value(serde_json::json!({"version":"1.0.0","pid":1000,"written_at":now,"started_at":now,"listen":"0.0.0.0:443","world_id":"world-demo","hub_key":"public fingerprint","tls":"pinned","binding":"direct","members":[{"name":"desktop","state":"online","last_seen":now,"outbox":0,"version":"1.0.0"}],"open_invites":2,"events":30,"bootstrap_used":true,"data_connections":2})).unwrap();
     app.snapshot = Some(Snapshot {
         observed_at: now.clone(),
         config: ReadState::Ready(config),
@@ -207,7 +207,7 @@ fn all_languages_render_world_states_at_terminal_boundaries() {
                 FormKind::Grant(1),
                 FormKind::Cursor,
                 FormKind::HubDirectory,
-                FormKind::Export("fxw1.secret".into()),
+                FormKind::Export("fxw2.secret".into()),
             ] {
                 let mut app = fixture();
                 app.open_form(kind, "A very long value with 中文 and e\u{301} 🧑‍💻");
@@ -236,7 +236,7 @@ fn all_languages_render_world_states_at_terminal_boundaries() {
                     uncertain: true,
                 });
                 app.receipt = Some(Receipt {
-                    invite: Some(format!("fxw1.{}", "abcd".repeat(512))),
+                    invite: Some(format!("fxw2.{}", "abcd".repeat(512))),
                     warnings: vec!["A warning with 中文.".into()],
                     ..Receipt::default()
                 });
@@ -506,7 +506,7 @@ fn export_world_render_scenes() {
         ("grant", FormKind::Grant(1)),
         ("cursor", FormKind::Cursor),
         ("hub-directory", FormKind::HubDirectory),
-        ("export", FormKind::Export("fxw1.example-only".into())),
+        ("export", FormKind::Export("fxw2.example-only".into())),
     ] {
         for (suffix, language, width, height) in [
             ("zh", Language::ZhCn, 80, 24),
@@ -632,7 +632,7 @@ fn export_world_render_scenes() {
     app.screen = Screen::Receipt;
     app.receipt_action = Some(MenuAction::Invite);
     app.receipt = Some(Receipt {
-        invite: Some(format!("fxw1.{}", "example-public-fixture-".repeat(30))),
+        invite: Some(format!("fxw2.{}", "example-public-fixture-".repeat(30))),
         ..Receipt::default()
     });
     export_scene("receipt-invite", Language::ZhCn, 80, 24, app);

@@ -248,7 +248,7 @@ fn apply_status_and_unapply_cover_both_shell_states() {
         } else {
             "inspect_local_file,grep,glob,replace"
         };
-        let expected_args = vec!["serve", "--tools", enabled];
+        let expected_args = vec!["serve", "--tools", enabled, "--writer", "apply_patch"];
         assert_eq!(args, expected_args, "{config}");
         // 1.0 no longer pins FastCtx to the direct tool surface, so a fresh Apply must not
         // create features.code_mode at all.
@@ -581,7 +581,8 @@ fn apply_migrates_owned_three_server_config_and_legacy_agents_blocks_atomically(
     assert!(
         config.contains(concat!(
             "args = [\"serve\", \"--tools\", ",
-            "\"inspect_local_file,grep,glob,replace,run,run_background,job_output,job_kill,job_list\"]"
+            "\"inspect_local_file,grep,glob,replace,run,run_background,job_output,job_kill,job_list\", ",
+            "\"--writer\", \"apply_patch\"]"
         )),
         "{config}"
     );

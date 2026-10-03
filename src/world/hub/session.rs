@@ -8,8 +8,7 @@ use crate::world::crypto::{self, b64_array, b64_decode, b64_encode};
 use crate::world::identity::verify;
 use crate::world::invite::Invite;
 use crate::world::wire::{
-    self, Auth, BindingMode, Challenge, Enrolled, Frame, Hello, Intent, ProtocolMismatch, Rejected,
-    Welcome,
+    self, Auth, BindingMode, Challenge, Frame, Hello, Intent, ProtocolMismatch, Rejected, Welcome,
 };
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
@@ -125,7 +124,15 @@ pub(crate) async fn serve<S>(
         };
     match intent {
         Intent::Stream { stream, role } if data => {
-            super::stream::attach(hub, link, peer_identity, stream, role).await;
+            super::stream::attach(
+                hub,
+                link,
+                peer_identity,
+                stream,
+                role,
+                auth.ticket.map(|ticket| *ticket),
+            )
+            .await;
         }
         Intent::Stream { .. } => {
             log(format!(
@@ -187,15 +194,12 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let hello = read_hello(link).await?;
-    if hello.protocol < PROTOCOL_VERSION.saturating_sub(1) || hello.min_protocol > PROTOCOL_VERSION
-    {
+    if hello.protocol != PROTOCOL_VERSION || hello.min_protocol > PROTOCOL_VERSION {
         return Err(HandshakeFailure::Rejected(Rejected {
             code: "protocol_mismatch".to_string(),
             message: format!(
-                "This hub speaks World protocol {PROTOCOL_VERSION} and accepts {} or newer; the member offered {} (minimum {}). Upgrade the older side.",
-                PROTOCOL_VERSION.saturating_sub(1),
-                hello.protocol,
-                hello.min_protocol
+                "This hub accepts only World protocol {PROTOCOL_VERSION}; the member offered {} (minimum {}). Rebuild the older test world.",
+                hello.protocol, hello.min_protocol
             ),
             protocol: Some(ProtocolMismatch {
                 ours: PROTOCOL_VERSION,
@@ -206,12 +210,24 @@ where
     let node_nonce = b64_decode(&hello.nonce).map_err(|error| reject("invalid_hello", error))?;
     let node_pub = b64_array::<32>(&hello.node_pub, "member public key")
         .map_err(|error| reject("invalid_hello", error))?;
-    let wrap_pub = b64_array::<32>(&hello.wrap_pub, "member wrap key")
-        .map_err(|error| reject("invalid_hello", error))?;
     let hub_nonce = crypto::random_bytes::<32>()?;
     let hub_pub = hub.identity.public_key();
     let transcript = wire::hub_transcript(&node_nonce, &hub_nonce, &hub_pub, &node_pub, binding);
+    let bootstrap_proof = if hello.intent == Intent::Bootstrap {
+        let admission = hub
+            .store
+            .meta_string(super::store::meta::BOOTSTRAP_ADMISSION)?
+            .ok_or_else(|| reject("invite_invalid", "Bootstrap is unavailable"))?;
+        let verifier = crypto::hex_array::<32>(&admission, "bootstrap verifier")?;
+        Some(b64_encode(&crypto::hmac_sha256(
+            &verifier,
+            &wire::bootstrap_transcript(&transcript, &hub.world_id),
+        )))
+    } else {
+        None
+    };
     let challenge = Challenge {
+        bootstrap_proof,
         protocol: PROTOCOL_VERSION,
         nonce: b64_encode(&hub_nonce),
         hub_pub: b64_encode(&hub_pub),
@@ -266,10 +282,17 @@ where
                     format!("The member \"{}\" was revoked from this World.", row.name),
                 ));
             }
+            let table = hub.member_table()?;
+            if table.trusted_key(&row.name) != Some(node_pub) {
+                return Err(reject(
+                    "untrusted_member",
+                    "Member admission does not reach the pinned founder",
+                ));
+            }
             row.name
         }
-        Intent::Enroll => enroll(hub, &hello, &auth, &node_pub_b64, &wrap_pub)?,
-        Intent::Bootstrap => bootstrap(hub, &hello, &auth, &node_pub_b64, &wrap_pub)?,
+        Intent::Enroll => enroll(hub, &hello, &auth, &node_pub_b64)?,
+        Intent::Bootstrap => bootstrap(hub, &hello, &auth, &node_pub_b64)?,
     };
     // A data connection is not a session: it takes no generation and replaces nothing.
     let generation = match hello.intent {
@@ -307,7 +330,6 @@ fn enroll(
     hello: &Hello,
     auth: &Auth,
     node_pub_b64: &str,
-    wrap_pub: &crypto::Key32,
 ) -> Result<String, HandshakeFailure> {
     let Some(enrollment) = &auth.enrollment else {
         return Err(reject("invite_invalid", "Enrollment needs an invite."));
@@ -322,19 +344,41 @@ fn enroll(
     let Some(invite) = hub.store.invite(&enrollment.code_id)? else {
         return Err(invalid());
     };
-    if crate::world::parse_rfc3339(&invite.exp)
+    if invite.used {
+        return Err(reject(
+            "invite_used",
+            "This one-time invitation was already consumed",
+        ));
+    }
+    if crate::world::parse_rfc3339(&invite.endorsement.expires)
         .is_ok_and(|exp| exp <= time::OffsetDateTime::now_utc())
     {
         let _ = hub.store.remove_invite(&enrollment.code_id);
         return Err(invalid());
     }
-    let token = b64_decode(&enrollment.admission_token).map_err(|_| invalid())?;
-    if Invite::admission_of_token(&token) != invite.admission {
+    let inviter = hub
+        .store
+        .member(&invite.endorsement.inviter)?
+        .ok_or_else(invalid)?;
+    if inviter.is_revoked() {
+        return Err(reject("revoked", "The inviter has been revoked"));
+    }
+    if !matches!(&enrollment.record.admission, crate::world::admission::Credential::Invited { endorsement, .. } if endorsement == &invite.endorsement)
+    {
         return Err(invalid());
     }
+    enrollment
+        .record
+        .admission
+        .verify(
+            &enrollment.name,
+            node_pub_b64,
+            &b64_array(&inviter.node_pub, "inviter")?,
+        )
+        .map_err(|e| reject("invalid_admission", e))?;
     crate::world::validate_node_name(&enrollment.name)
         .map_err(|error| reject("invalid_name", error))?;
-    let row = member_row(&enrollment.name, node_pub_b64, wrap_pub, &enrollment.tags);
+    let row = member_row(&enrollment.name, node_pub_b64, &enrollment.record)?;
     match hub
         .store
         .admit_member(&row, Admission::Invite(&enrollment.code_id))?
@@ -371,15 +415,14 @@ fn enroll(
         [
             (
                 "invited_by",
-                serde_json::Value::String(invite.inviter.clone()),
+                serde_json::Value::String(invite.endorsement.inviter.clone()),
             ),
             ("version", serde_json::Value::String(hello.version.clone())),
         ],
     );
-    hub.remember_enrollment(&enrollment.name, invite.wrapped_keys.clone());
     log(format!(
         "enrolled \"{}\" (invited by {})",
-        enrollment.name, invite.inviter
+        enrollment.name, invite.endorsement.inviter
     ));
     Ok(enrollment.name.clone())
 }
@@ -389,7 +432,6 @@ fn bootstrap(
     hello: &Hello,
     auth: &Auth,
     node_pub_b64: &str,
-    wrap_pub: &crypto::Key32,
 ) -> Result<String, HandshakeFailure> {
     let Some(enrollment) = &auth.enrollment else {
         return Err(reject(
@@ -409,13 +451,14 @@ fn bootstrap(
     else {
         return Err(invalid());
     };
-    let token = b64_decode(&enrollment.admission_token).map_err(|_| invalid())?;
+    let token = b64_decode(enrollment.admission_token.as_deref().ok_or_else(invalid)?)
+        .map_err(|_| invalid())?;
     if Invite::admission_of_token(&token) != expected {
         return Err(invalid());
     }
     crate::world::validate_node_name(&enrollment.name)
         .map_err(|error| reject("invalid_name", error))?;
-    let row = member_row(&enrollment.name, node_pub_b64, wrap_pub, &enrollment.tags);
+    let row = member_row(&enrollment.name, node_pub_b64, &enrollment.record)?;
     // The first member is whoever commits first; any other outcome means the World already
     // has one, and the password says nothing more to the loser.
     if !matches!(
@@ -432,7 +475,6 @@ fn bootstrap(
             ("version", serde_json::Value::String(hello.version.clone())),
         ],
     );
-    hub.remember_enrollment(&enrollment.name, String::new());
     log(format!(
         "bootstrapped the World with \"{}\"",
         enrollment.name
@@ -442,21 +484,27 @@ fn bootstrap(
 
 fn member_row(
     name: &str,
-    node_pub_b64: &str,
-    wrap_pub: &crypto::Key32,
-    tags: &[String],
-) -> MemberRow {
-    MemberRow {
-        name: name.to_string(),
-        node_pub: node_pub_b64.to_string(),
-        wrap_pub: b64_encode(wrap_pub),
-        tags: tags.to_vec(),
+    node_pub: &str,
+    signed: &crate::world::messages::SignedRecord,
+) -> Result<MemberRow, HandshakeFailure> {
+    let record =
+        crate::world::members::verify_record(signed).map_err(|e| reject("invalid_record", e))?;
+    if record.name != name || record.node_pub != node_pub {
+        return Err(reject(
+            "invalid_record",
+            "Enrollment identity differs from signed record",
+        ));
+    }
+    Ok(MemberRow {
+        name: name.into(),
+        node_pub: node_pub.into(),
+        tags: record.tags,
         admitted_at: crate::world::now_rfc3339(),
-        signed: None,
+        signed: Some(signed.clone()),
         revoked_at: None,
         revoke_reason: None,
         revocation: None,
-    }
+    })
 }
 
 async fn run_session<S>(hub: Arc<Hub>, mut link: Link<S>, peer: Peer, auth: Auth)
@@ -467,20 +515,6 @@ where
     let name = peer.name.clone();
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
     let cancel = CancellationToken::new();
-    let replaced = hub.register(
-        &name,
-        Connected {
-            generation: peer.generation,
-            tx: tx.clone(),
-            cancel: cancel.clone(),
-        },
-    );
-    if replaced {
-        log(format!(
-            "\"{name}\" reconnected from {address}; the previous connection was replaced"
-        ));
-    }
-
     let session_row = match hub.store.update_session(&name, |row| {
         row.generation = peer.generation;
         row.last_seen = crate::world::now_rfc3339();
@@ -495,9 +529,6 @@ where
             return;
         }
     };
-    let enrolled = hub.take_enrollment(&name).map(|wrapped_keys| Enrolled {
-        wrapped_keys: (!wrapped_keys.is_empty()).then_some(wrapped_keys),
-    });
     let welcome = Welcome {
         world_id: hub.world_id.clone(),
         name: name.clone(),
@@ -512,16 +543,6 @@ where
             .store
             .meta_u64(super::store::meta::GRANT_VERSION)
             .unwrap_or(0),
-        key_epoch: hub
-            .store
-            .meta_u64(super::store::meta::KEY_EPOCH)
-            .unwrap_or(0) as u32,
-        rotation_pending: hub
-            .store
-            .meta_u64(super::store::meta::ROTATION_PENDING)
-            .unwrap_or(0)
-            > 0,
-        enrolled,
     };
     if let Err(error) = link.send(&Frame::Welcome(welcome)).await {
         log(format!("\"{name}\": cannot send welcome: {error}"));
@@ -538,24 +559,40 @@ where
     );
     log(format!("\"{name}\" online from {address}"));
 
-    // Everything the member has not acknowledged goes out again, in order, before new traffic.
-    match hub
-        .store
-        .outbox_ack(&name, auth.recv_seq)
-        .and_then(|()| hub.store.outbox_after(&name, auth.recv_seq))
     {
-        Ok(rows) => {
-            for (seq, OutboxRow { id, env, .. }) in rows {
-                let _ = tx.send(Frame::Msg {
-                    seq: Some(seq),
-                    id,
-                    env,
-                });
-            }
+        let _delivery = hub.delivery_lock.lock();
+        let replaced = hub.register(
+            &name,
+            Connected {
+                generation: peer.generation,
+                tx: tx.clone(),
+                cancel: cancel.clone(),
+            },
+        );
+        if replaced {
+            log(format!(
+                "\"{name}\" reconnected from {address}; the previous connection was replaced"
+            ));
         }
-        Err(error) => log(format!("\"{name}\": cannot replay the outbox: {error}")),
-    }
 
+        // Everything the member has not acknowledged goes out again, in order, before new traffic.
+        match hub
+            .store
+            .outbox_ack(&name, auth.recv_seq)
+            .and_then(|()| hub.store.outbox_after(&name, auth.recv_seq))
+        {
+            Ok(rows) => {
+                for (seq, OutboxRow { id, env, .. }) in rows {
+                    let _ = tx.send(Frame::Msg {
+                        seq: Some(seq),
+                        id,
+                        env,
+                    });
+                }
+            }
+            Err(error) => log(format!("\"{name}\": cannot replay the outbox: {error}")),
+        }
+    }
     let mut recv_seq = session_row.recv_seq;
     let mut last_heartbeat = Instant::now();
     let reason = loop {
@@ -602,11 +639,14 @@ where
                         if seq <= recv_seq {
                             let _ = tx.send(Frame::Ack { seq });
                         } else if seq == recv_seq + 1 {
-                            match super::router::handle_reliable(&hub, &peer, id, env) {
+                            match super::router::handle_reliable(&hub, &peer, id, env.clone()) {
                                 Ok(()) => {}
                                 Err(error) => {
                                     log(format!("\"{name}\": reliable message {seq} rejected: {error}"));
-                                    hub.send_hub_error(&name, id, "rejected", &error);
+                                    if error.starts_with("hub store:") { break format!("store failure: {error}"); }
+                                    let rejected = crate::world::delivery::Rejection { seq, mail_id: env.body_bytes().ok().and_then(|bytes| crate::world::messages::decode::<crate::world::mail::Letter>(&bytes, "mail").ok()).map(|letter| letter.id), hash: hex::encode(crypto::sha256(&crate::world::messages::encode(&env).expect("envelope serializes"))), reason: error };
+                                    let persisted = hub.hub_envelope(crate::world::messages::kind::DELIVERY_REJECTED, &name, None, &rejected).and_then(|env| hub.queue_reliable(&name, env, None));
+                                    if let Err(error) = persisted { break format!("cannot persist delivery rejection: {error}"); }
                                 }
                             }
                             recv_seq = seq;
@@ -659,6 +699,7 @@ where
         .store
         .update_session(&name, |row| row.last_seen = crate::world::now_rfc3339());
     if still_current {
+        hub.close_subscriptions(&name);
         hub.append_event(
             &name,
             "node.offline",

@@ -27,7 +27,7 @@ fn micro_edit_golden_preserves_every_unowned_byte_and_writes_the_exact_private_s
         "\n",
         "[mcp_servers.fastctx]\n",
         "command = \"C:/Users/test/.fastctx/bin/fastctx.exe\"\n",
-        "args = [\"serve\", \"--tools\", \"inspect_local_file,grep,glob,replace\"]\n",
+        "args = [\"serve\", \"--tools\", \"inspect_local_file,grep,glob,replace\", \"--writer\", \"apply_patch\"]\n",
         "startup_timeout_sec = 120\n",
         "tool_timeout_sec = 300\n",
         "\n",
