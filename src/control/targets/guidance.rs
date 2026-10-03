@@ -174,10 +174,13 @@ fn apply_dedicated(
     })
 }
 
-/// The managed guidance for one enabled set. `world` says whether this machine is enrolled in
-/// a World: the block then speaks of machines instead of "local" and ends with the World
-/// section.
-pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools, world: bool) -> String {
+/// The managed guidance for one enabled set. On a machine enrolled in a World the surface is the
+/// World's whatever the enabled set (`specs/world.md`, "世界的手"), so the block describes that
+/// surface and the commands inside its shell instead.
+pub(crate) fn generated_guidance(target: AgentTarget, tools: EnabledTools, world: bool) -> String {
+    if world {
+        return world_guidance(target);
+    }
     let names = tools
         .names()
         .into_iter()
@@ -191,13 +194,7 @@ pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools, worl
     } else {
         "filesystem work"
     };
-    let mut text = if world {
-        format!(
-            "## FastCtx tools\n\nUse FastCtx for {work} on this machine and, with `node`, on the other machines of its World. Enabled tools: {names}.\n"
-        )
-    } else {
-        format!("## FastCtx local tools\n\nUse FastCtx for local {work}. Enabled tools: {names}.\n")
-    };
+    let mut text = format!("## FastCtx local tools\n\nUse FastCtx for local {work}. Enabled tools: {names}.\n");
     if tools.contains("inspect_local_file") {
         text.push_str(
             "Each inspect_local_file call accepts one path; issue independent read-only calls in parallel when the host supports it.\n",
@@ -214,48 +211,29 @@ pub(crate) fn generated_guidance(_target: AgentTarget, tools: EnabledTools, worl
         );
     }
     if tools.shell_enabled() {
-        text.push_str(if world {
-            "Use run for shell work on any machine; it is POSIX bash on every platform, including Windows.\n"
-        } else {
-            "Use run for local shell work; it is POSIX bash on every platform, including Windows.\n"
-        });
+        text.push_str("Use run for local shell work; it is POSIX bash on every platform, including Windows.\n");
     }
     text.push_str(
         "Successful responses begin with a factual head note whose ranges and totals describe the body that FastCtx emitted.\n",
     );
-    if world {
-        text.push_str(&world_guidance(tools));
-    }
     text
 }
 
-/// The World section: the cross-tool facts no tool description can say. Every tool it names
-/// is published on this enabled set in World mode.
-fn world_guidance(tools: EnabledTools) -> String {
-    let mut text = String::from(
-        "\n## FastCtx World\n\nThis machine is one of your trusted machines woven into a World. `nodes` lists them with their OS, home directory and user; a call with `node` runs on that machine and its first line names it.\nOne call names one machine; several machines are several calls, sent in parallel where the host allows.\n",
-    );
-    if tools.shell_enabled() {
-        text.push_str(
-            "Each machine runs commands in its own login shell, starting in its home directory when `cwd` is omitted.\nBefore working on a machine for the first time, read its OS and home from `nodes` and look around with `run` rather than assuming paths.\n",
-        );
-    } else {
-        text.push_str(
-            "Before working on a machine for the first time, read its OS and home from `nodes` rather than assuming paths.\n",
-        );
-    }
-    text.push_str("`copy` moves a file or a directory tree between two machines and skips files already identical there.\n");
-    if tools.contains("inspect_local_file") {
-        text.push_str(
-            "`remote_write` and `remote_edit` change files on other machines; inspect a file with `inspect_local_file` on that machine before changing it.\n",
-        );
-    }
-    if tools.shell_enabled() {
-        text.push_str(
-            "For work across many machines, or work that must outlive this conversation, write a script and start it with `run_background`; inside it, `fastctx world nodes`, `fastctx world run --node <machine> -- <command>`, and `fastctx world copy` reach the other machines.\n",
-        );
-    }
-    text
+/// The guidance on an enrolled machine: the World's tools, and one sentence for each command
+/// in its shell (`specs/world-run.md`, "模型怎样知道"). Codex writes with `apply_patch`, every
+/// other host with `edit` and `write` (`specs/world-write.md`).
+fn world_guidance(target: AgentTarget) -> String {
+    let writer = if target == AgentTarget::Codex { "`apply_patch` changes files" } else { "`edit` and `write` change files" };
+    format!(
+        "## FastCtx World\n\n\
+This machine is one of your machines woven into a World. FastCtx's tools here are the World's: `run` runs every command and search in POSIX bash, {writer}, `nodes` lists the machines, `copy` moves files between them, and `ask_colleague` and `message_colleague` bring in a colleague. A call with `node` acts on that machine and its first line names it; one call names one machine. Paths are absolute.\n\
+Inside `run`:\n\
+- `fastctx view -- <paths>` shows files, images and PDF pages, several at once.\n\
+- `fastctx w` shows who is in your town and what they are doing; `fastctx w <id>` shows one resident or job in detail.\n\
+- `fastctx project enter <town>` puts you in a project's town; use it only when the user tells you which project to work on.\n\
+- `fastctx journal` reads and writes the project's journals; read `fastctx journal --help` before adding an entry.\n\
+`fastctx --help` lists every command, and each command's `--help` gives its full use.\n"
+    )
 }
 
 fn section_range(source: &str) -> Result<Option<(usize, usize)>, String> {
