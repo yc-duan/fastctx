@@ -34,6 +34,11 @@ pub(crate) struct TextReader {
 }
 
 impl TextReader {
+    /// The encoding the text is decoded with.
+    pub(crate) fn label(&self) -> &'static str {
+        self.label
+    }
+
     pub(crate) fn open(
         mut file: File,
         explicit: Option<&str>,

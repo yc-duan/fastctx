@@ -77,7 +77,7 @@ pub fn edit(request: EditRequest, context: &WriteContext<'_>) -> Result<WriteRes
     let mut text = head_note("edit", context, ranges.len());
     let mut changed_since_observation = Vec::new();
     if let Some(observed_hash) = stale {
-        text.push_str("\nThe file changed since this session last saw it; the edit matched its current contents.");
+        text.push_str("\nThe file changed since you last viewed it; the edit matched its current contents.");
         changed_since_observation.push(ChangedSinceObservation {
             file_path: target.requested,
             observed_hash: observed_hash.into(),
@@ -105,7 +105,7 @@ pub fn write(request: WriteRequest, context: &WriteContext<'_>) -> Result<WriteR
             .observed_hash
             .is_some_and(|observed| observed != content_hash(before))
         {
-            return Err(format!("{} changed since this session last saw it. Whole-file overwrite refused; read the current file before writing again.", request.file_path).into());
+            return Err(format!("{} changed since you last viewed it. Whole-file overwrite refused; view it again with `fastctx view` before writing.", request.file_path).into());
         }
         Document::decode(before, &target.requested, context)?
             .encode_replacement(&request.content)?

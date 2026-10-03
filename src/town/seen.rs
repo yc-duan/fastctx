@@ -48,13 +48,12 @@ impl Seen {
 /// The record of a file as it is now; `hash` when its whole content was shown.
 pub(crate) fn observe(path: &Path, whole: Option<&[u8]>, encoding: Option<&str>) -> Result<Seen, String> {
     let metadata = std::fs::metadata(path).map_err(|error| format!("Cannot inspect {}: {error}", crate::paths::display_path(path)))?;
-    Ok(Seen {
-        path: path.to_path_buf(),
-        hash: whole.map(|bytes| hex::encode(crate::world::crypto::sha256(bytes))),
-        size: metadata.len(),
-        modified: modified(&metadata),
-        encoding: encoding.map(str::to_string),
-    })
+    Ok(Seen { hash: whole.map(|bytes| hex::encode(crate::world::crypto::sha256(bytes))), ..measure(path, &metadata, encoding) })
+}
+
+/// The record of a file by its size and modification time, as `metadata` reports them.
+pub(crate) fn measure(path: &Path, metadata: &std::fs::Metadata, encoding: Option<&str>) -> Seen {
+    Seen { path: path.to_path_buf(), hash: None, size: metadata.len(), modified: modified(metadata), encoding: encoding.map(str::to_string) }
 }
 
 /// Appends what was seen to the resident's `seen` file.

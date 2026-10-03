@@ -14,6 +14,7 @@ mod text;
 
 use crate::encoding::view::{OpenedText, TextReader};
 use crate::head_note::{HeadMetric, HeadNote};
+use crate::town::seen::{self, Seen};
 pub use args::{Range, ViewArgs};
 use image::Picture;
 use std::fs::{self, File};
@@ -48,12 +49,36 @@ struct Entry {
     error: bool,
     shown: bool,
     blocks: Vec<Block>,
+    /// The file as it was when opened for showing, and whether all of its content was shown.
+    opened: Option<Seen>,
+    whole: bool,
 }
 
-/// Executes view using the enrolled node name, or the operating system hostname.
+/// What reading one file gave.
+struct Reading {
+    blocks: Vec<Block>,
+    /// Whether the blocks reach the end of what was asked for; viewing stops at the first file
+    /// that does not.
+    complete: bool,
+    /// Whether the blocks show the file's content, not a note about it.
+    content: bool,
+    encoding: Option<&'static str>,
+}
+
+impl Reading {
+    fn of(blocks: Vec<Block>, complete: bool, content: bool) -> Self {
+        Self { blocks, complete, content, encoding: None }
+    }
+}
+
+/// Executes view using the enrolled node name, or the operating system hostname. Run on
+/// behalf of a resident of the World, it also records what the resident saw (`town::seen`).
 pub fn run(args: &ViewArgs) -> Result<ExitCode, String> {
     let node = node_name()?;
-    let failed = write(args, &node, &mut std::io::stdout().lock())?;
+    let (failed, shown) = view(args, &node, &mut std::io::stdout().lock())?;
+    if let Err(error) = remember(shown) {
+        eprintln!("fastctx view: cannot record what was seen, so a later whole-file write cannot check whether these files changed since: {error}");
+    }
     Ok(if failed {
         ExitCode::FAILURE
     } else {
@@ -65,6 +90,42 @@ pub fn run(args: &ViewArgs) -> Result<ExitCode, String> {
 /// Returns true if any file failed. The caller supplies the local machine's name;
 /// the paths are always opened in this process, never on a different node.
 pub fn write(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<bool, String> {
+    view(args, node, output).map(|(failed, _)| failed)
+}
+
+/// Appends what a resident saw to its `seen` record on this machine, when a resident is the
+/// one viewing. A file whose content was shown whole is remembered by its hash, but only if
+/// its size and modification time are still those it had when opened; otherwise, and for a
+/// file shown in part, by that earlier size and time, which a later whole-file write compares.
+fn remember(shown: Vec<(Seen, bool)>) -> Result<(), String> {
+    let Some(resident) = std::env::var(crate::town::session::RESIDENT_VARIABLE).ok().filter(|id| !id.is_empty()) else {
+        return Ok(());
+    };
+    let paths = crate::world::WorldPaths::from_control(&crate::control::paths::ControlPaths::discover()?);
+    let config = crate::world::load_config(&paths)?.ok_or("this machine is not in a World")?;
+    let query = crate::town::who::Query { ids: vec![resident.clone()], ..Default::default() };
+    let found = crate::town::who::answer(&paths.dir, &config.name, &query);
+    let dir = crate::town::who::current(found.residents.iter().collect())
+        .map(|facts| facts.dir.clone())
+        .ok_or_else(|| format!("resident {resident} has no records on this machine"))?;
+    let mut records = Vec::with_capacity(shown.len());
+    for (opened, whole) in shown {
+        if whole {
+            let bytes = fs::read(&opened.path).map_err(|error| format!("Cannot read {}: {error}", crate::paths::display_path(&opened.path)))?;
+            let now = seen::observe(&opened.path, Some(&bytes), opened.encoding.as_deref())?;
+            if (now.size, now.modified) == (opened.size, opened.modified) {
+                records.push(now);
+                continue;
+            }
+        }
+        records.push(opened);
+    }
+    seen::record(&dir, &records)
+}
+
+/// Shows the files, and returns whether any failed and, for each file shown, the file as it
+/// was when opened and whether all of its content was shown.
+fn view(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<(bool, Vec<(Seen, bool)>), String> {
     let paths = args::paths(args)?;
     let mut entries: Vec<_> = paths.into_iter().map(|path| entry(path, node)).collect();
     let count = entries.len();
@@ -81,7 +142,7 @@ pub fn write(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<boo
         let available = remaining + entries[index].fallback.chars().count();
         let result = read(&entries[index], args, available);
         match result {
-            Ok((blocks, complete)) if !blocks.is_empty() => {
+            Ok((Reading { blocks, complete, content, encoding }, opened)) if !blocks.is_empty() => {
                 let pictures: Vec<_> = entries
                     .iter()
                     .flat_map(|entry| &entry.blocks)
@@ -98,6 +159,9 @@ pub fn write(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<boo
                 let before_resizing = resizing.then(|| entries.clone());
                 entries[index].blocks = blocks;
                 entries[index].shown = true;
+                entries[index].opened = Some(Seen { encoding: encoding.map(str::to_string), ..opened });
+                // A range of lines or pages is not the whole file, even when all of it fits.
+                entries[index].whole = complete && content && args.lines.is_none() && args.pages.is_none();
                 shrink_images(&mut entries);
                 let cost = entries
                     .iter()
@@ -157,7 +221,13 @@ pub fn write(args: &ViewArgs, node: &str, output: &mut impl Write) -> Result<boo
         }
     }
     output.flush().map_err(|error| error.to_string())?;
-    Ok(entries.iter().any(|entry| entry.error))
+    let failed = entries.iter().any(|entry| entry.error);
+    let shown = entries
+        .into_iter()
+        .filter(|entry| entry.shown)
+        .filter_map(|entry| Some((entry.opened?, entry.whole)))
+        .collect();
+    Ok((failed, shown))
 }
 
 fn entry(path: PathBuf, node: &str) -> Entry {
@@ -173,6 +243,8 @@ fn entry(path: PathBuf, node: &str) -> Entry {
                 error: true,
                 shown: false,
                 blocks: Vec::new(),
+                opened: None,
+                whole: false,
             };
         }
     };
@@ -200,6 +272,8 @@ fn entry(path: PathBuf, node: &str) -> Entry {
             error: true,
             shown: false,
             blocks: Vec::new(),
+            opened: None,
+            whole: false,
         };
     }
     let (bytes, error) = match fs::metadata(&path) {
@@ -242,11 +316,21 @@ fn entry(path: PathBuf, node: &str) -> Entry {
         error: error.is_some(),
         shown: false,
         blocks: Vec::new(),
+        opened: None,
+        whole: false,
     }
 }
 
-fn read(entry: &Entry, args: &ViewArgs, budget: usize) -> Result<(Vec<Block>, bool), String> {
-    let mut file = open_regular(&entry.path)?;
+/// Reads one file, with the file as it was when opened.
+fn read(entry: &Entry, args: &ViewArgs, budget: usize) -> Result<(Reading, Seen), String> {
+    let (file, metadata) = open_regular(&entry.path)?;
+    // Recorded absolute, as the write tools name files.
+    let absolute = std::path::absolute(&entry.path).map_err(|error| format!("Cannot resolve path: {error}"))?;
+    let opened = seen::measure(&absolute, &metadata, None);
+    Ok((decode(entry, args, budget, file)?, opened))
+}
+
+fn decode(entry: &Entry, args: &ViewArgs, budget: usize, mut file: File) -> Result<Reading, String> {
     let mut prefix = [0_u8; 512];
     let length = file.read(&mut prefix).map_err(|error| io_error(&error))?;
     file.rewind().map_err(|error| io_error(&error))?;
@@ -258,24 +342,24 @@ fn read(entry: &Entry, args: &ViewArgs, budget: usize) -> Result<(Vec<Block>, bo
             .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
     {
         #[cfg(feature = "pdf")]
-        return pdf::read(file, &entry.subject, entry.bytes, args, budget);
+        return pdf::read(file, &entry.subject, entry.bytes, args, budget).map(|(blocks, complete)| Reading::of(blocks, complete, true));
         #[cfg(not(feature = "pdf"))]
         return Err("PDF support is not enabled in this build.".to_string());
     }
     if ::image::guess_format(prefix).is_ok() {
         let image = Picture::open(&entry.subject, file)?;
         return Ok(if image.cost() <= budget {
-            (vec![Block::Image(image)], true)
+            Reading::of(vec![Block::Image(image)], true, true)
         } else {
-            (Vec::new(), false)
+            Reading::of(Vec::new(), false, true)
         });
     }
     if let Some(kind) = crate::binary::detect_binary_type(prefix) {
         let output = note(&entry.subject, &format!("{kind}: {}", size(entry.bytes)));
         return Ok(if output.chars().count() <= budget {
-            (vec![Block::Text(output)], true)
+            Reading::of(vec![Block::Text(output)], true, false)
         } else {
-            (Vec::new(), false)
+            Reading::of(Vec::new(), false, false)
         });
     }
     match TextReader::open(file, args.encoding.as_deref(), CHARACTER_BUDGET)? {
@@ -285,25 +369,24 @@ fn read(entry: &Entry, args: &ViewArgs, budget: usize) -> Result<(Vec<Block>, bo
                 &format!("binary file: {}", size(entry.bytes)),
             );
             Ok(if output.chars().count() <= budget {
-                (vec![Block::Text(output)], true)
+                Reading::of(vec![Block::Text(output)], true, false)
             } else {
-                (Vec::new(), false)
+                Reading::of(Vec::new(), false, false)
             })
         }
         OpenedText::Text(mut reader) => {
             let total = reader.total_lines;
             let window = text::TextWindow::read(|| reader.next_char(), args.lines, budget, total)?;
-            Ok(
-                match window.fit(&entry.subject, entry.bytes, reader.fact.as_deref(), budget) {
-                    Some((text, complete)) => (vec![Block::Text(text)], complete),
-                    None => (Vec::new(), false),
-                },
-            )
+            let reading = match window.fit(&entry.subject, entry.bytes, reader.fact.as_deref(), budget) {
+                Some((text, complete)) => Reading::of(vec![Block::Text(text)], complete, true),
+                None => Reading::of(Vec::new(), false, true),
+            };
+            Ok(Reading { encoding: Some(reader.label()), ..reading })
         }
     }
 }
 
-fn open_regular(path: &Path) -> Result<File, String> {
+fn open_regular(path: &Path) -> Result<(File, fs::Metadata), String> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -314,10 +397,11 @@ fn open_regular(path: &Path) -> Result<File, String> {
         options.custom_flags(libc::O_NONBLOCK);
     }
     let file = options.open(path).map_err(|error| io_error(&error))?;
-    if !file.metadata().map_err(|error| io_error(&error))?.is_file() {
+    let metadata = file.metadata().map_err(|error| io_error(&error))?;
+    if !metadata.is_file() {
         return Err("Cannot read non-regular file. Only regular files are supported.".to_string());
     }
-    Ok(file)
+    Ok((file, metadata))
 }
 
 fn io_error(error: &std::io::Error) -> String {
