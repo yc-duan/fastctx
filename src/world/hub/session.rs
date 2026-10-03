@@ -39,6 +39,9 @@ pub(crate) struct Peer {
     /// fastctx version the member announced.
     pub(crate) version: String,
     pub(crate) protocol: u32,
+    /// The connection that admitted the member: it publishes the member's record and hands
+    /// over to the node, so its coming and going is not the member's presence.
+    pub(crate) joining: bool,
 }
 
 pub(crate) struct Link<S> {
@@ -306,6 +309,7 @@ where
             generation,
             version: hello.version.clone(),
             protocol: hello.protocol,
+            joining: matches!(hello.intent, Intent::Enroll | Intent::Bootstrap),
         },
         auth,
         hello.intent,
@@ -549,14 +553,16 @@ where
         hub.unregister(&name, peer.generation);
         return;
     }
-    hub.append_event(
-        &name,
-        "node.online",
-        [(
-            "address",
-            serde_json::Value::String(address.ip().to_string()),
-        )],
-    );
+    if !peer.joining {
+        hub.append_event(
+            &name,
+            "node.online",
+            [(
+                "address",
+                serde_json::Value::String(address.ip().to_string()),
+            )],
+        );
+    }
     log(format!("\"{name}\" online from {address}"));
 
     {
@@ -700,11 +706,13 @@ where
         .update_session(&name, |row| row.last_seen = crate::world::now_rfc3339());
     if still_current {
         hub.close_subscriptions(&name);
-        hub.append_event(
-            &name,
-            "node.offline",
-            [("reason", serde_json::Value::String(reason.clone()))],
-        );
+        if !peer.joining {
+            hub.append_event(
+                &name,
+                "node.offline",
+                [("reason", serde_json::Value::String(reason.clone()))],
+            );
+        }
         hub.fail_pending_for_target(&name, "disconnected");
     }
     log(format!("\"{name}\" offline ({reason})"));
