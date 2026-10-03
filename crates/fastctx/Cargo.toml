@@ -1,0 +1,21 @@
+[package]
+name = "fastctx"
+description = "One world, many machines: a real, honest world for AI agents to live in"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "fastctx"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+fastctx-hands = { path = "../fastctx-hands" }
+fastctx-node = { path = "../fastctx-node" }
+fastctx-platform = { path = "../fastctx-platform" }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

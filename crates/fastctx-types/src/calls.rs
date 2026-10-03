@@ -10,8 +10,9 @@ use crate::{JobId, ResidentId, TownName};
 pub enum Call {
     /// Run a script on this machine for a resident.
     Run { resident: ResidentId, town: Option<TownName>, request: RunRequest },
-    /// A supervisor says its job has ended; the record holds how.
-    JobEnded { job: JobId, resident: ResidentId, town: Option<TownName> },
+    /// A supervisor says its job's record has changed: the shell started
+    /// or exited, the output ended, or nothing of the job runs any more.
+    JobChanged { job: JobId, resident: ResidentId, town: Option<TownName> },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

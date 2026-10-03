@@ -56,7 +56,8 @@ impl ProcessTree {
         self.0.wait_empty()
     }
 
-    /// How many processes of the tree are running now.
+    /// How many processes of the tree are running now; one in the middle
+    /// of exiting is not counted.
     pub fn count(&self) -> io::Result<usize> {
         self.0.count()
     }
@@ -151,7 +152,7 @@ mod imp {
         }
 
         pub fn count(&self) -> io::Result<usize> {
-            Ok(descendants()?.len())
+            Ok(descendants()?.iter().filter(|process| !process.is_ending()).count())
         }
 
         pub fn kill(&self) -> io::Result<()> {
@@ -250,7 +251,7 @@ mod imp {
 
     use windows_sys::Win32::Foundation::{
         ERROR_INVALID_PARAMETER, ERROR_MORE_DATA, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
-        SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        STILL_ACTIVE, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
@@ -389,6 +390,14 @@ mod imp {
             for member in self.members()? {
                 // SAFETY: a zero wait on a live handle.
                 if unsafe { WaitForSingleObject(member.as_raw_handle(), 0) } != WAIT_TIMEOUT {
+                    continue;
+                }
+                // A process that is exiting already has its exit code while
+                // its handle has yet to signal. (One that exits with 259,
+                // the value of STILL_ACTIVE, counts as running.)
+                let mut code = 0;
+                // SAFETY: a live handle with query access.
+                if unsafe { GetExitCodeProcess(member.as_raw_handle(), &mut code) } != 0 && code != STILL_ACTIVE as u32 {
                     continue;
                 }
                 // The console host Windows adds for a console is not one of

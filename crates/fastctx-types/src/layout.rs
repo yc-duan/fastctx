@@ -22,6 +22,11 @@ impl WorldDir {
         Self { root: fastctx_root.join("world") }
     }
 
+    /// The World kept in `world` itself.
+    pub fn at(world: &Path) -> Self {
+        Self { root: world.to_path_buf() }
+    }
+
     pub fn path(&self) -> &Path {
         &self.root
     }

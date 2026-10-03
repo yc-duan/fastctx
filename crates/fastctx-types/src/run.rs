@@ -40,6 +40,10 @@ pub enum RunState {
     Exited { status: ExitStatus, remaining: u32 },
     /// Still running when the wait ended; it continues in the background.
     Running,
+    /// Someone stopped it.
+    Stopped,
+    /// Its supervisor was gone while it ran (`EndedHow::Interrupted`).
+    Interrupted { reason: String },
     /// It could not be started.
     Failed { error: String },
 }
@@ -57,17 +61,35 @@ pub struct OutputWindow {
     /// counts.
     pub lines: u64,
     pub pieces: Vec<OutputPiece>,
+    /// Shown lines that were not UTF-8 but decoded in the machine's legacy
+    /// code page.
+    pub legacy: Option<LegacyLines>,
+    /// Shown lines holding bytes that decode in no known encoding; those
+    /// bytes appear as `\xNN`.
+    pub escaped_lines: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyLines {
+    pub encoding: String,
+    pub lines: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OutputPiece {
-    /// Text, from line `first_line` (counting from 1).
+    /// Text from line `first_line` (counting from 1), as a terminal shows it.
     Text { first_line: u64, text: String },
-    /// Lines left out to stay within the budget.
+    /// Characters `from` to `to` (counting from 1) of a line `of`
+    /// characters long, when the whole line does not fit.
+    PartOfLine { line: u64, from: u64, to: u64, of: u64, text: String },
+    /// Lines left out to stay within the budget. A line shown in part on
+    /// either side counts as shown.
     Omitted { first_line: u64, last_line: u64 },
     /// An image the output drew with a terminal graphics sequence.
     Image { mime: String, width: u32, height: u32, base64: String },
+    /// A graphics sequence that cannot be shown as an image, and why.
+    Unreadable { line: u64, reason: String },
 }
 
 /// How a program ended.
@@ -107,11 +129,21 @@ pub struct JobRecord {
     /// How many processes the shell left running, counted when the shell
     /// had exited and the output had ended.
     pub remaining: Option<u32>,
+    /// Set when the log could not take more output, as when the disk is
+    /// full: what failed, and how many bytes the log had kept by then. The
+    /// rest of the output was read and dropped, so the job ran on.
+    pub output_lost: Option<OutputLost>,
     /// Set once nothing of the job runs any more and its output is complete.
     pub end: Option<Ended>,
     /// On Windows the supervisor could not leave the node's job object, so
     /// the job ends when the node ends.
     pub ends_with_node: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputLost {
+    pub kept_bytes: u64,
+    pub error: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

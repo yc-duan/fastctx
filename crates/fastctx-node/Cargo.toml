@@ -1,0 +1,19 @@
+[package]
+name = "fastctx-node"
+description = "The node: the one long-lived process on each machine, and the only writer of the World's state there"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+fastctx-hands = { path = "../fastctx-hands" }
+fastctx-platform = { path = "../fastctx-platform" }
+fastctx-types = { path = "../fastctx-types" }
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

@@ -1,0 +1,23 @@
+[package]
+name = "fastctx-hands"
+description = "The World's hands: run, view and write"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+base64 = "0.22"
+fastctx-client = { path = "../fastctx-client" }
+fastctx-platform = { path = "../fastctx-platform" }
+fastctx-types = { path = "../fastctx-types" }
+getrandom = { version = "0.3", features = ["std"] }
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

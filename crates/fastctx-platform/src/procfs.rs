@@ -13,12 +13,23 @@ pub struct Stat {
     pub state: u8,
     /// Clock ticks since boot at which the process started.
     pub start: u64,
+    /// The kernel's per-process flags.
+    pub flags: u64,
 }
+
+/// Set from the moment a process starts to exit: its files are closing,
+/// and it becomes a zombie a moment later.
+const PF_EXITING: u64 = 0x4;
 
 impl Stat {
     /// A process that has exited, whether or not it has been reaped.
     pub fn has_exited(&self) -> bool {
         self.state == b'Z' || self.state == b'X'
+    }
+
+    /// A process that has exited or is in the middle of exiting.
+    pub fn is_ending(&self) -> bool {
+        self.has_exited() || self.flags & PF_EXITING != 0
     }
 }
 
@@ -55,7 +66,7 @@ fn parse(pid: u32, text: &[u8]) -> io::Result<Stat> {
     let close = text.iter().rposition(|&b| b == b')').ok_or_else(malformed)?;
     let fields: Vec<&[u8]> = text.get(close + 2..).ok_or_else(malformed)?.split(|&b| b == b' ').collect();
     // `fields` starts at field 3, the state; field 4 is the parent, field
-    // 22 the start time.
+    // 9 the flags, field 22 the start time.
     let number = |index: usize| -> io::Result<u64> {
         let field = fields.get(index).ok_or_else(malformed)?;
         std::str::from_utf8(field).ok().and_then(|text| text.parse().ok()).ok_or_else(malformed)
@@ -65,6 +76,7 @@ fn parse(pid: u32, text: &[u8]) -> io::Result<Stat> {
         ppid: number(1)? as u32,
         state: *fields.first().and_then(|state| state.first()).ok_or_else(malformed)?,
         start: number(19)?,
+        flags: number(6)?,
     })
 }
 

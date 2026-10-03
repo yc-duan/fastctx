@@ -1,0 +1,16 @@
+[package]
+name = "fastctx-client"
+description = "The one way into the node: every command, the TUI and later the graphical interface go through it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+fastctx-platform = { path = "../fastctx-platform" }
+fastctx-types = { path = "../fastctx-types" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
