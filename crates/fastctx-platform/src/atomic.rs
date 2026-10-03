@@ -1,0 +1,218 @@
+//! Publishing a file whole.
+//!
+//! Readers see the old bytes or the new ones, never a mix, and a crash
+//! leaves at worst a stray temporary file beside the target. The bytes are
+//! written to a temporary file in the target's directory, flushed to disk,
+//! and moved over the target in one step. On Windows the move uses POSIX
+//! semantics, so a reader that still holds the old file open keeps reading
+//! the old bytes instead of making the replacement fail.
+
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Who may read and write a published file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Permissions {
+    /// The owner alone: the World's own records. On Windows the file takes
+    /// the access of its directory, which the World keeps private.
+    Private,
+    /// Whatever the file being replaced had; a new file gets what the
+    /// platform gives new files. For files that belong to the user.
+    KeepExisting,
+}
+
+/// Replaces `path` with `bytes`, or creates it.
+pub fn publish(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
+    imp::publish(path, bytes, permissions, true)
+}
+
+/// Creates `path` with `bytes`, failing with `AlreadyExists` if something is
+/// there already: for records that are written once and never change.
+pub fn publish_new(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
+    imp::publish(path, bytes, permissions, false)
+}
+
+/// A name beside `path` that no other writer, in this process or another,
+/// uses at the same moment; it starts with a dot so listings pass over it.
+fn temporary_beside(path: &Path) -> io::Result<PathBuf> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{} names no file", path.display())))?;
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    Ok(path.with_file_name(format!(".{}.{}-{sequence}.tmp", name.to_string_lossy(), std::process::id())))
+}
+
+#[cfg(unix)]
+mod imp {
+    use std::fs::{self, File, OpenOptions};
+    use std::io::{self, Write as _};
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+    use std::path::Path;
+
+    use super::{Permissions, temporary_beside};
+
+    pub fn publish(path: &Path, bytes: &[u8], permissions: Permissions, replace: bool) -> io::Result<()> {
+        let temporary = temporary_beside(path)?;
+        // 0666 lets the umask decide for new user files, as any program's
+        // new file would; private records never pass through a wider mode.
+        let creation_mode = match permissions {
+            Permissions::Private => 0o600,
+            Permissions::KeepExisting => 0o666,
+        };
+        let mut file = OpenOptions::new().write(true).create_new(true).mode(creation_mode).open(&temporary)?;
+        let result = (|| {
+            file.write_all(bytes)?;
+            if permissions == Permissions::KeepExisting
+                && let Ok(existing) = fs::metadata(path)
+            {
+                file.set_permissions(fs::Permissions::from_mode(existing.permissions().mode() & 0o7777))?;
+            }
+            file.sync_all()?;
+            if replace {
+                fs::rename(&temporary, path)?;
+            } else {
+                // A hard link fails if the target exists, which a rename
+                // would silently overwrite.
+                fs::hard_link(&temporary, path)?;
+                fs::remove_file(&temporary)?;
+            }
+            sync_directory(path)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+
+    /// Makes the new directory entry itself durable.
+    fn sync_directory(path: &Path) -> io::Result<()> {
+        match path.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => File::open(parent)?.sync_all(),
+            _ => File::open(".")?.sync_all(),
+        }
+    }
+}
+
+#[cfg(windows)]
+mod imp {
+    use std::ffi::OsStr;
+    use std::io;
+    use std::mem::size_of;
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::path::Path;
+    use std::ptr;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_DISPOSITION_INFO, FILE_RENAME_INFO,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, FileRenameInfoEx,
+        FlushFileBuffers, SetFileInformationByHandle, WriteFile,
+    };
+
+    use super::{Permissions, temporary_beside};
+
+    const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x1;
+    const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x2;
+
+    pub fn publish(path: &Path, bytes: &[u8], _permissions: Permissions, replace: bool) -> io::Result<()> {
+        let temporary = temporary_beside(path)?;
+        let target = std::path::absolute(path)?;
+        let handle = Handle(create_temporary(&temporary)?);
+        let result = (|| {
+            write_all(handle.0, bytes)?;
+            // SAFETY: a valid handle opened for writing.
+            if unsafe { FlushFileBuffers(handle.0) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            rename_by_handle(handle.0, &target, replace)
+        })();
+        if result.is_err() {
+            delete_on_close(handle.0);
+        }
+        drop(handle);
+        result
+    }
+
+    struct Handle(HANDLE);
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            // SAFETY: the handle is owned here and closed once.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    fn wide(text: &OsStr) -> Vec<u16> {
+        text.encode_wide().chain([0]).collect()
+    }
+
+    fn create_temporary(path: &Path) -> io::Result<HANDLE> {
+        let name = wide(path.as_os_str());
+        // DELETE access is what lets the handle rename itself over the target.
+        // SAFETY: a NUL-terminated path and no security attributes.
+        let handle = unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                GENERIC_WRITE | DELETE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                ptr::null(),
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(handle)
+    }
+
+    fn write_all(handle: HANDLE, mut bytes: &[u8]) -> io::Result<()> {
+        while !bytes.is_empty() {
+            let chunk = bytes.len().min(u32::MAX as usize) as u32;
+            let mut written = 0u32;
+            // SAFETY: the buffer outlives the call; no overlapped I/O.
+            if unsafe { WriteFile(handle, bytes.as_ptr(), chunk, &mut written, ptr::null_mut()) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            bytes = &bytes[written as usize..];
+        }
+        Ok(())
+    }
+
+    /// Moves the open file to `target` with POSIX semantics: the old file's
+    /// readers keep their bytes, and the name switches in one step.
+    fn rename_by_handle(handle: HANDLE, target: &Path, replace: bool) -> io::Result<()> {
+        // The Win32 layer reads the name up to its NUL even though the length
+        // is given; without the NUL the new name gains whatever follows.
+        let name = wide(target.as_os_str());
+        let name_bytes = (name.len() - 1) * size_of::<u16>();
+        let header = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+        let total = header + (name.len() * size_of::<u16>());
+        let mut buffer = vec![0u64; total.div_ceil(size_of::<u64>())];
+        let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+        let flags = FILE_RENAME_FLAG_POSIX_SEMANTICS | if replace { FILE_RENAME_FLAG_REPLACE_IF_EXISTS } else { 0 };
+        // SAFETY: the buffer is zeroed, aligned for FILE_RENAME_INFO, and
+        // large enough for the header and the NUL-terminated name.
+        unsafe {
+            (*info).Anonymous.Flags = flags;
+            (*info).RootDirectory = ptr::null_mut();
+            (*info).FileNameLength = u32::try_from(name_bytes).map_err(|_| io::Error::other("path too long"))?;
+            ptr::copy_nonoverlapping(name.as_ptr(), (&raw mut (*info).FileName).cast::<u16>(), name.len());
+            if SetFileInformationByHandle(handle, FileRenameInfoEx, info.cast(), total as u32) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+
+    fn delete_on_close(handle: HANDLE) {
+        let info = FILE_DISPOSITION_INFO { DeleteFile: true };
+        // SAFETY: a valid handle opened with DELETE access.
+        unsafe {
+            SetFileInformationByHandle(handle, FileDispositionInfo, (&raw const info).cast(), size_of::<FILE_DISPOSITION_INFO>() as u32);
+        }
+    }
+}
