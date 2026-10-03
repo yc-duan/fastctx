@@ -93,7 +93,12 @@ pub(crate) const ASK_COLLEAGUE_DESCRIPTION: &str = concat!(
     "phrase questions so that facts can answer them. While it works, do not interrupt unless the ",
     "premise changed; `fastctx w <id>` shows what it is actually doing. When it reports back, look at ",
     "what it really ran before believing \"done\", and if it answers a different question than you ",
-    "asked, ask again whether your question holds and on what evidence."
+    "asked, ask again whether your question holds and on what evidence.\n\n",
+    "Do these yourself instead of handing them over: security testing around trust boundaries ",
+    "(authentication, permissions, input validation, paths escaping a directory, replayed messages), ",
+    "even on your own code, and biological or chemical lab methods. Without OpenAI's trusted access ",
+    "such turns are stopped whole, and repeated stops count against the account. If a turn is ",
+    "stopped, leave that colleague; do not retry the work reworded."
 );
 pub(crate) const ASK_PROMPT: &str = "Everything the colleague needs, in your own words; delivered verbatim.";
 pub(crate) const ASK_DESCRIPTION: &str = "A three-to-eight-word label for the work, shown next to its name in fastctx w.";
