@@ -15,7 +15,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::Path;
 
-use crate::ProcessIdentity;
+use fastctx_types::ProcessIdentity;
 
 /// A process started on its own.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub fn spawn_detached(
 /// past its first character (Windows keeps per-drive directories in names
 /// that start with one), a NUL anywhere, and a name given twice, which on
 /// Windows means twice regardless of case.
-fn check_environment(env: &[(OsString, OsString)]) -> io::Result<()> {
+pub(crate) fn check_environment(env: &[(OsString, OsString)]) -> io::Result<()> {
     let invalid = |what: &str| Err(io::Error::new(io::ErrorKind::InvalidInput, format!("environment: {what}")));
     let mut seen = std::collections::HashSet::new();
     for (name, value) in env {
@@ -77,7 +77,7 @@ mod imp {
     use std::process::{Command, Stdio};
 
     use super::DetachedProcess;
-    use crate::ProcessIdentity;
+    use crate::identity::identity_of;
     use crate::unix_fds::close_on_exec_from;
 
     pub fn spawn_detached(
@@ -128,30 +128,27 @@ mod imp {
         spawned?.wait()?;
         let mut pid = [0u8; 4];
         pid_reader.read_exact(&mut pid)?;
-        Ok(DetachedProcess { identity: ProcessIdentity::of(u32::from_ne_bytes(pid))?, ends_with_starters_job: false })
+        Ok(DetachedProcess { identity: identity_of(u32::from_ne_bytes(pid))?, ends_with_starters_job: false })
     }
 }
 
 #[cfg(windows)]
 mod imp {
-    use std::cmp::Ordering;
     use std::ffi::{OsStr, OsString};
     use std::io;
     use std::mem::{size_of, zeroed};
-    use std::os::windows::ffi::OsStrExt as _;
     use std::path::Path;
     use std::ptr;
 
+    use fastctx_types::ProcessIdentity;
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED};
-    use windows_sys::Win32::Globalization::{CSTR_EQUAL, CSTR_GREATER_THAN, CompareStringOrdinal};
     use windows_sys::Win32::System::Threading::{
         CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
         DETACHED_PROCESS, PROCESS_INFORMATION, STARTUPINFOW,
     };
 
     use super::DetachedProcess;
-    use crate::ProcessIdentity;
-    use crate::command_line::windows_command_line;
+    use crate::windows_process::{command_line, environment_block, wide};
 
     pub fn spawn_detached(
         program: &Path,
@@ -159,53 +156,22 @@ mod imp {
         cwd: &Path,
         env: &[(OsString, OsString)],
     ) -> io::Result<DetachedProcess> {
-        let mut command_line = windows_command_line(program.as_os_str(), args)?;
-        command_line.push(0);
+        let line = command_line(program.as_os_str(), args)?;
         let block = environment_block(env);
-        let (identity, ends_with_starters_job) = match create(program, &command_line, cwd, &block, true) {
+        let (identity, ends_with_starters_job) = match create(program, &line, cwd, &block, true) {
             Ok(identity) => (identity, false),
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
-                (create(program, &command_line, cwd, &block, false)?, true)
+                (create(program, &line, cwd, &block, false)?, true)
             }
             Err(error) => return Err(error),
         };
         Ok(DetachedProcess { identity: Some(identity), ends_with_starters_job })
     }
 
-    /// `NAME=value` strings, each NUL-terminated, sorted by name without
-    /// regard to case as Windows requires, ending with one more NUL.
-    fn environment_block(env: &[(OsString, OsString)]) -> Vec<u16> {
-        let mut vars: Vec<(Vec<u16>, Vec<u16>)> =
-            env.iter().map(|(name, value)| (name.encode_wide().collect(), value.encode_wide().collect())).collect();
-        vars.sort_by(|(a, _), (b, _)| compare_names(a, b));
-        let mut block = Vec::new();
-        for (name, value) in vars {
-            block.extend(name);
-            block.push(u16::from(b'='));
-            block.extend(value);
-            block.push(0);
-        }
-        if block.is_empty() {
-            block.push(0);
-        }
-        block.push(0);
-        block
-    }
-
-    fn compare_names(a: &[u16], b: &[u16]) -> Ordering {
-        // SAFETY: both slices are valid for their lengths, which fit in i32
-        // for any name the system accepts.
-        match unsafe { CompareStringOrdinal(a.as_ptr(), a.len() as i32, b.as_ptr(), b.len() as i32, 1) } {
-            CSTR_EQUAL => Ordering::Equal,
-            CSTR_GREATER_THAN => Ordering::Greater,
-            _ => Ordering::Less,
-        }
-    }
-
-    fn create(program: &Path, command_line: &[u16], cwd: &Path, block: &[u16], breakaway: bool) -> io::Result<ProcessIdentity> {
-        let application: Vec<u16> = program.as_os_str().encode_wide().chain([0]).collect();
-        let mut command_line = command_line.to_vec();
-        let directory: Vec<u16> = cwd.as_os_str().encode_wide().chain([0]).collect();
+    fn create(program: &Path, line: &[u16], cwd: &Path, block: &[u16], breakaway: bool) -> io::Result<ProcessIdentity> {
+        let application = wide(program);
+        let mut line = line.to_vec();
+        let directory = wide(cwd);
         let flags = DETACHED_PROCESS
             | CREATE_NEW_PROCESS_GROUP
             | CREATE_UNICODE_ENVIRONMENT
@@ -221,7 +187,7 @@ mod imp {
         let created = unsafe {
             CreateProcessW(
                 application.as_ptr(),
-                command_line.as_mut_ptr(),
+                line.as_mut_ptr(),
                 ptr::null(),
                 ptr::null(),
                 0,

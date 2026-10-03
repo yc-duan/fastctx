@@ -1,36 +1,26 @@
-//! Identifying one lifetime of a process.
-//!
-//! A PID alone does not: the system reuses it. A process is its PID plus a
-//! token that changes whenever the PID is reused (on Linux the boot and the
-//! start time, on Windows the creation time). Asking whether an identity is
-//! alive answers for that lifetime only.
+//! Identifying one lifetime of a process (`ProcessIdentity`): its PID plus
+//! a token that changes whenever the PID is reused, on Linux the boot and
+//! the start time, on Windows the creation time. Asking whether an identity
+//! is alive answers for that lifetime only.
 
 use std::io;
 
-/// One lifetime of a process.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ProcessIdentity {
-    pub pid: u32,
-    /// Opaque; compared, stored and shown, never parsed by callers.
-    pub token: String,
+use fastctx_types::ProcessIdentity;
+
+/// The identity of the process with `pid` now, or `None` if no process with
+/// that PID is running.
+pub fn identity_of(pid: u32) -> io::Result<Option<ProcessIdentity>> {
+    Ok(imp::token(pid)?.map(|token| ProcessIdentity { pid, token }))
 }
 
-impl ProcessIdentity {
-    /// The identity of the process with `pid` now, or `None` if no process
-    /// with that PID is running.
-    pub fn of(pid: u32) -> io::Result<Option<Self>> {
-        Ok(imp::token(pid)?.map(|token| Self { pid, token }))
-    }
+/// The identity of the calling process.
+pub fn current_identity() -> io::Result<ProcessIdentity> {
+    identity_of(std::process::id())?.ok_or_else(|| io::Error::other("the current process has no identity"))
+}
 
-    /// The identity of the calling process.
-    pub fn current() -> io::Result<Self> {
-        Self::of(std::process::id())?.ok_or_else(|| io::Error::other("the current process has no identity"))
-    }
-
-    /// Whether this lifetime of the process is still running.
-    pub fn is_alive(&self) -> io::Result<bool> {
-        Ok(imp::token(self.pid)?.as_deref() == Some(self.token.as_str()))
-    }
+/// Whether this lifetime of the process is still running.
+pub fn is_alive(identity: &ProcessIdentity) -> io::Result<bool> {
+    Ok(imp::token(identity.pid)?.as_deref() == Some(identity.token.as_str()))
 }
 
 #[cfg(target_os = "linux")]
@@ -78,7 +68,7 @@ mod imp {
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
 
-    use super::ProcessIdentity;
+    use fastctx_types::ProcessIdentity;
 
     pub fn token(pid: u32) -> io::Result<Option<String>> {
         // SAFETY: plain handle-based queries; the handle is closed below.

@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+fastctx-types = { path = "../fastctx-types" }
 tokio = { workspace = true, features = ["io-util", "net", "time"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -20,8 +21,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_Globalization",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_System_Environment",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
+    "Win32_System_JobObjects",
     "Win32_System_Threading",
     "Win32_UI_Shell",
 ] }
