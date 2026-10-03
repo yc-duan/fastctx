@@ -437,20 +437,24 @@ impl ServerHandler for FastCtxServer {
         result
     }
 
-    // The handshake is complete: the host has said what it is, so the session can register.
-    async fn on_initialized(&self, context: rmcp::service::NotificationContext<RoleServer>) {
-        let Some(slot) = &self.resident else { return };
-        let (agent, version) = context
-            .peer
-            .peer_info()
-            .map(|info| {
-                (
-                    info.client_info.name.clone(),
-                    info.client_info.version.clone(),
-                )
-            })
-            .unwrap_or_default();
-        slot.attach(&self.session.environment, &agent, &version);
+    // The host says what it is in `initialize` and calls no tool before the answer, so the
+    // session registers here and its first call finds its resident. rmcp does not hold calls
+    // back until `initialized` arrives, so registering there let an early call find none. The
+    // protocol version is negotiated by rmcp's handshake once this returns.
+    async fn initialize(
+        &self,
+        request: rmcp::model::InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<rmcp::model::InitializeResult, rmcp::ErrorData> {
+        if let Some(slot) = &self.resident {
+            slot.attach(
+                &self.session.environment,
+                &request.client_info.name,
+                &request.client_info.version,
+            );
+        }
+        context.peer.set_peer_info(request);
+        Ok(self.get_info())
     }
 
     fn get_info(&self) -> ServerInfo {

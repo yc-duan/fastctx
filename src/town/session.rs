@@ -77,7 +77,7 @@ impl ResidentSlot {
         self.id.lock().clone()
     }
 
-    /// Registers the session; called once its handshake completed.
+    /// Registers the session; called while its host's `initialize` is answered, before any call.
     pub(crate) fn attach(
         &self,
         environment: &SessionEnvironment,
