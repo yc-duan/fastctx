@@ -46,14 +46,15 @@ pub(super) fn render_towns(frame: &mut Frame<'_>, app: &mut WorldApp, m: &WorldM
     let table_area = Rect { y: list.y + 1, height: list.height.saturating_sub(1), ..list };
     let window = table_window(census.residents.len(), selected, table_area.height);
     let ids: Vec<String> = census.residents.iter().map(|facts| safe(&facts.about.id)).collect();
-    let id_width = ids.iter().map(|id| width(id)).max().unwrap_or(8).clamp(8, 16);
-    let state_width = census.residents.iter().map(|facts| width(state_word(&facts.now.state, m)) + 2).max().unwrap_or(6);
+    // A column is as wide as its content within a bound, and never narrower than its header.
+    let id_width = ids.iter().map(|id| width(id)).max().unwrap_or(8).clamp(8, 16).max(width(m.col_resident));
+    let state_width = census.residents.iter().map(|facts| width(state_word(&facts.now.state, m)) + 2).max().unwrap_or(6).max(width(m.col_state));
     let agents: Vec<String> = census.residents.iter().map(|facts| agent_line(&facts.about)).collect();
-    let agent_width = agents.iter().map(|agent| width(agent)).max().unwrap_or(6).clamp(6, 24);
+    let agent_width = agents.iter().map(|agent| width(agent)).max().unwrap_or(6).clamp(6, 24).max(width(m.col_agent));
     let towns: Vec<String> = census.residents.iter().map(|facts| town_label(facts.about.town.as_deref(), census, m)).collect();
-    let town_width = towns.iter().map(|town| width(town)).max().unwrap_or(6).clamp(6, 18);
+    let town_width = towns.iter().map(|town| width(town)).max().unwrap_or(6).clamp(6, 18).max(width(m.col_town));
     let machines: Vec<String> = census.residents.iter().map(|facts| safe(&facts.about.machine)).collect();
-    let machine_width = machines.iter().map(|machine| width(machine)).max().unwrap_or(6).clamp(6, 16);
+    let machine_width = machines.iter().map(|machine| width(machine)).max().unwrap_or(6).clamp(6, 16).max(width(m.col_machine));
     // Residents of one machine need no machine column; residents of several do, before their
     // town, which the detail pane names too.
     let with_machine = list.width >= 60 && machines.iter().any(|machine| machine != &machines[0]);
@@ -243,13 +244,16 @@ pub(super) fn chat_context(app: &WorldApp, m: &WorldMessages) -> String {
 fn compose_lines(chat: &Chat, towns: &[(String, String)], m: &WorldMessages) -> Lines {
     let Some(compose) = &chat.compose else { return Vec::new() };
     let agents = [m.agent_codex, m.agent_claude];
-    let mut agent_spans = vec![Span::styled(format!("{:<8}", m.col_agent), Style::default().fg(theme::muted()))];
+    // Both labels take the width of the wider one on screen, then two cells, so the choices line up.
+    let label_width = width(m.col_agent).max(width(m.col_town)) + 2;
+    let label = |text: &str| Span::styled(format!("{text}{}", " ".repeat(label_width - width(text))), Style::default().fg(theme::muted()));
+    let mut agent_spans = vec![label(m.col_agent)];
     for (index, label) in agents.iter().enumerate() {
         agent_spans.push(button(label, index == compose.agent, theme::accent()));
         agent_spans.push(Span::raw(" "));
     }
     agent_spans.push(Span::styled("  Tab", Style::default().fg(theme::border())));
-    let mut town_spans = vec![Span::styled(format!("{:<8}", m.col_town), Style::default().fg(theme::muted()))];
+    let mut town_spans = vec![label(m.col_town)];
     let choices = std::iter::once(m.outside.to_string()).chain(towns.iter().map(|(slug, name)| if name == slug { safe(slug) } else { format!("{} · {}", safe(name), safe(slug)) }));
     for (index, label) in choices.enumerate() {
         town_spans.push(button(&label, index == compose.town, theme::accent()));
