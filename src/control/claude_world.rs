@@ -1,7 +1,7 @@
 //! World-specific Claude host settings and the plugin command transaction.
 
 use super::apply::{PreviewAction, PreviewDetail, PreviewItem, PreviewTarget};
-use super::claude_plugin::{self, PluginFiles, PluginPlan, PluginReceipt};
+use super::claude_plugin::{self, PluginPlan, PluginReceipt};
 use super::json_setting::{self, JsonSettingReceipt};
 use super::paths::ControlPaths;
 use super::settings::{self, FastCtxSettings};
@@ -26,7 +26,9 @@ pub struct ClaudeWorldReceipt {
 pub(crate) struct ClaudeWorldPlan {
     plugin: PluginPlan,
     receipt: ClaudeWorldReceipt,
-    projected_files: PluginFiles,
+    previous_limit: Option<JsonSettingReceipt>,
+    original: Option<Vec<u8>>,
+    projected: Option<Vec<u8>>,
     limit_detail: PreviewDetail,
 }
 
@@ -38,34 +40,33 @@ pub(crate) fn plan(
     if !enrolled && previous.is_none() {
         return Ok(None);
     }
-    let world = control.fastctx_dir.join("world");
-    let plugin = PluginPlan::new(
-        &control.home,
-        &world,
-        enrolled,
-        previous.and_then(|r| r.plugin.as_ref()),
-    )?;
-    if let Some(previous) = previous
-        && !claude_plugin::paths_match(&previous.settings_path, &plugin.paths[0])
+    let path = control.home.join(".claude/settings.json");
+    if previous.is_some_and(|previous| !claude_plugin::paths_match(&previous.settings_path, &path))
     {
         return Err("The Claude World receipt points at a different settings file.".to_string());
     }
-    let (projected_files, receipt, limit_detail) = if enrolled {
+    let plugin = PluginPlan::new(
+        &control.home,
+        &control.fastctx_dir.join("world"),
+        enrolled,
+        previous.and_then(|r| r.plugin.as_ref()),
+    )?;
+    let original = transaction::read_snapshot(&path)?;
+    let previous_limit = previous.map(|r| r.output_limit.clone());
+    let (projected, receipt, limit_detail) = if enrolled {
         let (bytes, output_limit) = json_setting::set(
-            plugin.originals[0].as_deref().unwrap_or_default(),
+            original.as_deref().unwrap_or_default(),
             LIMIT_PATH,
             LIMIT,
-            previous.map(|r| &r.output_limit),
+            previous_limit.as_ref(),
         )?;
-        let mut files = plugin.originals.clone();
-        files[0] = Some(bytes);
         (
-            files,
+            Some(bytes),
             ClaudeWorldReceipt {
-                settings_path: plugin.paths[0].clone(),
+                settings_path: path,
                 settings_existed: previous
                     .map(|r| r.settings_existed)
-                    .unwrap_or(plugin.originals[0].is_some()),
+                    .unwrap_or(original.is_some()),
                 output_limit,
                 plugin: previous.and_then(|r| r.plugin.clone()),
             },
@@ -75,100 +76,116 @@ pub(crate) fn plan(
         let receipt = previous
             .expect("removing a World connection requires its receipt")
             .clone();
-        let mut files = plugin.project_remove(plugin.originals.clone())?;
-        let source = files[0].as_deref().unwrap_or_default();
-        // The host limit is shared: a later user value survives removal, like Codex's limit.
-        let limit_detail = if json_config::inspect(source, LIMIT_PATH)?.as_deref()
-            == Some(&receipt.output_limit.applied_hash)
-        {
-            let bytes = json_setting::restore(source, LIMIT_PATH, &receipt.output_limit)?;
-            files[0] = if bytes.is_empty() && !receipt.settings_existed {
-                None
-            } else {
-                Some(bytes)
-            };
-            match &receipt.output_limit.before {
-                Some(raw) => PreviewDetail::kept(format!("env.MAX_MCP_OUTPUT_TOKENS = {raw}")),
-                None => PreviewDetail::removed("env.MAX_MCP_OUTPUT_TOKENS = \"200000\""),
-            }
-        } else {
-            PreviewDetail::kept("env.MAX_MCP_OUTPUT_TOKENS was changed after Apply")
-        };
-        (files, receipt, limit_detail)
+        let (bytes, detail) = restore_limit(original.clone(), &receipt)?;
+        (bytes, receipt, detail)
     };
     Ok(Some(ClaudeWorldPlan {
         plugin,
         receipt,
-        projected_files,
+        previous_limit,
+        original,
+        projected,
         limit_detail,
     }))
 }
 
+fn restore_limit(
+    bytes: Option<Vec<u8>>,
+    receipt: &ClaudeWorldReceipt,
+) -> Result<(Option<Vec<u8>>, PreviewDetail), String> {
+    let source = bytes.as_deref().unwrap_or_default();
+    // The host limit is shared: a later user value survives removal, like Codex's limit.
+    if json_config::inspect(source, LIMIT_PATH)?.as_deref()
+        != Some(&receipt.output_limit.applied_hash)
+    {
+        return Ok((
+            bytes,
+            PreviewDetail::kept("env.MAX_MCP_OUTPUT_TOKENS was changed after Apply"),
+        ));
+    }
+    let restored = json_setting::restore(source, LIMIT_PATH, &receipt.output_limit)?;
+    let bytes = if restored.is_empty() && !receipt.settings_existed {
+        None
+    } else {
+        Some(restored)
+    };
+    let detail = match &receipt.output_limit.before {
+        Some(raw) => PreviewDetail::kept(format!("env.MAX_MCP_OUTPUT_TOKENS = {raw}")),
+        None => PreviewDetail::removed("env.MAX_MCP_OUTPUT_TOKENS = \"200000\""),
+    };
+    Ok((bytes, detail))
+}
+
 impl ClaudeWorldPlan {
-    pub fn paths(&self) -> &[PathBuf; 3] {
-        &self.plugin.paths
+    pub fn paths(&self) -> &[PathBuf] {
+        std::slice::from_ref(&self.receipt.settings_path)
     }
 
     pub fn receipt(&self) -> Option<ClaudeWorldReceipt> {
         self.plugin.install.then(|| self.receipt.clone())
     }
 
+    pub fn note(&self) -> Option<&'static str> {
+        self.plugin.note()
+    }
+
     pub fn preview(&self) -> Vec<PreviewItem> {
-        let commands = self.plugin.commands();
-        self.plugin
-            .paths
-            .iter()
-            .enumerate()
-            .map(|(index, path)| {
-                let mut details = if index == 0 {
-                    vec![self.limit_detail.clone()]
-                } else {
-                    Vec::new()
-                };
-                details.extend(
-                    commands
-                        .iter()
-                        .filter(|args| index == if args[1] == "marketplace" { 1 } else { 2 })
-                        .map(|args| {
-                            let command = format!("claude {}", args.join(" "));
-                            if self.plugin.install {
-                                PreviewDetail::kept(command)
-                            } else {
-                                PreviewDetail::removed(command)
-                            }
-                        }),
-                );
-                let command_changes_file = if index == 0 {
-                    !commands.is_empty()
-                } else {
-                    !details.is_empty()
-                };
-                let changed = command_changes_file
-                    || self.projected_files[index] != self.plugin.originals[index];
-                if details.is_empty() && changed {
-                    details.push(PreviewDetail::removed("World plugin ownership"));
-                }
-                PreviewItem {
-                    path: path.clone(),
-                    action: if !changed {
-                        PreviewAction::Unchanged
-                    } else if self.projected_files[index].is_none() && !self.plugin.install {
-                        PreviewAction::Delete
-                    } else {
-                        PreviewAction::Modify
-                    },
-                    target: PreviewTarget::AgentConfig,
-                    details,
-                }
-            })
-            .collect()
+        let mut details = vec![self.limit_detail.clone()];
+        for args in self.plugin.commands() {
+            let command = format!(
+                "claude {}",
+                args.iter()
+                    .map(|arg| {
+                        if arg.chars().any(char::is_whitespace) {
+                            format!("\"{}\"", arg.replace('"', "\\\""))
+                        } else {
+                            arg.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            details.push(if self.plugin.install {
+                PreviewDetail::kept(command)
+            } else {
+                PreviewDetail::removed(command)
+            });
+        }
+        if let Some(note) = self.note() {
+            details.push(PreviewDetail::kept(note));
+        }
+        vec![PreviewItem {
+            path: self.receipt.settings_path.clone(),
+            action: if self.is_empty() {
+                PreviewAction::Unchanged
+            } else if self.projected.is_none() && self.plugin.commands().is_empty() {
+                PreviewAction::Delete
+            } else {
+                PreviewAction::Modify
+            },
+            target: PreviewTarget::AgentConfig,
+            details,
+        }]
     }
 
     pub fn is_empty(&self) -> bool {
-        self.projected_files == self.plugin.originals && self.plugin.commands().is_empty()
+        self.projected == self.original && self.plugin.commands().is_empty()
+    }
+
+    fn change(&self, original: Option<Vec<u8>>, desired: Option<Vec<u8>>) -> FileChange {
+        FileChange {
+            target: self.receipt.settings_path.clone(),
+            original,
+            action: desired.map(FileAction::Write).unwrap_or(FileAction::Delete),
+            unix_mode: transaction::existing_unix_mode(&self.receipt.settings_path).or(Some(0o600)),
+            locked_binary_fallback: false,
+        }
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        transaction::validate_external(&[
+            self.change(self.original.clone(), self.original.clone())
+        ])?;
         self.plugin.validate()
     }
 
@@ -176,33 +193,38 @@ impl ClaudeWorldPlan {
         transaction::validate(changes)?;
         self.validate()?;
         let mut commands_started = false;
-        let mut rollback_snapshot = self.plugin.originals.clone();
         let result = (|| {
             for args in self.plugin.commands() {
                 commands_started = true;
-                let result = self.plugin.run(&args);
-                rollback_snapshot = claude_plugin::snapshot(&self.plugin.home)?.1;
-                result?;
+                self.plugin.run(&args)?;
             }
-            let (_, after_commands) = claude_plugin::snapshot(&self.plugin.home)?;
-            if !commands_started && after_commands != self.plugin.originals {
+            let plugin_receipt = self.plugin.finish()?;
+            let after_commands = transaction::read_snapshot(&self.receipt.settings_path)?;
+            if json_config::inspect(after_commands.as_deref().unwrap_or_default(), LIMIT_PATH)?
+                != json_config::inspect(self.original.as_deref().unwrap_or_default(), LIMIT_PATH)?
+            {
                 return Err(
-                    "Claude plugin files changed after the preview; preview again and retry."
+                    "Claude Code env.MAX_MCP_OUTPUT_TOKENS changed during the plugin commands."
                         .to_string(),
                 );
             }
-            self.plugin.check_unrelated(&after_commands)?;
-            let mut files = self.projected_files.clone();
-            let receipt = if self.plugin.install {
-                let (projected, plugin_receipt) =
-                    self.plugin.project_install(&after_commands, files)?;
-                files = projected;
+            // CLI changes remain intact; only the documented output limit is edited here.
+            let (desired, receipt) = if self.plugin.install {
+                let (bytes, output_limit) = json_setting::set(
+                    after_commands.as_deref().unwrap_or_default(),
+                    LIMIT_PATH,
+                    LIMIT,
+                    self.previous_limit.as_ref(),
+                )?;
                 let mut receipt = self.receipt.clone();
-                receipt.plugin = Some(plugin_receipt);
-                Some(receipt)
+                receipt.output_limit = output_limit;
+                receipt.plugin = plugin_receipt;
+                (Some(bytes), Some(receipt))
             } else {
-                self.plugin.check_removed(&after_commands)?;
-                None
+                (
+                    restore_limit(after_commands.clone(), &self.receipt)?.0,
+                    None,
+                )
             };
             let mut pending = changes.to_vec();
             if self.plugin.install {
@@ -225,13 +247,9 @@ impl ClaudeWorldPlan {
                     }
                 }
             }
-            let extra_count = self
-                .plugin
-                .changes(&self.plugin.originals, &files)
-                .iter()
-                .filter(|change| change.is_changed())
-                .count();
-            pending.extend(self.plugin.changes(&after_commands, &files));
+            let change = self.change(after_commands, desired);
+            let extra_count = usize::from(change.is_changed()) + self.plugin.commands().len();
+            pending.push(change);
             transaction::commit(&pending)?;
             Ok(extra_count)
         })();
@@ -239,7 +257,7 @@ impl ClaudeWorldPlan {
             if !commands_started {
                 return Err(error);
             }
-            return match self.plugin.rollback(&rollback_snapshot, commands_started) {
+            return match self.plugin.rollback() {
                 Ok(()) => Err(format!("{error} Claude plugin changes were rolled back.")),
                 Err(rollback) => Err(format!(
                     "{error} Claude plugin rollback also failed: {rollback}"
@@ -253,13 +271,13 @@ impl ClaudeWorldPlan {
 pub(crate) fn inspect(
     control: &ControlPaths,
     receipt: Option<&ClaudeWorldReceipt>,
-) -> Result<(), String> {
+) -> Result<Option<&'static str>, String> {
     let enrolled = crate::world::is_enrolled(control);
     let Some(receipt) = receipt else {
         return if enrolled {
             Err("Claude Code has no World host settings receipt; run fastctx apply.".to_string())
         } else {
-            Ok(())
+            Ok(None)
         };
     };
     if !claude_plugin::paths_match(
@@ -268,8 +286,11 @@ pub(crate) fn inspect(
     ) {
         return Err("The Claude World receipt points at a different settings file.".to_string());
     }
-    let (_, files) = claude_plugin::snapshot(&control.home)?;
-    if json_config::raw_value(files[0].as_deref().unwrap_or_default(), LIMIT_PATH)?
+    if !enrolled {
+        return Err("Claude Code still has World host settings after this machine left its World; run fastctx apply.".to_string());
+    }
+    let bytes = transaction::read_snapshot(&receipt.settings_path)?;
+    if json_config::raw_value(bytes.as_deref().unwrap_or_default(), LIMIT_PATH)?
         .map(|raw| serde_json::from_str::<serde_json::Value>(&raw))
         .transpose()
         .map_err(|error| error.to_string())?
@@ -280,16 +301,14 @@ pub(crate) fn inspect(
                 .to_string(),
         );
     }
+    let Some(state) = claude_plugin::snapshot(&control.home)? else {
+        return Ok(Some(claude_plugin::UNAVAILABLE));
+    };
+    state.check_installed(&control.fastctx_dir.join("world"))?;
     let plugin = receipt
         .plugin
         .as_ref()
         .ok_or("Claude Code has no World plugin receipt; run fastctx apply.")?;
-    claude_plugin::check_receipt(&files, plugin)?;
-    if claude_plugin::installed(&files, &control.fastctx_dir.join("world"))? != (true, true) {
-        return Err("Claude Code World plugin is not installed at user scope.".to_string());
-    }
-    if !enrolled {
-        return Err("Claude Code still has World host settings after this machine left its World; run fastctx apply.".to_string());
-    }
-    Ok(())
+    claude_plugin::check_receipt(&state, plugin)?;
+    Ok(None)
 }

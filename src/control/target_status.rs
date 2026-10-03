@@ -136,9 +136,11 @@ fn inspect_connected(
         if receipt.world != crate::world::is_enrolled(control) {
             return Err(TargetIssue::Drift(enrollment_changed(receipt.world)));
         }
-        if target == AgentTarget::ClaudeCode {
-            super::claude_world::inspect(control, receipt.claude_world.as_ref())
-                .map_err(TargetIssue::Drift)?;
+        if target == AgentTarget::ClaudeCode
+            && let Some(note) = super::claude_world::inspect(control, receipt.claude_world.as_ref())
+                .map_err(TargetIssue::Drift)?
+        {
+            facts.push(note.to_string());
         }
     }
     let installation = fs::read(&control.installed_binary)

@@ -1,8 +1,10 @@
-//! Frozen host configuration and plugin CLI contracts, exercised without either real host.
+//! Frozen host configuration and public plugin CLI contracts without either real host.
 
-use fastctx::control::{paths::ControlPaths, settings, target_apply, targets::AgentTarget};
+use fastctx::control::{
+    paths::ControlPaths, settings, target_apply, target_status, targets::AgentTarget,
+};
 use fastctx::server_manifest::EnabledTools;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command};
 
 fn options(home: &Path, target: AgentTarget) -> target_apply::TargetApplyOptions {
@@ -71,8 +73,12 @@ fn codex_world_budget_contract_and_enrollment_invalidate_preview() {
     assert!(!paths.codex_config.exists());
 }
 
+fn write_json(path: impl AsRef<Path>, value: &Value) {
+    fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
+}
+
 #[test]
-fn claude_user_plugin_commands_are_transactional() {
+fn claude_public_cli_ownership_and_transaction_contract() {
     let temp = tempfile::tempdir().unwrap();
     let executable = temp.path().join(if cfg!(windows) {
         "claude.exe"
@@ -85,26 +91,39 @@ use std::{env, fs, io::Write, path::PathBuf};
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    let home = PathBuf::from(env::var_os("HOME").unwrap());
+    let config = PathBuf::from(env::var_os("CLAUDE_CONFIG_DIR").unwrap());
+    assert_eq!(config, home.join(".claude"));
+    let list = match words.as_slice() {
+        ["plugin", "list", "--json"] => Some("plugins.json"),
+        ["plugin", "marketplace", "list", "--json"] => Some("marketplaces.json"),
+        _ => None,
+    };
+    if let Some(file) = list {
+        println!("{}", fs::read_to_string(home.join(file)).unwrap());
+        return;
+    }
     let stage = match words.as_slice() {
-        ["plugin", "marketplace", "add", _] => "add",
+        ["plugin", "marketplace", "add", path, "--scope", "user"] => {
+            assert_eq!(PathBuf::from(path), home.join(".fastctx/world/claude-plugins"));
+            "add"
+        },
         ["plugin", "install", "fastctx-world@fastctx", "--scope", "user"] => "install",
         ["plugin", "uninstall", "fastctx-world@fastctx", "--scope", "user"] => "uninstall",
         ["plugin", "marketplace", "remove", "fastctx", "--scope", "user"] => "remove",
         _ => panic!("unexpected arguments: {args:?}"),
     };
-    let home = PathBuf::from(env::var_os("HOME").unwrap());
-    let config = PathBuf::from(env::var_os("CLAUDE_CONFIG_DIR").unwrap());
-    assert_eq!(config, home.join(".claude"));
-    let world_limit = fs::read_to_string(config.join("settings.json")).unwrap().contains("\"200000\"");
     writeln!(fs::OpenOptions::new().append(true).create(true).open(home.join("calls")).unwrap(), "{stage}").unwrap();
-    for name in ["settings.json", "plugins/known_marketplaces.json", "plugins/installed_plugins.json"] {
-        let dest = config.join(name);
-        fs::create_dir_all(dest.parent().unwrap()).unwrap();
-        let mut bytes = fs::read_to_string(home.join("stages").join(stage).join(name)).unwrap();
-        if name == "settings.json" && world_limit { bytes = bytes.replace("\"9000\"", "\"200000\""); }
+    let world_limit = fs::read_to_string(config.join("settings.json")).unwrap().contains("\"200000\"");
+    for file in ["plugins.json", "marketplaces.json", "settings.json"] {
+        let mut bytes = fs::read_to_string(home.join("stages").join(stage).join(file)).unwrap();
+        let dest = if file == "settings.json" {
+            if world_limit { bytes = bytes.replace("\"9000\"", "\"200000\""); }
+            config.join(file)
+        } else { home.join(file) };
         fs::write(dest, bytes).unwrap();
     }
-    if env::var("FAIL_COMMAND").as_deref() == Ok(stage) { std::process::exit(37); }
+    if fs::read_to_string(home.join("fail-command")).is_ok_and(|value| value == stage) { std::process::exit(37); }
 }
 "#).unwrap();
     let compiled = Command::new("rustc")
@@ -119,54 +138,66 @@ fn main() {
         "{}",
         String::from_utf8_lossy(&compiled.stderr)
     );
-    for failure in ["none", "install", "uninstall"] {
-        let home = temp.path().join(failure);
+    for scenario in [
+        "owned",
+        "market",
+        "both",
+        "install_failure",
+        "remove_failure",
+        "uninstall_failure",
+        "missing",
+    ] {
+        let home = temp.path().join(scenario);
         fs::create_dir_all(home.join(".claude")).unwrap();
-        fs::create_dir_all(home.join(".fastctx/world/claude-plugins/fastctx-world/.claude-plugin"))
-            .unwrap();
-        fs::create_dir_all(home.join(".fastctx/world/claude-plugins/.claude-plugin")).unwrap();
-        fs::write(home.join(".fastctx/world.toml"), b"enrolled").unwrap();
-        fs::write(home.join("source"), b"fixture binary").unwrap();
         let market = home.join(".fastctx/world/claude-plugins");
         for manifest in [
             market.join(".claude-plugin/marketplace.json"),
             market.join("fastctx-world/.claude-plugin/plugin.json"),
         ] {
+            fs::create_dir_all(manifest.parent().unwrap()).unwrap();
             fs::write(manifest, b"{}").unwrap();
         }
-        fs::write(
-            home.join(".claude/settings.json"),
-            b"{\r\n  \"env\": {\"MAX_MCP_OUTPUT_TOKENS\": \"9000\"}\r\n}\r\n",
-        )
-        .unwrap();
+        fs::write(home.join(".fastctx/world.toml"), b"enrolled").unwrap();
+        fs::write(home.join("source"), b"fixture binary").unwrap();
+        // An opaque non-directory makes any attempt to access private plugin files fail.
+        fs::write(home.join(".claude/plugins"), b"opaque host state").unwrap();
         for stage in ["add", "install", "uninstall", "remove"] {
-            let declaration = json!({"source": {"source":"directory", "path": market}});
-            let mut settings = json!({"env":{"MAX_MCP_OUTPUT_TOKENS":"9000"}});
-            let mut known = json!({});
-            let mut installed = json!({"version":2,"plugins":{}});
+            let dir = home.join("stages").join(stage);
+            fs::create_dir_all(&dir).unwrap();
+            let mut marketplaces =
+                json!([null, {"future": [1, 2]}, {"name":"elsewhere","source":"future"}]);
             if stage != "remove" {
-                settings["extraKnownMarketplaces"] = json!({"fastctx":declaration});
-                known["fastctx"] = json!({"source":declaration["source"],"installLocation":market,"lastUpdated":"2026-10-02"});
+                marketplaces.as_array_mut().unwrap().push(json!({"name":"fastctx", "source":"directory", "path":market, "future":{"arbitrary":true}}));
             }
+            let mut plugins = json!([42, null, {"future": "shape"}, {"id":"other@elsewhere","scope":"user","enabled":true,"installPath":"opaque"}]);
             if stage == "install" {
-                settings["enabledPlugins"] = json!({"fastctx-world@fastctx":true});
-                installed["plugins"]["fastctx-world@fastctx"] = json!([{"scope":"user","installPath":market.join("fastctx-world"),"version":"1.0.0"}]);
+                plugins.as_array_mut().unwrap().push(json!({"id":"fastctx-world@fastctx","scope":"user","enabled":true,"installPath":market.join("fastctx-world"),"version":{"unknown":"shape"},"extra":[1,2,3]}));
             }
-            for (name, value) in [
-                ("settings.json", settings),
-                ("plugins/known_marketplaces.json", known),
-                ("plugins/installed_plugins.json", installed),
-            ] {
-                let file = home.join("stages").join(stage).join(name);
-                fs::create_dir_all(file.parent().unwrap()).unwrap();
-                fs::write(file, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-            }
+            write_json(dir.join("plugins.json"), &plugins);
+            write_json(dir.join("marketplaces.json"), &marketplaces);
+            write_json(
+                dir.join("settings.json"),
+                &json!({"env":{"MAX_MCP_OUTPUT_TOKENS":"9000"},"userSetting":"kept","cliSetting":stage}),
+            );
         }
-        let path = std::env::join_paths(
-            std::iter::once(temp.path().to_owned())
-                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-        )
-        .unwrap();
+        let initial = match scenario {
+            "market" | "uninstall_failure" => "add",
+            "both" => "install",
+            _ => "remove",
+        };
+        for file in ["plugins.json", "marketplaces.json"] {
+            fs::copy(
+                home.join("stages").join(initial).join(file),
+                home.join(file),
+            )
+            .unwrap();
+        }
+        fs::write(home.join(".claude/settings.json"), b"{\r\n  \"env\": {\"MAX_MCP_OUTPUT_TOKENS\": \"9000\"}, \"userSetting\": \"kept\"\r\n}\r\n").unwrap();
+        let path = if scenario == "missing" {
+            home.clone()
+        } else {
+            temp.path().to_owned()
+        };
         let result = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -174,9 +205,10 @@ fn main() {
                 "--ignored",
                 "--nocapture",
             ])
+            .current_dir(&home)
             .env("PATH", path)
             .env("CONTRACT_HOME", &home)
-            .env("FAIL_COMMAND", failure)
+            .env("SCENARIO", scenario)
             .env("HOME", &home)
             .env("USERPROFILE", &home)
             .env("CODEX_HOME", home.join(".codex"))
@@ -185,59 +217,152 @@ fn main() {
             .unwrap();
         assert!(
             result.status.success(),
-            "{failure}: {} {}",
+            "{scenario}: {} {}",
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         );
     }
 }
 
+fn host_settings(home: &Path) -> Value {
+    serde_json::from_slice(&fs::read(home.join(".claude/settings.json")).unwrap()).unwrap()
+}
+
+fn calls(home: &Path) -> String {
+    fs::read_to_string(home.join("calls")).unwrap_or_default()
+}
+
 #[test]
 #[ignore = "runs inside the isolated plugin contract process"]
 fn claude_contract_child() {
     let home = std::path::PathBuf::from(std::env::var_os("CONTRACT_HOME").unwrap());
+    let scenario = std::env::var("SCENARIO").unwrap();
     let paths = ControlPaths::for_home(&home);
-    let original = fs::read(home.join(".claude/settings.json")).unwrap();
+    let before_plugins = fs::read(home.join("plugins.json")).unwrap();
+    let before_marketplaces = fs::read(home.join("marketplaces.json")).unwrap();
     let plan =
         target_apply::plan_target_apply(&paths, options(&home, AgentTarget::ClaudeCode)).unwrap();
-    assert!(!home.join("calls").exists());
+    assert!(calls(&home).is_empty());
+    let preview = plan
+        .preview()
+        .iter()
+        .flat_map(|item| &item.details)
+        .map(|detail| detail.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if scenario == "missing" {
+        assert!(preview.contains("Claude Code was not found"));
+    }
+    if scenario == "owned" {
+        assert!(preview.contains("marketplace add"));
+        assert!(preview.contains("--scope user"));
+    }
+    if scenario == "install_failure" {
+        fs::write(home.join("fail-command"), "install").unwrap();
+    }
     let result = target_apply::commit_target_apply(plan, true);
-    if std::env::var("FAIL_COMMAND").unwrap() == "install" {
+    if scenario == "install_failure" {
         assert!(result.unwrap_err().contains("rolled back"));
-        assert_eq!(
-            fs::read(home.join(".claude/settings.json")).unwrap(),
-            original
-        );
+        assert_eq!(host_settings(&home)["env"]["MAX_MCP_OUTPUT_TOKENS"], "9000");
         assert!(!paths.fastctx_config.exists());
+        assert_eq!(fs::read(home.join("plugins.json")).unwrap(), before_plugins);
         assert_eq!(
-            fs::read_to_string(home.join("calls")).unwrap(),
-            "add\ninstall\nuninstall\nremove\n"
+            fs::read(home.join("marketplaces.json")).unwrap(),
+            before_marketplaces
         );
+        assert_eq!(calls(&home), "add\ninstall\nremove\n");
         return;
     }
-    result.unwrap();
-    let applied = fs::read(home.join(".claude/settings.json")).unwrap();
-    let value: serde_json::Value = serde_json::from_slice(&applied).unwrap();
-    assert_eq!(value["env"]["MAX_MCP_OUTPUT_TOKENS"], "200000");
+    let result = result.unwrap();
+    if scenario == "missing" {
+        assert!(
+            result
+                .notes
+                .iter()
+                .any(|note| note.contains("Claude Code was not found"))
+        );
+    }
+    assert_eq!(
+        host_settings(&home)["env"]["MAX_MCP_OUTPUT_TOKENS"],
+        "200000"
+    );
+    assert_eq!(host_settings(&home)["userSetting"], "kept");
+    let settings = settings::load(&paths).unwrap();
+    let status = target_status::inspect_target(&paths, &settings, AgentTarget::ClaudeCode);
+    assert_eq!(
+        status.state,
+        target_status::TargetConnectionState::Connected,
+        "{:?}",
+        status.facts
+    );
+    if scenario == "missing" {
+        assert!(
+            status
+                .facts
+                .iter()
+                .any(|fact| fact.contains("Claude Code was not found"))
+        );
+    }
+    if scenario == "owned" {
+        let mut legacy = settings.clone();
+        legacy
+            .applied_targets
+            .get_mut(AgentTarget::ClaudeCode.id())
+            .unwrap()
+            .created_directories
+            .push(home.join(".claude/plugins").to_string_lossy().into_owned());
+        fs::write(&paths.fastctx_config, settings::encode(&legacy).unwrap()).unwrap();
+    }
     let receipt = fs::read(&paths.fastctx_config).unwrap();
     let plan = target_apply::plan_target_disconnect(&paths, AgentTarget::ClaudeCode).unwrap();
+    let failure = match scenario.as_str() {
+        "remove_failure" => Some("remove"),
+        "uninstall_failure" => Some("uninstall"),
+        _ => None,
+    };
+    if let Some(failure) = failure {
+        fs::write(home.join("fail-command"), failure).unwrap();
+    }
     let result = target_apply::commit_target_disconnect(plan);
-    if std::env::var("FAIL_COMMAND").unwrap() == "uninstall" {
+    if failure.is_some() {
         assert!(result.unwrap_err().contains("rolled back"));
         assert_eq!(
-            fs::read(home.join(".claude/settings.json")).unwrap(),
-            applied
+            host_settings(&home)["env"]["MAX_MCP_OUTPUT_TOKENS"],
+            "200000"
         );
         assert_eq!(fs::read(&paths.fastctx_config).unwrap(), receipt);
-    } else {
-        result.unwrap();
+        let status = target_status::inspect_target(&paths, &settings, AgentTarget::ClaudeCode);
         assert_eq!(
-            fs::read(home.join(".claude/settings.json")).unwrap(),
-            original
+            status.state,
+            target_status::TargetConnectionState::Connected,
+            "{:?}",
+            status.facts
+        );
+    } else {
+        let result = result.unwrap();
+        assert!(
+            result
+                .notes
+                .iter()
+                .all(|note| !note.contains("Could not remove")),
+            "{:?}",
+            result.notes
+        );
+        assert_eq!(host_settings(&home)["env"]["MAX_MCP_OUTPUT_TOKENS"], "9000");
+        assert_eq!(host_settings(&home)["userSetting"], "kept");
+        assert_eq!(fs::read(home.join("plugins.json")).unwrap(), before_plugins);
+        assert_eq!(
+            fs::read(home.join("marketplaces.json")).unwrap(),
+            before_marketplaces
         );
         assert_eq!(
-            fs::read_to_string(home.join("calls")).unwrap(),
-            "add\ninstall\nuninstall\nremove\n"
+            calls(&home),
+            match scenario.as_str() {
+                "owned" => "add\ninstall\nremove\n",
+                "market" => "install\nuninstall\n",
+                "both" | "missing" => "",
+                _ => unreachable!(),
+            }
         );
     }
 }

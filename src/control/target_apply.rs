@@ -203,6 +203,8 @@ pub fn plan_target_apply(
             created_directories.extend(missing_parent_directories(path, &control.home)?);
         }
     }
+    created_directories
+        .retain(|path| owns_target_directory(options.target, Path::new(path), control));
     created_directories.sort();
     created_directories.dedup();
     let applied_at_utc = timestamp()?;
@@ -312,16 +314,21 @@ pub fn commit_target_apply(
             } else {
                 transaction::commit(&plan.changes)?;
             }
+            let mut notes = Vec::new();
+            if let Some(note) = plan.world.as_deref().and_then(ClaudeWorldPlan::note) {
+                notes.push(note.to_string());
+            }
+            notes.push(if changed_targets == 0 {
+                "No changes were needed.".to_string()
+            } else {
+                format!(
+                    "{} will use the connection in newly started sessions.",
+                    plan.target.display_name()
+                )
+            });
             Ok(OperationReceipt {
                 changed_targets,
-                notes: vec![if changed_targets == 0 {
-                    "No changes were needed.".to_string()
-                } else {
-                    format!(
-                        "{} will use the connection in newly started sessions.",
-                        plan.target.display_name()
-                    )
-                }],
+                notes,
             })
         }
     }
@@ -429,6 +436,7 @@ pub fn plan_target_disconnect(
             .created_directories
             .into_iter()
             .map(PathBuf::from)
+            .filter(|path| owns_target_directory(target, path, control))
             .collect(),
     })
 }
@@ -447,6 +455,9 @@ pub fn commit_target_disconnect(plan: TargetDisconnectPlan) -> Result<OperationR
     let mut directories = plan.created_directories;
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     let mut notes = Vec::new();
+    if let Some(note) = plan.world.as_ref().and_then(ClaudeWorldPlan::note) {
+        notes.push(note.to_string());
+    }
     for directory in directories {
         match fs::remove_dir(&directory) {
             Ok(()) => {}
@@ -736,6 +747,13 @@ fn managed_record(
             .unwrap_or_else(|| original.is_some()),
         applied_sha256: sha256(applied),
     }
+}
+
+fn owns_target_directory(target: AgentTarget, path: &Path, control: &ControlPaths) -> bool {
+    // Older Claude receipts can name plugin directories; their cleanup belongs to the CLI.
+    target != AgentTarget::ClaudeCode
+        || path == control.home
+        || path == control.home.join(".claude")
 }
 
 fn missing_parent_directories(path: &Path, home: &Path) -> Result<Vec<String>, String> {

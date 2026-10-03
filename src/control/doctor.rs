@@ -299,6 +299,16 @@ pub fn run_target(
             "Repair the target configuration format or path, then retry target Doctor.",
         ),
     });
+    if status
+        .facts
+        .iter()
+        .any(|fact| fact == super::claude_plugin::UNAVAILABLE)
+    {
+        checks.push(DoctorCheck::info(
+            "Claude Code World plugin",
+            super::claude_plugin::UNAVAILABLE,
+        ));
+    }
     checks.push(target_budget_check(&settings, target));
     if status.state == TargetConnectionState::Connected {
         checks.push(match probe_mcp(

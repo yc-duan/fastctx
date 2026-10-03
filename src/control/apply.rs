@@ -944,6 +944,13 @@ pub fn commit_unapply(plan: UnapplyPlan) -> Result<OperationReceipt, String> {
         transaction::commit(&plan.changes)?;
     }
     let mut notes = Vec::new();
+    if let Some(note) = plan
+        .claude_world
+        .as_ref()
+        .and_then(super::claude_world::ClaudeWorldPlan::note)
+    {
+        notes.push(note.to_string());
+    }
     if let Some(path) = plan.manual_binary_cleanup.as_ref() {
         remove_fastctx_except(&plan.fastctx_dir, path)
             .map_err(|error| augment_directory_error(error, &plan.paths))?;
