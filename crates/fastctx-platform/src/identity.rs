@@ -88,15 +88,19 @@ mod imp {
 }
 
 #[cfg(windows)]
+pub(crate) use imp::of_handle;
+
+#[cfg(windows)]
 mod imp {
     use std::io;
 
-    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, WAIT_OBJECT_0};
     use windows_sys::Win32::System::Threading::{
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
 
-    /// The creation time, in 100-nanosecond units since 1601.
+    use super::ProcessIdentity;
+
     pub fn token(pid: u32) -> io::Result<Option<String>> {
         // SAFETY: plain handle-based queries; the handle is closed below.
         unsafe {
@@ -108,20 +112,27 @@ mod imp {
                     _ => Err(error),
                 };
             }
-            let result = (|| {
-                // An exited process keeps its handle valid while anyone holds one.
-                if WaitForSingleObject(handle, 0) == WAIT_OBJECT_0 {
-                    return Ok(None);
-                }
-                let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-                let (mut creation, mut exit, mut kernel, mut user) = (zero, zero, zero, zero);
-                if GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(Some((u64::from(creation.dwHighDateTime) << 32 | u64::from(creation.dwLowDateTime)).to_string()))
-            })();
+            // An exited process keeps its handle valid while anyone holds one.
+            let result =
+                if WaitForSingleObject(handle, 0) == WAIT_OBJECT_0 { Ok(None) } else { creation_time(handle).map(Some) };
             CloseHandle(handle);
             result
         }
+    }
+
+    /// The identity of the process behind `handle`, which has query access.
+    pub fn of_handle(handle: HANDLE, pid: u32) -> io::Result<ProcessIdentity> {
+        Ok(ProcessIdentity { pid, token: creation_time(handle)? })
+    }
+
+    /// The creation time, in 100-nanosecond units since 1601.
+    fn creation_time(handle: HANDLE) -> io::Result<String> {
+        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let (mut creation, mut exit, mut kernel, mut user) = (zero, zero, zero, zero);
+        // SAFETY: a valid process handle and four out-parameters.
+        if unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((u64::from(creation.dwHighDateTime) << 32 | u64::from(creation.dwLowDateTime)).to_string())
     }
 }

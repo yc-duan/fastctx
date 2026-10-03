@@ -15,22 +15,28 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::Path;
 
-/// What became of the request to leave the starter's job, where the system
-/// has jobs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Detached {
-    /// Free of anything that would end it with the starter.
-    Free,
+use crate::ProcessIdentity;
+
+/// A process started on its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DetachedProcess {
+    /// `None` when it had already ended by the time it was looked at.
+    pub identity: Option<ProcessIdentity>,
     /// Windows put the starter in a job that forbids leaving it (the Task
-    /// Scheduler does this to its tasks); the new process is in that job
-    /// and ends when the job ends.
-    BoundToStartersJob,
+    /// Scheduler does this to its tasks): the new process is in that job
+    /// too and ends when the job ends.
+    pub ends_with_starters_job: bool,
 }
 
 /// Starts `program` with `args` in `cwd` with exactly the environment `env`,
 /// and returns once it is running on its own. `program` and `cwd` must be
 /// absolute; no search path is consulted.
-pub fn spawn_detached(program: &Path, args: &[&OsStr], cwd: &Path, env: &[(OsString, OsString)]) -> io::Result<Detached> {
+pub fn spawn_detached(
+    program: &Path,
+    args: &[&OsStr],
+    cwd: &Path,
+    env: &[(OsString, OsString)],
+) -> io::Result<DetachedProcess> {
     if !program.is_absolute() || !cwd.is_absolute() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "program and working directory must be absolute paths"));
     }
@@ -64,14 +70,25 @@ fn check_environment(env: &[(OsString, OsString)]) -> io::Result<()> {
 #[cfg(unix)]
 mod imp {
     use std::ffi::{OsStr, OsString};
-    use std::io;
+    use std::io::{self, Read as _};
+    use std::os::fd::AsRawFd as _;
     use std::os::unix::process::CommandExt as _;
     use std::path::Path;
     use std::process::{Command, Stdio};
 
-    use super::Detached;
+    use super::DetachedProcess;
+    use crate::ProcessIdentity;
 
-    pub fn spawn_detached(program: &Path, args: &[&OsStr], cwd: &Path, env: &[(OsString, OsString)]) -> io::Result<Detached> {
+    pub fn spawn_detached(
+        program: &Path,
+        args: &[&OsStr],
+        cwd: &Path,
+        env: &[(OsString, OsString)],
+    ) -> io::Result<DetachedProcess> {
+        // The first child tells the starter its own child's PID through
+        // this pipe; both ends close on exec.
+        let (mut pid_reader, pid_writer) = io::pipe()?;
+        let pid_fd = pid_writer.as_raw_fd();
         let mut command = Command::new(program);
         command
             .args(args)
@@ -82,26 +99,35 @@ mod imp {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         // SAFETY: only async-signal-safe calls between fork and exec. The
-        // first child starts a new session, forks once more and exits, so
-        // the process that execs belongs to init, not to the starter, and,
-        // not being a session leader, never gains a controlling terminal.
-        // The grandchild inherits the standard library's close-on-exec
-        // error pipe, so a failed exec is still reported to the starter.
+        // first child starts a new session, forks once more, reports the new
+        // PID and exits, so the process that execs belongs to init, not to
+        // the starter, and, not being a session leader, never gains a
+        // controlling terminal. The grandchild inherits the standard
+        // library's close-on-exec error pipe, so a failed exec is still
+        // reported to the starter.
         unsafe {
-            command.pre_exec(|| {
+            command.pre_exec(move || {
                 if libc::setsid() == -1 {
                     return Err(io::Error::last_os_error());
                 }
                 match libc::fork() {
                     -1 => Err(io::Error::last_os_error()),
                     0 => close_on_exec_from(3),
-                    _ => libc::_exit(0),
+                    grandchild => {
+                        let pid = (grandchild as u32).to_ne_bytes();
+                        libc::write(pid_fd, pid.as_ptr().cast(), pid.len());
+                        libc::_exit(0)
+                    }
                 }
             });
         }
+        let spawned = command.spawn();
+        drop(pid_writer);
         // The first child exits at once; reaping it leaves nothing behind.
-        command.spawn()?.wait()?;
-        Ok(Detached::Free)
+        spawned?.wait()?;
+        let mut pid = [0u8; 4];
+        pid_reader.read_exact(&mut pid)?;
+        Ok(DetachedProcess { identity: ProcessIdentity::of(u32::from_ne_bytes(pid))?, ends_with_starters_job: false })
     }
 
     /// Marks every descriptor from `first` on close-on-exec, so nothing the
@@ -148,21 +174,27 @@ mod imp {
         DETACHED_PROCESS, PROCESS_INFORMATION, STARTUPINFOW,
     };
 
-    use super::Detached;
+    use super::DetachedProcess;
+    use crate::ProcessIdentity;
     use crate::command_line::windows_command_line;
 
-    pub fn spawn_detached(program: &Path, args: &[&OsStr], cwd: &Path, env: &[(OsString, OsString)]) -> io::Result<Detached> {
+    pub fn spawn_detached(
+        program: &Path,
+        args: &[&OsStr],
+        cwd: &Path,
+        env: &[(OsString, OsString)],
+    ) -> io::Result<DetachedProcess> {
         let mut command_line = windows_command_line(program.as_os_str(), args)?;
         command_line.push(0);
         let block = environment_block(env);
-        match create(program, &command_line, cwd, &block, true) {
-            Ok(()) => Ok(Detached::Free),
+        let (identity, ends_with_starters_job) = match create(program, &command_line, cwd, &block, true) {
+            Ok(identity) => (identity, false),
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
-                create(program, &command_line, cwd, &block, false)?;
-                Ok(Detached::BoundToStartersJob)
+                (create(program, &command_line, cwd, &block, false)?, true)
             }
-            Err(error) => Err(error),
-        }
+            Err(error) => return Err(error),
+        };
+        Ok(DetachedProcess { identity: Some(identity), ends_with_starters_job })
     }
 
     /// `NAME=value` strings, each NUL-terminated, sorted by name without
@@ -195,7 +227,7 @@ mod imp {
         }
     }
 
-    fn create(program: &Path, command_line: &[u16], cwd: &Path, block: &[u16], breakaway: bool) -> io::Result<()> {
+    fn create(program: &Path, command_line: &[u16], cwd: &Path, block: &[u16], breakaway: bool) -> io::Result<ProcessIdentity> {
         let application: Vec<u16> = program.as_os_str().encode_wide().chain([0]).collect();
         let mut command_line = command_line.to_vec();
         let directory: Vec<u16> = cwd.as_os_str().encode_wide().chain([0]).collect();
@@ -228,12 +260,15 @@ mod imp {
         if created == 0 {
             return Err(io::Error::last_os_error());
         }
+        // The handle keeps the creation time readable even if the process
+        // has already exited.
+        let identity = crate::identity::of_handle(info.hProcess, info.dwProcessId);
         // SAFETY: handles returned by CreateProcessW, closed once; closing
         // them does not affect the process.
         unsafe {
             CloseHandle(info.hThread);
             CloseHandle(info.hProcess);
         }
-        Ok(())
+        identity
     }
 }
