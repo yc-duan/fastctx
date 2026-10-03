@@ -78,6 +78,9 @@ struct ThreadState {
     loaded: bool,
     turn: Option<String>,
     last_message: Option<String>,
+    /// Turns the app-server reported completed: an answer to `turn/start` that arrives after
+    /// its turn already finished must not make it run again.
+    finished: std::collections::HashSet<String>,
 }
 
 /// Where the binary comes from and how it is launched.
@@ -223,7 +226,7 @@ impl CodexHost {
         if let Some(turn) = &turn {
             let mut state = self.state.lock();
             let entry = state.threads.entry(thread.to_string()).or_default();
-            if entry.turn.as_deref() != Some(turn.as_str()) {
+            if entry.turn.as_deref() != Some(turn.as_str()) && !entry.finished.contains(turn) {
                 entry.turn = Some(turn.clone());
                 entry.last_message = None;
             }
@@ -391,6 +394,9 @@ impl CodexHost {
                 let last_message = {
                     let mut state = self.state.lock();
                     let entry = state.threads.entry(thread.clone()).or_default();
+                    if let Some(id) = turn.get("id").and_then(Value::as_str) {
+                        entry.finished.insert(id.to_string());
+                    }
                     entry.turn = None;
                     entry.last_message.take()
                 };

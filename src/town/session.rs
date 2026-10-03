@@ -78,12 +78,15 @@ impl ResidentSlot {
         let inbox = variable(environment, super::claude::INBOX_ADDRESS_VARIABLE);
         match self.town.attach(agent, Some(agent_version), named.as_deref(), &surface, inbox.as_deref()) {
             Ok(id) => {
-                // A resident that comes back is told what ended while it was away.
-                if let Some(place) = self.town.town_of(&id) {
-                    let dir = self.town.resident_dir(place.as_deref(), &id);
-                    let town = Arc::clone(&self.town);
-                    tokio::spawn(async move { town.owed_ends(&dir).await });
-                }
+                // A resident that comes back is told what ended while it was away, in every place
+                // it has records.
+                let town = Arc::clone(&self.town);
+                let returning = id.clone();
+                tokio::spawn(async move {
+                    for dir in town.resident_dirs(&returning) {
+                        town.owed_ends(&dir, false).await;
+                    }
+                });
                 *self.id.lock() = Some(id);
             }
             Err(error) => self.town.log(format!("cannot register a session of {agent}: {error}")),

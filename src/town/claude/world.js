@@ -31,17 +31,24 @@ function stamp() {
   return new Date().toISOString()
 }
 
-// The marker is written after the event, so an event with a marker is whole: the node waits
-// for an event without one, and sets aside one that has a marker yet does not parse. An event
-// that cannot be written cannot be reported through these same files; the next one tries again.
-async function event($, kind, fields) {
-  if (!dir) return
+// Events are written one at a time, each followed by its marker, so only the newest event can
+// be half written: the node waits for an unmarked event only while it is the newest, and sets
+// aside one that does not parse. An event that cannot be written cannot be reported through
+// these same files; the next one tries again.
+let writing = Promise.resolve()
+
+function event($, kind, fields) {
+  if (!dir) return writing
   sequence += 1
   const name = String(Date.now()).padStart(15, '0') + '-' + String(sequence).padStart(6, '0')
-  try {
-    await $.fs.write(dir + '/events/' + name + '.json', JSON.stringify({ kind, at: stamp(), ...fields }))
-    await $.fs.write(dir + '/events/' + name + '.done', '')
-  } catch (error) {}
+  const body = JSON.stringify({ kind, at: stamp(), ...fields })
+  writing = writing.then(async () => {
+    try {
+      await $.fs.write(dir + '/events/' + name + '.json', body)
+      await $.fs.write(dir + '/events/' + name + '.done', '')
+    } catch (error) {}
+  })
+  return writing
 }
 
 // A receipt tells the node the model has the delivery. One that cannot be written is owed and

@@ -115,6 +115,20 @@ pub(crate) struct MessageLine {
     pub(crate) text: Option<String>,
 }
 
+/// Now, to the nanosecond: what a resident's arrival is stamped with, so the records it moves
+/// into always outrank the ones it leaves, even within one second.
+pub(crate) fn now_precise() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .expect("the current time formats as RFC 3339")
+}
+
+/// Orders records of one resident: those it has not left first, then the latest change. The
+/// times are compared as moments, not as text, so precisions can mix.
+pub(crate) fn currency(now: &Now) -> (bool, Option<time::OffsetDateTime>) {
+    (now.state != "left", crate::world::parse_rfc3339(&now.since).ok())
+}
+
 /// The directory of one resident.
 #[derive(Clone, Debug)]
 pub(crate) struct Records {

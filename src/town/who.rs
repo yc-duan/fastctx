@@ -100,7 +100,7 @@ pub(crate) struct TownCount {
 /// Of the records one resident left in several places (it moved between towns), the one it is
 /// living in now: the one it has not left, else the latest.
 pub(crate) fn current(mut records: Vec<&ResidentFacts>) -> Option<&ResidentFacts> {
-    records.sort_by(|left, right| (left.now.state != "left", &left.now.since).cmp(&(right.now.state != "left", &right.now.since)));
+    records.sort_by_key(|facts| super::records::currency(&facts.now));
     records.pop()
 }
 

@@ -67,6 +67,14 @@ impl TalkClient {
         Self { resident, updates, commands, transcript: Transcript::default() }
     }
 
+    /// A client with a given transcript and no conversation behind it, for drawing.
+    #[cfg(test)]
+    pub(super) fn detached(resident: &str, transcript: Transcript) -> Self {
+        let (_, updates) = mpsc::channel();
+        let (commands, _) = tokio::sync::mpsc::unbounded_channel();
+        Self { resident: Some(resident.to_string()), updates, commands, transcript }
+    }
+
     /// Says one line the user typed, as the user.
     pub(super) fn say(&mut self, line: String) {
         if self.commands.send(Command::Say(line)).is_err() && self.transcript.closed.is_none() {
@@ -220,9 +228,9 @@ pub(super) enum ToolState {
 }
 
 impl Transcript {
-    fn push(&mut self, event: TalkEvent) {
+    pub(super) fn push(&mut self, event: TalkEvent) {
         match event {
-            TalkEvent::Words { from, text } => self.entries.push(Entry::Words { from, text }),
+            TalkEvent::Words { from, text, .. } => self.entries.push(Entry::Words { from, text }),
             TalkEvent::TurnStarted { .. } => self.busy = true,
             TalkEvent::Delta { item, text } => match self.streaming(&item) {
                 Some(so_far) => so_far.push_str(&text),

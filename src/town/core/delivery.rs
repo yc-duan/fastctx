@@ -42,7 +42,7 @@ impl Town {
                 })
             }
             Route::ClaudeMod(_) | Route::Piggyback => {
-                self.publish(to, TalkEvent::Words { from: from.to_string(), text: message.to_string() });
+                self.publish(to, TalkEvent::Words { from: from.to_string(), text: message.to_string(), item: None });
                 let delivery = Delivery { id: delivery_id()?, from: from.to_string(), kind: "message".into(), text, as_tool_output: false };
                 self.deliver(to, delivery).await?;
                 Ok(Spoken::Queued)
@@ -58,6 +58,7 @@ impl Town {
         let mut turn = None;
         let spoken = match route {
             Some(Route::CodexThread(thread)) => {
+                let _turns = self.turns.lock().await;
                 let (landed, into) = self.codex.send(&thread, Input::Text(text.to_string())).await?;
                 turn = Some(into.clone());
                 match landed {
@@ -95,7 +96,7 @@ impl Town {
             });
         }
         if spoken == Spoken::Queued {
-            self.publish(id, TalkEvent::Words { from: "user".into(), text: text.to_string() });
+            self.publish(id, TalkEvent::Words { from: "user".into(), text: text.to_string(), item: None });
         }
         Ok((spoken, turn))
     }
@@ -186,8 +187,16 @@ impl Town {
     }
 
     /// Delivers every owed end recorded in one resident's directory whose command has ended.
-    pub(crate) async fn owed_ends(&self, resident_dir: &Path) {
+    /// At the node's start a claim left by a delivery that never finished is owed again; no
+    /// delivery is running then.
+    pub(crate) async fn owed_ends(&self, resident_dir: &Path, starting: bool) {
         let jobs = resident_dir.join("jobs");
+        let markers: Vec<PathBuf> = std::fs::read_dir(&jobs).into_iter().flatten().flatten().map(|entry| entry.path()).collect();
+        for claim in markers.iter().filter(|path| starting && path.extension().is_some_and(|extension| extension == CLAIMED)) {
+            if let Err(error) = std::fs::rename(claim, claim.with_extension(OWED)) {
+                (self.log)(format!("cannot owe {} again: {error}", crate::paths::display_path(claim)));
+            }
+        }
         let owed: Vec<PathBuf> = std::fs::read_dir(&jobs)
             .into_iter()
             .flatten()
@@ -216,7 +225,7 @@ impl Town {
             return Ok(());
         }
         let marker = record.with_extension(OWED);
-        let claimed = record.with_extension(DELIVERED);
+        let claimed = record.with_extension(CLAIMED);
         match std::fs::rename(&marker, &claimed) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -239,17 +248,20 @@ impl Town {
             Ok(id) => self.deliver(resident, Delivery { id, from: "world".into(), kind: "notice".into(), text, as_tool_output: true }).await,
             Err(error) => Err(error),
         };
-        if delivered.is_err() {
-            // Owed again, so the node's next start tries once more.
-            let _ = std::fs::rename(&claimed, &marker);
+        // Delivered, the claim becomes the record that it was; failed, it is owed again. A
+        // delivery cut off between the two leaves the claim, owed again at the node's start.
+        let settled = if delivered.is_ok() { record.with_extension(DELIVERED) } else { marker };
+        if let Err(error) = std::fs::rename(&claimed, &settled) {
+            (self.log)(format!("cannot settle {}: {error}", crate::paths::display_path(&claimed)));
         }
         delivered
     }
 }
 
-/// The marker of an end owed to the resident that started a command, and the name it takes
-/// once the notice went out.
+/// The marker of an end owed to the resident that started a command, the name it takes while
+/// the notice is on its way, and the name it keeps once the notice went out.
 const OWED: &str = "notify";
+const CLAIMED: &str = "notifying";
 const DELIVERED: &str = "notified";
 
 impl Town {
@@ -264,7 +276,7 @@ impl Town {
                 Ok(Err(error)) => (self.log)(format!("cannot reconcile the commands in {}: {error}", crate::paths::display_path(&dir))),
                 Err(error) => (self.log)(format!("reconciling {} stopped: {error}", crate::paths::display_path(&dir))),
             }
-            self.owed_ends(&dir).await;
+            self.owed_ends(&dir, true).await;
         }
     }
 }

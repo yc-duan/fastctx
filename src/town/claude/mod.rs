@@ -183,16 +183,18 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
         }
     };
     names.sort();
-    // Events are taken in order and each is removed once taken. The mod writes a marker after
-    // each event: the first event without one is still being written and stops the look, so no
-    // event is taken out of order. One with a marker that does not parse is damaged; it is set
-    // aside in `damaged/`, kept for whoever looks, and the look goes on.
-    for name in names {
-        let Some(stem) = name.strip_suffix(".json") else { continue };
-        let events = dir.join("events");
-        let path = events.join(&name);
+    let stems: Vec<&str> = names.iter().filter_map(|name| name.strip_suffix(".json")).collect();
+    // Events are taken in order and each is removed once taken. The mod writes one event at a
+    // time, then its marker: an unmarked event is still being written only while it is the
+    // newest, and stops the look until it is marked; an older unmarked one was abandoned by a
+    // mod that stopped between the two writes, and counts as written. One that does not parse
+    // is damaged; it is set aside in `damaged/`, kept for whoever looks, and the look goes on.
+    let events = dir.join("events");
+    for (index, stem) in stems.iter().enumerate() {
+        let path = events.join(format!("{stem}.json"));
         let marker = events.join(format!("{stem}.done"));
-        if !marker.is_file() {
+        let newest = index + 1 == stems.len();
+        if newest && !marker.is_file() {
             break;
         }
         let parsed = std::fs::read(&path)
@@ -201,8 +203,10 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
                 serde_json::from_slice::<ModEvent>(&bytes)
                     .map_err(|error| format!("{} is not a mod event ({error})", crate::paths::display_path(&path)))
             });
+        // The marker goes first: an event whose own file could not be removed is still there,
+        // unmarked, for the next look, and never taken twice.
         let taken = match &parsed {
-            Ok(_) => std::fs::remove_file(&path).and_then(|()| std::fs::remove_file(&marker)),
+            Ok(_) => remove_present(&marker).and_then(|()| std::fs::remove_file(&path)),
             Err(_) => set_aside(&dir, &path, &marker),
         };
         if let Err(error) = taken {
@@ -237,16 +241,27 @@ pub(crate) fn harvest(world_dir: &Path, session: &str) -> Harvest {
     harvest
 }
 
-/// Moves a damaged event and its marker into the session's `damaged/` directory.
+/// Moves a damaged event and its marker, if it has one, into the session's `damaged/`
+/// directory.
 fn set_aside(session_dir: &Path, event: &Path, marker: &Path) -> std::io::Result<()> {
     let damaged = session_dir.join("damaged");
     std::fs::create_dir_all(&damaged)?;
     for path in [event, marker] {
-        if let Some(name) = path.file_name() {
+        if let Some(name) = path.file_name()
+            && path.exists()
+        {
             std::fs::rename(path, damaged.join(name))?;
         }
     }
     Ok(())
+}
+
+/// Removes a file that may already be gone.
+fn remove_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
 }
 
 fn list(dir: &Path) -> Result<Vec<String>, String> {

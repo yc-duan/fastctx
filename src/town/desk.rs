@@ -94,11 +94,16 @@ the World cannot see when it becomes free."
     /// A resident's turn ended. When it held the desk, the desk is free and everyone waiting is
     /// told. Returns whether it held the desk, and the notices.
     pub(crate) fn turn_ended(&mut self, resident: &str, machine: &str) -> (bool, Vec<Notice>) {
-        self.calling.remove(resident);
-        if self.holder.as_deref() != Some(resident) {
-            return (false, Vec::new());
+        let was_calling = self.calling.remove(resident);
+        if self.holder.as_deref() == Some(resident) {
+            return (true, self.release(machine));
         }
-        (true, self.release(machine))
+        // Its call was the one others were told about; with nobody else at the desk, they hear
+        // it is free.
+        if was_calling && self.holder.is_none() && self.calling.is_empty() {
+            return (false, self.release(machine));
+        }
+        (false, Vec::new())
     }
 
     /// The app-server stopped and every turn with it: whoever held the desk is gone. Returns
@@ -106,8 +111,7 @@ the World cannot see when it becomes free."
     pub(crate) fn server_gone(&mut self, machine: &str) -> (Option<String>, Vec<Notice>) {
         self.calling.clear();
         let holder = self.holder.clone();
-        let notices = if holder.is_some() { self.release(machine) } else { Vec::new() };
-        (holder, notices)
+        (holder, self.release(machine))
     }
 
     fn release(&mut self, machine: &str) -> Vec<Notice> {

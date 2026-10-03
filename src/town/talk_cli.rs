@@ -207,7 +207,7 @@ impl Printer {
             other => {
                 self.end_line(&mut out);
                 let line = match other {
-                    TalkEvent::Words { from, text } => format!("> {from}: {text}"),
+                    TalkEvent::Words { from, text, .. } => format!("> {from}: {text}"),
                     TalkEvent::TurnStarted { .. } => "── turn started".to_string(),
                     TalkEvent::TurnEnded { status, .. } => format!("── turn {status}"),
                     TalkEvent::Tool { name, summary, done: false, .. } => format!("  {name} {summary}"),

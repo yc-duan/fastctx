@@ -192,6 +192,11 @@ impl Town {
         parents.flat_map(|parent| subdirectories(&parent)).collect()
     }
 
+    /// Every directory holding records of one resident on this machine.
+    pub(crate) fn resident_dirs(&self, id: &str) -> Vec<PathBuf> {
+        self.record_dirs().into_iter().filter(|dir| dir.file_name().is_some_and(|name| name == id)).collect()
+    }
+
     /// Whether any resident ever recorded on this machine had this id, in or outside a town.
     fn recorded(&self, id: &str) -> bool {
         self.resident_dir(None, id).exists()
@@ -208,10 +213,10 @@ impl Town {
                 let records = Records::new(dir);
                 let about = records.about().ok().flatten()?;
                 let now = records.now().ok().flatten().unwrap_or_default();
-                Some((now.state != "left", now.since, records, about))
+                Some((super::records::currency(&now), records, about))
             })
-            .max_by(|left, right| (left.0, &left.1).cmp(&(right.0, &right.1)))
-            .map(|(_, _, records, about)| (records, about))
+            .max_by_key(|(currency, ..)| *currency)
+            .map(|(_, records, about)| (records, about))
     }
 
     /// Registers an MCP session as a resident. A session the World launched names itself in
@@ -354,7 +359,7 @@ impl Town {
                 // The words move first, all or none; if the new records cannot be written they
                 // move back, and the resident stays where it was.
                 delivery::move_waiting(&live.records.dir, &records.dir)?;
-                let entered = crate::world::now_rfc3339();
+                let entered = super::records::now_precise();
                 let written = live.records.now().and_then(|now| {
                     records.write_about(&about)?;
                     // Its state is as new as its arrival, so these records outrank the ones it
@@ -419,7 +424,7 @@ impl Town {
     /// died with the old app-server. Every other resident's session ended with the old node.
     /// A resident that moved between towns left records in each; only the current ones count.
     fn restore(&self) {
-        let mut current: BTreeMap<String, (bool, String, Records, About, Now)> = BTreeMap::new();
+        let mut current: BTreeMap<String, ((bool, Option<time::OffsetDateTime>), Records, About, Now)> = BTreeMap::new();
         for dir in self.record_dirs() {
             let records = Records::new(dir);
             let about = match records.about() {
@@ -431,14 +436,14 @@ impl Town {
                 }
             };
             let now = records.now().ok().flatten().unwrap_or_default();
-            let rank = (now.state != "left", now.since.clone());
-            let better = current.get(&about.id).is_none_or(|(living, since, ..)| rank > (*living, since.clone()));
+            let rank = super::records::currency(&now);
+            let better = current.get(&about.id).is_none_or(|(held, ..)| rank > *held);
             if better {
-                current.insert(about.id.clone(), (rank.0, rank.1, records, about, now));
+                current.insert(about.id.clone(), (rank, records, about, now));
             }
         }
         let mut state = self.state.lock();
-        for (id, (_, _, records, about, now)) in current {
+        for (id, (_, records, about, now)) in current {
             let thread = match (about.agent.as_str(), about.surface.as_str(), &about.session) {
                 ("codex", "world", Some(thread)) => Some(thread.clone()),
                 _ => None,
