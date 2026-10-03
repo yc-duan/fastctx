@@ -87,6 +87,27 @@ pub(crate) fn install_commands(world_dir: &Path) -> [Vec<String>; 2] {
     ]
 }
 
+/// Removes only the user-scoped plugin and marketplace installed by Apply.
+pub(crate) fn uninstall_commands() -> [Vec<String>; 2] {
+    [
+        vec![
+            "plugin".into(),
+            "uninstall".into(),
+            format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}"),
+            "--scope".into(),
+            "user".into(),
+        ],
+        vec![
+            "plugin".into(),
+            "marketplace".into(),
+            "remove".into(),
+            MARKETPLACE_NAME.into(),
+            "--scope".into(),
+            "user".into(),
+        ],
+    ]
+}
+
 /// `<world>/claude/<session>`.
 pub(crate) fn session_dir(world_dir: &Path, session: &str) -> PathBuf {
     world_dir.join("claude").join(session)

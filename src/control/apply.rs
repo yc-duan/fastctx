@@ -135,6 +135,7 @@ pub struct ApplyPlan {
     preview: Vec<PreviewItem>,
     conflict: Option<TokenLimitConflict>,
     stale_binaries: Vec<PathBuf>,
+    enrollment: (PathBuf, bool),
 }
 
 impl ApplyPlan {
@@ -166,6 +167,7 @@ pub struct UnapplyPlan {
     paths: ControlPaths,
     running_jobs: usize,
     running_processes: Vec<InstalledProcess>,
+    claude_world: Option<super::claude_world::ClaudeWorldPlan>,
 }
 
 impl UnapplyPlan {
@@ -179,6 +181,10 @@ impl UnapplyPlan {
         self.running_jobs == 0
             && self.running_processes.is_empty()
             && self.changes.iter().all(|change| !change.is_changed())
+            && self
+                .claude_world
+                .as_ref()
+                .is_none_or(super::claude_world::ClaudeWorldPlan::is_empty)
     }
 
     /// Number of running jobs observed by the immutable preview.
@@ -368,10 +374,16 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         options.output_guard_enabled,
         &provider_detection,
     );
+    let world = crate::world::is_enrolled(paths);
     let expected = ExpectedConfig {
         command: crate::paths::display_path(&paths.installed_binary),
         tier: options.tier,
-        host_limit: effective_output.host_limit,
+        host_limit: if world {
+            codex_config::WORLD_OUTPUT_TOKEN_LIMIT
+        } else {
+            effective_output.host_limit
+        },
+        run_output_token_limit: world.then_some(codex_config::WORLD_OUTPUT_TOKEN_LIMIT),
         fastctx_budget: effective_output.fastctx_budget,
         // Resolve the environment-derived mode here so what gets written, the receipt, and drift
         // detection all see one concrete policy while the persisted tier remains the user's choice.
@@ -402,12 +414,12 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         .map(|record| codex_config::CodexConfigOwnership {
             server_entry_owned: record.codex_server_entry_owned,
             direct_namespace_inserted: record.codex_direct_namespace_inserted,
+            run_output_token_limit: record.run_output_token_limit,
         })
         .unwrap_or_default();
     let codex_edit = codex_config::apply(codex_source, &expected, previous_ownership)?;
 
     let agents_original = transaction::read_snapshot(&paths.codex_agents)?;
-    let world = crate::world::is_enrolled(paths);
     let agents_edit = agents::apply_section_with_ownership_for_world(
         agents_original.as_deref().unwrap_or_default(),
         options.enabled_tools,
@@ -488,6 +500,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
             tier: options.tier,
             tool_output_token_limit: expected.host_limit,
             tool_timeout_sec: Some(codex_config::TOOL_TIMEOUT_SECONDS),
+            run_output_token_limit: expected.run_output_token_limit,
             previous_token_limit_present,
             previous_token_limit,
             fastctx_token_budget: expected.fastctx_budget,
@@ -566,6 +579,7 @@ pub fn plan_apply(paths: &ControlPaths, options: ApplyOptions) -> Result<ApplyPl
         preview,
         conflict: codex_edit.conflict,
         stale_binaries,
+        enrollment: (paths.fastctx_dir.join("world.toml"), world),
     })
 }
 
@@ -574,11 +588,17 @@ pub fn commit_apply(
     plan: ApplyPlan,
     token_limit_confirmed: bool,
 ) -> Result<OperationReceipt, String> {
+    validate_enrollment(&plan.enrollment)?;
     if let Some(conflict) = &plan.conflict
         && !token_limit_confirmed
     {
+        let requirement = if plan.enrollment.1 {
+            "World"
+        } else {
+            "the selected tier"
+        };
         return Err(format!(
-            "tool_output_token_limit is currently {} but the selected tier requires {}. Re-run with --yes or confirm this shared setting in the TUI.",
+            "tool_output_token_limit is currently {} but {requirement} requires {}. Re-run with --yes or confirm this shared setting in the TUI.",
             conflict.current, conflict.requested
         ));
     }
@@ -608,6 +628,15 @@ pub fn commit_apply(
         changed_targets,
         notes,
     })
+}
+
+pub(crate) fn validate_enrollment((path, enrolled): &(PathBuf, bool)) -> Result<(), String> {
+    if path.is_file() != *enrolled {
+        return Err(
+            "World enrollment changed after the preview; preview again and retry.".to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// Computes the complete immutable Unapply plan.
@@ -651,6 +680,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             command: record.command.clone(),
             tier: record.tier,
             host_limit: record.tool_output_token_limit,
+            run_output_token_limit: record.run_output_token_limit,
             fastctx_budget: record.fastctx_token_budget,
             tool_budgets: record.tool_budgets,
             enabled_tools: record.enabled_tools.unwrap_or_else(|| {
@@ -684,6 +714,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             codex_config::CodexConfigOwnership {
                 server_entry_owned: record.codex_server_entry_owned,
                 direct_namespace_inserted: record.codex_direct_namespace_inserted,
+                run_output_token_limit: record.run_output_token_limit,
             },
             restore_token_limit,
             record.previous_token_limit_present,
@@ -763,6 +794,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
 
     let mut changes = Vec::new();
     let mut target_directory_cleanup = Vec::new();
+    let mut claude_world = None;
     for target in crate::control::targets::AgentTarget::ALL {
         if target == crate::control::targets::AgentTarget::Codex
             || !applied_targets.contains_key(target.id())
@@ -770,10 +802,13 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             continue;
         }
         let target_plan = crate::control::target_apply::plan_target_disconnect(paths, target)?;
-        let (mut target_changes, directories) =
+        let (mut target_changes, directories, world) =
             target_plan.into_host_changes(&paths.fastctx_config);
         changes.append(&mut target_changes);
         target_directory_cleanup.extend(directories);
+        if world.is_some() {
+            claude_world = world;
+        }
     }
     changes.extend([
         FileChange {
@@ -807,7 +842,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             locked_binary_fallback: false,
         });
     }
-    let preview = preview_unapply(
+    let mut preview = preview_unapply(
         &changes,
         restore_token_limit,
         applied
@@ -818,6 +853,9 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
             .and_then(|record| record.previous_token_limit),
         manual_binary_cleanup.as_deref(),
     );
+    if let Some(world) = &claude_world {
+        preview.extend(world.preview());
+    }
     Ok(UnapplyPlan {
         changes,
         preview,
@@ -828,6 +866,7 @@ pub fn plan_unapply(paths: &ControlPaths, options: UnapplyOptions) -> Result<Una
         paths: paths.clone(),
         running_jobs,
         running_processes,
+        claude_world,
     })
 }
 
@@ -887,17 +926,31 @@ fn terminate_managed_processes(plan: &UnapplyPlan) -> Result<usize, String> {
 pub fn commit_unapply(plan: UnapplyPlan) -> Result<OperationReceipt, String> {
     let mut admission = crate::shell::jobs::acquire_unapply_admission(&plan.paths)?;
     transaction::validate(&plan.changes)?;
+    if let Some(world) = &plan.claude_world {
+        world.validate()?;
+    }
     // Fence older servers while admission is locked so no job can appear after the kill scan.
     admission.advance_generation()?;
     let killed_jobs = crate::shell::jobs::kill_all_running(&plan.paths)?;
     let terminated_processes = terminate_managed_processes(&plan)?;
-    let changed_targets = plan
+    let mut changed_targets = plan
         .changes
         .iter()
         .filter(|change| change.is_changed())
         .count();
-    transaction::commit(&plan.changes)?;
+    if let Some(world) = &plan.claude_world {
+        changed_targets += world.commit(&plan.changes)?;
+    } else {
+        transaction::commit(&plan.changes)?;
+    }
     let mut notes = Vec::new();
+    if let Some(note) = plan
+        .claude_world
+        .as_ref()
+        .and_then(super::claude_world::ClaudeWorldPlan::note)
+    {
+        notes.push(note.to_string());
+    }
     if let Some(path) = plan.manual_binary_cleanup.as_ref() {
         remove_fastctx_except(&plan.fastctx_dir, path)
             .map_err(|error| augment_directory_error(error, &plan.paths))?;
@@ -1133,6 +1186,8 @@ fn record_matches(record: &AppliedRecord, context: &RecordMatchContext<'_>) -> b
         }) == expected.enabled_tools
         && !record.fastedit_enabled
         && record.tool_output_token_limit == expected.host_limit
+        && record.run_output_token_limit == expected.run_output_token_limit
+        && record.world == crate::world::is_enrolled(paths)
         && record.tool_timeout_sec == Some(codex_config::TOOL_TIMEOUT_SECONDS)
         && record.fastctx_token_budget == expected.fastctx_budget
         && record.codex_dir_created == *codex_dir_created
@@ -1330,6 +1385,11 @@ fn preview_apply(
                     PreviewDetail::kept("[mcp_servers.fastctx] startup_timeout_sec = 120"),
                     PreviewDetail::kept("[mcp_servers.fastctx] tool_timeout_sec = 300"),
                 ]);
+                if let Some(limit) = expected.run_output_token_limit {
+                    details.push(PreviewDetail::kept(format!(
+                        "[mcp_servers.fastctx.tools.run] output_token_limit = {limit}"
+                    )));
+                }
                 if codex_config::has_namespace(original, "mcp__fastctx")
                     && !codex_config::has_namespace(updated, "mcp__fastctx")
                 {

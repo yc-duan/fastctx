@@ -9,13 +9,13 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-pub(super) struct JsonEntryEdit {
+pub(crate) struct JsonEntryEdit {
     pub bytes: Vec<u8>,
     pub managed_hash: String,
     pub receipt: JsoncConfigReceipt,
 }
 
-pub(super) fn apply(
+pub(crate) fn apply(
     original: &[u8],
     property_path: &[&str],
     desired: &Value,
@@ -126,7 +126,7 @@ pub(super) fn apply(
     })
 }
 
-pub(super) fn disconnect(
+pub(crate) fn disconnect(
     original: &[u8],
     property_path: &[&str],
     owned_hash: &str,
@@ -201,7 +201,7 @@ pub(super) fn disconnect(
     Ok(std::mem::take(&mut output).into_bytes())
 }
 
-pub(super) fn inspect(original: &[u8], property_path: &[&str]) -> Result<Option<String>, String> {
+pub(crate) fn inspect(original: &[u8], property_path: &[&str]) -> Result<Option<String>, String> {
     let source = utf8(original)?;
     let parsed = parse(source)?;
     let Some(root) = parsed.root.as_ref() else {
@@ -211,10 +211,39 @@ pub(super) fn inspect(original: &[u8], property_path: &[&str]) -> Result<Option<
         .map(|located| observed_hash(source, &parsed.tokens, located.property)))
 }
 
-pub(super) fn canonical_hash(value: &Value) -> String {
+pub(crate) fn canonical_hash(value: &Value) -> String {
     let sorted = sort_json(value);
     let bytes = serde_json::to_vec(&sorted).expect("JSON values are serializable");
     hex::encode(Sha256::digest(bytes))
+}
+
+pub(crate) fn raw_value(original: &[u8], path: &[&str]) -> Result<Option<String>, String> {
+    let source = utf8(original)?;
+    let parsed = parse(source)?;
+    let Some(root) = parsed.root.as_ref() else {
+        return Ok(None);
+    };
+    Ok(locate_property(root, path)?.map(|located| {
+        let range = located.property.value.range();
+        source[range.start..range.end].to_string()
+    }))
+}
+
+pub(crate) fn replace_raw(original: &[u8], path: &[&str], raw: &str) -> Result<Vec<u8>, String> {
+    let source = utf8(original)?;
+    let parsed = parse(source)?;
+    let located = parsed
+        .root
+        .as_ref()
+        .map(|root| locate_property(root, path))
+        .transpose()?
+        .flatten()
+        .ok_or_else(|| format!("JSONC entry {} is missing.", path.join(".")))?;
+    let range = located.property.value.range();
+    let mut output = source.to_string();
+    output.replace_range(range.start..range.end, raw);
+    parse(&output)?;
+    Ok(output.into_bytes())
 }
 
 struct ParsedDocument<'a> {

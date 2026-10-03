@@ -299,6 +299,16 @@ pub fn run_target(
             "Repair the target configuration format or path, then retry target Doctor.",
         ),
     });
+    if status
+        .facts
+        .iter()
+        .any(|fact| fact == super::claude_plugin::UNAVAILABLE)
+    {
+        checks.push(DoctorCheck::info(
+            "Claude Code World plugin",
+            super::claude_plugin::UNAVAILABLE,
+        ));
+    }
     checks.push(target_budget_check(&settings, target));
     if status.state == TargetConnectionState::Connected {
         checks.push(match probe_mcp(
@@ -332,6 +342,26 @@ fn target_budget_check(
     target: crate::control::targets::AgentTarget,
 ) -> DoctorCheck {
     use crate::control::targets::BudgetPolicy;
+    if settings
+        .target_receipt(target)
+        .is_some_and(|receipt| receipt.world)
+    {
+        match target {
+            crate::control::targets::AgentTarget::Codex => {
+                return DoctorCheck::info(
+                    "Target output budget",
+                    "World requires tool_output_token_limit and fastctx run output_token_limit = 125000.",
+                );
+            }
+            crate::control::targets::AgentTarget::ClaudeCode => {
+                return DoctorCheck::info(
+                    "Target output budget",
+                    "World requires env.MAX_MCP_OUTPUT_TOKENS = \"200000\".",
+                );
+            }
+            _ => {}
+        }
+    }
     let Some(receipt) = settings.target_receipt(target) else {
         return DoctorCheck::info(
             "Target output budget",
@@ -532,6 +562,12 @@ fn check_output_guard(
     settings: Option<&settings::FastCtxSettings>,
     record: Option<&settings::AppliedRecord>,
 ) -> DoctorCheck {
+    if record.is_some_and(|record| record.world) {
+        return DoctorCheck::info(
+            "Provider and compaction",
+            "World connections require host output limit 125000.",
+        );
+    }
     if detection.provenance == ProviderProvenance::Unknown {
         let settings_detail = if settings.is_none() {
             " FastCtx settings also could not be loaded, so no effective output policy could be evaluated."
@@ -953,6 +989,7 @@ fn check_drift(
         command: record.command.clone(),
         tier: record.tier,
         host_limit: record.tool_output_token_limit,
+        run_output_token_limit: record.run_output_token_limit,
         fastctx_budget: record.fastctx_token_budget,
         tool_budgets: record.tool_budgets,
         enabled_tools: applied_tools(record),
@@ -968,6 +1005,15 @@ fn check_drift(
     )
     .and_then(|mut items| {
         items.extend(receipt_drift(paths, record)?);
+        let enrolled = crate::world::is_enrolled(paths);
+        if record.world != enrolled {
+            items.push("World enrollment differs from the host connection".to_string());
+        } else if enrolled
+            && (record.tool_output_token_limit != codex_config::WORLD_OUTPUT_TOKEN_LIMIT
+                || record.run_output_token_limit != Some(codex_config::WORLD_OUTPUT_TOKEN_LIMIT))
+        {
+            items.push("World output limits require 125000".to_string());
+        }
         if legacy_fastedit {
             items.push("legacy fastedit configuration".to_string());
         }
@@ -985,7 +1031,12 @@ fn check_drift(
                     settings.output_guard.enabled,
                     &detection,
                 );
-                if record.tool_output_token_limit != effective.host_limit
+                let host_limit = if crate::world::is_enrolled(paths) {
+                    codex_config::WORLD_OUTPUT_TOKEN_LIMIT
+                } else {
+                    effective.host_limit
+                };
+                if record.tool_output_token_limit != host_limit
                     || record.fastctx_token_budget != effective.fastctx_budget
                 {
                     pending.push(match effective.mode {
@@ -1417,7 +1468,12 @@ pub fn probe_mcp(executable: &Path, options: ServerOptions) -> Result<(), String
         crate::server::Writer::Edit => "edit",
         crate::server::Writer::ApplyPatch => "apply_patch",
     };
-    probe_mcp_server(executable, &["serve", "--tools", &tools, "--writer", writer], options, &expected)
+    probe_mcp_server(
+        executable,
+        &["serve", "--tools", &tools, "--writer", writer],
+        options,
+        &expected,
+    )
 }
 
 /// Probes one explicit server invocation and requires exact tool contracts.

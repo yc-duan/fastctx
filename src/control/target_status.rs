@@ -60,7 +60,11 @@ pub fn inspect_target(
             facts: vec!["No Apply receipt for this target.".to_string()],
         };
     };
-    let mut facts = vec![target.budget_policy().doctor_fact().to_string()];
+    let mut facts = vec![if target == AgentTarget::ClaudeCode && receipt.world {
+        "World requires env.MAX_MCP_OUTPUT_TOKENS = \"200000\".".to_string()
+    } else {
+        target.budget_policy().doctor_fact().to_string()
+    }];
     let state = match inspect_connected(
         control,
         target,
@@ -132,6 +136,12 @@ fn inspect_connected(
         if receipt.world != crate::world::is_enrolled(control) {
             return Err(TargetIssue::Drift(enrollment_changed(receipt.world)));
         }
+        if target == AgentTarget::ClaudeCode
+            && let Some(note) = super::claude_world::inspect(control, receipt.claude_world.as_ref())
+                .map_err(TargetIssue::Drift)?
+        {
+            facts.push(note.to_string());
+        }
     }
     let installation = fs::read(&control.installed_binary)
         .map_err(|error| classify_io(&control.installed_binary, "installed binary", error))?;
@@ -174,6 +184,7 @@ fn inspect_codex(
             .clone(),
         tier: codex.tier,
         host_limit: codex.tool_output_token_limit,
+        run_output_token_limit: codex.run_output_token_limit,
         fastctx_budget: receipt.fastctx_token_budget,
         tool_budgets: codex.tool_budgets,
         enabled_tools: receipt.enabled_tools,
@@ -193,6 +204,18 @@ fn inspect_codex(
         )));
     }
     let world = crate::world::is_enrolled(control);
+    if receipt.world != world {
+        return Err(TargetIssue::Drift(enrollment_changed(receipt.world)));
+    }
+    if world
+        && (codex.tool_output_token_limit != codex_config::WORLD_OUTPUT_TOKEN_LIMIT
+            || codex.run_output_token_limit != Some(codex_config::WORLD_OUTPUT_TOKEN_LIMIT))
+    {
+        return Err(TargetIssue::Drift(
+            "Codex output limits differ from the World value 125000; run fastctx apply."
+                .to_string(),
+        ));
+    }
     if agents::classify_managed_section_for(guidance, receipt.enabled_tools, world)
         != agents::ManagedSectionState::Current
     {
@@ -207,12 +230,13 @@ fn inspect_codex(
     Ok(())
 }
 
-/// The sentence for a guidance block written before this machine enrolled in or left a World.
+/// Describes a host connection made for a different World enrollment state.
 fn enrollment_changed(applied_enrolled: bool) -> String {
     if applied_enrolled {
-        "Managed guidance still carries the World section from before this machine left its World; run fastctx apply to remove it.".to_string()
+        "The host connection still uses World settings after this machine left its World; run fastctx apply.".to_string()
     } else {
-        "Managed guidance predates this machine's World enrollment and has no World section; run fastctx apply to add it.".to_string()
+        "The host connection predates this machine's World enrollment; run fastctx apply."
+            .to_string()
     }
 }
 
