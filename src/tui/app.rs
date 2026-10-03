@@ -1137,7 +1137,7 @@ impl App {
             }
             Effect::LoadJobTail { job_id } => {
                 self.last_tail_refresh = Some(Instant::now());
-                if !self.focused_job().is_some_and(|job| job.id == *job_id) {
+                if self.focused_job().is_none_or(|job| job.id != *job_id) {
                     return;
                 }
                 if self.jobs_detail.job_id.as_deref() != Some(job_id.as_str()) {

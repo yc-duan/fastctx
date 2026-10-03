@@ -121,7 +121,12 @@ fn normalize_path(path: &Path) -> PathBuf {
 }
 
 fn run(home: &Path, args: &[String]) -> Result<Option<Vec<u8>>, String> {
-    let output = match Command::new("claude")
+    // Found the way the town finds it: on Windows an npm install is `claude.cmd`, which
+    // `Command` does not look for on its own.
+    let Some(claude) = crate::town::claude::claude_binary() else {
+        return Ok(None);
+    };
+    let output = match Command::new(claude)
         .args(args)
         .current_dir(home)
         .env("HOME", home)

@@ -402,7 +402,7 @@ pub(crate) async fn start_background(background: &Background<'_>) -> Result<(), 
     claude(&args, Some(background.cwd), Some(background.resident)).await.map(|_| ())
 }
 
-fn claude_binary() -> Option<PathBuf> {
+pub(crate) fn claude_binary() -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
     let names: &[&str] = if cfg!(windows) { &["claude.exe", "claude.cmd"] } else { &["claude"] };
     std::env::split_paths(&paths).flat_map(|dir| names.iter().map(move |name| dir.join(name))).find(|path| path.is_file())

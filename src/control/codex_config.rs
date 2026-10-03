@@ -13,7 +13,9 @@ const LEGACY_FASTEDIT_NAMESPACE: &str = "mcp__fastedit";
 pub(crate) const STARTUP_TIMEOUT_SECONDS: i64 = 120;
 /// MCP tool timeout written by Apply so 240-second tool waits retain a 60-second return margin.
 pub(crate) const TOOL_TIMEOUT_SECONDS: i64 = 300;
-pub(crate) const WORLD_OUTPUT_TOKEN_LIMIT: i64 = 125_000;
+/// Codex's output limit on an enrolled machine, for one `run` and for every tool: the World's
+/// budget for one result (`hands::text`).
+pub(crate) const WORLD_OUTPUT_TOKEN_LIMIT: i64 = crate::hands::text::CODEX_OUTPUT_TOKEN_LIMIT as i64;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct LegacyRemoval {

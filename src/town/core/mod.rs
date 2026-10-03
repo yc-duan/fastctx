@@ -477,7 +477,7 @@ impl Town {
     /// resident's session ended with the old node. A resident that moved between towns left
     /// records in each; only the current ones count.
     fn restore(&self) -> Restored {
-        let mut current: BTreeMap<String, ((bool, Option<time::OffsetDateTime>), Records, About, Now)> = BTreeMap::new();
+        let mut current: BTreeMap<String, (super::records::Currency, Records, About, Now)> = BTreeMap::new();
         for dir in self.record_dirs() {
             let records = Records::new(dir);
             let about = match records.about() {

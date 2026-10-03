@@ -11,7 +11,17 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const LIMIT_PATH: &[&str] = &["env", "MAX_MCP_OUTPUT_TOKENS"];
-const LIMIT: &str = "\"200000\"";
+
+/// The World's limit on one MCP result in Claude Code (`hands::text`); Claude Code reads its
+/// environment settings as strings.
+fn limit() -> String {
+    crate::hands::text::CLAUDE_MCP_OUTPUT_TOKENS.to_string()
+}
+
+/// [`limit`] as the raw JSON written into the settings.
+fn limit_json() -> String {
+    serde_json::Value::String(limit()).to_string()
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ClaudeWorldReceipt {
@@ -57,7 +67,7 @@ pub(crate) fn plan(
         let (bytes, output_limit) = json_setting::set(
             original.as_deref().unwrap_or_default(),
             LIMIT_PATH,
-            LIMIT,
+            &limit_json(),
             previous_limit.as_ref(),
         )?;
         (
@@ -70,7 +80,7 @@ pub(crate) fn plan(
                 output_limit,
                 plugin: previous.and_then(|r| r.plugin.clone()),
             },
-            PreviewDetail::kept("env.MAX_MCP_OUTPUT_TOKENS = \"200000\""),
+            PreviewDetail::kept(format!("env.MAX_MCP_OUTPUT_TOKENS = {}", limit_json())),
         )
     } else {
         let receipt = previous
@@ -111,7 +121,7 @@ fn restore_limit(
     };
     let detail = match &receipt.output_limit.before {
         Some(raw) => PreviewDetail::kept(format!("env.MAX_MCP_OUTPUT_TOKENS = {raw}")),
-        None => PreviewDetail::removed("env.MAX_MCP_OUTPUT_TOKENS = \"200000\""),
+        None => PreviewDetail::removed(format!("env.MAX_MCP_OUTPUT_TOKENS = {}", limit_json())),
     };
     Ok((bytes, detail))
 }
@@ -213,7 +223,7 @@ impl ClaudeWorldPlan {
                 let (bytes, output_limit) = json_setting::set(
                     after_commands.as_deref().unwrap_or_default(),
                     LIMIT_PATH,
-                    LIMIT,
+                    &limit_json(),
                     self.previous_limit.as_ref(),
                 )?;
                 let mut receipt = self.receipt.clone();
@@ -294,12 +304,12 @@ pub(crate) fn inspect(
         .map(|raw| serde_json::from_str::<serde_json::Value>(&raw))
         .transpose()
         .map_err(|error| error.to_string())?
-        != Some(serde_json::Value::String("200000".to_string()))
+        != Some(serde_json::Value::String(limit()))
     {
-        return Err(
-            "Claude Code env.MAX_MCP_OUTPUT_TOKENS differs from the World value 200000."
-                .to_string(),
-        );
+        return Err(format!(
+            "Claude Code env.MAX_MCP_OUTPUT_TOKENS differs from the World value {}.",
+            limit()
+        ));
     }
     let Some(state) = claude_plugin::snapshot(&control.home)? else {
         return Ok(Some(claude_plugin::UNAVAILABLE));

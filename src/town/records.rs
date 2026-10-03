@@ -148,9 +148,12 @@ pub(crate) fn now_precise() -> String {
         .expect("the current time formats as RFC 3339")
 }
 
+/// How current one copy of a resident's records is; a greater one is more current.
+pub(crate) type Currency = (bool, Option<time::OffsetDateTime>);
+
 /// Orders records of one resident: those it has not left first, then the latest change. The
 /// times are compared as moments, not as text, so precisions can mix.
-pub(crate) fn currency(now: &Now) -> (bool, Option<time::OffsetDateTime>) {
+pub(crate) fn currency(now: &Now) -> Currency {
     (now.state != "left", crate::world::parse_rfc3339(&now.since).ok())
 }
 
