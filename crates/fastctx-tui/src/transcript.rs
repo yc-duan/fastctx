@@ -718,7 +718,9 @@ fn sent(ctx: &Ctx, state: &SendState, width: usize) -> Vec<Line<'static>> {
 /// a rule once it is done, the accent breathing while it runs, the colour
 /// of what went wrong when it failed), its name, what it was used on, the
 /// machine it acted on when not this one, and on the right how long it took
-/// or how its command ended.
+/// or how its command ended. A tool read back from a host's record that
+/// keeps no times began and ended at the same instant: how long it took is
+/// not known, and is not shown.
 fn tool_row(
     ctx: &Ctx,
     tool: &Tool,
@@ -734,16 +736,23 @@ fn tool_row(
         Some((end, _)) => end.as_second() - at.as_second(),
         None => ctx.now.as_second() - at.as_second(),
     };
-    let took = match tool.duration_ms {
-        Some(ms) if ended.is_some() => words.duration(ms / 1000),
-        _ => words.duration(seconds.max(0) as u64),
+    let took = match (tool.duration_ms, ended) {
+        (Some(ms), Some(_)) if ms < 1000 => Some(words.under_a_second().to_string()),
+        (Some(ms), Some(_)) => Some(words.duration(ms / 1000)),
+        (None, Some((end, _))) if end == at => None,
+        (None, Some(_)) if seconds < 1 => Some(words.under_a_second().to_string()),
+        _ => Some(words.duration(seconds.max(0) as u64)),
     };
     let (exit, job) = match &tool.does {
         Does::Command { exit, job, .. } => (*exit, job.clone()),
         _ => (None, None),
     };
     let (bar, detail_role, said) = match ended {
-        None => (look.faded(Role::Accent, ctx.breath), Role::Text, Span::styled(took, look.text(Role::Faint))),
+        None => (
+            look.faded(Role::Accent, ctx.breath),
+            Role::Text,
+            Span::styled(took.unwrap_or_default(), look.text(Role::Faint)),
+        ),
         Some((_, Use::Done)) => match (exit, job) {
             (_, Some(job)) => {
                 (look.text(Role::Rule), Role::Muted, Span::styled(words.went_on_as(&job), look.text(Role::Accent)))
@@ -751,13 +760,15 @@ fn tool_row(
             (Some(code), None) if code != 0 => (
                 look.text(Role::Caution),
                 Role::Muted,
-                Span::styled(words.exited(code, &took), look.text(Role::Caution)),
+                Span::styled(words.exited(code, took.as_deref()), look.text(Role::Caution)),
             ),
-            _ => (look.text(Role::Rule), Role::Muted, Span::styled(took, look.text(Role::Faint))),
+            _ => (look.text(Role::Rule), Role::Muted, Span::styled(took.unwrap_or_default(), look.text(Role::Faint))),
         },
-        Some((_, Use::Failed)) => {
-            (look.text(Role::Wrong), Role::Muted, Span::styled(words.tool_failed(&took), look.text(Role::Wrong)))
-        }
+        Some((_, Use::Failed)) => (
+            look.text(Role::Wrong),
+            Role::Muted,
+            Span::styled(words.tool_failed(took.as_deref()), look.text(Role::Wrong)),
+        ),
         Some((_, Use::Declined)) => (
             look.text(Role::Wrong),
             Role::Muted,

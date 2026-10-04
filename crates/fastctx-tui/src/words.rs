@@ -695,10 +695,18 @@ impl Words {
         self.pick("；它的宿主不告诉世界一轮何时结束", "; its host does not tell the World when its turns end")
     }
 
-    pub fn tool_failed(&self, took: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("失败 · {took}"),
-            Lang::En => format!("failed · {took}"),
+    /// How long a tool took that ended within its first second.
+    pub fn under_a_second(&self) -> &'static str {
+        self.pick("不到 1 秒", "under 1s")
+    }
+
+    /// A tool that failed, after how long when that is known.
+    pub fn tool_failed(&self, took: Option<&str>) -> String {
+        match (self.lang, took) {
+            (Lang::Zh, Some(took)) => format!("失败 · {took}"),
+            (Lang::En, Some(took)) => format!("failed · {took}"),
+            (Lang::Zh, None) => "失败".to_string(),
+            (Lang::En, None) => "failed".to_string(),
         }
     }
 
@@ -707,10 +715,13 @@ impl Words {
     }
 
     /// A command that exited with a code other than 0, and how long it took.
-    pub fn exited(&self, code: i64, took: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("退出码 {code} · {took}"),
-            Lang::En => format!("exit {code} · {took}"),
+    /// A command's exit code, after how long when that is known.
+    pub fn exited(&self, code: i64, took: Option<&str>) -> String {
+        match (self.lang, took) {
+            (Lang::Zh, Some(took)) => format!("退出码 {code} · {took}"),
+            (Lang::En, Some(took)) => format!("exit {code} · {took}"),
+            (Lang::Zh, None) => format!("退出码 {code}"),
+            (Lang::En, None) => format!("exit {code}"),
         }
     }
 
