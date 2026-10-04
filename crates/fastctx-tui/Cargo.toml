@@ -1,0 +1,33 @@
+[package]
+name = "fastctx-tui"
+description = "The World in a terminal: projects, agents, machines and conversations, in the World's design language"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# Scenes drawn from made-up data, for looking at the screens without a World.
+preview = []
+
+[dependencies]
+anyhow.workspace = true
+crossterm = "0.29"
+fastctx-client = { path = "../fastctx-client" }
+fastctx-types = { path = "../fastctx-types" }
+jiff.workspace = true
+pulldown-cmark = { version = "0.13", default-features = false }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+unicode-segmentation = "1.12"
+unicode-width = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_System_Console",
+    "Win32_System_Registry",
+] }
