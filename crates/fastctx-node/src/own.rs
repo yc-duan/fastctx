@@ -34,8 +34,20 @@ pub fn pin(world: &WorldDir) -> io::Result<(PathBuf, Vec<(PathBuf, io::Error)>)>
         publish(&copy, &bytes, Permissions::Private)?;
         executable(&copy)?;
     }
+    if cfg!(windows) && fs::read(directory.join("fastctx")).ok().is_none_or(|held| held != GIT_BASH_SHIM.as_bytes()) {
+        publish(&directory.join("fastctx"), GIT_BASH_SHIM.as_bytes(), Permissions::Private)?;
+    }
     Ok((copy, remove_others(world, &programs, &name)))
 }
+
+/// What Git Bash runs for `fastctx` in the World's shell on Windows. Before
+/// it starts a native program, Git Bash rewrites each argument that looks
+/// like a Unix path into one under its own installation, and a path given
+/// to fastctx is often another machine's (`fastctx journal add
+/// --attach-from laptop /srv/run.log`). Only fastctx is started without
+/// that rewriting; every other program sees the shell as Git Bash made it.
+/// Git Bash finds this file before `fastctx.exe` beside it.
+const GIT_BASH_SHIM: &str = "#!/bin/sh\nMSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' exec \"${0%/*}/fastctx.exe\" \"$@\"\n";
 
 /// Removes other versions only after their jobs' complete process trees
 /// have ended. Windows executable sharing alone does not express that
