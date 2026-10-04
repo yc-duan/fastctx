@@ -247,7 +247,7 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
                     && !prompt
                     && !row.blocks().is_some_and(|blocks| blocks.iter().any(|block| block["type"] == "tool_result"))
                 {
-                    transcript.other(row, at, 0, "user", row.value.clone());
+                    transcript.hidden(row, at);
                     continue;
                 }
                 if prompt {
@@ -284,11 +284,7 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
                     }
                 }
                 match message.get("content") {
-                    Some(Value::String(_)) if row.kind() == Some("user") => {
-                        if !prompt {
-                            transcript.other(row, at, 0, "user", row.value.clone());
-                        }
-                    }
+                    Some(Value::String(_)) if prompt => {}
                     Some(Value::Array(blocks)) => {
                         for (block_index, block) in blocks.iter().enumerate() {
                             let kind = block.get("type").and_then(Value::as_str);
@@ -362,6 +358,7 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
                     }
                 }
             }
+            Some("attachment" | "system" | "queue-operation") => transcript.hidden(row, at),
             _ => transcript.other(row, at, 0, row.kind().expect("type checked"), row.value.clone()),
         }
     }
@@ -395,9 +392,17 @@ impl Row {
         let message = self.value.get("message").filter(|message| message.is_object());
         let Some(message) = message else { return Some("missing or invalid message") };
         if message.get("role").is_some_and(|role| role.as_str() != self.kind())
-            || ["isMeta", "isCompactSummary", "isVisibleInTranscriptOnly", "isVirtual", "turnCompanion"]
-                .iter()
-                .any(|key| self.value.get(*key).is_some_and(|value| !value.is_boolean()))
+            || [
+                "isMeta",
+                "isCompactSummary",
+                "isVisibleInTranscriptOnly",
+                "isVirtual",
+                "turnCompanion",
+                "dispatchEcho",
+                "stackedExpansion",
+            ]
+            .iter()
+            .any(|key| self.value.get(*key).is_some_and(|value| !value.is_boolean()))
             || self
                 .value
                 .get("origin")
@@ -438,9 +443,16 @@ impl Row {
     }
 
     fn prompt(&self) -> bool {
-        if ["isMeta", "isCompactSummary", "isVisibleInTranscriptOnly", "isVirtual", "turnCompanion"]
-            .iter()
-            .any(|key| self.value[*key] == true)
+        if [
+            "isCompactSummary",
+            "isVisibleInTranscriptOnly",
+            "isVirtual",
+            "turnCompanion",
+            "dispatchEcho",
+            "stackedExpansion",
+        ]
+        .iter()
+        .any(|key| self.value[*key] == true)
             || ["sourceToolAssistantUUID", "sourceToolUseID", "toolUseResult"]
                 .iter()
                 .any(|key| self.value.get(*key).is_some_and(|value| !value.is_null()))
@@ -448,11 +460,11 @@ impl Row {
         {
             return false;
         }
-        if self.value["promptSource"] == "system"
-            || matches!(
-                self.value.get("turnOrigin").and_then(Value::as_str),
-                Some("system" | "host_synthetic" | "auto_continuation" | "task_notification" | "scheduled")
-            )
+        // System-origin submissions can be prompts, including a plugin speaking
+        // as the user. Meta prompts carry input provenance too; a plugin's
+        // session.append context note carries origin alone.
+        if self.value["isMeta"] == true
+            && !["promptSource", "turnOrigin"].iter().any(|key| self.value.get(*key).is_some_and(Value::is_string))
         {
             return false;
         }
@@ -471,8 +483,6 @@ impl Row {
             "<local-command-stderr>",
             "<command-name>",
             "<command-message>",
-            "<system-reminder>",
-            "<task-notification>",
             "[Request interrupted by user",
         ]
         .iter()
@@ -480,12 +490,7 @@ impl Row {
         {
             return false;
         }
-        self.value.get("origin").filter(|origin| !origin.is_null()).is_none_or(|origin| {
-            matches!(
-                origin.get("kind").and_then(Value::as_str),
-                Some("human" | "plugin" | "peer" | "channel" | "coordinator" | "slack-ping")
-            )
-        })
+        true
     }
 }
 
@@ -506,6 +511,16 @@ impl Transcript {
 
     fn other(&mut self, row: &Row, at: Timestamp, index: usize, kind: &str, detail: Value) {
         self.finish(at, row.id(index), at, What::Other { host_kind: kind.to_string() }, detail);
+    }
+
+    fn hidden(&mut self, row: &Row, at: Timestamp) {
+        self.finish(
+            at,
+            row.id(0),
+            at,
+            What::Hidden { host_kind: row.kind().expect("type checked").to_string() },
+            row.value.clone(),
+        );
     }
 
     fn tool(&mut self, row: &Row, at: Timestamp, request: &Value, result: Option<(&Row, usize, Timestamp)>) {
