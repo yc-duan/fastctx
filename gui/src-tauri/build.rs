@@ -1,3 +1,9 @@
 fn main() {
-    tauri_build::build();
+    let attributes = tauri_build::Attributes::new().plugin(
+        "desktop-presence",
+        tauri_build::InlinedPlugin::new()
+            .commands(&["notify", "dismiss", "pending", "acknowledge", "window_presence"])
+            .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+    );
+    tauri_build::try_build(attributes).expect("building World's shell");
 }

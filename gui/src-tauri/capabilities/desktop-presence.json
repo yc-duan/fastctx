@@ -1,0 +1,7 @@
+{
+  "identifier": "desktop-presence",
+  "description": "The main Windows page can send notifications and receive desktop activations.",
+  "platforms": ["windows"],
+  "windows": ["main"],
+  "permissions": ["desktop-presence:default"]
+}
