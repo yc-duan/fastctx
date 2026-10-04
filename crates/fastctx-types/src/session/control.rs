@@ -17,7 +17,14 @@ use crate::Address;
 pub enum Control {
     /// Runs one of the session's own commands as the user typing
     /// `/name args` would; `name` is without the slash.
-    Command { name: String, args: String },
+    Command {
+        name: String,
+        args: String,
+        /// The host's skill path, when a catalog selection names a skill.
+        /// Equal skill names remain distinct; no arbitrary file is accepted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
     /// Compacts the conversation now. Between turns only.
     Compact,
     /// The model and reasoning effort from the next turn on; what is `None`
@@ -34,7 +41,7 @@ pub enum Control {
     Rewind { from: String },
     /// Answers a request the session waits on the user for, as its host
     /// reported it (`SessionChange::Request`): `request` is the request's
-    /// id, `answer` what the host's contract for that request takes.
+    /// opaque reply address, `answer` what the host's contract takes.
     Answer { request: Value, answer: Value },
 }
 
@@ -72,7 +79,8 @@ pub struct Offers {
     /// The models it can be given, as its host lists them; empty when the
     /// host does not list them.
     pub models: Vec<ModelOffer>,
-    /// The model and effort it uses now, when known.
+    /// The model and effort selected for the next turn through the World,
+    /// or the latest host-reported defaults when no choice was made.
     pub model: Option<String>,
     pub effort: Option<String>,
     /// How much of its context, and of the account's limits, is used, when
@@ -90,6 +98,9 @@ pub struct CommandOffer {
     /// Where it comes from: the host itself, a skill, a plugin, an MCP
     /// server, a prompt file; as the host says, kept verbatim.
     pub source: Option<String>,
+    /// Pass this path unchanged with the command when selecting a skill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -35,6 +35,13 @@ fn item(id: &str, what: What) -> Item {
 
 fn changes() -> Vec<SessionChange> {
     vec![
+        SessionChange::HistoryChanged,
+        SessionChange::Forked { source: address(), thread: "source-thread".into(), through: None },
+        SessionChange::Forked {
+            source: address(),
+            thread: "source-thread".into(),
+            through: Some("source-turn".into()),
+        },
         SessionChange::Diff { diff: "-before\n+after\n".into() },
         SessionChange::Terminal { item: "tool-1".into(), process: "process-1".into(), input: "yes\n".into() },
         SessionChange::Usage { usage: json!({"inputTokens": 42}) },
@@ -86,6 +93,11 @@ fn changes() -> Vec<SessionChange> {
             .unwrap(),
         SessionChange::Attachment { attachment: json!({"path": "diagram.png"}) },
         SessionChange::Request { id: json!(42), request: "approve".into(), params: json!({"command": "pwd"}) },
+        SessionChange::Request {
+            id: json!({"server":"123:2026-10-04T12:00:00Z","id":0}),
+            request: "item/fileChange/requestApproval".into(),
+            params: json!({"threadId":"thread","itemId":"item"}),
+        },
         SessionChange::Request { id: json!("request-1"), request: "input".into(), params: Value::Null },
         SessionChange::Resolved { id: json!("request-1"), resolution: json!(true) },
         SessionChange::Resolved { id: Value::Null, resolution: Value::Null },

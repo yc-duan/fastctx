@@ -153,7 +153,7 @@ pub async fn watch_here(
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
-    let events = node.watchers.watch(resident);
+    let mut events = node.watchers.watch(resident);
     let directory = node.world.resident(town.as_ref(), resident);
     let recorded =
         |directory: &ResidentDir| crate::delivery::history(directory).map_err(|error| Failure::new(error.to_string()));
@@ -161,7 +161,14 @@ pub async fn watch_here(
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
             let history = node.codex.history(thread).await.map_err(Failure::new)?;
             node.codex.flush_events(thread).await.map_err(Failure::new)?;
-            (recorded(&directory)?, Some(history))
+            // Reverted turns remain in the World's audit record, but no
+            // longer belong to the host's current conversation.
+            let recorded = crate::codex::watch::recorded(recorded(&directory)?, &history);
+            // A request can arrive and resolve while history is loading.
+            // Only currently unanswered requests may enter a new view; the
+            // subscription already covers changes after this snapshot.
+            events = crate::codex::watch::requests(node.codex.clone(), thread.clone(), events);
+            (recorded, Some(history))
         }
         // Claude Code's own record of the session, placed in the turns the
         // World saw, which the World's record says.
@@ -172,7 +179,14 @@ pub async fn watch_here(
         }
         _ => (recorded(&directory)?, None),
     };
-    Ok((history(recorded, hosted), events))
+    let mut history = history(recorded, hosted, about.host.agent.as_str());
+    if about.world_started
+        && about.host.agent.as_str() == "codex"
+        && let Some(thread) = &about.session
+    {
+        history.extend(node.codex.requests(thread));
+    }
+    Ok((history, events))
 }
 
 /// A session's history: what the World kept of it, and what its host keeps
@@ -180,14 +194,25 @@ pub async fn watch_here(
 /// turn's start or end, the World's account stands: it knows why a turn was
 /// cut short. Words the World sent are told by its own record, which knows
 /// who said them; the host's copy of them carries the World's head note.
-fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Vec<SessionEvent> {
+fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent: &str) -> Vec<SessionEvent> {
     use fastctx_types::session::Happened;
     let Some(hosted) = hosted else {
         return recorded_history(recorded);
     };
+    let sent_turns: std::collections::HashSet<_> = recorded
+        .iter()
+        .filter_map(|event| match &event.happened {
+            Happened::Heard { turn: Some(turn), .. } => Some(turn.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut history: Vec<SessionEvent> = hosted
         .into_iter()
-        .filter(|event| !matches!(&event.happened, Happened::Heard { text, .. } if fastctx_hands::told::is_told(text)))
+        .filter(|event| {
+            !matches!(&event.happened, Happened::Heard { turn, text, .. }
+            if fastctx_hands::told::is_told(text)
+                && (agent != "codex" || turn.as_deref().is_some_and(|turn| sent_turns.contains(turn))))
+        })
         .collect();
     for event in recorded {
         let same = history.iter().position(|other| match (&event.happened, &other.happened) {
@@ -265,7 +290,7 @@ fn recorded_history(mut history: Vec<SessionEvent>) -> Vec<SessionEvent> {
 }
 
 /// The turn an event belongs to, where it says.
-fn turn_of(happened: &fastctx_types::session::Happened) -> Option<&str> {
+pub(crate) fn turn_of(happened: &fastctx_types::session::Happened) -> Option<&str> {
     use fastctx_types::session::Happened;
     match happened {
         Happened::TurnStarted { turn }

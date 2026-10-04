@@ -18,6 +18,10 @@ impl Live {
 
     pub fn observe(&mut self, event: &SessionEvent) -> bool {
         match &event.happened {
+            Happened::Changed { change: SessionChange::HistoryChanged, .. } => {
+                self.items.clear();
+                self.deltas.clear();
+            }
             Happened::Began { turn, item } => {
                 if self.items.iter().any(|event| {
                     matches!(&event.happened,

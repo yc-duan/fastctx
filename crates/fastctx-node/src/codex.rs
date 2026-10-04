@@ -17,6 +17,9 @@ use tokio::sync::mpsc;
 
 use crate::Node;
 
+pub mod control;
+pub mod watch;
+
 /// Makes the World's own Codex threads known to the host again. Those idle
 /// whose asker is gone are asleep: the node that kept them is gone too.
 pub async fn adopt(node: &Arc<Node>) {
@@ -151,7 +154,10 @@ async fn drain(node: &Arc<Node>, thread: &str) {
         let Some(id) = node.residents.resident_of_thread(thread) else { return };
         let result = match event {
             HostEvent::Synchronized { .. } => unreachable!("barriers do not enter the durable queue"),
-            HostEvent::Happened { event, .. } => crate::turns::apply(node, &id, event).await,
+            HostEvent::Happened { event, .. } => match control::reported(node, &id, thread, &event) {
+                Ok(()) => crate::turns::apply(node, &id, event).await,
+                Err(error) => Err(error),
+            },
             HostEvent::Desk { turn, desk, .. } => {
                 let town = node.residents.town_of(&id).flatten();
                 let directory = node.world.resident(town.as_ref(), &id);
