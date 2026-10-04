@@ -13,21 +13,28 @@ pub(crate) fn depth() -> io::Result<Depth> {
         return Ok(Depth::Mono);
     }
 
+    // A Linux console and an explicitly selected ANSI/VT terminal must
+    // not inherit the capabilities of the terminal that launched it.
+    if let Some(depth) = fixed_depth(&term) {
+        return Ok(depth);
+    }
+    #[cfg(windows)]
+    let console = super::windows::console_depth()?;
+    #[cfg(windows)]
+    if console == Some(Depth::Ansi16) {
+        // A bridge that transports only 16 colours also limits a multiplexer.
+        return Ok(Depth::Ansi16);
+    }
     let multiplexed = term.starts_with("screen") || term.starts_with("tmux") || present("TMUX") || present("STY");
     if !multiplexed {
-        // A Linux console and an explicitly selected ANSI/VT terminal
-        // must not inherit the capabilities of the terminal that launched it.
-        if let Some(depth) = fixed_depth(&term) {
-            return Ok(depth);
-        }
         #[cfg(windows)]
-        if let Some(depth) = super::windows::console_depth()? {
-            if depth == Depth::Ansi16 {
-                return Ok(depth);
-            }
+        if let Some(depth) = console {
             // A remote ConPTY exposes the server's Console API even when
             // the client terminal has fewer colours.
-            if term.is_empty() && !present("SSH_CONNECTION") && !present("SSH_TTY") {
+            if (term.is_empty() || super::windows::has_visible_window())
+                && !present("SSH_CONNECTION")
+                && !present("SSH_TTY")
+            {
                 return Ok(depth);
             }
         }

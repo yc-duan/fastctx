@@ -48,6 +48,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Console",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

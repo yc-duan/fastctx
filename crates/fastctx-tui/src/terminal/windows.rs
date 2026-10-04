@@ -1,16 +1,25 @@
 //! The native Console path; a PTY pipe is handled by its terminal description.
 
+mod winpty;
+
 use std::io::{self, IsTerminal};
 use std::mem::size_of;
 use std::os::windows::io::AsRawHandle;
 
 use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
 use windows_sys::Win32::System::Console::{
-    ENABLE_PROCESSED_OUTPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, SetConsoleMode,
+    ENABLE_PROCESSED_OUTPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetConsoleWindow, SetConsoleMode,
 };
 use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
+use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 
 use crate::design::Depth;
+
+pub(super) fn has_visible_window() -> bool {
+    // SAFETY: neither call takes ownership. ConPTY's message-only window
+    // is not visible; a real Console window identifies the local renderer.
+    unsafe { IsWindowVisible(GetConsoleWindow()) != 0 }
+}
 
 pub(super) fn console_depth() -> io::Result<Option<Depth>> {
     let stdout = io::stdout();
@@ -22,6 +31,9 @@ pub(super) fn console_depth() -> io::Result<Option<Depth>> {
     // SAFETY: stdout owns the handle and mode is writable.
     if unsafe { GetConsoleMode(handle, &mut mode) } == 0 {
         return Ok(None);
+    }
+    if winpty::attached()? {
+        return Ok(Some(Depth::Ansi16));
     }
     let vt = mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     // SAFETY: the handle was verified as a console output buffer above.
