@@ -72,7 +72,10 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
             return;
         }
         // Beside the machines, how this one's own sessions stand.
-        if feed == Feed::Nodes && sender.send((page, Data::Sessions(crate::sessions::status().await))).is_err() {
+        // The World page tells when an old fastctx's tools are still in
+        // Codex; the machines page says how every host stands.
+        let sessions = matches!(feed, Feed::Nodes | Feed::World { .. });
+        if sessions && sender.send((page, Data::Sessions(crate::sessions::status().await))).is_err() {
             return;
         }
         tokio::time::sleep(EVERY).await;

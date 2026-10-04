@@ -76,7 +76,8 @@ impl MachinesPage {
     }
 
     fn any_in(&self) -> bool {
-        matches!(&self.sessions, Some(Ok(status)) if status.codex == Standing::In || status.claude == Standing::In)
+        let taken = |standing: Standing| matches!(standing, Standing::In | Standing::Old);
+        matches!(&self.sessions, Some(Ok(status)) if taken(status.codex) || taken(status.claude))
     }
 
     fn any_installed(&self) -> bool {
@@ -131,6 +132,7 @@ impl MachinesPage {
             Some(Ok(status)) => {
                 let role = |standing: Standing| match standing {
                     Standing::In => Role::Alive,
+                    Standing::Old => Role::Caution,
                     Standing::Out => Role::Muted,
                     Standing::Absent => Role::Faint,
                 };
@@ -267,7 +269,8 @@ impl MachinesPage {
         if matches!(self.outcome, Some(Outcome::NeedsRaise { .. })) {
             keys.push(("U", words.key_raise()));
         } else if self.any_installed() && !self.busy() {
-            keys.push(("u", words.key_apply()));
+            let old = matches!(&self.sessions, Some(Ok(status)) if status.codex == Standing::Old);
+            keys.push(("u", if old { words.key_replace_old() } else { words.key_apply() }));
         }
         if self.any_in() && !self.busy() {
             keys.push(("x", words.key_unapply()));

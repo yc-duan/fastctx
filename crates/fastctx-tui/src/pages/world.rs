@@ -15,6 +15,7 @@ use crate::app::{Act, Ctx, Data, Feed};
 use crate::design::Role;
 use crate::pages::{form, machines, project, talk};
 use crate::paint::{self, Row};
+use crate::sessions::Standing;
 use crate::{text, who};
 
 #[derive(Default)]
@@ -26,6 +27,8 @@ pub struct WorldPage {
     had_at: Option<Timestamp>,
     all: bool,
     list: List,
+    /// Whether an old fastctx's tools are still in this machine's Codex.
+    old_tools: bool,
 }
 
 /// What an item of the page is.
@@ -62,6 +65,9 @@ impl WorldPage {
     }
 
     pub fn data(&mut self, data: Data) -> Act {
+        if let Data::Sessions(Ok(status)) = &data {
+            self.old_tools = status.codex == Standing::Old;
+        }
         if let Data::World { view, nodes } = data {
             match view {
                 Ok(mut view) => {
@@ -207,6 +213,7 @@ impl WorldPage {
                 Some(wrong(ctx, format!("{}{}{}", words.node_unreachable(), words.colon(), text::first_line(error))))
             }
             (None, None, _) => Some(quiet(ctx, words.asking())),
+            _ if self.old_tools => Some(Line::from(Span::styled(words.old_tools(), ctx.look.text(Role::Caution)))),
             _ => None,
         };
         let page = Sheet {

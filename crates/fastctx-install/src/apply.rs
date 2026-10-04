@@ -116,6 +116,9 @@ pub enum Standing {
     Out,
     /// The record says an apply put the World's tools in.
     In,
+    /// An old fastctx (0.1.0 to 0.2.6) put its own tools in, which an
+    /// apply takes over.
+    Old,
 }
 
 /// How each host stands, as the record says.
@@ -135,8 +138,16 @@ pub fn status(places: &Places) -> Result<Status, Error> {
         (false, false) => Standing::Absent,
     };
     let plugin = places.plugin_record().exists();
+    // The old fastctx kept its record in its settings, only for Codex.
+    let old = record.codex.is_none()
+        && Snapshot::read(places.root.join("config.toml"))?
+            .bytes()
+            .map(legacy::Receipt::from_bytes)
+            .transpose()?
+            .flatten()
+            .is_some();
     Ok(Status {
-        codex: standing(present.codex, record.codex.is_some()),
+        codex: if old { Standing::Old } else { standing(present.codex, record.codex.is_some()) },
         claude: standing(present.claude, record.claude_md.is_some() || record.settings.is_some() || plugin),
     })
 }

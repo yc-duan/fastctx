@@ -486,10 +486,20 @@ impl Words {
             (Lang::Zh, Standing::In) => format!("{host} 已接入"),
             (Lang::Zh, Standing::Out) => format!("{host} 没接入"),
             (Lang::Zh, Standing::Absent) => format!("{host} 没装"),
+            (Lang::Zh, Standing::Old) => format!("{host} 里是旧版 fastctx"),
             (Lang::En, Standing::In) => format!("{host}: in"),
             (Lang::En, Standing::Out) => format!("{host}: not in"),
             (Lang::En, Standing::Absent) => format!("{host}: not installed"),
+            (Lang::En, Standing::Old) => format!("{host}: an old fastctx is in"),
         }
+    }
+
+    /// On the World page, while an old fastctx's tools are still in Codex.
+    pub fn old_tools(&self) -> &'static str {
+        self.pick(
+            "这台机器的 Codex 里还是旧版 fastctx 的工具：按 m 到机器页，按 u 换成新版",
+            "This machine's Codex still has an old fastctx's tools: press m, then u, to put the new ones in",
+        )
     }
 
     pub fn applying(&self) -> &'static str {
@@ -547,6 +557,10 @@ impl Words {
 
     pub fn key_apply(&self) -> &'static str {
         self.pick("接入", "put in")
+    }
+
+    pub fn key_replace_old(&self) -> &'static str {
+        self.pick("换成新版", "replace the old fastctx")
     }
 
     pub fn key_unapply(&self) -> &'static str {
