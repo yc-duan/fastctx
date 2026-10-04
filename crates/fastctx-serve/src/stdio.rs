@@ -9,7 +9,7 @@
 use std::io::{self, BufRead as _};
 
 use tokio::io::AsyncWriteExt as _;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// What reading standard input yields: a line, or why reading stopped.
 pub enum Input {
@@ -45,29 +45,60 @@ pub fn input() -> mpsc::Receiver<Input> {
 /// The one writer of standard output.
 #[derive(Clone)]
 pub struct Output {
-    sender: mpsc::UnboundedSender<String>,
+    sender: mpsc::UnboundedSender<Line>,
+}
+
+struct Line {
+    text: String,
+    receipt: Option<oneshot::Sender<Result<(), String>>>,
+    answer: Option<crate::session::Answer>,
 }
 
 impl Output {
     /// Starts the writer; the returned task ends once every `Output` is
     /// dropped and every line is written.
     pub fn start() -> (Self, tokio::task::JoinHandle<io::Result<()>>) {
-        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let (sender, mut receiver) = mpsc::unbounded_channel::<Line>();
         let writer = tokio::spawn(async move {
             let mut stdout = tokio::io::stdout();
-            while let Some(mut line) = receiver.recv().await {
+            while let Some(Line { text: mut line, receipt, answer }) = receiver.recv().await {
                 line.push('\n');
-                stdout.write_all(line.as_bytes()).await?;
-                stdout.flush().await?;
+                let written = async {
+                    stdout.write_all(line.as_bytes()).await?;
+                    stdout.flush().await
+                }
+                .await;
+                if written.is_ok()
+                    && let Some(answer) = answer
+                {
+                    answer.sent().await;
+                }
+                if let Some(receipt) = receipt {
+                    let _ = receipt.send(match &written {
+                        Ok(()) => Ok(()),
+                        Err(error) => Err(error.to_string()),
+                    });
+                }
+                written?;
             }
             Ok(())
         });
         (Self { sender }, writer)
     }
 
+    // The queue owns the collection until the write finishes. Cancelling
+    // the tool task cannot release words while their response still writes.
+    pub async fn send_answer(&self, message: &serde_json::Value, answer: crate::session::Answer) -> Result<(), String> {
+        let (written, receipt) = oneshot::channel();
+        self.sender
+            .send(Line { text: message.to_string(), receipt: Some(written), answer: Some(answer) })
+            .map_err(|error| error.to_string())?;
+        receipt.await.map_err(|error| error.to_string())?
+    }
+
     pub fn send(&self, message: &serde_json::Value) {
         // The writer stops only when standard output fails, and then there
         // is no one left to tell.
-        let _ = self.sender.send(message.to_string());
+        let _ = self.sender.send(Line { text: message.to_string(), receipt: None, answer: None });
     }
 }

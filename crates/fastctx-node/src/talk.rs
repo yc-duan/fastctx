@@ -148,17 +148,46 @@ pub async fn watch_here(
     node: &Arc<Node>,
     resident: &ResidentId,
 ) -> Result<(Vec<SessionEvent>, mpsc::UnboundedReceiver<SessionEvent>), Failure> {
-    let (about, _) = node
+    let (about, town) = node
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
     let events = node.watchers.watch(resident);
-    let history = match &about.session {
+    let mut history = match &about.session {
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
             node.codex.history(thread).await.map_err(Failure::new)?
         }
         _ => Vec::new(),
     };
+    let directory = node.world.resident(town.as_ref(), resident);
+    let recorded = crate::delivery::history(&directory).map_err(|error| Failure::new(error.to_string()))?;
+    for event in &recorded {
+        history.retain(|old| match (&old.happened, &event.happened) {
+            (
+                fastctx_types::session::Happened::TurnEnded { turn: a, .. },
+                fastctx_types::session::Happened::TurnEnded { turn: b, .. },
+            )
+            | (
+                fastctx_types::session::Happened::TurnStarted { turn: a },
+                fastctx_types::session::Happened::TurnStarted { turn: b },
+            ) => a != b,
+            _ => old != event,
+        });
+    }
+    history.extend(recorded);
+    let finals: Vec<SessionEvent> = history.iter().filter_map(|event| {
+        if let fastctx_types::session::Happened::TurnEnded { turn, end } = &event.happened
+            && let Some(text) = &end.last_message
+            && !history.iter().any(|other| matches!(&other.happened, fastctx_types::session::Happened::Said { turn: said, text: words, .. } if said == turn && words == text))
+        {
+            Some(SessionEvent { at: event.at, happened: fastctx_types::session::Happened::Said {
+                turn: turn.clone(), item: format!("{turn}-final"), text: text.clone(),
+            } })
+        } else { None }
+    }).collect();
+    history.extend(finals);
+    history
+        .sort_by_key(|event| (event.at, matches!(event.happened, fastctx_types::session::Happened::TurnEnded { .. })));
     Ok((history, events))
 }
 

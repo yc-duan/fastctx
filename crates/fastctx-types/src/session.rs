@@ -29,12 +29,19 @@ pub struct SessionEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "event")]
 pub enum Happened {
+    /// The host did not identify a consuming turn for this delivery.
+    DeliveryUncertain {
+        delivery: crate::NoticeId,
+        why: String,
+    },
     TurnStarted {
         turn: String,
     },
     /// Words went into the session. `from` is unknown where the host's
     /// record of them does not say, as in a thread's history.
     Heard {
+        #[serde(default)]
+        delivery: Option<crate::NoticeId>,
         turn: Option<String>,
         from: Option<Speaker>,
         text: String,

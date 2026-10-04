@@ -13,14 +13,17 @@ mod claude;
 mod codex;
 mod colleagues;
 mod copy;
+mod delivery;
 mod desk;
 mod inbox;
 mod jobs;
 mod ledger;
+mod letters;
 mod log;
 mod look;
 mod machine;
 mod own;
+mod resident_storage;
 mod residents;
 mod server;
 mod speech;
@@ -76,9 +79,22 @@ pub(crate) struct Node {
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
     taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
+    effects_ready: std::sync::atomic::AtomicBool,
+    effects_changed: tokio::sync::Notify,
 }
 
 impl Node {
+    pub(crate) async fn ready(&self) {
+        loop {
+            let changed = self.effects_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.effects_ready.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+            changed.await;
+        }
+    }
     pub(crate) fn machine(&self) -> MachineName {
         self.machine.read().expect("never poisoned").clone()
     }
@@ -120,6 +136,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     }
 
     let (residents, problems) = residents::Residents::load(&world)?;
+    let unfinished = residents.unfinished();
     for (path, error) in &problems {
         log.line(format_args!("could not read {}: {error}", path.display()));
     }
@@ -164,6 +181,8 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         syncing: tokio::sync::Mutex::new(()),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
+        effects_ready: std::sync::atomic::AtomicBool::new(false),
+        effects_changed: tokio::sync::Notify::new(),
     });
     for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));
@@ -175,16 +194,32 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     }
     codex::adopt(&node).await;
     codex::listen(node.clone(), codex_events);
+    codex::replay(&node).await;
+    let mut unfinished: std::collections::BTreeSet<_> = unfinished.into_iter().collect();
+    unfinished.extend(node.residents.unfinished());
+    claude::replay(&node).await;
     claude::start(&node).context("writing the World's Claude Code plugin")?;
 
     // What a node that stopped left owed, now that letters can be sent: the
     // turns it stopped under end, what it was handing over is settled, and
     // the ends of turns and jobs not yet told are told.
-    turns::recover(&node).await;
+    speech::restore(&node).await;
+    unfinished.extend(node.residents.unfinished());
+    turns::recover(&node, unfinished.into_iter().collect()).await;
+    node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
+    node.effects_changed.notify_waiters();
     speech::recover(&node).await;
-    for (path, error) in inbox::settle_jobs(&node).await? {
-        node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
-    }
+    let jobs_node = node.clone();
+    tokio::spawn(async move {
+        match inbox::settle_jobs(&jobs_node).await {
+            Ok(problems) => {
+                for (path, error) in problems {
+                    jobs_node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
+                }
+            }
+            Err(error) => jobs_node.log.line(format_args!("recovering job notifications: {error}")),
+        }
+    });
 
     let watchdog = watchdog::Watchdog::start(&node.world.node_log()).context("starting the control-loop watchdog")?;
     loop {

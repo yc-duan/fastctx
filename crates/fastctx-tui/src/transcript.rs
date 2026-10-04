@@ -36,6 +36,9 @@ enum Item {
     Ended { turn: String, end: TurnEnd },
     Health { health: Health },
     Note { text: String, role: Role },
+    /// Words the World handed over without learning whether a turn took
+    /// them.
+    Uncertain { why: String },
 }
 
 /// What the agent wrote, laid out for the width it was last drawn at:
@@ -122,7 +125,7 @@ impl Transcript {
         let at = event.at;
         match event.happened {
             Happened::TurnStarted { .. } => {}
-            Happened::Heard { turn, from, text } => {
+            Happened::Heard { turn, from, text, .. } => {
                 // Words sent from here are now heard: they keep their place.
                 if matches!(from, Some(Speaker::User { .. }))
                     && let Some(Item::Heard { sending, turn: heard_turn, from: heard_from, .. }) = self
@@ -190,6 +193,9 @@ impl Transcript {
                     }
                 }
                 self.items.push(Item::Ended { turn, end });
+            }
+            Happened::DeliveryUncertain { why, .. } => {
+                self.items.push(Item::Uncertain { why });
             }
             Happened::Health { health, .. } => {
                 let repeat = matches!(self.items.last(), Some(Item::Health { health: last, .. }) if *last == health);
@@ -322,6 +328,10 @@ impl Transcript {
                     blank(&mut out);
                     out.extend(text::wrap_plain(text, look.text(*role), width));
                 }
+                Item::Uncertain { why } => {
+                    blank(&mut out);
+                    out.extend(text::wrap_plain(&ctx.words.landing_unknown(why), look.text(Role::Caution), width));
+                }
             }
             last_was_tool = is_tool;
         }
@@ -405,7 +415,8 @@ fn sent(ctx: &Ctx, state: &SendState, width: usize) -> Vec<Line<'static>> {
         SendState::Landed(landed, machine) => match landed {
             Landed::NewTurn { .. } => return Vec::new(),
             Landed::JoinedTurn { .. } => (words.joined_turn().to_string(), Role::Faint),
-            Landed::Handed => (words.handed().to_string(), Role::Faint),
+            Landed::Handed { .. } => (words.handed().to_string(), Role::Faint),
+            Landed::Uncertain { why } => (words.landing_unknown(why), Role::Caution),
             Landed::Sent => (words.sent_to(machine.as_str()), Role::Faint),
             Landed::Waiting { why, answered } => {
                 let mut text = match why {

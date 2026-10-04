@@ -36,11 +36,20 @@ pub struct Session {
 pub struct Answer {
     pub content: Vec<Content>,
     pub is_error: bool,
+    receipt: Option<(Client, ResidentId, Vec<fastctx_types::NoticeId>)>,
 }
 
 impl Answer {
+    pub async fn sent(mut self) {
+        if let Some((mut client, resident, ids)) = self.receipt.take()
+            && let Err(error) = client.call(Call::Taken { resident, ids }).await
+        {
+            eprintln!("fastctx serve: the response was written but its receipt could not be recorded: {error}");
+        }
+    }
+
     fn error(text: String) -> Self {
-        Self { content: vec![Content::Text(text)], is_error: true }
+        Self { content: vec![Content::Text(text)], is_error: true, receipt: None }
     }
 }
 
@@ -113,7 +122,7 @@ impl Session {
         }
         .await;
         let mut answer = match reply {
-            Ok(Reply::Run(reply)) => Answer { content: present(&reply), is_error: false },
+            Ok(Reply::Run(reply)) => Answer { content: present(&reply), is_error: false, receipt: None },
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run: {error}) ===")),
         };
@@ -150,7 +159,7 @@ impl Session {
         .await;
         let mut answer = match reply {
             Ok(Reply::Written { outcome: Ok(result) }) => {
-                Answer { content: vec![Content::Text(result.text)], is_error: false }
+                Answer { content: vec![Content::Text(result.text)], is_error: false, receipt: None }
             }
             Ok(Reply::Written { outcome: Err(error) }) => Answer::error(error.to_string()),
             Ok(other) => Answer::error(format!("=== {tool} (the node answered something else: {other:?}) ===")),
@@ -189,6 +198,7 @@ impl Session {
                     colleague.resident, colleague.machine, colleague.resident
                 ))],
                 is_error: false,
+                receipt: None,
             },
             Ok(other) => Answer::error(format!("=== ask_colleague (the node answered something else: {other:?}) ===")),
             Err(error) => failed(error),
@@ -225,6 +235,9 @@ impl Session {
         let mut answer = match reply {
             Ok(Reply::Spoken { to, landed }) => {
                 let how = match landed {
+                    Landed::Uncertain { why } => format!(
+                        "acceptance is unknown: {why}; the words remain recorded and will not be submitted again"
+                    ),
                     Landed::NewTurn { .. } => "a new turn started with it".to_string(),
                     Landed::JoinedTurn { .. } => "it joins the turn running now".to_string(),
                     Landed::Waiting { why: None, .. } => "waiting until it can be handed over".to_string(),
@@ -232,7 +245,7 @@ impl Session {
                         format!("waiting: it could not be handed over now: {why}")
                     }
                     Landed::Sent => format!("sent to {}", to.machine),
-                    Landed::Handed => "handed to its session, which takes it at its next step".to_string(),
+                    Landed::Handed { .. } => "handed to its session, which takes it at its next step".to_string(),
                 };
                 Answer {
                     content: vec![Content::Text(format!(
@@ -240,6 +253,7 @@ impl Session {
                         to.resident, to.machine
                     ))],
                     is_error: false,
+                    receipt: None,
                 }
             }
             Ok(other) => {
@@ -256,10 +270,14 @@ impl Session {
     /// (`world-colleagues.md`, 话怎样送到居民眼前; `world-projects.md`).
     async fn add_waiting_words(&self, whereabouts: &Whereabouts, answer: &mut Answer) {
         let collect = Call::Collect { resident: whereabouts.resident.clone() };
-        let collected = match self.client().await {
-            Ok(mut client) => client.call(collect).await.map_err(|error| error.to_string()),
-            Err(error) => Err(error),
+        let mut client = match self.client().await {
+            Ok(client) => client,
+            Err(error) => {
+                answer.content.push(Content::Text(format!("=== words for you could not be read: {error} ===")));
+                return;
+            }
         };
+        let collected = client.call(collect).await.map_err(|error| error.to_string());
         match collected {
             Ok(Reply::Notices { notices, notes }) => {
                 answer.content.extend(notes.into_iter().map(Content::Text));
@@ -269,10 +287,7 @@ impl Session {
                 // one does.
                 if !notices.is_empty() {
                     let ids = notices.into_iter().map(|delivery| delivery.id).collect();
-                    let taken = Call::Taken { resident: whereabouts.resident.clone(), ids };
-                    if let Ok(mut client) = self.client().await {
-                        let _ = client.call(taken).await;
-                    }
+                    answer.receipt = Some((client, whereabouts.resident.clone(), ids));
                 }
             }
             Ok(other) => answer

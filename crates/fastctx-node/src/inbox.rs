@@ -36,7 +36,11 @@ use crate::speech::{Owed, tell};
 /// Keeps something on its way into the resident's session. Returns `false`
 /// when it is not new: it is kept already, or went in before.
 pub fn keep(directory: &ResidentDir, pending: &Pending) -> io::Result<bool> {
-    if delivered(directory, &pending.delivery.id)? {
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
+    if delivered_here(directory, &pending.delivery.id)?
+        || directory.path().join("uncertain").join(format!("{}.json", pending.delivery.id)).exists()
+    {
         return Ok(false);
     }
     ensure_private_dir(&directory.inbox())?;
@@ -47,15 +51,47 @@ pub fn keep(directory: &ResidentDir, pending: &Pending) -> io::Result<bool> {
     }
 }
 
+/// Retains words whose host acceptance cannot be established.
+pub fn retain_uncertain(directory: &ResidentDir, pending: &Pending) -> io::Result<()> {
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
+    let uncertain = directory.path().join("uncertain");
+    ensure_private_dir(&uncertain)?;
+    let path = uncertain.join(format!("{}.json", pending.delivery.id));
+    match publish_new(&path, &json(pending)?, Permissions::Private) {
+        Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
+        _ => {}
+    }
+    match std::fs::remove_file(directory.inbox().join(format!("{}.json", pending.delivery.id))) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
 /// Records how far something kept has come.
 pub fn set_state(directory: &ResidentDir, id: &NoticeId, state: PendingState) -> io::Result<()> {
-    let Some(mut pending) = read(directory, id)? else { return Ok(()) };
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
+    let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
     pending.state = state;
+    publish(&path(directory, id), &json(&pending)?, Permissions::Private)
+}
+
+pub fn target(directory: &ResidentDir, id: &NoticeId, session: &str) -> io::Result<()> {
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
+    let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
+    if pending.session.as_deref().is_some_and(|prior| prior != session) {
+        return Err(io::Error::other("these words belong to the prior conversation"));
+    }
+    pending.session = Some(session.to_string());
     publish(&path(directory, id), &json(&pending)?, Permissions::Private)
 }
 
 /// Everything on its way into the resident's session, oldest first.
 pub fn pending(directory: &ResidentDir) -> io::Result<Vec<Pending>> {
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
     let mut all = Vec::new();
     for path in entries(&directory.inbox())? {
         // A file being written sits under a hidden temporary name until it
@@ -64,16 +100,27 @@ pub fn pending(directory: &ResidentDir) -> io::Result<Vec<Pending>> {
         if hidden || path.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
-        all.push(parse(&path, &std::fs::read(&path)?)?);
+        let pending = parse_pending(directory, &path, &std::fs::read(&path)?)?;
+        if !delivered_here(directory, &pending.delivery.id)?
+            && !directory.path().join("uncertain").join(format!("{}.json", pending.delivery.id)).exists()
+        {
+            all.push(pending);
+        }
     }
-    all.sort_by_key(|pending: &Pending| pending.delivery.at);
+    all.sort_by(|a: &Pending, b| a.delivery.at.cmp(&b.delivery.at).then(a.delivery.id.cmp(&b.delivery.id)));
     Ok(all)
 }
 
 /// Something kept that went in: it leaves the inbox and goes on the
 /// `delivered` list. Returns it, or `None` when it was settled already.
 pub fn settle(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pending>> {
-    let Some(pending) = read(directory, id)? else { return Ok(None) };
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
+    let Some(pending) = read_here(directory, id)? else { return Ok(None) };
+    if delivered_here(directory, id)? {
+        std::fs::remove_file(path(directory, id))?;
+        return Ok(None);
+    }
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(directory.delivered())?;
     file.write_all(format!("{id}\n").as_bytes())?;
     match std::fs::remove_file(path(directory, id)) {
@@ -84,7 +131,7 @@ pub fn settle(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pendi
 }
 
 /// Whether something with this id went into the resident's session.
-pub fn delivered(directory: &ResidentDir, id: &NoticeId) -> io::Result<bool> {
+fn delivered_here(directory: &ResidentDir, id: &NoticeId) -> io::Result<bool> {
     let file = match std::fs::File::open(directory.delivered()) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -98,10 +145,10 @@ pub fn delivered(directory: &ResidentDir, id: &NoticeId) -> io::Result<bool> {
     Ok(false)
 }
 
-fn read(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pending>> {
+fn read_here(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pending>> {
     let path = path(directory, id);
     match std::fs::read(&path) {
-        Ok(bytes) => parse(&path, &bytes).map(Some),
+        Ok(bytes) => parse_pending(directory, &path, &bytes).map(Some),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
@@ -113,7 +160,12 @@ fn path(directory: &ResidentDir, id: &NoticeId) -> std::path::PathBuf {
 
 /// Keeps a turn's end for one reader until the reader's machine has it.
 pub fn owe(directory: &ResidentDir, owing: &Owing) -> io::Result<()> {
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
     ensure_private_dir(&directory.outbox())?;
+    if directory.outbox().join(format!("{}.paid", owing.delivery.id)).exists() {
+        return Ok(());
+    }
     let path = directory.outbox().join(format!("{}.json", owing.delivery.id));
     match publish_new(&path, &json(owing)?, Permissions::Private) {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
@@ -123,24 +175,59 @@ pub fn owe(directory: &ResidentDir, owing: &Owing) -> io::Result<()> {
 
 /// The turns' ends still on their way, oldest first.
 pub fn owing(directory: &ResidentDir) -> io::Result<Vec<Owing>> {
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
     let mut all = Vec::new();
     for path in entries(&directory.outbox())? {
         let hidden = path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'));
         if hidden || path.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
-        all.push(parse(&path, &std::fs::read(&path)?)?);
+        let owing: Owing = parse(&path, &std::fs::read(&path)?)?;
+        if !directory.outbox().join(format!("{}.paid", owing.delivery.id)).exists() {
+            all.push(owing);
+        }
     }
-    all.sort_by_key(|owing: &Owing| owing.delivery.at);
+    all.sort_by(|a: &Owing, b| a.delivery.at.cmp(&b.delivery.at).then(a.delivery.id.cmp(&b.delivery.id)));
     Ok(all)
 }
 
 /// A turn's end reached its reader's machine.
 pub fn paid(directory: &ResidentDir, id: &NoticeId) -> io::Result<()> {
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    let directory = &current;
+    publish(&directory.outbox().join(format!("{id}.paid")), b"", Permissions::Private)?;
     match std::fs::remove_file(directory.outbox().join(format!("{id}.json"))) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
+}
+
+fn parse_pending(directory: &ResidentDir, path: &Path, bytes: &[u8]) -> io::Result<Pending> {
+    let value: serde_json::Value = parse(path, bytes)?;
+    if value.get("delivery").is_some() {
+        return serde_json::from_value(value).map_err(io::Error::other);
+    }
+    // Before durable handovers the inbox contained Delivery directly.
+    let delivery: fastctx_types::residents::Delivery = serde_json::from_value(value).map_err(io::Error::other)?;
+    let (readers, working) = match &delivery.notice {
+        Notice::Words { from: fastctx_types::session::Speaker::Resident { address }, .. } => {
+            (vec![address.clone()], false)
+        }
+        Notice::Words { from: fastctx_types::session::Speaker::User { .. }, .. } => (Vec::new(), false),
+        _ => (Vec::new(), true),
+    };
+    let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;
+    // Old Codex inbox entries were written after any send error, including
+    // an unanswered accepted request. They cannot safely be sent again.
+    let state = if about.world_started && about.host.agent.as_str() == "codex" {
+        PendingState::Sending
+    } else {
+        PendingState::Waiting
+    };
+    let pending = Pending { delivery, readers, state, working, session: None };
+    publish(&self::path(directory, &pending.delivery.id), &json(&pending)?, Permissions::Private)?;
+    Ok(pending)
 }
 
 /// Marks that the resident who started `job` is owed word of its end.
@@ -225,4 +312,9 @@ fn json(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     bytes.push(b'\n');
     Ok(bytes)
+}
+
+pub fn read(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pending>> {
+    let (_transaction, directory) = crate::resident_storage::current(directory)?;
+    read_here(&directory, id)
 }

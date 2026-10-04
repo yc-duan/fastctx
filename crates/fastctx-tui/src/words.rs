@@ -638,6 +638,13 @@ impl Words {
         self.pick("已交给它的会话", "handed to its session")
     }
 
+    pub fn landing_unknown(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("话交出去了，但不知道它进没进去：{why}"),
+            Lang::En => format!("handed over, but whether it went in is not known: {why}"),
+        }
+    }
+
     pub fn sent_to(&self, machine: &str) -> String {
         match self.lang {
             Lang::Zh => format!("已寄往 {machine}，等那台机器收到再送进去"),

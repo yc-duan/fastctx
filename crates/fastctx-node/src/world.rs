@@ -232,7 +232,17 @@ impl fastctx_net::link::Node for Handler {
             let Some(node) = node else {
                 return Err(io::Error::other("the node is stopping"));
             };
+            let (letter, delivery_id) = match letter {
+                Letter::Fragment { id, index, total, text } => {
+                    match crate::letters::receive(&node, &from, &id, index, total, &text)? {
+                        Some(letter) => (letter, crate::speech::fixed_id("letter", &[from.as_str(), id.as_str()])),
+                        None => return Ok(Ok(())),
+                    }
+                }
+                letter => (letter, delivery_id),
+            };
             match letter {
+                Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
                 Letter::Notice { to, notice } => {
                     if node.residents.town_of(&to).is_none() {
                         return Ok(Err(format!(

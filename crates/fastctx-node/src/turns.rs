@@ -26,78 +26,129 @@ use crate::Node;
 use crate::speech::{self, Owed};
 
 /// Something a host reported about a resident's session.
-pub async fn happened(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) {
+/// Applies a report before the source acknowledges or deletes it.
+pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> std::io::Result<()> {
+    let Some((_, town)) = node.residents.about(id) else { return Err(std::io::Error::other("unknown resident")) };
+    let directory = node.world.resident(town.as_ref(), id);
     match event.happened {
-        Happened::TurnEnded { turn, end } => ended(node, id, &turn, end).await,
-        Happened::Health { turn, health: report } => {
-            // A report can come before the answer naming the turn words went
-            // into: whoever they are from is recorded first.
-            let Some(speaking) = node.residents.speaking(id) else { return };
+        Happened::TurnEnded { turn, end } => {
+            let speaking = node.residents.speaking(id).expect("known resident");
             let _speaking = speaking.lock().await;
-            health(node, id, turn, report);
+            finish_locked(node, id, &turn, end, &[]).await
         }
-        Happened::TurnStarted { ref turn } => {
-            if let Err(error) = node.residents.turn_started(&node.world, id, turn) {
-                node.log.line(format_args!("recording that {id} started a turn: {error}"));
+        Happened::Health { turn, health: report } => {
+            let speaking = node.residents.speaking(id).expect("known resident");
+            let _speaking = speaking.lock().await;
+            health_at(node, id, turn, report, event.at)
+        }
+        _ => {
+            let key = match &event.happened {
+                Happened::TurnStarted { turn } => {
+                    if crate::delivery::terminal(&directory, turn)?.is_some() {
+                        return Ok(());
+                    }
+                    node.residents.turn_started(&node.world, id, turn)?;
+                    format!("started:{turn}")
+                }
+                _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
+            };
+            if crate::delivery::event(&directory, &key, &event)? {
+                node.watchers.publish(id, &event);
             }
-            node.watchers.publish(id, &event);
+            Ok(())
         }
-        _ => node.watchers.publish(id, &event),
     }
 }
 
 /// A turn of a resident's session ended. An empty `turn` is one whose id
 /// was never known.
 pub async fn ended(node: &Arc<Node>, id: &ResidentId, turn: &str, end: TurnEnd) {
-    let at = Timestamp::now();
-    if !turn.is_empty() {
-        let event = SessionEvent { at, happened: Happened::TurnEnded { turn: turn.to_string(), end: end.clone() } };
-        node.watchers.publish(id, &event);
+    let Some(speaking) = node.residents.speaking(id) else { return };
+    let _speaking = speaking.lock().await;
+    if let Err(error) = finish_locked(node, id, turn, end, &[]).await {
+        node.log.line(format_args!("settling {id}'s turn {turn}: {error}"));
     }
-    crate::desk::turn_ended(node, id, turn);
-    let Some((about, town)) = node.residents.about(id) else {
-        return;
-    };
-    let here = node.machine();
+}
+
+/// The caller holds the resident's speech lock. Acceptance that arrives
+/// after completion adds its readers to the same immutable outcome.
+pub async fn finish_locked(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    turn: &str,
+    end: TurnEnd,
+    additional: &[Address],
+) -> std::io::Result<()> {
+    let Some((about, town)) = node.residents.about(id) else { return Ok(()) };
+    let directory = node.world.resident(town.as_ref(), id);
+    let mut readers = node.residents.readers(id, turn);
+    readers.extend_from_slice(additional);
+    let accepted: Vec<_> = crate::delivery::handovers(&directory)?
+        .into_iter()
+        .filter(|handover| handover.turn.as_deref() == Some(turn))
+        .collect();
+    for handover in &accepted {
+        readers.extend(handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()));
+    }
+    let (finished, first) = crate::delivery::finish(&directory, turn, end, &readers)?;
+    keep_answers(node, id, &about.origin, &directory, turn, turn, &finished.end, &finished.readers).await?;
+    let (pay_node, pay_id, pay_directory) = (node.clone(), id.clone(), directory.clone());
+    tokio::spawn(async move { pay(&pay_node, &pay_id, &pay_directory).await });
     let requester_here = match &about.origin {
-        Origin::Colleague { asked_by, .. } => node.residents.requester_here(asked_by, &here),
+        Origin::Colleague { asked_by, .. } => node.residents.requester_here(asked_by, &node.machine()),
         Origin::User => true,
     };
-    let trouble = match (&end.how, &end.reason) {
+    let trouble = match (&finished.end.how, &finished.end.reason) {
         (TurnHow::Completed, _) => None,
-        (how, Some(reason)) => Some(Trouble { at, text: format!("turn {how}: {reason}") }),
-        (how, None) => Some(Trouble { at, text: format!("turn {how}") }),
+        (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
+        (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };
-    let directory = node.world.resident(town.as_ref(), id);
-    let readers = {
-        let Some(speaking) = node.residents.speaking(id) else { return };
-        let _speaking = speaking.lock().await;
-        let readers = node.residents.readers(id, turn);
-        // Kept before the debt is cleared: a node that stops in between
-        // finds both, and telling the same end again is the same answer.
-        if let Err(error) = keep_answers(node, id, &about.origin, &directory, turn, turn, &end, &readers).await {
-            node.log.line(format_args!("keeping the end of {id}'s turn {turn} for its readers: {error}"));
-            return;
-        }
-        match node.residents.take_owed(&node.world, id, turn, requester_here, trouble) {
-            Ok(readers) => readers,
-            Err(error) => {
-                node.log.line(format_args!("recording how {id}'s turn ended: {error}"));
-                return;
-            }
-        }
-    };
-    if matches!(about.origin, Origin::Colleague { .. }) {
-        let line =
-            MessageLine { at, what: MessageKind::Ended { turn: turn.to_string(), end: end.clone(), owed: readers } };
-        if let Err(error) = crate::residents::append_message(&directory, &line) {
-            node.log.line(format_args!("recording how {id}'s turn ended: {error}"));
+    if let Err(error) = node.residents.take_owed(&node.world, id, turn, requester_here, trouble) {
+        node.log.line(format_args!("the end of {id}'s turn {turn} is durable, but updating now failed: {error}"));
+    }
+    for handover in &accepted {
+        for input in &handover.inputs {
+            crate::speech::heard(node, id, &input.delivery, turn);
         }
     }
-    // Telling may wait for a reader's own session; the turn's end is
-    // settled already.
-    let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move { pay(&node, &id, &directory).await });
+    let event = SessionEvent {
+        at: finished.at,
+        happened: Happened::TurnEnded { turn: turn.to_string(), end: finished.end.clone() },
+    };
+    let recorded = crate::delivery::event(&directory, &format!("ended:{turn}"), &event)?;
+    if first || recorded {
+        crate::desk::turn_ended(node, id, turn);
+        node.watchers.publish(id, &event);
+    }
+    for handover in &accepted {
+        for input in &handover.inputs {
+            crate::inbox::settle(&directory, &input.delivery.id)?;
+        }
+    }
+    if matches!(about.origin, Origin::Colleague { .. }) {
+        let already = match std::fs::read_to_string(directory.messages()) {
+            Ok(text) => text
+                .lines()
+                .filter_map(|line| serde_json::from_str::<MessageLine>(line).ok())
+                .any(|line| matches!(line.what, MessageKind::Ended { turn: ref recorded, .. } if recorded == turn)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error),
+        };
+        if !already {
+            crate::residents::append_message(
+                &directory,
+                &MessageLine {
+                    at: finished.at,
+                    what: MessageKind::Ended {
+                        turn: turn.to_string(),
+                        end: finished.end.clone(),
+                        owed: finished.readers.clone(),
+                    },
+                },
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Keeps a turn's end in the outbox, an answer for each reader. `key`
@@ -149,50 +200,63 @@ async fn keep_answers(
 /// Tells each reader the answers kept for it in the resident's outbox; each
 /// leaves the outbox once its reader's machine has it, or telling it failed
 /// for good, which the colleague's records keep.
-pub async fn pay(node: &Arc<Node>, id: &ResidentId, directory: &ResidentDir) {
-    let owing = {
-        let directory = directory.clone();
-        tokio::task::spawn_blocking(move || crate::inbox::owing(&directory)).await
-    };
-    let owing = match owing {
-        Ok(Ok(owing)) => owing,
-        Ok(Err(error)) => {
-            node.log.line(format_args!("reading the answers {id} owes: {error}"));
-            return;
-        }
-        Err(_) => return,
-    };
-    let colleague = node.residents.about(id).is_some_and(|(about, _)| matches!(about.origin, Origin::Colleague { .. }));
-    for answer in owing {
-        let turn = match &answer.delivery.notice {
-            Notice::Answer { turn, .. } => Some(turn.clone()).filter(|turn| !turn.is_empty()),
-            _ => None,
+pub fn pay<'a>(
+    node: &'a Arc<Node>,
+    id: &'a ResidentId,
+    directory: &'a ResidentDir,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+    Box::pin(async move {
+        node.ready().await;
+        let Some(paying) = node.residents.paying(id) else { return };
+        let _paying = paying.lock().await;
+        let owing = {
+            let directory = directory.clone();
+            tokio::task::spawn_blocking(move || crate::inbox::owing(&directory)).await
         };
-        // Telling can lead back here, as a reader's turn ends at once.
-        let landed = Box::pin(speech::tell(
-            node,
-            &answer.to,
-            answer.delivery.id.clone(),
-            answer.delivery.notice.clone(),
-            Owed::Working,
-        ))
-        .await;
-        if let Err(failure) = &landed {
-            node.log.line(format_args!("telling {} how {id}'s turn ended: {failure}", answer.to));
-        }
-        if colleague {
-            let line = MessageLine {
-                at: Timestamp::now(),
-                what: MessageKind::Told { to: answer.to.clone(), turn, outcome: speech::outcome(&landed) },
+        let owing = match owing {
+            Ok(Ok(owing)) => owing,
+            Ok(Err(error)) => {
+                node.log.line(format_args!("reading the answers {id} owes: {error}"));
+                return;
+            }
+            Err(_) => return,
+        };
+        let colleague =
+            node.residents.about(id).is_some_and(|(about, _)| matches!(about.origin, Origin::Colleague { .. }));
+        for answer in owing {
+            let turn = match &answer.delivery.notice {
+                Notice::Answer { turn, .. } => Some(turn.clone()).filter(|turn| !turn.is_empty()),
+                _ => None,
             };
-            if let Err(error) = crate::residents::append_message(directory, &line) {
-                node.log.line(format_args!("recording that {} was told: {error}", answer.to));
+            // Telling can lead back here, as a reader's turn ends at once.
+            let landed = Box::pin(speech::tell(
+                node,
+                &answer.to,
+                answer.delivery.id.clone(),
+                answer.delivery.notice.clone(),
+                Owed::Working,
+            ))
+            .await;
+            if let Err(failure) = &landed {
+                node.log.line(format_args!("telling {} how {id}'s turn ended: {failure}", answer.to));
+            }
+            if colleague {
+                let line = MessageLine {
+                    at: Timestamp::now(),
+                    what: MessageKind::Told { to: answer.to.clone(), turn, outcome: speech::outcome(&landed) },
+                };
+                if let Err(error) = crate::residents::append_message(directory, &line) {
+                    node.log.line(format_args!("recording that {} was told: {error}", answer.to));
+                }
+            }
+            if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
+                continue;
+            }
+            if let Err(error) = crate::inbox::paid(directory, &answer.delivery.id) {
+                node.log.line(format_args!("settling the answer for {}: {error}", answer.to));
             }
         }
-        if let Err(error) = crate::inbox::paid(directory, &answer.delivery.id) {
-            node.log.line(format_args!("settling the answer for {}: {error}", answer.to));
-        }
-    }
+    })
 }
 
 /// Words kept for a resident whose fate will not be told by any turn's end:
@@ -206,49 +270,132 @@ pub async fn unsettled(
     how: TurnHow,
     why: String,
 ) {
-    let Ok(Some(pending)) = speech::settle(directory, &pending.delivery.id).await else {
-        return;
-    };
-    let Some((about, _)) = node.residents.about(id) else { return };
-    let end = TurnEnd { how, reason: Some(why), duration_ms: None, last_message: None };
-    let key = pending.delivery.id.to_string();
-    if let Err(error) = keep_answers(node, id, &about.origin, directory, &key, "", &end, &pending.readers).await {
-        node.log.line(format_args!("keeping what became of words for {id}: {error}"));
-        return;
+    let result = async {
+        let mut handover = crate::delivery::begin(directory, vec![pending])?;
+        unresolved(node, id, directory, &mut handover, how, why).await
     }
-    pay(node, id, directory).await;
+    .await;
+    if let Err(error) = result {
+        node.log.line(format_args!("settling uncertain words for {id}: {error}"));
+    }
+}
+
+/// An unknown submission is one outcome for the whole attempted batch,
+/// not one outcome per message or per retry.
+pub async fn unresolved(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    directory: &ResidentDir,
+    handover: &mut crate::delivery::Handover,
+    how: TurnHow,
+    why: String,
+) -> std::io::Result<()> {
+    let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)?
+        .into_iter()
+        .filter(|handover| handover.turn.is_some())
+        .flat_map(|handover| handover.inputs.into_iter().map(|input| input.delivery.id))
+        .collect();
+    if handover.inputs.iter().all(|input| accepted.contains(&input.delivery.id)) {
+        return Ok(());
+    }
+    let end = TurnEnd { how, reason: Some(why), duration_ms: None, last_message: None };
+    crate::delivery::unresolved(directory, handover, end)?;
+    let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
+    let readers: std::collections::BTreeSet<Address> = handover
+        .inputs
+        .iter()
+        .filter(|input| !accepted.contains(&input.delivery.id))
+        .flat_map(|input| input.readers.iter().cloned())
+        .collect();
+    let readers: Vec<Address> = readers.into_iter().collect();
+    keep_answers(
+        node,
+        id,
+        &about.origin,
+        directory,
+        handover.id.as_str(),
+        "",
+        handover.unresolved.as_ref().expect("recorded above"),
+        &readers,
+    )
+    .await?;
+    for pending in &handover.inputs {
+        if accepted.contains(&pending.delivery.id) {
+            continue;
+        }
+        let event = SessionEvent {
+            at: Timestamp::now(),
+            happened: Happened::DeliveryUncertain {
+                delivery: pending.delivery.id.clone(),
+                why: handover.unresolved.as_ref().and_then(|end| end.reason.clone()).unwrap_or_default(),
+            },
+        };
+        if crate::delivery::event(directory, &format!("uncertain:{}", pending.delivery.id), &event)? {
+            node.watchers.publish(id, &event);
+        }
+        crate::inbox::retain_uncertain(directory, pending)?;
+    }
+    // The handover retains the exact payload and the uncertainty even when
+    // no resident is owed an answer, as with a delivery to a user's session.
+    let trouble = Trouble {
+        at: Timestamp::now(),
+        text: handover.unresolved.as_ref().and_then(|end| end.reason.clone()).unwrap_or_default(),
+    };
+    node.residents.change_now(&node.world, id, |now| {
+        now.trouble = Some(trouble);
+        if now.turn.is_none() {
+            now.activity = fastctx_types::residents::Activity::Idle;
+            now.since = Timestamp::now();
+        }
+    })?;
+    let (node, id, directory) = (node.clone(), id.clone(), directory.clone());
+    tokio::spawn(async move { pay(&node, &id, &directory).await });
+    Ok(())
 }
 
 /// The host reported something about a resident's session itself.
-pub fn health(node: &Arc<Node>, id: &ResidentId, turn: Option<String>, report: Health) {
-    let at = Timestamp::now();
-    let event = SessionEvent { at, happened: Happened::Health { turn, health: report.clone() } };
-    node.watchers.publish(id, &event);
-    let trouble = Trouble { at, text: report.text.clone() };
-    if let Err(error) = node.residents.change_now(&node.world, id, |now| now.trouble = Some(trouble)) {
-        node.log.line(format_args!("recording what {id}'s host reported: {error}"));
+pub fn health(node: &Arc<Node>, id: &ResidentId, turn: Option<String>, report: Health) -> std::io::Result<()> {
+    health_at(node, id, turn, report, Timestamp::now())
+}
+
+fn health_at(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    turn: Option<String>,
+    report: Health,
+    at: Timestamp,
+) -> std::io::Result<()> {
+    let Some((about, town)) = node.residents.about(id) else { return Ok(()) };
+    let directory = node.world.resident(town.as_ref(), id);
+    let event = SessionEvent { at, happened: Happened::Health { turn: turn.clone(), health: report.clone() } };
+    let key = serde_json::to_string(&event).map_err(std::io::Error::other)?;
+    let first = crate::delivery::event(&directory, &key, &event)?;
+    let finished = turn.as_deref().map(|turn| crate::delivery::terminal(&directory, turn)).transpose()?.flatten();
+    if finished.is_none() {
+        let trouble = Trouble { at, text: report.text.clone() };
+        node.residents.change_now(&node.world, id, |now| now.trouble = Some(trouble))?;
+    }
+    if first {
+        node.watchers.publish(id, &event);
     }
     if !report.kind.urgent() {
-        return;
+        return Ok(());
     }
-    let readers = node.residents.first_told(id, report.kind);
-    let label = match node.residents.about(id) {
-        Some((about, _)) => match about.origin {
-            Origin::Colleague { label, .. } => label,
-            Origin::User => String::new(),
-        },
-        None => return,
+    let turn = turn.or_else(|| node.residents.now(id).and_then(|now| now.turn)).unwrap_or_default();
+    let readers = node.residents.readers(id, &turn);
+    let colleague = Address { machine: node.machine(), resident: id.clone() };
+    let label = match about.origin {
+        Origin::Colleague { label, .. } => label,
+        Origin::User => String::new(),
     };
+    for reader in readers {
+        let id = speech::fixed_id("health", &[&colleague.tag(), &turn, &format!("{:?}", report.kind), &reader.tag()]);
+        let notice = Notice::Health { colleague: colleague.clone(), label: label.clone(), health: report.clone() };
+        crate::inbox::owe(&directory, &Owing { to: reader, delivery: Delivery { id, at, notice } })?;
+    }
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
-        let colleague = Address { machine: node.machine(), resident: id.clone() };
-        for reader in readers {
-            let notice = Notice::Health { colleague: colleague.clone(), label: label.clone(), health: report.clone() };
-            if let Err(failure) = speech::tell(&node, &reader, speech::new_id("health"), notice, Owed::Working).await {
-                node.log.line(format_args!("telling {reader} what {id}'s host reported: {failure}"));
-            }
-        }
-    });
+    tokio::spawn(async move { pay(&node, &id, &directory).await });
+    Ok(())
 }
 
 /// A turn stopped because something stopped under it.
@@ -259,9 +406,24 @@ pub async fn stopped(node: &Arc<Node>, id: &ResidentId, turn: &str, reason: Stri
 
 /// Ends the turns the node stopped under, now that it is up again, and
 /// tells whoever was owed them.
-pub async fn recover(node: &Arc<Node>) {
+pub async fn recover(node: &Arc<Node>, unfinished: Vec<(ResidentId, String)>) {
     let reason = format!("the node on {} restarted while it ran", node.machine());
-    for (id, turn) in node.residents.unfinished() {
+    for (id, turn) in unfinished {
+        if let Some((about, town)) = node.residents.about(&id)
+            && about.host.agent.as_str() == "claude"
+            && node.residents.now(&id).and_then(|now| now.turn).as_deref() == Some(&turn)
+        {
+            let directory = node.world.resident(town.as_ref(), &id);
+            if crate::delivery::terminal(&directory, &turn).is_ok_and(|end| end.is_none())
+                && let Some(session) = about.session
+                && let Err(error) = fastctx_hosts::claude::exchange::stop(
+                    &fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session),
+                    &turn,
+                )
+            {
+                node.log.line(format_args!("stopping the Claude turn interrupted by restart: {error}"));
+            }
+        }
         stopped(node, &id, &turn, reason.clone()).await;
     }
 }

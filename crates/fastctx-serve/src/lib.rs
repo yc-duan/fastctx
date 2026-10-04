@@ -81,19 +81,23 @@ pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
                     match name {
                         "run" => {
                             let answer = session.run(&arguments, params.get("_meta")).await;
-                            output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
+                            let response = response(&id, tools::result(&answer.content, answer.is_error));
+                            let _ = output.send_answer(&response, answer).await;
                         }
                         name if writer.lists(name) => {
                             let answer = session.write(name, &arguments, params.get("_meta")).await;
-                            output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
+                            let response = response(&id, tools::result(&answer.content, answer.is_error));
+                            let _ = output.send_answer(&response, answer).await;
                         }
                         "ask_colleague" if !session.colleague => {
                             let answer = session.ask(&arguments, params.get("_meta")).await;
-                            output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
+                            let response = response(&id, tools::result(&answer.content, answer.is_error));
+                            let _ = output.send_answer(&response, answer).await;
                         }
                         "message_colleague" if !session.colleague => {
                             let answer = session.message(&arguments, params.get("_meta")).await;
-                            output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
+                            let response = response(&id, tools::result(&answer.content, answer.is_error));
+                            let _ = output.send_answer(&response, answer).await;
                         }
                         _ => output.send(&error_response(&id, -32602, &format!("unknown tool: {name}"))),
                     }

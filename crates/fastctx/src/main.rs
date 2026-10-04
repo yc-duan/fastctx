@@ -31,6 +31,9 @@ enum Command {
     /// Open the World in this terminal: projects, agents, machines, and a
     /// conversation with any agent on any machine.
     Ui,
+    /// Identifies the process invoking the World mod helper.
+    #[command(hide = true)]
+    ParentProcess,
     /// Run this machine's node in the foreground.
     Node {
         /// The fastctx root to serve; defaults to this user's fastctx root.
@@ -114,6 +117,7 @@ fn main() -> ExitCode {
     };
     let result = match command {
         Command::Ui => fastctx_tui::run(),
+        Command::ParentProcess => parent_process(),
         Command::Node { dir } => node(dir),
         Command::Service(args) => service::run(args),
         #[cfg(windows)]
@@ -187,4 +191,10 @@ fn append(path: &std::path::Path, text: &str) {
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{text}");
     }
+}
+
+fn parent_process() -> anyhow::Result<()> {
+    let identity = fastctx_platform::host_process::parent_identity()?;
+    println!("{}", serde_json::to_string(&identity)?);
+    Ok(())
 }

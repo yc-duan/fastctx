@@ -13,6 +13,7 @@ pub mod child;
 pub mod detach;
 pub mod environment;
 pub mod home;
+pub mod host_process;
 pub mod hostname;
 pub mod identity;
 pub mod ipc;

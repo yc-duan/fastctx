@@ -30,8 +30,20 @@ pub fn read_about(directory: &ResidentDir) -> io::Result<About> {
 
 /// The resident's `now`; `None` when its host never told the World.
 pub fn read_now(directory: &ResidentDir) -> io::Result<Option<Now>> {
-    match read_json(&directory.now()) {
-        Ok(now) => Ok(Some(now)),
+    match read_json::<serde_json::Value>(&directory.now()) {
+        Ok(mut value) => {
+            // Earlier nodes stored a single turn's readers as an array.
+            if value.get("owed").is_some_and(serde_json::Value::is_array) {
+                let readers = value["owed"].take();
+                let turn = value.get("turn").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+                value["owed"] = if readers.as_array().is_some_and(Vec::is_empty) {
+                    serde_json::json!({})
+                } else {
+                    serde_json::json!({ turn: readers })
+                };
+            }
+            serde_json::from_value(value).map(Some).map_err(io::Error::other)
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
@@ -63,12 +75,14 @@ pub fn move_to(
     about: &About,
     now: Option<&Now>,
 ) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
     let old = world.resident(from, id);
     let moved = Moved { to: to.cloned(), at: jiff::Timestamp::now() };
     publish(&old.moved(), &json(&moved)?, Permissions::Private)?;
-    arrive_in(world, id, to, about)?;
     let new = world.resident(to, id);
-    if let Some(now) = now {
+    ensure_private_dir(new.path())?;
+    let recovered = if now.is_none() { read_now(&old)? } else { None };
+    if let Some(now) = now.or(recovered.as_ref()) {
         write_now(&new, now)?;
     }
     match std::fs::read(old.seen()) {
@@ -76,17 +90,13 @@ pub fn move_to(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    match std::fs::read_dir(old.inbox()) {
-        Ok(waiting) => {
-            ensure_private_dir(&new.inbox())?;
-            for file in waiting {
-                let file = file?;
-                std::fs::rename(file.path(), new.inbox().join(file.file_name()))?;
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
+    // These are active obligations and receipt identities, not town history.
+    // Copy before publishing arrival; an interrupted move resumes from old.
+    for name in ["inbox", "outbox", "handovers", "uncertain", "turns", "turn-sessions", "session-events"] {
+        copy_state(&old.path().join(name), &new.path().join(name), true)?;
     }
+    merge_receipts(&old, &new)?;
+    arrive_in(world, id, to, about)?;
     Ok(())
 }
 
@@ -188,4 +198,61 @@ fn json(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     bytes.push(b'\n');
     Ok(bytes)
+}
+
+fn copy_state(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
+    let entries = match std::fs::read_dir(from) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    ensure_private_dir(to)?;
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_type()?.is_file() && !entry.file_name().to_string_lossy().starts_with('.') {
+            let destination = to.join(entry.file_name());
+            if replace || !destination.exists() {
+                publish(&destination, &std::fs::read(entry.path())?, Permissions::Private)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Older completed moves carried only inbox files. Recover their receipts
+/// and unpaid answers without replacing newer records in the active town.
+pub fn carry_obligations(
+    world: &WorldDir,
+    id: &ResidentId,
+    from: Option<&TownName>,
+    to: Option<&TownName>,
+) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    let old = world.resident(from, id);
+    let new = world.resident(to, id);
+    for name in
+        ["inbox", "outbox", "handovers", "uncertain", "turns", "turn-sessions", "session-events", "host-reports"]
+    {
+        copy_state(&old.path().join(name), &new.path().join(name), false)?;
+    }
+    merge_receipts(&old, &new)
+}
+
+fn merge_receipts(old: &ResidentDir, new: &ResidentDir) -> io::Result<()> {
+    let mut receipts = std::collections::BTreeSet::new();
+    for directory in [old, new] {
+        match std::fs::read_to_string(directory.delivered()) {
+            Ok(text) => receipts.extend(text.lines().map(str::to_string)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if !receipts.is_empty() {
+        publish(
+            &new.delivered(),
+            (receipts.into_iter().collect::<Vec<_>>().join("\n") + "\n").as_bytes(),
+            Permissions::Private,
+        )?;
+    }
+    Ok(())
 }
