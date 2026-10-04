@@ -470,6 +470,42 @@ export const enDevices: DeviceWords = {
   specimen: "This is a specimen, not connected to the World",
 };
 
+export interface PaletteWords {
+  placeholder: string;
+  nothing: string;
+  actions: string;
+  places: string;
+  agents: string;
+  machines: string;
+  theme(name: string): string;
+  fold: string;
+  hint: string;
+}
+
+export const zhPalette: PaletteWords = {
+  placeholder: "去哪里，做什么…",
+  nothing: "没有对得上的",
+  actions: "做",
+  places: "地方",
+  agents: "智能体",
+  machines: "机器",
+  theme: (name) => `主题：${name}`,
+  fold: "收起或打开侧栏",
+  hint: "↑↓ 选择 · Enter 前往 · Esc 关闭",
+};
+
+export const enPalette: PaletteWords = {
+  placeholder: "Go somewhere, do something…",
+  nothing: "Nothing matches",
+  actions: "Do",
+  places: "Places",
+  agents: "Agents",
+  machines: "Machines",
+  theme: (name) => `Theme: ${name}`,
+  fold: "Fold or open the sidebar",
+  hint: "↑↓ to choose · Enter to go · Esc to close",
+};
+
 function zhSpan(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 1) return "不到一分钟";

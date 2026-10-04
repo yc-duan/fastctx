@@ -101,6 +101,13 @@ export class Shell {
     this.sidebar.draw();
   }
 
+  /** Folds the sidebar away or brings it back; a drawer on a narrow
+   *  screen. */
+  toggleSidebar(): void {
+    if (narrow.matches) this.element.classList.toggle("drawer-open");
+    else this.fold(!this.element.classList.contains("folded"));
+  }
+
   /** Names the page shown, once it knows its own name. */
   retitle(title: string): void {
     document.title = `${title} · ${this.options.words.app}`;

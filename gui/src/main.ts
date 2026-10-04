@@ -20,6 +20,7 @@ import "./project/project.css";
 import { Devices } from "./app/devices";
 import { MachinesPage } from "./app/machines";
 import { NewTalk } from "./app/new-talk";
+import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage } from "./app/settings";
@@ -31,6 +32,7 @@ import {
   enDevices,
   enMachines,
   enNewTalk,
+  enPalette,
   enProjectForm,
   enSettings,
   enShell,
@@ -38,6 +40,7 @@ import {
   zhDevices,
   zhMachines,
   zhNewTalk,
+  zhPalette,
   zhProjectForm,
   zhSettings,
   zhShell,
@@ -58,7 +61,7 @@ import { enProject, zhProject } from "./project/words";
 import { specimenJournal, specimenMap } from "./specimen/project";
 import { specimens } from "./specimen/sessions";
 import { specimenNow } from "./specimen/world";
-import { applyTheme } from "./theme";
+import { applyTheme, chooseTheme, themes } from "./theme";
 import type { Address } from "./world/events";
 import type { ResidentDetail } from "./world/world";
 import {
@@ -563,6 +566,40 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "claude-2b1c", machine: "laptop" } };
   }
 }
+
+const paletteWords = english ? enPalette : zhPalette;
+const themeNames = (english ? enSettings : zhSettings).themes;
+new Palette({
+  words: paletteWords,
+  items() {
+    const world = store.world.peek();
+    const go = (to: Place) => () => {
+      location.hash = link(to);
+    };
+    const items: PaletteItem[] = [
+      { group: paletteWords.actions, label: shellWords.newTalk, note: "Ctrl N", run: () => newTalk.open(place.kind === "project" ? place.town : null) },
+      { group: paletteWords.actions, label: shellWords.newProject, run: () => projectForm.open() },
+      { group: paletteWords.actions, label: deviceWords.invite, run: () => devices.invite() },
+      { group: paletteWords.actions, label: paletteWords.fold, note: "Ctrl B", run: () => shell.toggleSidebar() },
+      ...themes.map((theme) => ({ group: paletteWords.actions, label: paletteWords.theme(themeNames[theme]), run: () => chooseTheme(theme) })),
+      { group: paletteWords.places, label: shellWords.world, run: go({ kind: "home" }) },
+      ...(world?.towns ?? []).map((town) => ({ group: paletteWords.places, label: town.record.name, note: town.town, run: go({ kind: "project", town: town.town }) })),
+      { group: paletteWords.places, label: shellWords.settings, run: go({ kind: "settings" }) },
+      ...residentsOf(world)
+        .filter((r) => r.here || r.now?.waiting_for_user)
+        .map((r) => ({
+          group: paletteWords.agents,
+          label: r.about.origin.kind === "colleague" ? r.about.origin.label : shellWords.someone(agentName(r.about.host.agent), r.about.machine),
+          note: [r.about.origin.kind === "colleague" ? shellWords.someone(agentName(r.about.host.agent), r.about.machine) : null, r.town].filter(Boolean).join(" · "),
+          run: go({ kind: "talk", address: { resident: r.about.id, machine: r.about.machine } }),
+        })),
+      ...(world?.nodes.machines ?? [])
+        .filter((node) => !node.revoked)
+        .map((node) => ({ group: paletteWords.machines, label: node.name, note: node.online ? "" : shellWords.offline, run: go({ kind: "machine", name: node.name }) })),
+    ];
+    return items;
+  },
+});
 
 installPens();
 installRules();

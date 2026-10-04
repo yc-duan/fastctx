@@ -219,6 +219,117 @@
   }
 }
 
+/* The command palette: a field and what it finds, near the top of the
+   screen where the eye already is. */
+.palette {
+  margin-top: 14vh;
+}
+
+.palette-body {
+  width: min(600px, 100vw - 32px);
+  padding: var(--space-2);
+}
+
+.palette-input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-3) var(--space-3);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--body-size);
+}
+
+.palette-input::placeholder {
+  color: var(--text-3);
+}
+
+.palette-list {
+  max-height: min(52dvh, 440px);
+  margin: 0;
+  padding: var(--space-1) 0 0;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  border-top: 1px solid var(--hairline);
+}
+
+.palette-group {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-size: var(--size-small);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.palette-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-height: 34px;
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-s);
+  font-size: var(--size-ui);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.palette-item.chosen {
+  color: var(--text-strong);
+  background: var(--hairline);
+}
+
+.palette-label {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.palette-nothing {
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--size-ui);
+  color: var(--text-3);
+}
+
+.palette-hint {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+@media (max-width: 760px) {
+  .palette {
+    margin-top: 0;
+    margin-bottom: auto;
+    width: 100%;
+  }
+
+  .palette-body {
+    width: 100%;
+    border-radius: 0 0 var(--radius-l) var(--radius-l);
+    padding-top: calc(var(--space-2) + env(safe-area-inset-top));
+  }
+
+  .palette-hint {
+    display: none;
+  }
+}
+
 /* A form on a sheet: fields one under another, the sheet scrolling inside
    when the form is taller than the screen. */
 .form-sheet .sheet-body {
