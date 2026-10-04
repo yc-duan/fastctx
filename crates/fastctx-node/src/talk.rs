@@ -258,6 +258,7 @@ pub async fn open_here(
         owed: Vec::new(),
         answering: Vec::new(),
         trouble: None,
+        desk: false,
     };
     node.residents
         .create(&node.world, about, town, now)

@@ -146,6 +146,9 @@ fn doing(resident: &ResidentNow, job: Option<&RunningJob>, now: Timestamp) -> St
     let mut parts = Vec::new();
     if let Some(state) = &resident.now {
         parts.push(state_of(state, now));
+        if state.desk {
+            parts.push(format!("using Computer Use on {}", resident.about.machine));
+        }
     }
     parts.push(match (job, &resident.last_action) {
         (Some(job), _) => running(job, now),

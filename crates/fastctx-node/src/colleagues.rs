@@ -103,6 +103,7 @@ pub async fn ask_here(
         owed: vec![asker.clone()],
         answering: vec![asker.clone()],
         trouble: None,
+        desk: false,
     };
     node.residents
         .create(&node.world, about, town.clone(), now)

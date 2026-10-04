@@ -42,6 +42,7 @@ pub async fn ended(node: &Arc<Node>, id: &ResidentId, turn: &str, end: TurnEnd) 
         let event = SessionEvent { at, happened: Happened::TurnEnded { turn: turn.to_string(), end: end.clone() } };
         node.watchers.publish(id, &event);
     }
+    crate::desk::turn_ended(node, id, turn);
     let Some((about, town)) = node.residents.about(id) else {
         return;
     };

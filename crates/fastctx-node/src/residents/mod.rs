@@ -122,6 +122,12 @@ impl Residents {
                 if let Some(session) = &about.session {
                     state.threads.insert(session.clone(), about.id.clone());
                 }
+                // Whoever sat at the desk sat there for a turn the node that
+                // stopped kept; the desk is the new node's to see afresh.
+                let now = now.map(|mut now| {
+                    now.desk = false;
+                    now
+                });
                 let mut live = Live::new(about, town.clone(), now);
                 // Who was owed a turn the node stopped under: it is told how
                 // that turn ended once the node is up (`unfinished`).
@@ -483,7 +489,15 @@ fn owed(live: &Live) -> Vec<Address> {
 }
 
 pub fn idle(since: Timestamp) -> Now {
-    Now { activity: Activity::Idle, since, turn: None, owed: Vec::new(), answering: Vec::new(), trouble: None }
+    Now {
+        activity: Activity::Idle,
+        since,
+        turn: None,
+        owed: Vec::new(),
+        answering: Vec::new(),
+        trouble: None,
+        desk: false,
+    }
 }
 
 /// A fresh id for a resident of `agent`: its name and four hex digits,

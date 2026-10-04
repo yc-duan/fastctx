@@ -13,6 +13,7 @@ mod claude;
 mod codex;
 mod colleagues;
 mod copy;
+mod desk;
 mod inbox;
 mod jobs;
 mod log;
@@ -55,6 +56,7 @@ pub(crate) struct Node {
     unclaimed: codex::Unclaimed,
     /// Claude sessions, as the World's plugin reports them.
     claude: claude::Claude,
+    desk: desk::Desk,
     watchers: watch::Watchers,
     log: Arc<log::Log>,
     /// Present while the machine is a member of a World with others.
@@ -135,6 +137,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         codex,
         unclaimed: codex::Unclaimed::default(),
         claude: claude::Claude::default(),
+        desk: desk::Desk::default(),
         watchers: watch::Watchers::default(),
         log,
         link: RwLock::new(None),

@@ -68,6 +68,11 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
                         None => unclaimed.entry(thread).or_default().push(event),
                     }
                 }
+                HostEvent::Desk { thread, turn, desk } => {
+                    if let Some(id) = node.residents.resident_of_thread(&thread) {
+                        crate::desk::used(&node, &id, &turn, desk);
+                    }
+                }
                 HostEvent::Gone { how, turns } => {
                     for (thread, turn) in turns {
                         if let Some(id) = node.residents.resident_of_thread(&thread) {

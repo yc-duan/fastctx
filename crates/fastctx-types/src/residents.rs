@@ -142,6 +142,9 @@ pub struct Now {
     /// The latest thing that went wrong: what its host reported about the
     /// session, or how its last turn ended when it did not complete.
     pub trouble: Option<Trouble>,
+    /// It sits at this machine's Computer Use desk until its turn ends.
+    #[serde(default)]
+    pub desk: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

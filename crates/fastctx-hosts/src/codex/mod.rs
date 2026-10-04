@@ -93,6 +93,13 @@ pub enum HostEvent {
         thread: String,
         event: SessionEvent,
     },
+    /// A thread used this machine's Computer Use: a call started, or one
+    /// finished, refused or not by the app's helper.
+    Desk {
+        thread: String,
+        turn: String,
+        desk: Desk,
+    },
     /// The app-server stopped, and these turns, as (thread, turn), with it;
     /// `how` is how it exited, such as `exit code: 1`. Threads come back
     /// with the next words.
@@ -101,6 +108,23 @@ pub enum HostEvent {
         turns: Vec<(String, String)>,
     },
 }
+
+/// A use of the desktop app's Computer Use, which works one request at a
+/// time and refuses the others without saying who holds it
+/// (`world-colleagues.md`, 一台机器只有一张桌子).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Desk {
+    Calling,
+    Done,
+    /// The helper refused the call: another request held it.
+    Refused,
+}
+
+/// The tool server through which a thread uses the app's Windows Computer
+/// Use.
+const COMPUTER_USE: &str = "node_repl";
+/// What the app's helper answers while another request is in flight.
+const HELPER_BUSY: &str = "Computer Use helper already has an active request";
 
 pub struct CodexHost {
     codex_home: PathBuf,
@@ -482,6 +506,16 @@ impl CodexHost {
                 let completed = method == "item/completed";
                 let at = millis(params.get(if completed { "completedAtMs" } else { "startedAtMs" }));
                 let (id, read) = items::read(item);
+                let computer = item.get("type").and_then(Value::as_str) == Some("mcpToolCall")
+                    && item.get("server").and_then(Value::as_str) == Some(COMPUTER_USE);
+                if computer {
+                    let desk = match completed {
+                        false => Desk::Calling,
+                        true if item.to_string().contains(HELPER_BUSY) => Desk::Refused,
+                        true => Desk::Done,
+                    };
+                    let _ = self.events.send(HostEvent::Desk { thread: thread.clone(), turn: turn.clone(), desk });
+                }
                 let happened = match (read, completed) {
                     (items::Item::Message { text }, true) => {
                         self.lock().threads.entry(thread.clone()).or_default().last_message = Some(text.clone());
