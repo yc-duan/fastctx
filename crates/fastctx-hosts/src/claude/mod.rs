@@ -96,6 +96,7 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
     write(&plugin.join("hooks").join("presentation.js"), include_bytes!("presentation.js"))?;
     write(&plugin.join("hooks").join("steps.js"), include_bytes!("steps.js"))?;
     write(&plugin.join("hooks").join("world.js"), module.as_bytes())?;
+    write(&plugin.join("hooks").join("world.test.ts"), include_bytes!("world.test.ts"))?;
     Ok(plugin)
 }
 
