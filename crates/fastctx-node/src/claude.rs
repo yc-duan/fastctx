@@ -414,7 +414,10 @@ async fn running(node: &Arc<Node>, session: &str) -> Result<bool, Failure> {
 async fn wake(node: &Arc<Node>, session: &str, words: String) -> Result<Landed, Failure> {
     let Command { program, cwd, env } = command(node)?;
     let args = background::wake_args(session, &words);
-    tokio::task::spawn_blocking(move || background::claude(&program, &args, &cwd, &env))
+    let world = node.world.path().to_path_buf();
+    // Not tried twice: a resume refused for trust may already have queued
+    // the words.
+    tokio::task::spawn_blocking(move || trust(&world).and_then(|()| background::claude(&program, &args, &cwd, &env)))
         .await
         .map_err(|error| Failure::new(format!("waking the session: {error}")))?
         .map_err(Failure::new)?;
@@ -507,15 +510,36 @@ pub async fn open_here(
     };
     crate::inbox::keep(&directory, &first)
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
+    let world = node.world.path().to_path_buf();
     tokio::task::spawn_blocking(move || {
         let start =
             background::Start { plugin: &plugin, settings: &settings, instructions: &instructions, first_words: &text };
-        background::claude(&program, &background::start_args(&start), &cwd, &env)
+        let args = background::start_args(&start);
+        trust(&world)?;
+        match background::claude(&program, &args, &cwd, &env) {
+            // A Claude Code that was running can write its state back over
+            // the trust a moment after it was written; a new session refused
+            // for exactly that was not created, so it is started once more.
+            Err(why) if why.contains(background::UNTRUSTED) => {
+                trust(&world)?;
+                background::claude(&program, &args, &cwd, &env)
+            }
+            started => started,
+        }
     })
     .await
     .map_err(|error| Failure::new(format!("starting the session: {error}")))?
     .map_err(Failure::new)?;
     Ok((id, Landed::Handed))
+}
+
+/// The World's directory, where every session the World starts stands, is
+/// trusted in Claude Code, so it starts sessions there without asking
+/// (`world-projects.md`).
+fn trust(world: &Path) -> Result<(), String> {
+    claude::trust::ensure_trusted(world)
+        .map(|_| ())
+        .map_err(|error| format!("trusting {} in Claude Code: {error}", world.display()))
 }
 
 /// Settings for a background session the World starts: the host's limit on
@@ -526,6 +550,7 @@ fn settings_json() -> String {
     let settings = serde_json::json!({
         "env": { "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string() },
         "permissions": {
+            "allow": [fastctx_hosts::claude::WORLD_TOOLS],
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         },
     });

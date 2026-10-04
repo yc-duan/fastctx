@@ -27,6 +27,11 @@ pub const MARKETPLACE: &str = "fastctx";
 /// The plugin's name.
 pub const PLUGIN: &str = "fastctx-world";
 
+/// The permission rule allowing every tool of the plugin's `fastctx` server:
+/// Claude Code names a plugin's MCP tools `mcp__plugin_<plugin>_<server>__…`.
+/// Only this form matches a server's tools; `mcp__*` does not.
+pub const WORLD_TOOLS: &str = "mcp__plugin_fastctx-world_fastctx__*";
+
 /// Claude Code's limit on a tool answer, in tokens, set past the World's own
 /// (`world-view.md`, 一次给多少): the World gives at most 150,000
 /// characters, and every model is assumed to have a window of at least
@@ -78,15 +83,22 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
         bytes.push(b'\n');
         write(&path, &bytes)?;
     }
-    // The World's directory goes into the mod as a JavaScript string, with
-    // forward slashes, which every system it runs on reads.
-    let directory = world.to_string_lossy().replace('\\', "/");
+    // The World's directory goes into the mod as a JavaScript string: its
+    // physical path, as Claude Code itself spells directories (long names,
+    // forward slashes, no `\\?\` prefix). A mod given a Windows short name
+    // such as `MOTORW~1` writes nothing at all.
+    let directory = trust::directory_key(world)?;
     let module = MOD.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
     write(&plugin.join("hooks").join("world.js"), module.as_bytes())?;
     Ok(plugin)
 }
 
+/// Writes a file of the plugin unless it already holds `bytes`: a running
+/// Claude Code reloads the plugin whenever one of its files changes.
 fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if std::fs::read(path).is_ok_and(|held| held == bytes) {
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         ensure_private_dir(parent)?;
     }

@@ -134,7 +134,7 @@ fn config_file(directory: &Path, name: &str) -> io::Result<PathBuf> {
     Ok(normalized)
 }
 
-fn directory_key(directory: &Path) -> io::Result<String> {
+pub(super) fn directory_key(directory: &Path) -> io::Result<String> {
     let physical = fs::canonicalize(directory)?;
     if !physical.is_dir() {
         return Err(io::Error::new(io::ErrorKind::NotADirectory, "Claude trust requires an existing directory"));
