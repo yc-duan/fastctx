@@ -15,7 +15,7 @@ fn installation_round_trip_and_drift_are_independent() {
     let agents = File { path: "profile/AGENTS.md", bytes: Some(instructions) };
     assert!(matches!(
         codex::apply(config, agents, &plan(), "body", Ownership::None, Approval::Require),
-        Err(Error::TokenLimitApproval { current: 8192, requested: 125000, .. })
+        Err(Error::TokenLimitApproval { current: 8192, requested, .. }) if requested == plan().output_token_limit
     ));
     let applied = codex::apply(config, agents, &plan(), "body", Ownership::None, Approval::RaiseOutputLimit).unwrap();
     let receipt = serde_json::from_slice(&serde_json::to_vec(&applied.receipt).unwrap()).unwrap();
@@ -43,7 +43,7 @@ fn installation_round_trip_and_drift_are_independent() {
     assert!(restored.receipt.is_none());
 
     let edited = String::from_utf8(applied.config.clone()).unwrap().replacen(
-        "tool_output_token_limit = 125000",
+        &format!("tool_output_token_limit = {}", plan().output_token_limit),
         "tool_output_token_limit = 7",
         1,
     );

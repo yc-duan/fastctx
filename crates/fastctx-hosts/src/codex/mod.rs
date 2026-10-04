@@ -43,14 +43,59 @@ pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 /// what can take longer is a large result travelling between machines.
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// The output limit Codex is given for a tool whose answers are at most
-/// `budget` characters, so Codex never cuts an answer after the World has
-/// sized it (`world-view.md`, 一次给多少). Codex counts a fourth of an
-/// answer's UTF-8 bytes and allows 1.2 times the limit; a character is at
-/// most four bytes, so `budget` characters count at most `budget`, and the
-/// limit is `budget / 1.2`.
+/// The MCP/history limit for at most `budget` Unicode scalar values across
+/// the complete displayed text blocks, plus images. The caller must include
+/// its own head notes and delivered messages in that budget. For Code Mode,
+/// it bounds the text the script prints, not the raw MCP JSON it can inspect.
+///
+/// Verified against desktop Codex 0.160.0, upstream commit
+/// a956835d020762cb2b570053af06f643a11c0ecc:
+/// - `protocol/src/models.rs` preserves text/image blocks as content items;
+///   the World sends neither `structuredContent` nor unknown block types.
+/// - `core/src/tools/context.rs` prepends a separate text item:
+///   `Wall time: {duration.as_secs_f64():.4} seconds\nOutput:`. It has no tool
+///   name, call id, exit code or trailing newline. Even `Duration::MAX`, rounded
+///   to 2^64 seconds by f64, has only 20 integer digits: the header is at most
+///   11 + (20 + 1 + 4) + 16 = 52 ASCII bytes. The 300-second MCP timeout is not
+///   a bound on the handler's elapsed time, which includes hooks and approvals.
+/// - `utils/output-truncation/src/lib.rs` charges each text item separately at
+///   ceil(UTF-8 bytes / 4), without separators. A block of n characters costs
+///   at most n tokens; splitting into blocks does not increase that bound.
+///   Images consume none of this budget. The header costs at most 13 tokens.
+/// - Code Mode skips that MCP header/truncation and returns raw MCP JSON to
+///   the script. Its exec/wait output has a different header, subsequently
+///   checked against the root limit in history (`core/src/tools/code_mode/`).
+///   The runtime's cell id is a decimal u64, at most 20 digits. A restarted
+///   host can prepend `g{generation}:`, another 22 characters, making
+///   `Script running with cell ID {id}` at most 28 + 42 = 70 ASCII bytes.
+///   Host time crosses both pipe and gRPC transports as u64 nanoseconds
+///   (`code-mode-protocol/src/host/payload.rs`, `code-mode/src/grpc_session/`).
+///   The usual `.1`-second header therefore has at most 70 + 28 + 13 = 111
+///   bytes. With experimental_show_cell_overhead, it is replaced by:
+///   `{status}\nWall time {total:.3} seconds (code-mode {host:.3} seconds; overhead {difference:.3} seconds)\nOutput:\n`.
+///   Total time is a u64 millisecond count, host time a u64 nanosecond count;
+///   the widest numbers are 21, 15 and 21 characters respectively (negative
+///   overhead needs at most 16). With 68 fixed bytes, this is at most
+///   70 + 68 + 21 + 15 + 21 = 195 bytes, or ceil(195 / 4) = 49 tokens.
+///   A handler duration overflowing u64 milliseconds keeps the shorter header.
+///   These are alternative paths: the 13-token MCP header is not added again.
+/// - `protocol/src/protocol.rs` applies the allowance as
+///   `(limit as f64 * 1.2).ceil()`. Set limit = ceil(5 * (budget + 49) / 6),
+///   rounding upwards rather than discarding a fraction. For 150,000 characters
+///   this is 125,041, whose allowance is 150,050 tokens, covering 150,049.
+///   A byte-mode root policy gets four bytes per configured token before the
+///   allowance: ceil(125,041 * 4 * 1.2) = 600,197 covers 600,000 + 195 bytes.
+///   Direct MCP history reuses its already computed allowance from metadata;
+///   Code Mode history uses the root policy. Neither adds another header.
+///
+/// Code Mode also truncates prints *before* adding its header, under a separate
+/// exec/wait `max_output_tokens` (10,000 by default, without the 20% allowance).
+/// That limit must independently accommodate the prints; changing this setting
+/// cannot prevent earlier truncation, arbitrary script expansion, or hook edits.
 pub fn output_limit(budget: usize) -> u64 {
-    budget as u64 * 10 / 12
+    const HEADER_TOKENS: u128 = 195_u128.div_ceil(4);
+    // Widen before adding and multiplying, including on 64-bit targets.
+    ((budget as u128 + HEADER_TOKENS) * 5).div_ceil(6) as u64
 }
 
 /// The name of the World's tool server in a thread; the startup it reports

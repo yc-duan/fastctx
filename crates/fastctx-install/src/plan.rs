@@ -17,8 +17,9 @@ pub struct CodexPlan {
     pub startup_timeout_sec: u64,
     pub tool_timeout_sec: u64,
     /// For `run` alone, and for every tool through the shared root
-    /// `tool_output_token_limit`: the limit at which Codex never cuts an
-    /// answer of at most `BUDGET` characters.
+    /// `tool_output_token_limit`: the MCP/history limit for displayed text of
+    /// at most `BUDGET` characters, including the World's notes and script prints.
+    /// Code Mode exec/wait prints have a separate per-execution output budget.
     pub output_token_limit: u64,
 }
 
