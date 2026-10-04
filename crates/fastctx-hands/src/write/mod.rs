@@ -1,0 +1,90 @@
+//! The local synchronous core behind `edit`, `write`, and `apply_patch`.
+//!
+//! All writers in one World share a process lock. Each file is published whole;
+//! a multi-file patch is sequential, not a transaction, matching Codex. Failures
+//! retain the list of changes already committed. The node should call this core
+//! on a blocking thread and persist the returned changes, including on failure.
+//!
+//! The lock coordinates World writers only. The current bytes are rechecked after
+//! staging and before rename, but that is not a kernel compare-and-swap against
+//! programs that write outside the World; such a program can race the final rename.
+
+mod document;
+mod edit;
+mod excerpts;
+mod patch;
+mod storage;
+
+use crate::files::canonical_path;
+use fastctx_platform::lock::FileLock;
+use fastctx_types::files::SeenFiles;
+use fastctx_types::layout::WorldDir;
+pub use fastctx_types::write::*;
+use std::io;
+use std::path::PathBuf;
+
+/// All state is explicit: this core never reads the user's default fastctx home.
+pub struct Writer {
+    world: PathBuf,
+    node: String,
+}
+
+impl Writer {
+    pub fn new(world: &WorldDir, node: impl Into<String>) -> io::Result<Self> {
+        if !world.path().is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "World directory must be absolute",
+            ));
+        }
+        std::fs::create_dir_all(world.path())?;
+        Ok(Self {
+            world: canonical_path(world.path())?,
+            node: node.into(),
+        })
+    }
+
+    pub fn edit(&self, request: EditRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
+        let _lock = self.lock().map_err(|error| self.failure("edit", error))?;
+        edit::edit(self, request, seen).map_err(|error| self.failure("edit", error))
+    }
+
+    pub fn write(
+        &self,
+        request: WriteRequest,
+        seen: &SeenFiles,
+    ) -> Result<WriteResult, WriteError> {
+        let _lock = self.lock().map_err(|error| self.failure("write", error))?;
+        edit::write(self, request, seen).map_err(|error| self.failure("write", error))
+    }
+
+    pub fn apply_patch(
+        &self,
+        request: ApplyPatchRequest,
+        seen: &SeenFiles,
+    ) -> Result<WriteResult, WriteError> {
+        let _lock = self
+            .lock()
+            .map_err(|error| self.failure("apply_patch", error))?;
+        patch::apply_patch(self, request, seen).map_err(|error| self.failure("apply_patch", error))
+    }
+
+    fn lock(&self) -> Result<FileLock, WriteError> {
+        FileLock::acquire(&self.world.join("write.lock"))
+            .map_err(|e| format!("Cannot lock world writes: {e}").into())
+    }
+
+    fn head(&self, operation: &str, changes: usize) -> String {
+        format!("=== {operation} on {} ({changes} changes) ===", self.node)
+    }
+
+    fn failure(&self, operation: &str, mut error: WriteError) -> WriteError {
+        error.message = format!(
+            "=== {operation} on {} (failed; {} committed changes) ===\n{}",
+            self.node,
+            error.changes.len(),
+            error.message
+        );
+        error
+    }
+}

@@ -1,0 +1,48 @@
+use std::fmt::Write as _;
+
+pub(super) fn excerpts(text: &str, changes: &[std::ops::Range<usize>]) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<&str> = normalized.lines().collect();
+    let mut starts = vec![0];
+    let mut index = 0;
+    while index < text.len() {
+        match text.as_bytes()[index] {
+            b'\r' if text.as_bytes().get(index + 1) == Some(&b'\n') => {
+                index += 2;
+                starts.push(index);
+            }
+            b'\r' | b'\n' => {
+                index += 1;
+                starts.push(index);
+            }
+            _ => index += 1,
+        }
+    }
+    let mut windows: Vec<std::ops::Range<usize>> = Vec::new();
+    for changed in changes {
+        let start = starts.partition_point(|offset| *offset <= changed.start) - 1;
+        let end = starts.partition_point(|offset| *offset <= changed.end) - 1;
+        // Two neighboring lines on each side provide the requested edit excerpt.
+        let window = start.saturating_sub(2)..(end + 3).min(lines.len());
+        if let Some(previous) = windows.last_mut()
+            && window.start <= previous.end
+        {
+            previous.end = previous.end.max(window.end);
+        } else {
+            windows.push(window);
+        }
+    }
+    let mut result = String::new();
+    for (index, window) in windows.iter().enumerate() {
+        if index > 0 {
+            result.push_str("\n...");
+        }
+        for line in window.clone() {
+            let _ = write!(result, "\n{}: {}", line + 1, lines[line]);
+        }
+    }
+    if lines.is_empty() {
+        result.push_str("\n(empty file)");
+    }
+    result
+}

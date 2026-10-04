@@ -1,0 +1,10 @@
+OpenAI Codex
+Copyright 2025 OpenAI
+
+parser.rs, streaming_parser.rs, seek_sequence.rs, and matching.rs contain
+code derived from OpenAI Codex, licensed under the Apache License, Version 2.0.
+https://github.com/openai/codex
+Source revision: 7431f10d0d4b4ecf5df08a853b41859013b17e45
+
+Modified for FastCtx to provide synchronous, encoding-preserving local writes.
+The Apache-2.0 license text is provided in the repository's LICENSE-APACHE.

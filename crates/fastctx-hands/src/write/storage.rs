@@ -1,0 +1,286 @@
+use super::{ChangeKind, FileChange, Writer};
+use crate::files::{canonical_path, content_hash};
+use fastctx_platform::atomic::{Permissions, publish_checked};
+use fastctx_types::files::{SeenFile, SeenFiles, SeenVersion};
+use std::fs::{self, Metadata, OpenOptions};
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+
+pub(super) struct Target {
+    pub requested: PathBuf,
+    pub resolved: PathBuf,
+}
+pub(super) struct Snapshot {
+    pub bytes: Vec<u8>,
+    pub metadata: Metadata,
+}
+
+impl Snapshot {
+    fn matches(&self, seen: &SeenFile) -> io::Result<bool> {
+        Ok(match &seen.version {
+            SeenVersion::Full { sha256 } => *sha256 == content_hash(&self.bytes),
+            SeenVersion::Partial { size, modified } => {
+                *size == self.metadata.len() && *modified == self.metadata.modified()?
+            }
+        })
+    }
+}
+
+impl Target {
+    pub fn new(path: &Path, writer: &Writer) -> Result<Self, String> {
+        if !path.is_absolute() {
+            return Err(format!(
+                "Use an absolute path, not a relative path: {}",
+                path.display()
+            ));
+        }
+        check_policy(path, writer)?;
+        let resolved = canonical_path(path).map_err(|e| error(path, e))?;
+        check_policy(&resolved, writer)?;
+        Ok(Self {
+            requested: path.to_path_buf(),
+            resolved,
+        })
+    }
+
+    pub fn create_parent(&self, writer: &Writer) -> Result<(), String> {
+        self.validate(writer)?;
+        let parent = self
+            .resolved
+            .parent()
+            .ok_or_else(|| "File path has no parent".to_string())?;
+        fs::create_dir_all(parent).map_err(|e| error(parent, e))
+    }
+
+    fn validate(&self, writer: &Writer) -> Result<(), String> {
+        let current = Self::new(&self.requested, writer)?;
+        if current.resolved != self.resolved {
+            return Err(format!(
+                "{} changed its link target during the write; view it again",
+                self.requested.display()
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn read(&self) -> Result<Option<Snapshot>, String> {
+        let metadata = match fs::metadata(&self.resolved) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(error(&self.requested, e)),
+        };
+        if !metadata.is_file() {
+            return Err(format!("Not a regular file: {}", self.requested.display()));
+        }
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // A file replaced by a FIFO between stat and open must not block the node.
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let mut file = options
+            .open(&self.resolved)
+            .map_err(|e| error(&self.requested, e))?;
+        let metadata = file.metadata().map_err(|e| error(&self.requested, e))?;
+        if !metadata.is_file() {
+            return Err(format!("Not a regular file: {}", self.requested.display()));
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|e| error(&self.requested, e))?;
+        let after = file.metadata().map_err(|e| error(&self.requested, e))?;
+        if metadata.len() != after.len()
+            || metadata.modified().map_err(|e| error(&self.requested, e))?
+                != after.modified().map_err(|e| error(&self.requested, e))?
+        {
+            return Err(format!(
+                "{} changed while being read; view it again",
+                self.requested.display()
+            ));
+        }
+        Ok(Some(Snapshot { bytes, metadata }))
+    }
+
+    pub fn required(&self) -> Result<Snapshot, String> {
+        self.read()?
+            .ok_or_else(|| format!("File does not exist: {}", self.requested.display()))
+    }
+
+    pub fn observation<'a>(&self, seen: &'a SeenFiles) -> Option<&'a SeenFile> {
+        seen.get(&self.resolved)
+            .or_else(|| seen.get(&self.requested))
+    }
+
+    pub fn stale(&self, snapshot: &Snapshot, seen: &SeenFiles) -> Result<bool, String> {
+        self.observation(seen)
+            .map(|seen| snapshot.matches(seen).map(|same| !same))
+            .transpose()
+            .map(|stale| stale.unwrap_or(false))
+            .map_err(|e| error(&self.requested, e))
+    }
+
+    pub fn encoding<'a>(
+        &self,
+        snapshot: &Snapshot,
+        seen: &'a SeenFiles,
+    ) -> Result<Option<&'a str>, String> {
+        if self.stale(snapshot, seen)? {
+            return Ok(None);
+        }
+        Ok(self
+            .observation(seen)
+            .and_then(|entry| entry.encoding.as_deref()))
+    }
+
+    pub fn whole_overwrite(&self, before: &Snapshot, seen: &SeenFiles) -> Result<(), String> {
+        if self.stale(before, seen)? {
+            return Err(format!(
+                "{} changed since you last viewed it. Whole-file overwrite refused; use fastctx view before writing again",
+                self.requested.display()
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn verify(&self, before: Option<&Snapshot>, writer: &Writer) -> Result<(), String> {
+        self.validate(writer)?;
+        let now = self.read()?;
+        if now.as_ref().map(|s| &s.bytes) != before.map(|s| &s.bytes) {
+            return Err(format!(
+                "{} changed on disk during the write; this file was not written. View it and retry",
+                self.requested.display()
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn publish(
+        &self,
+        before: Option<&Snapshot>,
+        after: &[u8],
+        writer: &Writer,
+        changes: &mut Vec<FileChange>,
+    ) -> Result<(), String> {
+        let result = publish_checked(
+            &self.resolved,
+            after,
+            Permissions::KeepExisting,
+            before.is_some(),
+            || self.verify(before, writer).map_err(io::Error::other),
+        );
+        if result
+            .as_ref()
+            .map_or_else(|failure| failure.published, |_| true)
+        {
+            changes.push(FileChange {
+                path: self.requested.clone(),
+                kind: if before.is_some() {
+                    ChangeKind::Modified
+                } else {
+                    ChangeKind::Added
+                },
+                before_hash: before.map(|s| content_hash(&s.bytes)),
+                after_hash: Some(content_hash(after)),
+            });
+        }
+        result.map_err(|failure| {
+            if failure.published {
+                format!(
+                    "{} was published, but durability failed: {}",
+                    self.requested.display(),
+                    failure.error
+                )
+            } else {
+                error(&self.requested, failure.error)
+            }
+        })
+    }
+
+    pub fn delete(
+        &self,
+        before: &Snapshot,
+        writer: &Writer,
+        changes: &mut Vec<FileChange>,
+    ) -> Result<(), String> {
+        self.verify(Some(before), writer)?;
+        fs::remove_file(&self.requested).map_err(|e| error(&self.requested, e))?;
+        changes.push(FileChange {
+            path: self.requested.clone(),
+            kind: ChangeKind::Deleted,
+            before_hash: Some(content_hash(&before.bytes)),
+            after_hash: None,
+        });
+        #[cfg(unix)]
+        {
+            let parent = self.requested.parent().expect("absolute file has parent");
+            std::fs::File::open(parent)
+                .and_then(|file| file.sync_all())
+                .map_err(|e| {
+                    format!(
+                        "{} was deleted, but durability failed: {e}",
+                        self.requested.display()
+                    )
+                })?;
+        }
+        Ok(())
+    }
+}
+
+fn error(path: &Path, e: io::Error) -> String {
+    format!("{}: {e}", path.display())
+}
+
+fn check_policy(path: &Path, writer: &Writer) -> Result<(), String> {
+    let towns = writer.world.join("towns");
+    if relative_parts(path, &writer.world.join("write.lock")).is_some_and(|parts| parts.is_empty())
+    {
+        // Replacing the lock inode would split cooperating writers into two groups.
+        return Err("The World's active write lock cannot be replaced".into());
+    }
+    // Check the lexical ledger path even when journals has not been created yet,
+    // and resolved ledger roots when a town or ledger is a directory link.
+    if let Some(parts) = relative_parts(path, &towns)
+        && parts.len() >= 3
+        && component_eq(parts[1], std::ffi::OsStr::new("ledger"))
+        && component_eq(parts[2], std::ffi::OsStr::new("journals"))
+    {
+        return Err("Journal files are read-only copies; write through fastctx journal".into());
+    }
+    match fs::read_dir(&towns) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.map_err(|e| error(&towns, e))?;
+                let journal = canonical_path(&entry.path().join("ledger/journals"))
+                    .map_err(|e| error(path, e))?;
+                if relative_parts(path, &journal).is_some() {
+                    return Err(
+                        "Journal files are read-only copies; write through fastctx journal".into(),
+                    );
+                }
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(error(&towns, e)),
+    }
+    Ok(())
+}
+
+fn component_eq(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
+    if cfg!(windows) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
+fn relative_parts<'a>(path: &'a Path, root: &Path) -> Option<Vec<&'a std::ffi::OsStr>> {
+    let mut path = path.components();
+    for component in root.components() {
+        if !component_eq(path.next()?.as_os_str(), component.as_os_str()) {
+            return None;
+        }
+    }
+    Some(path.map(|part| part.as_os_str()).collect())
+}

@@ -2,3 +2,7 @@
 //! the writing core behind `edit`, `write` and `apply_patch`.
 
 pub mod run;
+
+pub mod encoding;
+pub mod files;
+pub mod write;
