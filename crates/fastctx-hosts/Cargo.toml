@@ -18,3 +18,4 @@ serde_json = { workspace = true, features = ["raw_value"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 toml = "0.9"
 unicode-normalization = "0.1"
+roxmltree = "0.21"

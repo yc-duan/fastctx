@@ -210,7 +210,26 @@ impl Printer {
                 self.open_line = !text.ends_with('\n');
                 let _ = std::io::stdout().flush();
             }
-            Happened::Grew { .. } => {}
+            Happened::Grew { .. } | Happened::Updated { .. } => {}
+            Happened::Changed { change, .. } => {
+                use fastctx_types::session::SessionChange;
+                match change {
+                    SessionChange::Diff { diff } => self.line(diff),
+                    SessionChange::Terminal { input, .. } => self.line(input),
+                    SessionChange::Warning { text } => self.line(text),
+                    SessionChange::Error { error, .. } => {
+                        self.line(error.get("message").and_then(serde_json::Value::as_str).unwrap_or_default())
+                    }
+                    SessionChange::Rerouted { from, to, reason } => self.line(&format!("  {from} → {to}: {reason}")),
+                    _ => {}
+                }
+            }
+            Happened::Realtime { item, complete: true } => {
+                if let Some(text) = item.get("text").and_then(serde_json::Value::as_str) {
+                    self.line(text);
+                }
+            }
+            Happened::Realtime { .. } | Happened::RealtimeGrew { .. } => {}
             Happened::Finished { item, .. } => match &item.what {
                 What::Message { text } => {
                     if self.streamed.remove(&item.id) {
@@ -223,6 +242,7 @@ impl Printer {
                 What::Tool(tool) if matches!(tool.status, ToolStatus::Failed | ToolStatus::Declined) => {
                     self.line(&format!("  ✗ {} {} failed", tool.name, fastctx_client::shown::tool_detail(tool)))
                 }
+                What::AgentActivity { path, activity, .. } => self.line(&format!("  · {path}: {activity}")),
                 What::Compaction => self.line("── context compacted"),
                 _ => {}
             },

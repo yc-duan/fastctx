@@ -152,7 +152,11 @@ fn identity(event: &SessionEvent) -> Option<String> {
     match &event.happened {
         Happened::TurnEnded { turn, .. } => Some(format!("end:{turn}")),
         Happened::TurnStarted { turn } => Some(format!("start:{turn}")),
-        Happened::Grew { .. } => None,
+        Happened::Grew { .. } | Happened::Updated { .. } | Happened::RealtimeGrew { .. } => None,
+        Happened::Heard { turn, message: Some(message), .. } => Some(format!("heard:{turn:?}:{}", message.id)),
+        Happened::Realtime { item, complete } => {
+            Some(format!("realtime:{complete}:{}:{}", item["realtimeSessionId"], item["id"]))
+        }
         Happened::Began { turn, item } => Some(format!("began:{turn}:{}", item.id)),
         Happened::Finished { turn, item } => Some(format!("finished:{turn}:{}", item.id)),
         Happened::DeliveryUncertain { delivery, .. } => Some(format!("uncertain:{delivery}")),

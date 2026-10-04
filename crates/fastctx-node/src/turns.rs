@@ -28,6 +28,9 @@ use crate::speech::{self, Owed};
 /// Something a host reported about a resident's session.
 /// Applies a report before the source acknowledges or deletes it.
 pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> std::io::Result<()> {
+    if matches!(&event.happened, Happened::Heard { text, message: Some(_), .. } if fastctx_hands::told::is_told(text)) {
+        return Ok(());
+    }
     let Some((about, town)) = node.residents.about(id) else {
         return Err(std::io::Error::other("unknown resident"));
     };
@@ -74,12 +77,8 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
 /// words and how a turn ended, is always kept.
 fn recorded(agent: &str, happened: &Happened) -> bool {
     match happened {
-        Happened::Grew { .. } => false,
-        Happened::Began { .. }
-        | Happened::Finished { .. }
-        | Happened::Steps { .. }
-        | Happened::Context { .. }
-        | Happened::Titled { .. } => agent != "codex",
+        happened if !happened.kept() => false,
+        Happened::Finished { .. } => agent != "codex",
         _ => true,
     }
 }
@@ -322,7 +321,7 @@ pub async fn unresolved(
     if handover.inputs.iter().all(|input| accepted.contains(&input.delivery.id)) {
         return Ok(());
     }
-    let end = TurnEnd { how, reason: Some(why), duration_ms: None, last_message: None };
+    let end = TurnEnd { error: None, how, reason: Some(why), duration_ms: None, last_message: None };
     crate::delivery::unresolved(directory, handover, end)?;
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let readers: std::collections::BTreeSet<Address> = handover
@@ -424,7 +423,8 @@ fn health_at(
 
 /// A turn stopped because something stopped under it.
 pub async fn stopped(node: &Arc<Node>, id: &ResidentId, turn: &str, reason: String) {
-    let end = TurnEnd { how: TurnHow::Interrupted, reason: Some(reason), duration_ms: None, last_message: None };
+    let end =
+        TurnEnd { error: None, how: TurnHow::Interrupted, reason: Some(reason), duration_ms: None, last_message: None };
     ended(node, id, turn, end).await;
 }
 

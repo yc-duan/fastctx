@@ -289,6 +289,7 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     let event = SessionEvent {
         at: Timestamp::now(),
         happened: Happened::Heard {
+            message: None,
             delivery: Some(delivery.id.clone()),
             turn: Some(turn.to_string()),
             from: Some(from.clone()),

@@ -28,14 +28,21 @@ use super::Log;
 /// What the app-server says that is not the answer to one of our requests.
 #[derive(Debug)]
 pub enum Inbound {
+    /// Complete the RPC only after preceding notifications reached host state.
+    Response {
+        waiter: oneshot::Sender<Result<Value, Unanswered>>,
+        answer: Result<Value, Unanswered>,
+    },
     Notification {
         method: String,
         params: Value,
+        emitted_at_ms: Option<i64>,
     },
     /// It asks something of the client.
     Request {
         id: Value,
         method: String,
+        params: Value,
     },
     /// It stopped: how it exited, such as `exit code: 1`. Nothing more
     /// comes.
@@ -55,6 +62,11 @@ pub struct AppServer {
 /// Why a request has no answer.
 #[derive(Clone, Debug)]
 pub enum Unanswered {
+    Rpc {
+        code: i64,
+        message: String,
+        data: Value,
+    },
     /// It answered with an error, or the request never reached it.
     Refused(String),
     /// It stopped while the request waited: whether it acted on it is not
@@ -66,6 +78,7 @@ impl std::fmt::Display for Unanswered {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Unanswered::Refused(why) | Unanswered::Stopped(why) => f.write_str(why),
+            Unanswered::Rpc { message, .. } => f.write_str(message),
         }
     }
 }
@@ -241,10 +254,14 @@ fn route(line: &[u8], pending: &Mutex<Pending>, inbound: &mpsc::UnboundedSender<
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     match (method, message.get("id")) {
         (Some(method), Some(id)) => {
-            let _ = inbound.send(Inbound::Request { id: id.clone(), method });
+            let _ = inbound.send(Inbound::Request { id: id.clone(), method, params });
         }
         (Some(method), None) => {
-            let _ = inbound.send(Inbound::Notification { method, params });
+            let _ = inbound.send(Inbound::Notification {
+                method,
+                params,
+                emitted_at_ms: message.get("emittedAtMs").and_then(Value::as_i64),
+            });
         }
         (None, Some(id)) => {
             let Some(waiter) = id.as_u64().and_then(|id| pending.lock().expect("never poisoned").waiting.remove(&id))
@@ -252,16 +269,18 @@ fn route(line: &[u8], pending: &Mutex<Pending>, inbound: &mpsc::UnboundedSender<
                 return;
             };
             let answer = match message.get("error") {
-                Some(error) => Err(Unanswered::Refused(
-                    error
+                Some(error) => Err(Unanswered::Rpc {
+                    code: error.get("code").and_then(Value::as_i64).unwrap_or_default(),
+                    data: error.get("data").cloned().unwrap_or(Value::Null),
+                    message: error
                         .get("message")
                         .and_then(Value::as_str)
                         .map(str::to_string)
                         .unwrap_or_else(|| error.to_string()),
-                )),
+                }),
                 None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
             };
-            let _ = waiter.send(answer);
+            let _ = inbound.send(Inbound::Response { waiter, answer });
         }
         (None, None) => {}
     }

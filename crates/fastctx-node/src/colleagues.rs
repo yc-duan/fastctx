@@ -152,6 +152,7 @@ pub async fn ask_here(
             &colleague,
             "",
             fastctx_types::session::TurnEnd {
+                error: None,
                 how: TurnHow::Failed,
                 reason: Some(why),
                 duration_ms: None,

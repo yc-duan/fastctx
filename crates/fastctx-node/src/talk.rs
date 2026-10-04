@@ -154,13 +154,15 @@ pub async fn watch_here(
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
     let events = node.watchers.watch(resident);
     let directory = node.world.resident(town.as_ref(), resident);
-    let recorded = crate::delivery::history(&directory).map_err(|error| Failure::new(error.to_string()))?;
     let hosted = match &about.session {
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
-            Some(node.codex.history(thread).await.map_err(Failure::new)?)
+            let history = node.codex.history(thread).await.map_err(Failure::new)?;
+            node.codex.flush_events(thread).await.map_err(Failure::new)?;
+            Some(history)
         }
         _ => None,
     };
+    let recorded = crate::delivery::history(&directory).map_err(|error| Failure::new(error.to_string()))?;
     Ok((history(recorded, hosted), events))
 }
 
@@ -171,23 +173,47 @@ pub async fn watch_here(
 /// who said them; the host's copy of them carries the World's head note.
 fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Vec<SessionEvent> {
     use fastctx_types::session::{Happened, Item, What};
-    let mut history: Vec<SessionEvent> = Vec::new();
-    for event in hosted.into_iter().flatten() {
-        let told = match &event.happened {
-            Happened::Heard { text, .. } => fastctx_hands::told::is_told(text),
-            Happened::TurnStarted { turn } => recorded
-                .iter()
-                .any(|kept| matches!(&kept.happened, Happened::TurnStarted { turn: other } if other == turn)),
-            Happened::TurnEnded { turn, .. } => recorded
-                .iter()
-                .any(|kept| matches!(&kept.happened, Happened::TurnEnded { turn: other, .. } if other == turn)),
+    let mut history: Vec<SessionEvent> = hosted
+        .into_iter()
+        .flatten()
+        .filter(|event| !matches!(&event.happened, Happened::Heard { text, .. } if fastctx_hands::told::is_told(text)))
+        .collect();
+    for event in recorded {
+        let same = history.iter().position(|other| match (&event.happened, &other.happened) {
+            (Happened::TurnStarted { turn: a }, Happened::TurnStarted { turn: b })
+            | (Happened::TurnEnded { turn: a, .. }, Happened::TurnEnded { turn: b, .. }) => a == b,
+            (
+                Happened::Heard { turn: a, message: Some(a_message), .. },
+                Happened::Heard { turn: b, message: Some(b_message), .. },
+            ) => a == b && a_message.id == b_message.id,
+            (Happened::Realtime { item: a, complete: ac }, Happened::Realtime { item: b, complete: bc }) => {
+                ac == bc && a["id"] == b["id"] && a["realtimeSessionId"] == b["realtimeSessionId"]
+            }
             _ => false,
-        };
-        if !told {
-            history.push(event);
+        });
+        if let Some(index) = same {
+            history[index] = event;
+            continue;
         }
+        let turn = turn_of(&event.happened);
+        let index = history
+            .iter()
+            .position(|other| {
+                let same_turn = turn.is_some() && turn == turn_of(&other.happened);
+                if same_turn && matches!(other.happened, Happened::TurnEnded { .. }) {
+                    return true;
+                }
+                if same_turn && matches!(event.happened, Happened::TurnStarted { .. }) {
+                    return true;
+                }
+                if matches!(other.happened, Happened::TurnStarted { .. }) && same_turn {
+                    return false;
+                }
+                other.at > event.at
+            })
+            .unwrap_or(history.len());
+        history.insert(index, event);
     }
-    history.extend(recorded);
     // A turn whose end is known while its last message is not, as when its
     // end was recovered after a restart, shows that message as it ended.
     let finals: Vec<SessionEvent> = history
@@ -198,34 +224,13 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Ve
             let said = history.iter().any(|other| {
                 matches!(&other.happened, Happened::Finished { turn: t, item: Item { what: What::Message { text: words }, .. } } if t == turn && words == text)
             });
-            let item = Item { id: format!("{turn}-final"), what: What::Message { text: text.clone() } };
+            let item = Item { id: format!("{turn}-final"), details: Default::default(), started_at: None, completed_at: None, what: What::Message { text: text.clone() } };
             (!said).then(|| SessionEvent { at: event.at, happened: Happened::Finished { turn: turn.clone(), item } })
         })
         .collect();
     history.extend(finals);
-    // The host's record keeps times in whole seconds, the World's to the
-    // microsecond, so time alone would put an answer before the words that
-    // asked for it. Each turn stands where it began, and within it come its
-    // start, the words it heard, what was done in the order the record holds
-    // it, and its end. What belongs to no turn stands at its own time.
-    let mut began: std::collections::HashMap<String, jiff::Timestamp> = std::collections::HashMap::new();
-    for event in &history {
-        if let Some(turn) = turn_of(&event.happened) {
-            began.entry(turn.to_string()).and_modify(|at| *at = (*at).min(event.at)).or_insert(event.at);
-        }
-    }
-    history.sort_by_key(|event| {
-        let phase = match &event.happened {
-            Happened::TurnStarted { .. } => 0,
-            Happened::Heard { .. } => 1,
-            Happened::TurnEnded { .. } => 3,
-            _ => 2,
-        };
-        match turn_of(&event.happened).and_then(|turn| began.get(turn)) {
-            Some(start) => (*start, phase, event.at),
-            None => (event.at, 2, event.at),
-        }
-    });
+    // Preserve the host's canonical timeline, including interleaved voice
+    // items and steering input. Local facts were inserted at their source time.
     history
 }
 
@@ -236,11 +241,18 @@ fn turn_of(happened: &fastctx_types::session::Happened) -> Option<&str> {
         Happened::TurnStarted { turn }
         | Happened::TurnEnded { turn, .. }
         | Happened::Began { turn, .. }
+        | Happened::Updated { turn, .. }
         | Happened::Grew { turn, .. }
         | Happened::Finished { turn, .. }
         | Happened::Steps { turn, .. } => Some(turn),
-        Happened::Heard { turn, .. } | Happened::Health { turn, .. } => turn.as_deref(),
-        Happened::Context { .. } | Happened::Titled { .. } | Happened::DeliveryUncertain { .. } => None,
+        Happened::Heard { turn, .. } | Happened::Health { turn, .. } | Happened::Changed { turn, .. } => {
+            turn.as_deref()
+        }
+        Happened::Context { .. }
+        | Happened::Titled { .. }
+        | Happened::DeliveryUncertain { .. }
+        | Happened::Realtime { .. }
+        | Happened::RealtimeGrew { .. } => None,
     }
 }
 

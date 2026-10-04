@@ -23,6 +23,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Address, MachineName, NoticeId};
 
+mod details;
+pub use details::*;
+
 /// One thing that happened in a session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEvent {
@@ -45,6 +48,8 @@ pub enum Happened {
         turn: Option<String>,
         from: Option<Speaker>,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<Box<UserMessage>>,
     },
     /// The agent began an item, as far as it was known then.
     Began {
@@ -62,6 +67,26 @@ pub enum Happened {
     Finished {
         turn: String,
         item: Item,
+    },
+    /// Replaces a running item's snapshot, without completing it.
+    Updated {
+        turn: String,
+        item: Item,
+    },
+    /// Presentation state rather than an additional chat message. Nested
+    /// third-party payloads retain their published JSON contracts.
+    Changed {
+        turn: Option<String>,
+        change: SessionChange,
+    },
+    /// Voice history has its own session and item identities, without a turn.
+    Realtime {
+        item: serde_json::Value,
+        complete: bool,
+    },
+    RealtimeGrew {
+        item: String,
+        text: String,
     },
     /// The steps the agent set out for its work, as they stand now: Codex's
     /// plan, Claude Code's to-do list.
@@ -100,7 +125,7 @@ impl Happened {
     /// Whether it is kept in a session's record: what grows an item is
     /// only for those watching live, as the finished item holds it all.
     pub fn kept(&self) -> bool {
-        !matches!(self, Happened::Grew { .. })
+        !matches!(self, Happened::Grew { .. } | Happened::Updated { .. } | Happened::RealtimeGrew { .. })
     }
 }
 
@@ -125,10 +150,16 @@ pub enum Speaker {
     World,
 }
 
-/// Something the agent does in a turn. Its id is unique within the session.
+/// Something the agent does in a turn. Identity is the pair (turn, id).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "ItemDetails::is_empty")]
+    pub details: Box<ItemDetails>,
     #[serde(flatten)]
     pub what: What,
 }
@@ -152,6 +183,11 @@ pub enum What {
     Tool(Box<Tool>),
     /// The host compacted the session's context.
     Compaction,
+    AgentActivity {
+        agent: String,
+        path: String,
+        activity: String,
+    },
     /// An item of a kind the World does not know, by the host's name for it.
     Other {
         host_kind: String,
@@ -236,8 +272,24 @@ pub enum ChangeHow {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Content {
-    Text { text: String },
-    Image { mime: String, base64: String },
+    Text {
+        text: String,
+    },
+    Image {
+        mime: String,
+        base64: String,
+    },
+    ImageUrl {
+        url: String,
+    },
+    AudioUrl {
+        url: String,
+    },
+    /// MCP content beyond plain text and base64 images, including resource
+    /// links, embedded resources, audio, and annotations on ordinary blocks.
+    Structured {
+        value: serde_json::Value,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +302,7 @@ pub enum ToolStatus {
     Declined,
     /// Its turn ended while it ran.
     Cut,
+    Unknown,
 }
 
 /// One step of the agent's plan.
@@ -273,6 +326,9 @@ pub struct TurnEnd {
     pub how: TurnHow,
     /// Why it did not complete, in the host's words where it gave them.
     pub reason: Option<String>,
+    /// Structured provider error, when the host supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<serde_json::Value>,
     pub duration_ms: Option<u64>,
     /// The agent's last message in the turn, verbatim: what goes back to
     /// whoever is owed the turn's end.
