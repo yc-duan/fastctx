@@ -93,8 +93,21 @@
    on the agent's side, set off by a rule. */
 
 .relayed {
-  border-left: 2px solid var(--rule);
   padding-left: var(--space-4);
+  position: relative;
+}
+
+.relayed::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 2px;
+  bottom: 2px;
+  width: 8px;
+  background: var(--pen-graphite);
+  opacity: 0.6;
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
 }
 
 .relayed-from {
@@ -257,8 +270,10 @@
 .divider::after {
   content: "";
   flex: 1;
-  height: 1px;
-  background: var(--hairline);
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
 }
 
 /* An activity group: a heading that says what the stretch did, and the
@@ -763,8 +778,21 @@
 }
 
 .diagram.unreadable {
-  border-left: 2px solid var(--rule);
   padding-left: var(--space-3);
+  position: relative;
+}
+
+.diagram.unreadable::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 2px;
+  bottom: 2px;
+  width: 8px;
+  background: var(--pen-graphite);
+  opacity: 0.6;
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
 }
 
 /* A message still being written. */

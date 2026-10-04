@@ -11,17 +11,36 @@ import "./design/highlight.css";
 import "./conversation/conversation.css";
 import "./app.css";
 import "./home/home.css";
+import "./project/project.css";
 
 import { Conversation } from "./conversation/model";
 import { ConversationPage, type Someone } from "./conversation/page";
 import { redrawDiagrams } from "./conversation/diagrams";
 import { HomePage } from "./home/page";
+import { installPens } from "./pen/filters";
+import { installRules } from "./pen/rules";
+import { JournalPage } from "./project/journal";
+import { ProjectPage } from "./project/page";
+import { enProject, zhProject } from "./project/words";
+import { specimenJournal, specimenMap } from "./specimen/project";
 import { enHome, zhHome } from "./home/words";
 import { specimens } from "./specimen/sessions";
 import { specimenWorld } from "./specimen/world";
 import { applyTheme } from "./theme";
 import type { Address } from "./world/events";
-import { inShell, open as openAgent, stop, talk, unwatch, watch, worldNow, type Piece, type WorldNow } from "./world/bridge";
+import {
+  inShell,
+  journal as readJournal,
+  open as openAgent,
+  project as readProject,
+  stop,
+  talk,
+  unwatch,
+  watch,
+  worldNow,
+  type Piece,
+  type WorldNow,
+} from "./world/bridge";
 import type { WorldState } from "./home/model";
 import { en, zh } from "./words";
 
@@ -29,6 +48,7 @@ const params = new URLSearchParams(location.search);
 const english = params.get("lang") === "en";
 const words = english ? en : zh;
 const homeWords = english ? enHome : zhHome;
+const projectWords = english ? enProject : zhProject;
 document.documentElement.lang = english ? "en" : "zh-CN";
 
 const live = inShell();
@@ -263,11 +283,81 @@ async function liveTalk(address: Address): Promise<void> {
   }
 }
 
+const projectLink = (town: string) => `#/project/${encodeURIComponent(town)}`;
+const journalLink = (town: string, name: string) => `#/journal/${encodeURIComponent(town)}/${encodeURIComponent(name)}`;
+
+function projectPage(town: string): void {
+  const page = new ProjectPage({
+    words: projectWords,
+    home: homeWords,
+    back: { href: "#/", label: homeWords.world },
+    link: linkTo,
+    journalLink,
+  });
+  if (!live) {
+    const { world, now } = specimenWorld();
+    show(page.element, town);
+    page.update(specimenMap(), { machine: world.here, scope: { kind: "town", town, record: null }, machines: world.machines }, now);
+    return;
+  }
+  let timer = 0;
+  let left = false;
+  // Asked again while in view, as the front page is.
+  const refresh = async () => {
+    if (left) return;
+    if (document.visibilityState === "visible") {
+      try {
+        const { map, who } = await readProject(town);
+        if (!left) {
+          document.title = map.record.name;
+          page.update(map, who, new Date());
+        }
+      } catch (error) {
+        if (!left) page.unreachable(String(error));
+      }
+    }
+    if (!left) timer = window.setTimeout(refresh, 2000);
+  };
+  show(page.element, town, () => {
+    left = true;
+    clearTimeout(timer);
+  });
+  void refresh();
+}
+
+function journalPage(town: string, name: string): void {
+  const page = new JournalPage({
+    words: projectWords,
+    back: { href: projectLink(town), label: town },
+    earlier: (before) => (live ? readJournal(town, name, before) : Promise.reject(new Error("specimen"))),
+  });
+  show(page.element, name);
+  if (!live) {
+    page.show(specimenJournal());
+    return;
+  }
+  readJournal(town, name, null)
+    .then((view) => page.show(view))
+    .catch((error: unknown) => page.unreachable(String(error)));
+}
+
 function route(): void {
   const direct = params.get("s");
   if (!live && direct && !location.hash) {
     if (direct === "home") home();
+    else if (direct === "project") projectPage("mark50");
+    else if (direct === "journal") journalPage("mark50", "q16-fixed-point");
     else specimenTalk(direct, false);
+    return;
+  }
+  const opened = /^#\/project\/([^/]+)$/.exec(location.hash);
+  if (opened) {
+    projectPage(decodeURIComponent(opened[1]));
+    return;
+  }
+  const reading = /^#\/journal\/([^/]+)\/([^/]+)$/.exec(location.hash);
+  if (reading) {
+    journalPage(decodeURIComponent(reading[1]), decodeURIComponent(reading[2]));
     return;
   }
   const talking = /^#\/talk\/(.+)$/.exec(location.hash);
@@ -281,6 +371,8 @@ function route(): void {
   else specimenTalk(name, true);
 }
 
+installPens();
+installRules();
 addEventListener("hashchange", route);
 applyTheme(() => {
   if (current) void redrawDiagrams(current);

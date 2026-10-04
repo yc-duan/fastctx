@@ -151,8 +151,21 @@ button:disabled {
 .prose blockquote {
   margin: 0.8em 0;
   padding: 0.15em 0 0.15em 0.9em;
-  border-left: 2px solid var(--rule);
   color: var(--text-quote);
+  position: relative;
+}
+
+.prose blockquote::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 2px;
+  bottom: 2px;
+  width: 8px;
+  background: var(--pen-graphite);
+  opacity: 0.6;
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
 }
 
 .prose blockquote p {
@@ -161,9 +174,11 @@ button:disabled {
 
 .prose hr {
   border: 0;
-  height: 1px;
-  background: var(--rule);
+  height: 8px;
   margin: 1.8em 0;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
 }
 
 /* Links keep the text's colour; the affordance is a row of dots set well

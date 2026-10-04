@@ -118,6 +118,18 @@
   --caution: #d4a85a;
   --wrong: #c96a6a;
   --scrollbar: #3c3c3c;
+  /* The pen's inks, for drawings only, never for text: graphite for the
+     paper's structure, clay for work, and three quiet colours for kinds.
+     On dark paper the inks lighten what they cross; on light paper they
+     darken it, as ink does. */
+  --pen-graphite: #9a978d;
+  --pen-clay: #d97757;
+  --pen-sky: #7fa8cf;
+  --pen-sage: #9cb07e;
+  --pen-rose: #d08da4;
+  --pen-blend: screen;
+  --swash-strength: 16%;
+  --pen-rule: rgba(245, 242, 232, 0.2);
   --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
@@ -163,6 +175,14 @@
   --caution: #d4a85a;
   --wrong: #c96a6a;
   --scrollbar: #2c2c2d;
+  --pen-graphite: #8f9092;
+  --pen-clay: #c2c4c7;
+  --pen-sky: #8fa9c4;
+  --pen-sage: #9fae8f;
+  --pen-rose: #c49aa9;
+  --pen-blend: screen;
+  --swash-strength: 16%;
+  --pen-rule: rgba(255, 255, 255, 0.2);
   --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
@@ -207,6 +227,14 @@
   --caution: #9a6d1a;
   --wrong: #c92626;
   --scrollbar: #c6c4bd;
+  --pen-graphite: #87867f;
+  --pen-clay: #c96442;
+  --pen-sky: #6a9bcc;
+  --pen-sage: #788c5d;
+  --pen-rose: #c46686;
+  --pen-blend: multiply;
+  --swash-strength: 24%;
+  --pen-rule: rgba(60, 55, 40, 0.28);
   --shadow-pop: 0 12px 36px rgba(60, 55, 40, 0.16), 0 2px 8px rgba(60, 55, 40, 0.1);
 }
 

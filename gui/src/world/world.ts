@@ -218,3 +218,49 @@ export interface JournalSummary {
   writers: number;
   latest: EntryStamp | null;
 }
+
+/** Who wrote a version of a record, on which machine, when. */
+export interface Stamp {
+  by: Writer;
+  on: MachineName;
+  at: Timestamp;
+}
+
+/** One document of a town's canon: its title and what it covers. */
+export interface CanonHead {
+  file: string;
+  title: string;
+  scope: string;
+}
+
+/** What a town's map is made of (`fastctx_types::project::MapView`). */
+export interface MapView {
+  town: TownName;
+  ledger: string;
+  record: ProjectRecord;
+  opened: Stamp;
+  /** Most recently added to first. */
+  journals: JournalSummary[];
+  /** The canon's documents, or why they could not be read. */
+  canon: Result<CanonHead[], string> | null;
+}
+
+export interface EntryView {
+  stamp: EntryStamp;
+  text: string;
+  /** Later entries that cite this one. */
+  mentioned_by: EntryId[];
+}
+
+/** A part of a journal: the latest entries that fit, in order. */
+export interface JournalView {
+  town: TownName;
+  journal: JournalName;
+  directory: string;
+  description: Description | null;
+  /** Its position among all entries, from 1. */
+  first: number;
+  entries: EntryView[];
+  total: number;
+  writers: number;
+}

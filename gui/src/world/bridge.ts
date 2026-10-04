@@ -5,7 +5,7 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Address, MachineName, SessionEvent } from "./events";
-import type { NodesReply, TownSummary, WorldWho } from "./world";
+import type { JournalView, MapView, NodesReply, TownSummary, WorldWho } from "./world";
 
 export function inShell(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -62,4 +62,14 @@ export function open(
 
 export function stop(who: Address): Promise<boolean> {
   return invoke("stop", { residentId: who.resident, machineName: who.machine });
+}
+
+/** A project's overview: its map, and who is in its town now. */
+export function project(town: string): Promise<{ map: MapView; who: WorldWho }> {
+  return invoke("project", { town });
+}
+
+/** A journal's latest entries that fit, or those before an entry. */
+export function journal(town: string, name: string, before: string | null): Promise<JournalView> {
+  return invoke("journal", { town, journal: name, before });
 }

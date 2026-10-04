@@ -35,7 +35,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? [only] : ["home", "claude", "codex"];
+const sessions = only ? [only] : ["home", "claude", "codex", "project", "journal"];
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
 const port = 9300 + Math.floor(Math.random() * 500);
@@ -124,7 +124,7 @@ for (const session of sessions) {
       // Fonts, then any diagram, then two frames for layout to settle.
       await send("Runtime.evaluate", {
         expression:
-          "document.fonts.ready.then(() => new Promise(r => setTimeout(r, 900))).then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))",
+          "document.fonts.ready.then(() => new Promise(r => setTimeout(r, 1500))).then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))",
         awaitPromise: true,
       });
       const { result } = await send("Runtime.evaluate", {
@@ -136,7 +136,7 @@ for (const session of sessions) {
         // Name the innermost elements that reach past the screen's edge.
         const { result: wide } = await send("Runtime.evaluate", {
           expression: `JSON.stringify([...document.querySelectorAll("body *")]
-            .filter((e) => e.getBoundingClientRect().right > innerWidth + 1)
+            .filter((e) => e.getBoundingClientRect().right > innerWidth + 1 || e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX === "visible")
             .filter((e) => ![...e.children].some((c) => c.getBoundingClientRect().right > innerWidth + 1))
             .slice(0, 6)
             .map((e) => e.tagName.toLowerCase() + "." + [...e.classList].join(".") + " " + Math.round(e.getBoundingClientRect().right) + " " + (e.textContent || "").slice(0, 60)))`,

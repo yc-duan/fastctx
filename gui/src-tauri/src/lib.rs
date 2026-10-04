@@ -11,12 +11,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use fastctx_client::{Conversation, World};
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::project::TownSummary;
+use fastctx_types::project::{JournalView, MapView, TownSummary};
 use fastctx_types::residents::Landed;
 use fastctx_types::session::SessionEvent;
 use fastctx_types::town::WorldWho;
 use fastctx_types::world::NodesReply;
-use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
+use fastctx_types::{Address, AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
 use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
@@ -141,6 +141,34 @@ async fn talk(
     Ok(Spoken { to: said.to, landed: said.landed })
 }
 
+/// A project's overview: its map, and who is in its town now.
+#[derive(Serialize)]
+struct Project {
+    map: MapView,
+    who: WorldWho,
+}
+
+#[tauri::command]
+async fn project(shell: tauri::State<'_, Shell>, town: String) -> Result<Project, String> {
+    let town = TownName::try_from(town).map_err(|error| error.to_string())?;
+    let (map, who) = tokio::join!(shell.world.map(Some(town.clone())), shell.world.who(Some(town), false));
+    Ok(Project { map: map.map_err(|error| error.to_string())?, who: who.map_err(|error| error.to_string())? })
+}
+
+/// A journal's latest entries that fit, or those before `before`.
+#[tauri::command]
+async fn journal(
+    shell: tauri::State<'_, Shell>,
+    town: String,
+    journal: String,
+    before: Option<String>,
+) -> Result<JournalView, String> {
+    let town = TownName::try_from(town).map_err(|error| error.to_string())?;
+    let journal = JournalName::try_from(journal).map_err(|error| error.to_string())?;
+    let before = before.map(|id| EntryId::try_from(id).map_err(|error| error.to_string())).transpose()?;
+    shell.world.journal(Some(town), journal, before).await.map_err(|error| error.to_string())
+}
+
 /// Asks an agent into the World for the user: on a machine, in a town,
 /// with the user's words as the first it hears.
 #[tauri::command]
@@ -178,7 +206,7 @@ pub fn run() {
         World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None }).starting_node_from(program);
     tauri::Builder::default()
         .manage(Shell { world, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
-        .invoke_handler(tauri::generate_handler![world_now, watch, unwatch, talk, open, stop])
+        .invoke_handler(tauri::generate_handler![world_now, project, journal, watch, unwatch, talk, open, stop])
         .run(tauri::generate_context!())
         .expect("running the World's window");
 }
