@@ -133,3 +133,41 @@ export function revoke(name: MachineName, reason: string): Promise<void> {
 export function leave(): Promise<void> {
   return invoke("leave");
 }
+
+/** Where this computer stands with the World (`src-tauri/src/setup.rs`). */
+export interface Setup {
+  installed: string | null;
+  carried: string | null;
+  same: boolean;
+  service: boolean;
+  codex: "absent" | "out" | "in" | "old";
+  claude: "absent" | "out" | "in" | "old";
+}
+
+export type KeptNow =
+  | { kind: "already" }
+  | { kind: "installed" }
+  | { kind: "declined" }
+  | { kind: "unsupported" }
+  | { kind: "command"; command: string };
+
+export function setupState(): Promise<Setup> {
+  return invoke("setup_state");
+}
+
+export function placeFastctx(): Promise<string> {
+  return invoke("place_fastctx");
+}
+
+export function joinWorld(code: string, name: string | null): Promise<{ world: string; name: MachineName; kept: KeptNow }> {
+  return invoke("join_world", { code, name });
+}
+
+/** Founds a hub on this computer; resolves to the code that founds its World. */
+export function hubHere(publicAddresses: string[]): Promise<string> {
+  return invoke("hub_here", { public: publicAddresses });
+}
+
+export function applyHosts(codex: boolean, claude: boolean, raise: boolean, into: boolean): Promise<string[]> {
+  return invoke("apply_hosts", { codex, claude, raise, into });
+}

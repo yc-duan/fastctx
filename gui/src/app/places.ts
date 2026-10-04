@@ -10,7 +10,8 @@ export type Place =
   | { kind: "journal"; town: string; journal: string }
   | { kind: "machines" }
   | { kind: "machine"; name: string }
-  | { kind: "settings" };
+  | { kind: "settings" }
+  | { kind: "welcome" };
 
 const part = encodeURIComponent;
 
@@ -30,6 +31,8 @@ export function link(place: Place): string {
       return `#/machine/${part(place.name)}`;
     case "settings":
       return "#/settings";
+    case "welcome":
+      return "#/welcome";
   }
 }
 
@@ -56,6 +59,8 @@ export function placeOf(hash: string): Place {
       break;
     case "settings":
       return { kind: "settings" };
+    case "welcome":
+      return { kind: "welcome" };
   }
   return { kind: "home" };
 }

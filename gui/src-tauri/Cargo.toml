@@ -27,3 +27,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
 tokio = { version = "1", features = ["sync"] }
+
+# Joining a World, founding a hub and putting the World's tools into the
+# hosts happen on a computer, never on a phone.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+fastctx-hub = { path = "../../crates/fastctx-hub" }
+fastctx-install = { path = "../../crates/fastctx-install" }

@@ -24,6 +24,7 @@ import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage } from "./app/settings";
+import { WelcomePage } from "./app/welcome";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect } from "./app/signals";
 import { createStore, jobsOf, residentsOf } from "./app/store";
@@ -36,6 +37,7 @@ import {
   enProjectForm,
   enSettings,
   enShell,
+  enWelcome,
   zhDetails,
   zhDevices,
   zhMachines,
@@ -44,6 +46,7 @@ import {
   zhProjectForm,
   zhSettings,
   zhShell,
+  zhWelcome,
 } from "./app/words";
 import { Details } from "./conversation/details";
 import { Conversation } from "./conversation/model";
@@ -65,7 +68,12 @@ import { applyTheme, chooseTheme, themes } from "./theme";
 import type { Address } from "./world/events";
 import type { ResidentDetail } from "./world/world";
 import {
+  applyHosts,
+  hubHere,
   invite,
+  joinWorld,
+  placeFastctx,
+  setupState,
   journal as readJournal,
   journalAdd,
   leave as leaveWorld,
@@ -516,6 +524,22 @@ function show(next: Place): void {
         when,
       });
       break;
+    case "welcome":
+      page = new WelcomePage({
+        store,
+        words: english ? enWelcome : zhWelcome,
+        head,
+        setup: () => (live ? setupState() : Promise.reject(new Error("specimen"))),
+        place: () => (live ? placeFastctx() : notLive()),
+        join: (code, name) => (live ? joinWorld(code, name) : notLive()),
+        hubHere: (addresses) => (live ? hubHere(addresses) : notLive()),
+        applyHosts: (codex, claude) => (live ? applyHosts(codex, claude, false, true) : notLive()),
+        enter() {
+          welcomed.now();
+          location.hash = link({ kind: "home" });
+        },
+      });
+      break;
     case "settings":
       page = new SettingsPage({
         store,
@@ -558,6 +582,8 @@ function specimenPlace(): Place | null {
       return { kind: "machine", name: "laptop" };
     case "invite":
       return { kind: "machines" };
+    case "welcome":
+      return { kind: "welcome" };
     case "settings":
       return { kind: "settings" };
     case "codex":
@@ -600,6 +626,37 @@ new Palette({
     return items;
   },
 });
+
+/** Whether this device has been shown the way into a World: a computer
+ *  on its own is shown it once, by itself, and after that from the
+ *  sidebar. */
+const welcomed = {
+  read(): boolean {
+    try {
+      return localStorage.getItem("welcomed") === "1";
+    } catch {
+      return false;
+    }
+  },
+  now(): void {
+    try {
+      localStorage.setItem("welcomed", "1");
+    } catch {
+      // Not kept: it is shown again next time.
+    }
+  },
+};
+
+if (live) {
+  // Decided once, on the World's first answer.
+  let decided = false;
+  effect(() => {
+    const world = store.world.get();
+    if (!world || decided) return;
+    decided = true;
+    if (!world.nodes.world && !welcomed.read() && place.kind === "home") location.hash = link({ kind: "welcome" });
+  });
+}
 
 installPens();
 installRules();

@@ -153,7 +153,13 @@ export class Sidebar {
           .join("")}</ul></section>`
       : "";
 
-    const html = home + projects + loose + machines;
+    // On its own, this computer is a World of one; the way on is kept at
+    // hand until it joins one.
+    const alone =
+      world && !world.nodes.world
+        ? `<section class="sidebar-group"><a class="place${place.kind === "welcome" ? " current" : ""}" href="${link({ kind: "welcome" })}">${glyph("plus", 16)}<span class="place-name">${escape(words.joinOrFound)}</span></a></section>`
+        : "";
+    const html = home + projects + loose + machines + alone;
     if (html === this.drawn) return;
     this.drawn = html;
     this.list.innerHTML = html;

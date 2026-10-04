@@ -4,6 +4,9 @@
 //! watched conversation streams the session's events to the page as they
 //! come. The page speaks as the person at this machine, never as a session.
 
+#[cfg(desktop)]
+mod setup;
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -278,6 +281,43 @@ async fn leave(shell: tauri::State<'_, Shell>) -> Result<(), String> {
     shell.world.leave().await.map_err(|error| error.to_string())
 }
 
+/// Where this computer stands with the World.
+#[cfg(desktop)]
+#[tauri::command]
+async fn setup_state() -> Result<setup::Setup, String> {
+    tauri::async_runtime::spawn_blocking(setup::setup).await.map_err(|error| error.to_string())?
+}
+
+/// Puts the fastctx this application carries in place for the hosts.
+#[cfg(desktop)]
+#[tauri::command]
+async fn place_fastctx() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(setup::place).await.map_err(|error| error.to_string())?
+}
+
+/// Joins a World with a code, under `name` or the name this machine has.
+#[cfg(desktop)]
+#[tauri::command]
+async fn join_world(shell: tauri::State<'_, Shell>, code: String, name: Option<String>) -> Result<setup::Joined, String> {
+    setup::join(&shell.world, code.trim().to_string(), machine(name)?).await
+}
+
+/// Founds a hub on this computer; returns the code that founds its World.
+#[cfg(desktop)]
+#[tauri::command]
+async fn hub_here(public: Vec<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || setup::hub_here(public)).await.map_err(|error| error.to_string())?
+}
+
+/// Puts the World's tools into this computer's hosts, or takes them out.
+#[cfg(desktop)]
+#[tauri::command]
+async fn apply_hosts(codex: bool, claude: bool, raise: bool, into: bool) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || setup::hosts(codex, claude, raise, into))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 pub fn run() {
     let root = fastctx_platform::fastctx_root().expect("finding this user's fastctx directory");
     // When no node runs, it is started from the stable copy fastctx keeps
@@ -303,7 +343,17 @@ pub fn run() {
             look,
             invite,
             revoke,
-            leave
+            leave,
+            #[cfg(desktop)]
+            setup_state,
+            #[cfg(desktop)]
+            place_fastctx,
+            #[cfg(desktop)]
+            join_world,
+            #[cfg(desktop)]
+            hub_here,
+            #[cfg(desktop)]
+            apply_hosts
         ])
         .run(tauri::generate_context!())
         .expect("running the World's window");

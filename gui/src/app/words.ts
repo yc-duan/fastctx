@@ -26,6 +26,7 @@ export interface ShellWords {
   /** The World on this machine could not be asked. */
   unreachable: string;
   thisOne: string;
+  joinOrFound: string;
   more(n: number): string;
   span(ms: number): string;
 }
@@ -506,6 +507,164 @@ export const enPalette: PaletteWords = {
   hint: "↑↓ to choose · Enter to go · Esc to close",
 };
 
+export interface WelcomeWords {
+  lede: string;
+  thisComputer: string;
+  facts(name: string, world: string | null): string;
+  placed: string;
+  notPlaced: string;
+  place: string;
+  noCarried: string;
+  serviceOn: string;
+  serviceOff: string;
+  join: string;
+  joinWhat: string;
+  found: string;
+  foundWhat: string;
+  alone: string;
+  aloneWhat: string;
+  code: string;
+  codeHint: string;
+  name: string;
+  nameHint: string;
+  joinGo: string;
+  joining: string;
+  hubWhere: string;
+  hubHere: string;
+  hubServer: string;
+  address: string;
+  addressHint: string;
+  hubGo: string;
+  founding: string;
+  serverSteps: string[];
+  foundingCode: string;
+  joined(world: string, name: string): string;
+  kept: Record<"already" | "installed" | "declined" | "unsupported", string>;
+  keptCommand: string;
+  hosts: string;
+  hostsWhat: string;
+  codex: string;
+  claude: string;
+  hostState: Record<"absent" | "out" | "in" | "old", string>;
+  applyGo: string;
+  applying: string;
+  enter: string;
+  failed(why: string): string;
+  back: string;
+}
+
+export const zhWelcome: WelcomeWords = {
+  lede: "让你的几台电脑，和住在上面的 Codex、Claude，在同一个世界里。",
+  thisComputer: "这台电脑",
+  facts: (name, world) => (world ? `叫 ${name}，在世界 ${world} 里` : `叫 ${name}，此刻独自一台`),
+  placed: "fastctx 已就位",
+  notPlaced: "fastctx 还没放好",
+  place: "放好它",
+  noCarried: "这一份 World 没有随身带 fastctx",
+  serviceOn: "开机自启的服务在",
+  serviceOff: "还没有开机自启的服务",
+  join: "加入已有的世界",
+  joinWhat: "另一台设备在 World 里「邀请一台设备」，会给你一个邀请码。",
+  found: "建一个新世界",
+  foundWhat: "要有一个中枢，别的设备都连向它：可以是这台电脑，也可以是一台服务器。",
+  alone: "先独自用",
+  aloneWhat: "这台电脑本身就是一个世界。以后随时可以加入或建一个。",
+  code: "邀请码",
+  codeHint: "以 fxw3. 开头的一长串，粘贴进来",
+  name: "这台电脑在世界里叫什么",
+  nameHint: "小写字母、数字与连字符；不写就用它现在的名字",
+  joinGo: "加入",
+  joining: "正在加入，稍后会请一次管理员确认…",
+  hubWhere: "中枢放在哪",
+  hubHere: "这台电脑",
+  hubServer: "一台服务器",
+  address: "别的设备够得着这台电脑的地址",
+  addressHint: "IP 加端口，比如 203.0.113.5:7443；它要一直开着，别的设备才连得上",
+  hubGo: "在这台电脑上建中枢",
+  founding: "正在建，稍后会请一次管理员确认…",
+  serverSteps: [
+    "在服务器上装好 fastctx（npm install -g fastctx，或从 GitHub 的发布页下载）；",
+    "运行 fastctx hub init --public <服务器的公网 IP>:7443，它会打印一个建世界码；",
+    "运行 sudo fastctx service hub install，让中枢开机自启、一直在；",
+    "把那个建世界码粘贴到上面「加入已有的世界」里，这台电脑就是这个世界的第一台。",
+  ],
+  foundingCode: "建世界码",
+  joined: (world, name) => `已经在世界 ${world} 里，这台叫 ${name}。`,
+  kept: {
+    already: "开机自启的服务早就在了。",
+    installed: "开机自启的服务装好了：从此开机就连着，不管有没有人登录。",
+    declined: "没有拿到管理员确认，所以没装开机服务：只有你登录着时它才连着。以后可以在设置里再装。",
+    unsupported: "这个系统没有开机服务：只有你登录着时它才连着。",
+  },
+  keptCommand: "要它开机就连着，在终端里运行：",
+  hosts: "把世界的工具接进这台电脑上的智能体",
+  hostsWhat: "接进去之后，你在这台电脑上自己开的 Codex 与 Claude Code 也能用世界的手、看见世界。随时可以拿出来。",
+  codex: "Codex",
+  claude: "Claude Code",
+  hostState: { absent: "没装", out: "没接入", in: "已接入", old: "里面是旧版 fastctx" },
+  applyGo: "接入",
+  applying: "正在接入…",
+  enter: "进入世界",
+  failed: (why) => `没办成：${why}`,
+  back: "返回",
+};
+
+export const enWelcome: WelcomeWords = {
+  lede: "Your computers, and the Codex and Claude living on them, in one World.",
+  thisComputer: "This computer",
+  facts: (name, world) => (world ? `named ${name}, in the World ${world}` : `named ${name}, on its own for now`),
+  placed: "fastctx is in place",
+  notPlaced: "fastctx is not in place yet",
+  place: "Put it in place",
+  noCarried: "this build of World carries no fastctx",
+  serviceOn: "a service keeps it running",
+  serviceOff: "no service keeps it running yet",
+  join: "Join a World",
+  joinWhat: "Another device's World gives you an invitation code under “Invite a device”.",
+  found: "Found a new World",
+  foundWhat: "It needs a hub every device connects to: this computer, or a server.",
+  alone: "Stay on its own",
+  aloneWhat: "This computer is a World by itself. You can join or found one any time.",
+  code: "Invitation code",
+  codeHint: "a long string starting with fxw3.; paste it here",
+  name: "This computer's name in the World",
+  nameHint: "lowercase letters, digits and hyphens; left empty, it keeps its name",
+  joinGo: "Join",
+  joining: "Joining; an administrator will be asked once…",
+  hubWhere: "Where the hub is",
+  hubHere: "This computer",
+  hubServer: "A server",
+  address: "An address other devices reach this computer at",
+  addressHint: "IP and port, such as 203.0.113.5:7443; it must stay on for the others to connect",
+  hubGo: "Found the hub here",
+  founding: "Founding; an administrator will be asked once…",
+  serverSteps: [
+    "Install fastctx on the server (npm install -g fastctx, or from the GitHub releases);",
+    "run fastctx hub init --public <the server's public IP>:7443; it prints a founding code;",
+    "run sudo fastctx service hub install, so the hub starts at boot and stays up;",
+    "paste the founding code into “Join a World” above; this computer is the World's first.",
+  ],
+  foundingCode: "Founding code",
+  joined: (world, name) => `In the World ${world}, as ${name}.`,
+  kept: {
+    already: "A service already keeps it running.",
+    installed: "A service now keeps it running: connected from boot, signed in or not.",
+    declined: "Administrator rights were declined, so no service was installed: it is connected only while you are signed in. You can install it later in the settings.",
+    unsupported: "This system has no service for it: it is connected only while you are signed in.",
+  },
+  keptCommand: "To keep it connected from boot, run in a terminal:",
+  hosts: "Put the World's tools into the agents on this computer",
+  hostsWhat: "Then the Codex and Claude Code you open on this computer yourself use the World's hands and see the World. You can take them out any time.",
+  codex: "Codex",
+  claude: "Claude Code",
+  hostState: { absent: "not installed", out: "not in", in: "in", old: "an old fastctx is in it" },
+  applyGo: "Put them in",
+  applying: "Putting them in…",
+  enter: "Enter the World",
+  failed: (why) => `It did not go through: ${why}`,
+  back: "Back",
+};
+
 function zhSpan(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 1) return "不到一分钟";
@@ -548,6 +707,7 @@ export const zhShell: ShellWords = {
   nobodyHere: "此刻没有谁在",
   unreachable: "问不到世界",
   thisOne: "这台",
+  joinOrFound: "加入或建一个世界",
   more: (n) => `还有 ${n} 个`,
   span: zhSpan,
 };
@@ -575,6 +735,7 @@ export const enShell: ShellWords = {
   nobodyHere: "Nobody here right now",
   unreachable: "The World cannot be asked",
   thisOne: "this one",
+  joinOrFound: "Join or found a World",
   more: (n) => `${n} more`,
   span: enSpan,
 };

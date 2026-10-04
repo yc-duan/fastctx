@@ -215,3 +215,205 @@
   color: var(--text-3);
   font-size: var(--size-small);
 }
+
+/* Meeting the World: the mark, a line on what it is, this computer, and
+   the ways on, in one quiet column. */
+.welcome-page {
+  --board: min(100% - 2 * var(--gutter), 560px);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.welcome-page > .page-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+.welcome {
+  flex: 1;
+}
+
+.welcome > * {
+  width: var(--board);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.welcome-hero {
+  padding-top: clamp(var(--space-8), 9dvh, 96px);
+  text-align: center;
+}
+
+.welcome-mark {
+  width: 104px;
+  height: auto;
+  color: var(--pen-graphite);
+  mix-blend-mode: var(--pen-blend);
+}
+
+.welcome-title {
+  margin: var(--space-3) 0 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: calc(var(--size-title) * 1.2);
+  letter-spacing: 0.02em;
+  color: var(--text-strong);
+}
+
+.welcome-lede {
+  margin: var(--space-2) 0 0;
+  font-size: var(--body-size);
+  line-height: var(--leading-prose);
+  color: var(--text-2);
+}
+
+.welcome-here {
+  margin-top: var(--space-8);
+}
+
+.welcome-facts {
+  margin: 0;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.welcome-facts .place-now {
+  margin-left: var(--space-2);
+}
+
+.welcome-body {
+  margin-top: var(--space-6);
+  padding-bottom: var(--space-12);
+}
+
+.welcome-paths {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.welcome-paths li + li {
+  position: relative;
+}
+
+.welcome-paths li + li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  background: var(--pen-rule);
+  opacity: 0.7;
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
+.welcome-path {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: var(--space-4) var(--space-3);
+  border-radius: var(--radius-m);
+  box-sizing: content-box;
+  transition: background-color var(--hover) ease;
+}
+
+.welcome-path:hover {
+  background: var(--hairline);
+}
+
+.welcome-path-title {
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+}
+
+.welcome-path-what {
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+  color: var(--text-2);
+}
+
+.welcome-form-title {
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h2);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+}
+
+.welcome-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-5);
+}
+
+.welcome-steps {
+  margin: var(--space-4) 0 0;
+  padding-left: 1.4em;
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+}
+
+.welcome-kept {
+  margin-top: var(--space-3);
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+}
+
+.welcome-kept p {
+  margin: 0;
+}
+
+.welcome-command {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--surface-code);
+  font-size: var(--size-small);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.welcome-hosts {
+  margin-top: var(--space-6);
+}
+
+.welcome-hosts h3 {
+  margin: 0 0 var(--space-1);
+  font-weight: 400;
+}
+
+.host-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 34px;
+  font-size: var(--size-ui);
+}
+
+.host-row input {
+  accent-color: var(--accent);
+}
+
+.host-name {
+  color: var(--text);
+}
+
+.host-state {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.welcome-hosts .apply-now {
+  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
+}
