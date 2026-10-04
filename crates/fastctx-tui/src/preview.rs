@@ -585,10 +585,13 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     let mut picking =
         TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     picking.data(ctx, Data::History(answered(now, ANSWER)));
-    picking.data(ctx, Data::Around(Ok(crate::app::Around {
-        jobs: Vec::new(),
-        colleagues: town_view.colleagues_of(&asker).into_iter().cloned().collect(),
-    })));
+    picking.data(
+        ctx,
+        Data::Around(Ok(crate::app::Around {
+            jobs: Vec::new(),
+            colleagues: town_view.colleagues_of(&asker).into_iter().cloned().collect(),
+        })),
+    );
     picking.key(ctx, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     picking.key(ctx, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     let mut typing =
