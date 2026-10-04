@@ -109,11 +109,18 @@ fn save(node: &Node, thread: &str, events: &[HostEvent]) -> std::io::Result<()> 
 fn enqueue(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Result<()> {
     {
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
+        let claimed = state.claimed.contains(&thread);
         let events = state.queues.entry(thread.clone()).or_default();
         let kept = durable(&event);
         events.push(event);
         if kept {
             save(node, &thread, events)?;
+        }
+        // Reports of threads not yet claimed are recoverable once saved;
+        // claimed threads finish applying their effects before handoff.
+        if !claimed {
+            node.codex.acknowledge(events.last().expect("just enqueued"));
+            node.handoff.changed();
         }
     }
     let node = node.clone();
@@ -193,7 +200,9 @@ async fn drain(node: &Arc<Node>, thread: &str) {
             node.log.line(format_args!("acknowledging a report for {thread}: {error}"));
             return;
         }
-        events.remove(0);
+        let applied = events.remove(0);
+        node.codex.acknowledge(&applied);
+        node.handoff.changed();
     }
 }
 

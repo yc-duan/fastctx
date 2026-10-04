@@ -10,6 +10,7 @@
 
 mod changes;
 mod letters;
+mod outgoing;
 mod session;
 pub mod state;
 
@@ -42,6 +43,9 @@ pub type Feed = Box<dyn FnOnce(Stream) -> BoxFuture<Result<(), String>> + Send>;
 
 /// What the link hands the node: calls to answer and letters to keep.
 pub trait Node: Send + Sync + 'static {
+    /// Admits a call and keeps its work alive through writing the reply,
+    /// including a large reply's data transfer. Streams may return no guard.
+    fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, fastctx_types::ipc::Failure>;
     /// Does what `from` asks and answers. A call that comes with a data
     /// connection hands over this machine's end of it, the sink.
     fn call(&self, from: MachineName, call: RemoteCall, stream: Option<Stream>) -> BoxFuture<RemoteResult>;
@@ -127,7 +131,7 @@ struct Members {
 #[derive(Clone)]
 pub(crate) struct Connection {
     generation: u64,
-    up: mpsc::UnboundedSender<Up>,
+    up: outgoing::Outgoing,
 }
 
 /// A call waiting for its answer.
