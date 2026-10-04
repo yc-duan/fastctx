@@ -57,6 +57,30 @@ pub fn publish_checked(
         .map_err(|error| PublishFailure { error, published })
 }
 
+/// A file written piece by piece beside its target and moved over it whole
+/// once complete, for contents too large to hold in memory. Until then the
+/// target is untouched; dropped uncommitted, the staged file is removed.
+pub struct Staged {
+    inner: imp::Staged,
+}
+
+impl Staged {
+    /// Starts staging a new version of `target`. On Unix the file gets
+    /// `mode`, or what the platform gives new files.
+    pub fn create(target: &Path, mode: Option<u32>) -> io::Result<Self> {
+        Ok(Self { inner: imp::Staged::create(target, temporary_beside(target)?, mode)? })
+    }
+
+    pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write_all(bytes)
+    }
+
+    /// Flushes the contents to disk and moves them over the target.
+    pub fn commit(self) -> io::Result<()> {
+        self.inner.commit()
+    }
+}
+
 /// A name beside `path` that no other writer, in this process or another,
 /// uses at the same moment; it starts with a dot so listings pass over it.
 fn temporary_beside(path: &Path) -> io::Result<PathBuf> {
@@ -121,6 +145,44 @@ mod imp {
         result
     }
 
+    pub struct Staged {
+        file: Option<File>,
+        temporary: std::path::PathBuf,
+        target: std::path::PathBuf,
+    }
+
+    impl Staged {
+        pub fn create(target: &Path, temporary: std::path::PathBuf, mode: Option<u32>) -> io::Result<Self> {
+            let file = OpenOptions::new().write(true).create_new(true).mode(mode.unwrap_or(0o666)).open(&temporary)?;
+            if let Some(mode) = mode {
+                // The umask narrowed the creation mode; the mode asked for is
+                // the source's own.
+                file.set_permissions(fs::Permissions::from_mode(mode & 0o7777))?;
+            }
+            Ok(Self { file: Some(file), temporary, target: target.to_path_buf() })
+        }
+
+        pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            self.file.as_mut().expect("open until committed").write_all(bytes)
+        }
+
+        pub fn commit(mut self) -> io::Result<()> {
+            let file = self.file.take().expect("open until committed");
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&self.temporary, &self.target)?;
+            sync_directory(&self.target)
+        }
+    }
+
+    impl Drop for Staged {
+        fn drop(&mut self) {
+            if self.file.is_some() {
+                let _ = fs::remove_file(&self.temporary);
+            }
+        }
+    }
+
     /// Makes the new directory entry itself durable.
     fn sync_directory(path: &Path) -> io::Result<()> {
         match path.parent() {
@@ -180,7 +242,46 @@ mod imp {
         result
     }
 
+    pub struct Staged {
+        handle: Option<Handle>,
+        target: std::path::PathBuf,
+    }
+
+    impl Staged {
+        pub fn create(target: &Path, temporary: std::path::PathBuf, _mode: Option<u32>) -> io::Result<Self> {
+            let target = std::path::absolute(target)?;
+            Ok(Self { handle: Some(Handle(create_temporary(&temporary)?)), target })
+        }
+
+        pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+            write_all(self.handle.as_ref().expect("open until committed").0, bytes)
+        }
+
+        pub fn commit(mut self) -> io::Result<()> {
+            let handle = self.handle.as_ref().expect("open until committed").0;
+            // SAFETY: a valid handle opened for writing.
+            if unsafe { FlushFileBuffers(handle) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            rename_by_handle(handle, &self.target, true)?;
+            drop(self.handle.take());
+            Ok(())
+        }
+    }
+
+    impl Drop for Staged {
+        fn drop(&mut self) {
+            if let Some(handle) = &self.handle {
+                delete_on_close(handle.0);
+            }
+        }
+    }
+
     struct Handle(HANDLE);
+
+    // SAFETY: the handle is owned by this value alone; a file handle may be
+    // used and closed from any thread.
+    unsafe impl Send for Handle {}
 
     impl Drop for Handle {
         fn drop(&mut self) {

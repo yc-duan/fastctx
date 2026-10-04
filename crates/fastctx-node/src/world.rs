@@ -147,7 +147,12 @@ struct Handler {
 }
 
 impl fastctx_net::link::Node for Handler {
-    fn call(&self, from: MachineName, call: RemoteCall) -> BoxFuture<RemoteResult> {
+    fn call(
+        &self,
+        from: MachineName,
+        call: RemoteCall,
+        stream: Option<fastctx_net::data::Stream>,
+    ) -> BoxFuture<RemoteResult> {
         let node = self.node.upgrade();
         Box::pin(async move {
             let Some(node) = node else {
@@ -173,6 +178,17 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Who { all } => crate::server::who_here(&node, all).await.map(RemoteReply::Who),
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&machine))),
+                RemoteCall::CopySend { from, to } => {
+                    let to_machine = to.machine.ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
+                    crate::copy::send(&node, &from, &to_machine, &to.path).await.map(RemoteReply::Copied)
+                }
+                RemoteCall::CopyReceive { to, manifest_bytes, manifest_sha256 } => {
+                    let stream = stream
+                        .ok_or_else(|| Failure::new("a copy comes with a data connection, and this one had none"))?;
+                    crate::copy::receive(&node, to, manifest_bytes, manifest_sha256, stream)
+                        .await
+                        .map(RemoteReply::Copied)
+                }
             }
         })
     }

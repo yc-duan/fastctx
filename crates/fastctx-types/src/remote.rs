@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::copy::{CopyReport, Place};
 use crate::ipc::Failure;
 use crate::residents::Notice;
 use crate::run::{RunReply, RunRequest};
@@ -23,6 +24,13 @@ pub enum RemoteCall {
     Who { all: bool },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
+    /// Copy `from`, a path there, to another machine.
+    CopySend { from: String, to: Place },
+    /// Take a copy from the calling machine, over the call's data
+    /// connection: first the manifest, whose size and digest are these, then
+    /// the files the receiver asks for. `to` ends in a separator to copy
+    /// into that directory.
+    CopyReceive { to: String, manifest_bytes: u64, manifest_sha256: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +40,7 @@ pub enum RemoteReply {
     Written { outcome: WriteOutcome },
     Who(WhoReply),
     Facts(MachineFacts),
+    Copied(CopyReport),
 }
 
 /// The answer to a call, as the called machine gave it.

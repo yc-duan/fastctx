@@ -28,6 +28,10 @@ pub enum Body {
     /// A call too large for a message: it follows over a data connection,
     /// as the JSON of a `RemoteCall`.
     LargeCall { carried: Carried },
+    /// A call that comes with a data connection, `ticket`, whose source is
+    /// the caller: the two ends exchange what the call is about, such as
+    /// the files of a copy, while the call waits for its answer.
+    StreamCall { call: RemoteCall, ticket: crate::sign::Signed },
     /// The answer to the sender's call numbered `call`.
     Answer { call: u64, result: RemoteResult },
     /// The answer to the call numbered `call`, too large for a message: it

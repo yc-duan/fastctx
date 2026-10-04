@@ -430,7 +430,7 @@ async fn answer(inner: Arc<Inner>, up: mpsc::UnboundedSender<Up>, call: u64, mes
     };
     let caller = claimed.from.clone();
     let result: RemoteResult = match check_call(&inner, &message, &claimed).await {
-        Ok(remote) => inner.node.call(caller.clone(), remote).await,
+        Ok((remote, stream)) => inner.node.call(caller.clone(), remote, stream).await,
         Err(reason) => {
             inner.node.log(format!("refused a call from {caller}: {reason}"));
             Err(Failure::new(format!("{} refused the call: {reason}", inner.membership.name)))
@@ -484,11 +484,13 @@ async fn answer(inner: Arc<Inner>, up: mpsc::UnboundedSender<Up>, call: u64, mes
     }
 }
 
+/// Checks a call, and fetches it or opens its data connection when it
+/// comes with one.
 async fn check_call(
     inner: &Inner,
     message: &Signed,
     claimed: &Message,
-) -> Result<fastctx_types::remote::RemoteCall, String> {
+) -> Result<(fastctx_types::remote::RemoteCall, Option<crate::data::Stream>), String> {
     if claimed.to != inner.membership.name || claimed.world != inner.membership.world {
         return Err(format!("it is for {} in {}", claimed.to, claimed.world));
     }
@@ -497,7 +499,7 @@ async fn check_call(
         .await
         .ok_or_else(|| format!("{} is not a member this machine trusts", claimed.from))?;
     let opened: Message = message.open(&key, Domain::Message).map_err(|error| error.to_string())?;
-    if !matches!(opened.body, Body::Call { .. } | Body::LargeCall { .. }) {
+    if !matches!(opened.body, Body::Call { .. } | Body::LargeCall { .. } | Body::StreamCall { .. }) {
         return Err("it is not a call".to_string());
     }
     match inner.taken.take(&opened.from, opened.n) {
@@ -505,17 +507,27 @@ async fn check_call(
         Ok(Err(reason)) => return Err(reason),
         Err(error) => return Err(format!("recording the call: {error}")),
     }
+    let from_the_caller = |ticket: &Ticket| {
+        if ticket.source != opened.from || ticket.sink != inner.membership.name {
+            return Err(format!("its ticket is for {} to {}", ticket.source, ticket.sink));
+        }
+        Ok(())
+    };
     match opened.body {
-        Body::Call { call } => Ok(call),
+        Body::Call { call } => Ok((call, None)),
+        Body::StreamCall { call, ticket } => {
+            from_the_caller(&ticket.claim().map_err(|error| format!("the ticket: {error}"))?)?;
+            let stream = crate::data::Stream::open(&inner.membership, &inner.key, ticket, crate::wire::End::Sink)
+                .await
+                .map_err(|error| format!("opening its data connection: {error}"))?;
+            Ok((call, Some(stream)))
+        }
         Body::LargeCall { carried } => {
-            let ticket: Ticket = carried.ticket.claim().map_err(|error| format!("the ticket: {error}"))?;
-            if ticket.source != opened.from || ticket.sink != inner.membership.name {
-                return Err(format!("its ticket is for {} to {}", ticket.source, ticket.sink));
-            }
+            from_the_caller(&carried.ticket.claim().map_err(|error| format!("the ticket: {error}"))?)?;
             let bytes = crate::data::sink(&inner.membership, &inner.key, &carried)
                 .await
                 .map_err(|error| format!("fetching it, too large for a message: {error}"))?;
-            serde_json::from_slice(&bytes).map_err(|error| format!("it cannot be read: {error}"))
+            Ok((serde_json::from_slice(&bytes).map_err(|error| format!("it cannot be read: {error}"))?, None))
         }
         _ => unreachable!("checked above"),
     }
@@ -576,7 +588,7 @@ fn answered(inner: &Arc<Inner>, id: u64, message: Signed) {
                 }
             });
         }
-        Body::Call { .. } | Body::LargeCall { .. } | Body::Letter { .. } => {
+        Body::Call { .. } | Body::LargeCall { .. } | Body::StreamCall { .. } | Body::Letter { .. } => {
             if let Some((_, _, events)) = waiter {
                 let _ = events.send(CallEvent::Broken("what came back is not an answer".to_string()));
             }

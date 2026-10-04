@@ -8,6 +8,7 @@
 //! is written to disk and what travels on the wire is their serde form.
 
 pub mod calls;
+pub mod copy;
 pub mod files;
 pub mod ipc;
 pub mod layout;

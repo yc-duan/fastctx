@@ -9,6 +9,7 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+mod copy;
 mod inbox;
 mod jobs;
 mod log;

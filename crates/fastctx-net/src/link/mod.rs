@@ -26,6 +26,7 @@ use jiff::Timestamp;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::code::Code;
+use crate::data::Stream;
 use crate::message::{Body, LetterId, Message};
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::trust::{self, Endorsement, Revocation, Table};
@@ -35,11 +36,14 @@ pub use state::{Membership, NetDir};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
+/// What a caller does with its end of a call's data connection, the source.
+pub type Feed = Box<dyn FnOnce(Stream) -> BoxFuture<Result<(), String>> + Send>;
+
 /// What the link hands the node: calls to answer and letters to keep.
 pub trait Node: Send + Sync + 'static {
-    /// Does what `from` asks and answers. The future is dropped if the
-    /// caller gives up.
-    fn call(&self, from: MachineName, call: RemoteCall) -> BoxFuture<RemoteResult>;
+    /// Does what `from` asks and answers. A call that comes with a data
+    /// connection hands over this machine's end of it, the sink.
+    fn call(&self, from: MachineName, call: RemoteCall, stream: Option<Stream>) -> BoxFuture<RemoteResult>;
     /// Keeps a letter from `from`. An inner error says why the letter cannot
     /// be taken, and it is set aside with that reason; an outer one is a
     /// failure of this machine, and the letter comes again.
@@ -218,7 +222,18 @@ impl Link {
 
     /// Calls `to` and waits for its answer.
     pub async fn call(&self, to: &MachineName, call: RemoteCall) -> Result<RemoteResult, CallFailure> {
-        self.inner.call(to, call).await
+        self.inner.call(to, call, None).await
+    }
+
+    /// Calls `to` with a data connection, whose source end `feed` is given
+    /// while the call waits for its answer.
+    pub async fn call_with_stream(
+        &self,
+        to: &MachineName,
+        call: RemoteCall,
+        feed: Feed,
+    ) -> Result<RemoteResult, CallFailure> {
+        self.inner.call(to, call, Some(feed)).await
     }
 
     /// Sends a letter to `to`. It is on this machine's disk when this
@@ -363,7 +378,12 @@ impl Inner {
         answered.await.unwrap_or_else(|_| Err("the connection to the hub ended before it answered".to_string()))
     }
 
-    async fn call(self: &Arc<Self>, to: &MachineName, call: RemoteCall) -> Result<RemoteResult, CallFailure> {
+    async fn call(
+        self: &Arc<Self>,
+        to: &MachineName,
+        call: RemoteCall,
+        feed: Option<Feed>,
+    ) -> Result<RemoteResult, CallFailure> {
         if *to == self.membership.name {
             return Err(CallFailure::Unreachable { name: to.clone(), reason: "it is this machine".to_string() });
         }
@@ -388,25 +408,42 @@ impl Inner {
             Signed::new(&self.key, Domain::Message, &message)
         };
         let id = self.next_id();
-        let mut message = sign(Body::Call { call: call.clone() });
-        // A call too large for the control connection says what follows over
-        // a data connection, and this machine sends it as the source. The
-        // sending ends with the call, so a refused call leaves nothing waiting.
-        let mut sending = None;
-        if crate::wire::encode(&Up::Call { id, message: message.clone() }).len() > crate::wire::MAX_CONTROL_FRAME {
-            let bytes = serde_json::to_vec(&call).expect("calls serialize");
-            let stream =
-                crate::sign::random::<8>().map(u64::from_le_bytes).map_err(|error| CallFailure::Unreachable {
-                    name: to.clone(),
-                    reason: format!("choosing a stream for a large call: {error}"),
-                })?;
+        let ticket = || -> Result<Signed, CallFailure> {
+            let stream = crate::sign::random::<8>().map(u64::from_le_bytes).map_err(|error| {
+                CallFailure::Unreachable { name: to.clone(), reason: format!("choosing a data connection: {error}") }
+            })?;
             let ticket = crate::wire::Ticket {
                 world: self.membership.world.clone(),
                 stream,
                 source: self.membership.name.clone(),
                 sink: to.clone(),
             };
-            let ticket = Signed::new(&self.key, Domain::Ticket, &ticket);
+            Ok(Signed::new(&self.key, Domain::Ticket, &ticket))
+        };
+        let mut message = sign(Body::Call { call: call.clone() });
+        // The sending over a data connection ends with the call, so a
+        // refused call leaves nothing waiting.
+        let mut sending = None;
+        let mut fed = None;
+        if let Some(feed) = feed {
+            let ticket = ticket()?;
+            message = sign(Body::StreamCall { call, ticket: ticket.clone() });
+            let (done, finished) = oneshot::channel();
+            fed = Some(finished);
+            let inner = self.clone();
+            sending = Some(tokio::spawn(async move {
+                let result = match Stream::open(&inner.membership, &inner.key, ticket, crate::wire::End::Source).await {
+                    Ok(stream) => feed(stream).await,
+                    Err(error) => Err(error),
+                };
+                let _ = done.send(result);
+            }));
+        } else if crate::wire::encode(&Up::Call { id, message: message.clone() }).len() > crate::wire::MAX_CONTROL_FRAME
+        {
+            // A call too large for the control connection says what follows
+            // over a data connection, which this machine sends as the source.
+            let bytes = serde_json::to_vec(&call).expect("calls serialize");
+            let ticket = ticket()?;
             let carried = crate::wire::Carried {
                 ticket: ticket.clone(),
                 bytes: bytes.len() as u64,
@@ -435,7 +472,27 @@ impl Inner {
                 CallFailure::Unreachable { name: to.clone(), reason }
             }
         };
-        while let Some(event) = received.recv().await {
+        let failed_feeding = async {
+            match fed {
+                Some(finished) => match finished.await {
+                    Ok(Err(error)) => error,
+                    // Fed in full; the answer decides.
+                    Ok(Ok(())) | Err(_) => std::future::pending().await,
+                },
+                None => std::future::pending().await,
+            }
+        };
+        tokio::pin!(failed_feeding);
+        loop {
+            let event = tokio::select! {
+                event = received.recv() => match event {
+                    Some(event) => event,
+                    None => break,
+                },
+                reason = &mut failed_feeding => {
+                    return Err(lost(delivered, format!("sending its data failed: {reason}")));
+                }
+            };
             match event {
                 CallEvent::Status(CallStatus::Delivered) => delivered = true,
                 CallEvent::Status(CallStatus::Offline { last_seen }) => {

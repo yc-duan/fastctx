@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod copy;
 mod view;
 mod w;
 mod world;
@@ -34,6 +35,8 @@ enum Command {
     W(w::WArgs),
     /// See the World's machines: which are online and what each is like.
     Nodes,
+    /// Copy a file or a directory from one machine to another.
+    Copy(copy::CopyArgs),
     /// Join a World with a code.
     Join(world::JoinArgs),
     /// Make a code that lets one more machine join this World.
@@ -59,6 +62,7 @@ fn main() -> ExitCode {
         Command::View(args) => view::run(args),
         Command::W(args) => w::run(args),
         Command::Nodes => world::nodes(),
+        Command::Copy(args) => return finish(copy::run(args)),
         Command::Join(args) => world::join(args),
         Command::Invite(args) => world::invite(args),
         Command::Revoke(args) => world::revoke(args),
@@ -73,6 +77,14 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// A command that sets its own exit code, or fails.
+fn finish(result: anyhow::Result<ExitCode>) -> ExitCode {
+    result.unwrap_or_else(|error| {
+        eprintln!("fastctx: {error:#}");
+        ExitCode::FAILURE
+    })
 }
 
 fn node() -> anyhow::Result<()> {
