@@ -106,8 +106,42 @@ impl Hosts {
     }
 }
 
+/// Whether the sessions a host opens here have the World's tools.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Standing {
+    /// The host is not installed here.
+    Absent,
+    /// Installed, and nothing of the World's is in it.
+    Out,
+    /// The record says an apply put the World's tools in.
+    In,
+}
+
+/// How each host stands, as the record says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Status {
+    pub codex: Standing,
+    pub claude: Standing,
+}
+
+/// How each host stands now; reads the record and nothing of the hosts'.
+pub fn status(places: &Places) -> Result<Status, Error> {
+    let record = Record::read(&Snapshot::read(places.record())?)?;
+    let present = Hosts::present(places);
+    let standing = |present: bool, applied: bool| match (present, applied) {
+        (_, true) => Standing::In,
+        (true, false) => Standing::Out,
+        (false, false) => Standing::Absent,
+    };
+    let plugin = places.plugin_record().exists();
+    Ok(Status {
+        codex: standing(present.codex, record.codex.is_some()),
+        claude: standing(present.claude, record.claude_md.is_some() || record.settings.is_some() || plugin),
+    })
+}
+
 /// What an apply or unapply did, for the person who asked.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Report {
     /// Files written or removed.
     pub changed: Vec<PathBuf>,

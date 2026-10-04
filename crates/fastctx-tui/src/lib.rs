@@ -13,6 +13,7 @@ pub mod pages;
 pub mod paint;
 #[cfg(feature = "preview")]
 pub mod preview;
+pub mod sessions;
 pub mod terminal;
 pub mod text;
 pub mod transcript;

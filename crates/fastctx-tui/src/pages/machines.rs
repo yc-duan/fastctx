@@ -10,10 +10,11 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 
 use super::{List, Page, Sheet, quiet, sheet, title, wrong};
-use crate::app::{Act, Ctx, Data};
+use crate::app::{Act, Ctx, Data, Done, Job};
 use crate::design::Role;
 use crate::pages::form;
 use crate::paint::{self, Row};
+use crate::sessions::{Report, Standing, Status};
 use crate::text;
 
 #[derive(Default)]
@@ -22,6 +23,19 @@ pub struct MachinesPage {
     failed: Option<String>,
     had_at: Option<Timestamp>,
     list: List,
+    /// Whether the user's own sessions here have the World's tools.
+    sessions: Option<Result<Status, String>>,
+    /// What the latest apply or unapply came to, or that one is under way.
+    outcome: Option<Outcome>,
+}
+
+enum Outcome {
+    Applying,
+    Unapplying,
+    Applied(Report),
+    Unapplied(Report),
+    NeedsRaise { current: i64, requested: u64 },
+    Failed(String),
 }
 
 impl MachinesPage {
@@ -34,18 +48,39 @@ impl MachinesPage {
     }
 
     pub fn data(&mut self, data: Data) -> Act {
-        if let Data::Nodes(nodes) = data {
-            match nodes {
-                Ok(nodes) => {
-                    self.list.clamp(nodes.machines.len());
-                    self.nodes = Some(nodes);
-                    self.failed = None;
-                    self.had_at = Some(Timestamp::now());
-                }
-                Err(why) => self.failed = Some(why),
+        match data {
+            Data::Nodes(Ok(nodes)) => {
+                self.list.clamp(nodes.machines.len());
+                self.nodes = Some(nodes);
+                self.failed = None;
+                self.had_at = Some(Timestamp::now());
             }
+            Data::Nodes(Err(why)) => self.failed = Some(why),
+            Data::Sessions(sessions) => self.sessions = Some(sessions),
+            Data::Done { job: Job::Apply { .. } | Job::Unapply, result } => {
+                self.outcome = Some(match result {
+                    Ok(Done::Applied(report)) => Outcome::Applied(report),
+                    Ok(Done::Unapplied(report)) => Outcome::Unapplied(report),
+                    Ok(Done::NeedsRaise { current, requested }) => Outcome::NeedsRaise { current, requested },
+                    Ok(_) => return Act::Stay,
+                    Err(why) => Outcome::Failed(why),
+                });
+            }
+            _ => {}
         }
         Act::Stay
+    }
+
+    fn busy(&self) -> bool {
+        matches!(self.outcome, Some(Outcome::Applying | Outcome::Unapplying))
+    }
+
+    fn any_in(&self) -> bool {
+        matches!(&self.sessions, Some(Ok(status)) if status.codex == Standing::In || status.claude == Standing::In)
+    }
+
+    fn any_installed(&self) -> bool {
+        matches!(&self.sessions, Some(Ok(status)) if status.codex != Standing::Absent || status.claude != Standing::Absent)
     }
 
     pub fn key(&mut self, _ctx: &Ctx, key: KeyEvent) -> Act {
@@ -67,9 +102,79 @@ impl MachinesPage {
             KeyCode::Char('l') if self.nodes.as_ref().is_some_and(|nodes| !matches!(nodes.link, LinkState::Alone)) => {
                 Act::Push(Page::Form(Box::new(form::FormPage::leave())))
             }
+            KeyCode::Char('u') if !self.busy() && self.any_installed() => {
+                self.outcome = Some(Outcome::Applying);
+                Act::Do(Job::Apply { raise: false })
+            }
+            KeyCode::Char('U') if matches!(self.outcome, Some(Outcome::NeedsRaise { .. })) => {
+                self.outcome = Some(Outcome::Applying);
+                Act::Do(Job::Apply { raise: true })
+            }
+            KeyCode::Char('x') if !self.busy() && self.any_in() => {
+                self.outcome = Some(Outcome::Unapplying);
+                Act::Do(Job::Unapply)
+            }
             KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('q') => Act::Back,
             _ => Act::Stay,
         }
+    }
+
+    /// The line on the user's own sessions, and what the latest apply or
+    /// unapply came to.
+    fn sessions_rows(&self, ctx: &Ctx, width: usize) -> Vec<Row> {
+        let words = &ctx.words;
+        let look = &ctx.look;
+        let mut rows = Vec::new();
+        let standing = match &self.sessions {
+            None => quiet(ctx, words.asking()),
+            Some(Err(why)) => wrong(ctx, text::first_line(why)),
+            Some(Ok(status)) => {
+                let role = |standing: Standing| match standing {
+                    Standing::In => Role::Alive,
+                    Standing::Out => Role::Muted,
+                    Standing::Absent => Role::Faint,
+                };
+                Line::from(vec![
+                    Span::styled(words.standing("Codex", status.codex), look.text(role(status.codex))),
+                    Span::styled("  ·  ", look.text(Role::Faint)),
+                    Span::styled(words.standing("Claude Code", status.claude), look.text(role(status.claude))),
+                ])
+            }
+        };
+        rows.push(Row::new(Span::styled(words.own_sessions(), look.text(Role::Muted))).right(standing));
+        let (said, role) = match &self.outcome {
+            None => return rows,
+            Some(Outcome::Applying) => (words.applying().to_string(), Role::Faint),
+            Some(Outcome::Unapplying) => (words.unapplying().to_string(), Role::Faint),
+            Some(Outcome::Applied(report)) => (words.applied(report.changed.len(), report.commands.len()), Role::Muted),
+            Some(Outcome::Unapplied(report)) => {
+                (words.unapplied(report.changed.len(), report.commands.len()), Role::Muted)
+            }
+            Some(Outcome::NeedsRaise { current, requested }) => {
+                (words.needs_raise(*current, *requested), Role::Caution)
+            }
+            Some(Outcome::Failed(why)) => (why.clone(), Role::Wrong),
+        };
+        for line in text::wrap_plain(&said, look.text(role), width) {
+            rows.push(Row::new(line));
+        }
+        if let Some(Outcome::Applied(report) | Outcome::Unapplied(report)) = &self.outcome {
+            for notice in &report.notices {
+                for line in text::wrap_plain(
+                    &words.left_alone(&notice.location, &notice.reason),
+                    look.text(Role::Caution),
+                    width,
+                ) {
+                    rows.push(Row::new(line));
+                }
+            }
+            for leftover in &report.leftovers {
+                for line in text::wrap_plain(leftover, look.text(Role::Faint), width) {
+                    rows.push(Row::new(line));
+                }
+            }
+        }
+        rows
     }
 
     pub fn draw(&mut self, ctx: &Ctx, frame: &mut Frame, area: Rect) {
@@ -100,6 +205,7 @@ impl MachinesPage {
             for line in text::wrap_plain(&line, look.text(role), width) {
                 rows.push(Row::new(line));
             }
+            rows.extend(self.sessions_rows(ctx, width));
             rows.push(Row::blank());
             paint::open_section(
                 &mut rows,
@@ -152,6 +258,14 @@ impl MachinesPage {
             (None, Some(_)) => None,
         };
         let mut keys = vec![("i", words.key_invite()), ("j", words.key_join())];
+        if matches!(self.outcome, Some(Outcome::NeedsRaise { .. })) {
+            keys.push(("U", words.key_raise()));
+        } else if self.any_installed() && !self.busy() {
+            keys.push(("u", words.key_apply()));
+        }
+        if self.any_in() && !self.busy() {
+            keys.push(("x", words.key_unapply()));
+        }
         if !alone {
             keys.push(("r", words.key_revoke()));
             keys.push(("l", words.key_leave()));

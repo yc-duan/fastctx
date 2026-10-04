@@ -18,6 +18,7 @@ use ratatui::Frame;
 use crate::design::Look;
 use crate::input::Input;
 use crate::pages::Page;
+use crate::sessions::{Report, Status};
 use crate::words::Words;
 
 /// What every page draws with.
@@ -47,16 +48,54 @@ pub enum Act {
 /// Something to ask of the World for a page.
 #[derive(Clone, Debug)]
 pub enum Job {
-    Talk { to: ResidentId, machine: MachineName, text: String },
-    Stop { resident: ResidentId, machine: MachineName },
-    Open { agent: AgentName, town: Option<TownName>, node: Option<MachineName>, text: String },
-    OpenTown { town: TownName, fields: RecordFields },
-    EditTown { town: TownName, fields: RecordFields },
-    Journal { town: TownName, journal: JournalName, before: Option<EntryId> },
-    Invite { name: Option<MachineName>, hours: u32 },
-    Join { code: String, name: Option<MachineName> },
-    Revoke { name: MachineName, reason: String },
+    Talk {
+        to: ResidentId,
+        machine: MachineName,
+        text: String,
+    },
+    Stop {
+        resident: ResidentId,
+        machine: MachineName,
+    },
+    Open {
+        agent: AgentName,
+        town: Option<TownName>,
+        node: Option<MachineName>,
+        text: String,
+    },
+    OpenTown {
+        town: TownName,
+        fields: RecordFields,
+    },
+    EditTown {
+        town: TownName,
+        fields: RecordFields,
+    },
+    Journal {
+        town: TownName,
+        journal: JournalName,
+        before: Option<EntryId>,
+    },
+    Invite {
+        name: Option<MachineName>,
+        hours: u32,
+    },
+    Join {
+        code: String,
+        name: Option<MachineName>,
+    },
+    Revoke {
+        name: MachineName,
+        reason: String,
+    },
     Leave,
+    /// Put the World's tools into the user's own sessions on this machine;
+    /// `raise` agrees to raising Codex's shared output limit.
+    Apply {
+        raise: bool,
+    },
+    /// Take them out again.
+    Unapply,
 }
 
 /// What the World answered a job.
@@ -67,10 +106,24 @@ pub enum Done {
     Opened(Said),
     Record(Box<TownRecord>),
     Journal(Box<JournalView>),
-    Code { code: String, expires: Timestamp },
-    Joined { world: String, name: MachineName },
+    Code {
+        code: String,
+        expires: Timestamp,
+    },
+    Joined {
+        world: String,
+        name: MachineName,
+    },
     Revoked,
     Left,
+    Applied(Report),
+    Unapplied(Report),
+    /// Codex's shared output limit is lower than the World needs, and
+    /// raising it was not yet agreed to.
+    NeedsRaise {
+        current: i64,
+        requested: u64,
+    },
 }
 
 /// What a page keeps up to date with while it is on top.
@@ -120,6 +173,8 @@ pub enum Data {
     Unwatched(Option<String>),
     /// What the agent being watched started that still runs, wherever.
     Running(Result<Vec<RunningJob>, String>),
+    /// Whether the user's own sessions here have the World's tools.
+    Sessions(Result<Status, String>),
     /// What the World answered a job the page asked for.
     Done {
         job: Job,

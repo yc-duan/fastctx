@@ -589,6 +589,12 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     new_project.key(ctx, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     new_project.paste("深空探测器".into());
 
+    let mut machines = MachinesPage::with(nodes(now));
+    machines.data(Data::Sessions(Ok(crate::sessions::Status {
+        codex: crate::sessions::Standing::In,
+        claude: crate::sessions::Standing::Out,
+    })));
+
     vec![
         ("world", Page::World(WorldPage::with(world_view, nodes(now)))),
         ("project", Page::Project(Box::new(ProjectPage::with(town("mark50"), town_view, map(now))))),
@@ -597,7 +603,7 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         ("answer-table", Page::Talk(Box::new(table_answer))),
         ("typing", Page::Talk(Box::new(typing))),
         ("journal", Page::Journal(Box::new(JournalPage::with("Mark 50 研发".into(), journal(now))))),
-        ("machines", Page::Machines(MachinesPage::with(nodes(now)))),
+        ("machines", Page::Machines(machines)),
         ("open-agent", Page::Form(Box::new(open))),
         ("new-project", Page::Form(Box::new(new_project))),
     ]

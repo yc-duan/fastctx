@@ -14,8 +14,10 @@ preview = []
 
 [dependencies]
 anyhow.workspace = true
+thiserror.workspace = true
 crossterm = "0.29"
 fastctx-client = { path = "../fastctx-client" }
+fastctx-install = { path = "../fastctx-install" }
 fastctx-types = { path = "../fastctx-types" }
 jiff.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }

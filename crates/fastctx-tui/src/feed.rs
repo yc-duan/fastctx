@@ -15,6 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 
 use crate::app::{Data, Done, Feed, Job};
+use crate::sessions::Refused;
 
 /// How long a page that shows who is where waits between asks.
 const EVERY: Duration = Duration::from_secs(2);
@@ -68,6 +69,10 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
     loop {
         let data = ask(&world, &feed).await;
         if sender.send((page, data)).is_err() {
+            return;
+        }
+        // Beside the machines, how this one's own sessions stand.
+        if feed == Feed::Nodes && sender.send((page, Data::Sessions(crate::sessions::status().await))).is_err() {
             return;
         }
         tokio::time::sleep(EVERY).await;
@@ -146,7 +151,15 @@ async fn running(world: World, sender: Sender, page: u64, owner: Address, town: 
 /// Does a job and sends its answer to the page that asked.
 pub fn run(world: World, sender: Sender, page: u64, job: Job) {
     tokio::spawn(async move {
-        let result = work(&world, job.clone()).await.map_err(|error| error.to_string());
+        let result = match &job {
+            Job::Apply { raise } => match crate::sessions::apply(*raise).await {
+                Ok(report) => Ok(Done::Applied(report)),
+                Err(Refused::OutputLimit { current, requested }) => Ok(Done::NeedsRaise { current, requested }),
+                Err(Refused::Failed(why)) => Err(why),
+            },
+            Job::Unapply => crate::sessions::unapply().await.map(Done::Unapplied),
+            _ => work(&world, job.clone()).await.map_err(|error| error.to_string()),
+        };
         let _ = sender.send((page, Data::Done { job, result }));
     });
 }
@@ -177,5 +190,6 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
             world.leave().await?;
             Done::Left
         }
+        Job::Apply { .. } | Job::Unapply => unreachable!("done on this machine, not asked of the World"),
     })
 }

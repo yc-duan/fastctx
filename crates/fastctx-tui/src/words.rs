@@ -12,6 +12,8 @@ use fastctx_types::world::Route;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
+use crate::sessions::Standing;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     Zh,
@@ -471,6 +473,87 @@ impl Words {
             Lang::Zh => format!("没问到：{why}"),
             Lang::En => format!("not asked: {why}"),
         }
+    }
+
+    pub fn own_sessions(&self) -> &'static str {
+        self.pick("你自己开的会话", "Your own sessions")
+    }
+
+    /// How a host stands: `Codex 已接入`.
+    pub fn standing(&self, host: &str, standing: Standing) -> String {
+        match (self.lang, standing) {
+            (Lang::Zh, Standing::In) => format!("{host} 已接入"),
+            (Lang::Zh, Standing::Out) => format!("{host} 没接入"),
+            (Lang::Zh, Standing::Absent) => format!("{host} 没装"),
+            (Lang::En, Standing::In) => format!("{host}: in"),
+            (Lang::En, Standing::Out) => format!("{host}: not in"),
+            (Lang::En, Standing::Absent) => format!("{host}: not installed"),
+        }
+    }
+
+    pub fn applying(&self) -> &'static str {
+        self.pick("正在接入…", "Putting the World's tools in…")
+    }
+
+    pub fn unapplying(&self) -> &'static str {
+        self.pick("正在拿出来…", "Taking the World's tools out…")
+    }
+
+    pub fn applied(&self, files: usize, commands: usize) -> String {
+        match (self.lang, files + commands) {
+            (Lang::Zh, 0) => "早就接好了，什么都没改。".to_string(),
+            (Lang::En, 0) => "Already in place; nothing changed.".to_string(),
+            (Lang::Zh, _) if commands == 0 => {
+                format!("接好了：改了 {files} 个文件。之后新开的会话就有世界的工具，已经开着的不变。")
+            }
+            (Lang::Zh, _) => format!(
+                "接好了：改了 {files} 个文件，跑了 {commands} 条 claude 命令。之后新开的会话就有世界的工具，已经开着的不变。"
+            ),
+            (Lang::En, _) => format!(
+                "In: {files} files changed, {commands} claude commands run. Sessions opened from now on have the World's tools."
+            ),
+        }
+    }
+
+    pub fn unapplied(&self, files: usize, commands: usize) -> String {
+        match (self.lang, files + commands) {
+            (Lang::Zh, 0) => "里面本来就没有世界的东西。".to_string(),
+            (Lang::En, 0) => "Nothing of the World's was in.".to_string(),
+            (Lang::Zh, _) => format!("拿出来了：改了 {files} 个文件。之后新开的会话不再有世界的工具。"),
+            (Lang::En, _) => {
+                format!("Out: {files} files changed. Sessions opened from now on no longer have the World's tools.")
+            }
+        }
+    }
+
+    pub fn needs_raise(&self, current: i64, requested: u64) -> String {
+        match self.lang {
+            Lang::Zh => format!(
+                "Codex 的输出上限设成了 {current}，世界的一次回答要 {requested}，所以什么都没改。这个上限管着 Codex 的所有工具，按 U 同意调高并接入。"
+            ),
+            Lang::En => format!(
+                "Codex's output limit is {current} and the World's answers need {requested}, so nothing changed. It applies to every tool in Codex; press U to raise it and go on."
+            ),
+        }
+    }
+
+    pub fn left_alone(&self, location: &str, reason: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("留着没动：{location}（{reason}）"),
+            Lang::En => format!("left alone: {location} ({reason})"),
+        }
+    }
+
+    pub fn key_apply(&self) -> &'static str {
+        self.pick("接入", "put in")
+    }
+
+    pub fn key_unapply(&self) -> &'static str {
+        self.pick("拿出来", "take out")
+    }
+
+    pub fn key_raise(&self) -> &'static str {
+        self.pick("调高并接入", "raise and put in")
     }
 
     pub fn this_machine_link(&self) -> &'static str {
