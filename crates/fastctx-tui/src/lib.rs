@@ -46,7 +46,9 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 async fn live(world: World) -> anyhow::Result<()> {
-    let look = Look { depth: design::depth(), theme: design::theme() };
+    // Read before anything changes the console's modes.
+    let depth = design::depth().context("reading what the terminal can show")?;
+    let look = Look { depth, theme: design::theme() };
     let words = Words::new(words::lang());
     let mut screen = Screen::open().context("taking the terminal")?;
     let (input_sender, mut inputs) = mpsc::unbounded_channel();

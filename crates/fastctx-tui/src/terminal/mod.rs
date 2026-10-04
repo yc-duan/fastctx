@@ -2,13 +2,19 @@
 //! pastes bracketed, the cursor hidden unless a page places it. However the
 //! TUI ends, a panic included, the terminal is put back as it was.
 
-use std::io::{Stdout, stdout};
+mod colors;
+#[cfg(windows)]
+mod windows;
+
+use std::io::{self, IsTerminal, Stdout, stdout};
 
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+
+pub(crate) use colors::depth;
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
@@ -18,7 +24,8 @@ pub struct Screen {
 }
 
 impl Screen {
-    pub fn open() -> std::io::Result<Self> {
+    pub fn open() -> io::Result<Self> {
+        require_interactive()?;
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             // Put the terminal back first, so the panic is printed on the
@@ -53,4 +60,19 @@ fn restore() {
     crate::input::restore();
     let _ = execute!(stdout(), DisableBracketedPaste, LeaveAlternateScreen, crossterm::cursor::Show);
     let _ = disable_raw_mode();
+}
+
+/// Checks both streams before raw mode, alternate screen, or an input
+/// reader is started. `NO_COLOR` does not prohibit an interactive TUI.
+///
+/// Rust's terminal check also recognizes MSYS/Cygwin PTY pipes on Windows;
+/// a `TERM` variable alone never makes a redirected stream interactive.
+pub fn require_interactive() -> io::Result<()> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "the TUI needs terminal input and output"));
+    }
+    if colors::variable("TERM") == "dumb" {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "TERM=dumb cannot run a full-screen TUI"));
+    }
+    Ok(())
 }
