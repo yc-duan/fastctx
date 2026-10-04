@@ -14,6 +14,7 @@
 
 pub mod background;
 pub mod exchange;
+pub mod trust;
 
 use std::io;
 use std::path::{Path, PathBuf};

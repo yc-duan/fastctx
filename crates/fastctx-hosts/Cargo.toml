@@ -11,8 +11,10 @@ publish = false
 [dependencies]
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
+filetime = "0.2"
 jiff.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 toml = "0.9"
+unicode-normalization = "0.1"
