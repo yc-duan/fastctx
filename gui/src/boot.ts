@@ -25,10 +25,16 @@ function tooOld(): void {
   const android = /Android/i.test(navigator.userAgent);
   const zh = !/^en/i.test(new URLSearchParams(location.search).get("lang") ?? navigator.language);
   const light = document.documentElement.dataset.theme === "warm-white";
-  const title = zh ? "这台设备的浏览器内核太旧了" : "This device's browser engine is too old";
   // A new enough engine can still lack what is used, where a policy turns
   // it off: said as that, not as an old version.
   const lacking = found !== null && Number(found) >= MINIMUM;
+  const title = lacking
+    ? zh
+      ? "这台设备的浏览器内核画不了这个界面"
+      : "This device's browser engine cannot draw this interface"
+    : zh
+      ? "这台设备的浏览器内核太旧了"
+      : "This device's browser engine is too old";
   const why = lacking
     ? zh
       ? `这台设备的系统浏览器内核（Chromium ${found}）缺少界面要用的绘制能力。`
