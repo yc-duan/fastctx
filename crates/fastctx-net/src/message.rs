@@ -51,6 +51,11 @@ pub enum Body {
 pub struct LetterId(String);
 
 impl LetterId {
+    /// An id as long as any can be, for measuring.
+    pub fn longest() -> Self {
+        Self("z".repeat(64))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

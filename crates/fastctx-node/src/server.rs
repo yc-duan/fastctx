@@ -6,11 +6,12 @@ use fastctx_net::link::CallFailure;
 use fastctx_platform::ipc::Connection;
 use fastctx_types::ipc::{ClientFrame, Failure, Hello, NodeFrame, PROTOCOL, Peer, Welcome};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::residents::{Activity, PendingState};
 use fastctx_types::run::{RunReply, RunRequest};
 use fastctx_types::town::{MachineWho, WhoReply, WhoScope, WorldWho};
 use fastctx_types::world::{Node as NodeView, NodesReply, Revoked};
 use fastctx_types::write::{WriteOp, WriteOutcome};
-use fastctx_types::{Address, Call, MachineName, Reply, ResidentId, TownName};
+use fastctx_types::{Address, Call, MachineName, NoticeId, Reply, ResidentId, TownName};
 
 use crate::Node;
 use crate::town::caller::{self, Caller};
@@ -40,8 +41,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     let welcome = Welcome::Accepted { machine: node.machine(), version: env!("CARGO_PKG_VERSION").to_string() };
     writer.send(&json(&welcome)).await?;
     // The residents that arrived on this connection are here until it
-    // closes, however it closes.
-    let mut arrived = Arrived { node, residents: Vec::new() };
+    // closes, however it closes; what was collected for them and not taken
+    // is free to be handed over again then.
+    let mut arrived = Arrived { node, residents: Vec::new(), collected: Vec::new() };
     while let Some(frame) = reader.recv().await? {
         let ClientFrame::Call { id, call } = parse(&frame)?;
         if let Call::Watch { resident, machine } = call {
@@ -65,7 +67,11 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(call, Call::Arrive { .. });
-        let reply = handle(node, &hello.peer, call).await;
+        let reply = match call {
+            Call::Collect { resident } => collect(node, resident, &mut arrived.collected).await,
+            Call::Taken { resident, ids } => taken(node, resident, ids, &mut arrived.collected).await,
+            call => handle(node, &hello.peer, call).await,
+        };
         if arriving && let Ok(Reply::Arrived(whereabouts)) = &reply {
             arrived.residents.push(whereabouts.resident.clone());
         }
@@ -77,14 +83,74 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
 struct Arrived<'a> {
     node: &'a Arc<Node>,
     residents: Vec<ResidentId>,
+    collected: Vec<(ResidentId, NoticeId)>,
 }
 
 impl Drop for Arrived<'_> {
     fn drop(&mut self) {
+        let mut taking = self.node.taking.lock().expect("never poisoned");
+        for collected in &self.collected {
+            taking.remove(collected);
+        }
+        drop(taking);
         for resident in self.node.residents.left(&self.residents) {
             crate::colleagues::left(self.node, resident);
         }
     }
+}
+
+/// What waits for a resident with no other way in, for the answer of one
+/// of its World tools, and what it is to be told of where it lives.
+async fn collect(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    collected: &mut Vec<(ResidentId, NoticeId)>,
+) -> Result<Reply, Failure> {
+    let town = town_of(node, &resident)?;
+    let directory = node.world.resident(town.as_ref(), &resident);
+    let kept = blocking("reading what waits", move || crate::inbox::pending(&directory)).await?;
+    let mut notices = Vec::new();
+    {
+        let mut taking = node.taking.lock().expect("never poisoned");
+        for pending in kept.into_iter().filter(|pending| pending.state == PendingState::Waiting) {
+            let key = (resident.clone(), pending.delivery.id.clone());
+            if taking.insert(key.clone()) {
+                collected.push(key);
+                notices.push(pending.delivery);
+            }
+        }
+    }
+    let notes = {
+        let node = node.clone();
+        blocking("reading the town", move || crate::town::notes::notes(&node, &resident)).await?
+    };
+    Ok(Reply::Notices { notices, notes })
+}
+
+/// What `collect` gave went out with an answer: it went into the turn the
+/// resident runs, when the World sees its turns.
+async fn taken(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    ids: Vec<NoticeId>,
+    collected: &mut Vec<(ResidentId, NoticeId)>,
+) -> Result<Reply, Failure> {
+    let town = town_of(node, &resident)?;
+    let directory = node.world.resident(town.as_ref(), &resident);
+    let turn = node.residents.now(&resident).filter(|now| now.activity == Activity::Busy).and_then(|now| now.turn);
+    for id in ids {
+        let key = (resident.clone(), id.clone());
+        collected.retain(|collected| *collected != key);
+        node.taking.lock().expect("never poisoned").remove(&key);
+        let Some(pending) = crate::speech::settle(&directory, &id).await? else { continue };
+        if let Some(turn) = &turn {
+            node.residents
+                .owe(&node.world, &resident, turn, &pending.readers)
+                .map_err(|error| Failure::new(format!("recording who is owed the turn: {error}")))?;
+            crate::speech::heard(node, &resident, &pending.delivery, turn);
+        }
+    }
+    Ok(Reply::Done)
 }
 
 async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
@@ -130,17 +196,7 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
                 .map(|(resident, landed)| Reply::Opened { resident, landed })
         }
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
-        Call::Collect { resident } => {
-            let town = town_of(node, &resident)?;
-            let (world, id) = (node.world.clone(), resident.clone());
-            let notices =
-                blocking("reading the inbox", move || crate::inbox::collect(&world, &id, town.as_ref())).await?;
-            let notes = {
-                let node = node.clone();
-                blocking("reading the town", move || crate::town::notes::notes(&node, &resident)).await?
-            };
-            Ok(Reply::Notices { notices, notes })
-        }
+        Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
         Call::Ask { resident, label, prompt, node: target } => {
             let town = town_of(node, &resident)?;
             crate::colleagues::ask(node, resident, town, label, prompt, target)

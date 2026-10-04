@@ -68,6 +68,9 @@ pub(crate) struct Node {
     /// Held while a town's record or journals are written from here, from
     /// reading what is there to writing what comes next.
     writing: tokio::sync::Mutex<()>,
+    /// What went out with an answer of a World tool and is not yet known to
+    /// have been taken: no other answer hands it over meanwhile.
+    taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
 }
 
 impl Node {
@@ -150,6 +153,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         link: RwLock::new(None),
         syncing: tokio::sync::Mutex::new(()),
         writing: tokio::sync::Mutex::new(()),
+        taking: Default::default(),
     });
     for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));
@@ -162,9 +166,12 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     codex::listen(node.clone(), codex_events);
     claude::start(&node).context("writing the World's Claude Code plugin")?;
 
-    // What a node that stopped left owed, now that letters can be sent.
+    // What a node that stopped left owed, now that letters can be sent: the
+    // turns it stopped under end, what it was handing over is settled, and
+    // the ends of turns and jobs not yet told are told.
     turns::recover(&node).await;
-    for (path, error) in inbox::settle(&node).await? {
+    speech::recover(&node).await;
+    for (path, error) in inbox::settle_jobs(&node).await? {
         node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
     }
 

@@ -10,7 +10,7 @@ use crate::run::{RunReply, RunRequest};
 use crate::town::{LookedUp, WorldWho};
 use crate::world::NodesReply;
 use crate::write::{WriteOp, WriteOutcome};
-use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, TownName};
+use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, NoticeId, ResidentId, TownName};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
@@ -54,9 +54,12 @@ pub enum Call {
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.
     Open { agent: AgentName, town: Option<TownName>, node: Option<MachineName>, text: String },
-    /// Takes what waits in a resident's inbox, oldest first, with what the
-    /// resident is to be told of where it is.
+    /// What waits to be handed to a resident with the answer of a World
+    /// tool, oldest first, with what it is to be told of where it is. It is
+    /// handed to no other answer meanwhile.
     Collect { resident: ResidentId },
+    /// What `Collect` gave went out with the answer: it is handed over.
+    Taken { resident: ResidentId, ids: Vec<NoticeId> },
     /// `fastctx project`.
     Project(ProjectCall),
     /// `fastctx journal`.

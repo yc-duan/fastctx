@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc};
 
 use launch::Launch;
-use server::{AppServer, Inbound};
+use server::{AppServer, Inbound, Unanswered};
 
 pub type Log = Arc<dyn Fn(String) + Send + Sync>;
 
@@ -84,6 +84,24 @@ pub enum Input {
 pub struct Sent {
     pub turn: String,
     pub joined: bool,
+}
+
+/// Why words sent to a thread are not known to be in a turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SendError {
+    /// They did not go in.
+    NotSent(String),
+    /// The app-server stopped as it took them: whether they went in is not
+    /// known, and if they did, the turn they went into ended with it.
+    Unknown(String),
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendError::NotSent(why) | SendError::Unknown(why) => f.write_str(why),
+        }
+    }
 }
 
 /// What the host tells the node.
@@ -166,8 +184,8 @@ struct Thread {
     finished: HashSet<String>,
     /// Errors for turns not yet named by the answer that started them.
     failed_early: HashMap<String, String>,
-    /// The agent's last message in the running turn.
-    last_message: Option<String>,
+    /// The agent's last message so far, and the turn it is in.
+    last_message: Option<(String, String)>,
     /// The app-server said how the thread's World tools started since it was
     /// last started or resumed.
     tools_settled: bool,
@@ -274,9 +292,9 @@ impl CodexHost {
     /// the running turn when it is busy, which the answer tells by the turn
     /// it names. A thread not loaded is resumed first; call
     /// [`Self::prepare`] before to have its tools there.
-    pub async fn send(self: &Arc<Self>, thread: &str, input: Input) -> Result<Sent, String> {
-        let server = self.server().await?;
-        self.ensure_loaded(&server, thread).await?;
+    pub async fn send(self: &Arc<Self>, thread: &str, input: Input) -> Result<Sent, SendError> {
+        let server = self.server().await.map_err(SendError::NotSent)?;
+        self.ensure_loaded(&server, thread).await.map_err(SendError::NotSent)?;
         let mut params = json!({
             "threadId": thread,
             "input": [],
@@ -290,30 +308,40 @@ impl CodexHost {
                 params["toolOutput"] = json!({ "name": name, "namespace": namespace, "output": output })
             }
         }
-        let answer = server.request("turn/start", params).await?;
+        // Whether they join a running turn is what ran before they went in:
+        // the turn they start may be reported started before the answer.
+        let before = self.running_turn(thread);
+        let answer = match server.ask("turn/start", params).await {
+            Ok(answer) => answer,
+            Err(Unanswered::Refused(why)) => return Err(SendError::NotSent(why)),
+            Err(Unanswered::Stopped(why)) => return Err(SendError::Unknown(why)),
+        };
         let turn = answer
             .pointer("/turn/id")
             .and_then(Value::as_str)
-            .ok_or("turn/start answered without a turn id")?
+            .ok_or_else(|| SendError::Unknown("turn/start answered without a turn id".to_string()))?
             .to_string();
-        let (joined, failed) = {
+        let failed = {
             let mut state = self.lock();
             // An app-server that stopped, or was replaced, while it answered
-            // runs nothing more; its turns ended with it.
+            // runs nothing more: the turn they went into ended with it.
             if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server)) {
-                return Err("the Codex app-server stopped as it took the words; they went into no turn".to_string());
+                return Err(SendError::Unknown(
+                    "the Codex app-server stopped as it took the words, and with it the turn they went into"
+                        .to_string(),
+                ));
             }
             let entry = state.threads.entry(thread.to_string()).or_default();
-            let joined = entry.turn.as_deref() == Some(turn.as_str());
-            if !joined && !entry.finished.contains(&turn) {
+            if entry.turn.as_deref() != Some(turn.as_str()) && !entry.finished.contains(&turn) {
                 entry.turn = Some(turn.clone());
                 entry.last_message = None;
             }
-            (joined, entry.failed_early.remove(&turn))
+            entry.failed_early.remove(&turn)
         };
         if let Some(reason) = failed {
             self.end(thread, &turn, TurnHow::Failed, Some(reason), None, Timestamp::now());
         }
+        let joined = before.as_deref() == Some(turn.as_str());
         Ok(Sent { turn, joined })
     }
 
@@ -456,15 +484,36 @@ impl CodexHost {
         duration_ms: Option<u64>,
         at: Timestamp,
     ) {
+        self.end_with(thread, turn, how, reason, duration_ms, at, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn end_with(
+        &self,
+        thread: &str,
+        turn: &str,
+        how: TurnHow,
+        reason: Option<String>,
+        duration_ms: Option<u64>,
+        at: Timestamp,
+        summary: Option<String>,
+    ) {
         let last_message = {
             let mut state = self.lock();
             let entry = state.threads.entry(thread.to_string()).or_default();
-            entry.finished.insert(turn.to_string());
+            // One end a turn: a second report of it changes nothing.
+            if !entry.finished.insert(turn.to_string()) {
+                return;
+            }
             entry.started.remove(turn);
             if entry.turn.as_deref() == Some(turn) {
                 entry.turn = None;
             }
-            entry.last_message.take()
+            let said = match &entry.last_message {
+                Some((said_in, _)) if said_in == turn => entry.last_message.take().map(|(_, text)| text),
+                _ => None,
+            };
+            summary.or(said)
         };
         let end = TurnEnd { how, reason, duration_ms, last_message };
         self.emit(thread, at, Happened::TurnEnded { turn: turn.to_string(), end });
@@ -518,7 +567,8 @@ impl CodexHost {
                 }
                 let happened = match (read, completed) {
                     (items::Item::Message { text }, true) => {
-                        self.lock().threads.entry(thread.clone()).or_default().last_message = Some(text.clone());
+                        self.lock().threads.entry(thread.clone()).or_default().last_message =
+                            Some((turn.clone(), text.clone()));
                         Happened::Said { turn, item: id, text }
                     }
                     (items::Item::Tool { tool, detail, .. }, false) => {
@@ -543,7 +593,40 @@ impl CodexHost {
                 let reason = text("/turn/error/message");
                 let duration = params.pointer("/turn/durationMs").and_then(Value::as_u64);
                 let at = seconds(params.pointer("/turn/completedAt"));
-                self.end(&thread, &id, how, reason, duration, at);
+                // The completion names the turn's last message itself, when
+                // it has one; it is the turn's own, whatever came before.
+                let summary = params.pointer("/turn/items").and_then(Value::as_array).and_then(|items| {
+                    items.iter().rev().find_map(|item| match items::read(item).1 {
+                        items::Item::Message { text } => Some(text),
+                        _ => None,
+                    })
+                });
+                self.end_with(&thread, &id, how, reason, duration, at, summary);
+            }
+            "thread/status/changed" => {
+                let flags: Vec<&str> = params
+                    .pointer("/status/activeFlags")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                let report = match text("/status/type").as_deref() {
+                    Some("systemError") => {
+                        Some((HealthKind::Error, "Codex reports a system error in this thread".to_string()))
+                    }
+                    Some("active") if flags.contains(&"waitingOnUserInput") => Some((
+                        HealthKind::Warning,
+                        "Codex is waiting for input from the user in this thread".to_string(),
+                    )),
+                    Some("active") if flags.contains(&"waitingOnApproval") => {
+                        Some((HealthKind::Warning, "Codex is waiting for an approval in this thread".to_string()))
+                    }
+                    _ => None,
+                };
+                if let Some((kind, text)) = report {
+                    self.health(&thread, turn, kind, text);
+                }
             }
             "error" => self.error(&thread, params),
             "model/safetyBuffering/updated" => {

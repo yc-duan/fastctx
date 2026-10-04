@@ -44,10 +44,12 @@ pub trait Node: Send + Sync + 'static {
     /// Does what `from` asks and answers. A call that comes with a data
     /// connection hands over this machine's end of it, the sink.
     fn call(&self, from: MachineName, call: RemoteCall, stream: Option<Stream>) -> BoxFuture<RemoteResult>;
-    /// Keeps a letter from `from`. An inner error says why the letter cannot
-    /// be taken, and it is set aside with that reason; an outer one is a
-    /// failure of this machine, and the letter comes again.
-    fn letter(&self, from: MachineName, letter: Letter) -> BoxFuture<io::Result<Result<(), String>>>;
+    /// Keeps a letter from `from`, which it named `id`. An inner error says
+    /// why the letter cannot be taken, and it is set aside with that reason;
+    /// an outer one is a failure of this machine, and the letter comes again,
+    /// with the same id, as it may once more when this machine stops before
+    /// it records having taken it.
+    fn letter(&self, from: MachineName, id: LetterId, letter: Letter) -> BoxFuture<io::Result<Result<(), String>>>;
     /// The ledger of `town`, or of every town when `None`, may have entries
     /// this machine does not have yet.
     fn ledger_changed(&self, town: Option<TownName>);
@@ -315,6 +317,21 @@ impl Link {
     /// returns, and goes to the hub whenever the link is up.
     pub fn send_letter(&self, to: &MachineName, id: LetterId, letter: Letter) -> io::Result<()> {
         self.inner.send_letter(to, id, letter)
+    }
+
+    /// The most a letter to `to` takes as a control message, with the
+    /// longest id and count it could carry: it can be sent when this is at
+    /// most `wire::MAX_CONTROL_FRAME`.
+    pub fn letter_size(&self, to: &MachineName, letter: &Letter) -> usize {
+        let message = Message {
+            world: self.inner.membership.world.clone(),
+            from: self.inner.membership.name.clone(),
+            to: to.clone(),
+            n: u64::MAX,
+            body: Body::Letter { id: LetterId::longest(), letter: letter.clone() },
+        };
+        let message = Signed::new(&self.inner.key, Domain::Message, &message);
+        crate::wire::encode(&Up::Send { seq: u64::MAX, message }).len()
     }
 
     /// An invitation for one more machine, valid until `expires`; `name` is

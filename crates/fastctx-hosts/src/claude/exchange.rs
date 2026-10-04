@@ -2,10 +2,11 @@
 //! in `<world>/claude/<session id>/` (the mod's side is `world.js`).
 //!
 //! The mod writes `session.json` when the session starts and one event file
-//! per turn, tool use and end, each followed by a `.done` marker once it is
-//! whole, since `$.fs.write` promises nothing about being atomic. The node
-//! writes what it has for the session into `inbox/`, each file whole before
-//! it appears, and the mod writes a receipt once it handed one to the model.
+//! per turn, tool use, hand-over and end, each followed by a `.done` marker
+//! once it is whole, since `$.fs.write` promises nothing about being atomic.
+//! The node writes what it has for the session into `inbox/`, each file
+//! whole before it appears; the mod says in an event which turn took it,
+//! and writes a receipt so that it never hands it over again.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -74,6 +75,11 @@ pub enum Reported {
     Ended {
         reason: Option<String>,
     },
+    /// The mod handed these inbox files to the model, in `turn`.
+    Handed {
+        ids: Vec<String>,
+        turn: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -85,6 +91,7 @@ enum ModEvent {
     ToolEnd { turn: Option<String>, at: Option<Timestamp>, tool: Option<String>, detail: Option<String>, failed: bool },
     Trouble { at: Option<Timestamp>, file: Option<String>, text: Option<String> },
     SessionEnd { reason: Option<String> },
+    Handed { deliveries: Vec<String>, turn: Option<String> },
 }
 
 /// Takes every whole event the mod wrote, oldest first. An event that
@@ -178,6 +185,7 @@ fn translate(event: ModEvent) -> Vec<Reported> {
             vec![happened(at, Happened::Health { turn: None, health: Health { kind: HealthKind::Error, text } })]
         }
         ModEvent::SessionEnd { reason } => vec![Reported::Ended { reason }],
+        ModEvent::Handed { deliveries, turn } => vec![Reported::Handed { ids: deliveries, turn: turn_of(turn) }],
     }
 }
 

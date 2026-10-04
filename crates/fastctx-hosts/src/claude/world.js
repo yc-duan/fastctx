@@ -13,6 +13,8 @@
 //   events/<n>.done    written after it, once it is whole
 //   inbox/<id>.json    what the node has for the session; read, never changed
 //   receipts/<id>      written once something was handed to the model
+// Which turn took what it handed over is an event of its own, before the
+// end of that turn: the node owes that turn's end to whoever it was from.
 // It uses only on(), $.session.*, $.env.get, $.fs.read/write/list,
 // $.clock.every and $.prompt.submit. Of the session's inbox address it
 // reads the address alone, never the token beside it.
@@ -32,8 +34,12 @@ const handled = new Set()
 const failing = new Set()
 // What waits for the next tool boundary or the end of the turn.
 const held = []
+// What was submitted and waits for the turn that takes it to start.
+const submitting = []
 // Receipts not written yet; written at the next look.
 const owed = []
+// One look at a time: a look waits on the session, and the clock does not.
+let looking = false
 
 function stamp() {
   return new Date().toISOString()
@@ -79,18 +85,37 @@ function framed(delivery) {
   return 'The fastctx plugin delivers a message from the World.\n\n' + delivery.text
 }
 
-// Hands everything held to the model in one new turn; on failure it stays
-// held.
+// Says which turn took what was handed over.
+function handed($, deliveries, turn, how) {
+  return event($, 'handed', { deliveries: deliveries.map((delivery) => delivery.id), turn, how })
+}
+
+// Submits words as a new turn; the turn that takes them is told when it
+// starts. Returns whether they went.
+async function submit($, deliveries, prompt) {
+  submitting.push(...deliveries)
+  try {
+    await $.prompt.submit(prompt)
+    return true
+  } catch (error) {
+    for (const delivery of deliveries) {
+      const at = submitting.indexOf(delivery)
+      if (at >= 0) submitting.splice(at, 1)
+    }
+    await trouble($, deliveries[0].id, 'it could not be handed over: ' + error)
+    return false
+  }
+}
+
+// Hands everything held to the model in one new turn; on failure it is
+// held again, before anything held since.
 async function flush($, how) {
   if (held.length === 0) return
-  const deliveries = held.slice()
-  try {
-    await $.prompt.submit({ text: deliveries.map(framed).join('\n\n') })
-  } catch (error) {
-    await trouble($, deliveries[0].id, 'it could not be handed over: ' + error)
+  const deliveries = held.splice(0, held.length)
+  if (!(await submit($, deliveries, { text: deliveries.map(framed).join('\n\n') }))) {
+    held.unshift(...deliveries)
     return
   }
-  held.splice(0, deliveries.length)
   for (const delivery of deliveries) await receipt($, delivery, how)
 }
 
@@ -113,6 +138,16 @@ async function trouble($, name, text) {
 }
 
 async function look($) {
+  if (looking) return
+  looking = true
+  try {
+    await looked($)
+  } finally {
+    looking = false
+  }
+}
+
+async function looked($) {
   await settle($)
   // What has a receipt was handed over already, perhaps before this mod
   // loaded again. Without knowing which, anything handed over could repeat.
@@ -136,15 +171,15 @@ async function look($) {
       handled.add(name)
       continue
     }
-    try {
-      // The user's own words, typed on one of the user's machines: only these
-      // go in as the user.
-      await $.prompt.submit(delivery.as_user === true ? { text: delivery.text, asUser: true } : { text: framed(delivery) })
-    } catch (error) {
-      await trouble($, name, 'it could not be handed over: ' + error)
+    // Taken before the session is asked, so no other look takes it too.
+    handled.add(name)
+    // The user's own words, typed on one of the user's machines: only these
+    // go in as the user.
+    const prompt = delivery.as_user === true ? { text: delivery.text, asUser: true } : { text: framed(delivery) }
+    if (!(await submit($, [delivery], prompt))) {
+      handled.delete(name)
       continue
     }
-    handled.add(name)
     failing.delete(name)
     await receipt($, delivery, delivery.as_user === true ? 'submitted as the user' : 'submitted')
   }
@@ -191,6 +226,7 @@ export function register(on) {
   on('turn.start', async ($, e, next) => {
     busy = true
     turn = e.turnId || stamp()
+    if (submitting.length > 0) await handed($, submitting.splice(0, submitting.length), turn, 'submitted')
     await event($, 'turn_start', { turn })
     return next(e)
   })
@@ -224,6 +260,7 @@ export function register(on) {
     if (held.length === 0) return result
     const deliveries = held.splice(0, held.length)
     const prior = result && Array.isArray(result.additionalContext) ? result.additionalContext : []
+    await handed($, deliveries, turn, 'beside a tool result')
     for (const delivery of deliveries) await receipt($, delivery, 'beside a tool result')
     return { ...(result || {}), additionalContext: [...prior, deliveries.map(framed).join('\n\n')] }
   })

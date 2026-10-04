@@ -197,9 +197,22 @@ impl ResidentDir {
         self.path.join("seen")
     }
 
-    /// What waits to be told to the resident, one file each.
+    /// What is on its way into the resident's session, one file each
+    /// (`Pending`).
     pub fn inbox(&self) -> PathBuf {
         self.path.join("inbox")
+    }
+
+    /// The ids of everything that went into the resident's session, one a
+    /// line: the same thing arriving again is known and not told twice.
+    pub fn delivered(&self) -> PathBuf {
+        self.path.join("delivered")
+    }
+
+    /// Ends of the resident's turns on their way to their readers, one file
+    /// each (`Owing`).
+    pub fn outbox(&self) -> PathBuf {
+        self.path.join("outbox")
     }
 
     pub fn jobs(&self) -> PathBuf {

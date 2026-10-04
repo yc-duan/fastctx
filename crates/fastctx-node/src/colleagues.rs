@@ -16,9 +16,10 @@ use fastctx_net::message::LetterId;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{Letter, RemoteCall, RemoteReply};
 use fastctx_types::residents::{
-    About, Action, Activity, Delivery, Host, Landed, MessageKind, MessageLine, Notice, Now, Origin,
+    About, Action, Activity, Delivery, Host, Landed, MessageKind, MessageLine, Notice, Now, Origin, Pending,
+    PendingState,
 };
-use fastctx_types::session::{Speaker, TurnEnd, TurnHow};
+use fastctx_types::session::{Speaker, TurnHow};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
@@ -98,41 +99,47 @@ pub async fn ask_here(
         world_started: true,
         model,
     };
-    // Busy and owing its asker from the start: a node that stops before the
-    // words go in still knows whom to tell.
     let now = Now {
         activity: Activity::Busy,
         since: born_at,
         turn: None,
-        owed: vec![asker.clone()],
+        owed: Default::default(),
         answering: vec![asker.clone()],
         trouble: None,
         desk: false,
     };
     node.residents
-        .create(&node.world, about, town.clone(), now)
+        .create(&node.world, about.clone(), town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
     node.residents.set_heard(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
+    let directory = node.world.resident(town.as_ref(), &id);
     let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone() } };
-    if let Err(error) = crate::residents::append_message(&node.world.resident(town.as_ref(), &id), &asked) {
+    if let Err(error) = crate::residents::append_message(&directory, &asked) {
         node.log.line(format_args!("recording what {id} was asked: {error}"));
     }
-    let (node, colleague) = (node.clone(), id.clone());
-    tokio::spawn(async move {
-        let delivery = Delivery {
+    // The request is kept before the asker hears of the colleague: a node
+    // that stops before it goes in finds it, and puts it in then.
+    let first = Pending {
+        delivery: Delivery {
             id: speech::new_id("words"),
             at: born_at,
             notice: Notice::Words { from: Speaker::Resident { address: asker.clone() }, text: prompt },
-        };
-        let why = match speech::tell_here(&node, &colleague, delivery, Owed::Speaker(asker)).await {
+        },
+        readers: vec![asker],
+        state: PendingState::Waiting,
+    };
+    crate::inbox::keep(&directory, &first).map_err(|error| Failure::new(format!("keeping the request: {error}")))?;
+    let (node, colleague) = (node.clone(), id.clone());
+    tokio::spawn(async move {
+        let why = match speech::hand_over(&node, &colleague, &about, &directory, first.clone()).await {
             Ok(Landed::NewTurn { .. } | Landed::JoinedTurn { .. } | Landed::Sent | Landed::Handed) => return,
-            Ok(Landed::Waiting { why }) => why.unwrap_or_else(|| "its session could not be reached".to_string()),
+            Ok(Landed::Waiting { why, .. }) => why.unwrap_or_else(|| "its session could not be reached".to_string()),
             Err(failure) => failure.message,
         };
-        // Its first turn never began; whoever asked is owed that end.
-        let end = TurnEnd { how: TurnHow::Failed, reason: Some(why), duration_ms: None, last_message: None };
-        crate::turns::ended(&node, &colleague, "", end).await;
+        // Its first turn never began: whoever asked hears so, and it is idle.
+        crate::turns::unsettled(&node, &colleague, &directory, first, TurnHow::Failed, why.clone()).await;
+        crate::turns::stopped(&node, &colleague, "", why).await;
     });
     Ok(id)
 }

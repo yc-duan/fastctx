@@ -49,9 +49,27 @@ pub struct AppServer {
     pending: Arc<Mutex<Pending>>,
 }
 
+/// Why a request has no answer.
+#[derive(Clone, Debug)]
+pub enum Unanswered {
+    /// It answered with an error, or the request never reached it.
+    Refused(String),
+    /// It stopped while the request waited: whether it acted on it is not
+    /// known.
+    Stopped(String),
+}
+
+impl std::fmt::Display for Unanswered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unanswered::Refused(why) | Unanswered::Stopped(why) => f.write_str(why),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Pending {
-    waiting: HashMap<u64, oneshot::Sender<Result<Value, String>>>,
+    waiting: HashMap<u64, oneshot::Sender<Result<Value, Unanswered>>>,
     /// Why it stopped, once it has.
     stopped: Option<String>,
 }
@@ -134,7 +152,7 @@ impl AppServer {
             let mut pending = pending.lock().expect("never poisoned");
             pending.stopped = Some(reason.clone());
             for (_, waiter) in pending.waiting.drain() {
-                let _ = waiter.send(Err(reason.clone()));
+                let _ = waiter.send(Err(Unanswered::Stopped(reason.clone())));
             }
             drop(pending);
             let _ = inbound.send(Inbound::Exited(why));
@@ -151,20 +169,26 @@ impl AppServer {
     /// Sends a request and waits for its answer: its `result`, or its
     /// `error`'s message.
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.ask(method, params).await.map_err(|unanswered| unanswered.to_string())
+    }
+
+    /// A request, telling a refusal from a stop that leaves whether it acted
+    /// unknown.
+    pub async fn ask(&self, method: &str, params: Value) -> Result<Value, Unanswered> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (answer, answered) = oneshot::channel();
         {
             let mut pending = self.pending.lock().expect("never poisoned");
             if let Some(reason) = &pending.stopped {
-                return Err(reason.clone());
+                return Err(Unanswered::Refused(reason.clone()));
             }
             pending.waiting.insert(id, answer);
         }
         if let Err(error) = self.send(&json!({ "id": id, "method": method, "params": params })) {
             self.pending.lock().expect("never poisoned").waiting.remove(&id);
-            return Err(error);
+            return Err(Unanswered::Refused(error));
         }
-        answered.await.unwrap_or_else(|_| Err("the Codex app-server stopped".to_string()))
+        answered.await.unwrap_or_else(|_| Err(Unanswered::Stopped("the Codex app-server stopped".to_string())))
     }
 
     pub fn notify(&self, method: &str, params: Value) -> Result<(), String> {
@@ -220,11 +244,13 @@ fn route(line: &[u8], pending: &Mutex<Pending>, inbound: &mpsc::UnboundedSender<
                 return;
             };
             let answer = match message.get("error") {
-                Some(error) => Err(error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| error.to_string())),
+                Some(error) => Err(Unanswered::Refused(
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| error.to_string()),
+                )),
                 None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
             };
             let _ = waiter.send(answer);

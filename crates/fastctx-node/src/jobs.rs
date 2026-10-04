@@ -110,7 +110,7 @@ impl Jobs {
             // and the marker, and then nobody else would tell.
             let (world, here, job, path) =
                 (world.clone(), machine.clone(), launched.job.clone(), launched.record.clone());
-            let now = tokio::task::spawn_blocking(move || crate::inbox::owe(&world, &here, &job, &path))
+            let now = tokio::task::spawn_blocking(move || crate::inbox::owe_job(&world, &here, &job, &path))
                 .await
                 .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
                 .map_err(|error| failure("noting that the job's end is owed", error))?;

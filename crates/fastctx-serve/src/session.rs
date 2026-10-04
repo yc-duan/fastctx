@@ -227,8 +227,10 @@ impl Session {
                 let how = match landed {
                     Landed::NewTurn { .. } => "a new turn started with it".to_string(),
                     Landed::JoinedTurn { .. } => "it joins the turn running now".to_string(),
-                    Landed::Waiting { why: None } => "waiting until it can be handed over".to_string(),
-                    Landed::Waiting { why: Some(why) } => format!("waiting: it could not be handed over now: {why}"),
+                    Landed::Waiting { why: None, .. } => "waiting until it can be handed over".to_string(),
+                    Landed::Waiting { why: Some(why), .. } => {
+                        format!("waiting: it could not be handed over now: {why}")
+                    }
                     Landed::Sent => format!("sent to {}", to.machine),
                     Landed::Handed => "handed to its session, which takes it at its next step".to_string(),
                 };
@@ -261,7 +263,17 @@ impl Session {
         match collected {
             Ok(Reply::Notices { notices, notes }) => {
                 answer.content.extend(notes.into_iter().map(Content::Text));
-                answer.content.extend(notices.iter().map(|delivery| Content::Text(told::told(&delivery.notice))))
+                answer.content.extend(notices.iter().map(|delivery| Content::Text(told::told(&delivery.notice))));
+                // They go out with this answer; until the node hears so, no
+                // other answer hands them over, and if it never does, a later
+                // one does.
+                if !notices.is_empty() {
+                    let ids = notices.into_iter().map(|delivery| delivery.id).collect();
+                    let taken = Call::Taken { resident: whereabouts.resident.clone(), ids };
+                    if let Ok(mut client) = self.client().await {
+                        let _ = client.call(taken).await;
+                    }
+                }
             }
             Ok(other) => answer
                 .content

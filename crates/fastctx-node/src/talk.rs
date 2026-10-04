@@ -229,7 +229,7 @@ pub async fn open_here(
 ) -> Result<(ResidentId, Landed), Failure> {
     match agent.as_str() {
         "codex" => {}
-        "claude" => return crate::claude::open_here(node, town, text).await,
+        "claude" => return crate::claude::open_here(node, typed_on, town, text).await,
         _ => {
             return Err(Failure::new(format!(
                 "the World opens codex and claude sessions; it cannot open {agent} ones"
@@ -258,7 +258,7 @@ pub async fn open_here(
         activity: Activity::Idle,
         since: born_at,
         turn: None,
-        owed: Vec::new(),
+        owed: Default::default(),
         answering: Vec::new(),
         trouble: None,
         desk: false,

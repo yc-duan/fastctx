@@ -418,7 +418,7 @@ async fn take_letter(inner: &Inner, message: &Signed) -> std::io::Result<()> {
         }
         None => {}
     }
-    if let Err(reason) = inner.node.letter(opened.from.clone(), letter).await? {
+    if let Err(reason) = inner.node.letter(opened.from.clone(), id.clone(), letter).await? {
         set_aside(format!("from {}: {reason}", opened.from))?;
     }
     letters::keep_receipt(&inner.dir, &opened.from, &id, &Receipt { digest, at: Timestamp::now() })

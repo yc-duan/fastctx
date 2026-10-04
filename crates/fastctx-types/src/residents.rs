@@ -1,6 +1,8 @@
 //! Residents: who an agent session is in the World, and its records
 //! (`world-town.md`, 居民目录).
 
+use std::collections::BTreeMap;
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -113,8 +115,14 @@ pub enum Landed {
     JoinedTurn { turn: String },
     /// Its host gives the World no way in now: they wait for its next call
     /// of a World tool, or for it to come back. `why` is set when the World
-    /// has a way in and it failed.
-    Waiting { why: Option<String> },
+    /// has a way in and it failed. `answered` says whether the end of the
+    /// turn they go into will be told: the World sees the turns of the
+    /// sessions it holds and of Claude sessions with its plugin, no others.
+    Waiting {
+        why: Option<String>,
+        #[serde(default)]
+        answered: bool,
+    },
     /// It lives on another machine: they went there as a letter, which that
     /// machine hands over when it has it.
     Sent,
@@ -133,8 +141,11 @@ pub struct Now {
     pub since: Timestamp,
     /// The turn running now, as its host named it.
     pub turn: Option<String>,
-    /// Whose words went into the running turn: each is owed its end.
-    pub owed: Vec<Address>,
+    /// For each turn running, whose words went into it: each is owed its
+    /// end. Once a turn ends, its answers wait in the `outbox` until each
+    /// reader's machine has its own.
+    #[serde(default)]
+    pub owed: BTreeMap<String, Vec<Address>>,
     /// Who the latest turn that anyone was owed was for. A turn the World
     /// starts with a fact of the resident's own work, such as a job's end,
     /// is owed to them: they are who it is working for.
@@ -239,6 +250,43 @@ pub struct Moved {
     /// The town it went to; `None` for outside every town.
     pub to: Option<TownName>,
     pub at: Timestamp,
+}
+
+/// Something on its way into a resident's session: one file in its
+/// `inbox`, kept until the World knows which turn took it, so whoever is
+/// owed that turn's end is owed it from then on.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pending {
+    pub delivery: Delivery,
+    /// Who is owed the end of the turn it goes into.
+    pub readers: Vec<Address>,
+    pub state: PendingState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingState {
+    /// It waits for a way in: the next words that go into the session, the
+    /// World's plugin in it, or its next call of a World tool.
+    Waiting,
+    /// It is being put into a Codex thread; the app-server's answer says
+    /// which turn took it.
+    Sending,
+    /// The World's plugin in a Claude session has it, and says which turn
+    /// takes it.
+    Handed,
+    /// A Claude session stopped by its supervisor was started again with it
+    /// as its first words: the session's next turn takes it.
+    Waking,
+}
+
+/// A turn's end on its way to one reader: kept from the moment the turn
+/// ends until the reader's machine has it. One file in the `outbox` of the
+/// resident whose turn it was.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Owing {
+    pub to: Address,
+    pub delivery: Delivery,
 }
 
 /// Where a resident is.

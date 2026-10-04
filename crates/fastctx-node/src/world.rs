@@ -11,6 +11,7 @@ use std::sync::{Arc, Weak};
 
 use fastctx_net::code::Code;
 use fastctx_net::link::{BoxFuture, Link, Membership, NetDir, Status};
+use fastctx_net::message::LetterId;
 use fastctx_net::sign::SecretKey;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
@@ -218,7 +219,11 @@ impl fastctx_net::link::Node for Handler {
         })
     }
 
-    fn letter(&self, from: MachineName, letter: Letter) -> BoxFuture<io::Result<Result<(), String>>> {
+    fn letter(&self, from: MachineName, id: LetterId, letter: Letter) -> BoxFuture<io::Result<Result<(), String>>> {
+        // What the letter carries is named here from who sent it and what
+        // they named it, never by a name from the letter itself: a letter
+        // that comes again is the same thing, and is not told twice.
+        let delivery_id = crate::speech::fixed_id("letter", &[from.as_str(), id.as_str()]);
         let node = self.node.upgrade();
         Box::pin(async move {
             let Some(node) = node else {
@@ -232,9 +237,7 @@ impl fastctx_net::link::Node for Handler {
                             node.machine()
                         )));
                     }
-                    // Named here, never from the letter, which only names a
-                    // place in this machine's records by what is in them.
-                    let delivery = Delivery { id: crate::speech::new_id("letter"), at: Timestamp::now(), notice };
+                    let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                     match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {
                         Ok(_) => Ok(Ok(())),
                         Err(failure) => Err(io::Error::other(failure.message)),
@@ -250,7 +253,7 @@ impl fastctx_net::link::Node for Handler {
                     let address = Address { machine: from, resident: speaker };
                     node.residents.set_departed(address.clone(), false);
                     let notice = Notice::Words { from: Speaker::Resident { address: address.clone() }, text };
-                    let delivery = Delivery { id: crate::speech::new_id("letter"), at: Timestamp::now(), notice };
+                    let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                     match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
                         Ok(_) => Ok(Ok(())),
                         Err(failure) => Err(io::Error::other(failure.message)),

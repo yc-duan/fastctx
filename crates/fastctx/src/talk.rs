@@ -55,7 +55,7 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
                 agent: AgentName::try_from(agent.as_str())?,
                 town: args.town.as_deref().map(TownName::try_from).transpose()?,
                 node: args.node.as_deref().map(MachineName::try_from).transpose()?,
-                text,
+                text: text.clone(),
             };
             let (resident, landed) = match client(&world).await?.call(call).await? {
                 Reply::Opened { resident, landed } => (resident, landed),
@@ -64,12 +64,14 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
             println!("=== opened {} on {} ===", resident.resident, resident.machine);
             let mut watching = watch(&world, &resident.resident, Some(resident.machine.clone())).await?;
             let history = first(&mut watching).await?;
-            let turn = turn_of(&landed);
+            let following = following(&landed, &text);
             let ended = printer.events(&history);
-            if turn.as_ref().is_some_and(|turn| ended.contains(turn)) {
+            if let Some(Following::Turn(turn)) = &following
+                && ended.contains(turn)
+            {
                 return Ok(());
             }
-            return follow(&mut watching, &mut printer, turn, &resident).await;
+            return follow(&mut watching, &mut printer, following, &resident, &landed).await;
         }
         let (target, words) = args.args.split_first().context("name the resident to talk to")?;
         let (resident, machine) = match target.parse::<Address>() {
@@ -80,8 +82,9 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
         let history = first(&mut watching).await?;
         printer.events(&history);
         if !words.is_empty() {
-            let (to, landed) = say(&world, &resident, machine, words.join(" ")).await?;
-            return follow(&mut watching, &mut printer, turn_of(&landed), &to).await;
+            let text = words.join(" ");
+            let (to, landed) = say(&world, &resident, machine, text.clone()).await?;
+            return follow(&mut watching, &mut printer, following(&landed, &text), &to, &landed).await;
         }
         // No words: say each line typed, and show everything until input
         // ends.
@@ -109,8 +112,8 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
                     Some(line) if line.trim().is_empty() => {}
                     Some(line) => {
                         let (to, landed) = say(&world, &resident, machine.clone(), line).await?;
-                        if let Landed::Waiting { why } = landed {
-                            printer.note(&waiting(&to, why));
+                        if let Landed::Waiting { why, answered } = landed {
+                            printer.note(&waiting(&to, why, answered));
                         }
                     }
                     None => return Ok(()),
@@ -150,31 +153,52 @@ async fn say(
     }
 }
 
-/// Shows what happens until the turn `turn` ends; with no turn to follow,
-/// says why and stops.
+/// What to follow: the turn the words went into, or, when a session's
+/// plugin has them, the words themselves until the session says which turn
+/// took them.
+enum Following {
+    Turn(String),
+    Words(String),
+}
+
+/// Shows what happens until the turn the words went into ends; when they
+/// went into none yet, says where they are and stops.
 async fn follow(
     watching: &mut Watching,
     printer: &mut Printer,
-    turn: Option<String>,
+    following: Option<Following>,
     to: &Address,
+    landed: &Landed,
 ) -> anyhow::Result<()> {
-    let Some(turn) = turn else {
-        printer
-            .note(&format!("{} cannot be followed here: its session tells the World nothing as it works", to.resident));
-        return Ok(());
+    let (mut turn, words) = match following {
+        Some(Following::Turn(turn)) => (Some(turn), None),
+        Some(Following::Words(words)) => (None, Some(words)),
+        None => {
+            printer.note(&match landed {
+                Landed::Waiting { why, answered } => waiting(to, why.clone(), *answered),
+                _ => format!("your words went to {}, which is on another machine", to.resident),
+            });
+            return Ok(());
+        }
     };
     loop {
         match watching.next().await? {
             Some(Watched::Live { event }) => {
                 printer.event(&event);
-                // An empty turn is the next one to end.
-                if matches!(&event.happened, Happened::TurnEnded { turn: ended, .. } if turn.is_empty() || *ended == turn)
-                {
-                    return Ok(());
+                match (&turn, &event.happened) {
+                    // The session says which turn took them.
+                    (None, Happened::Heard { turn: Some(took), from: Some(Speaker::User { .. }), text })
+                        if words.as_deref() == Some(text.as_str()) =>
+                    {
+                        turn = Some(took.clone())
+                    }
+                    (Some(turn), Happened::TurnEnded { turn: ended, .. }) if ended == turn => return Ok(()),
+                    _ => {}
                 }
             }
             Some(Watched::History { events }) => {
-                if printer.events(&events).contains(&turn) {
+                let ended = printer.events(&events);
+                if turn.as_ref().is_some_and(|turn| ended.contains(turn)) {
                     return Ok(());
                 }
             }
@@ -183,20 +207,23 @@ async fn follow(
     }
 }
 
-/// Which turn to follow: the one words went into, the next one to end when
-/// they were handed to a session's plugin, or none.
-fn turn_of(landed: &Landed) -> Option<String> {
+fn following(landed: &Landed, text: &str) -> Option<Following> {
     match landed {
-        Landed::NewTurn { turn } | Landed::JoinedTurn { turn } => Some(turn.clone()),
-        Landed::Handed => Some(String::new()),
+        Landed::NewTurn { turn } | Landed::JoinedTurn { turn } => Some(Following::Turn(turn.clone())),
+        Landed::Handed => Some(Following::Words(text.to_string())),
         Landed::Waiting { .. } | Landed::Sent => None,
     }
 }
 
-fn waiting(to: &Address, why: Option<String>) -> String {
-    match why {
+fn waiting(to: &Address, why: Option<String>, answered: bool) -> String {
+    let wait = match why {
         Some(why) => format!("your words wait for {}: {why}", to.resident),
-        None => format!("your words wait for {}'s next call of a World tool", to.resident),
+        None => format!("your words wait for {} to take them, with its next call of a World tool", to.resident),
+    };
+    if answered {
+        format!("{wait}; the turn they go into can be followed with fastctx talk {}", to.resident)
+    } else {
+        format!("{wait}; its host does not tell the World when its turns end")
     }
 }
 

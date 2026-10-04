@@ -9,8 +9,9 @@
 //! here while a connection it arrived on stays open; one the World started
 //! is here unless it is asleep.
 //!
-//! What a session owes is kept in memory and written through to its `now`
-//! on every change, so a node that restarts knows whom to tell.
+//! Who is owed the end of each running turn is kept in memory and written
+//! through to its `now` on every change, so a node that restarts knows whom
+//! to tell.
 //!
 //! A resident has a directory in each town it lived in; all but the one it
 //! lives in now are marked as left (`records::move_to`).
@@ -77,7 +78,7 @@ struct Live {
     /// Open connections the resident arrived on.
     connections: usize,
     now: Option<Now>,
-    /// For each turn running or about to, whose words went into it.
+    /// For each turn running, whose words went into it.
     owed: HashMap<String, BTreeSet<Address>>,
     /// The urgent kinds of health already told to those owed the running
     /// turn's end: each is told once a turn.
@@ -92,13 +93,18 @@ struct Live {
 
 impl Live {
     fn new(about: About, town: Option<TownName>, now: Option<Now>) -> Self {
+        let owed = now
+            .iter()
+            .flat_map(|now| now.owed.iter())
+            .map(|(turn, readers)| (turn.clone(), readers.iter().cloned().collect()))
+            .collect();
         Self {
             about,
             town,
             inbox: None,
             connections: 0,
             now,
-            owed: HashMap::new(),
+            owed,
             told: BTreeSet::new(),
             speaking: Arc::new(tokio::sync::Mutex::new(())),
             heard: None,
@@ -188,15 +194,9 @@ impl Residents {
                 now.desk = false;
                 now
             });
-            let mut live = Live::new(about, town.clone(), now);
-            // Who was owed a turn the node stopped under: it is told how
-            // that turn ended once the node is up (`unfinished`).
-            if let Some(now) = &live.now
-                && now.activity == Activity::Busy
-            {
-                let turn = now.turn.clone().unwrap_or_default();
-                live.owed.insert(turn, now.owed.iter().cloned().collect());
-            }
+            // Who is owed the turns the node stopped under: they are told how
+            // those turns ended once the node is up (`unfinished`).
+            let live = Live::new(about, town.clone(), now);
             state.live.insert(live.about.id.clone(), live);
         }
         Ok((Self { state: Mutex::new(state) }, problems))
@@ -253,6 +253,9 @@ impl Residents {
             return match state.live.get_mut(&resident) {
                 Some(live) => {
                     live.connections += 1;
+                    if hints.inbox.is_some() {
+                        live.inbox = hints.inbox;
+                    }
                     Ok(Whereabouts { resident, town: live.town.clone() })
                 }
                 None => Err(Failure::new(format!(
@@ -271,6 +274,11 @@ impl Residents {
             && let Some(live) = state.live.get_mut(&resident)
         {
             live.connections += 1;
+            // A Claude session arriving again after the node restarted pairs
+            // by this address again.
+            if hints.inbox.is_some() {
+                live.inbox = hints.inbox;
+            }
             return Ok(Whereabouts { resident, town: live.town.clone() });
         }
         if let Some(inbox) = &hints.inbox
@@ -367,14 +375,6 @@ impl Residents {
         Ok(())
     }
 
-    /// Words of `readers` went in, and the turn they go into is not known
-    /// yet: they are owed the first turn that ends.
-    pub fn owe_next(&self, id: &ResidentId, readers: &[Address]) {
-        if let Some(live) = self.lock().live.get_mut(id) {
-            live.owed.entry(String::new()).or_default().extend(readers.iter().cloned());
-        }
-    }
-
     /// A new id for a resident of `agent`, unused on this machine.
     pub fn new_id(&self, agent: &AgentName) -> Result<ResidentId, Failure> {
         new_id(agent, &self.lock())
@@ -418,14 +418,15 @@ impl Residents {
             .collect()
     }
 
-    /// Residents whose session the World holds and that were working when
-    /// the node stopped, with the turn they ran (empty when its id was not
-    /// known yet).
+    /// Codex residents the World holds that were working when the node
+    /// stopped, with the turn they ran (empty when none had started): their
+    /// app-server stopped with the node. A Claude session runs on under
+    /// Claude Code's own supervisor, and its turn ends as it ends.
     pub fn unfinished(&self) -> Vec<(ResidentId, String)> {
         self.lock()
             .live
             .values()
-            .filter(|live| live.about.world_started)
+            .filter(|live| live.about.world_started && live.about.host.agent.as_str() == "codex")
             .filter_map(|live| {
                 let now = live.now.as_ref()?;
                 (now.activity == Activity::Busy).then(|| (live.about.id.clone(), now.turn.clone().unwrap_or_default()))
@@ -502,10 +503,32 @@ impl Residents {
         })
     }
 
+    /// Who is owed `turn`'s end, as it stands.
+    pub fn readers(&self, id: &ResidentId, turn: &str) -> Vec<Address> {
+        self.lock()
+            .live
+            .get(id)
+            .and_then(|live| live.owed.get(turn))
+            .map(|readers| readers.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Who the resident is working for: those owed the turn it runs, or,
+    /// between turns, those its latest turn anyone was owed was for.
+    pub fn working_for(&self, id: &ResidentId) -> Vec<Address> {
+        let state = self.lock();
+        let Some(live) = state.live.get(id) else { return Vec::new() };
+        let Some(now) = &live.now else { return Vec::new() };
+        match now.turn.as_ref().filter(|_| now.activity == Activity::Busy).and_then(|turn| live.owed.get(turn)) {
+            Some(readers) if !readers.is_empty() => readers.iter().cloned().collect(),
+            _ => now.answering.clone(),
+        }
+    }
+
     /// Who was owed `turn`'s end, taken now that it ended; the resident is
     /// idle, or asleep when whoever it works for is gone, unless words
-    /// meanwhile started another turn. `outage` says the turn did not end
-    /// on its own.
+    /// meanwhile started another turn. `trouble` says the turn did not end
+    /// as it should.
     pub fn take_owed(
         &self,
         world: &WorldDir,
@@ -516,11 +539,7 @@ impl Residents {
     ) -> io::Result<Vec<Address>> {
         let mut readers = Vec::new();
         self.with_live(world, id, |live, now| {
-            // Words whose turn was not known when they went in are owed the
-            // first turn that ends.
-            let mut taken = live.owed.remove(turn).unwrap_or_default();
-            taken.extend(live.owed.remove("").unwrap_or_default());
-            readers = taken.into_iter().collect();
+            readers = live.owed.remove(turn).unwrap_or_default().into_iter().collect();
             // Words may meanwhile have started the next turn, whose state
             // stands.
             if now.turn.as_deref() == Some(turn) || now.turn.is_none() {
@@ -545,7 +564,7 @@ impl Residents {
         let Some(live) = state.live.get_mut(id) else {
             return Vec::new();
         };
-        if live.told.insert(kind) { owed(live) } else { Vec::new() }
+        if live.told.insert(kind) { everyone_owed(live) } else { Vec::new() }
     }
 
     fn with_live(&self, world: &WorldDir, id: &ResidentId, change: impl FnOnce(&mut Live, &mut Now)) -> io::Result<()> {
@@ -577,7 +596,17 @@ fn enter(now: &mut Now, turn: &str) {
     now.activity = Activity::Busy;
 }
 
-fn owed(live: &Live) -> Vec<Address> {
+/// Who is owed each running turn, as `now` keeps it.
+fn owed(live: &Live) -> BTreeMap<String, Vec<Address>> {
+    live.owed
+        .iter()
+        .filter(|(_, readers)| !readers.is_empty())
+        .map(|(turn, readers)| (turn.clone(), readers.iter().cloned().collect()))
+        .collect()
+}
+
+/// Everyone owed any running turn, once each.
+fn everyone_owed(live: &Live) -> Vec<Address> {
     live.owed.values().flatten().cloned().collect::<BTreeSet<_>>().into_iter().collect()
 }
 
@@ -586,7 +615,7 @@ pub fn idle(since: Timestamp) -> Now {
         activity: Activity::Idle,
         since,
         turn: None,
-        owed: Vec::new(),
+        owed: BTreeMap::new(),
         answering: Vec::new(),
         trouble: None,
         desk: false,
