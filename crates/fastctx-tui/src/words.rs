@@ -1032,6 +1032,32 @@ impl Words {
         }
     }
 
+    /// What came of keeping this machine connected after it joined.
+    pub fn kept(&self, kept: &fastctx_install::service::Kept) -> String {
+        use fastctx_install::service::Kept;
+        match (self.lang, kept) {
+            (Lang::Zh, Kept::Already | Kept::Installed) => "开机就连着：系统服务会一直让它在线，登不登录都一样。".to_string(),
+            (Lang::En, Kept::Already | Kept::Installed) => {
+                "Kept connected: a system service keeps it online from boot, signed in or not.".to_string()
+            }
+            (Lang::Zh, Kept::Declined) => {
+                "没装上开机服务：它只在你登录时连着。以管理员身份跑 fastctx service node install 可以补装。".to_string()
+            }
+            (Lang::En, Kept::Declined) => "No boot service: it is connected only while you are signed in. Run fastctx service node install as administrator to add it.".to_string(),
+            (Lang::Zh, Kept::Unsupported) => "这个系统没有给节点用的服务：它只在你登录时连着。".to_string(),
+            (Lang::En, Kept::Unsupported) => "This system has no service for the node: it is connected only while you are signed in.".to_string(),
+            (Lang::Zh, Kept::Command(command)) => format!("要它开机就连着，还需装系统服务：{command}"),
+            (Lang::En, Kept::Command(command)) => format!("To keep it connected from boot, install the service: {command}"),
+        }
+    }
+
+    pub fn not_kept(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("开机服务没装上：{why}"),
+            Lang::En => format!("The boot service was not installed: {why}"),
+        }
+    }
+
     pub fn working(&self) -> &'static str {
         self.pick("正在办…", "working…")
     }

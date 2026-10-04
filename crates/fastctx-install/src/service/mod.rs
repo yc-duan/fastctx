@@ -15,12 +15,15 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(windows, target_os = "linux"))]
 use sha2::{Digest as _, Sha256};
 
+mod keep;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 mod linux_watchdog;
 #[cfg(any(windows, target_os = "linux"))]
 mod transaction;
+
+pub use keep::{Kept, keep_connected};
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]
 mod windows;
@@ -93,14 +96,24 @@ impl Service {
     /// Installs and starts this registration. Repeating the same installation
     /// leaves a running service alone. An update rolls back its registration
     /// on failure; rollback failures are included in the returned error.
+    ///
+    /// A node a service keeps is started by nobody else: while the service
+    /// is in place, its World says so to the World's clients.
     pub fn install(&self) -> anyhow::Result<Status> {
         self.validate()?;
         #[cfg(windows)]
-        return windows::install(self);
+        let status = windows::install(self)?;
         #[cfg(target_os = "linux")]
-        return linux::install(self);
+        let status = linux::install(self)?;
         #[cfg(not(any(windows, target_os = "linux")))]
-        bail!("fastctx services support Windows and Linux; this platform is not supported")
+        bail!("fastctx services support Windows and Linux; this platform is not supported");
+        #[cfg(any(windows, target_os = "linux"))]
+        {
+            if self.kind == Kind::Node {
+                std::fs::write(keep::marker(&self.directory), b"")?;
+            }
+            Ok(status)
+        }
     }
 
     /// Stops and deletes only this registration. A missing registration is
@@ -108,11 +121,21 @@ impl Service {
     pub fn uninstall(&self) -> anyhow::Result<Status> {
         self.validate()?;
         #[cfg(windows)]
-        return windows::uninstall(self);
+        let status = windows::uninstall(self)?;
         #[cfg(target_os = "linux")]
-        return linux::uninstall(self);
+        let status = linux::uninstall(self)?;
         #[cfg(not(any(windows, target_os = "linux")))]
-        bail!("fastctx services support Windows and Linux; this platform is not supported")
+        bail!("fastctx services support Windows and Linux; this platform is not supported");
+        #[cfg(any(windows, target_os = "linux"))]
+        {
+            if self.kind == Kind::Node {
+                match std::fs::remove_file(keep::marker(&self.directory)) {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+                    _ => {}
+                }
+            }
+            Ok(status)
+        }
     }
 
     pub fn status(&self) -> anyhow::Result<Status> {
