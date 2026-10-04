@@ -196,6 +196,12 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Stop { resident } => {
                     crate::talk::stop_here(&node, &resident).await.map(|stopped| RemoteReply::Stopped { stopped })
                 }
+                RemoteCall::Control { resident, control } => {
+                    crate::control::control_here(&node, &resident, control).await.map(RemoteReply::Controlled)
+                }
+                RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
+                    .await
+                    .map(|offers| RemoteReply::Offers(Box::new(offers))),
                 RemoteCall::Look { id } => Ok(RemoteReply::Looked { looked: crate::look::look_here(&node, &id).await }),
                 RemoteCall::Find { resident } => {
                     Ok(RemoteReply::Found { lives_here: node.residents.town_of(&resident).is_some() })

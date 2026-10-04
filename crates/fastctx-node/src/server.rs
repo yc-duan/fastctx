@@ -298,6 +298,15 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
                 .await
                 .map(|(resident, stopped)| Reply::Stopped { resident, stopped })
         }
+        Call::Control { resident, machine, control } => {
+            users_voice(node, peer)?;
+            crate::control::control(node, resident, machine, control)
+                .await
+                .map(|(resident, controlled)| Reply::Controlled { resident, controlled })
+        }
+        Call::Offers { resident, machine } => crate::control::offers(node, resident, machine)
+            .await
+            .map(|(resident, offers)| Reply::Offers { resident, offers: Box::new(offers) }),
         Call::Attach { resident } => {
             users_voice(node, peer)?;
             crate::attach::command(node, &resident).await.map(Reply::Attachable)

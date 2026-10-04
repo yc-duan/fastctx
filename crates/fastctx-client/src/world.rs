@@ -7,6 +7,7 @@ use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use fastctx_types::residents::Landed;
+use fastctx_types::session::control::{Control, Controlled, Offers};
 use fastctx_types::town::{LookedUp, WorldWho};
 use fastctx_types::world::NodesReply;
 use fastctx_types::{
@@ -201,6 +202,28 @@ impl World {
     pub async fn stop(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<(Address, bool), Error> {
         match self.ask(Call::Stop { resident, machine }).await? {
             Reply::Stopped { resident, stopped } => Ok((resident, stopped)),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Does something to a resident's conversation for the user, besides
+    /// speaking into it.
+    pub async fn control(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        control: Control,
+    ) -> Result<(Address, Controlled), Error> {
+        match self.ask(Call::Control { resident, machine, control }).await? {
+            Reply::Controlled { resident, controlled } => Ok((resident, controlled)),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// What a resident's conversation offers now.
+    pub async fn offers(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<(Address, Offers), Error> {
+        match self.ask(Call::Offers { resident, machine }).await? {
+            Reply::Offers { resident, offers } => Ok((resident, *offers)),
             other => Err(unexpected(other)),
         }
     }

@@ -8,6 +8,7 @@ use crate::ipc::Failure;
 use crate::project::CanonHead;
 use crate::residents::{Landed, Notice};
 use crate::run::{RunReply, RunRequest};
+use crate::session::control::{Control, Controlled, Offers};
 use crate::town::{Looked, WhoReply};
 use crate::world::MachineFacts;
 use crate::write::{WriteOp, WriteOutcome};
@@ -42,6 +43,10 @@ pub enum RemoteCall {
     Open { agent: AgentName, town: Option<TownName>, text: String },
     /// Stop the turn a resident there is running, for the user.
     Stop { resident: ResidentId },
+    /// Do something to a resident's conversation there, for the user.
+    Control { resident: ResidentId, control: Control },
+    /// What a resident's conversation there offers now.
+    Offers { resident: ResidentId },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
     /// Copy `from`, a path there, to another machine.
@@ -80,6 +85,8 @@ pub enum RemoteReply {
     Stopped {
         stopped: bool,
     },
+    Controlled(Controlled),
+    Offers(Box<Offers>),
     /// A watch ended: the caller left, or the session's machine stopped it.
     Watched,
     Facts(MachineFacts),

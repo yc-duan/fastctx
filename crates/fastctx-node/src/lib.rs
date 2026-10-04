@@ -13,6 +13,7 @@ mod attach;
 mod claude;
 mod codex;
 mod colleagues;
+mod control;
 mod copy;
 mod delivery;
 mod desk;

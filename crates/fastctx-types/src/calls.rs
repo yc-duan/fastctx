@@ -7,6 +7,7 @@ use crate::copy::{CopyReport, Place};
 use crate::project::{Attachment, JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use crate::residents::{Delivery, Hints, Host, Landed, Seen, Whereabouts};
 use crate::run::{RunReply, RunRequest};
+use crate::session::control::{Control, Controlled, Offers};
 use crate::town::{LookedUp, WorldWho};
 use crate::world::NodesReply;
 use crate::write::{WriteOp, WriteOutcome};
@@ -56,6 +57,12 @@ pub enum Call {
     Open { agent: AgentName, town: Option<TownName>, node: Option<MachineName>, text: String },
     /// Stops the turn a resident on any machine is running, for the user.
     Stop { resident: ResidentId, machine: Option<MachineName> },
+    /// Does something to a resident's conversation on any machine for the
+    /// user, besides speaking into it (`session::control`).
+    Control { resident: ResidentId, machine: Option<MachineName>, control: Control },
+    /// What a resident's conversation on any machine offers now: the
+    /// controls it takes, its commands and models, its usage.
+    Offers { resident: ResidentId, machine: Option<MachineName> },
     /// How to open a resident of this machine in its host's own interface,
     /// for the user (`fastctx attach`).
     Attach { resident: ResidentId },
@@ -115,6 +122,14 @@ pub enum Reply {
     Stopped {
         resident: Address,
         stopped: bool,
+    },
+    Controlled {
+        resident: Address,
+        controlled: Controlled,
+    },
+    Offers {
+        resident: Address,
+        offers: Box<Offers>,
     },
     /// The command that opens the resident in its host's own interface,
     /// run in the user's terminal.

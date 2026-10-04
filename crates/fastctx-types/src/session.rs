@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Address, MachineName, NoticeId};
 
+pub mod control;
 mod details;
 pub use details::*;
 
