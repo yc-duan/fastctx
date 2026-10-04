@@ -32,6 +32,8 @@ terminfo = "0.9"
 windows-sys = { version = "0.61", features = [
     "Wdk_System_SystemServices",
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
     "Win32_Globalization",
     "Win32_System_Console",
     "Win32_System_Registry",

@@ -1,24 +1,16 @@
-//! Keys and pastes from the characters a terminal sends.
+//! Decodes the character stream supplied by a Windows console in VT input mode.
 //!
-//! On Windows the console hands over a paste as characters between
-//! `ESC [ 200 ~` and `ESC [ 201 ~` only when its virtual-terminal input is
-//! on, and crossterm's Windows reader drops characters that come without a
-//! key code, so the World reads the console itself and decodes here.
-//!
-//! Nothing here is cut short or waited out. A paste is whatever lies
-//! between its brackets, however long. An escape sequence ends where its
-//! grammar says it ends (ECMA-48: parameters, intermediates, one final
-//! byte). Whether an `ESC` is the Esc key or the start of a sequence is
-//! decided at the end of what the console had ready: a terminal writes a
-//! sequence whole, so an `ESC` with nothing after it and nothing more
-//! waiting was the key.
+//! Paste framing has neither a size limit nor a timeout. An escape prefix is
+//! resolved when the console queue is empty after a read, without a timed wait.
+//! A terminal must enqueue the prefix and its continuation together for that
+//! boundary rule to distinguish a key from a sequence.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::Input;
 
-const PASTE_START: &str = "\x1b[200~";
-const PASTE_END: &str = "\x1b[201~";
+pub(super) const PASTE_START: &str = "\x1b[200~";
+pub(super) const PASTE_END: &str = "\x1b[201~";
 
 #[derive(Default)]
 pub struct Decoder {
@@ -32,27 +24,24 @@ enum State {
     /// An escape sequence so far, from its `ESC`.
     Escape(String),
     /// A paste so far; `closing` holds what may be the start of its end.
-    Paste { text: String, closing: String, told: usize },
+    Paste { text: String, closing: String, count: usize, told: usize, keys: Vec<KeyEvent> },
 }
 
 impl Decoder {
-    /// Whether characters are being gathered, as a paste or a sequence.
-    pub fn gathering(&self) -> bool {
-        !matches!(self.state, State::Ground)
-    }
-
     /// One character the terminal sent.
     pub fn char(&mut self, c: char, out: &mut Vec<Input>) {
         match &mut self.state {
-            State::Paste { text, closing, .. } => {
+            State::Paste { text, closing, count, .. } => {
+                *count += 1;
                 closing.push(c);
                 while !PASTE_END.starts_with(closing.as_str()) {
                     let first = closing.remove(0);
                     text.push(first);
                 }
                 if closing == PASTE_END {
-                    let State::Paste { text, .. } = std::mem::take(&mut self.state) else { unreachable!() };
-                    out.push(Input::Paste(normalise_newlines(&text)));
+                    let State::Paste { text, keys, .. } = std::mem::take(&mut self.state) else { unreachable!() };
+                    out.push(Input::Paste(normalise_newlines(text)));
+                    out.extend(keys.into_iter().map(Input::Key));
                 }
             }
             State::Escape(sequence) => {
@@ -71,7 +60,7 @@ impl Decoder {
                 if sequence.starts_with("\x1bO") {
                     let sequence = std::mem::take(sequence);
                     self.state = State::Ground;
-                    out.extend(ss3(c).unwrap_or_else(|| loose(&sequence)));
+                    out.push(super::sequence::ss3(c).unwrap_or(Input::Sequence(sequence)));
                     return;
                 }
                 // CSI: parameters 0x30–0x3F, intermediates 0x20–0x2F, then
@@ -82,9 +71,15 @@ impl Decoder {
                         let sequence = std::mem::take(sequence);
                         self.state = State::Ground;
                         if sequence == PASTE_START {
-                            self.state = State::Paste { text: String::new(), closing: String::new(), told: 0 };
-                        } else if let Some(input) = csi(&sequence) {
-                            out.push(input);
+                            self.state = State::Paste {
+                                text: String::new(),
+                                closing: String::new(),
+                                count: 0,
+                                told: 0,
+                                keys: Vec::new(),
+                            };
+                        } else {
+                            out.push(super::sequence::csi(&sequence).unwrap_or(Input::Sequence(sequence)));
                         }
                     }
                     _ => {
@@ -103,24 +98,17 @@ impl Decoder {
         }
     }
 
-    /// A key the console reported with its code rather than as characters.
+    /// A native key with a known identity is never protocol text. Keys arriving
+    /// during a paste follow the completed paste, which is delivered atomically.
     pub fn key(&mut self, event: KeyEvent, out: &mut Vec<Input>) {
-        if event.code == KeyCode::Esc {
-            return self.char('\x1b', out);
-        }
-        if self.gathering() {
-            let c = match event.code {
-                KeyCode::Char(c) => Some(c),
-                KeyCode::Enter => Some('\r'),
-                KeyCode::Tab => Some('\t'),
-                KeyCode::Backspace => Some('\x7f'),
-                _ => None,
-            };
-            if let Some(c) = c {
-                return self.char(c, out);
+        if let State::Paste { keys, .. } = &mut self.state {
+            keys.push(event);
+        } else {
+            if let State::Escape(sequence) = std::mem::take(&mut self.state) {
+                out.extend(loose(&sequence));
             }
+            out.push(Input::Key(event));
         }
-        out.push(Input::Key(event));
     }
 
     /// The console has handed over all it had ready; `waiting` says whether
@@ -132,8 +120,9 @@ impl Decoder {
                 self.state = State::Ground;
                 out.extend(loose(&sequence));
             }
-            State::Paste { text, closing, told } => {
-                let so_far = text.chars().count() + closing.chars().count();
+            State::Paste { count, closing, told, .. } => {
+                // The possible closing delimiter is not yet known to be text.
+                let so_far = *count - closing.len();
                 if so_far != *told {
                     *told = so_far;
                     out.push(Input::Pasting(so_far));
@@ -155,14 +144,16 @@ fn alt(c: char) -> Input {
     }
 }
 
-/// A character typed on its own.
+/// A character typed on its own in raw mode. Some legacy encodings are
+/// inherently ambiguous (Tab/Ctrl+I, Enter/Ctrl+M, Esc/Ctrl+[).
 fn plain(c: char) -> Input {
     match c {
-        '\r' | '\n' => key(KeyCode::Enter, KeyModifiers::NONE),
+        '\r' => key(KeyCode::Enter, KeyModifiers::NONE),
         '\t' => key(KeyCode::Tab, KeyModifiers::NONE),
-        '\x08' | '\x7f' => key(KeyCode::Backspace, KeyModifiers::NONE),
+        '\x7f' => key(KeyCode::Backspace, KeyModifiers::NONE),
         '\0' => key(KeyCode::Char(' '), KeyModifiers::CONTROL),
         '\x01'..='\x1a' => key(KeyCode::Char((c as u8 - 1 + b'a') as char), KeyModifiers::CONTROL),
+        '\x1c'..='\x1f' => key(KeyCode::Char((c as u8 + 0x40) as char), KeyModifiers::CONTROL),
         c => key(KeyCode::Char(c), KeyModifiers::NONE),
     }
 }
@@ -179,70 +170,22 @@ fn loose(sequence: &str) -> Vec<Input> {
     out
 }
 
-/// `ESC O x`: function and cursor keys in application mode.
-fn ss3(c: char) -> Option<Vec<Input>> {
-    let code = match c {
-        'P' => KeyCode::F(1),
-        'Q' => KeyCode::F(2),
-        'R' => KeyCode::F(3),
-        'S' => KeyCode::F(4),
-        'A' => KeyCode::Up,
-        'B' => KeyCode::Down,
-        'C' => KeyCode::Right,
-        'D' => KeyCode::Left,
-        'H' => KeyCode::Home,
-        'F' => KeyCode::End,
-        _ => return None,
-    };
-    Some(vec![key(code, KeyModifiers::NONE)])
-}
-
-/// `ESC [ … x`: cursor, editing and function keys, with modifiers.
-fn csi(sequence: &str) -> Option<Input> {
-    let last = sequence.chars().last()?;
-    let body = &sequence[2..sequence.len() - last.len_utf8()];
-    let numbers: Vec<u16> = body.split(';').map(|part| part.parse().unwrap_or(0)).collect();
-    let flags = numbers.get(1).copied().unwrap_or(1).saturating_sub(1);
-    let mut modifiers = KeyModifiers::NONE;
-    if flags & 1 != 0 {
-        modifiers |= KeyModifiers::SHIFT;
+/// Canonical line endings for the text editor, in one pass and one allocation.
+pub(super) fn normalise_newlines(text: String) -> String {
+    if !text.contains('\r') {
+        return text;
     }
-    if flags & 2 != 0 {
-        modifiers |= KeyModifiers::ALT;
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\r' {
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            result.push('\n');
+        } else {
+            result.push(c);
+        }
     }
-    if flags & 4 != 0 {
-        modifiers |= KeyModifiers::CONTROL;
-    }
-    let code = match last {
-        'A' => KeyCode::Up,
-        'B' => KeyCode::Down,
-        'C' => KeyCode::Right,
-        'D' => KeyCode::Left,
-        'H' => KeyCode::Home,
-        'F' => KeyCode::End,
-        'Z' => KeyCode::BackTab,
-        'P' => KeyCode::F(1),
-        'Q' => KeyCode::F(2),
-        'R' => KeyCode::F(3),
-        'S' => KeyCode::F(4),
-        '~' => match numbers.first().copied().unwrap_or(0) {
-            1 | 7 => KeyCode::Home,
-            2 => KeyCode::Insert,
-            3 => KeyCode::Delete,
-            4 | 8 => KeyCode::End,
-            5 => KeyCode::PageUp,
-            6 => KeyCode::PageDown,
-            number @ 11..=15 => KeyCode::F((number - 10) as u8),
-            number @ 17..=21 => KeyCode::F((number - 11) as u8),
-            number @ 23..=24 => KeyCode::F((number - 12) as u8),
-            _ => return None,
-        },
-        _ => return None,
-    };
-    Some(Input::Key(KeyEvent::new(code, modifiers)))
-}
-
-/// A paste with its line ends as `\n`, whatever the terminal sent.
-fn normalise_newlines(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
+    result
 }
