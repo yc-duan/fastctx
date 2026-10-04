@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fastctx_client::{Said, TownRecord, TownView};
 use fastctx_types::project::{JournalView, MapView, RecordFields, TownSummary};
 use fastctx_types::session::SessionEvent;
-use fastctx_types::town::RunningJob;
+use fastctx_types::town::{ResidentNow, RunningJob};
 use fastctx_types::world::NodesReply;
 use fastctx_types::{AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
@@ -171,8 +171,8 @@ pub enum Data {
     Event(SessionEvent),
     /// The watch ended, with why when it broke.
     Unwatched(Option<String>),
-    /// What the agent being watched started that still runs, wherever.
-    Running(Result<Vec<RunningJob>, String>),
+    /// What the agent being watched has going on besides its turns.
+    Around(Result<Around, String>),
     /// Whether the user's own sessions here have the World's tools.
     Sessions(Result<Status, String>),
     /// What the World answered a job the page asked for.
@@ -180,6 +180,15 @@ pub enum Data {
         job: Job,
         result: Result<Done, String>,
     },
+}
+
+/// What an agent has going on besides its turns, wherever it is.
+#[derive(Clone, Debug, Default)]
+pub struct Around {
+    /// What it started that still runs.
+    pub jobs: Vec<RunningJob>,
+    /// The colleagues it asked for.
+    pub colleagues: Vec<ResidentNow>,
 }
 
 pub struct App {

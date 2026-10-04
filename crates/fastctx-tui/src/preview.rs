@@ -571,6 +571,26 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     let mut table_answer =
         TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     table_answer.data(ctx, Data::History(answered(now, TABLE_ANSWER)));
+    // The Claude that asked for both Codex colleagues, with them below its
+    // conversation, then with the first one picked.
+    let asker = address("claude-2b1c", "desktop");
+    let around = crate::app::Around {
+        jobs: town_view.jobs_by(&asker).into_iter().cloned().collect(),
+        colleagues: town_view.colleagues_of(&asker).into_iter().cloned().collect(),
+    };
+    let mut asking =
+        TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
+    asking.data(ctx, Data::History(answered(now, ANSWER)));
+    asking.data(ctx, Data::Around(Ok(around)));
+    let mut picking =
+        TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
+    picking.data(ctx, Data::History(answered(now, ANSWER)));
+    picking.data(ctx, Data::Around(Ok(crate::app::Around {
+        jobs: Vec::new(),
+        colleagues: town_view.colleagues_of(&asker).into_iter().cloned().collect(),
+    })));
+    picking.key(ctx, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    picking.key(ctx, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     let mut typing =
         TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     typing.data(ctx, Data::History(Vec::new()));
@@ -601,6 +621,8 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         ("talk", Page::Talk(Box::new(talk))),
         ("answer", Page::Talk(Box::new(answer))),
         ("answer-table", Page::Talk(Box::new(table_answer))),
+        ("colleagues", Page::Talk(Box::new(asking))),
+        ("colleague-picked", Page::Talk(Box::new(picking))),
         ("typing", Page::Talk(Box::new(typing))),
         ("journal", Page::Journal(Box::new(JournalPage::with("Mark 50 研发".into(), journal(now))))),
         ("machines", Page::Machines(machines)),

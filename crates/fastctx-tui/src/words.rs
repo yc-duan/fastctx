@@ -1024,6 +1024,18 @@ impl Words {
         self.pick("重新接上", "watch again")
     }
 
+    pub fn key_colleagues(&self) -> &'static str {
+        self.pick("它请的同事", "its colleagues")
+    }
+
+    pub fn key_open_colleague(&self) -> &'static str {
+        self.pick("和这位同事说话", "talk to this colleague")
+    }
+
+    pub fn key_back_to_typing(&self) -> &'static str {
+        self.pick("回到输入", "back to typing")
+    }
+
     pub fn key_earlier(&self) -> &'static str {
         self.pick("更早的", "earlier")
     }

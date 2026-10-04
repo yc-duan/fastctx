@@ -8,15 +8,15 @@ use std::collections::VecDeque;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fastctx_types::residents::{Activity, Origin};
 use fastctx_types::session::Happened;
-use fastctx_types::town::{ResidentNow, RunningJob};
+use fastctx_types::town::ResidentNow;
 use fastctx_types::{Address, MachineName, TownName};
 use jiff::Timestamp;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 
-use super::{quiet, wrong};
-use crate::app::{Act, Ctx, Data, Done, Feed, Job};
+use super::{Page, quiet, wrong};
+use crate::app::{Act, Around, Ctx, Data, Done, Feed, Job};
 use crate::design::Role;
 use crate::editor::{Edit, Editor};
 use crate::paint;
@@ -33,8 +33,12 @@ pub struct TalkPage {
     model: Option<String>,
     project: Option<String>,
     town: Option<TownName>,
-    /// What it started that still runs, wherever it runs.
-    running: Result<Vec<RunningJob>, String>,
+    /// What it started that still runs and the colleagues it asked for,
+    /// wherever they are.
+    around: Result<Around, String>,
+    /// The colleague picked among them, while the keys go to that list
+    /// rather than to the place to type.
+    picked: Option<usize>,
     /// What its host last reported it doing, and since when.
     state: Option<(Activity, Timestamp)>,
     transcript: Transcript,
@@ -101,7 +105,8 @@ impl TalkPage {
             model: None,
             project,
             town: None,
-            running: Ok(Vec::new()),
+            around: Ok(Around::default()),
+            picked: None,
             state: None,
             editor: Editor::multi(),
             top: None,
@@ -131,7 +136,10 @@ impl TalkPage {
     pub fn animating(&self) -> bool {
         self.transcript.moving()
             || matches!(self.state, Some((Activity::Busy, _)))
-            || self.running.as_ref().is_ok_and(|jobs| !jobs.is_empty())
+            || self
+                .around
+                .as_ref()
+                .is_ok_and(|around| !around.jobs.is_empty() || around.colleagues.iter().any(fastctx_client::town::busy))
     }
 
     pub fn paste(&mut self, text: String) -> Act {
@@ -160,7 +168,11 @@ impl TalkPage {
                 self.transcript.event(event);
             }
             Data::Unwatched(why) => self.watching = Watching::Ended(why),
-            Data::Running(running) => self.running = running,
+            Data::Around(around) => {
+                self.around = around;
+                let count = self.colleagues().len();
+                self.picked = self.picked.filter(|_| count > 0).map(|picked| picked.min(count - 1));
+            }
             Data::Done { job, result } => match (job, result) {
                 (Job::Talk { .. }, Ok(Done::Said(said))) => {
                     if let Some(local) = self.pending.pop_front() {
@@ -197,10 +209,46 @@ impl TalkPage {
         }
     }
 
+    fn colleagues(&self) -> &[ResidentNow] {
+        self.around.as_ref().map(|around| around.colleagues.as_slice()).unwrap_or_default()
+    }
+
+    /// Keys while a colleague is picked: the arrows move among them, Enter
+    /// goes to the one picked, and Tab or Esc returns to the place to type.
+    /// Anything else is typing, and goes there too.
+    fn pick_key(&mut self, picked: usize, key: &KeyEvent) -> Option<Act> {
+        let count = self.colleagues().len();
+        match key.code {
+            KeyCode::Up => self.picked = Some(picked.saturating_sub(1)),
+            KeyCode::Down => self.picked = Some((picked + 1).min(count.saturating_sub(1))),
+            KeyCode::Enter => {
+                let colleague = self.colleagues().get(picked)?.clone();
+                self.picked = None;
+                let page = TalkPage::new(colleague, self.project.clone(), self.here.clone());
+                return Some(Act::Push(Page::Talk(Box::new(page))));
+            }
+            KeyCode::Tab | KeyCode::Esc => self.picked = None,
+            _ => {
+                self.picked = None;
+                return None;
+            }
+        }
+        Some(Act::Stay)
+    }
+
     pub fn key(&mut self, ctx: &Ctx, key: KeyEvent) -> Act {
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        if let Some(picked) = self.picked
+            && let Some(act) = self.pick_key(picked, &key)
+        {
+            return act;
+        }
         match key.code {
             KeyCode::Esc => return Act::Back,
+            KeyCode::Tab if !self.colleagues().is_empty() => {
+                self.picked = Some(0);
+                return Act::Stay;
+            }
             KeyCode::Char('x') if control => {
                 self.stopping = true;
                 self.note = Some(quiet(ctx, ctx.words.stopping()));
@@ -270,27 +318,50 @@ impl TalkPage {
         self.top = if top >= bottom { None } else { Some(top) };
     }
 
-    /// A row for each thing it started that still runs: the command, then
-    /// where and for how long.
-    fn running_rows(&self, ctx: &Ctx) -> Vec<(Line<'static>, Line<'static>)> {
+    /// A row for each colleague it asked for, then for each thing it
+    /// started that still runs: who or what, then how it stands.
+    fn around_rows(&self, ctx: &Ctx) -> Vec<paint::Row> {
         let look = &ctx.look;
-        match &self.running {
-            Err(why) => vec![(quiet(ctx, ctx.words.running_unseen(&text::first_line(why))), Line::default())],
-            Ok(jobs) => jobs
-                .iter()
-                .map(|job| {
-                    let left = Line::from(vec![
-                        Span::styled("◌  ", look.faded(Role::Alive, ctx.breath)),
-                        Span::styled(text::first_line(&job.command), look.text(Role::Muted)),
-                    ]);
-                    let right = Line::from(Span::styled(
-                        format!("{} · {}", job.machine, ctx.words.since(job.started_at, ctx.now)),
-                        look.text(Role::Faint),
-                    ));
-                    (left, right)
-                })
-                .collect(),
+        let words = &ctx.words;
+        let around = match &self.around {
+            Ok(around) => around,
+            Err(why) => return vec![paint::Row::new(quiet(ctx, words.running_unseen(&text::first_line(why))))],
+        };
+        let mut rows = Vec::new();
+        for (item, colleague) in around.colleagues.iter().enumerate() {
+            let mut left = vec![
+                who::mark(ctx, colleague),
+                Span::raw("  "),
+                Span::styled(who::resident_name(ctx, colleague), look.text(Role::Text)),
+            ];
+            if let Origin::Colleague { label, .. } = &colleague.about.origin {
+                left.push(Span::styled(format!("  {}", words.quoted(label)), look.text(Role::Muted)));
+            }
+            let state = match colleague.now.as_ref().map(|now| (now.activity, now.since)) {
+                _ if !colleague.here => words.left().to_string(),
+                Some((Activity::Busy, since)) => format!("{} {}", words.busy(), words.since(since, ctx.now)),
+                Some((Activity::Idle, since)) => format!("{} {}", words.idle(), words.since(since, ctx.now)),
+                Some((Activity::Asleep, _)) => words.asleep().to_string(),
+                None => String::new(),
+            };
+            rows.push(
+                paint::Row::new(Line::from(left))
+                    .right(Line::from(Span::styled(state, look.text(Role::Faint))))
+                    .item(item),
+            );
         }
+        for job in &around.jobs {
+            let left = Line::from(vec![
+                Span::styled("◌  ", look.faded(Role::Alive, ctx.breath)),
+                Span::styled(text::first_line(&job.command), look.text(Role::Muted)),
+            ]);
+            let right = Line::from(Span::styled(
+                format!("{} · {}", job.machine, words.since(job.started_at, ctx.now)),
+                look.text(Role::Faint),
+            ));
+            rows.push(paint::Row::new(left).right(right));
+        }
+        rows
     }
 
     pub fn draw(&mut self, ctx: &Ctx, frame: &mut Frame, area: Rect, pasting: Option<usize>) {
@@ -413,13 +484,12 @@ impl TalkPage {
             paint::line(buffer, status.x, status.y, status.width, &line, &Line::default(), false, look);
         }
 
-        // What it started that still runs, above that.
-        let running = self.running_rows(ctx);
-        let running_top = status.y.saturating_sub(running.len() as u16);
-        for (row, (left, right)) in running.iter().enumerate() {
-            paint::line(buffer, column.x, running_top + row as u16, column.width, left, right, false, look);
-        }
-        let above = running_top;
+        // Its colleagues and what it started that still runs, above that.
+        let around = self.around_rows(ctx);
+        let around_top = status.y.saturating_sub(around.len() as u16);
+        let area = Rect { y: around_top, height: around.len() as u16, ..column };
+        paint::rows(buffer, area, &around, 0, self.picked, look);
+        let above = around_top;
 
         // The conversation, above that.
         let body =
@@ -447,15 +517,23 @@ impl TalkPage {
         }
 
         // The keys.
-        let mut keys =
-            vec![("Enter", words.key_send()), ("Ctrl+J", words.key_newline()), ("PgUp PgDn", words.key_scroll())];
-        if matches!(self.watching, Watching::Ended(_)) {
-            keys.push(("Ctrl+R", words.key_watch_again()));
-        }
-        keys.push(("Esc", words.key_back()));
+        let keys = if self.picked.is_some() {
+            vec![("Enter", words.key_open_colleague()), ("↑↓", words.key_choose()), ("Esc", words.key_back_to_typing())]
+        } else {
+            let mut keys =
+                vec![("Enter", words.key_send()), ("Ctrl+J", words.key_newline()), ("PgUp PgDn", words.key_scroll())];
+            if !self.colleagues().is_empty() {
+                keys.push(("Tab", words.key_colleagues()));
+            }
+            if matches!(self.watching, Watching::Ended(_)) {
+                keys.push(("Ctrl+R", words.key_watch_again()));
+            }
+            keys.push(("Esc", words.key_back()));
+            keys
+        };
         paint::footer(buffer, footer, look, &keys);
 
-        if !empty {
+        if !empty && self.picked.is_none() {
             let row = caret.0.saturating_sub(first_shown) as u16;
             frame.set_cursor_position(Position::new(left + 4 + caret.1 as u16, box_top + 1 + row));
         }

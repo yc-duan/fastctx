@@ -14,7 +14,7 @@ use jiff::Timestamp;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 
-use crate::app::{Data, Done, Feed, Job};
+use crate::app::{Around, Data, Done, Feed, Job};
 use crate::sessions::Refused;
 
 /// How long a page that shows who is where waits between asks.
@@ -62,7 +62,7 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
         let owner = Address { machine: machine.clone(), resident: resident.clone() };
         tokio::join!(
             watch(world.clone(), sender.clone(), page, resident, machine),
-            running(world, sender, page, owner, town),
+            around(world, sender, page, owner, town),
         );
         return;
     }
@@ -132,16 +132,23 @@ async fn watch(
     }
 }
 
-/// What `owner` started that still runs, asked as often as a page that
-/// shows who is where, of the machines that would list it.
-async fn running(world: World, sender: Sender, page: u64, owner: Address, town: Option<TownName>) {
+/// What `owner` started that still runs and the colleagues it asked for,
+/// asked as often as a page that shows who is where, of the machines that
+/// would list them.
+async fn around(world: World, sender: Sender, page: u64, owner: Address, town: Option<TownName>) {
     loop {
-        let jobs = world
+        let around = world
             .who(town.clone(), false)
             .await
-            .map(|who| TownView::new(who, None).jobs_by(&owner).into_iter().cloned().collect())
+            .map(|who| {
+                let view = TownView::new(who, None);
+                Around {
+                    jobs: view.jobs_by(&owner).into_iter().cloned().collect(),
+                    colleagues: view.colleagues_of(&owner).into_iter().cloned().collect(),
+                }
+            })
             .map_err(|error| error.to_string());
-        if sender.send((page, Data::Running(jobs))).is_err() {
+        if sender.send((page, Data::Around(around))).is_err() {
             return;
         }
         tokio::time::sleep(EVERY).await;

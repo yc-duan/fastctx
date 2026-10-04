@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use fastctx_types::project::{Record, TownSummary};
-use fastctx_types::residents::Activity;
+use fastctx_types::residents::{Activity, Origin};
 use fastctx_types::town::{MachineWho, ResidentNow, RunningJob, WhoScope, WorldWho};
 use fastctx_types::{Address, MachineName, TownName};
 use jiff::Timestamp;
@@ -127,6 +127,16 @@ impl TownView {
     /// What `owner` started that still runs, on whichever machine.
     pub fn jobs_by(&self, owner: &Address) -> Vec<&RunningJob> {
         self.jobs.iter().filter(|job| job.owner == *owner).collect()
+    }
+
+    /// The colleagues `asker` asked for, among those shown.
+    pub fn colleagues_of(&self, asker: &Address) -> Vec<&ResidentNow> {
+        self.residents
+            .iter()
+            .filter(
+                |resident| matches!(&resident.about.origin, Origin::Colleague { asked_by, .. } if asked_by == asker),
+            )
+            .collect()
     }
 
     /// What runs on with nobody here who started it.
