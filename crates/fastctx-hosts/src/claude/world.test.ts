@@ -103,18 +103,22 @@ test('loads, streams without waiting for disk, and retains the old session after
   expect(JSON.parse(files.get([...files.keys()].find((path) => path.endsWith('/second/activity.json'))!)!).turn).toBe('new')
 })
 
-// The official engine checks the ownership mapping, untouched foreign calls,
-// and the lease's lifetime around both successful and refused World calls.
-test('leases only World calls, releases them, and distinguishes clear from resume', async ($, on) => {
+// The official engine checks the ownership mapping, that foreign calls are
+// left alone, and that a World call goes through only once its proof is written.
+test('proves only World calls, before they run, and distinguishes clear from resume', async ($, on) => {
   mock.clock(on)
   mock.env(on, {})
   const files = new Map<string, string>()
-  const active = new Map<string, { registration: { session: string }, owner: { pid: number, token: string } }>()
   let sessionId = 'one'
   let failProof = false
   let executed = 0
-  let helper = 123
-  let pairingOperations = 0
+  const proofs = () => [...files.keys()].filter((path) => path.includes('/claude-calls/'))
+  const proof = (id: string) => {
+    let name = ''
+    for (let i = 0; i < id.length; i++) name += id.charCodeAt(i).toString(16).padStart(4, '0')
+    const path = proofs().find((path) => path.endsWith('/claude-calls/' + name + '.json'))
+    return path === undefined ? undefined : JSON.parse(files.get(path)!)
+  }
   on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
   on('session.usage', () => ({ value: usage() }))
   on('session.id', () => ({ value: sessionId }))
@@ -122,34 +126,10 @@ test('leases only World calls, releases them, and distinguishes clear from resum
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
-  on('process.run', (_, e) => {
-    if (e.argv[1] === 'claude-call') {
-      pairingOperations += 1
-      const id = e.argv[4], owner = JSON.parse(e.init.stdin!)
-      expect(active.get(id)?.owner).toEqual(owner)
-      active.delete(id)
-      return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
-    }
-    return { value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
-  })
-  on('process.spawn', async function* (_, e) {
-    pairingOperations += 1
-    const id = e.argv[4]
-    if (failProof || active.has(id)) {
-      yield { stream: 'stderr', text: 'claim refused' }
-      return { value: { code: 1, signal: null } }
-    }
-    const entry = { registration: JSON.parse(e.input!), owner: { pid: ++helper, token: 'fixture-helper-' + helper } }
-    active.set(id, entry)
-    try {
-      yield { stream: 'stdout', text: JSON.stringify(entry.owner) + '\n' }
-    } finally {
-      if (active.get(id) === entry) active.delete(id)
-    }
-    return { value: { code: 0, signal: null } }
-  })
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('fs.write', (_, e) => {
     const path = e.path.replaceAll('\\', '/')
+    if (failProof && path.includes('/claude-calls/')) throw new Error('disk refused')
     files.set(path, e.text)
     return { value: undefined }
   })
@@ -171,29 +151,27 @@ test('leases only World calls, releases them, and distinguishes clear from resum
   on('classic.PostToolUseFailure', () => ({}))
   on('tool.call', (_, e) => {
     if (e.tool === worldTool) {
-      expect(active.get(e.tool_use_id!)?.registration.session).toBe(sessionId)
+      const written = proof(e.tool_use_id!)
+      expect(written.tool_use_id).toBe(e.tool_use_id)
+      expect(written.registration.session).toBe(sessionId)
       executed += 1
     } else {
-      expect(active.size).toBe(0)
       expect(e.command).toBe('same bytes')
     }
     return { result: { raw: '  exact \r\n🦊' } }
   })
 
   await $.session.start({ cwd: '/fixture', surface: 'terminal', isInteractive: true })
-  const before = pairingOperations
   failProof = true
   for (const tool of ['mcp__github__run', 'mcp__computer_use__js', 'mcp__plugin_fastctx-world_fastctx__lookalike']) {
     expect((await $.tool.call({ tool, command: 'same bytes' })).result).toEqual({ raw: '  exact \r\n🦊' })
     await $.classic.PostToolUse({ tool_name: tool, tool_use_id: 'foreign', tool_input: {}, tool_response: {} })
     await $.classic.PostToolUseFailure({ tool_name: tool, tool_use_id: 'foreign', tool_input: {}, error: 'fixture' })
   }
-  expect(pairingOperations).toBe(before)
+  expect(proofs().length).toBe(0)
   failProof = false
   await $.tool.call({ tool: worldTool, command: 'first' })
-  expect(active.size).toBe(0)
   await $.tool.call({ tool: worldTool, command: 'child', agentId: 'child' })
-  expect(active.size).toBe(0)
   await $.session.end({ sessionId: 'one', reason: 'clear', resume: { id: 'one' } })
   sessionId = 'two'
   await $.classic.SessionStart({ source: 'clear' })
@@ -208,10 +186,9 @@ test('leases only World calls, releases them, and distinguishes clear from resum
   expect(registration('unrelated').previous).toBe(null)
   expect(registration('unrelated').at > registration('two').at).toBe(true)
   expect(executed).toBe(4)
-  expect(active.size).toBe(0)
+  expect(proofs().length).toBe(4)
   failProof = true
   const refused = await $.tool.call({ tool: worldTool, command: 'must not run' })
   expect(refused.deny).toContain('could not identify this MCP call')
   expect(executed).toBe(4)
-  expect(active.size).toBe(0)
 })

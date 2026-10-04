@@ -17,13 +17,13 @@ import { presentation } from './presentation.js'
 //   inbox/<id>.json    what the node has for the session; read, never changed
 //   receipts/<id>      written once something was handed to the model
 //   stop.json          the turn the node asks to be stopped; read, never changed
-// Active World calls have one indexed proof under `<world>/claude-calls/`.
-// A helper process owns it; normal completion releases it, and the node
-// observes the helper's death for cancellation, unloading and host exit.
+// Before a call to the World's own tools goes through, it writes which
+// session makes it to `<world>/claude-calls/<call id>.json`; the node takes
+// that file when the call arrives, and sweeps those of ended sessions.
 // Which turn took what it handed over is an event of its own, before the
 // end of that turn: the node owes that turn's end to whoever it was from.
 // It uses only on(), $.session.*, $.env.get, $.fs.read/write/list,
-// $.clock.every/after, $.prompt.submit, $.process.run/spawn and $.turn.abort.
+// $.clock.every/after, $.prompt.submit, $.process.run and $.turn.abort.
 // MCP ownership is resolved from $.mcp.connect and $.session.usage at startup.
 // The inbox address identifies native-shell commands, never MCP calls.
 
@@ -664,18 +664,14 @@ export function register(on) {
   })
   on('tool.call', async ($, e, next) => {
     const context = await route($, registry, 'tool.call', e)
-    if (!registry.worldTools.has(e.tool)) return context.shown.call(reports($, context), e, next)
-    let lease
-    try {
-      lease = await identifyCall($, context, e.tool_use_id)
-    } catch (error) {
-      return { deny: 'The fastctx plugin could not identify this MCP call to the World: ' + error }
+    if (registry.worldTools.has(e.tool)) {
+      try {
+        await proveCall($, context, e.tool_use_id)
+      } catch (error) {
+        return { deny: 'The fastctx plugin could not identify this MCP call to the World: ' + error }
+      }
     }
-    try {
-      return await context.shown.call(reports($, context), e, next)
-    } finally {
-      await releaseCall($, e.tool_use_id, lease)
-    }
+    return context.shown.call(reports($, context), e, next)
   })
   on('session.append', async ($, e, next) => {
     const context = await route($, registry, 'session.append', e)
@@ -707,33 +703,13 @@ export function register(on) {
   })
 }
 
-async function identifyCall($, context, id) {
+// The file is whole before the call leaves the host, so the node reads it
+// whole. Its name spells each UTF-16 unit of the id in four hex digits.
+async function proveCall($, context, id) {
   if (typeof id !== 'string' || id.length === 0) throw new Error('the MCP call has no tool_use_id to pair with the World')
-  const stream = $.process.spawn({ argv: [FASTCTX, 'claude-call', 'begin', WORLD, id], input: JSON.stringify(context.registration) })
-  let output = '', errors = ''
-  try {
-    while (true) {
-      const piece = await stream.next()
-      if (piece.done) throw new Error('the call helper exited before registering it: ' + errors)
-      if (piece.value.stream === 'stderr') errors += piece.value.text
-      else output += piece.value.text
-      if (output.includes('\n')) return { stream, owner: JSON.parse(output.trim()) }
-    }
-  } catch (error) {
-    await stream.return()
-    throw error
-  }
-}
-
-async function releaseCall($, id, lease) {
-  try {
-    const result = await $.process.run([FASTCTX, 'claude-call', 'finish', WORLD, id], { stdin: JSON.stringify(lease.owner) })
-    if (result.exitCode !== 0) throw new Error('releasing the World call proof: ' + result.stderr)
-  } finally {
-    // The host also closes this stream on cancellation or module unload,
-    // even when an interrupted hook cannot finish its own cleanup.
-    await lease.stream.return()
-  }
+  let name = ''
+  for (let i = 0; i < id.length; i++) name += id.charCodeAt(i).toString(16).padStart(4, '0')
+  await $.fs.write(WORLD + '/claude-calls/' + name + '.json', JSON.stringify({ tool_use_id: id, registration: context.registration }))
 }
 
 async function worldTools($, registry) {

@@ -9,7 +9,6 @@ use clap::{Parser, Subcommand};
 mod apply;
 mod ask;
 mod attach;
-mod claude_call;
 mod copy;
 mod journal;
 mod keep;
@@ -37,9 +36,6 @@ enum Command {
     /// Identifies the process invoking the World mod helper.
     #[command(hide = true)]
     ParentProcess,
-    /// Holds or releases one mod invocation's pairing proof.
-    #[command(hide = true, subcommand)]
-    ClaudeCall(claude_call::Command),
     /// Run this machine's node in the foreground.
     Node {
         /// The fastctx root to serve; defaults to this user's fastctx root.
@@ -137,7 +133,6 @@ fn main() -> ExitCode {
     let result = match command {
         Command::Ui => fastctx_tui::run(),
         Command::ParentProcess => parent_process(),
-        Command::ClaudeCall(command) => claude_call::run(command),
         Command::Node { dir, supervised, supervisor_control, supervisor_events, service_identity } => {
             let supervision = match (supervised, supervisor_control, supervisor_events) {
                 (true, Some(control), Some(events)) => Some((control, events, service_identity)),

@@ -6,7 +6,8 @@
 //! which the node watches. A session's registration pairs it with its
 //! resident: the one the World started under its id, the one the session
 //! it continues after a clear was, or a new resident for this session.
-//! MCP calls identify it by the call id its mod published before execution.
+//! A call to the World's tools is known for its session by the proof the
+//! mod wrote under the call's id before letting it through.
 //! What it reports is read once it is paired, in the order it was written,
 //! and goes to that resident; what waited for the resident goes to its mod.
 //! What the World has for a paired session goes into its mod's inbox, and
@@ -14,8 +15,7 @@
 //! whose process the supervisor stopped is woken with it, and its next turn
 //! takes it.
 //!
-//! Built against the mod API as measured on Claude Code 2.1.287 and run
-//! against a stand-in host only; it has not yet run with Claude Code.
+//! Run with Claude Code 2.1.289.
 
 pub(crate) mod calls;
 pub(crate) mod history;
@@ -42,7 +42,6 @@ use crate::Node;
 #[derive(Default)]
 pub struct Claude {
     state: Mutex<State>,
-    calls: Mutex<()>,
     /// Held to read while the World starts a session and learns its id;
     /// to write, while a mod registration is assigned to a resident.
     pub births: tokio::sync::RwLock<()>,
@@ -68,7 +67,7 @@ struct Session {
 
 /// Writes the plugin and starts watching the sessions.
 pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
-    calls::recover(node);
+    calls::sweep(node);
     let plugin = claude::write_plugin(node.world.path(), &node.fastctx)?;
     let checking = node.clone();
     tokio::task::spawn_blocking(move || check_plugin(&checking, &plugin));
@@ -535,6 +534,7 @@ async fn ended_for_process(
             crate::colleagues::left(node, resident.clone());
         }
     }
+    calls::sweep(node);
     Ok(())
 }
 
@@ -559,9 +559,11 @@ pub fn paired(node: &Node, resident: &ResidentId) -> bool {
 pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_types::residents::Whereabouts, Failure> {
     let world = node.world.path().to_path_buf();
     let id = tool_use_id.to_string();
-    let registration = tokio::task::spawn_blocking(move || claude::calls::registration(&world, &id))
+    let registration = tokio::task::spawn_blocking(move || claude::calls::take(&world, &id))
         .await
         .map_err(|error| Failure::new(format!("reading Claude call evidence: {error}")))?
+        .map_err(|error| Failure::new(format!("pairing Claude call {tool_use_id}: {error}")))?;
+    pairing::validate_session(&registration.session)
         .map_err(|error| Failure::new(format!("pairing Claude call {tool_use_id}: {error}")))?;
     let session = registration.session.clone();
     hear(node, registration).await;
