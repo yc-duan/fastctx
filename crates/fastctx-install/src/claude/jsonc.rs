@@ -96,6 +96,14 @@ impl<'a> Document<'a> {
         self.tokens.iter().any(|t| t.range.start >= range.start && t.range.end <= range.end && is_comment(t))
     }
 
+    pub(super) fn comments(&self) -> Vec<String> {
+        self.tokens
+            .iter()
+            .filter(|token| is_comment(token))
+            .map(|token| self.source[token.range.start..token.range.end].to_owned())
+            .collect()
+    }
+
     pub fn remove(
         &self,
         object: &Object<'_>,
