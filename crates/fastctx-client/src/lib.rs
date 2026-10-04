@@ -4,6 +4,18 @@
 //! all reach the node through a `Client`: it connects to the node's local
 //! endpoint, says who is speaking, and sends calls, each answered once.
 //! Nothing outside the node writes the World's state; clients ask.
+//!
+//! Above it, what every interface shares: [`World`], one method for each
+//! thing asked of the World; [`TownView`], who is where in the shape to show
+//! it; [`Conversation`], talking to a resident and following its turns.
+
+pub mod conversation;
+pub mod town;
+pub mod world;
+
+pub use conversation::{Conversation, Following, Moment};
+pub use town::TownView;
+pub use world::{Error, Said, TownRecord, World};
 
 use fastctx_platform::ipc::{self, Connection, Endpoint};
 use fastctx_types::ipc::{ClientFrame, Failure, Hello, NodeFrame, PROTOCOL, Peer, SessionHint, Welcome};

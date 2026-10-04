@@ -2,14 +2,14 @@
 //! spans; outside every town, the World as a whole; with ids, one resident
 //! or job in detail (`world-town.md`).
 
-use std::collections::BTreeSet;
-
 use clap::Args;
+use fastctx_client::town::{MachineState, Scope, address};
+use fastctx_client::{TownView, World};
 use fastctx_hands::told::{duration, turn_end};
 use fastctx_types::residents::{Action, Activity, Host, MessageKind, Now, Origin};
 use fastctx_types::run::{EndedHow, ExitStatus, JobRecord};
-use fastctx_types::town::{Looked, LookedUp, MachineWho, ResidentDetail, ResidentNow, RunningJob, WhoScope, WorldWho};
-use fastctx_types::{Address, Call, JobId, Reply, ResidentId, TownName};
+use fastctx_types::town::{Looked, LookedUp, ResidentDetail, ResidentNow, RunningJob};
+use fastctx_types::{Address, JobId, ResidentId, TownName};
 use jiff::Timestamp;
 
 /// See who is here and what each is doing.
@@ -28,108 +28,98 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
     let you = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse::<Address>().ok());
     let now = Timestamp::now();
     let is_id = |name: &str| ResidentId::try_from(name).is_ok() || JobId::try_from(name).is_ok();
-    let call = match args.names.as_slice() {
-        [] => Call::Who { all: args.all, town: crate::ask::town_from_run() },
-        [town] if !is_id(town) => Call::Who { all: args.all, town: Some(TownName::try_from(town.as_str())?) },
+    let world = World::here()?;
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    let text = match args.names.as_slice() {
+        [] => {
+            let who = runtime.block_on(world.who(crate::ask::town_from_run(), args.all))?;
+            render(&TownView::new(who, you.as_ref()), you.as_ref(), now)
+        }
+        [town] if !is_id(town) => {
+            let who = runtime.block_on(world.who(Some(TownName::try_from(town.as_str())?), args.all))?;
+            render(&TownView::new(who, you.as_ref()), you.as_ref(), now)
+        }
         ids => {
             if let Some(name) = ids.iter().find(|name| !is_id(name)) {
                 anyhow::bail!("{name} is not a resident's or a job's id; a town is looked at on its own");
             }
-            Call::Look { ids: ids.to_vec() }
+            let looked = runtime.block_on(world.look(ids.to_vec()))?;
+            looked.iter().map(|one| detail(one, now)).collect::<String>()
         }
-    };
-    let text = match crate::ask::call(call)?.0 {
-        Reply::Who(reply) => render(&reply, you.as_ref(), now),
-        Reply::Looked { looked } => looked.iter().map(|one| detail(one, now)).collect::<String>(),
-        other => anyhow::bail!("the node answered something else: {other:?}"),
     };
     print!("{text}");
     Ok(())
 }
 
-fn render(reply: &WorldWho, you: Option<&Address>, now: Timestamp) -> String {
-    let mut residents: Vec<&ResidentNow> = Vec::new();
-    let mut jobs: Vec<&RunningJob> = Vec::new();
-    let mut answered = Vec::new();
-    let mut missing = Vec::new();
-    for machine in &reply.machines {
-        match machine {
-            MachineWho::Answered { reply } => {
-                answered.push(reply.machine.clone());
-                residents.extend(&reply.residents);
-                jobs.extend(&reply.jobs);
+fn render(view: &TownView, you: Option<&Address>, now: Timestamp) -> String {
+    let mut machines = Vec::new();
+    let answered: Vec<&str> = view
+        .machines
+        .iter()
+        .filter_map(|state| match state {
+            MachineState::Answered(machine) => Some(machine.as_str()),
+            _ => None,
+        })
+        .collect();
+    if view.machines.len() > 1 {
+        machines.push(format!("{} online", answered.join(", ")));
+    }
+    for state in &view.machines {
+        match state {
+            MachineState::Answered(_) => {}
+            MachineState::Offline { machine, since: Some(since) } => {
+                machines.push(format!("{machine} offline since {}", clock(*since, now)))
             }
-            MachineWho::Offline { machine, since } => missing.push(match since {
-                Some(since) => format!("{machine} offline since {}", clock(*since, now)),
-                None => format!("{machine} offline"),
-            }),
-            MachineWho::NoAnswer { machine, reason } => missing.push(format!("{machine} did not answer ({reason})")),
+            MachineState::Offline { machine, since: None } => machines.push(format!("{machine} offline")),
+            MachineState::NoAnswer { machine, reason } => machines.push(format!("{machine} did not answer ({reason})")),
         }
     }
-    // The caller first, then whoever acted most recently.
-    residents.sort_by_key(|resident| (Some(&address(resident)) != you, std::cmp::Reverse(latest(resident))));
-    let present: BTreeSet<Address> =
-        residents.iter().filter(|resident| resident.here).map(|resident| address(resident)).collect();
-
-    let mut machines = Vec::new();
-    if reply.machines.len() > 1 {
-        machines.push(format!("{} online", answered.iter().map(|name| name.as_str()).collect::<Vec<_>>().join(", ")));
-    }
-    machines.extend(missing);
-    let mut text = match &reply.scope {
-        WhoScope::Town { town, record } => {
-            let mut facts = vec![counts(&residents)];
+    let mut text = match &view.scope {
+        Scope::Town { town, record } => {
+            let mut facts = vec![counts(view.counts())];
             if record.is_none() {
-                facts.push(format!("{} keeps no record of {town}, so every machine was asked", reply.machine));
+                facts.push(format!("{} keeps no record of {town}, so every machine was asked", view.machine));
             }
             facts.extend(machines);
             format!("=== w: {town} ({}) ===\n", facts.join("; "))
         }
-        WhoScope::World { towns } => {
+        Scope::World { towns } => {
             // The World as a whole: each town in a line, then those who
             // live in none.
-            let mut names: BTreeSet<TownName> = towns.iter().map(|town| town.town.clone()).collect();
-            names.extend(residents.iter().filter_map(|resident| resident.town.clone()));
-            let mut facts = vec![match names.len() {
+            let mut facts = vec![match towns.len() {
                 1 => "1 town".to_string(),
                 count => format!("{count} towns"),
             }];
             facts.extend(machines);
             let mut text = format!("=== w: the World ({}) ===\n", facts.join("; "));
-            if !names.is_empty() {
+            if !towns.is_empty() {
                 text.push_str("towns\n");
-                let width = names.iter().map(|name| name.len()).max().unwrap_or(0);
-                for name in &names {
-                    let living: Vec<&ResidentNow> =
-                        residents.iter().copied().filter(|resident| resident.town.as_ref() == Some(name)).collect();
-                    let title = towns
-                        .iter()
-                        .find(|town| town.town == *name)
-                        .map(|town| format!("{} · ", town.record.name))
-                        .unwrap_or_default();
-                    text.push_str(&format!("    {name:width$}  {title}{}\n", counts(&living)));
+                let width = towns.iter().map(|town| town.town.len()).max().unwrap_or(0);
+                for town in towns {
+                    let title =
+                        town.summary.as_ref().map(|summary| format!("{} · ", summary.record.name)).unwrap_or_default();
+                    text.push_str(&format!("    {:width$}  {title}{}\n", town.town, counts((town.here, town.busy))));
                 }
             }
-            residents.retain(|resident| resident.town.is_none());
-            text.push_str(&format!("outside every town ({})\n", counts(&residents)));
+            text.push_str(&format!("outside every town ({})\n", counts(view.counts())));
             text
         }
     };
 
-    let width = residents.iter().map(|resident| resident.about.id.len()).max().unwrap_or(0);
-    for resident in &residents {
+    let width = view.residents.iter().map(|resident| resident.about.id.len()).max().unwrap_or(0);
+    for resident in &view.residents {
         let you_mark = if Some(&address(resident)) == you { "  (you)" } else { "" };
         text.push_str(&format!("{:width$}{you_mark}  {}\n", resident.about.id, who(resident, now)));
-        let own: Vec<&RunningJob> = jobs.iter().copied().filter(|job| job.owner == address(resident)).collect();
+        let own = view.jobs_of(resident);
         text.push_str(&format!("    {}\n", doing(resident, own.last().copied(), now)));
     }
 
     // What runs on with nobody here who started it.
-    let unattended: Vec<&&RunningJob> = jobs.iter().filter(|job| !present.contains(&job.owner)).collect();
+    let unattended = view.unattended();
     if !unattended.is_empty() {
         text.push_str("unattended\n");
         for job in unattended {
-            let owner = if answered.contains(&job.owner.machine) {
+            let owner = if view.answered(&job.owner.machine) {
                 format!("started by {}", job.owner.resident)
             } else {
                 format!("started by {} on {}, which did not answer", job.owner.resident, job.owner.machine)
@@ -196,9 +186,7 @@ fn doing(resident: &ResidentNow, job: Option<&RunningJob>, now: Timestamp) -> St
 }
 
 /// How many are here, and how many of them busy.
-fn counts(residents: &[&ResidentNow]) -> String {
-    let here = residents.iter().filter(|resident| resident.here).count();
-    let busy = residents.iter().filter(|resident| activity(resident) == Some(Activity::Busy)).count();
+fn counts((here, busy): (usize, usize)) -> String {
     if busy > 0 { format!("{here} here, {busy} busy") } else { format!("{here} here") }
 }
 
@@ -322,19 +310,8 @@ fn status(status: ExitStatus) -> String {
     }
 }
 
-fn address(resident: &ResidentNow) -> Address {
-    Address { machine: resident.about.machine.clone(), resident: resident.about.id.clone() }
-}
-
 fn activity(resident: &ResidentNow) -> Option<Activity> {
     resident.now.as_ref().map(|now| now.activity)
-}
-
-/// When it last did anything the World saw.
-fn latest(resident: &ResidentNow) -> Timestamp {
-    let action = resident.last_action.as_ref().map(|action| action.at);
-    let state = resident.now.as_ref().map(|now| now.since);
-    action.into_iter().chain(state).max().unwrap_or(resident.about.born_at)
 }
 
 fn host(host: &Host) -> String {

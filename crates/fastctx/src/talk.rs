@@ -12,12 +12,11 @@ use std::io::{BufRead as _, Write as _};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
-use fastctx_client::{Client, Watching};
+use fastctx_client::{Conversation, Said, World};
 use fastctx_hands::told::turn_end;
-use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::Landed;
-use fastctx_types::session::{Happened, SessionEvent, Speaker, Watched};
-use fastctx_types::{Address, AgentName, Call, MachineName, Reply, ResidentId, TownName};
+use fastctx_types::session::{Happened, SessionEvent, Speaker};
+use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 
 /// Talk to a resident on any machine, or open a session to talk to.
 #[derive(Args)]
@@ -42,7 +41,7 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
             "{resident} runs this; fastctx talk is the user's own voice. Residents speak to each other with message_colleague"
         );
     }
-    let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
+    let world = World::here()?;
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     runtime.block_on(async {
         let mut printer = Printer::default();
@@ -51,40 +50,42 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
             if text.trim().is_empty() {
                 bail!("say something to start the session with");
             }
-            let call = Call::Open {
-                agent: AgentName::try_from(agent.as_str())?,
-                town: args.town.as_deref().map(TownName::try_from).transpose()?,
-                node: args.node.as_deref().map(MachineName::try_from).transpose()?,
-                text: text.clone(),
-            };
-            let (resident, landed) = match client(&world).await?.call(call).await? {
-                Reply::Opened { resident, landed } => (resident, landed),
-                other => bail!("the node answered something else: {other:?}"),
-            };
-            println!("=== opened {} on {} ===", resident.resident, resident.machine);
-            let mut watching = watch(&world, &resident.resident, Some(resident.machine.clone())).await?;
-            let history = first(&mut watching).await?;
-            let following = following(&landed, &text);
-            let ended = printer.events(&history);
-            if let Some(Following::Turn(turn)) = &following
-                && ended.contains(turn)
-            {
+            let said = world
+                .open(
+                    AgentName::try_from(agent.as_str())?,
+                    args.town.as_deref().map(TownName::try_from).transpose()?,
+                    args.node.as_deref().map(MachineName::try_from).transpose()?,
+                    text.clone(),
+                )
+                .await?;
+            println!("=== opened {} on {} ===", said.to.resident, said.to.machine);
+            let (mut conversation, history) =
+                Conversation::watch(&world, said.to.resident.clone(), Some(said.to.machine.clone())).await?;
+            printer.events(&history);
+            if !conversation.said(&said, &text) {
+                printer.note(&gone(&said));
                 return Ok(());
             }
-            return follow(&mut watching, &mut printer, following, &resident, &landed).await;
+            if conversation.ended_among(&history) {
+                return Ok(());
+            }
+            return follow(&mut conversation, &mut printer).await;
         }
         let (target, words) = args.args.split_first().context("name the resident to talk to")?;
         let (resident, machine) = match target.parse::<Address>() {
             Ok(address) => (address.resident, Some(address.machine)),
             Err(_) => (ResidentId::try_from(target.as_str())?, None),
         };
-        let mut watching = watch(&world, &resident, machine.clone()).await?;
-        let history = first(&mut watching).await?;
+        let (mut conversation, history) = Conversation::watch(&world, resident.clone(), machine.clone()).await?;
         printer.events(&history);
         if !words.is_empty() {
             let text = words.join(" ");
-            let (to, landed) = say(&world, &resident, machine, text.clone()).await?;
-            return follow(&mut watching, &mut printer, following(&landed, &text), &to, &landed).await;
+            let said = world.talk(resident, machine, text.clone()).await?;
+            if !conversation.said(&said, &text) {
+                printer.note(&gone(&said));
+                return Ok(());
+            }
+            return follow(&mut conversation, &mut printer).await;
         }
         // No words: say each line typed, and show everything until input
         // ends.
@@ -103,17 +104,16 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
         });
         loop {
             tokio::select! {
-                piece = watching.next() => match piece? {
-                    Some(Watched::Live { event }) => printer.event(&event),
-                    Some(Watched::History { events }) => { printer.events(&events); }
+                moment = conversation.next() => match moment? {
+                    Some(moment) => printer.event(&moment.event),
                     None => return Ok(()),
                 },
                 line = typed.recv() => match line {
                     Some(line) if line.trim().is_empty() => {}
                     Some(line) => {
-                        let (to, landed) = say(&world, &resident, machine.clone(), line).await?;
-                        if let Landed::Waiting { why, answered } = landed {
-                            printer.note(&waiting(&to, why, answered));
+                        let said = world.talk(resident.clone(), machine.clone(), line.clone()).await?;
+                        if !conversation.said(&said, &line) {
+                            printer.note(&gone(&said));
                         }
                     }
                     None => return Ok(()),
@@ -123,107 +123,33 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
     })
 }
 
-async fn client(world: &WorldDir) -> anyhow::Result<Client> {
-    Ok(Client::connect_or_start(world, fastctx_client::command_peer()).await?)
-}
-
-async fn watch(world: &WorldDir, resident: &ResidentId, machine: Option<MachineName>) -> anyhow::Result<Watching> {
-    let call = Call::Watch { resident: resident.clone(), machine };
-    Ok(client(world).await?.watch(call).await?)
-}
-
-/// The history every watch starts with.
-async fn first(watching: &mut Watching) -> anyhow::Result<Vec<SessionEvent>> {
-    match watching.next().await? {
-        Some(Watched::History { events }) => Ok(events),
-        Some(Watched::Live { event }) => Ok(vec![event]),
-        None => bail!("the watch ended before it began"),
-    }
-}
-
-async fn say(
-    world: &WorldDir,
-    resident: &ResidentId,
-    machine: Option<MachineName>,
-    text: String,
-) -> anyhow::Result<(Address, Landed)> {
-    match client(world).await?.call(Call::Talk { to: resident.clone(), machine, text }).await? {
-        Reply::Spoken { to, landed } => Ok((to, landed)),
-        other => bail!("the node answered something else: {other:?}"),
-    }
-}
-
-/// What to follow: the turn the words went into, or, when a session's
-/// plugin has them, the words themselves until the session says which turn
-/// took them.
-enum Following {
-    Turn(String),
-    Words(String),
-}
-
-/// Shows what happens until the turn the words went into ends; when they
-/// went into none yet, says where they are and stops.
-async fn follow(
-    watching: &mut Watching,
-    printer: &mut Printer,
-    following: Option<Following>,
-    to: &Address,
-    landed: &Landed,
-) -> anyhow::Result<()> {
-    let (mut turn, words) = match following {
-        Some(Following::Turn(turn)) => (Some(turn), None),
-        Some(Following::Words(words)) => (None, Some(words)),
-        None => {
-            printer.note(&match landed {
-                Landed::Waiting { why, answered } => waiting(to, why.clone(), *answered),
-                _ => format!("your words went to {}, which is on another machine", to.resident),
-            });
+/// Shows what happens until the turn the words went into ends.
+async fn follow(conversation: &mut Conversation, printer: &mut Printer) -> anyhow::Result<()> {
+    while let Some(moment) = conversation.next().await? {
+        printer.event(&moment.event);
+        if moment.answered {
             return Ok(());
         }
-    };
-    loop {
-        match watching.next().await? {
-            Some(Watched::Live { event }) => {
-                printer.event(&event);
-                match (&turn, &event.happened) {
-                    // The session says which turn took them.
-                    (None, Happened::Heard { turn: Some(took), from: Some(Speaker::User { .. }), text })
-                        if words.as_deref() == Some(text.as_str()) =>
-                    {
-                        turn = Some(took.clone())
-                    }
-                    (Some(turn), Happened::TurnEnded { turn: ended, .. }) if ended == turn => return Ok(()),
-                    _ => {}
-                }
+    }
+    Ok(())
+}
+
+/// Where words are that went into no turn yet.
+fn gone(said: &Said) -> String {
+    let to = &said.to.resident;
+    match &said.landed {
+        Landed::Waiting { why, answered } => {
+            let wait = match why {
+                Some(why) => format!("your words wait for {to}: {why}"),
+                None => format!("your words wait for {to} to take them, with its next call of a World tool"),
+            };
+            if *answered {
+                format!("{wait}; the turn they go into can be followed with fastctx talk {to}")
+            } else {
+                format!("{wait}; its host does not tell the World when its turns end")
             }
-            Some(Watched::History { events }) => {
-                let ended = printer.events(&events);
-                if turn.as_ref().is_some_and(|turn| ended.contains(turn)) {
-                    return Ok(());
-                }
-            }
-            None => return Ok(()),
         }
-    }
-}
-
-fn following(landed: &Landed, text: &str) -> Option<Following> {
-    match landed {
-        Landed::NewTurn { turn } | Landed::JoinedTurn { turn } => Some(Following::Turn(turn.clone())),
-        Landed::Handed => Some(Following::Words(text.to_string())),
-        Landed::Waiting { .. } | Landed::Sent => None,
-    }
-}
-
-fn waiting(to: &Address, why: Option<String>, answered: bool) -> String {
-    let wait = match why {
-        Some(why) => format!("your words wait for {}: {why}", to.resident),
-        None => format!("your words wait for {} to take them, with its next call of a World tool", to.resident),
-    };
-    if answered {
-        format!("{wait}; the turn they go into can be followed with fastctx talk {}", to.resident)
-    } else {
-        format!("{wait}; its host does not tell the World when its turns end")
+        _ => format!("your words went to {to} on {}", said.to.machine),
     }
 }
 

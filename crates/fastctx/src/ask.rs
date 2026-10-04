@@ -1,19 +1,15 @@
 //! Asking the node, as a command: it speaks as whoever runs it
 //! (`fastctx_client::command_peer`).
 
-use fastctx_client::{Client, command_peer};
+use fastctx_client::World;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::{Address, Call, MachineName, Reply, TownName};
 
 /// Sends one call to this machine's node, starting it if it is not
 /// running. Returns the answer and the machine the node runs on.
 pub fn call(call: Call) -> anyhow::Result<(Reply, MachineName)> {
-    let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
-    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
-        let mut client = Client::connect_or_start(&world, command_peer()).await?;
-        let reply = client.call(call).await?;
-        anyhow::Ok((reply, client.machine.clone()))
-    })
+    let world = World::here()?;
+    Ok(tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(world.call(call))?)
 }
 
 /// The town a command means when it names none, for a resident of another
