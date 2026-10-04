@@ -322,11 +322,15 @@ impl FormPage {
                 ]);
                 Act::Stay
             }
-            (Kind::Join, Done::Joined { world, name }) => {
-                self.result = Some(vec![Line::from(Span::styled(
-                    words.joined(&world, name.as_str()),
-                    ctx.look.text(Role::Text),
-                ))]);
+            (Kind::Join, Done::Joined { world, name, kept }) => {
+                let (said, role) = match &kept {
+                    Ok(kept) => (words.kept(kept), Role::Muted),
+                    Err(why) => (words.not_kept(why), Role::Caution),
+                };
+                self.result = Some(vec![
+                    Line::from(Span::styled(words.joined(&world, name.as_str()), ctx.look.text(Role::Text))),
+                    Line::from(Span::styled(said, ctx.look.text(role))),
+                ]);
                 Act::Stay
             }
             _ => Act::Stay,

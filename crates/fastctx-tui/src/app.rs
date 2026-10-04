@@ -113,6 +113,8 @@ pub enum Done {
     Joined {
         world: String,
         name: MachineName,
+        /// What came of keeping this machine connected afterwards.
+        kept: Result<fastctx_install::service::Kept, String>,
     },
     Revoked,
     Left,

@@ -278,6 +278,10 @@ impl TalkPage {
                     machine: self.address.machine.clone(),
                 });
             }
+            KeyCode::Char('o') if control => {
+                self.transcript.toggle_details();
+                return Act::Stay;
+            }
             KeyCode::Char('r') if control => {
                 if matches!(self.watching, Watching::Ended(_)) {
                     self.round += 1;
@@ -397,7 +401,7 @@ impl TalkPage {
         crumbs.extend(self.project.clone());
         crumbs.push(who::name(ctx, &self.agent, &self.address.machine));
         // A turn at work shows above the place to type, where the eye is.
-        let state = match self.state {
+        let mut state = match self.state {
             Some((Activity::Busy, _)) => Line::default(),
             Some((Activity::Idle, since)) => Line::from(vec![
                 Span::styled("○ ", look.text(Role::Muted)),
@@ -408,6 +412,13 @@ impl TalkPage {
             }
             None => Line::default(),
         };
+        // How full its context is, beside how it stands.
+        if let Some((used, window)) = self.transcript.context() {
+            if !state.spans.is_empty() {
+                state.spans.push(Span::styled("  ·  ", look.text(Role::Faint)));
+            }
+            state.spans.push(Span::styled(words.context_used(used, window), look.text(Role::Muted)));
+        }
         let at = |offset: u16| Rect { y: column.y + offset, height: 1, ..column };
         paint::header(buffer, at(1), look, &crumbs, &state);
         let mut about = Vec::new();
@@ -417,6 +428,9 @@ impl TalkPage {
             }
             Some(Origin::User) => about.push(words.opened_by_you().to_string()),
             None => {}
+        }
+        if let Some(title) = self.transcript.title() {
+            about.push(words.quoted(title));
         }
         about.extend(self.model.clone());
         about.push(self.address.resident.to_string());
@@ -557,6 +571,9 @@ impl TalkPage {
                 vec![("Enter", words.key_send()), ("Ctrl+J", words.key_newline()), ("PgUp PgDn", words.key_scroll())];
             if empty && !self.colleagues().is_empty() {
                 keys.push(("Tab", words.key_colleagues()));
+            }
+            if self.transcript.has_tools() {
+                keys.push(("Ctrl+O", words.key_details(self.transcript.details())));
             }
             if matches!(self.watching, Watching::Ended(_)) {
                 keys.push(("Ctrl+R", words.key_watch_again()));

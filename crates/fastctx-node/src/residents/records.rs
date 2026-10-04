@@ -95,6 +95,7 @@ pub fn move_to(
     for name in ["inbox", "outbox", "handovers", "uncertain", "turns", "turn-sessions", "session-events"] {
         copy_state(&old.path().join(name), &new.path().join(name), true)?;
     }
+    crate::session_record::carried(old.path(), new.path())?;
     merge_receipts(&old, &new)?;
     arrive_in(world, id, to, about)?;
     Ok(())
@@ -235,6 +236,7 @@ pub fn carry_obligations(
     {
         copy_state(&old.path().join(name), &new.path().join(name), false)?;
     }
+    crate::session_record::carried(old.path(), new.path())?;
     merge_receipts(&old, &new)
 }
 

@@ -548,6 +548,30 @@ impl Words {
         }
     }
 
+    /// What was done with what an old fastctx left on this machine.
+    pub fn legacy_cleaned(&self, tidied: usize, archived: usize, place: &str, waiting: usize) -> String {
+        match self.lang {
+            Lang::Zh => {
+                let mut said = format!(
+                    "旧版 fastctx 留下的：{tidied} 处原样未动的已收拾，{archived} 样归档在 {place}，删不删由你"
+                );
+                if waiting > 0 {
+                    said.push_str(&format!("；还有 {waiting} 样在用，等不用了再收"));
+                }
+                said
+            }
+            Lang::En => {
+                let mut said = format!(
+                    "Left by an old fastctx: {tidied} untouched files tidied, {archived} archived in {place}, yours to delete"
+                );
+                if waiting > 0 {
+                    said.push_str(&format!("; {waiting} still in use, put away once they are not"));
+                }
+                said
+            }
+        }
+    }
+
     pub fn left_alone(&self, location: &str, reason: &str) -> String {
         match self.lang {
             Lang::Zh => format!("留着没动：{location}（{reason}）"),
@@ -694,6 +718,56 @@ impl Words {
         }
     }
 
+    pub fn in_directory(&self, cwd: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("在 {cwd}"),
+            Lang::En => format!("in {cwd}"),
+        }
+    }
+
+    pub fn more_lines_before(&self, lines: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("…前面还有 {lines} 行"),
+            Lang::En => format!("… {lines} more lines before"),
+        }
+    }
+
+    pub fn more_lines_after(&self, lines: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("…还有 {lines} 行"),
+            Lang::En => format!("… {lines} more lines"),
+        }
+    }
+
+    pub fn image(&self, mime: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("[图片 {mime}]"),
+            Lang::En => format!("[image {mime}]"),
+        }
+    }
+
+    /// A block of a tool's answer the World does not read, by its type.
+    pub fn block(&self, kind: &str) -> String {
+        format!("[{kind}]")
+    }
+
+    /// The key that shows or hides each tool's input and output.
+    pub fn key_details(&self, shown: bool) -> &'static str {
+        if shown { self.pick("收起工具", "fold tools") } else { self.pick("展开工具", "unfold tools") }
+    }
+
+    /// How much of its context a session holds: a share of its window
+    /// when the host says how large that is, else a count of tokens.
+    pub fn context_used(&self, used: u64, window: Option<u64>) -> String {
+        let count = if used >= 1000 { format!("{:.1}k", used as f64 / 1000.0) } else { used.to_string() };
+        match (self.lang, window) {
+            (Lang::Zh, Some(window)) if window > 0 => format!("上下文 {}%", used * 100 / window),
+            (Lang::En, Some(window)) if window > 0 => format!("context {}%", used * 100 / window),
+            (Lang::Zh, _) => format!("上下文 {count} token"),
+            (Lang::En, _) => format!("context {count} tokens"),
+        }
+    }
+
     pub fn thinking(&self) -> &'static str {
         self.pick("思考", "Thinking")
     }
@@ -708,6 +782,10 @@ impl Words {
 
     pub fn compacted(&self) -> &'static str {
         self.pick("—— 上下文压缩过了 ——", "—— context compacted ——")
+    }
+
+    pub fn turn_stopped(&self) -> &'static str {
+        self.pick("这一轮被停下了", "this turn was stopped")
     }
 
     pub fn tool_cut(&self) -> &'static str {
@@ -972,6 +1050,32 @@ impl Words {
         match self.lang {
             Lang::Zh => format!("已加入世界 {world}，这台机器在里面叫 {name}。"),
             Lang::En => format!("Joined the World {world}; this machine is {name} in it."),
+        }
+    }
+
+    /// What came of keeping this machine connected after it joined.
+    pub fn kept(&self, kept: &fastctx_install::service::Kept) -> String {
+        use fastctx_install::service::Kept;
+        match (self.lang, kept) {
+            (Lang::Zh, Kept::Already | Kept::Installed) => "开机就连着：系统服务会一直让它在线，登不登录都一样。".to_string(),
+            (Lang::En, Kept::Already | Kept::Installed) => {
+                "Kept connected: a system service keeps it online from boot, signed in or not.".to_string()
+            }
+            (Lang::Zh, Kept::Declined) => {
+                "没装上开机服务：它只在你登录时连着。以管理员身份跑 fastctx service node install 可以补装。".to_string()
+            }
+            (Lang::En, Kept::Declined) => "No boot service: it is connected only while you are signed in. Run fastctx service node install as administrator to add it.".to_string(),
+            (Lang::Zh, Kept::Unsupported) => "这个系统没有给节点用的服务：它只在你登录时连着。".to_string(),
+            (Lang::En, Kept::Unsupported) => "This system has no service for the node: it is connected only while you are signed in.".to_string(),
+            (Lang::Zh, Kept::Command(command)) => format!("要它开机就连着，还需装系统服务：{command}"),
+            (Lang::En, Kept::Command(command)) => format!("To keep it connected from boot, install the service: {command}"),
+        }
+    }
+
+    pub fn not_kept(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("开机服务没装上：{why}"),
+            Lang::En => format!("The boot service was not installed: {why}"),
         }
     }
 

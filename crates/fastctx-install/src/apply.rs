@@ -129,10 +129,12 @@ pub enum Standing {
 }
 
 /// How each host stands, as the record says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub codex: Standing,
     pub claude: Standing,
+    /// What has been done with what an old fastctx left here.
+    pub legacy: Option<crate::upgrade::Summary>,
 }
 
 /// How each host stands now; reads the record and nothing of the hosts'.
@@ -156,6 +158,7 @@ pub fn status(places: &Places) -> Result<Status, Error> {
     Ok(Status {
         codex: if old { Standing::Old } else { standing(present.codex, record.codex.is_some()) },
         claude: standing(present.claude, record.claude_md.is_some() || record.settings.is_some() || plugin),
+        legacy: crate::upgrade::summary(places)?,
     })
 }
 
@@ -235,6 +238,25 @@ impl Record {
     fn holds_nothing(&self) -> bool {
         self.codex.is_none() && self.claude_md.is_none() && self.settings.is_none()
     }
+}
+
+/// Places this fastctx where the hosts and the node's service start it
+/// from, as an apply does; returns that path, and what was changed or left.
+pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
+    crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
+    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let mut report = recovery::before(places)?;
+    let installed = places.installed();
+    let copy = Snapshot::read(&installed)?;
+    if !same_executable(&places.fastctx, &copy)? {
+        let receipt = Transaction::new([FileChange::copy_executable(copy, &places.fastctx)?])
+            .commit()
+            .map_err(|error| Error::Files(error.to_string()))?;
+        report.changed.extend(receipt.changed);
+        report.preserved.extend(receipt.preserved);
+        report.leftovers.extend(receipt.cleanup.iter().map(ToString::to_string));
+    }
+    Ok((installed, report))
 }
 
 /// Puts the World's tools into the sessions `hosts` open from now on.

@@ -42,24 +42,33 @@ pub(super) async fn read(server: &AppServer, thread: &str, running: Option<&str>
             .iter()
             .filter_map(|entry| Some(((entry["turnId"].as_str()?, entry["item"]["id"].as_str()?), entry)))
             .collect();
-        let (mut timeline, active_voice) = match pages_with_voice(server, "thread/timeline/list", json!({"threadId": thread})).await {
-            Ok(timeline) => timeline,
-            // The 0.160 timeline RPC explicitly excludes archived threads.
-            // Its ordinary turns/items RPCs still include archived history.
-            Err(Unanswered::Rpc { code: -32600, message, data })
-                if data.is_null() && message == format!("thread {thread} is archived") =>
-            {
-                (ordinary_timeline(&turns, &entries), None)
-            }
-            Err(error) => return Err(error.to_string()),
-        };
+        let (mut timeline, active_voice) =
+            match pages_with_voice(server, "thread/timeline/list", json!({"threadId": thread})).await {
+                Ok(timeline) => timeline,
+                // The 0.160 timeline RPC explicitly excludes archived threads.
+                // Its ordinary turns/items RPCs still include archived history.
+                Err(Unanswered::Rpc { code: -32600, message, data })
+                    if data.is_null() && message == format!("thread {thread} is archived") =>
+                {
+                    (ordinary_timeline(&turns, &entries), None)
+                }
+                Err(error) => return Err(error.to_string()),
+            };
         // Timeline pages run newest to oldest, with each page ordered forward.
         timeline.sort_by_key(|entry| entry["position"].as_u64());
-        let mut events: Vec<SessionEvent> = active_voice.into_iter().map(|session| SessionEvent {
-            at: seconds(metadata.get("createdAt")), happened: Happened::Changed { turn: None, change: fastctx_types::session::SessionChange::Voice {
-                event: "active_session".into(), data: json!({"realtimeSessionId": session}),
-            } },
-        }).collect();
+        let mut events: Vec<SessionEvent> = active_voice
+            .into_iter()
+            .map(|session| SessionEvent {
+                at: seconds(metadata.get("createdAt")),
+                happened: Happened::Changed {
+                    turn: None,
+                    change: fastctx_types::session::SessionChange::Voice {
+                        event: "active_session".into(),
+                        data: json!({"realtimeSessionId": session}),
+                    },
+                },
+            })
+            .collect();
         let mut messages: HashMap<String, String> = HashMap::new();
         let mut at = seconds(metadata.get("createdAt"));
         for entry in timeline {
@@ -72,19 +81,17 @@ pub(super) async fn read(server: &AppServer, thread: &str, running: Option<&str>
                 Some("item") => {
                     let item = &entry["item"];
                     if let Some(timing) = item.get("id").and_then(Value::as_str).and_then(|id| times.get(&(turn, id)))
-                        && timing["completedAtMs"].is_i64() {
-                            at = millis(timing.get("completedAtMs"));
-                        }
+                        && timing["completedAtMs"].is_i64()
+                    {
+                        at = millis(timing.get("completedAtMs"));
+                    }
                     if let Some(mut happened) = completed(turn, item, &mut messages) {
                         if let Happened::Finished { item, .. } = &mut happened
-                            && let Some(timing) = times.get(&(turn, item.id.as_str())) {
-                                item.started_at = timing["startedAtMs"]
-                                    .as_i64()
-                                    .and_then(|n| jiff::Timestamp::from_millisecond(n).ok());
-                                item.completed_at = timing["completedAtMs"]
-                                    .as_i64()
-                                    .and_then(|n| jiff::Timestamp::from_millisecond(n).ok());
-                            }
+                            && let Some(timing) = times.get(&(turn, item.id.as_str()))
+                        {
+                            item.started_at =
+                                timing["startedAtMs"].as_i64().and_then(|n| jiff::Timestamp::from_millisecond(n).ok());
+                        }
                         events.push(SessionEvent { at, happened });
                     }
                 }
@@ -172,7 +179,11 @@ async fn pages(server: &AppServer, method: &str, params: Value) -> Result<Vec<Va
     pages_with_voice(server, method, params).await.map(|(entries, _)| entries)
 }
 
-async fn pages_with_voice(server: &AppServer, method: &str, mut params: Value) -> Result<(Vec<Value>, Option<String>), Unanswered> {
+async fn pages_with_voice(
+    server: &AppServer,
+    method: &str,
+    mut params: Value,
+) -> Result<(Vec<Value>, Option<String>), Unanswered> {
     let mut entries = Vec::new();
     loop {
         let page = server.ask(method, params.clone()).await?;
@@ -192,9 +203,13 @@ async fn pages_with_voice(server: &AppServer, method: &str, mut params: Value) -
 fn completed(turn: &str, raw: &Value, messages: &mut HashMap<String, String>) -> Option<Happened> {
     match items::read(raw, true) {
         items::Read::Hidden => None,
-        items::Read::Words { text, message } => {
-            Some(Happened::Heard { delivery: None, turn: Some(turn.into()), from: None, text, message: Some(Box::new(message)) })
-        }
+        items::Read::Words { text, message } => Some(Happened::Heard {
+            delivery: None,
+            turn: Some(turn.into()),
+            from: None,
+            text,
+            message: Some(Box::new(message)),
+        }),
         items::Read::Item(item) => {
             if let What::Message { text } = &item.what {
                 messages.insert(turn.into(), text.clone());
@@ -217,7 +232,13 @@ pub(super) fn project(answer: &Value, running: Option<&str>) -> Vec<SessionEvent
             match items::read(item, true) {
                 items::Read::Words { text, message } => push(
                     started,
-                    Happened::Heard { delivery: None, turn: Some(turn), from: None, text, message: Some(Box::new(message)) },
+                    Happened::Heard {
+                        delivery: None,
+                        turn: Some(turn),
+                        from: None,
+                        text,
+                        message: Some(Box::new(message)),
+                    },
                 ),
                 items::Read::Hidden => {}
                 items::Read::Item(item) => {

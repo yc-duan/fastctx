@@ -223,6 +223,7 @@ pub struct CodexHost {
 
 #[derive(Default)]
 struct State {
+    notification_sequence: u64,
     server: Option<(Arc<AppServer>, Launch)>,
     threads: HashMap<String, Thread>,
 }
@@ -466,6 +467,11 @@ impl CodexHost {
         applied.await.map_err(|_| "the Codex event consumer stopped before applying its queue".to_string())?
     }
 
+    /// Whether a turn runs in any thread this host holds.
+    pub fn any_turn_running(&self) -> bool {
+        self.lock().threads.values().any(|entry| entry.turn.is_some())
+    }
+
     pub fn running_turn(&self, thread: &str) -> Option<String> {
         self.lock().threads.get(thread).and_then(|entry| entry.turn.clone())
     }
@@ -640,6 +646,11 @@ impl CodexHost {
 
     /// Reads one notification about a thread.
     fn notified(&self, method: &str, params: &Value, at: Timestamp) {
+        let revision = {
+            let mut state = self.lock();
+            state.notification_sequence += 1;
+            Some(state.notification_sequence)
+        };
         let Some(thread) =
             params.get("threadId").or_else(|| params.pointer("/thread/id")).and_then(Value::as_str).map(str::to_string)
         else {
@@ -654,9 +665,9 @@ impl CodexHost {
             if method == "thread/started"
                 && let Some(title) =
                     params.pointer("/thread/name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
-                {
-                    self.emit(&thread, at, Happened::Titled { title: title.into() });
-                }
+            {
+                self.emit(&thread, at, Happened::Titled { title: title.into() });
+            }
             if method == "guardianWarning" {
                 if turn.is_none() {
                     return;
@@ -741,7 +752,6 @@ impl CodexHost {
                 let key = (turn.clone(), item.id.clone());
                 if completed {
                     item.started_at = entry.item_starts.remove(&key);
-                    item.completed_at = Some(at);
                 } else {
                     item.started_at = Some(at);
                     entry.item_starts.insert(key, at);
@@ -760,7 +770,7 @@ impl CodexHost {
             }
             "item/agentMessage/delta" | "item/plan/delta" => {
                 let (Some(turn), Some(item), Some(delta)) = (turn, text("/itemId"), text("/delta")) else { return };
-                self.emit(&thread, at, Happened::Grew { turn, item, part: Part::Text, text: delta });
+                self.emit(&thread, at, Happened::Grew { revision, turn, item, part: Part::Text, text: delta });
             }
             "item/reasoning/summaryTextDelta" | "item/fileChange/patchUpdated" => {
                 let (Some(turn), Some(id)) = (turn, text("/itemId")) else { return };
@@ -802,7 +812,7 @@ impl CodexHost {
             }
             "item/commandExecution/outputDelta" => {
                 let (Some(turn), Some(item), Some(delta)) = (turn, text("/itemId"), text("/delta")) else { return };
-                self.emit(&thread, at, Happened::Grew { turn, item, part: Part::Output, text: delta });
+                self.emit(&thread, at, Happened::Grew { revision, turn, item, part: Part::Output, text: delta });
             }
             "turn/plan/updated" => {
                 let Some(turn) = turn else { return };
@@ -812,6 +822,9 @@ impl CodexHost {
                     .into_iter()
                     .flatten()
                     .map(|step| Step {
+                        id: None,
+                        active_form: None,
+                        detail: Some(step.clone()),
                         text: step.get("step").and_then(Value::as_str).unwrap_or_default().to_string(),
                         status: match step.get("status").and_then(Value::as_str) {
                             Some("completed") => StepStatus::Done,
@@ -1016,21 +1029,21 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                         | "item/tool/requestUserInput"
                         | "mcpServer/elicitation/request"
                         | "item/permissions/requestApproval"
-                )
-                    && let Some(thread) = params.get("threadId").and_then(Value::as_str) {
-                        host.emit(
-                            thread,
-                            Timestamp::now(),
-                            Happened::Changed {
-                                turn: params.get("turnId").and_then(Value::as_str).map(str::to_string),
-                                change: SessionChange::Request {
-                                    id: id.clone(),
-                                    request: method.clone(),
-                                    params: params.clone(),
-                                },
+                ) && let Some(thread) = params.get("threadId").and_then(Value::as_str)
+                {
+                    host.emit(
+                        thread,
+                        Timestamp::now(),
+                        Happened::Changed {
+                            turn: params.get("turnId").and_then(Value::as_str).map(str::to_string),
+                            change: SessionChange::Request {
+                                id: id.clone(),
+                                request: method.clone(),
+                                params: params.clone(),
                             },
-                        );
-                    }
+                        },
+                    );
+                }
                 // The World answers nothing the app-server asks: it gives no
                 // approvals, and its threads ask for none.
                 (host.log)(format!("declined the app-server's {method} request"));

@@ -23,6 +23,9 @@ pub struct Conversation {
     following: Option<Following>,
     queued: VecDeque<SessionEvent>,
     seen: HashSet<String>,
+    finished_voice: HashSet<String>,
+    finished: HashSet<(String, String)>,
+    ended: HashSet<String>,
 }
 
 /// What the latest words are waiting on.
@@ -74,7 +77,31 @@ impl Conversation {
         });
         {
             let seen = history.iter().filter_map(identity).collect();
-            Ok((Self { pieces, following: None, queued: VecDeque::new(), seen }, history))
+            let finished_voice = history
+                .iter()
+                .filter_map(|event| match &event.happened {
+                    Happened::Realtime { item, complete: true } => item["id"].as_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect();
+            let finished = history
+                .iter()
+                .filter_map(|event| match &event.happened {
+                    Happened::Finished { turn, item } => Some((turn.clone(), item.id.clone())),
+                    _ => None,
+                })
+                .collect();
+            let ended = history
+                .iter()
+                .filter_map(|event| match &event.happened {
+                    Happened::TurnEnded { turn, .. } => Some(turn.clone()),
+                    _ => None,
+                })
+                .collect();
+            Ok((
+                Self { pieces, following: None, queued: VecDeque::new(), seen, finished, ended, finished_voice },
+                history,
+            ))
         }
     }
 
@@ -107,6 +134,38 @@ impl Conversation {
     pub async fn next(&mut self) -> Result<Option<Moment>, Error> {
         loop {
             if let Some(event) = self.queued.pop_front() {
+                // Registration precedes the history read. That read can
+                // include a completed item whose older deltas are queued.
+                let stale = match &event.happened {
+                    Happened::Began { turn, item } | Happened::Updated { turn, item } => {
+                        self.ended.contains(turn) || self.finished.contains(&(turn.clone(), item.id.clone()))
+                    }
+                    Happened::Grew { turn, item, .. } => {
+                        self.ended.contains(turn) || self.finished.contains(&(turn.clone(), item.clone()))
+                    }
+                    Happened::Finished { turn, item } => {
+                        self.finished.insert((turn.clone(), item.id.clone()));
+                        false
+                    }
+                    Happened::TurnEnded { turn, .. } => {
+                        self.ended.insert(turn.clone());
+                        false
+                    }
+                    Happened::Realtime { item, complete: false } => {
+                        item["id"].as_str().is_some_and(|id| self.finished_voice.contains(id))
+                    }
+                    Happened::RealtimeGrew { item, .. } => self.finished_voice.contains(item),
+                    Happened::Realtime { item, complete: true } => {
+                        if let Some(id) = item["id"].as_str() {
+                            self.finished_voice.insert(id.into());
+                        }
+                        false
+                    }
+                    _ => false,
+                };
+                if stale {
+                    continue;
+                }
                 if let Some(key) = identity(&event)
                     && !self.seen.insert(key)
                 {
@@ -152,14 +211,14 @@ fn identity(event: &SessionEvent) -> Option<String> {
     match &event.happened {
         Happened::TurnEnded { turn, .. } => Some(format!("end:{turn}")),
         Happened::TurnStarted { turn } => Some(format!("start:{turn}")),
-        Happened::Grew { .. } | Happened::Updated { .. } | Happened::RealtimeGrew { .. } => None,
+        Happened::RealtimeGrew { .. } => None,
+        Happened::Began { turn, item } => Some(format!("began:{turn}:{}", item.id)),
+        Happened::Finished { turn, item } => Some(format!("finished:{turn}:{}", item.id)),
+        Happened::DeliveryUncertain { delivery, .. } => Some(format!("uncertain:{delivery}")),
         Happened::Heard { turn, message: Some(message), .. } => Some(format!("heard:{turn:?}:{}", message.id)),
         Happened::Realtime { item, complete } => {
             Some(format!("realtime:{complete}:{}:{}", item["realtimeSessionId"], item["id"]))
         }
-        Happened::Began { turn, item } => Some(format!("began:{turn}:{}", item.id)),
-        Happened::Finished { turn, item } => Some(format!("finished:{turn}:{}", item.id)),
-        Happened::DeliveryUncertain { delivery, .. } => Some(format!("uncertain:{delivery}")),
         _ => serde_json::to_string(event).ok(),
     }
 }

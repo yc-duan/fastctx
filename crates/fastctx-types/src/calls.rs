@@ -78,6 +78,9 @@ pub enum Call {
     Revoke { name: MachineName, reason: String },
     /// This machine leaves its World and becomes a World of one again.
     Leave,
+    /// The node hands the World over once idle and exits: a system service
+    /// now keeps this World's node, and its node waits to take over.
+    HandOver,
     /// This machine's link and every machine of the World (`fastctx nodes`).
     Nodes,
 }

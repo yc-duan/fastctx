@@ -1,3 +1,5 @@
+import { presentation } from './presentation.js'
+
 // The World's mod for Claude Code.
 //
 // It tells the World the session exists and what it does, turn by turn and
@@ -99,6 +101,20 @@ function conversation(sessionId, previous) {
   const unwritten = new Map()
   const failedReports = new Set()
 
+  function reserved() {
+    const id = nextName()
+    // Six sequence digits fill the six sub-millisecond digits of a Rust
+    // timestamp. The counter's carry in nextName keeps this monotonic.
+    const at = new Date(logicalTime).toISOString().replace('Z', String(sequence).padStart(6, '0') + 'Z')
+    return { id, at }
+  }
+  const shown = presentation(event, reserved, () => turn, ($, state) => {
+    const body = JSON.stringify({ process: hostProcess, ...state })
+    const saved = writing.then(() => writeReport($, dir + '/presentation', body))
+    writing = saved.catch(() => {})
+    return saved
+  })
+
   function nextName() {
     const now = Date.now()
     if (now > logicalTime) { logicalTime = now; sequence = 0 }
@@ -110,8 +126,9 @@ function conversation(sessionId, previous) {
 
   function event($, kind, fields) {
     if (!dir) return writing
-    const name = nextName()
-    const body = JSON.stringify({ kind, at: stamp(), ...fields })
+    const { id: name, at } = reserved()
+    const pending = [...unwritten.keys()].map((name) => name + '.json')
+    const body = JSON.stringify({ kind, at, ...fields, pending })
     const destination = dir + '/events/' + name
     unwritten.set(name, body)
     const written = writing.then(async () => {
@@ -347,13 +364,6 @@ function conversation(sessionId, previous) {
     }
   }
 
-  // A tool call's own arguments: its input without the keys the engine
-  // strips before the tool runs.
-  function argumentsOf(e) {
-    const { tool, tool_use_id, consent, agentId, ...input } = e
-    return input
-  }
-
   function wire(on) {
     on('session.start', async ($, e, next) => {
       const id = sessionId
@@ -384,6 +394,14 @@ function conversation(sessionId, previous) {
           turn = previous.turn
           busy = turn !== null
         }
+      }
+      if (files.includes('presentation.json')) {
+        const state = await readReport($, dir + '/presentation')
+        if (state.process.pid !== hostProcess.pid || state.process.token !== hostProcess.token) {
+          state.tools = []
+          state.requests = []
+        }
+        shown.restore(state)
       }
       const ask = async (name, get) => {
         try {
@@ -423,6 +441,7 @@ function conversation(sessionId, previous) {
 
     on('turn.complete', async ($, e, next) => {
       if (e.agentId !== undefined) return next(e)
+      await shown.end($, e.turnId)
       if (turn === e.turnId) { busy = false; turn = null }
       const completed = event($, 'turn_complete', {
         turn: e.turnId,
@@ -431,6 +450,7 @@ function conversation(sessionId, previous) {
         refusal: e.reason === 'refusal' ? e.refusal : null,
         ms: e.durationMs,
         answer: e.answer ?? null,
+        streamed: true,
       })
       const saved = activity($)
       await Promise.all([completed, saved])
@@ -438,22 +458,11 @@ function conversation(sessionId, previous) {
       return next(e)
     })
 
-    on('tool.call', async ($, e, next) => {
-      if (e.agentId !== undefined) return next(e)
-      const fields = { turn, item: e.tool_use_id, tool: e.tool, input: argumentsOf(e) }
-      await event($, 'tool_start', fields)
-      const began = Date.now()
-      const result = await next(e)
-      const said = result.deny !== undefined ? result.deny : result.text
-      await event($, 'tool_end', {
-        ...fields,
-        output: typeof said === 'string' ? [{ type: 'text', text: said }] : [],
-        failed: result.isError === true,
-        declined: result.deny !== undefined,
-        ms: Date.now() - began,
-      })
-      return result
-    })
+    on('turn.step', shown.step)
+    on('tool.call', shown.call)
+    on('session.append', shown.append)
+    on('session.compact', shown.compact)
+    on('session.measure', shown.measure)
 
     // Both successful and failed main-tool boundaries can append World facts.
     // Appending preserves the text without the classic context-size rewrite.
@@ -492,9 +501,9 @@ function conversation(sessionId, previous) {
 
     on('session.end', async ($, e, next) => {
       closed = true
-      const name = nextName()
+      const { id: name, at } = reserved()
       const path = dir + '/events/' + name
-      const body = JSON.stringify({ kind: 'session_end', at: stamp(), reason: e.reason, pending: [...unwritten.keys()].map((name) => name + '.json') })
+      const body = JSON.stringify({ kind: 'session_end', at, reason: e.reason, pending: [...unwritten.keys()].map((name) => name + '.json') })
       unwritten.set(name, body)
       try {
         await writeReport($, path, body)
@@ -517,6 +526,7 @@ function conversation(sessionId, previous) {
 export function register(on) {
   const sessions = new Map()
   const turns = new Map()
+  const toolOwners = new Map()
   let currentSession = null
   async function session($, id, renew = false) {
     let context = sessions.get(id)
@@ -531,15 +541,26 @@ export function register(on) {
   }
   const route = (name) => async ($, e, next) => {
     const id = name === 'session.end' ? e.sessionId : await $.session.id()
-    const context = (name === 'turn.complete' && turns.get(e.turnId)) || await session($, id)
+    const resultId = name === 'session.append' && e.agentId === undefined
+      ? e.message.content.find((block) => block.type === 'tool_result')?.tool_use_id : undefined
+    const context = (name === 'turn.complete' && turns.get(e.turnId))
+      || (resultId !== undefined && toolOwners.get(resultId)) || await session($, id)
     if (name === 'turn.start') turns.set(e.turnId, context)
+    if (name === 'tool.call' && e.agentId === undefined) toolOwners.set(e.tool_use_id, context)
     if (name === 'session.start') return next(e)
     return context.handlers[name]($, e, next)
   }
   on('session.start', route('session.start'))
   on('turn.start', route('turn.start'))
   on('turn.complete', route('turn.complete'))
+  on('turn.step', async function* ($, e, next) {
+    const context = turns.get(e.turnId) || await session($, await $.session.id())
+    return yield* context.handlers['turn.step']($, e, next)
+  })
   on('tool.call', route('tool.call'))
+  on('session.append', route('session.append'))
+  on('session.compact', route('session.compact'))
+  on('session.measure', route('session.measure'))
   on('classic.PostToolUse', route('classic.PostToolUse'))
   on('classic.PostToolUseFailure', route('classic.PostToolUseFailure'))
   on('session.end', route('session.end'))

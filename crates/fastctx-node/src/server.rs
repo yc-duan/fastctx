@@ -66,6 +66,16 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
             continue;
         }
+        // A call is answered whole or not taken on: a node handing the
+        // World to its successor answers what it has begun, then goes.
+        let Some(_answering) = node.handoff.call() else {
+            let reply = Err(Failure::new(format!(
+                "the node on {} is handing over to its successor; ask again in a moment",
+                node.machine()
+            )));
+            writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
+            continue;
+        };
         let arriving = matches!(call, Call::Arrive { .. });
         let reply = match call {
             Call::Collect { resident } => collect(node, resident, &mut arrived.collected).await,
@@ -306,6 +316,10 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             link.revoke(&name, &reason).await.map(|()| Reply::Done).map_err(Failure::new)
         }
         Call::Leave => crate::world::leave(node).await.map(|()| Reply::Done),
+        Call::HandOver => {
+            crate::handoff::hand_over(node.clone());
+            Ok(Reply::Done)
+        }
         Call::Copy { from, to } => crate::copy::copy(node, from, to).await.map(Reply::Copied),
         Call::Nodes => nodes(node).await.map(Reply::Nodes),
     }

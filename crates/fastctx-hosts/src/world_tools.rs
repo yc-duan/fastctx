@@ -18,7 +18,7 @@ pub fn read(tool: &str, input: &Value, output: &[Content]) -> (Does, Option<Mach
     let text = |key: &str| input.get(key).and_then(Value::as_str).map(str::to_string);
     let head = output.iter().find_map(|piece| match piece {
         Content::Text { text } => text.lines().next(),
-        Content::Structured { value } if value["type"] == "text" => {
+        Content::Other { block: value } if value["type"] == "text" => {
             value["text"].as_str().and_then(|text| text.lines().next())
         }
         _ => None,
@@ -120,7 +120,7 @@ pub fn mcp_content(blocks: &[Value]) -> Vec<Content> {
                 Some("image") if block.as_object().is_some_and(|o| o.len() == 3) => {
                     Content::Image { mime: text("mimeType"), base64: text("data") }
                 }
-                _ => Content::Structured { value: block.clone() },
+                _ => Content::Other { block: block.clone() },
             }
         })
         .collect()

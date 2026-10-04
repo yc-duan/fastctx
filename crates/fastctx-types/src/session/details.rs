@@ -4,61 +4,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ItemDetails {
-    #[default]
-    None,
-    Message {
-        phase: Option<String>,
-        delivery: Option<String>,
-        memory_citation: Value,
-        questions: Value,
-    },
-    Command {
-        actions: Vec<Value>,
-        process_id: Option<String>,
-        source: Option<String>,
-        plugin_id: Option<String>,
-        script_path: Option<String>,
-    },
-    Mcp {
-        structured_content: Value,
-        meta: Value,
-        error: Value,
-        app_ui: Value,
-        app_resource_uri: Option<String>,
-        app_context: Value,
-        plugin_id: Option<String>,
-        read_only: Option<bool>,
-    },
-    Dynamic {
-        success: Option<bool>,
-    },
-    Colleagues {
-        sender: String,
-        receivers: Vec<String>,
-        states: Value,
-        model: Option<String>,
-        reasoning_effort: Option<String>,
-    },
-    Search {
-        results: Value,
-    },
-    Image {
-        status: String,
-        revised_prompt: Option<String>,
-        transparent_background: Option<bool>,
-        failure: Value,
-    },
-}
-
-impl ItemDetails {
-    pub fn is_empty(&self) -> bool {
-        matches!(self, Self::None)
-    }
-}
-
 /// A user's original blocks and identity, including text spans, attachments,
 /// mentions and hook provenance. `Heard.text` is the readable projection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -9,10 +9,11 @@
 //! plugin is the one the next session starts with. A background session the
 //! World starts or wakes goes through the `claude` command (`background`).
 //!
-//! Built against the mod API as measured on Claude Code 2.1.287 and run
+//! Built against the mod API as measured on Claude Code 2.1.289 and run
 //! against a stand-in host only; it has not yet run inside Claude Code.
 
 pub mod background;
+mod content;
 pub mod exchange;
 mod tools;
 pub mod trust;
@@ -92,6 +93,8 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
     let module = MOD.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
     let module = module
         .replace("__FASTCTX_COMMAND__", &serde_json::to_string(&fastctx.to_string_lossy()).expect("strings serialize"));
+    write(&plugin.join("hooks").join("presentation.js"), include_bytes!("presentation.js"))?;
+    write(&plugin.join("hooks").join("steps.js"), include_bytes!("steps.js"))?;
     write(&plugin.join("hooks").join("world.js"), module.as_bytes())?;
     Ok(plugin)
 }

@@ -172,10 +172,12 @@ pub async fn watch_here(
 /// cut short. Words the World sent are told by its own record, which knows
 /// who said them; the host's copy of them carries the World's head note.
 fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Vec<SessionEvent> {
-    use fastctx_types::session::{Happened, Item, What};
+    use fastctx_types::session::Happened;
+    let Some(hosted) = hosted else {
+        return recorded_history(recorded);
+    };
     let mut history: Vec<SessionEvent> = hosted
         .into_iter()
-        .flatten()
         .filter(|event| !matches!(&event.happened, Happened::Heard { text, .. } if fastctx_hands::told::is_told(text)))
         .collect();
     for event in recorded {
@@ -214,23 +216,42 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Ve
             .unwrap_or(history.len());
         history.insert(index, event);
     }
-    // A turn whose end is known while its last message is not, as when its
-    // end was recovered after a restart, shows that message as it ended.
-    let finals: Vec<SessionEvent> = history
-        .iter()
-        .filter_map(|event| {
-            let Happened::TurnEnded { turn, end } = &event.happened else { return None };
-            let text = end.last_message.as_ref()?;
-            let said = history.iter().any(|other| {
-                matches!(&other.happened, Happened::Finished { turn: t, item: Item { what: What::Message { text: words }, .. } } if t == turn && words == text)
-            });
-            let item = Item { id: format!("{turn}-final"), details: Default::default(), started_at: None, completed_at: None, what: What::Message { text: text.clone() } };
-            (!said).then(|| SessionEvent { at: event.at, happened: Happened::Finished { turn: turn.clone(), item } })
-        })
-        .collect();
-    history.extend(finals);
+    history.retain(|event| event.happened.kept());
     // Preserve the host's canonical timeline, including interleaved voice
     // items and steering input. Local facts were inserted at their source time.
+    history
+}
+
+fn recorded_history(mut history: Vec<SessionEvent>) -> Vec<SessionEvent> {
+    use fastctx_types::session::Happened;
+    history.retain(|event| event.happened.kept());
+    // The host's record keeps times in whole seconds, the World's to the
+    // microsecond, so time alone would put an answer before the words that
+    // asked for it. Each turn stands where it began, and within it come its
+    // start, the words it heard, what was done in the order the record holds
+    // it, and its end. What belongs to no turn stands at its own time.
+    let mut began: std::collections::HashMap<String, jiff::Timestamp> = std::collections::HashMap::new();
+    for event in &history {
+        if let Some(turn) = turn_of(&event.happened) {
+            began.entry(turn.to_string()).and_modify(|at| *at = (*at).min(event.at)).or_insert(event.at);
+        }
+    }
+    history.sort_by_key(|event| {
+        let at = match &event.happened {
+            Happened::Finished { item, .. } => item.started_at.unwrap_or(event.at),
+            _ => event.at,
+        };
+        let phase = match &event.happened {
+            Happened::TurnStarted { .. } => 0,
+            Happened::Heard { .. } => 1,
+            Happened::TurnEnded { .. } => 3,
+            _ => 2,
+        };
+        match turn_of(&event.happened).and_then(|turn| began.get(turn)) {
+            Some(start) => (*start, phase, at),
+            None => (at, 2, at),
+        }
+    });
     history
 }
 
@@ -244,7 +265,7 @@ fn turn_of(happened: &fastctx_types::session::Happened) -> Option<&str> {
         | Happened::Updated { turn, .. }
         | Happened::Grew { turn, .. }
         | Happened::Finished { turn, .. }
-        | Happened::Steps { turn, .. } => Some(turn),
+        | Happened::Steps { turn, .. } => (!turn.is_empty()).then_some(turn),
         Happened::Heard { turn, .. } | Happened::Health { turn, .. } | Happened::Changed { turn, .. } => {
             turn.as_deref()
         }

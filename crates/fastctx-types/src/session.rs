@@ -58,6 +58,9 @@ pub enum Happened {
     },
     /// More of an item that is still going: text appended to what it has.
     Grew {
+        /// Distinguishes equal chunks emitted within the same timestamp.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        revision: Option<u64>,
         turn: String,
         item: String,
         part: Part,
@@ -125,7 +128,14 @@ impl Happened {
     /// Whether it is kept in a session's record: what grows an item is
     /// only for those watching live, as the finished item holds it all.
     pub fn kept(&self) -> bool {
-        !matches!(self, Happened::Grew { .. } | Happened::Updated { .. } | Happened::RealtimeGrew { .. })
+        !matches!(
+            self,
+            Happened::Began { .. }
+                | Happened::Grew { .. }
+                | Happened::Updated { .. }
+                | Happened::RealtimeGrew { .. }
+                | Happened::Realtime { complete: false, .. }
+        )
     }
 }
 
@@ -157,9 +167,7 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_at: Option<Timestamp>,
-    #[serde(default, skip_serializing_if = "ItemDetails::is_empty")]
-    pub details: Box<ItemDetails>,
+    pub detail: Option<serde_json::Value>,
     #[serde(flatten)]
     pub what: What,
 }
@@ -287,8 +295,8 @@ pub enum Content {
     },
     /// MCP content beyond plain text and base64 images, including resource
     /// links, embedded resources, audio, and annotations on ordinary blocks.
-    Structured {
-        value: serde_json::Value,
+    Other {
+        block: serde_json::Value,
     },
 }
 
@@ -310,6 +318,14 @@ pub enum ToolStatus {
 pub struct Step {
     pub text: String,
     pub status: StepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The host's present-tense label while this step is in progress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_form: Option<String>,
+    /// The host's complete task record, including fields not yet rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

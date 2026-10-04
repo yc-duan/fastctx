@@ -417,6 +417,17 @@ fn world_tool(name: &str, does: Does, status: ToolStatus, on: Option<&str>) -> W
     }))
 }
 
+/// The same tool use, having answered `text`.
+fn answered_with(what: What, text: &str) -> What {
+    match what {
+        What::Tool(mut tool) => {
+            tool.output = vec![fastctx_types::session::Content::Text { text: text.into() }];
+            What::Tool(tool)
+        }
+        other => other,
+    }
+}
+
 fn command(text: &str, exit: Option<i64>, job: Option<&str>) -> Does {
     Does::Command { command: text.into(), cwd: None, exit, job: job.map(str::to_string) }
 }
@@ -426,7 +437,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     let event =
         |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
     let turn = "t-1".to_string();
-    let item = |id: &str, what: What| Item { id: id.into(), what };
+    let item = |id: &str, what: What| Item { id: id.into(), started_at: None, detail: None, what };
     let used = |seconds: i64, id: &str, what: What| {
         let running = matches!(&what, What::Tool(tool) if tool.status == ToolStatus::Running);
         let mut events = vec![event(seconds, Happened::Began { turn: turn.clone(), item: item(id, what.clone()) })];
@@ -440,6 +451,9 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
             .iter()
             .enumerate()
             .map(|(index, text)| Step {
+                id: None,
+                active_form: None,
+                detail: None,
                 text: (*text).into(),
                 status: match index.cmp(&doing) {
                     std::cmp::Ordering::Less => StepStatus::Done,
@@ -457,7 +471,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
             from: Some(Speaker::Resident { address: address("claude-2b1c", "desktop") }),
             text: "Port the PID loop in D:/work/mark50/src/ctrl/pid.rs to fixed-point. The board has no FPU; keep the sampling period as it is.".into(),
         }),
-        event(860, Happened::Finished { turn: "t-0".into(), item: Item { id: "m0".into(), details: Default::default(), started_at: None, completed_at: None, what: What::Message { text: "I'll read the loop and the board's timing first.".into() } } }),
+        event(860, Happened::Finished { turn: "t-0".into(), item: Item { id: "m0".into(), started_at: None, detail: None, what: What::Message { text: "I'll read the loop and the board's timing first.".into() } } }),
         event(600, Happened::TurnEnded { turn: "t-0".into(), end: TurnEnd { error: None, how: TurnHow::Completed, reason: None, duration_ms: Some(300_000), last_message: None } }),
         event(240, Happened::TurnStarted { turn: turn.clone() }),
         event(240, Happened::Heard { message: None, delivery: None, turn: Some(turn.clone()), from: Some(Speaker::User { machine: machine("desktop") }), text: "先别动采样周期，积分项用 Q8.24 试试看，跑一下 step 那组测试。".into() }),
@@ -487,11 +501,14 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     events.extend(used(
         150,
         "c4",
-        world_tool(
-            "run",
-            command("cargo test -p ctrl step_profile", Some(101), None),
-            ToolStatus::Done,
-            Some("laptop"),
+        answered_with(
+            world_tool(
+                "run",
+                command("cargo test -p ctrl step_profile", Some(101), None),
+                ToolStatus::Done,
+                Some("laptop"),
+            ),
+            "=== run on laptop (exited 101) ===\n   Compiling ctrl v0.3.0 (D:/work/mark50/ctrl)\n    Finished `test` profile in 4.21s\n     Running unittests src/lib.rs\n\nrunning 3 tests\ntest ramp_hold ... ok\ntest noise_reject ... ok\ntest step_profile ... FAILED\n\nfailures:\n---- step_profile stdout ----\nthread 'step_profile' panicked at src/ctrl/pid.rs:88:9:\nintegral saturated at t=41.0s: 2147483647 > 2147483520\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored",
         ),
     ));
     events.push(event(140, Happened::Finished {
@@ -499,6 +516,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
         item: item("m1", What::Message { text: "The step test fails at 41 s: the integral still saturates with Q8.24 because the clamp sits after the accumulator. Moving the clamp before it and running the whole workspace.".into() }),
     }));
     events.push(event(138, Happened::Steps { turn: turn.clone(), steps: steps(2), note: None }));
+    events.push(event(137, Happened::Context { used: 48_200, window: Some(272_000) }));
     events.push(event(
         130,
         Happened::Health {
@@ -527,7 +545,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     ));
     events.push(event(
         6,
-        Happened::Grew { turn: turn.clone(), item: "r2".into(), part: Part::Text, text: "**Waiting on the workspace tests**\n\nWhile they run, the noise_reject margin is worth a look: 0.3% is inside".into() },
+        Happened::Grew { revision: None, turn: turn.clone(), item: "r2".into(), part: Part::Text, text: "**Waiting on the workspace tests**\n\nWhile they run, the noise_reject margin is worth a look: 0.3% is inside".into() },
     ));
     events
 }
@@ -573,9 +591,8 @@ fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
         |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
     let turn = "t-2".to_string();
     let tested = Item {
-        details: Default::default(),
         started_at: None,
-        completed_at: None,
+        detail: None,
         id: "c1".into(),
         what: world_tool("run", command("cargo test --workspace", Some(0), None), ToolStatus::Done, None),
     };
@@ -599,9 +616,8 @@ fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
                 turn: turn.clone(),
                 item: Item {
                     id: "m3".into(),
-                    details: Default::default(),
                     started_at: None,
-                    completed_at: None,
+                    detail: None,
                     what: What::Message { text: answer.into() },
                 },
             },
@@ -641,8 +657,11 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         .find(|resident| resident.about.id.as_str() == "codex-7f3a")
         .cloned()
         .expect("the colleague");
-    let mut talk = TalkPage::new(colleague, Some("Mark 50 研发".into()), Some(machine("desktop")));
+    let mut talk = TalkPage::new(colleague.clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     talk.data(ctx, Data::History(conversation(now)));
+    let mut detailed = TalkPage::new(colleague, Some("Mark 50 研发".into()), Some(machine("desktop")));
+    detailed.data(ctx, Data::History(conversation(now)));
+    detailed.key(ctx, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
     let mut answer =
         TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     answer.data(ctx, Data::History(answered(now, ANSWER)));
@@ -694,12 +713,20 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     machines.data(Data::Sessions(Ok(crate::sessions::Status {
         codex: crate::sessions::Standing::In,
         claude: crate::sessions::Standing::Out,
+        legacy: Some(fastctx_install::upgrade::Summary {
+            record: "C:/Users/me/.fastctx/upgrade-clean.json".into(),
+            archives: vec!["C:/Users/me/.fastctx/legacy-archive-2026-10-04".into()],
+            archived: 14,
+            tidied: 6,
+            waiting: 1,
+        }),
     })));
 
     vec![
         ("world", Page::World(WorldPage::with(world_view, nodes(now)))),
         ("project", Page::Project(Box::new(ProjectPage::with(town("mark50"), town_view, map(now))))),
         ("talk", Page::Talk(Box::new(talk))),
+        ("talk-details", Page::Talk(Box::new(detailed))),
         ("answer", Page::Talk(Box::new(answer))),
         ("answer-table", Page::Talk(Box::new(table_answer))),
         ("colleagues", Page::Talk(Box::new(asking))),

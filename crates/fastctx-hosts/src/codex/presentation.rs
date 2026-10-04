@@ -127,33 +127,38 @@ pub fn user_message(item: &Value) -> Option<(String, Value)> {
         return Some((heartbeat["instructions"].as_str().unwrap().into(), presentation));
     }
     if let Some(body) = wrapped(&text, "codex_delegation")
-        && let (Some(source), Some(input)) = (tag(body, "source_thread_id"), tag(body, "input")) {
-            presentation["delegation"] = json!({"source_thread_id":decode(source)});
-            return Some((decode(input), presentation));
-        }
+        && let (Some(source), Some(input)) = (tag(body, "source_thread_id"), tag(body, "input"))
+    {
+        presentation["delegation"] = json!({"source_thread_id":decode(source)});
+        return Some((decode(input), presentation));
+    }
     if let Some(body) = wrapped(&text, "codex_automation_message")
-        && let Some(automation) = automation_message(body) {
-            let visible = automation["body"].as_str().unwrap().to_string();
-            presentation["automation"] = automation;
-            return Some((visible, presentation));
-        }
+        && let Some(automation) = automation_message(body)
+    {
+        let visible = automation["body"].as_str().unwrap().to_string();
+        presentation["automation"] = automation;
+        return Some((visible, presentation));
+    }
     let external_client = item
         .get("clientId")
         .and_then(Value::as_str)
         .is_some_and(|s| s.starts_with("chatgpt-messaging:") || s.starts_with("aeon-imessage:"));
-    if !external_client && content.len() == texts.len() && matches!(texts.len(), 1 | 2)
-        && let Some(external) = external_event(texts[texts.len() - 1], (texts.len() == 2).then(|| texts[0])) {
-            let orbit = external["orbit"].as_bool().unwrap_or(false);
-            if texts.len() == 1 || orbit {
-                let visible = if orbit && texts.len() == 2 {
-                    texts[0].to_string()
-                } else {
-                    external.pointer("/payload/text").and_then(Value::as_str).unwrap_or_default().to_string()
-                };
-                presentation["external_event"] = external;
-                return Some((visible, presentation));
-            }
+    if !external_client
+        && content.len() == texts.len()
+        && matches!(texts.len(), 1 | 2)
+        && let Some(external) = external_event(texts[texts.len() - 1], (texts.len() == 2).then(|| texts[0]))
+    {
+        let orbit = external["orbit"].as_bool().unwrap_or(false);
+        if texts.len() == 1 || orbit {
+            let visible = if orbit && texts.len() == 2 {
+                texts[0].to_string()
+            } else {
+                external.pointer("/payload/text").and_then(Value::as_str).unwrap_or_default().to_string()
+            };
+            presentation["external_event"] = external;
+            return Some((visible, presentation));
         }
+    }
     Some((text, presentation))
 }
 

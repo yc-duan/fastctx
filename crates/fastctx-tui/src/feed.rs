@@ -190,7 +190,26 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
         }
         Job::Join { code, name } => {
             let (world_id, name) = world.join(code, name).await?;
-            Done::Joined { world: world_id, name }
+            // A machine in a World is kept connected by a system service;
+            // the node that served until now hands the World over to it.
+            let kept = tokio::task::spawn_blocking(|| {
+                let places = fastctx_install::apply::Places::here().map_err(|error| error.to_string())?;
+                fastctx_install::service::keep_connected(&places)
+                    .map(|(kept, _)| kept)
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|kept| kept);
+            let kept = match kept {
+                Ok(fastctx_install::service::Kept::Installed) => world
+                    .hand_over()
+                    .await
+                    .map(|()| fastctx_install::service::Kept::Installed)
+                    .map_err(|error| error.to_string()),
+                other => other,
+            };
+            Done::Joined { world: world_id, name, kept }
         }
         Job::Revoke { name, reason } => {
             world.revoke(name, reason).await?;

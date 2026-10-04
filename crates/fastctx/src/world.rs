@@ -67,7 +67,7 @@ pub fn join(args: JoinArgs) -> anyhow::Result<()> {
         Reply::Joined { world, name } => println!("joined the World {world} as {name}"),
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
-    Ok(())
+    crate::keep::keep_connected()
 }
 
 pub fn invite(args: InviteArgs) -> anyhow::Result<()> {

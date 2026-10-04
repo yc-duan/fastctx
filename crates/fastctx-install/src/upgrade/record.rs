@@ -58,6 +58,26 @@ struct Observation {
     reason: String,
 }
 
+/// What a cleanup record says it did, read without changing it.
+pub(super) fn summary(path: &Path, root: &Path) -> Result<Option<super::Summary>, Error> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(super::io(error)),
+    };
+    let contents: Contents =
+        serde_json::from_slice(&bytes).map_err(|_| Error::Io(format!("{}: invalid cleanup record", path.display())))?;
+    let archived: Vec<&ArchiveAction> =
+        contents.archives.iter().filter(|action| action.outcome == "completed").collect();
+    let mut archives: Vec<PathBuf> =
+        archived.iter().map(|action| root.join(format!("legacy-archive-{}", action.day))).collect();
+    archives.dedup();
+    let tidied = contents.actions.iter().filter(|action| action.outcome == "completed").count();
+    let waiting = contents.archives.iter().filter(|action| action.outcome.starts_with("deferred")).count()
+        + contents.actions.iter().filter(|action| action.outcome.starts_with("deferred")).count();
+    Ok(Some(super::Summary { record: path.to_path_buf(), archives, archived: archived.len(), tidied, waiting }))
+}
+
 pub(super) struct Record {
     snapshot: Snapshot,
     contents: Contents,

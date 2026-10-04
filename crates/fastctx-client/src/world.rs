@@ -233,6 +233,12 @@ impl World {
         done(self.ask(Call::Leave).await?)
     }
 
+    /// Asks the node to hand the World over once idle and exit: a service
+    /// now keeps this World's node.
+    pub async fn hand_over(&self) -> Result<(), Error> {
+        done(self.ask(Call::HandOver).await?)
+    }
+
     /// Adds a journal entry.
     #[allow(clippy::too_many_arguments)]
     pub async fn add_entry(

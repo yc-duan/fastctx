@@ -62,3 +62,31 @@ fn read(reader: &mut impl Read) -> io::Result<Option<u8>> {
         Err(error) => Err(error),
     }
 }
+
+/// The two ends a guardian handed down to its node, by the handle numbers
+/// on the node's command line: the one it reads commands from, and the one
+/// it writes events to. They stop being inheritable at once, so nothing the
+/// node starts receives them.
+#[cfg(windows)]
+pub fn inherited(control: u64, events: u64) -> io::Result<(std::fs::File, std::fs::File)> {
+    use std::os::windows::io::{FromRawHandle, RawHandle};
+    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+
+    let take = |value: u64| -> io::Result<std::fs::File> {
+        let handle = value as usize as RawHandle;
+        // SAFETY: the guardian passed this handle to this process alone,
+        // by inheritance; from here on this process owns it.
+        if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(unsafe { std::fs::File::from_raw_handle(handle) })
+    };
+    Ok((take(control)?, take(events)?))
+}
+
+/// A guardian hands its node a channel only on Windows; elsewhere the
+/// system's service manager is the guardian and needs none.
+#[cfg(not(windows))]
+pub fn inherited(_control: u64, _events: u64) -> io::Result<(std::fs::File, std::fs::File)> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "a guardian hands its node a channel only on Windows"))
+}

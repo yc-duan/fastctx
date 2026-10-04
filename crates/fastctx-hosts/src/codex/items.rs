@@ -6,9 +6,7 @@
 //! change with its diff. An item of a type not known here is passed on by
 //! its type, with nothing said of it (`world.md`, 接入宿主只靠它们写明的接口).
 
-use fastctx_types::session::{
-    Change, ChangeHow, Content, Does, Item, ItemDetails, Tool, ToolStatus, UserMessage, What,
-};
+use fastctx_types::session::{Change, ChangeHow, Content, Does, Item, Tool, ToolStatus, UserMessage, What};
 use serde_json::Value;
 
 use crate::world_tools;
@@ -122,10 +120,30 @@ pub fn read(item: &Value, completed: bool) -> Read {
             let server = text(item, "server").unwrap_or_default();
             if server == "codex_app" {
                 let mut dynamic = item.clone();
-                dynamic["success"] = serde_json::json!(item["status"] == "completed" && item["error"].is_null());
-                if super::presentation::hidden_tool(&dynamic) {
-                    return Read::Hidden;
+                dynamic["type"] = serde_json::json!("dynamicToolCall");
+                dynamic["namespace"] = serde_json::json!("codex_app");
+                dynamic["success"] = if item["status"] == "inProgress" {
+                    Value::Null
+                } else {
+                    serde_json::json!(item["status"] == "completed" && item["error"].is_null())
+                };
+                dynamic["contentItems"] = match item.pointer("/result/content").and_then(Value::as_array) {
+                    None => Value::Null,
+                    Some(blocks) => blocks
+                        .iter()
+                        .filter(|block| block["type"] == "text")
+                        .filter_map(|block| {
+                            Some(serde_json::json!({"type":"inputText", "text":block["text"].as_str()?}))
+                        })
+                        .collect(),
+                };
+                let mut projected = read(&dynamic, completed);
+                if let Read::Item(projected) = &mut projected {
+                    // The descriptor and original result remain available for
+                    // the official non-approved review's native MCP view.
+                    projected.detail = Some(item.clone());
                 }
+                return projected;
             }
             let name = text(item, "tool").unwrap_or_default();
             let input = arguments(item.get("arguments"));
@@ -179,22 +197,20 @@ pub fn read(item: &Value, completed: bool) -> Read {
         "imageView" => tool(item, "view_image", None, Does::Image { path: text(item, "path") }).done(),
         "imageGeneration" => {
             let mut output = Vec::new();
-            if let Some(image) = text(item, "result").filter(|result| !result.is_empty()) {
-                output.push(
-                    if data_url(&image).is_some()
-                        || image.starts_with("http:")
-                        || image.starts_with("https:")
-                        || image.starts_with("file:")
-                        || image.starts_with("app:")
-                        || image.starts_with('/')
-                        || image.starts_with("\\\\")
-                        || image.as_bytes().get(1) == Some(&b':')
-                    {
-                        image_content(&image)
-                    } else {
-                        Content::Image { mime: "image/png".into(), base64: image }
-                    },
-                );
+            if let Some(result) = text(item, "result").filter(|result| !result.trim().is_empty()) {
+                let image = result.trim();
+                let lower = image.to_ascii_lowercase();
+                let uri = ["data:image/", "http://", "https://", "file://", "app://"]
+                    .iter()
+                    .any(|prefix| lower.starts_with(prefix));
+                let drive = image.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                    && image.as_bytes().get(1) == Some(&b':')
+                    && image.as_bytes().get(2).is_some_and(|byte| matches!(byte, b'/' | b'\\'));
+                output.push(if uri || image.starts_with('/') || image.starts_with(r"\\") || drive {
+                    image_content(image)
+                } else {
+                    Content::Image { mime: "image/png".into(), base64: image.into() }
+                });
             }
             let mut used =
                 tool(item, "image_generation", None, Does::Image { path: text(item, "savedPath") }).output(output);
@@ -206,10 +222,12 @@ pub fn read(item: &Value, completed: bool) -> Read {
         other => What::Other { host_kind: other.to_string() },
     };
     if let What::Tool(tool) = &mut what
-        && !completed && item.get("status").is_none() {
-            tool.status = ToolStatus::Running;
-        }
-    Read::Item(Item { id, what, details: Box::new(details(item)), started_at: None, completed_at: None })
+        && !completed
+        && item.get("status").is_none()
+    {
+        tool.status = ToolStatus::Running;
+    }
+    Read::Item(Item { id, what, detail: Some(item.clone()), started_at: None })
 }
 
 /// A tool item being read.
@@ -268,7 +286,7 @@ fn dynamic_content(blocks: &[Value]) -> Vec<Content> {
             Some("inputText") => Content::Text { text: text(block, "text").unwrap_or_default() },
             Some("inputImage") => image_content(&text(block, "imageUrl").unwrap_or_default()),
             Some("inputAudio") => Content::AudioUrl { url: text(block, "audioUrl").unwrap_or_default() },
-            _ => Content::Structured { value: block.clone() },
+            _ => Content::Other { block: block.clone() },
         })
         .collect()
 }
@@ -304,50 +322,4 @@ fn text(value: &Value, key: &str) -> Option<String> {
 
 fn array(value: &Value, key: &str) -> Vec<Value> {
     value.get(key).and_then(Value::as_array).cloned().unwrap_or_default()
-}
-
-fn details(item: &Value) -> ItemDetails {
-    let value = |key: &str| item.get(key).cloned().unwrap_or(Value::Null);
-    let nested = |key: &str| item.pointer(key).cloned().unwrap_or(Value::Null);
-    match item.get("type").and_then(Value::as_str) {
-        Some("agentMessage") => ItemDetails::Message {
-            phase: text(item, "phase"),
-            delivery: text(item, "delivery"),
-            memory_citation: value("memoryCitation"),
-            questions: value("questions"),
-        },
-        Some("commandExecution") => ItemDetails::Command {
-            actions: array(item, "commandActions"),
-            process_id: text(item, "processId"),
-            source: text(item, "source"),
-            plugin_id: text(item, "pluginId"),
-            script_path: text(item, "scriptPath"),
-        },
-        Some("mcpToolCall") => ItemDetails::Mcp {
-            structured_content: nested("/result/structuredContent"),
-            meta: nested("/result/_meta"),
-            error: value("error"),
-            app_ui: value("mcpAppUi"),
-            app_resource_uri: text(item, "mcpAppResourceUri"),
-            app_context: value("appContext"),
-            plugin_id: text(item, "pluginId"),
-            read_only: item.get("readOnlyHint").and_then(Value::as_bool),
-        },
-        Some("dynamicToolCall") => ItemDetails::Dynamic { success: item.get("success").and_then(Value::as_bool) },
-        Some("collabAgentToolCall") => ItemDetails::Colleagues {
-            sender: text(item, "senderThreadId").unwrap_or_default(),
-            receivers: strings(item, "receiverThreadIds"),
-            states: value("agentsStates"),
-            model: text(item, "model"),
-            reasoning_effort: text(item, "reasoningEffort"),
-        },
-        Some("webSearch") => ItemDetails::Search { results: value("results") },
-        Some("imageGeneration") => ItemDetails::Image {
-            status: text(item, "status").unwrap_or_default(),
-            revised_prompt: text(item, "revisedPrompt"),
-            transparent_background: item.get("transparentBackground").and_then(Value::as_bool),
-            failure: value("failure"),
-        },
-        _ => ItemDetails::None,
-    }
 }

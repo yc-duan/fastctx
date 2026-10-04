@@ -2,7 +2,7 @@
 //! the unmodified official binary; only paths and opaque IDs are normalized.
 
 use super::{CodexHost, HostEvent, history, items, millis};
-use fastctx_types::session::{Content, Does, Happened, ItemDetails, SessionChange, ToolStatus, What};
+use fastctx_types::session::{Content, Does, Happened, SessionChange, ToolStatus, What};
 use serde_json::{Value, json};
 use std::{path::PathBuf, sync::Arc};
 
@@ -31,7 +31,6 @@ fn captured_live_items_match_completed_history() {
             .filter_map(|event| {
                 if let Happened::Finished { turn, mut item } = event.happened {
                     item.started_at = None;
-                    item.completed_at = None;
                     Some((turn, item))
                 } else {
                     None
@@ -42,8 +41,13 @@ fn captured_live_items_match_completed_history() {
     let live = finished(live);
     assert_eq!(live, finished(history));
     assert!(live.iter().any(|(_, item)| matches!(&item.what, What::Tool(tool) if matches!(&tool.does, Does::Command { exit: Some(7), .. }) && tool.output == vec![Content::Text { text: "EVENTS_PROBE_COMMAND\r\n".into() }])));
-    assert!(live.iter().any(|(_, item)| matches!(item.details.as_ref(), ItemDetails::Mcp { structured_content, meta, .. } if structured_content == &json!({"exact":[1,true,null,"汉字"]}) && meta == &json!({"probe":"metadata"}))));
-    assert!(live.iter().any(|(_, item)| matches!(&item.what, What::Tool(tool) if tool.output.iter().any(|c| matches!(c, Content::Structured { value } if value["type"] == "resource_link")))));
+    assert!(live.iter().any(|(_, item)| {
+        item.detail.as_ref().is_some_and(|d| {
+            d.pointer("/result/structuredContent") == Some(&json!({"exact":[1,true,null,"汉字"]}))
+                && d.pointer("/result/_meta") == Some(&json!({"probe":"metadata"}))
+        })
+    }));
+    assert!(live.iter().any(|(_, item)| matches!(&item.what, What::Tool(tool) if tool.output.iter().any(|c| matches!(c, Content::Other { block: value } if value["type"] == "resource_link")))));
 }
 
 #[test]
@@ -52,23 +56,22 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
         json!({"type":"agentMessage","id":"m","text":"原文","phase":"final_answer","delivery":"async","memoryCitation":{"entries":[{"path":"memory.md","lineStart":2,"lineEnd":4,"note":"n"}],"threadIds":["t"]},"questions":[{"title":"choice","options":["a","b"]}]}),
         true,
     );
+    let detail = message.detail.unwrap();
+    assert_eq!(detail["phase"], "final_answer");
+    assert_eq!(detail["delivery"], "async");
     assert_eq!(
-        *message.details,
-        ItemDetails::Message {
-            phase: Some("final_answer".into()),
-            delivery: Some("async".into()),
-            memory_citation: json!({"entries":[{"path":"memory.md","lineStart":2,"lineEnd":4,"note":"n"}],"threadIds":["t"]}),
-            questions: json!([{"title":"choice","options":["a","b"]}])
-        }
+        detail["memoryCitation"],
+        json!({"entries":[{"path":"memory.md","lineStart":2,"lineEnd":4,"note":"n"}],"threadIds":["t"]})
     );
+    assert_eq!(detail["questions"], json!([{"title":"choice","options":["a","b"]}]));
     let call = item(
         json!({"type":"mcpToolCall","id":"m","server":"s","tool":"t","arguments":"{\"literal\":true}","status":"completed","mcpAppUi":{"resourceUri":"ui://a","preferredModelDisplayMode":"inline"},"result":{"content":[{"type":"text","text":"t","annotations":{"audience":["user"]}},{"type":"audio","data":"YQ==","mimeType":"audio/wav"},{"type":"resource","resource":{"uri":"file:///x","text":"exact"}}],"structuredContent":[1],"_meta":{"x":2}}}),
         true,
     );
     let What::Tool(tool) = call.what else { panic!() };
     assert_eq!(tool.input, json!("{\"literal\":true}"));
-    assert!(tool.output.iter().all(|p| matches!(p, Content::Structured { .. })));
-    assert!(matches!(*call.details,ItemDetails::Mcp { app_ui, .. } if app_ui["resourceUri"] == "ui://a"));
+    assert!(tool.output.iter().all(|p| matches!(p, Content::Other { .. })));
+    assert_eq!(call.detail.unwrap()["mcpAppUi"]["resourceUri"], "ui://a");
     let dynamic = item(
         json!({"type":"dynamicToolCall","id":"d","tool":"x","arguments":"123","status":"completed","success":true,"contentItems":[{"type":"inputImage","imageUrl":"https://example.org/x.png"},{"type":"inputAudio","audioUrl":"data:audio/wav;base64,YQ=="}]}),
         true,
@@ -86,9 +89,9 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
         json!({"type":"collabAgentToolCall","id":"c","tool":"sendInput","status":"completed","senderThreadId":"a","receiverThreadIds":["b","c"],"agentsStates":{"b":{"status":"completed","message":"done"},"c":{"status":"running","message":null}},"prompt":"task","model":"model","reasoningEffort":"high"}),
         true,
     );
-    assert!(
-        matches!(*collab.details,ItemDetails::Colleagues{receivers,states,..} if receivers == ["b","c"] && states["b"]["message"] == "done")
-    );
+    let detail = collab.detail.unwrap();
+    assert_eq!(detail["receiverThreadIds"], json!(["b", "c"]));
+    assert_eq!(detail["agentsStates"]["b"]["message"], "done");
     let search = item(json!({"type":"webSearch","id":"s","query":"","action":null,"results":null}), false);
     assert!(matches!(search.what,What::Tool(tool) if tool.status == ToolStatus::Running));
     for kind in ["sleep", "enteredReviewMode", "exitedReviewMode", "functionCallOutput"] {
