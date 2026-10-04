@@ -233,6 +233,7 @@ impl Printer {
                     }
                 }
                 What::Compaction => self.line("── context compacted"),
+                What::Other { host_kind } => self.line(&format!("  [{host_kind}]")),
                 _ => {}
             },
             Happened::Steps { steps, .. } => {

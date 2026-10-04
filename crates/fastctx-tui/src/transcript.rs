@@ -66,6 +66,11 @@ enum Item {
     Compaction {
         item: String,
     },
+    /// Something the host reported that the World has no name for.
+    Other {
+        item: String,
+        kind: String,
+    },
     Ended {
         turn: String,
         end: TurnEnd,
@@ -312,8 +317,10 @@ impl Transcript {
             // Shown once it is done: the context it leaves is what counts.
             What::Compaction if !finished => return,
             What::Compaction => Item::Compaction { item: id.clone() },
-            // A kind the World does not know is not drawn.
-            What::Other { .. } => return,
+            // A kind the World does not know is shown for what the host
+            // called it, once it is done.
+            What::Other { .. } if !finished => return,
+            What::Other { host_kind } => Item::Other { item: id.clone(), kind: host_kind.clone() },
         };
         if id.is_empty() {
             self.items.push(fresh);
@@ -347,7 +354,10 @@ impl Transcript {
 
     fn find(&mut self, id: &str) -> Option<&mut Item> {
         self.items.iter_mut().find(|item| match item {
-            Item::Prose { item, .. } | Item::Tool { item, .. } | Item::Compaction { item } => item == id,
+            Item::Prose { item, .. }
+            | Item::Tool { item, .. }
+            | Item::Compaction { item }
+            | Item::Other { item, .. } => item == id,
             _ => false,
         })
     }
@@ -463,6 +473,11 @@ impl Transcript {
                 Item::Compaction { .. } => {
                     blank(&mut out);
                     out.push(Line::from(Span::styled(ctx.words.compacted().to_string(), look.text(Role::Faint))));
+                }
+                Item::Other { kind, .. } => {
+                    blank(&mut out);
+                    let line = Line::from(Span::styled(ctx.words.block(kind), look.text(Role::Faint)));
+                    out.push(paint::fit_line(&line, width));
                 }
                 Item::Ended { end, .. } => {
                     if let Some(line) = ended(ctx, end, width) {
