@@ -433,9 +433,6 @@ impl Transcript {
                     }
                 }
                 Item::Prose { kind: Prose::Thinking, text, writing, laid, .. } => {
-                    if text.trim().is_empty() {
-                        continue;
-                    }
                     blank(&mut out);
                     out.extend(thinking(ctx, text, *writing, laid, width));
                 }
@@ -533,6 +530,17 @@ fn cursor(ctx: &Ctx, lines: &mut Vec<Line<'static>>, width: usize) {
 fn thinking(ctx: &Ctx, text: &str, writing: bool, laid: &Laid, width: usize) -> Vec<Line<'static>> {
     let look = &ctx.look;
     let label = Span::styled(format!("{}  ", ctx.words.thinking()), look.text(Role::Faint));
+    // A host may keep its thinking's words to itself (Claude's are not
+    // given): it is shown to have happened, and to have no words here.
+    if text.trim().is_empty() {
+        let mut lines = vec![Line::from(label)];
+        if writing {
+            cursor(ctx, &mut lines, width);
+        } else {
+            lines[0].spans.push(Span::styled(ctx.words.thinking_withheld().to_string(), look.text(Role::Faint)));
+        }
+        return lines.iter().map(|line| paint::fit_line(line, width)).collect();
+    }
     if !writing {
         let first = text.lines().map(|line| line.trim().trim_matches('*').trim()).find(|line| !line.is_empty());
         let line = Line::from(vec![label, Span::styled(first.unwrap_or_default().to_string(), look.text(Role::Faint))]);

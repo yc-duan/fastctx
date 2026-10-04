@@ -91,8 +91,9 @@ fn prepend_path(env: &mut [(OsString, OsString)], directory: &Path) {
     }
 }
 
+/// The bash every `run` starts: `/bin/bash`.
 #[cfg(unix)]
-fn bash() -> io::Result<PathBuf> {
+pub fn bash() -> io::Result<PathBuf> {
     let bash = PathBuf::from("/bin/bash");
     if bash.is_file() { Ok(bash) } else { Err(io::Error::new(io::ErrorKind::NotFound, "/bin/bash does not exist")) }
 }
@@ -105,7 +106,7 @@ fn script_argument(script: &Path) -> io::Result<OsString> {
 /// Git for Windows' bash: where its installer recorded it, or beside a
 /// `git.exe` on the user's PATH, as a portable Git is laid out.
 #[cfg(windows)]
-fn bash() -> io::Result<PathBuf> {
+pub fn bash() -> io::Result<PathBuf> {
     use fastctx_platform::registry::{Hive, string_value};
 
     let in_root = |root: &Path| root.join("usr").join("bin").join("bash.exe");

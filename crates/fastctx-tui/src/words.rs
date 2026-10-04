@@ -772,6 +772,10 @@ impl Words {
         self.pick("思考", "Thinking")
     }
 
+    pub fn thinking_withheld(&self) -> &'static str {
+        self.pick("没有交出内容", "its words were not given")
+    }
+
     pub fn plan(&self) -> &'static str {
         self.pick("它提出的计划", "Its proposed plan")
     }

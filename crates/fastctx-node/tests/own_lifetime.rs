@@ -68,16 +68,14 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn exercise() -> anyhow::Result<()> {
-    let bash = PathBuf::from(std::env::var_os("FASTCTX_TEST_BASH").ok_or_else(|| {
-        anyhow::anyhow!(
-            "set FASTCTX_TEST_BASH to an absolute bash executable; the test does not discover user settings"
-        )
-    })?);
+    // The bash `run` itself would start, unless the caller names another;
+    // the processes under test get only the environment built below.
+    let bash = match std::env::var_os("FASTCTX_TEST_BASH") {
+        Some(bash) => PathBuf::from(bash),
+        None => shell::bash()?,
+    };
     anyhow::ensure!(bash.is_absolute() && bash.is_file());
-    let base = PathBuf::from(
-        std::env::var_os("FASTCTX_TEST_ROOT")
-            .ok_or_else(|| anyhow::anyhow!("set FASTCTX_TEST_ROOT to a private test directory"))?,
-    );
+    let base = std::env::var_os("FASTCTX_TEST_ROOT").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     anyhow::ensure!(base.is_absolute() && base.is_dir());
     let root = base.join(format!("fastctx-own-lifetime-{}", std::process::id()));
     fs::create_dir(&root)?;
