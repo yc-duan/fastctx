@@ -168,6 +168,8 @@ dependencies = [
  "fastctx-hands",
  "fastctx-node",
  "fastctx-platform",
+ "fastctx-serve",
+ "fastctx-types",
  "tokio",
 ]
 
@@ -180,6 +182,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -206,6 +209,7 @@ dependencies = [
  "fastctx-hands",
  "fastctx-platform",
  "fastctx-types",
+ "getrandom",
  "jiff",
  "serde",
  "serde_json",
@@ -220,6 +224,19 @@ dependencies = [
  "libc",
  "tokio",
  "windows-sys",
+]
+
+[[package]]
+name = "fastctx-serve"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "fastctx-client",
+ "fastctx-hands",
+ "fastctx-platform",
+ "fastctx-types",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

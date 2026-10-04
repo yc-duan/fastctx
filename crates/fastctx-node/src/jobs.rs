@@ -1,12 +1,10 @@
 //! Jobs on this machine: starting one for `run`, waiting for it within the
 //! call, and noticing jobs whose supervisor is gone.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use fastctx_hands::run::{self, Launch, record, window};
-use fastctx_platform::{FileLock, is_alive, user_environment, user_home};
+use fastctx_hands::run::{self, Launch, WAIT, record, window};
+use fastctx_platform::{FileLock, is_alive, user_home, world_process_environment};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::run::{Ended, EndedHow, JobRecord, RunReply, RunRequest, RunState};
@@ -14,10 +12,6 @@ use fastctx_types::{JobId, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
-
-/// How long a `run` call waits before its job goes on in the background
-/// (`world-run.md`, 一次调用等 15 秒).
-pub const WAIT: Duration = Duration::from_secs(15);
 
 pub struct Jobs {
     changes: broadcast::Sender<JobId>,
@@ -55,7 +49,8 @@ impl Jobs {
             tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
                 let home = user_home().map_err(|error| failure("finding the home directory", error))?;
                 let executable = std::env::current_exe().map_err(|error| failure("finding fastctx itself", error))?;
-                let environment = supervisor_environment().map_err(|error| failure("reading the user's environment", error))?;
+                let environment =
+                    world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
                 run::launch(&Launch {
                     world: &world,
                     machine: &machine,
@@ -176,7 +171,7 @@ pub struct Reconciled {
 /// restarted.
 pub fn reconcile(world: &WorldDir) -> std::io::Result<Reconciled> {
     let mut found = Reconciled::default();
-    for residents in resident_parents(world)? {
+    for residents in world.resident_parents()? {
         for resident in read_dir(&residents)? {
             for entry in read_dir(&resident.join("jobs"))? {
                 if entry.extension().is_none_or(|extension| extension != "json") {
@@ -197,32 +192,12 @@ pub fn reconcile(world: &WorldDir) -> std::io::Result<Reconciled> {
     Ok(found)
 }
 
-/// Every directory that holds residents: one per town, and `outside`.
-fn resident_parents(world: &WorldDir) -> std::io::Result<Vec<PathBuf>> {
-    let mut parents = vec![world.path().join("outside").join("residents")];
-    for town in read_dir(&world.path().join("towns"))? {
-        parents.push(town.join("residents"));
-    }
-    Ok(parents)
-}
-
 fn read_dir(path: &Path) -> std::io::Result<Vec<PathBuf>> {
     match std::fs::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),
     }
-}
-
-/// The environment a supervisor starts with: the user's, and where the
-/// World lives when that is not the default.
-fn supervisor_environment() -> std::io::Result<Vec<(OsString, OsString)>> {
-    let mut env = user_environment()?;
-    if let Some(home) = std::env::var_os("FASTCTX_HOME") {
-        env.retain(|(name, _)| name != "FASTCTX_HOME");
-        env.push(("FASTCTX_HOME".into(), home));
-    }
-    Ok(env)
 }
 
 fn failure(what: &str, error: std::io::Error) -> Failure {

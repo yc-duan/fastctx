@@ -6,11 +6,19 @@
 //! is kept in a log on the machine where it ran.
 
 pub mod launch;
+pub mod present;
 pub mod record;
 pub mod shell;
 pub mod supervisor;
 pub mod terminal;
 pub mod window;
 
+use std::time::Duration;
+
 pub use launch::{Launch, Launched, launch};
+pub use present::{Content, present};
+
+/// How long a `run` call waits before its job goes on in the background
+/// (`world-run.md`, 一次调用等 15 秒).
+pub const WAIT: Duration = Duration::from_secs(15);
 pub use supervisor::supervise;

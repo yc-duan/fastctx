@@ -19,6 +19,8 @@ pub enum ConnectError {
     Refused { reason: String },
     #[error("talking to the node at {endpoint}: {error}")]
     Io { endpoint: String, error: std::io::Error },
+    #[error("the node was started but exited before it was ready; its log is {log}")]
+    NodeDidNotStart { log: String },
 }
 
 /// A failed call: the node said no, or the connection broke on the way.
@@ -44,8 +46,15 @@ pub struct Client {
 impl Client {
     /// Connects to the node of the World in `world` and introduces `peer`.
     pub async fn connect(world: &WorldDir, peer: Peer) -> Result<Self, ConnectError> {
-        let endpoint = Endpoint::for_world(world.path())
-            .map_err(|error| ConnectError::Io { endpoint: world.path().display().to_string(), error })?;
+        let endpoint = match Endpoint::for_world(world.path()) {
+            Ok(endpoint) => endpoint,
+            // The World's directory is made by its first node; without it
+            // there has never been a node here.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ConnectError::NoNode { endpoint: world.path().display().to_string() });
+            }
+            Err(error) => return Err(ConnectError::Io { endpoint: world.path().display().to_string(), error }),
+        };
         let io_error = |error: std::io::Error| ConnectError::Io { endpoint: endpoint.to_string(), error };
         let mut connection = match ipc::connect(&endpoint).await {
             Ok(connection) => connection,
@@ -69,6 +78,42 @@ impl Client {
         }
     }
 
+    /// Connects to the node, first starting it if it is not running. The
+    /// node is started on its own, with the user's environment, so that it
+    /// outlives whatever started it and carries nothing of that process.
+    pub async fn connect_or_start(world: &WorldDir, peer: Peer) -> Result<Self, ConnectError> {
+        match Self::connect(world, peer.clone()).await {
+            Err(ConnectError::NoNode { endpoint }) => {
+                let started = start_node().map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;
+                loop {
+                    match Self::connect(world, peer.clone()).await {
+                        Err(ConnectError::NoNode { .. }) => {}
+                        connected => return connected,
+                    }
+                    // Another client may have started a node first, in which
+                    // case this one exits at once; only when no node listens
+                    // and the one started here is gone has the start failed.
+                    let alive = match &started.identity {
+                        Some(identity) => fastctx_platform::is_alive(identity).unwrap_or(true),
+                        None => false,
+                    };
+                    if !alive {
+                        return match Self::connect(world, peer.clone()).await {
+                            Err(ConnectError::NoNode { .. }) => Err(ConnectError::NodeDidNotStart {
+                                log: world.node_log().display().to_string(),
+                            }),
+                            connected => connected,
+                        };
+                    }
+                    // A node takes a moment to open its endpoint after it
+                    // starts; asking again soon costs nothing.
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
+            connected => connected,
+        }
+    }
+
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
         self.next += 1;
@@ -88,6 +133,14 @@ impl Client {
             NodeFrame::Reply { id: answered, .. } => Err(broken(format!("the node answered call {answered}, not {id}"))),
         }
     }
+}
+
+/// Starts this binary's node on its own.
+fn start_node() -> std::io::Result<fastctx_platform::DetachedProcess> {
+    let executable = std::env::current_exe()?;
+    let home = fastctx_platform::user_home()?;
+    let environment = fastctx_platform::world_process_environment()?;
+    fastctx_platform::spawn_detached(&executable, &[std::ffi::OsStr::new("node")], &home, &environment)
 }
 
 fn to_json(value: &impl serde::Serialize) -> Vec<u8> {

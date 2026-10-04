@@ -11,6 +11,7 @@
 mod jobs;
 mod log;
 mod machine;
+mod residents;
 mod server;
 
 use std::path::Path;
@@ -22,13 +23,12 @@ use fastctx_platform::{FileLock, ensure_private_dir};
 use fastctx_types::MachineName;
 use fastctx_types::layout::WorldDir;
 
-pub use jobs::WAIT;
-
 /// What every connection shares.
 pub(crate) struct Node {
     world: WorldDir,
     machine: MachineName,
     jobs: jobs::Jobs,
+    residents: residents::Residents,
     log: log::Log,
 }
 
@@ -51,10 +51,15 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         log.line(format_args!("could not check {}: {error}", path.display()));
     }
 
+    let (residents, problems) = residents::Residents::load(&world)?;
+    for (path, error) in &problems {
+        log.line(format_args!("could not read {}: {error}", path.display()));
+    }
+
     let endpoint = Endpoint::for_world(world.path())?;
     let mut listener = Listener::bind(&endpoint)?;
     log.line(format_args!("listening at {endpoint}"));
-    let node = Arc::new(Node { world, machine, jobs: jobs::Jobs::new(), log });
+    let node = Arc::new(Node { world, machine, jobs: jobs::Jobs::new(), residents, log });
     loop {
         match listener.accept().await {
             Ok(connection) => {

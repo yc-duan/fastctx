@@ -46,6 +46,22 @@ impl WorldDir {
         self.root.join("machine.json")
     }
 
+    /// Every directory that holds residents' directories: `outside` and
+    /// each town's.
+    pub fn resident_parents(&self) -> std::io::Result<Vec<PathBuf>> {
+        let mut parents = vec![self.root.join("outside").join("residents")];
+        match std::fs::read_dir(self.root.join("towns")) {
+            Ok(towns) => {
+                for town in towns {
+                    parents.push(town?.path().join("residents"));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        Ok(parents)
+    }
+
     /// A resident's directory: in its town, or outside every town.
     pub fn resident(&self, town: Option<&TownName>, resident: &ResidentId) -> ResidentDir {
         let base = match town {
@@ -65,6 +81,11 @@ pub struct ResidentDir {
 impl ResidentDir {
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Who the resident is and how it came to be.
+    pub fn about(&self) -> PathBuf {
+        self.path.join("about")
     }
 
     pub fn jobs(&self) -> PathBuf {

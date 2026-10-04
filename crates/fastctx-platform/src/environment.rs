@@ -20,6 +20,18 @@ pub fn user_environment() -> io::Result<Vec<(OsString, OsString)>> {
     imp::user_environment()
 }
 
+/// The environment for a fastctx process the World starts on its own (a
+/// node, a supervisor): the user's, plus `FASTCTX_HOME` when this process
+/// has it, so the new process belongs to the same World.
+pub fn world_process_environment() -> io::Result<Vec<(OsString, OsString)>> {
+    let mut env = user_environment()?;
+    if let Some(root) = std::env::var_os("FASTCTX_HOME") {
+        env.retain(|(name, _)| name != "FASTCTX_HOME");
+        env.push(("FASTCTX_HOME".into(), root));
+    }
+    Ok(env)
+}
+
 /// Whether this process belongs to a job object, which ends it when the
 /// job ends. Never on Unix.
 pub fn in_job() -> io::Result<bool> {

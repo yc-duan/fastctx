@@ -12,6 +12,7 @@ pub mod ipc;
 pub mod layout;
 pub mod names;
 pub mod process;
+pub mod residents;
 pub mod run;
 
 pub use calls::{Call, Reply};

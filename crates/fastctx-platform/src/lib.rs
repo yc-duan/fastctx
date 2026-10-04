@@ -31,7 +31,7 @@ mod windows_user;
 
 pub use atomic::{Permissions, publish, publish_new};
 pub use detach::{DetachedProcess, spawn_detached};
-pub use environment::{in_job, user_environment};
+pub use environment::{in_job, user_environment, world_process_environment};
 pub use home::{fastctx_root, user_home};
 pub use hostname::hostname;
 pub use identity::{current_identity, identity_of, is_alive};

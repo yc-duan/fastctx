@@ -18,4 +18,6 @@ clap = { version = "4", features = ["derive"] }
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-node = { path = "../fastctx-node" }
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-serve = { path = "../fastctx-serve" }
+fastctx-types = { path = "../fastctx-types" }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

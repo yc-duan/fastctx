@@ -17,6 +17,8 @@ struct Cli {
 enum Command {
     /// Run this machine's node in the foreground.
     Node,
+    /// Serve the World's tools to an agent session over MCP's stdio.
+    Serve,
     /// Supervise one job; started by the node, not by people.
     #[command(hide = true)]
     Supervise { world: PathBuf, record: PathBuf },
@@ -26,6 +28,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Node => node(),
+        Command::Serve => serve(),
         Command::Supervise { world, record } => supervise(&world, &record),
     };
     match result {
@@ -40,6 +43,11 @@ fn main() -> ExitCode {
 fn node() -> anyhow::Result<()> {
     let root = fastctx_platform::fastctx_root()?;
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run(&root))
+}
+
+fn serve() -> anyhow::Result<()> {
+    let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_serve::serve(world))
 }
 
 /// A supervisor has no terminal: what it would print about its own failure

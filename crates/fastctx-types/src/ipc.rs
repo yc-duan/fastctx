@@ -1,13 +1,14 @@
 //! What local clients and the node say to each other.
 //!
 //! A client connects to the node's endpoint, says who it is, and is welcomed
-//! or refused. After that it sends calls, each with an id it chose, and the
-//! node answers each call once, possibly after a stream of events for it.
-//! Several calls may be in flight on one connection. Every frame is one of
-//! these types in its JSON form.
+//! or refused. After that it sends calls, one at a time, each with an id it
+//! chose, and the node answers each call once. A client with several calls
+//! to make at once opens several connections. Every frame is one of these
+//! types in its JSON form.
 
 use serde::{Deserialize, Serialize};
 
+use crate::residents::Host;
 use crate::{JobId, MachineName, ResidentId};
 
 /// Raised whenever a change would make an older client or node misread a
@@ -32,6 +33,8 @@ pub enum Peer {
     Command { resident: Option<ResidentId> },
     /// The supervisor of one job, reporting on it.
     Supervisor { job: JobId },
+    /// The MCP adapter of one agent session.
+    Session { host: Host },
 }
 
 /// The node's answer to `Hello`.
