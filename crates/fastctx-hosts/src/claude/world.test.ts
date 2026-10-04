@@ -1,15 +1,17 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { SessionUsage } from 'claude-code'
 
-const worldTool = 'mcp__deduplicated_alias__run'
-const serverName = 'configured World alias'
+const worldTool = 'mcp__configured_World_alias__run'
+// What connect answers; the tools carry its tool-name spelling.
+const serverName = 'configured:World alias'
+const spelledName = 'configured_World_alias'
 function usage(): SessionUsage {
   return { startedAt: 0, rateLimits: [], context: { window: 200000, breakdown: {
     categories: [], totalTokens: 0, maxTokens: 200000, rawMaxTokens: 200000,
     autocompactSource: 'model-default', percentage: 0, gridRows: [], model: 'fixture',
     memoryFiles: [], agents: [], isAutoCompactEnabled: false, apiUsage: null,
     mcpTools: [
-      { name: worldTool, serverName, tokens: 1, isLoaded: false },
+      { name: worldTool, serverName: spelledName, tokens: 1, isLoaded: false },
       { name: 'mcp__github__run', serverName: 'GitHub', tokens: 1, isLoaded: true },
       { name: 'mcp__plugin_fastctx-world_fastctx__lookalike', serverName: 'Other', tokens: 1, isLoaded: true },
     ],

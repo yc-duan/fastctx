@@ -716,8 +716,12 @@ async function worldTools($, registry) {
   registry.worldTools = new Set()
   const connected = await $.mcp.connect('fastctx')
   if (!connected.isConnected) return
-  // Both fields are the host's names. In particular, a deduplicated server
-  // can have an alias whose wire spelling must not be guessed from its name.
+  // connect answers the server's name as /mcp lists it, which for a
+  // deduplicated server is the name it runs under; a tool carries the
+  // name's tool-name spelling, every character outside [A-Za-z0-9_-] made
+  // `_` (`claude.ai Gmail`, `claude_ai_Gmail` in the mod reference; 2.1.289
+  // lists `plugin:fastctx-world:fastctx` and `plugin_fastctx-world_fastctx`).
+  const spelled = connected.server.replace(/[^A-Za-z0-9_-]/g, '_')
   const usage = await $.session.usage({ breakdown: 'summary' })
   if (usage.context.breakdown === undefined) throw new Error('the host did not provide its MCP tool ownership map')
   const owners = new Map()
@@ -725,5 +729,5 @@ async function worldTools($, registry) {
     if (owners.has(tool.name) && owners.get(tool.name) !== tool.serverName) owners.set(tool.name, null)
     else if (!owners.has(tool.name)) owners.set(tool.name, tool.serverName)
   }
-  registry.worldTools = new Set([...owners].filter(([, server]) => server === connected.server).map(([name]) => name))
+  registry.worldTools = new Set([...owners].filter(([, server]) => server === connected.server || server === spelled).map(([name]) => name))
 }
