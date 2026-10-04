@@ -57,7 +57,9 @@ struct Session {
 
 /// Writes the plugin and starts watching the sessions.
 pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
-    claude::write_plugin(node.world.path(), &node.fastctx)?;
+    let plugin = claude::write_plugin(node.world.path(), &node.fastctx)?;
+    let checking = node.clone();
+    tokio::task::spawn_blocking(move || check_plugin(&checking, &plugin));
     let sessions = exchange::sessions(node.world.path());
     fastctx_platform::ensure_private_dir(&sessions)?;
     let (changed, mut changes) = mpsc::unbounded_channel::<PathBuf>();
@@ -886,6 +888,21 @@ pub async fn open_here(
         return Ok((id, landed));
     }
     Ok((id, Landed::Handed { id: first.delivery.id }))
+}
+
+/// Has Claude Code check the plugin as it checks one before loading it,
+/// and says loudly when it would not load: its mod is read and judged by
+/// Claude Code before it runs, and a mod it refuses tells the World nothing
+/// at all. Without Claude Code here there is nothing to load it.
+fn check_plugin(node: &Node, plugin: &Path) {
+    let Ok(Command { program, cwd, env }) = command(node) else { return };
+    let args: Vec<OsString> = vec!["plugin".into(), "validate".into(), plugin.into()];
+    match background::claude(&program, &args, &cwd, &env) {
+        Ok(_) => node.log.line("Claude Code accepts the World's plugin"),
+        Err(why) => node.log.line(format_args!(
+            "Claude Code would not load the World's plugin, so its sessions tell the World nothing: {why}"
+        )),
+    }
 }
 
 /// The World's directory, where every session the World starts stands, is
