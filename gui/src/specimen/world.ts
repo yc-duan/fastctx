@@ -2,7 +2,8 @@
 // would answer on a desktop one morning, and what happened overnight.
 
 import type { Address } from "../world/events";
-import type { About, Action, ResidentNow, WorldState } from "../world/world";
+import type { About, Action, MachineFacts, ProjectRecord, ResidentNow } from "../world/world";
+import type { WorldState } from "../home/model";
 
 const at = (time: string) => `2026-10-04T${time}Z`;
 
@@ -33,6 +34,7 @@ function resident(
     here: state.here ?? true,
     now: state.now ?? null,
     last_action: state.last_action ?? null,
+    moved: state.moved ?? null,
   };
 }
 
@@ -46,15 +48,26 @@ const action = (time: string, machine: string, hand: string, what: string, resul
 
 const address = (machine: string, resident: string): Address => ({ machine, resident });
 
+function facts(name: string, os: string, home: string): MachineFacts {
+  return {
+    name, os, arch: "x86_64", home, temp: os === "windows" ? `${home}/AppData/Local/Temp` : "/tmp",
+    path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: "1.0.0",
+  };
+}
+
+function record(name: string, what: string, machines: string[]): ProjectRecord {
+  return { version: 1, name, what, machines, places: [], canon: null, by: { kind: "user" }, on: "desktop", at: at("00:00:00") };
+}
+
 export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date } {
   const world: WorldState = {
     here: "desktop",
     nodes: [
-      { name: "desktop", online: true, since: at("01:10:00"), facts: { Ok: { os: "Windows 11", arch: "x86_64", home: "C:/Users/me" } } },
-      { name: "laptop", online: true, since: at("02:04:00"), facts: { Ok: { os: "Windows 11", arch: "x86_64", home: "C:/Users/lenovo" } } },
-      { name: "lab", online: true, since: at("00:00:00"), facts: { Ok: { os: "Ubuntu 24.04", arch: "x86_64", home: "/home/lenovo" } } },
-      { name: "hangzhou", online: true, since: at("00:00:00"), facts: { Ok: { os: "Ubuntu 24.04", arch: "x86_64", home: "/root" } } },
-      { name: "studio", online: false, since: at("12:52:00"), facts: { Err: "offline" } },
+      { name: "desktop", online: true, since: at("01:10:00"), facts: { Ok: facts("desktop", "windows", "C:/Users/me") }, revoked: null },
+      { name: "laptop", online: true, since: at("02:04:00"), facts: { Ok: facts("laptop", "windows", "C:/Users/lenovo") }, revoked: null },
+      { name: "lab", online: true, since: at("00:00:00"), facts: { Ok: facts("lab", "linux", "/home/lenovo") }, revoked: null },
+      { name: "hangzhou", online: true, since: at("00:00:00"), facts: { Ok: facts("hangzhou", "linux", "/root") }, revoked: null },
+      { name: "studio", online: false, since: at("12:52:00"), facts: { Err: "offline" }, revoked: null },
     ],
     machines: [
       {
@@ -63,17 +76,17 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
           machine: "laptop",
           residents: [
             resident("claude-2b1c", "laptop", claude(), "mark50", "claude-opus-5-5", "05:02:00", {
-              now: { activity: "busy", since: at("13:36:00"), turn: "t3", trouble: null, desk: false, waiting_for_user: false },
+              now: { owed: {}, answering: [], activity: "busy", since: at("13:36:00"), turn: "t3", trouble: null, desk: false, waiting_for_user: false },
               last_action: action("13:37:10", "lab", "run", "cd /srv/mark50 && git fetch laptop colleague/q16-edge && cargo test -p ctrl overflow_repro", "running"),
             }),
             resident("codex-91c0", "laptop", codex(), "mark50", "gpt-6.1-sol", "05:20:00", {
               origin: { kind: "colleague", asked_by: address("laptop", "claude-2b1c"), label: "造出让 Q32 积分溢出的输入" },
               here: false,
-              now: { activity: "asleep", since: at("13:34:00"), turn: null, trouble: null, desk: false, waiting_for_user: false },
+              now: { owed: {}, answering: [], activity: "asleep", since: at("13:34:00"), turn: null, trouble: null, desk: false, waiting_for_user: false },
               last_action: action("13:33:40", "laptop", "run", "cargo test -p ctrl overflow_repro", "exit 101"),
             }),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
-              now: { activity: "idle", since: at("09:31:00"), turn: null, trouble: null, desk: false, waiting_for_user: false },
+              now: { owed: {}, answering: [], activity: "idle", since: at("09:31:00"), turn: null, trouble: null, desk: false, waiting_for_user: false },
               last_action: action("09:30:50", "laptop", "run", "cd /srv/ingest && cargo test 2>&1 | tail -3", "exit 0"),
             }),
           ],
@@ -86,7 +99,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
           machine: "desktop",
           residents: [
             resident("codex-5e2a", "desktop", codex(), "ingest", "gpt-6.1-sol", "12:58:00", {
-              now: { activity: "busy", since: at("13:20:00"), turn: "t2", trouble: null, desk: false, waiting_for_user: true },
+              now: { owed: {}, answering: [], activity: "busy", since: at("13:20:00"), turn: "t2", trouble: null, desk: false, waiting_for_user: true },
               last_action: action("13:21:30", "desktop", "apply_patch", "D:/work/ingest/deploy/compose.yaml", "1 file"),
             }),
           ],
@@ -100,7 +113,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
           residents: [
             resident("codex-0d1e", "lab", codex(), "mark50", "gpt-6.1-sol", "06:10:00", {
               origin: { kind: "colleague", asked_by: address("laptop", "claude-2b1c"), label: "训练关节模型 400 轮" },
-              now: { activity: "busy", since: at("13:12:00"), turn: "t5", trouble: { at: at("13:30:00"), text: "Reconnecting... 2/5" }, desk: false, waiting_for_user: false },
+              now: { owed: {}, answering: [], activity: "busy", since: at("13:12:00"), turn: "t5", trouble: { at: at("13:30:00"), text: "Reconnecting... 2/5" }, desk: false, waiting_for_user: false },
               last_action: action("13:31:00", "lab", "run", "tail -n 40 /data/mark50-sim/train.log", "exit 0"),
             }),
           ],
@@ -121,8 +134,8 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
       { kind: "offline", machine: "studio", since: at("12:52:00") },
     ],
     towns: [
-      { town: "mark50", record: { name: "mark50 研发", what: "为 Mark 50 战衣研发纳米单元的控制固件，并在真机上验证。", machines: ["desktop", "laptop", "lab"] }, journals: 7 },
-      { town: "ingest", record: { name: "ingest 服务", what: "把传感器日志批量写进时序库的服务，跑在 lab 上。", machines: ["laptop", "desktop", "lab"] }, journals: 2 },
+      { town: "mark50", record: record("mark50 研发", "为 Mark 50 战衣研发纳米单元的控制固件，并在真机上验证。", ["desktop", "laptop", "lab"]), journals: 7 },
+      { town: "ingest", record: record("ingest 服务", "把传感器日志批量写进时序库的服务，跑在 lab 上。", ["laptop", "desktop", "lab"]), journals: 2 },
     ],
     happenings: [
       { kind: "machine", at: at("12:52:00"), machine: "studio", online: false },

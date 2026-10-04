@@ -1,0 +1,71 @@
+// Check frozen Rust JSON as fresh TS literals, so excess fields, discriminants,
+// explicit nulls and omitted required fields are checked without type assertions.
+// --rust also checks the fixture against serde; --write regenerates it first.
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
+
+const gui = fileURLToPath(new URL("../", import.meta.url));
+const fixturePath = path.join(gui, "fixtures/wire.json");
+const flags = process.argv.slice(2);
+assert(flags.every((flag) => flag === "--rust" || flag === "--write"), "expected --rust or --write");
+if (flags.length) {
+  const generated = execFileSync("cargo", ["run", "--locked", "--quiet", "-p", "fastctx-types", "--example", "gui_wire_fixtures"], {
+    cwd: path.dirname(gui), encoding: "utf8", stdio: ["ignore", "pipe", "inherit"],
+  });
+  if (flags.includes("--write")) writeFileSync(fixturePath, generated);
+  // Compare text: JSON.parse cannot preserve all of Rust's u64 integer values.
+  assert.equal(readFileSync(fixturePath, "utf8"), generated, "wire fixture is stale; run npm run fixtures:wire");
+}
+const json = readFileSync(fixturePath, "utf8");
+const fixture = JSON.parse(json);
+const virtualFile = path.join(gui, "fixtures/contract.ts");
+const source = `
+import type { SessionEvent, Watched, SessionChange, Health } from "../src/world/events";
+import type { WorldWho, NodesReply, TownSummary, JournalSummary } from "../src/world/world";
+export const fixture = ${json.trimEnd()} satisfies {
+  session: {
+    events: SessionEvent[];
+    watched: Watched[];
+    health_cases: { change: SessionChange; health: Health | null }[];
+  };
+  world: { who: WorldWho[]; nodes: NodesReply[]; towns: TownSummary[]; journals: JournalSummary[] };
+};
+`;
+const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);
+if (configFile.error) throw new Error(ts.flattenDiagnosticMessageText(configFile.error.messageText, "\n"));
+const config = ts.parseJsonConfigFileContent(configFile.config, ts.sys, gui);
+const host = ts.createCompilerHost(config.options);
+const getSourceFile = host.getSourceFile.bind(host);
+host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) =>
+  path.resolve(fileName) === virtualFile
+    ? ts.createSourceFile(fileName, source, languageVersion, true)
+    : getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);
+const program = ts.createProgram([...config.fileNames, virtualFile], config.options, host);
+const diagnostics = [...config.errors, ...ts.getPreEmitDiagnostics(program)];
+if (diagnostics.length) {
+  process.stderr.write(ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+    getCanonicalFileName: (fileName) => fileName,
+    getCurrentDirectory: () => gui,
+    getNewLine: () => "\n",
+  }));
+  process.exit(1);
+}
+
+// The model has only type imports, so its emitted module runs without a DOM.
+const modelSource = readFileSync(path.join(gui, "src/conversation/model.ts"), "utf8");
+const { outputText } = ts.transpileModule(modelSource, { compilerOptions: config.options });
+const { changeHealth, Conversation } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+for (const { change, health } of fixture.session.health_cases) {
+  assert.deepEqual(changeHealth(change), health, `SessionChange::health() differs for ${JSON.stringify(change)}`);
+}
+const conversation = new Conversation();
+conversation.history(fixture.session.events);
+assert.equal(conversation.title, "Wire contract");
+assert(conversation.entries.some((entry) => entry.kind === "tool"));
+assert(conversation.entries.some((entry) => entry.kind === "uncertain"));
+assert.equal(conversation.moving(), false);
+process.stdout.write(`Wire contract: ${fixture.session.events.length} events, ${fixture.session.health_cases.length} Rust health comparisons, ${fixture.world.who.length} who replies, ${fixture.world.nodes.length} nodes replies, ${fixture.world.towns.length} towns, ${fixture.world.journals.length} journals passed.\n`);

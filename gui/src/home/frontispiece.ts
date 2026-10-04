@@ -5,7 +5,8 @@
 // and broken. Lines are a few slightly unsteady strands, seeded by name, so
 // the same World is always the same drawing.
 
-import type { ResidentNow, WorldState } from "../world/world";
+import type { ResidentNow } from "../world/world";
+import type { WorldState } from "./model";
 
 const ringRadius = 24;
 const knotRadius = 7;

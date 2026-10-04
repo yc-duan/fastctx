@@ -1,2 +1,4 @@
 # Shell scripts run on Linux and in WSL; keep them LF on every checkout.
 *.sh text eol=lf
+# The contract check compares serde's generated output byte for byte.
+gui/fixtures/wire.json text eol=lf

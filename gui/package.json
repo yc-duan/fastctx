@@ -9,6 +9,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
+    "check:wire": "node scripts/check-wire.mjs",
+    "fixtures:wire": "node scripts/check-wire.mjs --write",
     "shoot": "node scripts/shoot.mjs"
   },
   "dependencies": {

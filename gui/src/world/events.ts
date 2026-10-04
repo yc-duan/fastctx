@@ -2,13 +2,11 @@
 // `fastctx_types::session::SessionEvent`. Every interface reads the same
 // stream; this is its shape, and nothing here interprets it.
 
-export type MachineName = string;
-export type ResidentId = string;
+import type { Address, JsonValue, MachineName, NoticeId, Timestamp } from "./wire";
+export type { Address, MachineName, ResidentId } from "./wire";
 
-export interface Address {
-  machine: MachineName;
-  resident: ResidentId;
-}
+// These types describe serialized output. A serde default alone does not
+// make a field optional; only skip_serializing_if can omit one here.
 
 export type Speaker =
   | { kind: "user"; machine: MachineName }
@@ -39,7 +37,7 @@ export type Content =
   | { type: "image"; mime: string; base64: string }
   | { type: "image_url"; url: string }
   | { type: "audio_url"; url: string }
-  | { type: "other"; block: unknown };
+  | { type: "other"; block: JsonValue };
 
 export interface Tool {
   name: string;
@@ -47,7 +45,7 @@ export interface Tool {
   /** The machine it acted on, when the World's own tools say. */
   machine: MachineName | null;
   does: Does;
-  input: unknown;
+  input: JsonValue;
   output: Content[];
   status: ToolStatus;
   duration_ms: number | null;
@@ -63,14 +61,17 @@ export type What =
   | { kind: "hidden"; host_kind: string }
   | { kind: "other"; host_kind: string };
 
-export type Item = { id: string; started_at?: string; detail?: unknown } & What;
+export type Item = { id: string; started_at?: Timestamp; detail?: JsonValue } & What;
 
+export type Part = "text" | "output";
+
+/** Other(String) is untagged: unknown host endings remain bare strings. */
 export type TurnHow = "completed" | "failed" | "interrupted" | string;
 
 export interface TurnEnd {
   how: TurnHow;
   reason: string | null;
-  error?: unknown;
+  error?: JsonValue;
   duration_ms: number | null;
   last_message: string | null;
 }
@@ -80,39 +81,71 @@ export type StepStatus = "done" | "doing" | "pending";
 export interface Step {
   text: string;
   status: StepStatus;
+  id?: string;
+  active_form?: string;
+  detail?: JsonValue;
 }
 
+export type HealthKind = "reconnecting" | "safety" | "rerouted" | "tools_missing" | "tool_server" | "warning" | "error";
+
 export interface Health {
-  kind: string;
+  kind: HealthKind;
   text: string;
 }
 
+export interface UserMessage {
+  id: string;
+  client_id: string | null;
+  content: JsonValue[];
+  hook_fragments: JsonValue[];
+  presentation: JsonValue;
+  detail: JsonValue;
+}
+
+export type SessionChange =
+  | { kind: "diff"; diff: string }
+  | { kind: "terminal"; item: string; process: string; input: string }
+  | { kind: "usage"; usage: JsonValue }
+  | { kind: "status"; status: JsonValue; waiting_for_user?: boolean }
+  | { kind: "metadata"; metadata: JsonValue }
+  | { kind: "lifecycle"; state: string }
+  | { kind: "goal"; goal: JsonValue }
+  | { kind: "hook"; run: JsonValue }
+  | { kind: "approval_review"; review: JsonValue; complete: boolean }
+  | { kind: "strict_review"; notice: JsonValue }
+  | { kind: "safety"; buffering: JsonValue }
+  | { kind: "rerouted"; from: string; to: string; reason: string }
+  | { kind: "verification"; verifications: JsonValue[] }
+  | { kind: "error"; error: JsonValue; will_retry: boolean }
+  | { kind: "warning"; text: string }
+  | { kind: "settings"; settings: JsonValue }
+  | { kind: "environment"; environment: JsonValue; connected: boolean }
+  | { kind: "queue" }
+  | { kind: "tool_server"; server: string; status: string; error: JsonValue; failure_reason: JsonValue }
+  | { kind: "attachment"; attachment: JsonValue }
+  | { kind: "request"; id: JsonValue; request: string; params: JsonValue }
+  | { kind: "resolved"; id: JsonValue; resolution: JsonValue }
+  | { kind: "voice"; event: string; data: JsonValue };
+
 export type Happened =
   | { event: "turn_started"; turn: string }
-  | { event: "heard"; delivery?: string | null; turn: string | null; from: Speaker | null; text: string }
+  | { event: "heard"; delivery: NoticeId | null; turn: string | null; from: Speaker | null; text: string; message?: UserMessage }
   | { event: "began"; turn: string; item: Item }
-  | { event: "grew"; revision?: number; turn: string; item: string; part: "text" | string; text: string }
+  | { event: "grew"; revision?: number; turn: string; item: string; part: Part; text: string }
   | { event: "finished"; turn: string; item: Item }
   | { event: "updated"; turn: string; item: Item }
-  | { event: "changed"; turn: string | null; change: { kind: string } & Record<string, unknown> }
+  | { event: "changed"; turn: string | null; change: SessionChange }
   | { event: "steps"; turn: string; steps: Step[]; note: string | null }
   | { event: "context"; used: number; window: number | null }
   | { event: "titled"; title: string }
   | { event: "turn_ended"; turn: string; end: TurnEnd }
   | { event: "health"; turn: string | null; health: Health }
-  | { event: "delivery_uncertain"; why: string }
-  | { event: "realtime"; item: unknown; complete: boolean }
+  | { event: "delivery_uncertain"; delivery: NoticeId; why: string }
+  | { event: "realtime"; item: JsonValue; complete: boolean }
   | { event: "realtime_grew"; item: string; text: string };
 
-export type SessionEvent = { at: string } & Happened;
+export type SessionEvent = { at: Timestamp } & Happened;
 
-/** Who a resident is, as the World knows it (`about`). */
-export interface Resident {
-  id: ResidentId;
-  machine: MachineName;
-  agent: "codex" | "claude" | string;
-  model: string | null;
-  /** Asked for by another resident, with its few words of task. */
-  colleagueOf?: { address: Address; label: string };
-  town: string | null;
-}
+export type Watched =
+  | { kind: "history"; events: SessionEvent[] }
+  | { kind: "live"; event: SessionEvent };

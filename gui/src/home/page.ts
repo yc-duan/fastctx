@@ -7,7 +7,8 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
-import type { Happening, ResidentNow, RunningJob, WorldState } from "../world/world";
+import type { ResidentNow, RunningJob } from "../world/world";
+import type { Happening, WorldState } from "./model";
 import { drawFrontispiece } from "./frontispiece";
 import type { HomeWords } from "./words";
 
