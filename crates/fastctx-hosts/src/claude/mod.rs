@@ -16,6 +16,7 @@ pub mod background;
 mod content;
 pub mod exchange;
 mod tools;
+pub mod transcript;
 pub mod trust;
 
 use std::io;
