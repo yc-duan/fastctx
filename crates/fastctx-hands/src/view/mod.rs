@@ -1,0 +1,213 @@
+//! `fastctx view`: looking at files (`world-view.md`).
+//!
+//! Paths are shown in the order given, each under a head note saying what
+//! it is and how much of it is shown, until the answer's budget is spent;
+//! the files after that are named with their size and not shown. Nothing is
+//! cut silently: a file shown in part says where it stops. Text is shown as
+//! `number<TAB>line`. Images are written in the iTerm2 terminal protocol,
+//! which `run` turns back into images. The first line sums up what was and
+//! was not shown, because it survives any cut a host makes.
+
+mod text;
+
+use std::fs::File;
+use std::io::{self, Read as _, Write};
+use std::path::{Path, PathBuf};
+
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use fastctx_types::residents::Seen;
+use jiff::Timestamp;
+use sha2::{Digest as _, Sha256};
+
+use crate::image::sniff;
+use crate::run::window::{BUDGET, IMAGE_COST};
+
+/// How to look.
+#[derive(Clone, Debug, Default)]
+pub struct Options {
+    /// Lines `first..=last`, counting from 1, of every text file.
+    pub lines: Option<(u64, u64)>,
+    /// The encoding to read text in, by its WHATWG label, such as `gbk`.
+    pub encoding: Option<String>,
+    /// The machine's name, to say where each file is.
+    pub machine: Option<String>,
+}
+
+/// Shows `paths` on `out` and returns what was seen of each file shown.
+pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::Result<Vec<Seen>> {
+    // The summary and the note each file gets when it is not shown are paid
+    // for first: whatever happens, every path is named.
+    let files = plural(paths.len() as u64, "file", "files");
+    let summary_at_longest = format!("=== view ({files}: {n} shown, {n} not shown) ===\n", n = paths.len());
+    let notes: Vec<Section> = paths.iter().map(|path| not_shown(path, options)).collect();
+    let mut left = BUDGET.saturating_sub(summary_at_longest.chars().count() + notes.iter().map(|note| note.cost).sum::<usize>());
+    let mut sections = Vec::new();
+    let mut seen = Vec::new();
+    let mut stopped = false;
+    for (path, note) in paths.iter().zip(notes) {
+        let section = if stopped {
+            note
+        } else {
+            // This file's own note is no longer needed if it is shown.
+            let (section, observed) = look(path, options, left + note.cost)?;
+            if section.partial {
+                stopped = true;
+            }
+            left = (left + note.cost).saturating_sub(section.cost);
+            seen.extend(observed);
+            section
+        };
+        sections.push(section);
+    }
+    let shown = sections.iter().filter(|section| section.shown).count();
+    writeln!(out, "=== view ({files}: {shown} shown, {} not shown) ===", paths.len() - shown)?;
+    for section in sections {
+        out.write_all(section.text.as_bytes())?;
+    }
+    Ok(seen)
+}
+
+/// One path's part of the answer.
+struct Section {
+    text: String,
+    /// What it costs against the budget.
+    cost: usize,
+    /// Whether any of the file's content is shown.
+    shown: bool,
+    /// Whether the budget ran out in it, so later files are not shown.
+    partial: bool,
+}
+
+impl Section {
+    fn note(path: &Path, options: &Options, facts: &str) -> Self {
+        let text = format!("{}\n", head(path, options, facts));
+        Self { cost: text.chars().count(), text, shown: false, partial: false }
+    }
+}
+
+fn head(path: &Path, options: &Options, facts: &str) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    match &options.machine {
+        Some(machine) => format!("=== {machine}:{path} ({facts}) ==="),
+        None => format!("=== {path} ({facts}) ==="),
+    }
+}
+
+fn not_shown(path: &Path, options: &Options) -> Section {
+    let facts = match std::fs::metadata(path) {
+        Ok(metadata) => format!("not shown: {}", size(metadata.len())),
+        Err(error) => describe_error(&error),
+    };
+    Section::note(path, options, &facts)
+}
+
+fn look(path: &Path, options: &Options, budget: usize) -> io::Result<(Section, Option<Seen>)> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
+    };
+    if metadata.is_dir() {
+        return Ok((Section::note(path, options, "a directory; list it with ls or find"), None));
+    }
+    if !metadata.is_file() {
+        // A device, a FIFO or a socket could make looking wait forever.
+        return Ok((Section::note(path, options, "a special file, not shown"), None));
+    }
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
+    };
+    let mut start = vec![0u8; 512];
+    let read = read_up_to(&mut file, &mut start)?;
+    start.truncate(read);
+    if let Some((mime, width, height)) = sniff(&start) {
+        return image(path, options, budget, file, start, mime, width, height, metadata.len());
+    }
+    if start.starts_with(b"%PDF-") {
+        return Ok((
+            Section::note(path, options, &format!("a PDF, {}; reading PDFs is not in this build yet", size(metadata.len()))),
+            None,
+        ));
+    }
+    text::look(path, options, budget, file, start, &metadata)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn image(
+    path: &Path,
+    options: &Options,
+    budget: usize,
+    mut file: File,
+    start: Vec<u8>,
+    mime: &str,
+    width: u32,
+    height: u32,
+    length: u64,
+) -> io::Result<(Section, Option<Seen>)> {
+    let note = format!("{}\n", head(path, options, &format!("image {width}x{height}, {mime}")));
+    let cost = note.chars().count() + IMAGE_COST;
+    if cost > budget {
+        let mut section = Section::note(path, options, &format!("not shown: image {width}x{height}, {}", size(length)));
+        section.partial = true;
+        return Ok((section, None));
+    }
+    let mut bytes = start;
+    file.read_to_end(&mut bytes)?;
+    let seen = Seen {
+        path: path.to_string_lossy().into_owned(),
+        at: Timestamp::now(),
+        sha256: Some(hex(&Sha256::digest(&bytes))),
+        size: bytes.len() as u64,
+        modified: None,
+        encoding: None,
+    };
+    let text = format!("{note}\x1b]1337;File=inline=1;size={}:{}\x07\n", bytes.len(), STANDARD.encode(&bytes));
+    Ok((Section { text, cost, shown: true, partial: false }, Some(seen)))
+}
+
+fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match file.read(&mut buffer[filled..])? {
+            0 => break,
+            read => filled += read,
+        }
+    }
+    Ok(filled)
+}
+
+fn describe_error(error: &io::Error) -> String {
+    match error.kind() {
+        io::ErrorKind::NotFound => "no such file".to_string(),
+        io::ErrorKind::PermissionDenied => format!("not readable: {error}"),
+        _ => format!("could not be read: {error}"),
+    }
+}
+
+/// `count` with the noun in the number it takes.
+fn plural(count: u64, one: &str, many: &str) -> String {
+    if count == 1 { format!("1 {one}") } else { format!("{count} {many}") }
+}
+
+/// A size in the unit a person reads it in.
+fn size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1000 {
+        return format!("{bytes} bytes");
+    }
+    let mut value = bytes as f64;
+    let mut unit = "bytes";
+    for next in UNITS {
+        if value < 1000.0 {
+            break;
+        }
+        value /= 1000.0;
+        unit = next;
+    }
+    format!("{value:.1} {unit}")
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}

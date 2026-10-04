@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 base64 = "0.22"
+encoding_rs = "0.8"
 fastctx-client = { path = "../fastctx-client" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
@@ -17,6 +18,7 @@ getrandom = { version = "0.3", features = ["std"] }
 jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 tokio = { workspace = true, features = ["rt"] }
 
 [target.'cfg(unix)'.dependencies]

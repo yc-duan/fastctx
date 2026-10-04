@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::residents::{Hints, Host, Notice, Whereabouts};
+use crate::residents::{Hints, Host, Notice, Seen, Whereabouts};
 use crate::run::{RunReply, RunRequest};
 use crate::{JobId, ResidentId, TownName};
 
@@ -13,6 +13,8 @@ pub enum Call {
     Arrive { host: Host, hints: Hints },
     /// Run a script on this machine for a resident.
     Run { resident: ResidentId, town: Option<TownName>, request: RunRequest },
+    /// Records what a resident saw of files through `fastctx view`.
+    Saw { resident: ResidentId, town: Option<TownName>, seen: Vec<Seen> },
     /// Takes what waits in a resident's inbox, oldest first.
     Collect { resident: ResidentId, town: Option<TownName> },
     /// A supervisor says its job's record has changed: the shell started

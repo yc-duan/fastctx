@@ -56,6 +56,7 @@ impl Job {
         let (program, args) = shell::command(&resident.job_script(&self.record.id))?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
         let env = shell::environment(&shell::Context {
+            machine: &self.record.machine,
             resident: &self.record.resident,
             town: self.record.town.as_ref(),
             fastctx_dir,

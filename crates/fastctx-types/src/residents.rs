@@ -67,6 +67,22 @@ pub enum Notice {
     },
 }
 
+/// What a resident saw of a file through `fastctx view`: one line of its
+/// `seen` record. A file shown whole is remembered by its content's hash;
+/// one shown in part by its size and modification time, since hashing a
+/// file of several gigabytes for a glance at it would cost more than the
+/// glance (`world-view.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Seen {
+    pub path: String,
+    pub at: Timestamp,
+    pub sha256: Option<String>,
+    pub size: u64,
+    pub modified: Option<Timestamp>,
+    /// The encoding it was read in, for text.
+    pub encoding: Option<String>,
+}
+
 /// Where a resident is.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Whereabouts {

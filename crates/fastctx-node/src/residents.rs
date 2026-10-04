@@ -105,6 +105,20 @@ impl Residents {
     }
 }
 
+/// Appends what a resident saw to its `seen` record, one line per file.
+pub fn record_seen(world: &WorldDir, resident: &ResidentId, town: Option<&TownName>, seen: &[fastctx_types::residents::Seen]) -> io::Result<()> {
+    use std::io::Write as _;
+    let directory = world.resident(town, resident);
+    let mut lines = Vec::new();
+    for one in seen {
+        serde_json::to_writer(&mut lines, one).map_err(io::Error::other)?;
+        lines.push(b'\n');
+    }
+    // One write per call keeps each call's lines together.
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(directory.seen())?;
+    file.write_all(&lines)
+}
+
 /// A fresh id for a resident of `host`: its agent name and four hex digits,
 /// unused on this machine.
 fn new_id(host: &Host, state: &State) -> Result<ResidentId, Failure> {

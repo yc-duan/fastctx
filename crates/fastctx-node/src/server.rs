@@ -47,6 +47,14 @@ async fn handle(node: &Node, _peer: &Peer, call: Call) -> Result<Reply, Failure>
         Call::JobChanged { job, resident, town } => {
             node.jobs.changed(&node.world, job, resident, town).await.map(|()| Reply::Done)
         }
+        Call::Saw { resident, town, seen } => {
+            let world = node.world.clone();
+            tokio::task::spawn_blocking(move || crate::residents::record_seen(&world, &resident, town.as_ref(), &seen))
+                .await
+                .map_err(|error| Failure::new(format!("recording what was seen: {error}")))?
+                .map(|()| Reply::Done)
+                .map_err(|error| Failure::new(format!("recording what was seen: {error}")))
+        }
         Call::Collect { resident, town } => {
             let world = node.world.clone();
             tokio::task::spawn_blocking(move || crate::inbox::collect(&world, &resident, town.as_ref()))

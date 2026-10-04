@@ -6,6 +6,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod view;
+
 #[derive(Parser)]
 #[command(name = "fastctx", version, about = "One world, many machines.")]
 struct Cli {
@@ -19,6 +21,8 @@ enum Command {
     Node,
     /// Serve the World's tools to an agent session over MCP's stdio.
     Serve,
+    /// Look at files: text with line numbers, images as images.
+    View(view::ViewArgs),
     /// Supervise one job; started by the node, not by people.
     #[command(hide = true)]
     Supervise { world: PathBuf, record: PathBuf },
@@ -29,6 +33,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Node => node(),
         Command::Serve => serve(),
+        Command::View(args) => view::run(args),
         Command::Supervise { world, record } => supervise(&world, &record),
     };
     match result {
