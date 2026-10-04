@@ -8,6 +8,7 @@
 
 use std::sync::OnceLock;
 
+use fastctx_types::session::HealthKind;
 use fastctx_types::world::Route;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -678,6 +679,28 @@ impl Words {
         match self.lang {
             Lang::Zh => format!("这一轮结束：{how}"),
             Lang::En => format!("turn ended: {how}"),
+        }
+    }
+
+    /// What kind of fact about a session a health line reports; the host's
+    /// own words follow it.
+    pub fn health(&self, kind: HealthKind) -> &'static str {
+        match kind {
+            HealthKind::Reconnecting => self.pick("在重连模型", "reconnecting to the model"),
+            HealthKind::Safety => {
+                self.pick("模型服务商扣下了输出做安全检查", "the provider is holding output for a safety check")
+            }
+            HealthKind::Rerouted => {
+                self.pick("模型服务商把这一轮换给了别的模型", "the provider moved the turn to another model")
+            }
+            HealthKind::ToolsMissing => {
+                self.pick("这段会话里没有世界的工具", "the World's tools are not in this session")
+            }
+            HealthKind::ToolServer => {
+                self.pick("会话的另一个工具服务没起来", "another tool server of the session did not start")
+            }
+            HealthKind::Warning => self.pick("宿主提醒", "the host warns"),
+            HealthKind::Error => self.pick("宿主报错", "the host reports an error"),
         }
     }
 

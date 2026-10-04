@@ -301,8 +301,13 @@ impl Transcript {
                     }
                 }
                 Item::Health { health, .. } => {
-                    let line = Line::from(Span::styled(format!("▲ {}", health.text), look.text(Role::Caution)));
-                    out.push(paint::fit_line(&line, width));
+                    let mut spans =
+                        vec![Span::styled(format!("▲ {}", ctx.words.health(health.kind)), look.text(Role::Caution))];
+                    let words = text::first_line(&health.text);
+                    if !words.is_empty() {
+                        spans.push(Span::styled(format!("  ·  {words}"), look.text(Role::Faint)));
+                    }
+                    out.push(paint::fit_line(&Line::from(spans), width));
                 }
                 Item::Note { text, role } => {
                     blank(&mut out);

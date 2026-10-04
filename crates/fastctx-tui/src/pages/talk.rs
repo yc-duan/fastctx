@@ -304,11 +304,9 @@ impl TalkPage {
         let mut crumbs = vec![words.world().to_string()];
         crumbs.extend(self.project.clone());
         crumbs.push(who::name(ctx, &self.agent, &self.address.machine));
+        // A turn at work shows above the place to type, where the eye is.
         let state = match self.state {
-            Some((Activity::Busy, since)) => Line::from(vec![
-                Span::styled("● ", look.faded(Role::Alive, ctx.breath)),
-                Span::styled(format!("{} {}", words.busy(), words.since(since, ctx.now)), look.text(Role::Alive)),
-            ]),
+            Some((Activity::Busy, _)) => Line::default(),
             Some((Activity::Idle, since)) => Line::from(vec![
                 Span::styled("○ ", look.text(Role::Muted)),
                 Span::styled(format!("{} {}", words.idle(), words.since(since, ctx.now)), look.text(Role::Muted)),
