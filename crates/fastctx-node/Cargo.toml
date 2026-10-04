@@ -12,6 +12,7 @@ publish = false
 anyhow.workspace = true
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-hosts = { path = "../fastctx-hosts" }
+fastctx-install = { path = "../fastctx-install" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }

@@ -15,7 +15,7 @@ use clap::Args;
 use fastctx_client::{Conversation, Said, World};
 use fastctx_hands::told::turn_end;
 use fastctx_types::residents::Landed;
-use fastctx_types::session::{Happened, SessionEvent, Speaker};
+use fastctx_types::session::{Happened, Part, SessionEvent, Speaker, StepStatus, ToolStatus, What};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 
 /// Talk to a resident on any machine, or open a session to talk to.
@@ -138,6 +138,9 @@ async fn follow(conversation: &mut Conversation, printer: &mut Printer) -> anyho
 fn gone(said: &Said) -> String {
     let to = &said.to.resident;
     match &said.landed {
+        Landed::Uncertain { why } => format!(
+            "whether {to} received your words is unknown: {why}; they remain recorded and will not be submitted again"
+        ),
         Landed::Waiting { why, answered } => {
             let wait = match why {
                 Some(why) => format!("your words wait for {to}: {why}"),
@@ -158,6 +161,8 @@ fn gone(said: &Said) -> String {
 struct Printer {
     /// Messages whose text has been shown piece by piece as it was written.
     streamed: HashSet<String>,
+    /// Items whose text is not shown as it grows: thinking and plans.
+    quiet: HashSet<String>,
     /// Whether the cursor is in the middle of a line.
     open_line: bool,
 }
@@ -177,6 +182,9 @@ impl Printer {
 
     fn event(&mut self, event: &SessionEvent) {
         match &event.happened {
+            Happened::DeliveryUncertain { why, .. } => {
+                self.line(&format!("── delivery acceptance is unknown: {why}; the original words remain recorded"))
+            }
             Happened::TurnStarted { .. } => self.line("── turn started"),
             Happened::Heard { from, text, .. } => {
                 let from = match from {
@@ -187,22 +195,48 @@ impl Printer {
                 };
                 self.line(&format!("> {from}: {text}"));
             }
-            Happened::Writing { item, delta, .. } => {
+            Happened::Began { item, .. } => match &item.what {
+                What::Thinking { .. } | What::Plan { .. } => {
+                    self.quiet.insert(item.id.clone());
+                }
+                What::Tool(tool) => {
+                    self.line(&format!("  · {} {}", tool.name, fastctx_client::shown::tool_detail(tool)))
+                }
+                _ => {}
+            },
+            Happened::Grew { item, part: Part::Text, text, .. } if !self.quiet.contains(item) => {
                 self.streamed.insert(item.clone());
-                print!("{delta}");
-                self.open_line = !delta.ends_with('\n');
+                print!("{text}");
+                self.open_line = !text.ends_with('\n');
                 let _ = std::io::stdout().flush();
             }
-            Happened::Said { item, text, .. } => {
-                if self.streamed.remove(item) {
-                    self.end_line();
-                } else {
-                    self.line(text);
+            Happened::Grew { .. } => {}
+            Happened::Finished { item, .. } => match &item.what {
+                What::Message { text } => {
+                    if self.streamed.remove(&item.id) {
+                        self.end_line();
+                    } else {
+                        self.line(text);
+                    }
+                }
+                What::Plan { text } => self.line(&format!("── proposed plan\n{text}")),
+                What::Tool(tool) if matches!(tool.status, ToolStatus::Failed | ToolStatus::Declined) => {
+                    self.line(&format!("  ✗ {} {} failed", tool.name, fastctx_client::shown::tool_detail(tool)))
+                }
+                What::Compaction => self.line("── context compacted"),
+                _ => {}
+            },
+            Happened::Steps { steps, .. } => {
+                for step in steps {
+                    let mark = match step.status {
+                        StepStatus::Done => "✓",
+                        StepStatus::Doing => "▸",
+                        StepStatus::Pending => "·",
+                    };
+                    self.line(&format!("  {mark} {}", step.text));
                 }
             }
-            Happened::ToolStarted { tool, detail, .. } => self.line(&format!("  · {tool} {detail}")),
-            Happened::ToolEnded { tool, detail, failed: true, .. } => self.line(&format!("  ✗ {tool} {detail} failed")),
-            Happened::ToolEnded { .. } => {}
+            Happened::Context { .. } | Happened::Titled { .. } => {}
             Happened::TurnEnded { end, .. } => self.line(&format!("── {}", turn_end(end))),
             Happened::Health { health, .. } => self.line(&format!("  ! {}", health.text)),
         }

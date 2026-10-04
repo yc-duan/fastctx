@@ -3,10 +3,10 @@
 //! session, then each event as it happens; words said to it, and the turn
 //! they went into followed until it ends.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use fastctx_types::residents::Landed;
-use fastctx_types::session::{Happened, SessionEvent, Speaker, Watched};
+use fastctx_types::session::{Happened, SessionEvent, Watched};
 use fastctx_types::{MachineName, ResidentId};
 use tokio::sync::mpsc;
 
@@ -22,6 +22,7 @@ pub struct Conversation {
     pieces: mpsc::UnboundedReceiver<Result<Option<Watched>, CallError>>,
     following: Option<Following>,
     queued: VecDeque<SessionEvent>,
+    seen: HashSet<String>,
 }
 
 /// What the latest words are waiting on.
@@ -30,8 +31,8 @@ pub enum Following {
     /// The turn they went into.
     Turn(String),
     /// The session's plugin has them, and says which turn takes them; until
-    /// then the words themselves are what is looked for.
-    Words(String),
+    /// then its delivery identity is what is looked for.
+    Delivery(fastctx_types::NoticeId),
 }
 
 /// One thing that happened in the session.
@@ -71,18 +72,21 @@ impl Conversation {
                 }
             }
         });
-        Ok((Self { pieces, following: None, queued: VecDeque::new() }, history))
+        {
+            let seen = history.iter().filter_map(identity).collect();
+            Ok((Self { pieces, following: None, queued: VecDeque::new(), seen }, history))
+        }
     }
 
     /// Words were said with `text` and landed as `said` says: what they go
     /// into is followed from now on. Returns whether there is anything to
     /// follow; words waiting for a way in, or gone to another machine as a
     /// letter, are in no turn yet.
-    pub fn said(&mut self, said: &Said, text: &str) -> bool {
+    pub fn said(&mut self, said: &Said, _text: &str) -> bool {
         self.following = match &said.landed {
             Landed::NewTurn { turn } | Landed::JoinedTurn { turn } => Some(Following::Turn(turn.clone())),
-            Landed::Handed => Some(Following::Words(text.to_string())),
-            Landed::Waiting { .. } | Landed::Sent => None,
+            Landed::Handed { id } => Some(Following::Delivery(id.clone())),
+            Landed::Waiting { .. } | Landed::Sent | Landed::Uncertain { .. } => None,
         };
         self.following.is_some()
     }
@@ -103,6 +107,11 @@ impl Conversation {
     pub async fn next(&mut self) -> Result<Option<Moment>, Error> {
         loop {
             if let Some(event) = self.queued.pop_front() {
+                if let Some(key) = identity(&event)
+                    && !self.seen.insert(key)
+                {
+                    continue;
+                }
                 let answered = self.take(&event);
                 return Ok(Some(Moment { event, answered }));
             }
@@ -119,11 +128,14 @@ impl Conversation {
     /// their turn.
     fn take(&mut self, event: &SessionEvent) -> bool {
         match (&self.following, &event.happened) {
+            (Some(Following::Delivery(id)), Happened::DeliveryUncertain { delivery, .. }) if id == delivery => {
+                self.following = None;
+                true
+            }
             // The session says which turn took them.
-            (
-                Some(Following::Words(words)),
-                Happened::Heard { turn: Some(turn), from: Some(Speaker::User { .. }), text },
-            ) if words == text => {
+            (Some(Following::Delivery(id)), Happened::Heard { turn: Some(turn), delivery: Some(delivery), .. })
+                if id == delivery =>
+            {
                 self.following = Some(Following::Turn(turn.clone()));
                 false
             }
@@ -133,5 +145,17 @@ impl Conversation {
             }
             _ => false,
         }
+    }
+}
+
+fn identity(event: &SessionEvent) -> Option<String> {
+    match &event.happened {
+        Happened::TurnEnded { turn, .. } => Some(format!("end:{turn}")),
+        Happened::TurnStarted { turn } => Some(format!("start:{turn}")),
+        Happened::Grew { .. } => None,
+        Happened::Began { turn, item } => Some(format!("began:{turn}:{}", item.id)),
+        Happened::Finished { turn, item } => Some(format!("finished:{turn}:{}", item.id)),
+        Happened::DeliveryUncertain { delivery, .. } => Some(format!("uncertain:{delivery}")),
+        _ => serde_json::to_string(event).ok(),
     }
 }

@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io;
+use std::io::{self, Read};
 use std::mem::{offset_of, size_of};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
@@ -9,19 +9,17 @@ use std::path::Path;
 use std::ptr;
 use std::time::SystemTime;
 
-use windows_sys::Win32::Foundation::{
-    ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
-};
+use windows_sys::Win32::Foundation::{ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, GENERIC_READ, GENERIC_WRITE};
 use windows_sys::Win32::Security::{
     DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetKernelObjectSecurity, GetSecurityDescriptorControl,
-    OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SetKernelObjectSecurity,
-    UNPROTECTED_DACL_SECURITY_INFORMATION,
+    OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_AUTO_INHERIT_REQ, SE_DACL_AUTO_INHERITED,
+    SE_DACL_PROTECTED, SetKernelObjectSecurity, SetSecurityDescriptorControl, UNPROTECTED_DACL_SECURITY_INFORMATION,
 };
 use windows_sys::Win32::Storage::FileSystem::*;
 
 use super::Identity;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Attributes {
     flags: u32,
     created: i64,
@@ -30,6 +28,28 @@ pub(crate) struct Attributes {
 }
 
 impl Attributes {
+    pub(crate) fn revision_bytes(&self) -> io::Result<Vec<u8>> {
+        let mut attributes = self.clone();
+        // ReplaceFile recomputes this derived marker even when every ACE and
+        // protection bit is unchanged. It is not a change to access rights.
+        let inherited = windows_sys::Win32::Security::SE_DACL_AUTO_INHERITED as u32;
+        attributes.security[0] &= !(inherited << 16);
+        serde_json::to_vec(&attributes).map_err(io::Error::other)
+    }
+
+    pub(crate) fn publication_bytes(&self) -> io::Result<Vec<u8>> {
+        let mut attributes = self.clone();
+        // ReplaceFile rebuilds inherited ACEs from the publication directory.
+        // The complete displaced descriptor is checked separately; payload
+        // identity/content must also remain recognizable after that OS change.
+        attributes.security.clear();
+        serde_json::to_vec(&attributes).map_err(io::Error::other)
+    }
+
+    pub fn has_named_data(&self) -> bool {
+        !self.streams.is_empty()
+    }
+
     pub fn read(file: &File, path: &Path) -> io::Result<Self> {
         let mut basic = FILE_BASIC_INFO::default();
         // SAFETY: the handle and output buffer are valid for the call.
@@ -53,10 +73,31 @@ impl Attributes {
         check(unsafe {
             GetKernelObjectSecurity(file.as_raw_handle(), info, security.as_mut_ptr().cast(), needed, &mut needed)
         })?;
-        Ok(Self { flags: basic.FileAttributes, created: basic.CreationTime, security, streams: streams(path)? })
+        Ok(Self { flags: basic.FileAttributes, created: basic.CreationTime, security, streams: streams(file, path)? })
     }
 
     pub fn apply(&self, file: &File, path: &Path) -> io::Result<()> {
+        self.apply_to(file, path, false)
+    }
+
+    pub fn apply_directory(&self, file: &File, path: &Path) -> io::Result<()> {
+        self.apply_to(file, path, true)
+    }
+
+    pub fn apply_reparse_header(&self, file: &File) -> io::Result<()> {
+        let basic = FILE_BASIC_INFO { CreationTime: self.created, FileAttributes: self.flags, ..Default::default() };
+        // SAFETY: a live no-follow handle and initialized basic information.
+        check(unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle(),
+                FileBasicInfo,
+                (&raw const basic).cast(),
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        })
+    }
+
+    fn apply_to(&self, file: &File, path: &Path, directory: bool) -> io::Result<()> {
         // These flags require additional filesystem operations, rather than
         // SetFileInformationByHandle. Refuse to silently discard them.
         let supported = FILE_ATTRIBUTE_READONLY
@@ -66,7 +107,8 @@ impl Attributes {
             | FILE_ATTRIBUTE_NORMAL
             | FILE_ATTRIBUTE_TEMPORARY
             | FILE_ATTRIBUTE_OFFLINE
-            | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+            | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
+            | if directory { FILE_ATTRIBUTE_DIRECTORY } else { 0 };
         if self.flags & !supported != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -93,7 +135,8 @@ impl Attributes {
     pub fn protect(&self, file: &File) -> io::Result<()> {
         let mut control = 0;
         let mut revision = 0;
-        let descriptor = self.security.as_ptr().cast_mut().cast();
+        let mut security = self.security.clone();
+        let descriptor = security.as_mut_ptr().cast();
         // SAFETY: read() captured a valid self-relative security descriptor.
         check(unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) })?;
         let protection = if control & SE_DACL_PROTECTED != 0 {
@@ -101,6 +144,17 @@ impl Attributes {
         } else {
             UNPROTECTED_DACL_SECURITY_INFORMATION
         };
+        // SetKernelObjectSecurity consumes AUTO_INHERIT_REQ when restoring
+        // AUTO_INHERITED. Passing only the latter silently drops it; unlike
+        // SetSecurityInfo this does not inherit the archive parent's ACEs or
+        // rewrite existing children (verified on Windows 11, 2026-10-04).
+        check(unsafe {
+            SetSecurityDescriptorControl(
+                descriptor,
+                SE_DACL_AUTO_INHERIT_REQ,
+                if control & SE_DACL_AUTO_INHERITED != 0 { SE_DACL_AUTO_INHERIT_REQ } else { 0 },
+            )
+        })?;
         // SAFETY: the descriptor is valid and the staging handle owns these rights.
         check(unsafe {
             SetKernelObjectSecurity(
@@ -116,40 +170,72 @@ impl Attributes {
     }
 }
 
-fn streams(path: &Path) -> io::Result<Vec<(OsString, Vec<u8>)>> {
-    let mut data = WIN32_FIND_STREAM_DATA::default();
-    let name = wide(path);
-    // SAFETY: a terminated path and initialized stream-information buffer.
-    let handle = unsafe { FindFirstStreamW(name.as_ptr(), FindStreamInfoStandard, (&raw mut data).cast(), 0) };
-    if handle == INVALID_HANDLE_VALUE {
-        let error = io::Error::last_os_error();
-        return if error.raw_os_error() == Some(ERROR_HANDLE_EOF as i32) { Ok(Vec::new()) } else { Err(error) };
-    }
-    let result = (|| {
-        let mut streams = Vec::new();
-        loop {
-            let end = data.cStreamName.iter().position(|c| *c == 0).unwrap_or(data.cStreamName.len());
-            let name = OsString::from_wide(&data.cStreamName[..end]);
-            if name != "::$DATA" {
-                let mut stream = path.as_os_str().to_os_string();
-                stream.push(&name);
-                streams.push((name, fs::read(stream)?));
-            }
-            // SAFETY: the enumeration handle remains open and data is writable.
-            if unsafe { FindNextStreamW(handle, (&raw mut data).cast()) } == 0 {
-                let error = io::Error::last_os_error();
-                if error.raw_os_error() != Some(ERROR_HANDLE_EOF as i32) {
-                    return Err(error);
-                }
-                break;
-            }
+fn streams(file: &File, path: &Path) -> io::Result<Vec<(OsString, Vec<u8>)>> {
+    let expected = identity(file)?;
+    let mut buffer = vec![0u64; size_of::<FILE_STREAM_INFO>().div_ceil(8)];
+    loop {
+        // SAFETY: the buffer is aligned for FILE_STREAM_INFO and grows when
+        // the kernel reports it cannot hold the complete stream list.
+        if unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileStreamInfo,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+            )
+        } != 0
+        {
+            break;
         }
-        streams.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(streams)
-    })();
-    // SAFETY: this function owns the enumeration handle.
-    unsafe { FindClose(handle) };
-    result
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(ERROR_HANDLE_EOF as i32) {
+            return Ok(Vec::new());
+        }
+        if matches!(error.raw_os_error(), Some(code) if code == ERROR_INSUFFICIENT_BUFFER as i32 || code == windows_sys::Win32::Foundation::ERROR_MORE_DATA as i32)
+        {
+            buffer.resize(buffer.len() * 2, 0);
+        } else {
+            return Err(error);
+        }
+    }
+    let mut offset = 0usize;
+    let mut result = Vec::new();
+    loop {
+        let header = offset_of!(FILE_STREAM_INFO, StreamName);
+        if offset + header > buffer.len() * 8 {
+            return Err(io::Error::other("invalid stream information"));
+        }
+        // SAFETY: the header is within the aligned kernel buffer.
+        let info = unsafe { &*(buffer.as_ptr().cast::<u8>().add(offset).cast::<FILE_STREAM_INFO>()) };
+        let length = info.StreamNameLength as usize;
+        if !length.is_multiple_of(2) || offset + header + length > buffer.len() * 8 {
+            return Err(io::Error::other("invalid stream name length"));
+        }
+        // SAFETY: the validated name contains length / 2 UTF-16 units.
+        let name = OsString::from_wide(unsafe {
+            std::slice::from_raw_parts((&raw const info.StreamName).cast::<u16>(), length / 2)
+        });
+        if name != "::$DATA" {
+            let mut stream = path.as_os_str().to_os_string();
+            stream.push(&name);
+            let mut reader = OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(stream)?;
+            if identity(&reader)? != expected {
+                return Err(io::Error::other("stream belongs to another filesystem object"));
+            }
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes)?;
+            result.push((name, bytes));
+        }
+        if info.NextEntryOffset == 0 {
+            break;
+        }
+        if info.NextEntryOffset as usize <= header || info.NextEntryOffset % 8 != 0 {
+            return Err(io::Error::other("invalid stream entry offset"));
+        }
+        offset += info.NextEntryOffset as usize;
+    }
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(result)
 }
 
 pub(crate) fn open(path: &Path) -> io::Result<File> {
@@ -255,9 +341,54 @@ pub(crate) fn restore_modified(file: &File, modified: SystemTime) -> io::Result<
     file.set_modified(modified)
 }
 
-pub(crate) fn sync_parent(_path: &Path) -> io::Result<()> {
-    // Windows has no documented equivalent to fsync on a directory handle.
-    Ok(())
+pub(crate) fn sync_parent(path: &Path) -> io::Result<()> {
+    sync_directory(path.parent().expect("absolute path"))
+}
+
+pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
+    let directory = OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    let mut filesystem = [0u16; 32];
+    // MS-FSA 2.1.5.7 requires directory metadata on stable storage. Its
+    // Windows product note 80 limits that behavior to NTFS: other drivers
+    // can return success without flushing anything. Refuse that false promise.
+    // SAFETY: a live directory handle and a correctly sized name buffer.
+    check(unsafe {
+        GetVolumeInformationByHandleW(
+            directory.as_raw_handle(),
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            filesystem.as_mut_ptr(),
+            filesystem.len() as u32,
+        )
+    })?;
+    if filesystem[..5] != [b'N' as u16, b'T' as u16, b'F' as u16, b'S' as u16, 0] {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "durable directory publication requires NTFS"));
+    }
+    directory.sync_all()
+}
+
+/// Keeps the actual displaced object, including writes through old handles.
+/// ReplaceFile can partially complete on error; callers must inspect all names.
+pub(crate) fn replace_preserving(source: &Path, target: &Path, displaced: &Path) -> io::Result<()> {
+    let (source, target, displaced) = (wide(source), wide(target), wide(displaced));
+    // SAFETY: all three names are terminated, distinct paths on the same volume.
+    check(unsafe { ReplaceFileW(target.as_ptr(), source.as_ptr(), displaced.as_ptr(), 0, ptr::null(), ptr::null()) })
+}
+
+/// Moves the object opened at the source to a new name without replacing one.
+pub(crate) fn move_preserving(source: &Path, destination: &Path) -> io::Result<()> {
+    let file = OpenOptions::new()
+        .read(true)
+        .access_mode(DELETE | GENERIC_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(source)?;
+    publish(&file, source, destination, false)
 }
 
 fn wide(path: &Path) -> Vec<u16> {

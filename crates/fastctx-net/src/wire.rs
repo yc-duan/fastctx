@@ -19,7 +19,7 @@ use crate::sign::{Digest, PublicKey, Secret, Signature, Signed};
 use crate::trust::WorldId;
 
 /// Raised whenever a change would make one side misread the other.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 5;
 
 pub const CONTROL_PATH: &str = "/fastctx/world/3";
 pub const DATA_PATH: &str = "/fastctx/world/3/data";

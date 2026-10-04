@@ -16,6 +16,8 @@
 //! Built against the mod API as measured on Claude Code 2.1.287 and run
 //! against a stand-in host only; it has not yet run with Claude Code.
 
+mod process;
+
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -43,11 +45,14 @@ struct State {
     sessions: HashMap<String, Session>,
     /// Resident to the session it is.
     paired: HashMap<ResidentId, String>,
+    observed: HashSet<fastctx_types::ProcessIdentity>,
+    delivering: HashMap<ResidentId, Arc<tokio::sync::Mutex<()>>>,
 }
 
 struct Session {
     registration: exchange::Registration,
     resident: Option<ResidentId>,
+    reading: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Writes the plugin and starts watching the sessions.
@@ -100,6 +105,13 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     Ok(())
 }
 
+pub async fn replay(node: &Arc<Node>) {
+    let directory = exchange::sessions(node.world.path());
+    if directory.exists() {
+        look_all(node, &directory).await;
+    }
+}
+
 async fn look_all(node: &Arc<Node>, sessions: &Path) {
     let directories: Vec<PathBuf> = match std::fs::read_dir(sessions) {
         Ok(entries) => entries.filter_map(|entry| Some(entry.ok()?.path())).filter(|path| path.is_dir()).collect(),
@@ -118,25 +130,92 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     let Some(session) = directory.file_name().and_then(|name| name.to_str()).map(str::to_string) else {
         return;
     };
-    let known = node.claude.state.lock().expect("never poisoned").sessions.contains_key(&session);
-    if !known {
-        match exchange::registration(directory) {
-            Ok(Some(registration)) => {
-                node.claude
-                    .state
-                    .lock()
-                    .expect("never poisoned")
+    match exchange::registration(directory) {
+        Ok(Some(registration)) => {
+            if let Some(process) = &registration.process {
+                match fastctx_platform::is_alive(process) {
+                    Ok(false) => match exchange::recover_reports(directory) {
+                        Ok(problems) => {
+                            for problem in problems {
+                                node.log.line(problem);
+                            }
+                        }
+                        Err(error) => {
+                            node.log.line(format_args!("recovering the exited host's reports: {error}"));
+                            return;
+                        }
+                    },
+                    Ok(true) => {}
+                    Err(error) => {
+                        node.log.line(format_args!("checking the Claude host process: {error}"));
+                        return;
+                    }
+                }
+            }
+            let prior = {
+                let state = node.claude.state.lock().expect("never poisoned");
+                state
                     .sessions
-                    .insert(session.clone(), Session { registration, resident: None });
+                    .get(&session)
+                    .and_then(|entry| Some((entry.resident.clone()?, entry.registration.process.clone()?)))
+            };
+            if let Some((resident, process)) = &prior
+                && registration.process.as_ref() != Some(process)
+            {
+                match fastctx_platform::is_alive(process) {
+                    Ok(false) => {
+                        if let Err(error) = ended_for_process(
+                            node,
+                            resident,
+                            &session,
+                            Some("its host process exited".to_string()),
+                            Some(process),
+                        )
+                        .await
+                        {
+                            node.log.line(format_args!("settling the previous Claude host: {error}"));
+                            return;
+                        }
+                    }
+                    Ok(true) => {}
+                    Err(error) => {
+                        node.log.line(format_args!("checking the previous Claude host: {error}"));
+                        return;
+                    }
+                }
+            }
+            let speaking = prior.as_ref().and_then(|(resident, _)| node.residents.speaking(resident));
+            let guard = match speaking {
+                Some(lock) => Some(lock.lock_owned().await),
+                None => None,
+            };
+            let changed = {
+                let mut state = node.claude.state.lock().expect("never poisoned");
+                match state.sessions.get_mut(&session) {
+                    Some(entry) if entry.registration == registration => false,
+                    Some(entry) => {
+                        entry.registration = registration;
+                        entry.resident = None;
+                        true
+                    }
+                    None => {
+                        state.sessions.insert(
+                            session.clone(),
+                            Session { registration, resident: None, reading: Arc::new(tokio::sync::Mutex::new(())) },
+                        );
+                        true
+                    }
+                }
+            };
+            drop(guard);
+            if changed {
                 pair(node, &session).await;
             }
-            // Not registered yet, or not whole yet: its next change comes
-            // here again.
-            Ok(None) => return,
-            Err(error) => {
-                node.log.line(format_args!("reading {}: {error}", directory.display()));
-                return;
-            }
+        }
+        Ok(None) => return,
+        Err(error) => {
+            node.log.line(format_args!("reading {}: {error}", directory.display()));
+            return;
         }
     }
     // What it reports stays where it is until it is someone's: a node that
@@ -152,6 +231,8 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     else {
         return;
     };
+    let reading = node.claude.state.lock().expect("never poisoned").sessions[&session].reading.clone();
+    let _reading = reading.lock().await;
     let harvested = {
         let directory = directory.to_path_buf();
         tokio::task::spawn_blocking(move || exchange::harvest(&directory)).await
@@ -167,19 +248,79 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     for problem in problems {
         node.log.line(problem);
     }
-    for reported in reported {
-        match reported {
-            exchange::Reported::Happened(event) => {
-                if let Happened::TurnStarted { turn } = &event.happened {
-                    taken(node, &resident, turn, |state| state == PendingState::Waking).await;
+    for report in reported {
+        let applied = async {
+            for reported in report.events {
+                match reported {
+                    exchange::Reported::Uncertain { ids, text } => {
+                        let speaking = node.residents.speaking(&resident).expect("known resident");
+                        let _speaking = speaking.lock().await;
+                        uncertain_inputs(node, &resident, &session, Some(&ids), text).await?;
+                    }
+                    exchange::Reported::Happened(event) => {
+                        if let Happened::TurnStarted { turn } = &event.happened {
+                            taken(node, &resident, &session, turn, |pending| pending.state == PendingState::Waking)
+                                .await?;
+                        }
+                        let current = node
+                            .residents
+                            .about(&resident)
+                            .is_some_and(|(about, _)| about.session.as_deref() == Some(&session));
+                        if !current && matches!(event.happened, Happened::TurnStarted { .. } | Happened::Health { .. })
+                        {
+                            let town = node.residents.town_of(&resident).flatten();
+                            let directory = node.world.resident(town.as_ref(), &resident);
+                            let key = match &event.happened {
+                                Happened::TurnStarted { turn } => format!("started:{turn}"),
+                                _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
+                            };
+                            if crate::delivery::event(&directory, &key, &event)? {
+                                node.watchers.publish(&resident, &event);
+                            }
+                        } else {
+                            crate::turns::apply(node, &resident, event).await?;
+                        }
+                    }
+                    exchange::Reported::Handed { ids, turn } => {
+                        if turn.is_empty() {
+                            return Err(std::io::Error::other(
+                                "the mod handed words over without identifying their turn",
+                            ));
+                        }
+                        taken(node, &resident, &session, &turn, |pending| {
+                            ids.iter().any(|id| id == pending.delivery.id.as_str())
+                        })
+                        .await?;
+                        exchange::acknowledge_handover(directory, &ids, &turn)?;
+                    }
+                    exchange::Reported::Ended { reason } => ended(node, &resident, &session, reason).await?,
                 }
-                crate::turns::happened(node, &resident, event).await
             }
-            exchange::Reported::Handed { ids, turn } => {
-                taken(node, &resident, &turn, |_| true).await;
-                let _ = ids;
+            exchange::acknowledge(directory, &report.name)
+        }
+        .await;
+        if let Err(error) = applied {
+            node.log.line(format_args!(
+                "applying {} from {session}: {error}; the report remains for recovery",
+                report.name
+            ));
+            return;
+        }
+    }
+    match exchange::receipts(directory) {
+        Ok(receipts) => {
+            for (id, turn) in receipts {
+                if let Err(error) =
+                    taken(node, &resident, &session, &turn, |pending| pending.delivery.id.as_str() == id).await
+                {
+                    node.log.line(format_args!("applying the receipt for {id}: {error}"));
+                    return;
+                }
             }
-            exchange::Reported::Ended { reason } => ended(node, &resident, reason).await,
+        }
+        Err(error) => {
+            node.log.line(format_args!("reading consumption receipts for {session}: {error}"));
+            return;
         }
     }
     if let Err(error) = exchange::handed_over(directory) {
@@ -190,66 +331,154 @@ async fn look(node: &Arc<Node>, directory: &Path) {
 /// What the World kept for the resident that its session took into `turn`:
 /// whoever it was for is owed that turn's end. Which are taken is said by
 /// the mod, by id; `which` picks among those kept by how far they came.
-async fn taken(node: &Arc<Node>, resident: &ResidentId, turn: &str, which: impl Fn(PendingState) -> bool) {
-    let Some(town) = node.residents.town_of(resident) else { return };
+async fn taken(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    session: &str,
+    turn: &str,
+    which: impl Fn(&Pending) -> bool,
+) -> std::io::Result<()> {
+    let Some(town) = node.residents.town_of(resident) else { return Ok(()) };
     let directory = node.world.resident(town.as_ref(), resident);
-    let kept = {
-        let directory = directory.clone();
-        tokio::task::spawn_blocking(move || crate::inbox::pending(&directory)).await
-    };
-    let kept = match kept {
-        Ok(Ok(kept)) => kept,
-        Ok(Err(error)) => {
-            node.log.line(format_args!("reading what is on its way to {resident}: {error}"));
-            return;
-        }
-        Err(_) => return,
-    };
-    let Some(speaking) = node.residents.speaking(resident) else { return };
+    let speaking = node.residents.speaking(resident).expect("known resident");
     let _speaking = speaking.lock().await;
-    for pending in kept.into_iter().filter(|pending| which(pending.state)) {
-        if let Err(error) = node.residents.owe(&node.world, resident, turn, &pending.readers) {
-            node.log.line(format_args!("recording who is owed {resident}'s turn: {error}"));
-            continue;
-        }
-        match crate::speech::settle(&directory, &pending.delivery.id).await {
-            Ok(_) => crate::speech::heard(node, resident, &pending.delivery, turn),
-            Err(failure) => node.log.line(format_args!("settling what {resident} took: {failure}")),
+    crate::delivery::remember_session(&directory, turn, session)?;
+    let mut kept: Vec<Pending> = crate::inbox::pending(&directory)?
+        .into_iter()
+        .filter(|pending| pending.session.as_deref().is_none_or(|bound| bound == session))
+        .filter(which)
+        .collect();
+    if kept.is_empty() {
+        return Ok(());
+    }
+    let mut audience = node.residents.readers(resident, turn);
+    if audience.is_empty() {
+        if let Some(finished) = crate::delivery::terminal(&directory, turn)? {
+            audience = finished.readers;
+        } else if node.residents.about(resident).is_some_and(|(about, _)| about.session.as_deref() == Some(session)) {
+            audience = node.residents.working_for(resident);
         }
     }
+    for pending in &mut kept {
+        if pending.working {
+            pending.readers = audience.clone();
+            pending.working = false;
+        }
+    }
+    let mut handover = crate::delivery::begin(&directory, kept)?;
+    crate::speech::bind(node, resident, &directory, &mut handover, turn)
+        .await
+        .map_err(|error| std::io::Error::other(error.message))
+}
+
+async fn uncertain_inputs(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    session: &str,
+    ids: Option<&[String]>,
+    why: String,
+) -> std::io::Result<()> {
+    let Some(town) = node.residents.town_of(resident) else {
+        return Ok(());
+    };
+    let directory = node.world.resident(town.as_ref(), resident);
+    let known: HashSet<_> = crate::delivery::handovers(&directory)?
+        .into_iter()
+        .filter(|handover| handover.turn.is_some())
+        .flat_map(|handover| handover.inputs.into_iter().map(|input| input.delivery.id))
+        .collect();
+    let pending = crate::inbox::pending(&directory)?
+        .into_iter()
+        .filter(|pending| pending.session.as_deref() == Some(session) || (pending.session.is_none() && ids.is_some()))
+        .filter(|pending| !known.contains(&pending.delivery.id))
+        .filter(|pending| ids.is_none_or(|ids| ids.iter().any(|id| id == pending.delivery.id.as_str())))
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let mut handover = crate::delivery::begin(&directory, pending)?;
+    if let Some(turn) = handover.turn.clone() {
+        crate::speech::bind(node, resident, &directory, &mut handover, &turn)
+            .await
+            .map_err(|error| std::io::Error::other(error.message))?;
+    } else {
+        crate::turns::unresolved(
+            node,
+            resident,
+            &directory,
+            &mut handover,
+            fastctx_types::session::TurnHow::Interrupted,
+            why,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// The resident's session ended: a turn it ran ends with it, and it sleeps
 /// until words wake it.
-async fn ended(node: &Arc<Node>, resident: &ResidentId, reason: Option<String>) {
-    let running =
-        node.residents.now(resident).and_then(|now| (now.activity == Activity::Busy).then_some(now.turn)).flatten();
-    if let Some(turn) = running {
-        let why = match &reason {
-            Some(reason) => format!("its Claude Code session ended ({reason})"),
-            None => "its Claude Code session ended".to_string(),
-        };
-        crate::turns::stopped(node, resident, &turn, why).await;
-    }
-    let slept = node.residents.change_now(&node.world, resident, |now| {
-        now.activity = Activity::Asleep;
-        now.since = Timestamp::now();
-        now.turn = None;
-    });
-    if let Err(error) = slept {
-        node.log.line(format_args!("recording that {resident}'s session ended: {error}"));
-    }
+async fn ended(node: &Arc<Node>, resident: &ResidentId, session: &str, reason: Option<String>) -> std::io::Result<()> {
+    ended_for_process(node, resident, session, reason, None).await
 }
 
-/// Asks a resident's Claude session to stop the turn it is running; its mod
-/// does at its next look. Returns whether a turn was running.
+async fn ended_for_process(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    session: &str,
+    reason: Option<String>,
+    expected: Option<&fastctx_types::ProcessIdentity>,
+) -> std::io::Result<()> {
+    let speaking = node.residents.speaking(resident).expect("known resident");
+    let _speaking = speaking.lock().await;
+    if let Some(expected) = expected {
+        let state = node.claude.state.lock().expect("never poisoned");
+        if state.sessions.get(session).and_then(|entry| entry.registration.process.as_ref()) != Some(expected) {
+            return Ok(());
+        }
+    }
+    let Some((about, town)) = node.residents.about(resident) else { return Ok(()) };
+    let directory = node.world.resident(town.as_ref(), resident);
+    let current = about.session.as_deref() == Some(session);
+    let mut turns = std::collections::BTreeSet::new();
+    if let Some(now) = node.residents.now(resident) {
+        turns.extend(now.owed.into_keys());
+        turns.extend(now.turn);
+    }
+    for turn in turns {
+        let owner = crate::delivery::session(&directory, &turn)?;
+        if owner.as_deref() != Some(session) && !(owner.is_none() && current) {
+            continue;
+        }
+        let why = match &reason {
+            Some(reason) => format!("its Claude Code conversation ended ({reason})"),
+            None => "its Claude Code conversation ended".to_string(),
+        };
+        let end = fastctx_types::session::TurnEnd {
+            how: fastctx_types::session::TurnHow::Interrupted,
+            reason: Some(why),
+            duration_ms: None,
+            last_message: None,
+        };
+        crate::turns::finish_locked(node, resident, &turn, end, &[]).await?;
+    }
+    uncertain_inputs(node, resident, session, None,
+        "the conversation ended before the host identified which turn consumed these words; their acceptance is unknown".to_string()).await?;
+    if current {
+        node.residents.change_now(&node.world, resident, |now| {
+            now.activity = Activity::Asleep;
+            now.since = Timestamp::now();
+            now.turn = None;
+        })?;
+    }
+    Ok(())
+}
+
+/// Asks the paired mod to stop this resident's current turn.
 pub fn stop(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
     let session = node.claude.state.lock().expect("never poisoned").paired.get(resident).cloned().ok_or_else(|| {
         Failure::new(format!("{resident}'s session has not been heard from the World's plugin, which is what stops it"))
     })?;
-    let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else {
-        return Ok(false);
-    };
+    let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else { return Ok(false) };
     let directory = exchange::sessions(node.world.path()).join(&session);
     exchange::stop(&directory, &turn).map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
     Ok(true)
@@ -298,20 +527,53 @@ async fn pair(node: &Arc<Node>, session: &str) {
     let Some(resident) = resident.filter(|resident| node.residents.about(resident).is_some()) else {
         return;
     };
-    let set = node.residents.set_session(
-        &node.world,
-        &resident,
-        session,
-        registration.model_name(),
-        registration.version_text(),
-    );
-    if let Err(error) = set {
-        node.log.line(format_args!("recording which session {resident} is: {error}"));
-    }
-    {
-        let mut state = node.claude.state.lock().expect("never poisoned");
-        state.paired.insert(resident.clone(), session.to_string());
-        state.sessions.get_mut(session).expect("looked up above").resident = Some(resident.clone());
+    let speaking = node.residents.speaking(&resident).expect("known resident");
+    let guard = speaking.lock().await;
+    let current = node.residents.about(&resident).and_then(|(about, _)| about.session);
+    let newer = match current.as_deref() {
+        None => true,
+        Some(prior) if prior == session => true,
+        Some(prior) => match exchange::registration(&exchange::sessions(node.world.path()).join(prior)) {
+            Ok(Some(previous)) => {
+                registration.at.is_some()
+                    && (registration.at > previous.at
+                        || (registration.at == previous.at && registration.previous.as_deref() == Some(prior)))
+            }
+            Ok(None) => true,
+            Err(error) => {
+                node.log.line(format_args!("reading the current Claude registration: {error}"));
+                return;
+            }
+        },
+    };
+    // Every conversation keeps its resident for replay. Only a newer
+    // registration can replace the address used for future words.
+    node.claude.state.lock().expect("never poisoned").sessions.get_mut(session).expect("looked up above").resident =
+        Some(resident.clone());
+    if newer {
+        if let Some(prior) = current.as_deref().filter(|prior| *prior != session)
+            && let Some((_, town)) = node.residents.about(&resident)
+            && let Some(now) = node.residents.now(&resident)
+        {
+            let directory = node.world.resident(town.as_ref(), &resident);
+            for turn in now.owed.keys().chain(now.turn.iter()) {
+                if let Err(error) = crate::delivery::remember_session(&directory, turn, prior) {
+                    node.log.line(format_args!("remembering the prior conversation: {error}"));
+                    return;
+                }
+            }
+        }
+        if let Err(error) = node.residents.set_session(
+            &node.world,
+            &resident,
+            session,
+            registration.model_name(),
+            registration.version_text(),
+        ) {
+            node.log.line(format_args!("recording which session {resident} is: {error}"));
+            return;
+        }
+        node.claude.state.lock().expect("never poisoned").paired.insert(resident.clone(), session.to_string());
     }
     // What waited for the resident before its mod was there goes to the mod,
     // and stays kept until the mod says which turn took it.
@@ -323,7 +585,23 @@ async fn pair(node: &Arc<Node>, session: &str) {
     };
     match waiting {
         Ok(Ok(kept)) => {
-            for pending in kept.into_iter().filter(|pending| pending.state == PendingState::Waiting) {
+            for pending in &kept {
+                if pending.state == PendingState::Waking
+                    && pending.session.is_none()
+                    && newer
+                    && let Err(error) = crate::inbox::target(&directory, &pending.delivery.id, session)
+                {
+                    node.log.line(format_args!("binding the session's first words: {error}"));
+                    return;
+                }
+            }
+            for pending in kept.into_iter().filter(|pending| {
+                pending.state == PendingState::Waiting
+                    && match pending.session.as_deref() {
+                        Some(bound) => bound == session,
+                        None => newer,
+                    }
+            }) {
                 if let Err(failure) = into_inbox(node, session, &directory, &pending) {
                     node.log.line(format_args!("handing {} to {resident}'s session: {failure}", pending.delivery.id));
                 }
@@ -332,9 +610,11 @@ async fn pair(node: &Arc<Node>, session: &str) {
         Ok(Err(error)) => node.log.line(format_args!("reading what waits for {resident}: {error}")),
         Err(_) => {}
     }
+    drop(guard);
     // What it reported before it was paired is read now.
     let directory = exchange::sessions(node.world.path()).join(session);
     Box::pin(look(node, &directory)).await;
+    process::observe(node, registration.process);
 }
 
 /// Hands something kept to a resident whose Claude session the World
@@ -346,7 +626,16 @@ pub async fn deliver(
     directory: &ResidentDir,
     pending: &Pending,
 ) -> Option<Result<Landed, Failure>> {
+    let delivering = {
+        let mut state = node.claude.state.lock().expect("never poisoned");
+        state.paired.get(to)?;
+        state.delivering.entry(to.clone()).or_default().clone()
+    };
+    let _delivering = delivering.lock().await;
     let session = node.claude.state.lock().expect("never poisoned").paired.get(to).cloned()?;
+    if let Err(error) = crate::inbox::target(directory, &pending.delivery.id, &session) {
+        return Some(Err(Failure::new(error.to_string())));
+    }
     if !about.world_started {
         // The user's own session: whatever its state, its mod hands this over
         // when the session runs, and when the user opens it again.
@@ -358,26 +647,87 @@ pub async fn deliver(
         // next turn takes them.
         Ok(false) => {
             let (text, as_user) = words(&pending.delivery.notice);
-            let woken = wake(node, &session, if as_user { text } else { framed(&text) }).await;
-            if woken.is_ok()
-                && let Err(error) = crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Waking)
-            {
-                node.log.line(format_args!("keeping what woke {to}: {error}"));
+            let claimed: std::io::Result<bool> = (|| {
+                let taking = node.taking.lock().expect("never poisoned");
+                if taking.contains(&(to.clone(), pending.delivery.id.clone())) {
+                    return Ok(false);
+                }
+                let Some(current) = crate::inbox::read(directory, &pending.delivery.id)? else {
+                    return Ok(false);
+                };
+                if current.state != PendingState::Waiting {
+                    return Ok(false);
+                }
+                crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Waking)?;
+                Ok(true)
+            })();
+            match claimed {
+                Ok(true) => {
+                    match wake(node, &session, if as_user { text } else { framed(&text) }, pending.delivery.id.clone())
+                        .await
+                    {
+                        Ok(landed) => Ok(landed),
+                        Err(error) => failed_wake(node, to, directory, &pending.delivery.id, error).await,
+                    }
+                }
+                Ok(false) => Ok(Landed::Waiting {
+                    why: Some("these words already have a handover in progress".to_string()),
+                    answered: true,
+                }),
+                Err(error) => Err(Failure::new(format!("keeping what wakes {to}: {error}"))),
             }
-            woken
         }
         Err(failure) => Err(failure),
     })
 }
 
+async fn failed_wake(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    directory: &ResidentDir,
+    id: &fastctx_types::NoticeId,
+    error: Failure,
+) -> Result<Landed, Failure> {
+    let speaking = node.residents.speaking(resident).expect("known resident");
+    let _speaking = speaking.lock().await;
+    if let Some(turn) = crate::delivery::input_turn(directory, id).map_err(|error| Failure::new(error.to_string()))? {
+        node.log.line(format_args!("the Claude command failed after its turn was identified: {error}"));
+        return Ok(Landed::NewTurn { turn });
+    }
+    let why = format!("the Claude command failed before identifying a consuming turn: {error}");
+    if let Some(pending) = crate::inbox::read(directory, id).map_err(|error| Failure::new(error.to_string()))? {
+        crate::turns::unsettled(
+            node,
+            resident,
+            directory,
+            pending,
+            fastctx_types::session::TurnHow::Interrupted,
+            why.clone(),
+        )
+        .await;
+    }
+    Ok(Landed::Uncertain { why })
+}
+
 /// Puts something kept into the mod's inbox; it is kept until the mod says
 /// which turn took it.
 fn into_inbox(node: &Node, session: &str, directory: &ResidentDir, pending: &Pending) -> Result<Landed, Failure> {
-    let (text, as_user) = words(&pending.delivery.notice);
+    let taking = node.taking.lock().expect("never poisoned");
+    if taking.iter().any(|(_, id)| *id == pending.delivery.id) {
+        return Ok(Landed::Waiting {
+            why: Some("a World tool is handing these words over".to_string()),
+            answered: true,
+        });
+    }
+    if crate::inbox::read(directory, &pending.delivery.id).map_err(|error| Failure::new(error.to_string()))?.is_none() {
+        return Ok(Landed::Handed { id: pending.delivery.id.clone() });
+    }
     let session_directory = exchange::sessions(node.world.path()).join(session);
+    crate::inbox::target(directory, &pending.delivery.id, session).map_err(|error| Failure::new(error.to_string()))?;
+    let (text, as_user) = words(&pending.delivery.notice);
     exchange::deliver(&session_directory, pending.delivery.id.as_str(), &text, as_user)
         .and_then(|()| crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Handed))
-        .map(|()| Landed::Handed)
+        .map(|()| Landed::Handed { id: pending.delivery.id.clone() })
         .map_err(|error| Failure::new(format!("handing it to the session's plugin: {error}")))
 }
 
@@ -410,7 +760,7 @@ async fn running(node: &Arc<Node>, session: &str) -> Result<bool, Failure> {
     .map_err(Failure::new)
 }
 
-async fn wake(node: &Arc<Node>, session: &str, words: String) -> Result<Landed, Failure> {
+async fn wake(node: &Arc<Node>, session: &str, words: String, id: fastctx_types::NoticeId) -> Result<Landed, Failure> {
     let Command { program, cwd, env } = command(node)?;
     let args = background::wake_args(session, &words);
     let world = node.world.path().to_path_buf();
@@ -420,7 +770,7 @@ async fn wake(node: &Arc<Node>, session: &str, words: String) -> Result<Landed, 
         .await
         .map_err(|error| Failure::new(format!("waking the session: {error}")))?
         .map_err(Failure::new)?;
-    Ok(Landed::Handed)
+    Ok(Landed::Handed { id })
 }
 
 /// The `claude` command, where to run it, and the environment it gets: the
@@ -506,11 +856,13 @@ pub async fn open_here(
         },
         readers: Vec::new(),
         state: PendingState::Waking,
+        working: false,
+        session: None,
     };
     crate::inbox::keep(&directory, &first)
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
     let world = node.world.path().to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    let started = tokio::task::spawn_blocking(move || {
         let start =
             background::Start { plugin: &plugin, settings: &settings, instructions: &instructions, first_words: &text };
         let args = background::start_args(&start);
@@ -527,9 +879,13 @@ pub async fn open_here(
         }
     })
     .await
-    .map_err(|error| Failure::new(format!("starting the session: {error}")))?
-    .map_err(Failure::new)?;
-    Ok((id, Landed::Handed))
+    .map_err(|error| Failure::new(format!("starting the session: {error}")))
+    .and_then(|result| result.map_err(Failure::new));
+    if let Err(error) = started {
+        let landed = failed_wake(node, &id, &directory, &first.delivery.id, error).await?;
+        return Ok((id, landed));
+    }
+    Ok((id, Landed::Handed { id: first.delivery.id }))
 }
 
 /// The World's directory, where every session the World starts stands, is

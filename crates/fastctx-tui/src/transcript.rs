@@ -1,18 +1,20 @@
 //! A session as a conversation (`world-gui.md`, 对话): words said to the
-//! agent, what it writes, each tool it uses with where and how it ended,
-//! how each turn ended, and what its host said about the session. It reads
-//! the session's events and nothing else; what it shows of words the user
-//! is sending comes from what the World answered.
+//! agent, what it writes and what it shows of its thinking, the steps it
+//! set out, each tool it uses with where and how it ended, how each turn
+//! ended, and what its host said about the session. It reads the session's
+//! events and nothing else; what it shows of words the user is sending
+//! comes from what the World answered.
 //!
 //! What came before arrives as history and may repeat in what comes live;
-//! the same words in the same turn, the same message or the same tool use
-//! are shown once.
+//! the same words in the same turn and the same item are shown once.
 
 use std::cell::RefCell;
 
 use fastctx_types::MachineName;
 use fastctx_types::residents::Landed;
-use fastctx_types::session::{Happened, Health, SessionEvent, Speaker, TurnEnd, TurnHow};
+use fastctx_types::session::{
+    Does, Happened, Health, Part, SessionEvent, Speaker, Step, StepStatus, Tool, ToolStatus, TurnEnd, TurnHow, What,
+};
 use jiff::Timestamp;
 use ratatui::text::{Line, Span};
 
@@ -27,15 +29,65 @@ pub struct Transcript {
     /// The machine this TUI runs on: the user's words typed here need no
     /// name above them.
     here: Option<MachineName>,
+    /// How full the session's context is, as its host last said.
+    context: Option<(u64, Option<u64>)>,
+    title: Option<String>,
 }
 
 enum Item {
-    Heard { from: Option<Speaker>, text: String, turn: Option<String>, sending: Option<Sending> },
-    Message { item: String, turn: String, text: String, writing: bool, laid: Laid },
-    Tool { item: String, turn: String, tool: String, detail: String, at: Timestamp, ended: Option<(Timestamp, Use)> },
-    Ended { turn: String, end: TurnEnd },
-    Health { health: Health },
-    Note { text: String, role: Role },
+    Heard {
+        from: Option<Speaker>,
+        text: String,
+        turn: Option<String>,
+        sending: Option<Sending>,
+    },
+    Prose {
+        item: String,
+        turn: String,
+        kind: Prose,
+        text: String,
+        writing: bool,
+        laid: Laid,
+    },
+    Tool {
+        item: String,
+        turn: String,
+        tool: Box<Tool>,
+        at: Timestamp,
+        ended: Option<(Timestamp, Use)>,
+    },
+    Steps {
+        turn: String,
+        steps: Vec<Step>,
+        note: Option<String>,
+    },
+    Compaction {
+        item: String,
+    },
+    Ended {
+        turn: String,
+        end: TurnEnd,
+    },
+    Health {
+        health: Health,
+    },
+    Note {
+        text: String,
+        role: Role,
+    },
+    /// Words the World handed over without learning whether a turn took
+    /// them.
+    Uncertain {
+        why: String,
+    },
+}
+
+/// What the agent writes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Prose {
+    Message,
+    Thinking,
+    Plan,
 }
 
 /// What the agent wrote, laid out for the width it was last drawn at:
@@ -83,13 +135,25 @@ enum SendState {
 enum Use {
     Done,
     Failed,
+    /// Refused before it ran.
+    Declined,
     /// Its turn ended before it did.
     Cut,
 }
 
 impl Transcript {
     pub fn new(here: Option<MachineName>) -> Self {
-        Self { items: Vec::new(), next_local: 0, here }
+        Self { items: Vec::new(), next_local: 0, here, context: None, title: None }
+    }
+
+    /// How much of its context the session holds and how much it can.
+    pub fn context(&self) -> Option<(u64, Option<u64>)> {
+        self.context
+    }
+
+    /// The title the host gave the session.
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
     }
 
     /// What came before, replacing what was shown; words being sent from
@@ -122,7 +186,7 @@ impl Transcript {
         let at = event.at;
         match event.happened {
             Happened::TurnStarted { .. } => {}
-            Happened::Heard { turn, from, text } => {
+            Happened::Heard { turn, from, text, .. } => {
                 // Words sent from here are now heard: they keep their place.
                 if matches!(from, Some(Speaker::User { .. }))
                     && let Some(Item::Heard { sending, turn: heard_turn, from: heard_from, .. }) = self
@@ -142,42 +206,37 @@ impl Transcript {
                     self.items.push(Item::Heard { from, text, turn, sending: None });
                 }
             }
-            Happened::Writing { turn, item, delta } => match self.message(&item) {
-                Some(Item::Message { text, laid, .. }) => {
-                    text.push_str(&delta);
+            Happened::Began { turn, item } => self.item(turn, item.id, item.what, at, false),
+            Happened::Finished { turn, item } => self.item(turn, item.id, item.what, at, true),
+            Happened::Grew { turn, item, part, text: more } => match (self.find(&item), part) {
+                (Some(Item::Prose { text, laid, .. }), Part::Text) => {
+                    text.push_str(&more);
                     laid.changed();
                 }
-                _ => self.items.push(Item::Message { item, turn, text: delta, writing: true, laid: Laid::default() }),
+                (Some(_), _) => {}
+                // A message's first words can come before any word of it.
+                (None, Part::Text) => self.items.push(Item::Prose {
+                    item,
+                    turn,
+                    kind: Prose::Message,
+                    text: more,
+                    writing: true,
+                    laid: Laid::default(),
+                }),
+                (None, Part::Output) => {}
             },
-            Happened::Said { turn, item, text } => match self.message(&item) {
-                Some(Item::Message { text: shown, writing, laid, .. }) => {
-                    *shown = text;
-                    *writing = false;
-                    laid.changed();
-                }
-                _ => self.items.push(Item::Message { item, turn, text, writing: false, laid: Laid::default() }),
-            },
-            Happened::ToolStarted { turn, item, tool, detail } => {
-                let known = !item.is_empty()
-                    && self.items.iter().any(|shown| matches!(shown, Item::Tool { item: id, .. } if *id == item));
-                if !known {
-                    self.items.push(Item::Tool { item, turn, tool, detail, at, ended: None });
-                }
-            }
-            Happened::ToolEnded { turn, item, tool, detail, failed } => {
-                let how = if failed { Use::Failed } else { Use::Done };
-                let found = self.items.iter_mut().rev().find(|shown| match shown {
-                    Item::Tool { item: id, .. } if !item.is_empty() => *id == item,
-                    Item::Tool { turn: t, tool: name, detail: d, ended: None, .. } => {
-                        *t == turn && *name == tool && *d == detail
+            Happened::Steps { turn, steps, note } => {
+                match self.items.iter_mut().rev().find(|item| matches!(item, Item::Steps { turn: t, .. } if *t == turn))
+                {
+                    Some(Item::Steps { steps: shown, note: said, .. }) => {
+                        *shown = steps;
+                        *said = note;
                     }
-                    _ => false,
-                });
-                match found {
-                    Some(Item::Tool { ended, .. }) => *ended = Some((at, how)),
-                    _ => self.items.push(Item::Tool { item, turn, tool, detail, at, ended: Some((at, how)) }),
+                    _ => self.items.push(Item::Steps { turn, steps, note }),
                 }
             }
+            Happened::Context { used, window } => self.context = Some((used, window)),
+            Happened::Titled { title } => self.title = Some(title),
             Happened::TurnEnded { turn, end } => {
                 if self.items.iter().any(|item| matches!(item, Item::Ended { turn: ended, .. } if *ended == turn)) {
                     return;
@@ -185,11 +244,14 @@ impl Transcript {
                 for item in &mut self.items {
                     match item {
                         Item::Tool { turn: t, ended: ended @ None, .. } if *t == turn => *ended = Some((at, Use::Cut)),
-                        Item::Message { turn: t, writing, .. } if *t == turn => *writing = false,
+                        Item::Prose { turn: t, writing, .. } if *t == turn => *writing = false,
                         _ => {}
                     }
                 }
                 self.items.push(Item::Ended { turn, end });
+            }
+            Happened::DeliveryUncertain { why, .. } => {
+                self.items.push(Item::Uncertain { why });
             }
             Happened::Health { health, .. } => {
                 let repeat = matches!(self.items.last(), Some(Item::Health { health: last, .. }) if *last == health);
@@ -200,8 +262,78 @@ impl Transcript {
         }
     }
 
-    fn message(&mut self, id: &str) -> Option<&mut Item> {
-        self.items.iter_mut().find(|item| matches!(item, Item::Message { item, .. } if item == id))
+    /// An item began or finished: shown where it first appeared, as it now
+    /// stands.
+    fn item(&mut self, turn: String, id: String, what: What, at: Timestamp, finished: bool) {
+        let prose = |kind, text: String| Item::Prose {
+            item: id.clone(),
+            turn: turn.clone(),
+            kind,
+            text,
+            writing: !finished,
+            laid: Laid::default(),
+        };
+        let fresh = match what {
+            What::Message { text } => prose(Prose::Message, text),
+            What::Thinking { text } => prose(Prose::Thinking, text),
+            What::Plan { text } => prose(Prose::Plan, text),
+            What::Tool(tool) => {
+                let ended = match tool.status {
+                    ToolStatus::Running => None,
+                    ToolStatus::Done => Some((at, Use::Done)),
+                    ToolStatus::Failed => Some((at, Use::Failed)),
+                    ToolStatus::Declined => Some((at, Use::Declined)),
+                    ToolStatus::Cut => Some((at, Use::Cut)),
+                };
+                Item::Tool {
+                    item: id.clone(),
+                    turn: turn.clone(),
+                    tool,
+                    at,
+                    ended: if finished { ended } else { None },
+                }
+            }
+            // Shown once it is done: the context it leaves is what counts.
+            What::Compaction if !finished => return,
+            What::Compaction => Item::Compaction { item: id.clone() },
+            // A kind the World does not know is not drawn.
+            What::Other { .. } => return,
+        };
+        if id.is_empty() {
+            self.items.push(fresh);
+            return;
+        }
+        match self.find(&id) {
+            Some(shown) => {
+                let began = match shown {
+                    Item::Tool { at, .. } => Some(*at),
+                    _ => None,
+                };
+                let empty_now = matches!(&fresh, Item::Prose { text, .. } if text.is_empty());
+                match (shown, fresh) {
+                    // A message still being written keeps what it has
+                    // until its whole text comes.
+                    (Item::Prose { writing: true, .. }, _) if !finished && empty_now => {}
+                    (Item::Prose { text, writing, laid, .. }, Item::Prose { text: whole, writing: still, .. }) => {
+                        *text = whole;
+                        *writing = still;
+                        laid.changed();
+                    }
+                    (shown @ Item::Tool { .. }, Item::Tool { item, turn, tool, ended, .. }) => {
+                        *shown = Item::Tool { item, turn, tool, at: began.unwrap_or(at), ended };
+                    }
+                    (shown, fresh) => *shown = fresh,
+                }
+            }
+            None => self.items.push(fresh),
+        }
+    }
+
+    fn find(&mut self, id: &str) -> Option<&mut Item> {
+        self.items.iter_mut().find(|item| match item {
+            Item::Prose { item, .. } | Item::Tool { item, .. } | Item::Compaction { item } => item == id,
+            _ => false,
+        })
     }
 
     /// Words the user is sending; returns the number they are known by
@@ -246,17 +378,18 @@ impl Transcript {
     /// Whether anything shown is happening now.
     pub fn moving(&self) -> bool {
         self.items.iter().any(|item| {
-            matches!(item, Item::Tool { ended: None, .. } | Item::Message { writing: true, .. })
+            matches!(item, Item::Tool { ended: None, .. } | Item::Prose { writing: true, .. })
                 || matches!(item, Item::Heard { sending: Some(Sending { state: SendState::Going, .. }), .. })
         })
     }
 
     /// The conversation laid out in `width` cells. The words that went in
     /// sit behind `❯` on a band; what the agent writes sits on the ground
-    /// unmarked; the tools it uses in a row form one group, a line each,
-    /// with a bar on the left whose colour says how each went. A blank line
-    /// comes before each block. A turn that completed says nothing more;
-    /// one that did not says how it ended.
+    /// unmarked; its thinking is quieter, whole while it thinks and its
+    /// first line once it has; the tools it uses in a row form one group, a
+    /// line each, with a bar on the left whose colour says how each went. A
+    /// blank line comes before each block. A turn that completed says
+    /// nothing more; one that did not says how it ended.
     pub fn lines(&self, ctx: &Ctx, width: usize) -> Vec<Line<'static>> {
         let look = &ctx.look;
         let mut out: Vec<Line<'static>> = Vec::new();
@@ -264,7 +397,7 @@ impl Transcript {
             .items
             .iter()
             .filter_map(|item| match item {
-                Item::Tool { tool, .. } => Some(text::width(short_tool(tool))),
+                Item::Tool { tool, .. } => Some(text::width(&tool.name)),
                 _ => None,
             })
             .max()
@@ -283,25 +416,37 @@ impl Transcript {
                         out.extend(sent(ctx, &sending.state, width));
                     }
                 }
-                Item::Message { text, writing, laid, .. } => {
+                Item::Prose { kind: Prose::Thinking, text, writing, laid, .. } => {
+                    if text.trim().is_empty() {
+                        continue;
+                    }
                     blank(&mut out);
+                    out.extend(thinking(ctx, text, *writing, laid, width));
+                }
+                Item::Prose { kind, text, writing, laid, .. } => {
+                    blank(&mut out);
+                    if *kind == Prose::Plan {
+                        out.push(Line::from(Span::styled(ctx.words.plan().to_string(), look.text(Role::Muted))));
+                    }
                     let mut lines = laid.lines(ctx, text, width);
                     if *writing {
-                        let breath = look.faded(Role::Accent, ctx.breath);
-                        match lines.last_mut() {
-                            Some(line) if text::line_width(line) + 2 <= width => {
-                                line.spans.push(Span::styled(" ▍", breath))
-                            }
-                            _ => lines.push(Line::from(Span::styled("▍", breath))),
-                        }
+                        cursor(ctx, &mut lines, width);
                     }
                     out.extend(lines);
                 }
-                Item::Tool { tool, detail, at, ended, .. } => {
+                Item::Tool { tool, at, ended, .. } => {
                     if !last_was_tool {
                         blank(&mut out);
                     }
-                    out.push(tool_row(ctx, tool, name_width, detail, *at, *ended, width));
+                    out.push(tool_row(ctx, tool, name_width, *at, *ended, self.here.as_ref(), width));
+                }
+                Item::Steps { steps, note, .. } => {
+                    blank(&mut out);
+                    out.extend(steps_lines(ctx, steps, note.as_deref(), width));
+                }
+                Item::Compaction { .. } => {
+                    blank(&mut out);
+                    out.push(Line::from(Span::styled(ctx.words.compacted().to_string(), look.text(Role::Faint))));
                 }
                 Item::Ended { end, .. } => {
                     if let Some(line) = ended(ctx, end, width) {
@@ -321,6 +466,10 @@ impl Transcript {
                 Item::Note { text, role } => {
                     blank(&mut out);
                     out.extend(text::wrap_plain(text, look.text(*role), width));
+                }
+                Item::Uncertain { why } => {
+                    blank(&mut out);
+                    out.extend(text::wrap_plain(&ctx.words.landing_unknown(why), look.text(Role::Caution), width));
                 }
             }
             last_was_tool = is_tool;
@@ -349,6 +498,60 @@ fn blank(out: &mut Vec<Line<'static>>) {
     if out.last().is_some_and(|line| text::line_width(line) > 0) {
         out.push(Line::default());
     }
+}
+
+/// The breathing mark after text still being written.
+fn cursor(ctx: &Ctx, lines: &mut Vec<Line<'static>>, width: usize) {
+    let breath = ctx.look.faded(Role::Accent, ctx.breath);
+    match lines.last_mut() {
+        Some(line) if text::line_width(line) + 2 <= width => line.spans.push(Span::styled(" ▍", breath)),
+        _ => lines.push(Line::from(Span::styled("▍", breath))),
+    }
+}
+
+/// What the agent shows of its thinking: whole and faint while it thinks;
+/// once it has, its first line after `思考`, as the official apps fold it.
+fn thinking(ctx: &Ctx, text: &str, writing: bool, laid: &Laid, width: usize) -> Vec<Line<'static>> {
+    let look = &ctx.look;
+    let label = Span::styled(format!("{}  ", ctx.words.thinking()), look.text(Role::Faint));
+    if !writing {
+        let first = text.lines().map(|line| line.trim().trim_matches('*').trim()).find(|line| !line.is_empty());
+        let line = Line::from(vec![label, Span::styled(first.unwrap_or_default().to_string(), look.text(Role::Faint))]);
+        return vec![paint::fit_line(&line, width)];
+    }
+    let mut lines = laid.lines(ctx, text, width);
+    for line in &mut lines {
+        for span in &mut line.spans {
+            span.style = span.style.patch(look.text(Role::Faint));
+        }
+    }
+    cursor(ctx, &mut lines, width);
+    let mut out = vec![Line::from(label)];
+    out.extend(lines);
+    out
+}
+
+/// The agent's steps, one a line: done ones quiet, the one being done
+/// marked, the rest waiting.
+fn steps_lines(ctx: &Ctx, steps: &[Step], note: Option<&str>, width: usize) -> Vec<Line<'static>> {
+    let look = &ctx.look;
+    let mut out = vec![Line::from(Span::styled(ctx.words.steps().to_string(), look.text(Role::Muted)))];
+    if let Some(note) = note.filter(|note| !note.trim().is_empty()) {
+        out.extend(text::wrap_plain(note, look.text(Role::Faint), width));
+    }
+    for step in steps {
+        let (mark, mark_role, role) = match step.status {
+            StepStatus::Done => ("✓", Role::Faint, Role::Faint),
+            StepStatus::Doing => ("▸", Role::Accent, Role::Text),
+            StepStatus::Pending => ("·", Role::Muted, Role::Muted),
+        };
+        let line = Line::from(vec![
+            Span::styled(format!("{mark} "), look.text(mark_role)),
+            Span::styled(text::first_line(&step.text), look.text(role)),
+        ]);
+        out.push(paint::fit_line(&line, width));
+    }
+    out
 }
 
 /// The bar before a tool's row.
@@ -405,7 +608,8 @@ fn sent(ctx: &Ctx, state: &SendState, width: usize) -> Vec<Line<'static>> {
         SendState::Landed(landed, machine) => match landed {
             Landed::NewTurn { .. } => return Vec::new(),
             Landed::JoinedTurn { .. } => (words.joined_turn().to_string(), Role::Faint),
-            Landed::Handed => (words.handed().to_string(), Role::Faint),
+            Landed::Handed { .. } => (words.handed().to_string(), Role::Faint),
+            Landed::Uncertain { why } => (words.landing_unknown(why), Role::Caution),
             Landed::Sent => (words.sent_to(machine.as_str()), Role::Faint),
             Landed::Waiting { why, answered } => {
                 let mut text = match why {
@@ -422,24 +626,18 @@ fn sent(ctx: &Ctx, state: &SendState, width: usize) -> Vec<Line<'static>> {
     text::wrap_plain(&text, ctx.look.text(role), width)
 }
 
-/// A tool as its host names it, without the server it came from.
-fn short_tool(tool: &str) -> &str {
-    let tail = tool.rsplit("__").next().unwrap_or(tool);
-    tail.rsplit('.').next().unwrap_or(tail)
-}
-
-#[allow(clippy::too_many_arguments)]
 /// A tool in one row: a bar whose colour says how it went (the colour of
 /// a rule once it is done, the accent breathing while it runs, the colour
-/// of what went wrong when it failed), its name, what it was used on, and
-/// on the right how long it took.
+/// of what went wrong when it failed), its name, what it was used on, the
+/// machine it acted on when not this one, and on the right how long it took
+/// or how its command ended.
 fn tool_row(
     ctx: &Ctx,
-    tool: &str,
+    tool: &Tool,
     name_width: usize,
-    detail: &str,
     at: Timestamp,
     ended: Option<(Timestamp, Use)>,
+    here: Option<&MachineName>,
     width: usize,
 ) -> Line<'static> {
     let look = &ctx.look;
@@ -448,26 +646,51 @@ fn tool_row(
         Some((end, _)) => end.as_second() - at.as_second(),
         None => ctx.now.as_second() - at.as_second(),
     };
-    let took = words.duration(seconds.max(0) as u64);
+    let took = match tool.duration_ms {
+        Some(ms) if ended.is_some() => words.duration(ms / 1000),
+        _ => words.duration(seconds.max(0) as u64),
+    };
+    let (exit, job) = match &tool.does {
+        Does::Command { exit, job, .. } => (*exit, job.clone()),
+        _ => (None, None),
+    };
     let (bar, detail_role, said) = match ended {
         None => (look.faded(Role::Accent, ctx.breath), Role::Text, Span::styled(took, look.text(Role::Faint))),
-        Some((_, Use::Done)) => (look.text(Role::Rule), Role::Muted, Span::styled(took, look.text(Role::Faint))),
+        Some((_, Use::Done)) => match (exit, job) {
+            (_, Some(job)) => {
+                (look.text(Role::Rule), Role::Muted, Span::styled(words.went_on_as(&job), look.text(Role::Accent)))
+            }
+            (Some(code), None) if code != 0 => (
+                look.text(Role::Caution),
+                Role::Muted,
+                Span::styled(words.exited(code, &took), look.text(Role::Caution)),
+            ),
+            _ => (look.text(Role::Rule), Role::Muted, Span::styled(took, look.text(Role::Faint))),
+        },
         Some((_, Use::Failed)) => {
             (look.text(Role::Wrong), Role::Muted, Span::styled(words.tool_failed(&took), look.text(Role::Wrong)))
         }
+        Some((_, Use::Declined)) => (
+            look.text(Role::Wrong),
+            Role::Muted,
+            Span::styled(words.tool_declined().to_string(), look.text(Role::Wrong)),
+        ),
         Some((_, Use::Cut)) => {
             (look.text(Role::Rule), Role::Faint, Span::styled(words.tool_cut().to_string(), look.text(Role::Faint)))
         }
     };
-    let name = short_tool(tool);
-    let pad = name_width.saturating_sub(text::width(name));
-    let left = Line::from(vec![
+    let pad = name_width.saturating_sub(text::width(&tool.name));
+    let mut spans = vec![
         Span::styled(BAR, bar),
         Span::raw(" "),
-        Span::styled(format!("{name}{}", " ".repeat(pad)), look.text(Role::Faint)),
+        Span::styled(format!("{}{}", tool.name, " ".repeat(pad)), look.text(Role::Faint)),
         Span::raw("  "),
-        Span::styled(text::first_line(detail), look.text(detail_role)),
-    ]);
+        Span::styled(fastctx_client::shown::tool_detail(tool), look.text(detail_role)),
+    ];
+    if let Some(machine) = tool.machine.as_ref().filter(|machine| Some(*machine) != here) {
+        spans.push(Span::styled(format!("  · {machine}"), look.text(Role::Muted)));
+    }
+    let left = Line::from(spans);
     let right_width = text::width(&said.content);
     let mut line = paint::fit_line(&left, width.saturating_sub(right_width + 2));
     let used = text::line_width(&line);

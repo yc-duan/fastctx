@@ -104,12 +104,7 @@ fn output_facts(output: &OutputWindow) -> Vec<String> {
 }
 
 pub(crate) fn status_text(status: ExitStatus) -> String {
-    match status {
-        // Windows reports crashes as NTSTATUS codes, read in hex.
-        ExitStatus::Code(code) if code >= 0x8000_0000 => format!("exited 0x{code:08X}"),
-        ExitStatus::Code(code) => format!("exited {code}"),
-        ExitStatus::Signal(signal) => format!("ended by signal {signal}"),
-    }
+    status.to_string()
 }
 
 /// Paths in answers use forward slashes on every system (`world-run.md`).

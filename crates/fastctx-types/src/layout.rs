@@ -36,6 +36,12 @@ impl WorldDir {
         self.root.join("node.lock")
     }
 
+    /// Present while a system service keeps this World's node running: no
+    /// one else starts a node for it then (`fastctx service node install`).
+    pub fn node_service(&self) -> PathBuf {
+        self.root.join("node.service")
+    }
+
     /// The node's own diagnostics.
     pub fn node_log(&self) -> PathBuf {
         self.root.join("node.log")

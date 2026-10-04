@@ -16,7 +16,8 @@ fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
-jsonc-parser = "0.33.1"
+jiff.workspace = true
+jsonc-parser = { version = "0.33.1", features = ["serde"] }
 regex-lite = "0.1"
 ryu-js = "1"
 serde.workspace = true
@@ -42,6 +43,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Environment",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
     "Win32_System_JobObjects",
     "Win32_System_Pipes",
     "Win32_System_RemoteDesktop",

@@ -10,6 +10,7 @@ mod apply;
 mod ask;
 mod copy;
 mod journal;
+mod keep;
 mod project;
 mod service;
 mod talk;
@@ -31,11 +32,24 @@ enum Command {
     /// Open the World in this terminal: projects, agents, machines, and a
     /// conversation with any agent on any machine.
     Ui,
+    /// Identifies the process invoking the World mod helper.
+    #[command(hide = true)]
+    ParentProcess,
     /// Run this machine's node in the foreground.
     Node {
         /// The fastctx root to serve; defaults to this user's fastctx root.
         #[arg(long)]
         dir: Option<PathBuf>,
+        /// A guardian keeps this node; with the two below, the channel it
+        /// handed down (`fastctx_node::handoff`).
+        #[arg(long, hide = true, requires_all = ["supervisor_control", "supervisor_events", "service_identity"])]
+        supervised: bool,
+        #[arg(long, hide = true)]
+        supervisor_control: Option<u64>,
+        #[arg(long, hide = true)]
+        supervisor_events: Option<u64>,
+        #[arg(long, hide = true, value_parser = ["s4u", "interactive"])]
+        service_identity: Option<String>,
     },
     /// Install, uninstall or inspect a node/hub service on this machine.
     Service(service::ServiceArgs),
@@ -114,7 +128,14 @@ fn main() -> ExitCode {
     };
     let result = match command {
         Command::Ui => fastctx_tui::run(),
-        Command::Node { dir } => node(dir),
+        Command::ParentProcess => parent_process(),
+        Command::Node { dir, supervised, supervisor_control, supervisor_events, service_identity } => {
+            let supervision = match (supervised, supervisor_control, supervisor_events) {
+                (true, Some(control), Some(events)) => Some((control, events, service_identity)),
+                _ => None,
+            };
+            node(dir, supervision)
+        }
         Command::Service(args) => service::run(args),
         #[cfg(windows)]
         Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
@@ -154,12 +175,23 @@ fn finish(result: anyhow::Result<ExitCode>) -> ExitCode {
     })
 }
 
-fn node(dir: Option<PathBuf>) -> anyhow::Result<()> {
+fn node(dir: Option<PathBuf>, supervision: Option<(u64, u64, Option<String>)>) -> anyhow::Result<()> {
     let root = match dir {
         Some(root) => root,
         None => fastctx_platform::fastctx_root()?,
     };
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run(&root))
+    let supervision = match supervision {
+        Some((control, events, identity)) => {
+            let (control, events) = fastctx_platform::service_channel::inherited(control, events)?;
+            let identity = match identity.as_deref() {
+                Some("s4u") => fastctx_node::handoff::Identity::S4u,
+                _ => fastctx_node::handoff::Identity::Interactive,
+            };
+            Some(fastctx_node::handoff::Supervision { control, events, identity })
+        }
+        None => None,
+    };
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run(&root, supervision))
 }
 
 fn serve(writer: &str) -> anyhow::Result<()> {
@@ -187,4 +219,10 @@ fn append(path: &std::path::Path, text: &str) {
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{text}");
     }
+}
+
+fn parent_process() -> anyhow::Result<()> {
+    let identity = fastctx_platform::host_process::parent_identity()?;
+    println!("{}", serde_json::to_string(&identity)?);
+    Ok(())
 }

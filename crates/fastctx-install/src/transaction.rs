@@ -2,8 +2,10 @@
 //!
 //! Every publication is atomic; the group is not atomically visible. On a returned
 //! failure, completed changes are undone in reverse order, provided their installed
-//! revisions are still present. Original contents stay in memory, never backup files.
-//! Process termination/power loss does not roll back the group.
+//! revisions are still present. The non-durable methods retain originals only in
+//! memory and cannot recover a terminated process. The durable methods write a
+//! journal before publication, retain the actual displaced objects, and let
+//! `recover` complete publication or rollback after interruption.
 //!
 //! Attribute preservation covers Unix ownership, mode and extended attributes;
 //! Windows owner/group, DACL, creation time, basic file flags and named streams.
@@ -16,6 +18,8 @@
 //! `fastctx_platform::lock::FileLock`). A final comparison immediately precedes
 //! each rename or unlink, but portable filesystems have no content-based conditional
 //! rename: an uncooperative writer can still race that final system call.
+//! Durable publication detects changed displaced objects after the system call,
+//! restores when possible, and permanently preserves all displaced versions.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -31,6 +35,10 @@ use crate::disk::{self, Staged};
 use crate::executable;
 pub use crate::snapshot::Snapshot;
 use crate::snapshot::state_of_staged;
+
+mod durable;
+pub(crate) use durable::prepare_settings_command;
+pub use durable::recover;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Problem {
@@ -149,6 +157,9 @@ pub struct Receipt {
     /// Cleanup failures do not turn a fully committed transaction into failure.
     /// In particular, Windows may still be running an old executable image.
     pub cleanup: Vec<FileError>,
+    /// Manifests locating retained file objects. These are not disposable
+    /// copies: another process can still write through an old open handle.
+    pub preserved: Vec<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -183,17 +194,40 @@ impl std::error::Error for Failure {
 #[derive(Debug, Default)]
 pub struct Transaction {
     changes: Vec<FileChange>,
+    cleanup: Vec<CreatedDirectory>,
 }
 
 type RenderRecord<'a> = Box<dyn FnOnce(&Created) -> io::Result<Vec<u8>> + 'a>;
 
 impl Transaction {
     pub fn new(changes: impl IntoIterator<Item = FileChange>) -> Self {
-        Self { changes: changes.into_iter().collect() }
+        Self { changes: changes.into_iter().collect(), cleanup: vec![] }
+    }
+
+    /// Directory cleanup is part of the recoverable outcome, so interruption
+    /// after deleting an install record cannot lose these ownership facts.
+    pub fn cleanup_after_commit(mut self, directories: &[CreatedDirectory]) -> Self {
+        self.cleanup = directories.to_vec();
+        self
     }
 
     pub fn commit(self) -> Result<Receipt, Failure> {
         self.run(None)
+    }
+
+    /// Commits with a durable recovery manifest. Call `recover` under the same
+    /// installer lock before reading files for a subsequent operation.
+    pub fn commit_durable(self, journal: impl AsRef<Path>) -> Result<Receipt, Failure> {
+        durable::commit(self.changes, journal.as_ref(), None, self.cleanup)
+    }
+
+    pub fn commit_with_record_durable(
+        self,
+        journal: impl AsRef<Path>,
+        record: Snapshot,
+        render: impl FnOnce(&Created) -> io::Result<Vec<u8>>,
+    ) -> Result<Receipt, Failure> {
+        durable::commit(self.changes, journal.as_ref(), Some((record, Box::new(render))), self.cleanup)
     }
 
     /// Adds the install record last. The renderer runs after parent creation,
@@ -257,11 +291,13 @@ impl Transaction {
         })();
         match result {
             Ok(()) => {
-                let cleanup = work.cleanup_stages(&self.changes);
+                let mut cleanup = work.cleanup_stages(&self.changes);
+                cleanup.extend(cleanup_directories(&self.cleanup));
                 Ok(Receipt {
                     changed: work.committed.iter().map(|(i, _)| self.changes[*i].before.path.clone()).collect(),
                     created: work.created,
                     cleanup,
+                    preserved: Vec::new(),
                 })
             }
             Err(cause) => {
@@ -487,7 +523,9 @@ pub fn cleanup_directories(directories: &[CreatedDirectory]) -> Vec<FileError> {
                 return Err(FileError::changed(&directory.path));
             }
             fs::remove_dir(&directory.path)
-                .map_err(|error| FileError::io(&directory.path, "delete empty directory", error))
+                .map_err(|error| FileError::io(&directory.path, "delete empty directory", error))?;
+            disk::sync_parent(&directory.path)
+                .map_err(|error| FileError::io(&directory.path, "sync directory deletion", error))
         })();
         if let Err(error) = result {
             errors.push(error);

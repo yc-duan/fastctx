@@ -8,11 +8,10 @@
 //! Claude Code's plugin goes in through Claude Code's own `claude plugin`
 //! commands before the files are read, since those commands write Claude's
 //! settings; when the files cannot be committed afterwards, what this apply
-//! added to Claude is taken back. Each file publication is atomic. Revisions
-//! are compared immediately before publication, subject to the final syscall
-//! race documented by `transaction`. That transaction has no crash journal:
-//! an interruption can leave published files without their ownership record,
-//! which a later apply must not guess that it owns.
+//! added to Claude is taken back. File identities and both sides of publication
+//! are recorded durably before replacing names. A restart resumes publication
+//! or rollback. Displaced objects remain retained, including subsequent writes
+//! through old handles; conflicting versions are named and never discarded.
 //!
 //! An unapply takes out what the record says an apply put in, and leaves
 //! what the user changed since, saying where. It leaves fastctx's own copy,
@@ -21,9 +20,8 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
-use fastctx_platform::{FileLock, Permissions};
+use fastctx_platform::FileLock;
 use fastctx_types::layout::WorldDir;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +32,8 @@ use crate::codex::{self, Approval, Ownership};
 use crate::plan::{ClaudePlan, CodexPlan};
 use crate::transaction::{Created, FileChange, FileError, Snapshot, Transaction};
 use crate::{File, Notice, executable, guidance, legacy};
+
+mod recovery;
 
 /// Where the things an apply touches are, for this user on this machine.
 #[derive(Clone, Debug)]
@@ -90,6 +90,13 @@ impl Places {
     fn lock(&self) -> PathBuf {
         self.root.join("apply.lock")
     }
+
+    fn journal(&self) -> PathBuf {
+        self.root.join("applied-files-pending.json")
+    }
+    fn stamp(&self) -> PathBuf {
+        self.root.join("applied-operation.json")
+    }
 }
 
 /// Which hosts an apply or unapply is for.
@@ -122,10 +129,12 @@ pub enum Standing {
 }
 
 /// How each host stands, as the record says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub codex: Standing,
     pub claude: Standing,
+    /// What has been done with what an old fastctx left here.
+    pub legacy: Option<crate::upgrade::Summary>,
 }
 
 /// How each host stands now; reads the record and nothing of the hosts'.
@@ -149,6 +158,7 @@ pub fn status(places: &Places) -> Result<Status, Error> {
     Ok(Status {
         codex: if old { Standing::Old } else { standing(present.codex, record.codex.is_some()) },
         claude: standing(present.claude, record.claude_md.is_some() || record.settings.is_some() || plugin),
+        legacy: crate::upgrade::summary(places)?,
     })
 }
 
@@ -164,6 +174,7 @@ pub struct Report {
     /// What was done in full but left something behind, such as an old copy
     /// of fastctx still running.
     pub leftovers: Vec<String>,
+    pub preserved: Vec<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -229,17 +240,37 @@ impl Record {
     }
 }
 
+/// Places this fastctx where the hosts and the node's service start it
+/// from, as an apply does; returns that path, and what was changed or left.
+pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
+    crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
+    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let mut report = recovery::before(places)?;
+    let installed = places.installed();
+    let copy = Snapshot::read(&installed)?;
+    if !same_executable(&places.fastctx, &copy)? {
+        let receipt = Transaction::new([FileChange::copy_executable(copy, &places.fastctx)?])
+            .commit()
+            .map_err(|error| Error::Files(error.to_string()))?;
+        report.changed.extend(receipt.changed);
+        report.preserved.extend(receipt.preserved);
+        report.leftovers.extend(receipt.cleanup.iter().map(ToString::to_string));
+    }
+    Ok((installed, report))
+}
+
 /// Puts the World's tools into the sessions `hosts` open from now on.
 /// `approval` says whether Codex's shared output limit may be raised when
 /// the user set it lower than the World needs.
 pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report, Error> {
-    fastctx_platform::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
+    crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
     let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let mut report = recovery::before(places)?;
+    let operation = recovery::id()?;
     let record_file = Snapshot::read(places.record())?;
     let mut record = Record::read(&record_file)?;
     let installed = places.installed();
     let mut changes = Vec::new();
-    let mut report = Report::default();
 
     let copy = Snapshot::read(&installed)?;
     if !same_executable(&places.fastctx, &copy)? {
@@ -303,8 +334,23 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         let before = plugins::snapshot(&mut host).map_err(Error::Claude)?;
         let planned =
             PluginApply::prepare(&plan, before, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
-        let added = planned.execute(&mut host)?;
+        host.operation =
+            Some(recovery::PendingPlugin { id: operation.clone(), plan: planned.clone(), withdrawing: false });
+        let added = match planned.execute(&mut host) {
+            Ok(receipt) => receipt,
+            Err(failure) => {
+                let mut message = failure.to_string();
+                if failure.rollback_error.is_none()
+                    && let Err(error) =
+                        recovery::finish_rollback(places, &planned, &failure.receipt, &mut host, &mut report)
+                {
+                    message.push_str(&format!("\n{error}"));
+                }
+                return Err(Error::Claude(message));
+            }
+        };
         report.commands.append(&mut host.ran);
+        report.preserved.append(&mut host.preserved);
 
         // Read only now: the plugin commands write Claude's settings.
         let edit = (|| {
@@ -317,7 +363,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         })();
         let edit = match edit {
             Ok(edit) => edit,
-            Err(error) => return Err(rollback_plugin(error, &planned, &added, &mut host)),
+            Err(error) => return Err(rollback_plugin(places, error, &planned, &added, &mut host)),
         };
         record.settings = edit.receipt;
         record.settings_created = settings_created;
@@ -330,7 +376,8 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
     // fastctx's own copy, and the directory it lives in, belong to fastctx,
     // not to what an unapply takes out.
     let bin = installed.parent().map(Path::to_path_buf);
-    let committed = Transaction::new(changes).commit_with_record(record_file, |created| {
+    changes.push(recovery::stamp(places, &operation)?);
+    let committed = Transaction::new(changes).commit_with_record_durable(places.journal(), record_file, |created| {
         let mut record = record.clone();
         record.created.files.extend(created.files.iter().filter(|file| !same_path(file, &installed)).cloned());
         record.created.directories.extend(
@@ -344,9 +391,14 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
     });
     match committed {
         Ok(receipt) => {
-            report.changed = receipt.changed;
+            report.changed.extend(receipt.changed);
+            report.preserved.extend(receipt.preserved);
             report.leftovers.extend(receipt.cleanup.iter().map(ToString::to_string));
             report.leftovers.extend(executable::cleanup_retired(&installed).iter().map(ToString::to_string));
+            if let Some((_, added, mut host)) = plugin {
+                host.operation = None;
+                host.checkpoint(&added).map_err(Error::Claude)?;
+            }
             Ok(report)
         }
         Err(failure) => {
@@ -354,7 +406,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             // invocation's plugin additions even when a file could not be restored.
             let error = Error::Files(failure.to_string());
             if let Some((planned, added, mut host)) = plugin {
-                return Err(rollback_plugin(error, &planned, &added, &mut host));
+                return Err(rollback_plugin(places, error, &planned, &added, &mut host));
             }
             Err(error)
         }
@@ -364,12 +416,13 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
 /// Takes out of `hosts` what an apply put in, leaving what the user changed
 /// since.
 pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
-    fastctx_platform::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
+    crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
     let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let mut report = recovery::before(places)?;
+    let operation = recovery::id()?;
     let record_file = Snapshot::read(places.record())?;
     let mut record = Record::read(&record_file)?;
     let mut changes = Vec::new();
-    let mut report = Report::default();
 
     if hosts.codex {
         let old_file = record.codex.is_none().then(|| Snapshot::read(places.root.join("config.toml"))).transpose()?;
@@ -402,6 +455,7 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
     }
 
     let mut plugin_done = false;
+    let mut plugin = None;
     if hosts.claude {
         let initial_settings = Snapshot::read(places.claude_home.join("settings.json"))?;
         // Validate the profile and guidance before any irreversible CLI command.
@@ -414,19 +468,30 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
             None
         };
         let previous = read_plugin_record(&places.plugin_record(), initial_settings.path(), &record)?;
-        if let Some(previous) = previous {
-            let claude = places.claude.clone().ok_or(Error::NoClaude)?;
-            record.settings_created |= previous.settings_created;
+        if let Some(claude) = places.claude.clone() {
+            record.settings_created |= previous.as_ref().is_some_and(|record| record.settings_created);
             let mut host =
                 Cli::new(claude, places.plugin_record(), initial_settings.path().to_owned(), record.settings_created);
-            let remaining = plugins::unapply(&mut host, &previous.receipt)?;
+            let plan = ClaudePlan::new(&places.world);
+            let baseline = plugins::snapshot(&mut host).map_err(Error::Claude)?;
+            let baseline = PluginApply::prepare(&plan, baseline, previous.as_ref().map(|record| &record.receipt))
+                .map_err(Error::Claude)?;
+            host.operation = Some(recovery::PendingPlugin { id: operation.clone(), plan: baseline, withdrawing: true });
+            let remaining =
+                plugins::unapply_managed(&mut host, &plan, previous.as_ref().map(|record| &record.receipt))?;
             report.commands.append(&mut host.ran);
+            report.preserved.append(&mut host.preserved);
             plugin_done = !remaining.has_work();
+            plugin = Some((remaining, host));
+        } else if previous.as_ref().is_some_and(|record| record.receipt.has_work()) {
+            return Err(Error::NoClaude);
         }
         let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
-        let mut settings_bytes = settings_file.bytes().map(<[u8]>::to_vec);
+        let mut settings_bytes =
+            crate::claude::registration::remove(settings_file.bytes(), &ClaudePlan::new(&places.world), true, true)
+                .map_err(Error::Claude)?;
         if let Some(receipt) = record.settings.take() {
-            let edit = settings::unapply(settings_file.bytes(), Some(&receipt)).map_err(Error::Claude)?;
+            let edit = settings::unapply(settings_bytes.as_deref(), Some(&receipt)).map_err(Error::Claude)?;
             settings_notice(&mut report, settings_file.path(), &edit);
             settings_bytes = edit.bytes;
             record.settings = edit.receipt;
@@ -443,30 +508,32 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
         }
     }
 
+    changes.push(recovery::stamp(places, &operation)?);
     let committed = if record.holds_nothing() {
         if record_file.exists() {
             changes.push(FileChange::delete(record_file));
         }
-        Transaction::new(changes).commit()
+        Transaction::new(changes).cleanup_after_commit(&record.created.directories).commit_durable(places.journal())
     } else {
-        Transaction::new(changes)
-            .commit_with_record(record_file, |_| serde_json::to_vec_pretty(&record).map_err(io::Error::other))
+        Transaction::new(changes).commit_with_record_durable(places.journal(), record_file, |_| {
+            serde_json::to_vec_pretty(&record).map_err(io::Error::other)
+        })
     };
     let receipt = committed.map_err(|failure| Error::Files(failure.to_string()))?;
-    report.changed = receipt.changed;
+    report.changed.extend(receipt.changed);
+    report.preserved.extend(receipt.preserved);
     report.leftovers.extend(receipt.cleanup.iter().map(ToString::to_string));
+    if let Some((remaining, mut host)) = plugin {
+        host.operation = None;
+        host.settings_created = false;
+        host.checkpoint(&remaining).map_err(Error::Claude)?;
+    }
     if plugin_done {
         match std::fs::remove_file(places.plugin_record()) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => report.leftovers.push(format!("{}: {error}", places.plugin_record().display())),
         }
-    }
-    if record.holds_nothing() {
-        let created = std::mem::take(&mut record.created);
-        report
-            .leftovers
-            .extend(crate::transaction::cleanup_directories(&created.directories).iter().map(ToString::to_string));
     }
     Ok(report)
 }
@@ -478,33 +545,65 @@ struct Cli {
     record: PathBuf,
     settings_path: PathBuf,
     settings_created: bool,
+    operation: Option<recovery::PendingPlugin>,
     /// The commands that changed Claude, as run.
     ran: Vec<String>,
+    preserved: Vec<PathBuf>,
 }
 
 impl Cli {
     fn new(claude: PathBuf, record: PathBuf, settings_path: PathBuf, settings_created: bool) -> Self {
-        Self { claude, record, settings_path, settings_created, ran: Vec::new() }
+        Self {
+            claude,
+            record,
+            settings_path,
+            settings_created,
+            operation: None,
+            ran: Vec::new(),
+            preserved: Vec::new(),
+        }
     }
 }
 
 impl PluginHost for Cli {
     fn run(&mut self, command: &PluginCommand) -> Result<Vec<u8>, String> {
-        let output = Command::new(&self.claude)
-            .args(&command.args)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|error| format!("running claude {}: {error}", command.args.join(" ")))?;
+        let mutation = !command.args.iter().any(|arg| arg == "list");
+        let root = self.record.parent().expect("record directory");
+        let history = if mutation {
+            let history = crate::claude::history::History::begin(root, &self.settings_path, &command.args)?;
+            crate::transaction::prepare_settings_command(&root.join("applied-files-pending.json"), &history.before)
+                .map_err(|error| error.to_string())?;
+            self.preserved.push(history.manifest());
+            Some(history)
+        } else {
+            None
+        };
+        let program = std::path::absolute(&self.claude).map_err(|e| e.to_string())?;
+        let cwd = std::path::absolute(self.record.parent().expect("record directory")).map_err(|e| e.to_string())?;
+        let output = crate::claude::process::output(
+            &program,
+            &command.args,
+            &cwd,
+            self.settings_path.parent().expect("settings directory"),
+        )
+        .map_err(|error| format!("running claude {}: {error}", command.args.join(" ")))?;
+        if let Some(history) = &history {
+            history.finish()?;
+        }
         let line = format!("claude {}", command.args.join(" "));
         if !output.status.success() {
             return Err(format!(
-                "{line}: {}\n{}\n{}",
+                "{line}: {}\n{}\n{}{}",
                 output.status,
                 String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                String::from_utf8_lossy(&output.stderr),
+                history
+                    .as_ref()
+                    .map(|history| format!("\nsettings versions: {}", history.manifest().display()))
+                    .unwrap_or_default(),
             ));
         }
-        if !command.args.iter().any(|arg| arg == "list") {
+        if mutation {
             self.ran.push(line);
         }
         Ok(output.stdout)
@@ -515,10 +614,9 @@ impl PluginHost for Cli {
             settings_path: Some(self.settings_path.clone()),
             settings_created: self.settings_created,
             receipt: receipt.clone(),
+            operation: self.operation.clone(),
         };
-        let bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
-        fastctx_platform::publish(&self.record, &bytes, Permissions::Private)
-            .map_err(|error| format!("keeping {}: {error}", self.record.display()))
+        write_plugin_record(&self.record, &record)
     }
 }
 
@@ -528,31 +626,39 @@ struct PluginRecord {
     settings_path: Option<PathBuf>,
     #[serde(default)]
     settings_created: bool,
+    #[serde(default)]
+    operation: Option<recovery::PendingPlugin>,
     #[serde(flatten)]
     receipt: PluginReceipt,
 }
 
 fn read_plugin_record(path: &Path, settings: &Path, record: &Record) -> Result<Option<PluginRecord>, Error> {
+    let Some(plugin) = load_plugin_record(path)? else { return Ok(None) };
+    let previous = plugin
+        .settings_path
+        .clone()
+        .or_else(|| record.claude_md.as_ref().map(|receipt| Path::new(&receipt.path).with_file_name("settings.json")));
+    if let Some(previous) = previous {
+        crate::check_path(&text(settings), &text(&previous))?;
+    }
+    Ok(Some(plugin))
+}
+
+fn load_plugin_record(path: &Path) -> Result<Option<PluginRecord>, Error> {
     match std::fs::read(path) {
         Ok(bytes) => {
             let plugin: PluginRecord = serde_json::from_slice(&bytes)
                 .map_err(|error| Error::Io(format!("reading {}: {error}", path.display())))?;
-            let previous = plugin.settings_path.clone().or_else(|| {
-                record.claude_md.as_ref().map(|receipt| Path::new(&receipt.path).with_file_name("settings.json"))
-            });
-            if let Some(previous) = previous {
-                crate::check_path(&text(settings), &text(&previous))?;
-            } else if plugin.receipt.has_work() {
-                return Err(Error::Io(format!(
-                    "{}: plugin receipt has no recorded Claude profile; left unchanged",
-                    path.display()
-                )));
-            }
             Ok(Some(plugin))
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(Error::Io(format!("reading {}: {error}", path.display()))),
     }
+}
+
+fn write_plugin_record(path: &Path, record: &PluginRecord) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(record).map_err(|error| error.to_string())?;
+    crate::disk::publish_private(path, &bytes).map_err(|error| format!("keeping {}: {error}", path.display()))
 }
 
 fn retire_legacy(changes: &mut Vec<FileChange>, file: Snapshot) -> Result<(), Error> {
@@ -586,12 +692,29 @@ fn settings_notice(report: &mut Report, path: &Path, edit: &settings::SettingsEd
     }
 }
 
-fn rollback_plugin(error: Error, planned: &PluginApply, added: &PluginReceipt, host: &mut Cli) -> Error {
-    match planned.rollback(host, added) {
-        Ok(_) => error,
+fn rollback_plugin(
+    places: &Places,
+    error: Error,
+    planned: &PluginApply,
+    added: &PluginReceipt,
+    host: &mut Cli,
+) -> Error {
+    let result = match planned.rollback(host, added) {
+        Ok(receipt) => match recovery::finish_rollback(places, planned, &receipt, host, &mut Report::default()) {
+            Ok(()) => error,
+            Err(rollback) => Error::Io(format!("{error}\n{rollback}")),
+        },
         Err(rollback) => {
             Error::Io(format!("{error}\nand what was added to Claude Code could not be taken back: {rollback}"))
         }
+    };
+    if host.preserved.is_empty() {
+        result
+    } else {
+        Error::Io(format!(
+            "{result}\nClaude settings versions: {}",
+            host.preserved.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", ")
+        ))
     }
 }
 

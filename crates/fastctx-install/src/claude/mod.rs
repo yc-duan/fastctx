@@ -12,15 +12,17 @@
 //! [`plugins::unapply`] before reading settings for [`settings::unapply`]. Keep
 //! each receipt bound to the same user/configuration context that created it.
 //!
-//! Claude's commands are not atomic. In 2.1.287 an install can leave only an
-//! enabledPlugins entry, which uninstall cannot address without an install
-//! record. In a borrowed marketplace recovery reports this remaining work.
-//! Public listings also cannot distinguish identical marketplace recreation
-//! or prove ownership after a crash between intent and observed result.
+//! The world's marketplace and plugin are reserved fastctx products. Public
+//! state determines their recovery goal even after a command lost its result.
+//! An install can leave an enabledPlugins entry without a listable record;
+//! registration cleanup removes only this product's declarations in that case.
 
+pub(crate) mod history;
 mod jsonc;
 mod limit;
 pub mod plugins;
+pub(crate) mod process;
+pub(crate) mod registration;
 pub mod settings;
 
 /// Finds the public CLI on an explicitly supplied PATH, including npm's

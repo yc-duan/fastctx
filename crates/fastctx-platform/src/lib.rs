@@ -11,8 +11,10 @@ pub mod awake;
 #[cfg(any(target_os = "linux", windows))]
 pub mod child;
 pub mod detach;
+pub mod elevation;
 pub mod environment;
 pub mod home;
+pub mod host_process;
 pub mod hostname;
 pub mod identity;
 pub mod ipc;
@@ -48,3 +50,5 @@ pub use lock::FileLock;
 pub use private::ensure_private_dir;
 #[cfg(any(target_os = "linux", windows))]
 pub use tree::ProcessTree;
+#[cfg(windows)]
+pub use windows_user::current_user_sid;

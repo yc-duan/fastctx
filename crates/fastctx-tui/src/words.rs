@@ -548,6 +548,30 @@ impl Words {
         }
     }
 
+    /// What was done with what an old fastctx left on this machine.
+    pub fn legacy_cleaned(&self, tidied: usize, archived: usize, place: &str, waiting: usize) -> String {
+        match self.lang {
+            Lang::Zh => {
+                let mut said = format!(
+                    "旧版 fastctx 留下的：{tidied} 处原样未动的已收拾，{archived} 样归档在 {place}，删不删由你"
+                );
+                if waiting > 0 {
+                    said.push_str(&format!("；还有 {waiting} 样在用，等不用了再收"));
+                }
+                said
+            }
+            Lang::En => {
+                let mut said = format!(
+                    "Left by an old fastctx: {tidied} untouched files tidied, {archived} archived in {place}, yours to delete"
+                );
+                if waiting > 0 {
+                    said.push_str(&format!("; {waiting} still in use, put away once they are not"));
+                }
+                said
+            }
+        }
+    }
+
     pub fn left_alone(&self, location: &str, reason: &str) -> String {
         match self.lang {
             Lang::Zh => format!("留着没动：{location}（{reason}）"),
@@ -638,6 +662,13 @@ impl Words {
         self.pick("已交给它的会话", "handed to its session")
     }
 
+    pub fn landing_unknown(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("话交出去了，但不知道它进没进去：{why}"),
+            Lang::En => format!("handed over, but whether it went in is not known: {why}"),
+        }
+    }
+
     pub fn sent_to(&self, machine: &str) -> String {
         match self.lang {
             Lang::Zh => format!("已寄往 {machine}，等那台机器收到再送进去"),
@@ -665,6 +696,42 @@ impl Words {
             Lang::Zh => format!("失败 · {took}"),
             Lang::En => format!("failed · {took}"),
         }
+    }
+
+    pub fn tool_declined(&self) -> &'static str {
+        self.pick("没让它用", "refused")
+    }
+
+    /// A command that exited with a code other than 0, and how long it took.
+    pub fn exited(&self, code: i64, took: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("退出码 {code} · {took}"),
+            Lang::En => format!("exit {code} · {took}"),
+        }
+    }
+
+    /// A command still running when its call returned, going on as `job`.
+    pub fn went_on_as(&self, job: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("转到后台 {job}"),
+            Lang::En => format!("in the background as {job}"),
+        }
+    }
+
+    pub fn thinking(&self) -> &'static str {
+        self.pick("思考", "Thinking")
+    }
+
+    pub fn plan(&self) -> &'static str {
+        self.pick("它提出的计划", "Its proposed plan")
+    }
+
+    pub fn steps(&self) -> &'static str {
+        self.pick("步骤", "Steps")
+    }
+
+    pub fn compacted(&self) -> &'static str {
+        self.pick("—— 上下文压缩过了 ——", "—— context compacted ——")
     }
 
     pub fn tool_cut(&self) -> &'static str {

@@ -10,7 +10,7 @@ use xattr::FileExt;
 
 use super::Identity;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Attributes {
     mode: u32,
     uid: u32,
@@ -19,6 +19,22 @@ pub(crate) struct Attributes {
 }
 
 impl Attributes {
+    pub(crate) fn revision_bytes(&self) -> io::Result<Vec<u8>> {
+        serde_json::to_vec(self).map_err(io::Error::other)
+    }
+
+    pub(crate) fn publication_bytes(&self) -> io::Result<Vec<u8>> {
+        self.revision_bytes()
+    }
+
+    pub fn has_named_data(&self) -> bool {
+        !self.extended.is_empty()
+    }
+
+    pub fn apply_directory(&self, file: &File, path: &Path) -> io::Result<()> {
+        self.apply(file, path)
+    }
+
     pub fn protect(&self, _file: &File) -> io::Result<()> {
         // Existing files are staged with mode 0600 until apply() restores
         // their complete ownership, ACL and mode.
@@ -113,5 +129,69 @@ pub(crate) fn restore_modified(file: &File, modified: SystemTime) -> io::Result<
 }
 
 pub(crate) fn sync_parent(path: &Path) -> io::Result<()> {
-    File::open(path.parent().expect("absolute path"))?.sync_all()
+    sync_directory(path.parent().expect("absolute path"))
+}
+
+pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
+    open_directory(path)?.sync_all()
+}
+
+pub(crate) fn replace_preserving(source: &Path, target: &Path, displaced: &Path) -> io::Result<()> {
+    // An interruption between these operations leaves the displaced object
+    // at source. Both names are in the journal before the exchange occurs.
+    exchange(source, target)?;
+    sync_parent(source)?;
+    rename_exclusive(source, displaced)?;
+    sync_parent(displaced)
+}
+
+pub(crate) fn move_preserving(source: &Path, destination: &Path) -> io::Result<()> {
+    rename_exclusive(source, destination)
+}
+
+#[cfg(target_os = "linux")]
+fn rename_with_flags(source: &Path, destination: &Path, flags: u32) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let source = std::ffi::CString::new(source.as_os_str().as_bytes())?;
+    let destination = std::ffi::CString::new(destination.as_os_str().as_bytes())?;
+    // SAFETY: both C strings remain live throughout the syscall.
+    let result = unsafe {
+        libc::syscall(libc::SYS_renameat2, libc::AT_FDCWD, source.as_ptr(), libc::AT_FDCWD, destination.as_ptr(), flags)
+    };
+    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+}
+
+#[cfg(target_os = "macos")]
+fn rename_with_flags(source: &Path, destination: &Path, flags: u32) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let source = std::ffi::CString::new(source.as_os_str().as_bytes())?;
+    let destination = std::ffi::CString::new(destination.as_os_str().as_bytes())?;
+    // SAFETY: both paths are terminated strings. Unsupported filesystems fail;
+    // falling back to an overwriting rename would destroy the displaced version.
+    let result = unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), flags) };
+    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+}
+
+fn exchange(source: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    return rename_with_flags(source, destination, libc::RENAME_EXCHANGE);
+    #[cfg(target_os = "macos")]
+    return rename_with_flags(source, destination, libc::RENAME_SWAP);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (source, destination);
+        Err(io::Error::new(io::ErrorKind::Unsupported, "atomic file exchange is unavailable on this platform"))
+    }
+}
+
+fn rename_exclusive(source: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    return rename_with_flags(source, destination, libc::RENAME_NOREPLACE);
+    #[cfg(target_os = "macos")]
+    return rename_with_flags(source, destination, libc::RENAME_EXCL);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (source, destination);
+        Err(io::Error::new(io::ErrorKind::Unsupported, "exclusive rename is unavailable on this platform"))
+    }
 }

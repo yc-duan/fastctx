@@ -75,7 +75,7 @@ pub fn used(node: &Arc<Node>, resident: &ResidentId, turn: &str, used: Use) {
             }
         }
     }
-    send(node, tell);
+    send(node, tell, &format!("used:{resident}:{turn}"));
 }
 
 /// A resident's turn ended: if it sat at the desk, or its call never
@@ -97,7 +97,7 @@ pub fn turn_ended(node: &Arc<Node>, resident: &ResidentId, turn: &str) {
         let text = format!("{resident}'s turn ended: this machine's Computer Use is free.");
         std::mem::take(&mut state.waiting).into_iter().map(|waiting| (waiting, text.clone())).collect()
     };
-    send(node, tell);
+    send(node, tell, &format!("ended:{resident}:{turn}"));
 }
 
 /// Marks in the resident's `now` whether it sits at the desk.
@@ -107,13 +107,14 @@ fn sit(node: &Node, resident: &ResidentId, sits: bool) {
     }
 }
 
-fn send(node: &Arc<Node>, tell: Vec<(ResidentId, String)>) {
+fn send(node: &Arc<Node>, tell: Vec<(ResidentId, String)>, event: &str) {
     for (resident, text) in tell {
         let node = node.clone();
+        let id = speech::fixed_id("desk", &[event, resident.as_str(), &text]);
         tokio::spawn(async move {
             let to = Address { machine: node.machine(), resident: resident.clone() };
             let notice = Notice::Words { from: Speaker::World, text };
-            if let Err(failure) = speech::tell(&node, &to, speech::new_id("desk"), notice, Owed::Working).await {
+            if let Err(failure) = speech::tell(&node, &to, id, notice, Owed::Working).await {
                 node.log.line(format_args!("telling {resident} about the desk: {failure}"));
             }
         });

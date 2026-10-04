@@ -53,6 +53,13 @@ pub fn words(from: &Speaker, text: &str) -> String {
     format!("=== from {from} ===\n{text}")
 }
 
+/// Whether words in a session are something the World told it: everything
+/// the World says begins with a head note (`words`, `told`), and words a
+/// person typed into the host's own window do not.
+pub fn is_told(text: &str) -> bool {
+    text.starts_with("=== ")
+}
+
 /// How a turn ended and how long it ran, for a head note:
 /// `turn completed, 14m`, `turn failed: <reason>`.
 pub fn turn_end(end: &TurnEnd) -> String {

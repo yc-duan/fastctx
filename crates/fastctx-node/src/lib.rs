@@ -13,14 +13,18 @@ mod claude;
 mod codex;
 mod colleagues;
 mod copy;
+mod delivery;
 mod desk;
+pub mod handoff;
 mod inbox;
 mod jobs;
 mod ledger;
+mod letters;
 mod log;
 mod look;
 mod machine;
 mod own;
+mod resident_storage;
 mod residents;
 mod server;
 mod speech;
@@ -76,9 +80,25 @@ pub(crate) struct Node {
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
     taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
+    effects_ready: std::sync::atomic::AtomicBool,
+    effects_changed: tokio::sync::Notify,
+    /// Whether turns may start, while a guardian may ask for the World to
+    /// be handed on.
+    handoff: Arc<handoff::Handoff>,
 }
 
 impl Node {
+    pub(crate) async fn ready(&self) {
+        loop {
+            let changed = self.effects_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.effects_ready.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+            changed.await;
+        }
+    }
     pub(crate) fn machine(&self) -> MachineName {
         self.machine.read().expect("never poisoned").clone()
     }
@@ -94,11 +114,62 @@ impl Node {
 
 /// Runs the node of the World kept under `fastctx_root` until the process
 /// is ended.
-pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
+/// Puts away what an old fastctx left on this machine, when this World
+/// lives where the old versions did, and logs every step; the record of it
+/// is `upgrade-clean.json` beside the World.
+fn legacy(node: &Node) {
+    match fastctx_install::upgrade::is_legacy_root(&node.root) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(error) => {
+            node.log.line(format_args!("could not tell whether an old fastctx lived here: {error}"));
+            return;
+        }
+    }
+    let mut places = match fastctx_install::apply::Places::here() {
+        Ok(places) => places,
+        Err(error) => {
+            node.log.line(format_args!("cleaning up after an old fastctx: {error}"));
+            return;
+        }
+    };
+    places.root = node.root.clone();
+    places.world = node.world.path().to_path_buf();
+    match fastctx_install::upgrade::clean(&places) {
+        Ok(report) => {
+            for path in &report.changed {
+                node.log.line(format_args!("put away what an old fastctx left: {}", path.display()));
+            }
+            for notice in &report.notices {
+                node.log.line(format_args!("left what an old fastctx left, {}: {}", notice.location, notice.reason));
+            }
+            for leftover in &report.leftovers {
+                node.log.line(format_args!("an old fastctx's leftover: {leftover}"));
+            }
+        }
+        Err(error) => node.log.line(format_args!("cleaning up after an old fastctx: {error}")),
+    }
+}
+
+/// Runs the node for the World under `fastctx_root`; `supervision` is the
+/// guardian's channel when a guardian keeps it (`handoff`).
+pub async fn run(fastctx_root: &Path, mut supervision: Option<handoff::Supervision>) -> anyhow::Result<()> {
     let world = WorldDir::under(fastctx_root);
     ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
-    let _lock = FileLock::try_acquire(&world.node_lock())?
-        .ok_or_else(|| anyhow!("a node is already running for the World in {}", world.path().display()))?;
+    let _lock = match &mut supervision {
+        // A successor prepares, then waits to be let in, then waits for the
+        // node before it to let the World go.
+        Some(supervision) => {
+            let prepared = tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?;
+            if prepared.is_none() {
+                return Ok(());
+            }
+            let lock = world.node_lock();
+            tokio::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
+        }
+        None => FileLock::try_acquire(&world.node_lock())?
+            .ok_or_else(|| anyhow!("a node is already running for the World in {}", world.path().display()))?,
+    };
     let log = Arc::new(log::Log::open(&world.node_log())?);
     // The node usually has no terminal: a panic in any of its tasks is
     // written to its log, or it would leave no trace.
@@ -120,6 +191,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     }
 
     let (residents, problems) = residents::Residents::load(&world)?;
+    let unfinished = residents.unfinished();
     for (path, error) in &problems {
         log.line(format_args!("could not read {}: {error}", path.display()));
     }
@@ -164,6 +236,9 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         syncing: tokio::sync::Mutex::new(()),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
+        effects_ready: std::sync::atomic::AtomicBool::new(false),
+        effects_changed: tokio::sync::Notify::new(),
+        handoff: Arc::new(handoff::Handoff::default()),
     });
     for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));
@@ -175,15 +250,40 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     }
     codex::adopt(&node).await;
     codex::listen(node.clone(), codex_events);
+    codex::replay(&node).await;
+    let mut unfinished: std::collections::BTreeSet<_> = unfinished.into_iter().collect();
+    unfinished.extend(node.residents.unfinished());
+    claude::replay(&node).await;
     claude::start(&node).context("writing the World's Claude Code plugin")?;
 
     // What a node that stopped left owed, now that letters can be sent: the
     // turns it stopped under end, what it was handing over is settled, and
     // the ends of turns and jobs not yet told are told.
-    turns::recover(&node).await;
+    speech::restore(&node).await;
+    unfinished.extend(node.residents.unfinished());
+    turns::recover(&node, unfinished.into_iter().collect()).await;
+    node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
+    node.effects_changed.notify_waiters();
     speech::recover(&node).await;
-    for (path, error) in inbox::settle_jobs(&node).await? {
-        node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
+    let jobs_node = node.clone();
+    tokio::spawn(async move {
+        match inbox::settle_jobs(&jobs_node).await {
+            Ok(problems) => {
+                for (path, error) in problems {
+                    jobs_node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
+                }
+            }
+            Err(error) => jobs_node.log.line(format_args!("recovering job notifications: {error}")),
+        }
+    });
+
+    // What an old fastctx left here is put away in the background; nothing
+    // still in use is touched (`world-upgrade.md`).
+    let cleaning = node.clone();
+    tokio::task::spawn_blocking(move || legacy(&cleaning));
+
+    if let Some(supervision) = supervision {
+        handoff::follow(node.clone(), supervision);
     }
 
     let watchdog = watchdog::Watchdog::start(&node.world.node_log()).context("starting the control-loop watchdog")?;

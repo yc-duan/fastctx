@@ -38,7 +38,7 @@ pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
     let report = match apply::apply(&places, hosts, approval) {
         Ok(report) => report,
         Err(apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { location, current, requested })) => bail!(
-            "{} is {current}, and the World's answers need {requested}; nothing was changed. It is the \
+            "{} is {current}, and the World's answers need {requested}. It is the \
              limit for every tool in Codex: run fastctx apply --raise-output-limit to raise it",
             shown(std::path::Path::new(&location))
         ),
@@ -92,6 +92,9 @@ fn hosts(places: &Places, targets: &[Target], apply: bool) -> anyhow::Result<Hos
 }
 
 fn say(report: &Report) {
+    for manifest in &report.preserved {
+        println!("preserved file versions: {}", shown(manifest));
+    }
     for command in &report.commands {
         println!("ran {command}");
     }

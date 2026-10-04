@@ -1,22 +1,27 @@
 //! What happens in an agent's session, in one form for every host
-//! (`world-colleagues.md`, 一轮怎样结束 and 用户在任何地方和居民说话).
+//! (`world-colleagues.md`, 一轮怎样结束 and 用户在任何地方和居民说话;
+//! `world-gui.md`, 它是什么).
 //!
 //! Each host reports its sessions in its own words: Codex's app-server in
 //! notifications about threads, turns and items, Claude Code through the
 //! World's mod. Where the World first hears them it translates them into
 //! these events, and everything that follows a session (`fastctx talk`, the
 //! TUI, a colleague's requester, later the graphical interface) reads only
-//! these. A host's report that has no event here is not passed on, and
-//! nothing here is made up where the host said nothing.
+//! these. Nothing here is made up where the host said nothing; a kind of
+//! thing the World does not know is passed on by the host's name for it.
 //!
 //! A turn is one round of work: it starts when words go into an idle
 //! session and ends when the agent stops. Words that arrive while a turn
-//! runs join it at its next tool boundary.
+//! runs join it at its next tool boundary. Within a turn the agent does
+//! items, one after another or several at once: it writes, thinks, uses a
+//! tool. An item begins, may grow while it goes on, and finishes whole; only
+//! those watching live see it grow, and the finished item is all a record
+//! keeps.
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::{Address, MachineName};
+use crate::{Address, MachineName, NoticeId};
 
 /// One thing that happened in a session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,41 +37,47 @@ pub enum Happened {
     TurnStarted {
         turn: String,
     },
-    /// Words went into the session. `from` is unknown where the host's
-    /// record of them does not say, as in a thread's history.
+    /// Words went into the session. `from` is unknown where nothing tells,
+    /// as for words a host's record holds that the World did not send.
     Heard {
+        #[serde(default)]
+        delivery: Option<NoticeId>,
         turn: Option<String>,
         from: Option<Speaker>,
         text: String,
     },
-    /// A piece of a message the agent is writing. Only those watching live
-    /// see these; the whole message follows as `Said`.
-    Writing {
+    /// The agent began an item, as far as it was known then.
+    Began {
         turn: String,
-        item: String,
-        delta: String,
+        item: Item,
     },
-    /// A message the agent wrote, whole.
-    Said {
+    /// More of an item that is still going: text appended to what it has.
+    Grew {
         turn: String,
         item: String,
+        part: Part,
         text: String,
     },
-    /// The agent started using a tool. `tool` names it as the host does,
-    /// such as `fastctx.run` or `apply_patch`; `detail` says in a line what
-    /// it was used on, when the World can tell.
-    ToolStarted {
+    /// An item, whole, as it ended.
+    Finished {
         turn: String,
-        item: String,
-        tool: String,
-        detail: String,
+        item: Item,
     },
-    ToolEnded {
+    /// The steps the agent set out for its work, as they stand now: Codex's
+    /// plan, Claude Code's to-do list.
+    Steps {
         turn: String,
-        item: String,
-        tool: String,
-        detail: String,
-        failed: bool,
+        steps: Vec<Step>,
+        note: Option<String>,
+    },
+    /// How much of its context the session holds, as its host counts it.
+    Context {
+        used: u64,
+        window: Option<u64>,
+    },
+    /// The title the host gave the session.
+    Titled {
+        title: String,
     },
     TurnEnded {
         turn: String,
@@ -77,21 +88,29 @@ pub enum Happened {
         turn: Option<String>,
         health: Health,
     },
+    /// Words were handed to the host, and whether a turn took them cannot
+    /// be known.
+    DeliveryUncertain {
+        delivery: NoticeId,
+        why: String,
+    },
+}
+
+impl Happened {
+    /// Whether it is kept in a session's record: what grows an item is
+    /// only for those watching live, as the finished item holds it all.
+    pub fn kept(&self) -> bool {
+        !matches!(self, Happened::Grew { .. })
+    }
 }
 
 /// What watching a session hands over: first what happened before, as far
-/// as its host keeps it, then each event as it happens.
+/// as it is kept, then each event as it happens.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Watched {
-    /// What happened before; empty when the host keeps nothing the World
-    /// can read.
-    History {
-        events: Vec<SessionEvent>,
-    },
-    Live {
-        event: SessionEvent,
-    },
+    History { events: Vec<SessionEvent> },
+    Live { event: SessionEvent },
 }
 
 /// Who said words that went into a session.
@@ -104,6 +123,148 @@ pub enum Speaker {
     Resident { address: Address },
     /// The World, telling a fact, such as that a job ended.
     World,
+}
+
+/// Something the agent does in a turn. Its id is unique within the session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Item {
+    pub id: String,
+    #[serde(flatten)]
+    pub what: What,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum What {
+    /// Words the agent wrote to whoever it works for.
+    Message {
+        text: String,
+    },
+    /// What the host shows of the agent's thinking: Codex's summaries of its
+    /// reasoning, Claude's thinking.
+    Thinking {
+        text: String,
+    },
+    /// A plan the agent proposed, whole.
+    Plan {
+        text: String,
+    },
+    Tool(Box<Tool>),
+    /// The host compacted the session's context.
+    Compaction,
+    /// An item of a kind the World does not know, by the host's name for it.
+    Other {
+        host_kind: String,
+    },
+}
+
+/// Which part of an item grows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Part {
+    /// The text of a message, thinking or plan.
+    Text,
+    /// What a tool has put out so far.
+    Output,
+}
+
+/// A tool the agent used.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tool {
+    /// The tool as its host names it, without the server it belongs to:
+    /// `run`, `apply_patch`, `Bash`, `js`.
+    pub name: String,
+    /// The MCP server or namespace it belongs to; none for the host's own.
+    pub server: Option<String>,
+    /// The machine it acted on, where the World can tell: its own tools
+    /// say, and a host's own act where the host runs.
+    pub machine: Option<MachineName>,
+    /// What the World reads it as doing, which says how to show it.
+    pub does: Does,
+    /// Its arguments, as the host reported them.
+    pub input: serde_json::Value,
+    /// What it gave back, in order; empty while it runs.
+    pub output: Vec<Content>,
+    pub status: ToolStatus,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "as")]
+pub enum Does {
+    /// Runs a shell script. `exit` and `job` are what its answer says: how
+    /// it exited, or the job it goes on as in the background.
+    Command { command: String, cwd: Option<String>, exit: Option<i64>, job: Option<String> },
+    /// Changes files.
+    Edit { changes: Vec<Change> },
+    /// Searches the web.
+    Search { query: String },
+    /// Looks at an image, or makes one.
+    Image { path: Option<String> },
+    /// Asks a colleague in, or tells one something: the World's colleagues,
+    /// or the host's own agents.
+    Colleague { to: Option<String>, task: Option<String> },
+    /// Anything else: its name, input and output say what it did.
+    Call,
+}
+
+/// One file a tool changed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Change {
+    pub path: String,
+    pub how: ChangeHow,
+    /// The change as diff lines: `+` added, `-` removed, ` ` kept, `@@` a
+    /// new place in the file.
+    pub diff: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeHow {
+    Added,
+    Deleted,
+    Updated,
+    /// Updated, and moved to `to`.
+    Moved {
+        to: String,
+    },
+    /// Written whole, over whatever it held.
+    Replaced,
+}
+
+/// A piece of what a tool gave back.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum Content {
+    Text { text: String },
+    Image { mime: String, base64: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolStatus {
+    Running,
+    Done,
+    Failed,
+    /// Refused before it ran, by the host or whoever answers its approvals.
+    Declined,
+    /// Its turn ended while it ran.
+    Cut,
+}
+
+/// One step of the agent's plan.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Step {
+    pub text: String,
+    pub status: StepStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepStatus {
+    Pending,
+    Doing,
+    Done,
 }
 
 /// How a turn ended.

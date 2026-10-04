@@ -97,6 +97,8 @@ pub type RemoteResult = Result<RemoteReply, Failure>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "letter")]
 pub enum Letter {
+    /// One durable part of a letter that exceeds the control-frame budget.
+    Fragment { id: crate::NoticeId, index: usize, total: usize, text: String },
     /// Something the World tells the resident `to`.
     Notice { to: ResidentId, notice: Notice },
     /// Words from the resident `from` of the sending machine to the resident

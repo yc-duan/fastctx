@@ -103,6 +103,50 @@ pub enum ExitStatus {
     Signal(i32),
 }
 
+impl std::fmt::Display for ExitStatus {
+    /// How a `run` answer says it: `exited 0`, `ended by signal 9`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            // Windows reports crashes as NTSTATUS codes, read in hex.
+            ExitStatus::Code(code) if code >= 0x8000_0000 => write!(f, "{EXITED}0x{code:08X}"),
+            ExitStatus::Code(code) => write!(f, "{EXITED}{code}"),
+            ExitStatus::Signal(signal) => write!(f, "ended by signal {signal}"),
+        }
+    }
+}
+
+const EXITED: &str = "exited ";
+
+/// What the first line of a `run` answer says of how the script stands,
+/// read back by whatever shows a session: the code it exited with, or the
+/// job it goes on as in the background. The line is
+/// `=== run on <machine> (<facts>) ===`, its facts separated by `; `.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunHead {
+    pub exit: Option<i64>,
+    pub job: Option<String>,
+}
+
+impl RunHead {
+    pub fn read(line: &str) -> Option<RunHead> {
+        let rest = line.strip_prefix("=== run on ")?;
+        let (_, facts) = rest.split_once(" (")?;
+        let facts = facts.strip_suffix(") ===")?;
+        let mut head = RunHead { exit: None, job: None };
+        for fact in facts.split("; ") {
+            if let Some(code) = fact.strip_prefix(EXITED) {
+                head.exit = match code.strip_prefix("0x") {
+                    Some(hex) => i64::from_str_radix(hex, 16).ok(),
+                    None => code.parse().ok(),
+                };
+            } else if fact.parse::<JobId>().is_ok() {
+                head.job = Some(fact.to_string());
+            }
+        }
+        Some(head)
+    }
+}
+
 /// The record of one job, kept at `jobs/<id>.json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobRecord {
