@@ -5,7 +5,8 @@
 //! and carries only facts the World is sure of and the reader cannot see
 //! in the text itself (`world-view.md`, 输出长什么样).
 
-use fastctx_types::run::{ExitStatus, OutputPiece, OutputWindow, RunReply, RunState};
+use fastctx_types::residents::Notice;
+use fastctx_types::run::{EndedHow, ExitStatus, OutputPiece, OutputWindow, RunReply, RunState};
 
 use super::WAIT;
 
@@ -53,6 +54,23 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
         _ => {}
     }
     answer.finish()
+}
+
+/// A word the World tells a resident, as one block of its own.
+pub fn present_notice(notice: &Notice) -> Content {
+    match notice {
+        Notice::JobEnded { job, machine, how, status, at, output } => {
+            let how = match (how, status) {
+                (EndedHow::Finished, Some(status)) => status_text(*status),
+                (EndedHow::Finished, None) => "finished".to_string(),
+                (EndedHow::Stopped, _) => "stopped".to_string(),
+                (EndedHow::Interrupted { reason }, _) => format!("interrupted: {reason}"),
+                (EndedHow::Failed { error }, _) => format!("could not run: {error}"),
+            };
+            let at = at.strftime("%Y-%m-%d %H:%M:%S UTC");
+            Content::Text(format!("=== {job} on {machine} ended ({how}) at {at}; its output is in {} ===", display_path(output)))
+        }
+    }
 }
 
 /// The facts for the first line.

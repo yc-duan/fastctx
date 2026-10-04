@@ -44,9 +44,16 @@ async fn handle(node: &Node, _peer: &Peer, call: Call) -> Result<Reply, Failure>
         Call::Run { resident, town, request } => {
             node.jobs.run(&node.world, &node.machine, resident, town, request).await.map(Reply::Run)
         }
-        Call::JobChanged { job, .. } => {
-            node.jobs.changed(job);
-            Ok(Reply::Done)
+        Call::JobChanged { job, resident, town } => {
+            node.jobs.changed(&node.world, job, resident, town).await.map(|()| Reply::Done)
+        }
+        Call::Collect { resident, town } => {
+            let world = node.world.clone();
+            tokio::task::spawn_blocking(move || crate::inbox::collect(&world, &resident, town.as_ref()))
+                .await
+                .map_err(|error| Failure::new(format!("reading the inbox: {error}")))?
+                .map(|notices| Reply::Notices { notices })
+                .map_err(|error| Failure::new(format!("reading the inbox: {error}")))
         }
     }
 }

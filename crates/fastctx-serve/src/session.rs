@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use fastctx_client::{CallError, Client};
-use fastctx_hands::run::{Content, present};
+use fastctx_hands::run::{Content, present, present_notice};
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Hints, Host, Whereabouts};
@@ -70,21 +70,41 @@ impl Session {
             Some(_) => return Answer::error("=== run (not run: `cwd` must be a string) ===".to_string()),
         };
         let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
+        let whereabouts = match self.whereabouts(thread).await {
+            Ok(whereabouts) => whereabouts,
+            Err(error) => return Answer::error(format!("=== run (not run: {error}) ===")),
+        };
         let reply = async {
-            let whereabouts = self.whereabouts(thread).await?;
             let mut client = self.client().await?;
             let call = Call::Run {
-                resident: whereabouts.resident,
-                town: whereabouts.town,
+                resident: whereabouts.resident.clone(),
+                town: whereabouts.town.clone(),
                 request: RunRequest { script: command, cwd },
             };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
-        match reply {
+        let mut answer = match reply {
             Ok(Reply::Run(reply)) => Answer { content: present(&reply), is_error: false },
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run: {error}) ===")),
+        };
+        self.add_waiting_words(&whereabouts, &mut answer).await;
+        answer
+    }
+
+    /// Words waiting for the resident ride along with its answer, each in a
+    /// block of its own (`world-colleagues.md`, 话怎样送到居民眼前).
+    async fn add_waiting_words(&self, whereabouts: &Whereabouts, answer: &mut Answer) {
+        let collect = Call::Collect { resident: whereabouts.resident.clone(), town: whereabouts.town.clone() };
+        let collected = match self.client().await {
+            Ok(mut client) => client.call(collect).await.map_err(|error| error.to_string()),
+            Err(error) => Err(error),
+        };
+        match collected {
+            Ok(Reply::Notices { notices }) => answer.content.extend(notices.iter().map(present_notice)),
+            Ok(other) => answer.content.push(Content::Text(format!("=== words for you could not be read: the node answered {other:?} ==="))),
+            Err(error) => answer.content.push(Content::Text(format!("=== words for you could not be read: {error} ==="))),
         }
     }
 

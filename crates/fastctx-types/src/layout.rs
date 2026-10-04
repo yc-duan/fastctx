@@ -88,6 +88,11 @@ impl ResidentDir {
         self.path.join("about")
     }
 
+    /// What waits to be told to the resident, one file each.
+    pub fn inbox(&self) -> PathBuf {
+        self.path.join("inbox")
+    }
+
     pub fn jobs(&self) -> PathBuf {
         self.path.join("jobs")
     }
@@ -103,6 +108,12 @@ impl ResidentDir {
     /// Every byte a job wrote.
     pub fn job_output(&self, job: &JobId) -> PathBuf {
         self.out().join(format!("{job}.log"))
+    }
+
+    /// Present while the resident is owed word of the job's end: the job
+    /// went on in the background after its call answered.
+    pub fn job_owed(&self, job: &JobId) -> PathBuf {
+        self.jobs().join(format!("{job}.owed"))
     }
 
     /// The script a job runs, as the shell reads it.

@@ -8,6 +8,7 @@
 //! happened while it was away, such as jobs whose supervisor did not
 //! survive a restart of the machine.
 
+mod inbox;
 mod jobs;
 mod log;
 mod machine;
@@ -40,6 +41,10 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     let _lock = FileLock::try_acquire(&world.node_lock())?
         .ok_or_else(|| anyhow!("a node is already running for the World in {}", world.path().display()))?;
     let log = log::Log::open(&world.node_log())?;
+    // The node usually has no terminal: a panic in any of its tasks is
+    // written to its log, or it would leave no trace.
+    let panics = log::Log::open(&world.node_log())?;
+    std::panic::set_hook(Box::new(move |info| panics.line(format_args!("panicked: {info}"))));
     let machine = machine::name(&world)?;
     log.line(format_args!("node {} starting as {machine}", env!("CARGO_PKG_VERSION")));
 
@@ -49,6 +54,10 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     }
     for (path, error) in &reconciled.problems {
         log.line(format_args!("could not check {}: {error}", path.display()));
+    }
+
+    for (path, error) in inbox::settle(&world)? {
+        log.line(format_args!("could not tell what {} owes: {error}", path.display()));
     }
 
     let (residents, problems) = residents::Residents::load(&world)?;

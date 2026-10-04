@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::residents::{Hints, Host, Whereabouts};
+use crate::residents::{Hints, Host, Notice, Whereabouts};
 use crate::run::{RunReply, RunRequest};
 use crate::{JobId, ResidentId, TownName};
 
@@ -13,6 +13,8 @@ pub enum Call {
     Arrive { host: Host, hints: Hints },
     /// Run a script on this machine for a resident.
     Run { resident: ResidentId, town: Option<TownName>, request: RunRequest },
+    /// Takes what waits in a resident's inbox, oldest first.
+    Collect { resident: ResidentId, town: Option<TownName> },
     /// A supervisor says its job's record has changed: the shell started
     /// or exited, the output ended, or nothing of the job runs any more.
     JobChanged { job: JobId, resident: ResidentId, town: Option<TownName> },
@@ -23,5 +25,6 @@ pub enum Call {
 pub enum Reply {
     Arrived(Whereabouts),
     Run(RunReply),
+    Notices { notices: Vec<Notice> },
     Done,
 }

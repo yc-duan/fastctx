@@ -25,10 +25,19 @@ impl Jobs {
         Self { changes }
     }
 
-    /// A supervisor said its job's record changed.
-    pub fn changed(&self, job: JobId) {
+    /// A supervisor said its job's record changed: wake whoever waits for
+    /// it, and tell its resident if it ended and that is owed.
+    pub async fn changed(&self, world: &WorldDir, job: JobId, resident: ResidentId, town: Option<TownName>) -> Result<(), Failure> {
         // With nobody waiting there is nobody to wake.
-        let _ = self.changes.send(job);
+        let _ = self.changes.send(job.clone());
+        let world = world.clone();
+        tokio::task::spawn_blocking(move || {
+            let path = world.resident(town.as_ref(), &resident).job_record(&job);
+            crate::inbox::tell_if_ended(&world, &record::read(&path)?)
+        })
+        .await
+        .map_err(|error| Failure::new(format!("telling the job's end: {error}")))?
+        .map_err(|error| failure("telling the job's end", error))
     }
 
     /// Starts `request` for `resident` and waits until the job settles or
@@ -90,6 +99,15 @@ impl Jobs {
                 .map_err(|error| Failure::new(format!("reading the output: {error}")))?
                 .map_err(|error| failure("reading the output", error))?
         };
+        if record.end.is_none() {
+            // The job goes on past this answer: its end is owed to the
+            // resident who started it.
+            let (world, job, path) = (world.clone(), launched.job.clone(), launched.record.clone());
+            tokio::task::spawn_blocking(move || crate::inbox::owe(&world, &job, &path))
+                .await
+                .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
+                .map_err(|error| failure("noting that the job's end is owed", error))?;
+        }
         Ok(RunReply { machine: machine.clone(), job: launched.job, state: state(&record), output })
     }
 }

@@ -4,7 +4,8 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::{AgentName, MachineName, ResidentId, TownName};
+use crate::run::{EndedHow, ExitStatus};
+use crate::{AgentName, JobId, MachineName, ResidentId, TownName};
 
 /// The program a session runs in, as the session itself reported it in the
 /// MCP handshake.
@@ -46,6 +47,24 @@ pub enum Origin {
     User,
     /// Another resident asked for it, with this label for the task.
     Colleague { asked_by: ResidentId, label: String },
+}
+
+/// Something the World tells a resident, waiting in its inbox until the
+/// resident's host carries it to the model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Notice {
+    /// A job the resident started, which went on in the background, ended.
+    JobEnded {
+        job: JobId,
+        machine: MachineName,
+        how: EndedHow,
+        /// How the shell itself exited, when it did.
+        status: Option<ExitStatus>,
+        at: Timestamp,
+        /// The log holding all of its output, on that machine.
+        output: String,
+    },
 }
 
 /// Where a resident is.
