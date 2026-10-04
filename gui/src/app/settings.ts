@@ -38,6 +38,9 @@ export class SettingsPage implements Page {
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
         <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl></section>
+        <section class="home-section"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
+          .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
+          .join("")}</dl></section>
       </div>`;
     this.device = this.element.querySelector<HTMLElement>(".device")!;
     this.drawLook();

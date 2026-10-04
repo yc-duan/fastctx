@@ -30,6 +30,7 @@ export interface ShellWords {
   /** The World on this machine could not be asked. */
   unreachable: string;
   thisOne: string;
+  phone: string;
   joinOrFound: string;
   more(n: number): string;
   span(ms: number): string;
@@ -131,6 +132,8 @@ export interface SettingsWords {
   notify: string;
   notifyOn: string;
   notifyOff: string;
+  keys: string;
+  keyList: [string, string][];
   theme: string;
   system: string;
   themes: Record<"warm-black" | "ink-black" | "warm-white", string>;
@@ -152,6 +155,16 @@ export interface SettingsWords {
 export const zhSettings: SettingsWords = {
   title: "设置",
   look: "外观",
+  keys: "快捷键",
+  keyList: [
+    ["Ctrl+K", "命令面板：开对话、去某个地方、换主题"],
+    ["Ctrl+N", "新对话"],
+    ["Ctrl+B", "收起或展开侧栏"],
+    ["Ctrl+F", "在这段对话里找"],
+    ["Enter", "发出去；Shift+Enter 换行"],
+    ["/", "在输入框开头：这段对话能用的命令"],
+    ["Esc", "关掉菜单、卡片和查找"],
+  ],
   notify: "通知",
   notifyOn: "在等你、说完了时叫我",
   notifyOff: "不叫我",
@@ -176,6 +189,16 @@ export const zhSettings: SettingsWords = {
 export const enSettings: SettingsWords = {
   title: "Settings",
   look: "Look",
+  keys: "Keys",
+  keyList: [
+    ["Ctrl+K", "Palette: begin a conversation, go somewhere, change the theme"],
+    ["Ctrl+N", "New conversation"],
+    ["Ctrl+B", "Fold or unfold the sidebar"],
+    ["Ctrl+F", "Find in this conversation"],
+    ["Enter", "Send; Shift+Enter for a new line"],
+    ["/", "At the start of the box: this conversation's commands"],
+    ["Esc", "Close menus, cards and find"],
+  ],
   notify: "Notifications",
   notifyOn: "Call me when an agent waits or finishes",
   notifyOff: "Don't",
@@ -1092,6 +1115,7 @@ export const zhShell: ShellWords = {
   nobodyHere: "此刻没有谁在",
   unreachable: "问不到世界",
   thisOne: "这台",
+  phone: "手机",
   joinOrFound: "加入或建一个世界",
   more: (n) => `还有 ${n} 个`,
   span: zhSpan,
@@ -1120,6 +1144,7 @@ export const enShell: ShellWords = {
   nobodyHere: "Nobody here right now",
   unreachable: "The World cannot be asked",
   thisOne: "this one",
+  phone: "phone",
   joinOrFound: "Join or found a World",
   more: (n) => `${n} more`,
   span: enSpan,

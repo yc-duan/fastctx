@@ -147,7 +147,7 @@ export class Sidebar {
           .map((node) => {
             const current = place.kind === "machine" && place.name === node.name;
             const state = node.online === true ? "online" : node.online === false ? "offline" : "unknown";
-            const here = node.name === world?.here ? `<span class="place-note">${escape(words.thisOne)}</span>` : "";
+            const here = node.name === world?.here ? `<span class="place-note">${escape(words.thisOne)}</span>` : node.device ? `<span class="place-note">${escape(words.phone)}</span>` : "";
             return `<li><a class="place machine-place ${state}${current ? " current" : ""}" href="${link({ kind: "machine", name: node.name })}"><span class="dot" aria-hidden="true"></span><span class="place-name">${escape(node.name)}</span>${here}${node.online === false ? `<span class="place-note">${escape(words.offline)}</span>` : ""}</a></li>`;
           })
           .join("")}</ul></section>`
