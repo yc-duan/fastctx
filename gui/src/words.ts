@@ -2,6 +2,8 @@
 // (`world-gui.md`, 用词): plain, without role-play; what agents and tools
 // produce is never translated.
 
+import type { FindWords } from "./conversation/find";
+
 export type Tense = "running" | "done" | "failed";
 
 /** What a tool did, before it is put into words. */
@@ -40,6 +42,8 @@ export interface Words {
   thinking: string;
   thoughtWithheld: string;
   plan: string;
+  copyMessage: string;
+  find: FindWords;
   you(machine: string): string;
   world: string;
   compacted: string;
@@ -146,6 +150,16 @@ export const zh: Words = {
   thinking: "正在思考",
   thoughtWithheld: "想过，没有交出内容",
   plan: "提出的计划",
+  copyMessage: "复制这段话",
+  find: {
+    find: "在这段对话里找",
+    placeholder: "在这段对话里找…",
+    count: (current, total) => `${current} / ${total}`,
+    none: "没有找到",
+    previous: "上一个",
+    next: "下一个",
+    close: "关闭查找",
+  },
   you: (machine) => `你 · ${machine}`,
   world: "世界",
   compacted: "上下文已压缩",
@@ -226,6 +240,16 @@ export const en: Words = {
   thinking: "Thinking",
   thoughtWithheld: "Thought, without sharing it",
   plan: "Proposed plan",
+  copyMessage: "Copy this message",
+  find: {
+    find: "Find in this conversation",
+    placeholder: "Find in this conversation…",
+    count: (current, total) => `${current} of ${total}`,
+    none: "No matches",
+    previous: "Previous",
+    next: "Next",
+    close: "Close find",
+  },
   you: (machine) => `You · ${machine}`,
   world: "The World",
   compacted: "Context compacted",

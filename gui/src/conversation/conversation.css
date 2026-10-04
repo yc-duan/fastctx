@@ -1164,3 +1164,126 @@
     animation: none;
   }
 }
+
+/* Copying a message as it was written: a quiet mark beside it, shown when
+   the pointer is over it; under it where there is no pointer to hover. */
+
+.block-prose {
+  position: relative;
+}
+
+.prose-copy {
+  position: absolute;
+  top: 0;
+  right: calc(-1 * var(--space-8) - 4px);
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.block-prose:hover .prose-copy,
+.prose-copy:focus-visible,
+.prose-copy.copied {
+  opacity: 1;
+}
+
+.prose-copy:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+@media (hover: none), (max-width: 900px) {
+  .prose-copy {
+    position: static;
+    margin-top: var(--space-1);
+    margin-left: -6px;
+    opacity: 0.7;
+  }
+}
+
+/* Finding in the conversation: a small bar floating under the head, every
+   match washed in clay, the current one stronger. */
+
+.find-bar {
+  position: absolute;
+  top: calc(52px + env(safe-area-inset-top));
+  right: var(--space-4);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: min(380px, calc(100% - 2 * var(--space-4)));
+  height: 40px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop), 0 0 0 1px var(--hairline);
+  animation: sheet-in var(--enter) var(--fold-easing) both;
+}
+
+.find-bar[hidden] {
+  display: none;
+}
+
+.find-glyph {
+  flex: none;
+  display: grid;
+  color: var(--text-3);
+}
+
+.find-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-2);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-ui);
+}
+
+.find-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.find-input::placeholder {
+  color: var(--text-3);
+}
+
+.find-count {
+  flex: none;
+  padding: 0 var(--space-1);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.find-count.none {
+  color: var(--caution);
+}
+
+.find-bar .icon-button {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+
+.find-step:not(.find-next) .glyph {
+  transform: rotate(180deg);
+}
+
+::highlight(find) {
+  background-color: var(--accent-wash);
+}
+
+::highlight(find-current) {
+  background-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text-strong);
+}

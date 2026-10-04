@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -125,7 +125,7 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" || session === "palette" ? "home" : session === "about" || session === "slash" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
+      const shown = session === "drawer" || session === "palette" ? "home" : session === "about" || session === "slash" || session === "find" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
       const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
       await send("Page.navigate", { url: `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}` });
       await loaded;
@@ -138,6 +138,11 @@ for (const session of sessions) {
       if (session === "slash") {
         await send("Runtime.evaluate", {
           expression: "(() => { const t = document.querySelector('.composer textarea'); t.focus(); t.value = '/'; t.dispatchEvent(new Event('input')); })()",
+        });
+      }
+      if (session === "find") {
+        await send("Runtime.evaluate", {
+          expression: "(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true })); const i = document.querySelector('.find-input'); i.value = 'commit'; i.dispatchEvent(new Event('input')); })()",
         });
       }
       if (session === "new-codex") {

@@ -147,7 +147,9 @@ export class ConversationView {
         if (entry.prose === "plan") {
           return `<div class="plan"><div class="plan-label">${escape(words.plan)}</div><div class="prose">${render(entry.text)}</div></div>`;
         }
-        return `<div class="prose${entry.writing ? " writing" : ""}">${render(entry.text)}</div>`;
+        return `<div class="prose${entry.writing ? " writing" : ""}">${render(entry.text)}</div>${
+          entry.writing ? "" : `<button class="prose-copy" type="button" data-copy="${entry.key}" aria-label="${escape(words.copyMessage)}" title="${escape(words.copyMessage)}">${glyph("copy", 15)}</button>`
+        }`;
       case "steps":
         return `<ol class="steps">${entry.steps
           .map(
@@ -413,8 +415,22 @@ export class ConversationView {
   }
 
   private click(event: Event): void {
-    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-open], [data-fold], [data-whole], .code-copy, .ask-option, [data-ask]");
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-open], [data-fold], [data-whole], .code-copy, .ask-option, [data-ask], [data-copy]");
     if (!target) return;
+    if (target.dataset.copy) {
+      // A message is copied as it was written, in its Markdown.
+      const entry = this.conversation.entries.find((candidate) => candidate.key === target.dataset.copy);
+      const text = entry?.kind === "prose" || entry?.kind === "heard" ? entry.text : "";
+      void navigator.clipboard?.writeText(text).then(() => {
+        target.classList.add("copied");
+        target.innerHTML = glyph("check", 15);
+        setTimeout(() => {
+          target.classList.remove("copied");
+          target.innerHTML = glyph("copy", 15);
+        }, 1400);
+      });
+      return;
+    }
     if (target.classList.contains("ask-option") || target.dataset.ask) {
       void this.choose(target);
       return;

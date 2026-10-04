@@ -242,6 +242,8 @@ export interface DetailsWords {
   stop: string;
   stopped: string;
   notRunning: string;
+  exportMarkdown: string;
+  exported: string;
   cannotLook(why: string): string;
   notFound: string;
 }
@@ -275,6 +277,8 @@ export const zhDetails: DetailsWords = {
   stop: "停下这一轮",
   stopped: "已请它停下",
   notRunning: "它此刻没有在跑的一轮",
+  exportMarkdown: "复制整段对话（Markdown）",
+  exported: "整段对话已复制为 Markdown",
   cannotLook: (why) => `问不到它的详情：${why}`,
   notFound: "世界里没有找到它。",
 };
@@ -308,6 +312,8 @@ export const enDetails: DetailsWords = {
   stop: "Stop this turn",
   stopped: "Asked to stop",
   notRunning: "It is running no turn now",
+  exportMarkdown: "Copy the conversation as Markdown",
+  exported: "The conversation is copied as Markdown",
   cannotLook: (why) => `Its details could not be asked: ${why}`,
   notFound: "It was not found in the World.",
 };

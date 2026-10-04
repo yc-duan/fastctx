@@ -11,6 +11,7 @@ import type { Details } from "./details";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
 import { escape } from "./prose";
+import { Finder } from "./find";
 import { ConversationView } from "./view";
 
 export interface Someone {
@@ -76,6 +77,13 @@ export class ConversationPage {
   private effortMenu: Menu<string> | null = null;
   private note: HTMLElement;
   private chip: HTMLButtonElement;
+  private finder: Finder;
+  /** Ctrl+F finds in the conversation while its page is shown. */
+  private readonly findKey = (event: KeyboardEvent) => {
+    if (!this.element.isConnected || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
+    event.preventDefault();
+    this.finder.show();
+  };
 
   constructor(private readonly options: PageOptions) {
     const { words, someone } = options;
@@ -87,9 +95,11 @@ export class ConversationPage {
         <h1 class="who-name">${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span></h1>
         <div class="who-state"></div>
       </div>`,
-        options.details
-          ? `<button class="icon-button details-toggle" type="button" aria-expanded="false" aria-label="${escape(options.details.label)}" title="${escape(options.details.label)}">${glyph("more", 20)}</button>`
-          : "",
+        `<button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
+          options.details
+            ? `<button class="icon-button details-toggle" type="button" aria-expanded="false" aria-label="${escape(options.details.label)}" title="${escape(options.details.label)}">${glyph("more", 20)}</button>`
+            : ""
+        }`,
       )}
       <div class="talk-scroller scroller"><div class="conversation"></div></div>
       <footer class="composer-dock">
@@ -106,6 +116,13 @@ export class ConversationPage {
         </form>
       </footer>`;
     this.scroller = this.element.querySelector<HTMLElement>(".talk-scroller")!;
+    const transcript = this.element.querySelector<HTMLElement>(".conversation")!;
+    this.finder = new Finder(transcript, this.scroller, words.find, () => {
+      this.following = false;
+    });
+    this.scroller.before(this.finder.element);
+    this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
+    document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
     if (options.details) {
       const { card } = options.details;
@@ -184,6 +201,7 @@ export class ConversationPage {
   update(): void {
     const follow = this.following;
     this.view.update();
+    this.finder.refresh();
     this.drawState();
     this.drawAction();
     if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
@@ -198,6 +216,7 @@ export class ConversationPage {
   leave(): void {
     clearTimeout(this.looking);
     this.looking = -1;
+    document.removeEventListener("keydown", this.findKey);
   }
 
   private toggleDetails(open: boolean): void {

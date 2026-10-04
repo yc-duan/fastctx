@@ -65,6 +65,7 @@ import { JournalForm } from "./project/journal-form";
 import { ProjectPage } from "./project/page";
 import { enProject, zhProject } from "./project/words";
 import { specimenJournal, specimenMap } from "./specimen/project";
+import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenNow } from "./specimen/world";
 import { applyTheme, chooseTheme, themes } from "./theme";
@@ -274,6 +275,18 @@ const specimenOffers: Offers = {
   usage: null,
 };
 
+/** A conversation as Markdown, named as its page names it. */
+function exported(conversation: Conversation, someone: Someone): () => string {
+  return () =>
+    markdownOf(conversation, words, {
+      title: conversation.title ?? `${someone.agent} · ${someone.machine}`,
+      agent: someone.agent,
+      you: homeWords.you,
+      plan: words.plan,
+      waiting: words.waitingForYou,
+    });
+}
+
 /** "Claude · laptop" for a resident the World answered with; its id
  *  where it did not. */
 function someoneAt(address: Address): string {
@@ -282,7 +295,7 @@ function someoneAt(address: Address): string {
 }
 
 /** The card about the agent in a conversation, and how to fill it. */
-function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>) {
+function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>, markdown?: () => string) {
   return {
     card: new Details({
       words: detailsWords,
@@ -290,6 +303,7 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>)
       link: talkLink,
       span: shellWords.span,
       stop: () => (live ? stop(address) : Promise.resolve(false)),
+      markdown,
     }),
     label: detailsWords.open,
     look,
@@ -403,6 +417,7 @@ function specimenTalk(address: Address): Page {
             jobs: [],
           }
         : null,
+      exported(conversation, { agent: sample.agent === "claude" ? "Claude" : "Codex", machine: sample.machine, model: sample.model, town: sample.town }),
     ),
     send(text) {
       conversation.sending(text, sample.here);
@@ -470,7 +485,7 @@ function liveTalk(address: Address): Page {
         (looked) => looked.kind === "resident" && looked.resident.about.machine === address.machine,
       );
       return there && there.kind === "resident" ? there : null;
-    }),
+    }, exported(conversation, someone)),
     send(text) {
       const key = conversation.sending(text, here);
       page.update();

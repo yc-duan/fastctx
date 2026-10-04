@@ -18,6 +18,8 @@ export interface DetailsOptions {
   /** Says a span of time: "4 分钟". */
   span(ms: number): string;
   stop(): Promise<boolean>;
+  /** The conversation as Markdown, for copying out. */
+  markdown?: (() => string) | undefined;
 }
 
 const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
@@ -36,6 +38,18 @@ export class Details {
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-act]");
       if (!button || button.disabled) return;
+      if (button.dataset.act === "export" && options.markdown) {
+        const say = (text: string) => {
+          this.note = text;
+          const note = this.element.querySelector<HTMLElement>(".details-note");
+          if (note) note.textContent = text;
+        };
+        void navigator.clipboard.writeText(options.markdown()).then(
+          () => say(options.words.exported),
+          (error: unknown) => say(String(error)),
+        );
+        return;
+      }
       if (button.dataset.act === "stop") {
         button.disabled = true;
         void options
@@ -135,6 +149,7 @@ export class Details {
       ${trouble}
       <div class="details-acts">
         <button class="text-button" type="button" data-act="stop"${busy ? "" : " disabled"}>${glyph("stop", 14)}<span>${escape(words.stop)}</span></button>
+        ${this.options.markdown ? `<button class="text-button" type="button" data-act="export">${glyph("copy", 14)}<span>${escape(words.exportMarkdown)}</span></button>` : ""}
         <span class="details-note">${escape(this.note)}</span>
       </div>
       ${section(words.task, task)}
