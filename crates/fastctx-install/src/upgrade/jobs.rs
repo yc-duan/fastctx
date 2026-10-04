@@ -19,7 +19,7 @@ struct Supervisor {
 pub(super) fn inspect(root: &Path, plan: &mut Plan) {
     for directory in super::entries(&root.join("jobs"), plan) {
         if std::fs::symlink_metadata(&directory).is_ok_and(|metadata| crate::disk::is_link(&metadata)) {
-            if plan.quiet(&directory, root, false) && plan.unused(&directory, true) {
+            if plan.quiet(&directory, false) && plan.unused(&directory, true) {
                 plan.archive(&directory, "jobs", "job link retained as a link; its target was not traversed");
             }
             continue;
@@ -30,14 +30,14 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
                 && name[2..].bytes().all(|byte| byte.is_ascii_digit() || byte.is_ascii_lowercase())
         });
         if !valid_name {
-            if plan.quiet(&directory, root, false) && plan.unused(&directory, true) {
+            if plan.quiet(&directory, false) && plan.unused(&directory, true) {
                 plan.archive(&directory, "jobs", "unrecognized job entry retained without interpreting its contents");
             }
             continue;
         }
         let Some(snapshot) = plan.read(&directory.join("meta.json")) else { continue };
         let Some(bytes) = snapshot.bytes() else {
-            if plan.quiet(&directory, root, false) && plan.unused(&directory, true) {
+            if plan.quiet(&directory, false) && plan.unused(&directory, true) {
                 plan.archive(&directory, "jobs", "abandoned job reservation; no legacy process remains");
             }
             continue;
@@ -45,7 +45,7 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
         let metadata = match serde_json::from_slice::<Metadata>(bytes) {
             Ok(metadata) if (1..=3).contains(&metadata.schema_version) && metadata.supervisor.pid != 0 => metadata,
             _ => {
-                if plan.quiet(&directory, root, false) && plan.unused(&directory, true) {
+                if plan.quiet(&directory, false) && plan.unused(&directory, true) {
                     plan.archive(
                         &directory,
                         "jobs",
@@ -69,7 +69,7 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
                 plan.active(&directory, format!("cannot determine supervisor lifetime: {error}; preserved"));
             }
             Ok(false) => {
-                if plan.quiet(&directory, root, false) && plan.unused(&directory, true) {
+                if plan.quiet(&directory, false) && plan.unused(&directory, true) {
                     plan.archive(
                         &directory,
                         "jobs",

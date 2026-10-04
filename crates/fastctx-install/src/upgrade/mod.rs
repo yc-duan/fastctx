@@ -7,12 +7,16 @@
 //! `apply` and are never visited here.
 
 mod archive;
+mod descriptors;
 mod files;
+#[cfg(test)]
+mod health;
 mod jobs;
 mod leftovers;
 mod paths;
 mod processes;
 mod record;
+mod run;
 mod settings;
 mod updates;
 
@@ -20,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use crate::Notice;
 use crate::apply::{Places, Report};
-use crate::transaction::{FileChange, Snapshot, Transaction};
+use crate::transaction::Snapshot;
 
 pub use crate::apply::Error;
 
@@ -29,7 +33,9 @@ struct Plan {
     edits: Vec<(Snapshot, Option<Vec<u8>>, String)>,
     report: Report,
     locks: Vec<std::fs::File>,
+    runtime_locks: std::collections::HashMap<PathBuf, Vec<std::fs::File>>,
     archives: Vec<(archive::Object, &'static str, String)>,
+    archive_paths: std::collections::HashSet<PathBuf>,
     inventory: Option<Result<processes::Inventory, String>>,
     empty_directories: Vec<archive::Object>,
 }
@@ -70,12 +76,16 @@ impl Plan {
     fn archive(&mut self, path: &Path, category: &'static str, reason: impl Into<String>) {
         match archive::Object::read(path) {
             Ok(Some(object)) => {
-                if !self.archives.iter().any(|(existing, _, _)| existing.path == object.path) {
-                    self.archives.push((object, category, reason.into()));
-                }
+                self.archive_object(object, category, reason.into());
             }
             Ok(None) => {}
             Err(error) => self.leave(path, error.to_string()),
+        }
+    }
+
+    fn archive_object(&mut self, object: archive::Object, category: &'static str, reason: String) {
+        if self.archive_paths.insert(object.path.clone()) {
+            self.archives.push((object, category, reason));
         }
     }
 
@@ -86,12 +96,12 @@ impl Plan {
             .map_err(String::as_str)
     }
 
-    fn quiet(&mut self, path: &Path, old_root: &Path, fresh: bool) -> bool {
+    fn quiet(&mut self, path: &Path, fresh: bool) -> bool {
         if fresh {
             self.inventory = None;
         }
         let blockers = match self.inventory() {
-            Ok(inventory) => inventory.legacy_blockers(old_root),
+            Ok(inventory) => inventory.legacy_blockers(),
             Err(error) => vec![error.into()],
         };
         for reason in &blockers {
@@ -183,108 +193,61 @@ pub fn is_legacy_root(root: &Path) -> std::io::Result<bool> {
 ///
 /// No evidence means no writes. Repeated identical observations do not rewrite
 /// the record. Each mutation is journaled before publication and rechecked on
-/// recovery; cooperating new installers use the same lock as `apply`.
+/// recovery. Cleanup has its own lock; only shared settings use the `apply` lock.
 pub fn clean(places: &Places) -> Result<Report, Error> {
     let paths = paths::Paths::legacy()?;
+    descriptors::with_capacity(paths.runtime_entry_count().map_err(io)?, || clean_with(&paths, places))
+}
+
+fn clean_with(paths: &paths::Paths, places: &Places) -> Result<Report, Error> {
     let record_path = places.root.join("upgrade-clean.json");
-    let mut plan = discover(&paths, places);
-    let previous = files::read(&record_path)?;
-    if !plan.has_work() && !previous.exists() {
-        return Ok(Report::default());
+    if !record_path.try_exists().map_err(io)? {
+        let mut evidence = discover(paths, places);
+        settings::inspect(&paths.root, &mut evidence);
+        if !evidence.has_work() {
+            return Ok(Report::default());
+        }
     }
     files::check_path(&places.root).map_err(io)?;
-    if !places.root.exists() {
-        fastctx_platform::ensure_private_dir(&places.root).map_err(io)?;
+    if !places.root.try_exists().map_err(io)? {
+        crate::disk::ensure_private_dir(&places.root).map_err(io)?;
     }
-    let lock_path = places.root.join("apply.lock");
+    let lock_path = places.root.join("upgrade-clean.lock");
     files::check_path(&lock_path).map_err(io)?;
-    let _lock = fastctx_platform::FileLock::acquire(&lock_path).map_err(io)?;
-    // Discovery precedes locking only to keep a fresh installation write-free.
-    // Read again under the lock so apply's receipt retirement is not overwritten.
-    drop(plan);
-    plan = discover(&paths, places);
+    let _cleanup = fastctx_platform::FileLock::acquire(&lock_path).map_err(io)?;
     let mut record = record::Record::open(&record_path)?;
-    plan.report.notices.extend(record.recover(&paths, places)?);
-    record.observe(&plan.report);
-    record.save()?;
-    for (before, after, why) in std::mem::take(&mut plan.edits) {
-        let path = before.path().to_path_buf();
-        let operation = record.prepare(&before, after.as_deref(), why)?;
-        let change = match after {
-            Some(bytes) => FileChange::write(before, bytes),
-            None => FileChange::delete(before),
-        };
-        match Transaction::new([change]).commit() {
-            Ok(receipt) => {
-                plan.report.changed.extend(receipt.changed);
-                for error in receipt.cleanup {
-                    plan.report.leftovers.push(error.to_string());
-                }
-                record.complete(operation)?;
-            }
-            Err(error) => {
-                let reason = error.to_string();
-                plan.report.notices.push(Notice { location: path.display().to_string(), reason: reason.clone() });
-                plan.report.leftovers.push(format!("{}: cleanup is deferred: {reason}", path.display()));
-                record.deferred(operation, reason)?;
-            }
-        }
+    let mut report = Report::default();
+    report.notices.extend(record.recover(paths, places)?);
+
+    // Only legacy settings share a write target with apply. Discover them
+    // under its lock, then release it before runtime inspection or archival.
+    {
+        let lock_path = places.root.join("apply.lock");
+        files::check_path(&lock_path).map_err(io)?;
+        let _apply = fastctx_platform::FileLock::acquire(&lock_path).map_err(io)?;
+        let mut settings = Plan::default();
+        settings::inspect(&paths.root, &mut settings);
+        run::execute(&mut settings, &mut record, places)?;
+        report.changed.extend(settings.report.changed);
+        report.notices.extend(settings.report.notices);
+        report.leftovers.extend(settings.report.leftovers);
     }
-    for (object, category, reason) in std::mem::take(&mut plan.archives) {
-        let (index, destination, copying) = record.prepare_archive(&object, category, &reason, &places.root)?;
-        let previous = record.archive_destinations();
-        match archive::transfer(&object, &destination, &plan.locks, copying, &previous, || {
-            record.archive_copying(index).map_err(std::io::Error::other)
-        }) {
-            Ok(()) => {
-                record.archive_complete(index)?;
-                plan.report.changed.extend([object.path.clone(), destination.clone()]);
-                plan.leave(&object.path, format!("archived unchanged at {}; {reason}", destination.display()));
-                for path in files::entries(destination.parent().expect("archive slot")).map_err(io)? {
-                    if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with(".incomplete-copy-")) {
-                        plan.leave(&path, "interrupted copy retained alongside the complete archive; original source mapped in upgrade-clean.json");
-                    }
-                }
-            }
-            Err(error) => {
-                record.archive_deferred(index, &error)?;
-                plan.active(&object.path, format!("archive deferred; destination {}: {error}", destination.display()));
-            }
-        }
-    }
-    plan.empty_directories.sort_by_key(|object| std::cmp::Reverse(object.path.components().count()));
-    for object in &plan.empty_directories {
-        if archive::Object::read(&object.path).map_err(io)?.as_ref() != Some(object) {
-            continue;
-        }
-        if std::fs::read_dir(&object.path).map_err(io)?.next().transpose().map_err(io)?.is_some() {
-            continue;
-        }
-        let operation = record.prepare_directory(object)?;
-        match std::fs::remove_dir(&object.path) {
-            Ok(()) => {
-                plan.report.changed.push(object.path.clone());
-                record.directory_finished(operation, "completed".into())?;
-                crate::disk::sync_parent(&object.path).map_err(io)?;
-            }
-            Err(error) => {
-                record.directory_finished(operation, format!("deferred: {error}"))?;
-                plan.report.leftovers.push(format!("{}: {error}", object.path.display()));
-            }
-        }
-    }
-    record.observe(&plan.report);
+    let mut plan = discover(paths, places);
+    run::execute(&mut plan, &mut record, places)?;
+    report.changed.extend(plan.report.changed);
+    report.notices.extend(plan.report.notices);
+    report.leftovers.extend(plan.report.leftovers);
+    record.observe(&report);
     record.save()?;
     if record.wrote() {
-        plan.report.changed.push(record_path);
+        report.changed.push(record_path);
     }
-    Ok(plan.report)
+    Ok(report)
 }
 
 fn discover(paths: &paths::Paths, places: &Places) -> Plan {
     let mut plan = Plan::default();
     jobs::inspect(&paths.root, &mut plan);
-    settings::inspect(&paths.root, &mut plan);
     updates::inspect(&paths.root, &mut plan);
     paths.inspect_other(&mut plan);
     leftovers::inspect(places, &paths.root, &mut plan);

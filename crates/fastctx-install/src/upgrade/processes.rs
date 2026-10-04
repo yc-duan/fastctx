@@ -44,6 +44,9 @@ impl Inventory {
             } else {
                 classify(&process.image_source)
             };
+            #[cfg(windows)]
+            let classified =
+                classified.and_then(|legacy| if legacy { imp::confirmed_legacy(&process) } else { Ok(false) });
             match classified {
                 Ok(legacy) => {
                     cache.insert(process.image_source.clone(), legacy);
@@ -72,18 +75,15 @@ impl Inventory {
         Ok(Self { processes: result, unavailable })
     }
 
-    pub fn legacy_blockers(&self, old_root: &Path) -> Vec<String> {
+    pub fn legacy_blockers(&self) -> Vec<String> {
         let mut result = self.unavailable.clone();
         for process in &self.processes {
             if process.pid == std::process::id() {
                 continue;
             }
-            let basename = process.image.file_name().and_then(|name| name.to_str()).unwrap_or("");
-            if process.legacy
-                || within(&process.image, old_root)
-                || ["fastread", "fastread.exe", "fastshell", "fastshell.exe", "fastedit", "fastedit.exe"]
-                    .contains(&basename)
-            {
+            // Both generations use the stable bin path. Only a released image
+            // proves legacy identity; names and locations cannot distinguish them.
+            if process.legacy {
                 result.push(format!(
                     "legacy process PID {} is still running from {}",
                     process.pid,

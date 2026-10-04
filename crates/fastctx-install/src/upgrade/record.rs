@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -51,7 +52,7 @@ struct Action {
     outcome: String,
 }
 
-#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Hash, Eq, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Observation {
     location: String,
@@ -73,15 +74,23 @@ pub(super) fn summary(path: &Path, root: &Path) -> Result<Option<super::Summary>
         archived.iter().map(|action| root.join(format!("legacy-archive-{}", action.day))).collect();
     archives.dedup();
     let tidied = contents.actions.iter().filter(|action| action.outcome == "completed").count();
-    let waiting = contents.archives.iter().filter(|action| action.outcome.starts_with("deferred")).count()
-        + contents.actions.iter().filter(|action| action.outcome.starts_with("deferred")).count();
+    let waiting = contents.archives.iter().filter(|action| unfinished(&action.outcome)).count()
+        + contents.actions.iter().filter(|action| unfinished(&action.outcome)).count()
+        + contents.directories.iter().filter(|action| unfinished(&action.outcome)).count();
     Ok(Some(super::Summary { record: path.to_path_buf(), archives, archived: archived.len(), tidied, waiting }))
 }
+
+type ObjectKey = (PathBuf, u64, u128);
+type ActionKey = (PathBuf, String, Option<String>, String);
 
 pub(super) struct Record {
     snapshot: Snapshot,
     contents: Contents,
     wrote: bool,
+    archives: HashMap<ObjectKey, usize>,
+    directories: HashMap<ObjectKey, usize>,
+    actions: HashMap<ActionKey, usize>,
+    descendants: HashMap<PathBuf, Vec<usize>>,
 }
 
 impl Record {
@@ -95,7 +104,48 @@ impl Record {
         if contents.version != 1 {
             return Err(Error::Io(format!("{}: unsupported cleanup record version", path.display())));
         }
-        Ok(Self { snapshot, contents, wrote: false })
+        Ok(Self {
+            snapshot,
+            contents,
+            wrote: false,
+            archives: HashMap::new(),
+            directories: HashMap::new(),
+            actions: HashMap::new(),
+            descendants: HashMap::new(),
+        })
+    }
+
+    pub fn begin_batch(&mut self) {
+        self.archives.clear();
+        self.directories.clear();
+        self.actions.clear();
+        self.descendants.clear();
+        for (index, action) in self.contents.archives.iter().enumerate() {
+            if action.outcome == "pending" || action.outcome.starts_with("deferred:") {
+                self.archives.entry(object_key(&action.object)).or_insert(index);
+                for parent in action.object.path.ancestors().skip(1) {
+                    self.descendants.entry(parent.to_path_buf()).or_default().push(index);
+                }
+            }
+        }
+        for (index, action) in self.contents.directories.iter().enumerate() {
+            self.directories.entry(object_key(&action.object)).or_insert(index);
+        }
+        for (index, action) in self.contents.actions.iter().enumerate() {
+            self.actions.entry(action_key(action)).or_insert(index);
+        }
+    }
+
+    /// Resume older per-entry plans before retiring their containing directory.
+    /// Discovery has authorized the directory; the record only supplies slots.
+    pub fn inside(&self, object: &super::archive::Object) -> Vec<(super::archive::Object, String, String)> {
+        self.descendants
+            .get(&object.path)
+            .into_iter()
+            .flatten()
+            .map(|index| &self.contents.archives[*index])
+            .map(|action| (action.object.clone(), action.category.clone(), action.reason.clone()))
+            .collect()
     }
 
     pub fn recover(
@@ -183,11 +233,19 @@ impl Record {
                 && let Some(destination) = destination
             {
                 action.outcome = if destination.identity == action.object.identity {
-                    "completed"
+                    "completed".into()
                 } else {
-                    "archive present; source absent after interrupted copy"
-                }
-                .into();
+                    match super::archive::completed_copy(&action.object, &action.destination) {
+                        Ok(true) => {
+                            action.copying = true;
+                            "completed".into()
+                        }
+                        Ok(false) => {
+                            "conflict: source absent and archive has no matching copy manifest; retained".into()
+                        }
+                        Err(error) => format!("conflict: source absent; archive retained: {error}"),
+                    }
+                };
                 recovered.push(crate::Notice {
                     location: action.object.path.display().to_string(),
                     reason: format!("archive recovered at {}: {}", action.destination.display(), action.outcome),
@@ -217,14 +275,11 @@ impl Record {
         root: &Path,
     ) -> Result<(usize, PathBuf, bool), Error> {
         object.verify().map_err(super::io)?;
-        if let Some(index) = self.contents.archives.iter().position(|action| {
-            action.object == *object && (action.outcome == "pending" || action.outcome.starts_with("deferred:"))
-        }) {
+        if let Some(&index) = self.archives.get(&object_key(object)) {
             validate_archive(&self.contents.archives[index], root, index)?;
             self.contents.archives[index].outcome = "pending".into();
             let destination = self.contents.archives[index].destination.clone();
             let copying = self.contents.archives[index].copying;
-            self.save()?;
             return Ok((index, destination, copying));
         }
         let index = self.contents.archives.len();
@@ -246,19 +301,19 @@ impl Record {
             slot: Some(slot),
         };
         validate_archive(&action, root, index)?;
+        self.archives.insert(object_key(object), index);
         self.contents.archives.push(action);
-        self.save()?;
         Ok((index, destination, false))
     }
 
     pub fn archive_copying(&mut self, index: usize) -> Result<(), Error> {
         self.contents.archives[index].copying = true;
-        self.save()
+        Ok(())
     }
 
     pub fn archive_complete(&mut self, index: usize) -> Result<(), Error> {
         self.contents.archives[index].outcome = "completed".into();
-        self.save()
+        Ok(())
     }
 
     pub fn archive_deferred(&mut self, index: usize, error: &std::io::Error) -> Result<(), Error> {
@@ -267,44 +322,45 @@ impl Record {
         } else {
             format!("deferred: {error}")
         };
-        self.save()
+        Ok(())
     }
 
     pub fn archive_destinations(&self) -> Vec<PathBuf> {
-        self.contents.archives.iter().filter(|action| action.copying).map(|action| action.destination.clone()).collect()
+        self.contents
+            .archives
+            .iter()
+            .filter(|action| action.copying || unfinished(&action.outcome))
+            .map(|action| action.destination.clone())
+            .collect()
     }
 
     pub fn prepare_directory(&mut self, object: &super::archive::Object) -> Result<usize, Error> {
-        let index = self
-            .contents
-            .directories
-            .iter()
-            .position(|action| action.object == *object)
-            .unwrap_or(self.contents.directories.len());
+        let key = object_key(object);
+        let index = *self.directories.entry(key).or_insert(self.contents.directories.len());
         if index == self.contents.directories.len() {
             self.contents.directories.push(DirectoryAction { object: object.clone(), outcome: "pending".into() });
         } else {
             self.contents.directories[index].outcome = "pending".into();
         }
-        self.save()?;
         Ok(index)
     }
 
     pub fn directory_finished(&mut self, index: usize, outcome: String) -> Result<(), Error> {
         self.contents.directories[index].outcome = outcome;
-        self.save()
+        Ok(())
     }
 
     pub fn observe(&mut self, report: &Report) {
+        let mut seen: HashSet<_> = self.contents.observations.iter().cloned().collect();
         for notice in &report.notices {
             let observation = Observation { location: notice.location.clone(), reason: notice.reason.clone() };
-            if !self.contents.observations.contains(&observation) {
+            if seen.insert(observation.clone()) {
                 self.contents.observations.push(observation);
             }
         }
         for reason in &report.leftovers {
             let observation = Observation { location: "remaining after cleanup".into(), reason: reason.clone() };
-            if !self.contents.observations.contains(&observation) {
+            if seen.insert(observation.clone()) {
                 self.contents.observations.push(observation);
             }
         }
@@ -319,34 +375,30 @@ impl Record {
             reason,
             outcome: "pending".into(),
         };
-        let index = match self.contents.actions.iter().position(|previous| {
-            previous.path == action.path
-                && previous.before_sha256 == action.before_sha256
-                && previous.after_sha256 == action.after_sha256
-                && previous.reason == action.reason
-        }) {
+        let key = action_key(&action);
+        let index = match self.actions.get(&key).copied() {
             Some(index) => {
                 self.contents.actions[index].outcome = "pending".into();
                 index
             }
             None => {
                 let index = self.contents.actions.len();
+                self.actions.insert(key, index);
                 self.contents.actions.push(action);
                 index
             }
         };
-        self.save()?;
         Ok(index)
     }
 
     pub fn complete(&mut self, index: usize) -> Result<(), Error> {
         self.contents.actions[index].outcome = "completed".into();
-        self.save()
+        Ok(())
     }
 
     pub fn deferred(&mut self, index: usize, reason: String) -> Result<(), Error> {
         self.contents.actions[index].outcome = format!("deferred: {reason}");
-        self.save()
+        Ok(())
     }
 
     pub fn save(&mut self) -> Result<(), Error> {
@@ -355,9 +407,12 @@ impl Record {
         if self.snapshot.bytes() == Some(bytes.as_slice()) {
             return Ok(());
         }
-        let receipt = Transaction::new([FileChange::private(self.snapshot.clone(), bytes)])
-            .commit()
-            .map_err(|error| Error::Files(error.to_string()))?;
+        let receipt =
+            Transaction::new([FileChange::private(self.snapshot.clone(), bytes)]).commit().map_err(|error| {
+                Error::Files(format!(
+                    "cleanup checkpoint could not be published; unfinished steps remain for the next startup: {error}"
+                ))
+            })?;
         if !receipt.cleanup.is_empty() {
             return Err(Error::Files(receipt.cleanup.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")));
         }
@@ -400,4 +455,16 @@ fn validate_archive(action: &ArchiveAction, root: &Path, index: usize) -> Result
         return Err(Error::Io("archive destination differs from its assigned slot".into()));
     }
     files::check_path(expected.parent().expect("archive slot has a parent")).map_err(super::io)
+}
+
+fn object_key(object: &super::archive::Object) -> ObjectKey {
+    (object.path.clone(), object.identity.volume, object.identity.file)
+}
+
+fn unfinished(outcome: &str) -> bool {
+    outcome == "pending" || outcome.starts_with("deferred")
+}
+
+fn action_key(action: &Action) -> ActionKey {
+    (action.path.clone(), action.before_sha256.clone(), action.after_sha256.clone(), action.reason.clone())
 }
