@@ -8,6 +8,7 @@ pub mod design;
 pub mod editor;
 pub mod feed;
 pub mod input;
+pub mod markdown;
 pub mod pages;
 pub mod paint;
 #[cfg(feature = "preview")]

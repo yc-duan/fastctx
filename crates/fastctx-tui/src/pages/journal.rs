@@ -195,7 +195,7 @@ fn entry_rows(ctx: &Ctx, entry: &EntryView, width: usize) -> Vec<Row> {
         let cites: Vec<String> = stamp.cites.iter().map(|id| id.to_string()).collect();
         rows.push(Row::new(Span::styled(words.answers(&cites.join(", ")), look.text(Role::Link))));
     }
-    for line in text::wrap_plain(&entry.text, look.text(Role::Text), width) {
+    for line in crate::markdown::render(&entry.text, width, look) {
         rows.push(Row::new(line));
     }
     if !stamp.attachments.is_empty() {

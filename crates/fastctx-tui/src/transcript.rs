@@ -8,6 +8,8 @@
 //! the same words in the same turn, the same message or the same tool use
 //! are shown once.
 
+use std::cell::RefCell;
+
 use fastctx_types::residents::Landed;
 use fastctx_types::session::{Happened, Health, SessionEvent, Speaker, TurnEnd, TurnHow};
 use fastctx_types::{Address, MachineName};
@@ -18,7 +20,7 @@ use ratatui::text::{Line, Span};
 use crate::app::Ctx;
 use crate::design::Role;
 use crate::paint;
-use crate::{text, who};
+use crate::{markdown, text, who};
 
 pub struct Transcript {
     /// How the agent is named above what it writes: "Codex".
@@ -29,11 +31,30 @@ pub struct Transcript {
 
 enum Item {
     Heard { from: Option<Speaker>, text: String, at: Timestamp, turn: Option<String>, sending: Option<Sending> },
-    Message { item: String, turn: String, text: String, at: Timestamp, writing: bool },
+    Message { item: String, turn: String, text: String, at: Timestamp, writing: bool, laid: Laid },
     Tool { item: String, turn: String, tool: String, detail: String, at: Timestamp, ended: Option<(Timestamp, Use)> },
     Ended { turn: String, end: TurnEnd },
     Health { health: Health },
     Note { text: String, role: Role },
+}
+
+/// What the agent wrote, laid out for the width it was last drawn at:
+/// its Markdown is read again only when the text or the width changes.
+#[derive(Default)]
+struct Laid(RefCell<Option<(usize, Vec<Line<'static>>)>>);
+
+impl Laid {
+    fn lines(&self, ctx: &Ctx, text: &str, width: usize) -> Vec<Line<'static>> {
+        let mut laid = self.0.borrow_mut();
+        match &*laid {
+            Some((at, lines)) if *at == width => lines.clone(),
+            _ => {
+                let lines = markdown::render(text, width, &ctx.look);
+                *laid = Some((width, lines.clone()));
+                lines
+            }
+        }
+    }
 }
 
 /// Words the user is sending from here, until the session says it heard
@@ -113,15 +134,21 @@ impl Transcript {
                 }
             }
             Happened::Writing { turn, item, delta } => match self.message(&item) {
-                Some(Item::Message { text, .. }) => text.push_str(&delta),
-                _ => self.items.push(Item::Message { item, turn, text: delta, at, writing: true }),
+                Some(Item::Message { text, laid, .. }) => {
+                    text.push_str(&delta);
+                    *laid = Laid::default();
+                }
+                _ => {
+                    self.items.push(Item::Message { item, turn, text: delta, at, writing: true, laid: Laid::default() })
+                }
             },
             Happened::Said { turn, item, text } => match self.message(&item) {
-                Some(Item::Message { text: shown, writing, .. }) => {
+                Some(Item::Message { text: shown, writing, laid, .. }) => {
                     *shown = text;
                     *writing = false;
+                    *laid = Laid::default();
                 }
-                _ => self.items.push(Item::Message { item, turn, text, at, writing: false }),
+                _ => self.items.push(Item::Message { item, turn, text, at, writing: false, laid: Laid::default() }),
             },
             Happened::ToolStarted { turn, item, tool, detail } => {
                 let known = !item.is_empty()
@@ -247,7 +274,7 @@ impl Transcript {
                         out.extend(sent(ctx, &sending.state, width));
                     }
                 }
-                Item::Message { turn, text, at, writing, .. } => {
+                Item::Message { turn, text, at, writing, laid, .. } => {
                     if named != Some(turn.as_str()) {
                         blank(&mut out);
                         out.push(label(ctx, self.agent.clone(), *at, width));
@@ -255,7 +282,7 @@ impl Transcript {
                     } else if last_was_tool {
                         blank(&mut out);
                     }
-                    let mut lines = message_lines(ctx, text, width);
+                    let mut lines = laid.lines(ctx, text, width);
                     if *writing {
                         let breath = look.faded(Role::Accent, ctx.breath);
                         match lines.last_mut() {
@@ -358,12 +385,6 @@ fn sent(ctx: &Ctx, state: &SendState, width: usize) -> Vec<Line<'static>> {
         },
     };
     text::wrap_plain(&text, ctx.look.text(role), width)
-}
-
-/// What the agent wrote. Markdown is laid out as text until its renderer
-/// takes over.
-fn message_lines(ctx: &Ctx, text: &str, width: usize) -> Vec<Line<'static>> {
-    text::wrap_plain(text, ctx.look.text(Role::Text), width)
 }
 
 /// A tool as its host names it, without the server it came from.

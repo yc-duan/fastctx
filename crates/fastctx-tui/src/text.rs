@@ -83,13 +83,22 @@ struct Cell<'a> {
 /// Breaks styled text into lines of at most `width` cells. Newlines in the
 /// text end lines; spaces where a line breaks are dropped.
 pub fn wrap(spans: &[Span<'_>], width: usize) -> Vec<Line<'static>> {
+    wrap_impl(spans, width, false)
+}
+
+/// Wraps literal source with the same break opportunities, retaining all whitespace.
+pub fn wrap_preserving_spaces(spans: &[Span<'_>], width: usize) -> Vec<Line<'static>> {
+    wrap_impl(spans, width, true)
+}
+
+fn wrap_impl(spans: &[Span<'_>], width: usize, preserve_spaces: bool) -> Vec<Line<'static>> {
     let width = width.max(1);
     let mut lines = Vec::new();
     let mut paragraph: Vec<Cell<'_>> = Vec::new();
     for span in spans {
         for grapheme in span.content.graphemes(true) {
             if grapheme == "\n" || grapheme == "\r\n" {
-                lines.extend(wrap_paragraph(&paragraph, width));
+                lines.extend(wrap_paragraph(&paragraph, width, preserve_spaces));
                 paragraph.clear();
                 continue;
             }
@@ -97,7 +106,7 @@ pub fn wrap(spans: &[Span<'_>], width: usize) -> Vec<Line<'static>> {
             paragraph.push(Cell { text: grapheme, style: span.style, width: UnicodeWidthStr::width(grapheme) });
         }
     }
-    lines.extend(wrap_paragraph(&paragraph, width));
+    lines.extend(wrap_paragraph(&paragraph, width, preserve_spaces));
     lines
 }
 
@@ -142,7 +151,7 @@ fn atoms(cells: &[Cell<'_>]) -> Vec<(usize, usize)> {
     atoms
 }
 
-fn wrap_paragraph(cells: &[Cell<'_>], width: usize) -> Vec<Line<'static>> {
+fn wrap_paragraph(cells: &[Cell<'_>], width: usize, preserve_spaces: bool) -> Vec<Line<'static>> {
     if cells.is_empty() {
         return vec![Line::default()];
     }
@@ -160,11 +169,11 @@ fn wrap_paragraph(cells: &[Cell<'_>], width: usize) -> Vec<Line<'static>> {
         if used > 0 && used + body > width {
             lines.push(Vec::new());
             used = 0;
-            if visible.is_none() {
+            if visible.is_none() && !preserve_spaces {
                 continue;
             }
         }
-        if body > width {
+        if body > width || (preserve_spaces && used + total > width) {
             // Wider than a whole line: cut it where it has to be.
             for cell in atom {
                 if used + cell.width > width && used > 0 {
@@ -179,7 +188,7 @@ fn wrap_paragraph(cells: &[Cell<'_>], width: usize) -> Vec<Line<'static>> {
         lines.last_mut().expect("a line").extend(atom.iter());
         used += total;
     }
-    lines.into_iter().map(|cells| line_of(&trim_end(&cells))).collect()
+    lines.into_iter().map(|cells| if preserve_spaces { line_of(&cells) } else { line_of(&trim_end(&cells)) }).collect()
 }
 
 fn trim_end<'a, 'b>(cells: &[&'a Cell<'b>]) -> Vec<&'a Cell<'b>> {

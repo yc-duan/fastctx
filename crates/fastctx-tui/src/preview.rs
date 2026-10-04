@@ -460,6 +460,75 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     events
 }
 
+/// A finished turn whose answer is written the way agents write: a
+/// heading, lists, code, a table.
+fn answered(now: Timestamp) -> Vec<SessionEvent> {
+    let event =
+        |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
+    let turn = "t-2".to_string();
+    let answer = "## 定点化完成
+
+积分项改成 **Q8.24** 之后，`step_profile` 在 41 s 处的饱和消失了。原因是限幅放在累加之后：
+
+1. 累加器先溢出，再被限幅截回；
+2. 截回的值已经错了，后面每一拍都带着它。
+
+把限幅挪到累加之前：
+
+```rust
+let next = self.integral.saturating_add(error * self.ki);
+self.integral = next.clamp(-LIMIT, LIMIT);
+```
+
+| 测试 | 浮点 | Q8.24 |
+|---|---|---|
+| step_profile | 通过 | 通过 |
+| ramp_hold | 通过 | 通过 |
+| noise_reject | 通过 | 误差 0.3% |
+
+> 采样周期没动，仍是 1 ms。
+
+还剩 `noise_reject` 那 0.3%，要不要再看，你定。";
+    vec![
+        event(400, Happened::TurnStarted { turn: turn.clone() }),
+        event(
+            400,
+            Happened::Heard {
+                turn: Some(turn.clone()),
+                from: Some(Speaker::User { machine: machine("desktop") }),
+                text: "限幅的问题修好了吗？把结果列一下。".into(),
+            },
+        ),
+        event(
+            390,
+            Happened::ToolStarted {
+                turn: turn.clone(),
+                item: "c1".into(),
+                tool: "fastctx.run".into(),
+                detail: "cargo test --workspace".into(),
+            },
+        ),
+        event(
+            330,
+            Happened::ToolEnded {
+                turn: turn.clone(),
+                item: "c1".into(),
+                tool: "fastctx.run".into(),
+                detail: "cargo test --workspace".into(),
+                failed: false,
+            },
+        ),
+        event(320, Happened::Said { turn: turn.clone(), item: "m3".into(), text: answer.into() }),
+        event(
+            320,
+            Happened::TurnEnded {
+                turn,
+                end: TurnEnd { how: TurnHow::Completed, reason: None, duration_ms: Some(80_000), last_message: None },
+            },
+        ),
+    ]
+}
+
 /// Every scene, by name.
 pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     let now = ctx.now;
@@ -481,6 +550,9 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         .expect("the colleague");
     let mut talk = TalkPage::new(colleague, Some("Mark 50 研发".into()), Some(machine("desktop")));
     talk.data(ctx, Data::History(conversation(now)));
+    let mut answer =
+        TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
+    answer.data(ctx, Data::History(answered(now)));
     let mut typing =
         TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     typing.data(ctx, Data::History(Vec::new()));
@@ -503,6 +575,7 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         ("world", Page::World(WorldPage::with(world_view, nodes(now)))),
         ("project", Page::Project(Box::new(ProjectPage::with(town("mark50"), town_view, map(now))))),
         ("talk", Page::Talk(Box::new(talk))),
+        ("answer", Page::Talk(Box::new(answer))),
         ("typing", Page::Talk(Box::new(typing))),
         ("journal", Page::Journal(Box::new(JournalPage::with("Mark 50 研发".into(), journal(now))))),
         ("machines", Page::Machines(MachinesPage::with(nodes(now)))),
