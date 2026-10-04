@@ -22,6 +22,10 @@ fastctx-types = { path = "../fastctx-types" }
 jiff.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+# Grammars for code in fenced blocks, without C dependencies; colours are
+# our own roles, not syntect's themes.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy", "dump-load"] }
+two-face = { version = "0.5.2", default-features = false, features = ["syntect-fancy"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 unicode-segmentation = "1.12"
 unicode-linebreak = "0.1.5"

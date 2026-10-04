@@ -1,6 +1,7 @@
 //! Markdown laid out in terminal cells, using the same line breaks as the rest of the TUI.
 
 use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
@@ -11,7 +12,10 @@ use ratatui::text::{Line, Span};
 use crate::design::{Look, Role};
 use crate::text;
 
+mod highlight;
 mod table;
+
+pub use highlight::Memo;
 
 /// Renders a Markdown snapshot into owned, styled lines. A zero width produces no lines.
 ///
@@ -23,6 +27,12 @@ mod table;
 /// This function has no streaming state. Markdown that changes the interpretation of earlier
 /// input (such as a setext underline or a reference definition) necessarily changes those lines.
 pub fn render(markdown: &str, width: usize, look: &Look) -> Vec<Line<'static>> {
+    render_remembering(markdown, width, look, &mut Memo::default())
+}
+
+/// `render`, for a text laid out again as it grows or as the width changes:
+/// `memo` keeps how its code was coloured, so only what changed is read again.
+pub fn render_remembering(markdown: &str, width: usize, look: &Look, memo: &mut Memo) -> Vec<Line<'static>> {
     if width == 0 || markdown.is_empty() {
         return Vec::new();
     }
@@ -37,8 +47,19 @@ pub fn render(markdown: &str, width: usize, look: &Look) -> Vec<Line<'static>> {
             _ => {}
         }
     }
-    let renderer = Renderer { source: markdown, prepared: &prepared, events, ends, look };
-    renderer.blocks(0..renderer.events.len(), width, false, false).lines
+    let renderer = Renderer {
+        source: markdown,
+        prepared: &prepared,
+        events,
+        ends,
+        look,
+        memo: RefCell::new(std::mem::take(memo)),
+        code_blocks: Cell::new(0),
+    };
+    let lines = renderer.blocks(0..renderer.events.len(), width, false, false).lines;
+    *memo = renderer.memo.into_inner();
+    memo.keep(renderer.code_blocks.get());
+    lines
 }
 
 fn options() -> Options {
@@ -56,6 +77,9 @@ struct Renderer<'a> {
     events: Vec<(Event<'a>, Range<usize>)>,
     ends: Vec<usize>,
     look: &'a Look,
+    memo: RefCell<Memo>,
+    /// Code blocks met so far, which numbers each in `memo`.
+    code_blocks: Cell<usize>,
 }
 
 #[derive(Default)]
@@ -335,17 +359,25 @@ impl Renderer<'_> {
         let padding = 1;
         let room = width.saturating_sub(padding * 2).max(1);
         let mut lines = Vec::new();
-        if let CodeBlockKind::Fenced(info) = kind
-            && let Some(language) = info.split_whitespace().next()
-        {
+        let language = match kind {
+            CodeBlockKind::Fenced(info) => info.split_whitespace().next(),
+            CodeBlockKind::Indented => None,
+        };
+        if let Some(language) = language {
             for mut line in literal_lines(language, faint, room) {
                 let left = room.saturating_sub(text::line_width(&line));
                 line.spans.insert(0, Span::styled(" ".repeat(left), style));
                 lines.push(line);
             }
         }
-        if !code.is_empty() {
-            lines.extend(literal_lines(code.strip_suffix('\n').unwrap_or(&code), style, room));
+        let code = code.strip_suffix('\n').unwrap_or(&code);
+        let block = self.code_blocks.replace(self.code_blocks.get() + 1);
+        // A quoted block stays one quiet colour, like the quote around it.
+        let painted = language.filter(|_| !quoted).and_then(|language| self.painted(block, language, code, room));
+        if let Some(painted) = painted {
+            lines.extend(painted);
+        } else if !code.is_empty() {
+            lines.extend(literal_lines(code, style, room));
         } else if lines.is_empty() {
             lines.push(Line::default());
         }
@@ -355,6 +387,25 @@ impl Renderer<'_> {
             line.spans.push(Span::styled(" ".repeat(right), style));
         }
         Block::prose(lines)
+    }
+
+    /// Code in `language`, coloured by its grammar and wrapped like any
+    /// literal; `None` when no grammar knows the language.
+    fn painted(&self, block: usize, language: &str, code: &str, width: usize) -> Option<Vec<Line<'static>>> {
+        let source = visible(code).replace('\r', r"\r");
+        let layout = text::Layout::default().with_tab_stop(NonZeroUsize::new(4).unwrap());
+        let pieces = self.memo.borrow_mut().highlight(block, language, &layout.expand_tabs(&source))?;
+        let mut lines = Vec::new();
+        for line in pieces {
+            let spans: Vec<Span<'static>> =
+                line.into_iter().map(|(role, text)| Span::styled(text, self.look.code(role))).collect();
+            if spans.is_empty() {
+                lines.push(Line::default());
+            } else {
+                lines.extend(layout.wrap_preserving_spaces(&spans, width));
+            }
+        }
+        Some(lines)
     }
 
     fn table(&self, range: Range<usize>, alignments: &[Alignment], width: usize, quoted: bool) -> Block {

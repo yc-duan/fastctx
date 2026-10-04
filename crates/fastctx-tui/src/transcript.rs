@@ -41,19 +41,28 @@ enum Item {
 /// What the agent wrote, laid out for the width it was last drawn at:
 /// its Markdown is read again only when the text or the width changes.
 #[derive(Default)]
-struct Laid(RefCell<Option<(usize, Vec<Line<'static>>)>>);
+struct Laid {
+    shown: RefCell<Option<(usize, Vec<Line<'static>>)>>,
+    /// How its code was coloured, kept while the text grows.
+    memo: RefCell<markdown::Memo>,
+}
 
 impl Laid {
     fn lines(&self, ctx: &Ctx, text: &str, width: usize) -> Vec<Line<'static>> {
-        let mut laid = self.0.borrow_mut();
-        match &*laid {
+        let mut shown = self.shown.borrow_mut();
+        match &*shown {
             Some((at, lines)) if *at == width => lines.clone(),
             _ => {
-                let lines = markdown::render(text, width, &ctx.look);
-                *laid = Some((width, lines.clone()));
+                let lines = markdown::render_remembering(text, width, &ctx.look, &mut self.memo.borrow_mut());
+                *shown = Some((width, lines.clone()));
                 lines
             }
         }
+    }
+
+    /// The text changed: it is laid out again when next drawn.
+    fn changed(&self) {
+        self.shown.borrow_mut().take();
     }
 }
 
@@ -136,7 +145,7 @@ impl Transcript {
             Happened::Writing { turn, item, delta } => match self.message(&item) {
                 Some(Item::Message { text, laid, .. }) => {
                     text.push_str(&delta);
-                    *laid = Laid::default();
+                    laid.changed();
                 }
                 _ => self.items.push(Item::Message { item, turn, text: delta, writing: true, laid: Laid::default() }),
             },
@@ -144,7 +153,7 @@ impl Transcript {
                 Some(Item::Message { text: shown, writing, laid, .. }) => {
                     *shown = text;
                     *writing = false;
-                    *laid = Laid::default();
+                    laid.changed();
                 }
                 _ => self.items.push(Item::Message { item, turn, text, writing: false, laid: Laid::default() }),
             },
