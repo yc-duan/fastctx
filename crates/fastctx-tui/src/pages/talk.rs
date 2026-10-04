@@ -59,6 +59,9 @@ pub struct TalkPage {
     /// The conversation's length and the rows it had, as last drawn.
     last_total: usize,
     last_height: usize,
+    /// A turn that ended while watched, to tell the user of when the
+    /// terminal is not in front: a title and a line.
+    notice: Option<(String, String)>,
 }
 
 enum Watching {
@@ -119,6 +122,7 @@ impl TalkPage {
             pending: VecDeque::new(),
             last_total: 0,
             last_height: 0,
+            notice: None,
         }
     }
 
@@ -149,6 +153,11 @@ impl TalkPage {
         Act::Stay
     }
 
+    /// What to tell the user of a turn that ended, once.
+    pub fn take_notice(&mut self) -> Option<(String, String)> {
+        self.notice.take()
+    }
+
     pub fn data(&mut self, ctx: &Ctx, data: Data) -> Act {
         match data {
             Data::History(events) => {
@@ -166,6 +175,9 @@ impl TalkPage {
                     && std::mem::take(&mut self.stopping)
                 {
                     self.note = None;
+                }
+                if let Happened::TurnEnded { end, .. } = &event.happened {
+                    self.notice = Some((who::name(ctx, &self.agent, &self.address.machine), ended_line(ctx, end)));
                 }
                 self.transcript.event(event);
             }
@@ -587,5 +599,22 @@ impl TalkPage {
             let row = caret.0.saturating_sub(first_shown) as u16;
             frame.set_cursor_position(Position::new(left + 4 + caret.1 as u16, box_top + 1 + row));
         }
+    }
+}
+
+/// A turn's end in a line: its last message's first line, or how it ended
+/// when it did not complete.
+fn ended_line(ctx: &Ctx, end: &fastctx_types::session::TurnEnd) -> String {
+    use fastctx_types::session::TurnHow;
+    let words = &ctx.words;
+    let reason = end.reason.as_deref().map(text::first_line);
+    match &end.how {
+        TurnHow::Completed => {
+            end.last_message.as_deref().map(text::first_line).unwrap_or_else(|| words.turn_done().to_string())
+        }
+        TurnHow::Interrupted if reason.is_none() => words.turn_stopped().to_string(),
+        TurnHow::Interrupted => words.turn_interrupted(reason.as_deref()),
+        TurnHow::Failed => words.turn_failed(reason.as_deref()),
+        TurnHow::Other(how) => words.turn_ended_as(how),
     }
 }

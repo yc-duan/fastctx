@@ -84,6 +84,11 @@ async fn live(world: World) -> anyhow::Result<()> {
         for (page, job) in jobs {
             feed::run(world.clone(), answer_sender.clone(), page, job);
         }
+        // A turn that ended is told of only when the terminal is not in
+        // front; a terminal that cannot be told is told nothing.
+        for (title, body) in app.notices() {
+            screen.notify(&title, &body)?;
+        }
         if app.quit {
             break;
         }

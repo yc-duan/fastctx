@@ -28,6 +28,14 @@ pub enum Page {
 }
 
 impl Page {
+    /// A turn's end to tell the user of, from a conversation.
+    pub fn take_notice(&mut self) -> Option<(String, String)> {
+        match self {
+            Page::Talk(page) => page.take_notice(),
+            _ => None,
+        }
+    }
+
     pub fn key(&mut self, ctx: &Ctx, key: KeyEvent) -> Act {
         match self {
             Page::World(page) => page.key(ctx, key),

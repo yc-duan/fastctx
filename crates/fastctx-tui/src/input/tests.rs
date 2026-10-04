@@ -51,6 +51,34 @@ fn vt_key_contract_and_queue_boundary() {
 }
 
 #[test]
+fn focus_reports_are_not_keys_or_pasted_control_text() {
+    use super::Focus;
+
+    for (sequence, expected) in [("\x1b[I", Focus::Focused), ("\x1b[O", Focus::Unfocused)] {
+        for split in 0..=sequence.len() {
+            let mut decoder = Decoder::default();
+            let mut out = Vec::new();
+            feed(&mut decoder, &sequence[..split], &mut out);
+            decoder.boundary(true, &mut out);
+            feed(&mut decoder, &sequence[split..], &mut out);
+            decoder.boundary(false, &mut out);
+            assert!(matches!(out.as_slice(), [Input::Focus(value)] if *value == expected));
+        }
+    }
+    let mut decoder = Decoder::default();
+    let mut out = Vec::new();
+    feed(&mut decoder, "你\x1b[O\x1b[200~\x1b[I\x1b[O中文😀\x1b[201~\x1b[I好", &mut out);
+    assert!(matches!(out.as_slice(), [Input::Key(a), Input::Focus(Focus::Unfocused),
+        Input::Paste(paste), Input::Focus(Focus::Focused), Input::Key(b)]
+        if a.code == KeyCode::Char('你') && b.code == KeyCode::Char('好') && paste == "\x1b[I\x1b[O中文😀"));
+    for sequence in ["\x1b[1I", "\x1b[1;2O", "\x1b[?I"] {
+        out.clear();
+        feed(&mut decoder, sequence, &mut out);
+        assert!(matches!(out.as_slice(), [Input::Sequence(value)] if value == sequence));
+    }
+}
+
+#[test]
 fn bracketed_paste_is_atomic_across_every_character_boundary() {
     let mut decoder = Decoder::default();
     let mut out = Vec::new();

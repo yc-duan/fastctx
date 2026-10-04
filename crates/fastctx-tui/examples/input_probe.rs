@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Input::Paste(text) => json!({"paste": text}),
             Input::Pasting(count) => json!({"pasting": count}),
             Input::Resize => json!({"resize": true}),
+            Input::Focus(focus) => json!({"focus": format!("{focus:?}")}),
             Input::Sequence(text) => json!({"sequence": text}),
             Input::Failed(error) => json!({"failed": error}),
         };

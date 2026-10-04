@@ -230,6 +230,11 @@ impl App {
     }
 
     /// Whether anything on the screen is happening now, so it breathes.
+    /// Turns that ended in the conversations open, to tell the user of.
+    pub fn notices(&mut self) -> Vec<(String, String)> {
+        self.pages.iter_mut().filter_map(|(_, page)| page.take_notice()).collect()
+    }
+
     pub fn animating(&self) -> bool {
         self.pages.last().is_some_and(|(_, page)| page.animating()) || self.pasting.is_some()
     }
@@ -257,7 +262,7 @@ impl App {
                 Vec::new()
             }
             // A sequence no page reads, such as a terminal's answer nobody asked for.
-            Input::Resize | Input::Sequence(_) => Vec::new(),
+            Input::Resize | Input::Sequence(_) | Input::Focus(_) => Vec::new(),
             Input::Failed(_) => {
                 self.quit = true;
                 Vec::new()

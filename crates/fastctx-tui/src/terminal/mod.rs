@@ -3,6 +3,7 @@
 //! TUI ends, a panic included, the terminal is put back as it was.
 
 mod colors;
+mod notification;
 #[cfg(windows)]
 mod windows;
 
@@ -14,18 +15,22 @@ use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_ra
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
+pub use crate::input::Focus;
 pub(crate) use colors::depth;
+pub use notification::NotificationProtocol;
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
 /// The terminal, held; dropping it gives the terminal back.
 pub struct Screen {
     pub terminal: Term,
+    notification_protocol: Option<NotificationProtocol>,
 }
 
 impl Screen {
     pub fn open() -> io::Result<Self> {
         require_interactive()?;
+        let notification_protocol = notification::detect();
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             // Put the terminal back first, so the panic is printed on the
@@ -39,12 +44,37 @@ impl Screen {
             return Err(error);
         }
         match Terminal::new(CrosstermBackend::new(stdout())) {
-            Ok(terminal) => Ok(Self { terminal }),
+            Ok(terminal) => Ok(Self { terminal, notification_protocol }),
             Err(error) => {
                 restore();
                 Err(error)
             }
         }
+    }
+
+    /// The latest terminal focus report, or `Unknown` until one arrives.
+    /// Updated by the sole input reader, even before the UI handles its events.
+    pub fn focus(&self) -> Focus {
+        crate::input::focus()
+    }
+
+    /// The identified transport. Unknown terminals, multiplexers, native
+    /// conhost and Windows Terminal without a verifiable version return `None`.
+    pub fn notification_protocol(&self) -> Option<NotificationProtocol> {
+        self.notification_protocol
+    }
+
+    /// Submits one notification only when the terminal is known to be unfocused.
+    /// Call once for a completed, failed or stopped turn in the viewed session;
+    /// the caller chooses the title and body and owns turn deduplication.
+    ///
+    /// Returns `true` when written and flushed, not when displayed by the OS.
+    /// Unknown focus/support and foreground calls return `false` and are never
+    /// queued. Control characters become spaces; OSC 9/777 replace semicolons
+    /// with commas. No bell, capability query, retry or input reply is requested.
+    /// Use on the UI thread between draws, after [`crate::input::start`].
+    pub fn notify(&mut self, title: &str, body: &str) -> io::Result<bool> {
+        notification::notify(&mut stdout().lock(), self.notification_protocol, crate::input::focus, title, body)
     }
 }
 
