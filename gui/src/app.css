@@ -856,3 +856,25 @@ button.composer-context[hidden] {
   border-radius: inherit;
   background: var(--accent);
 }
+
+/* A conversation's title, renamed in place. */
+.who-name.renamable {
+  cursor: text;
+  border-radius: var(--radius-s);
+}
+
+.who-name.renamable:hover {
+  box-shadow: 0 2px 0 -1px var(--rule);
+}
+
+.who-rename {
+  width: min(28em, 100%);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  box-shadow: 0 2px 0 -1px var(--accent);
+}

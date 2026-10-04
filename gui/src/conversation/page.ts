@@ -136,6 +136,14 @@ export class ConversationPage {
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
     document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
+    // The title is renamed in place, where the conversation takes a name.
+    this.name.addEventListener("click", () => this.rename());
+    this.name.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !this.renaming) {
+        event.preventDefault();
+        this.rename();
+      }
+    });
     if (options.details) {
       const { card } = options.details;
       this.element.append(card.element);
@@ -381,6 +389,54 @@ export class ConversationPage {
   }
 
   private chosenModel: string | null = null;
+  private renaming = false;
+
+  /** Renames the conversation: its title becomes a field, Enter keeps the
+   *  new name, Escape or leaving it keeps the old. */
+  private rename(): void {
+    const controls = this.options.controls;
+    if (this.renaming || !controls || !this.offered?.controls.includes("rename")) return;
+    this.renaming = true;
+    const field = document.createElement("input");
+    field.className = "who-rename";
+    field.value = this.options.conversation.title ?? "";
+    field.placeholder = `${this.options.someone.agent} · ${this.options.someone.machine}`;
+    field.setAttribute("aria-label", controls.words.commands.rename);
+    this.name.replaceChildren(field);
+    field.focus();
+    field.select();
+    let done = false;
+    const finish = (keep: boolean) => {
+      if (done) return;
+      done = true;
+      const name = field.value.trim();
+      this.renaming = false;
+      if (keep && name && name !== this.options.conversation.title) {
+        // Shown at once; the host's own report of the title follows, and a
+        // name the host did not take gives way to the one it has.
+        const before = this.options.conversation.title;
+        this.options.conversation.title = name;
+        void this.run({ name: "rename", description: "", args: null, control: "rename", source: null }, "", { do: "rename", name }).then((done) => {
+          if (!done && this.options.conversation.title === name) {
+            this.options.conversation.title = before;
+            this.drawState();
+          }
+        });
+      }
+      this.name.innerHTML = "";
+      this.drawState();
+    };
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    field.addEventListener("blur", () => finish(true));
+  }
   private tray: AttachTray | null = null;
   private stopDrops: (() => void) | null = null;
 
@@ -560,17 +616,18 @@ export class ConversationPage {
   }
 
   /** Does a command: the World's own control, or the host's command. */
-  private async run(command: MenuCommand, args: string, given?: Control): Promise<void> {
+  /** Does a command; says whether it was done. */
+  private async run(command: MenuCommand, args: string, given?: Control): Promise<boolean> {
     const controls = this.options.controls;
-    if (!controls) return;
+    if (!controls) return false;
     const words = controls.words;
     if (command.control === "stop") {
       this.options.stop();
-      return;
+      return true;
     }
     if (command.control === "model" && !given && !args) {
       this.modelMenu!.show(this.offered?.models ?? [], words.noModels);
-      return;
+      return false;
     }
     const what: Control =
       given ??
@@ -589,12 +646,14 @@ export class ConversationPage {
       if (done.kind === "forked") {
         this.say(words.done(command.name));
         controls.forked(done.resident);
-        return;
+        return true;
       }
       this.say(done.said ?? words.done(command.name));
       void this.askOffers();
+      return true;
     } catch (error) {
       this.say(words.failed(String(error)));
+      return false;
     }
   }
 
@@ -634,7 +693,16 @@ export class ConversationPage {
     const name = title
       ? `${escape(title)}`
       : `${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span>`;
-    if (this.name.innerHTML !== name) this.name.innerHTML = name;
+    if (!this.renaming && this.name.innerHTML !== name) this.name.innerHTML = name;
+    const renamable = !!this.offered?.controls.includes("rename");
+    this.name.classList.toggle("renamable", renamable);
+    if (renamable) {
+      this.name.tabIndex = 0;
+      this.name.title = this.options.controls?.words.commands.rename ?? "";
+    } else {
+      this.name.removeAttribute("tabindex");
+      this.name.removeAttribute("title");
+    }
     const waiting = !this.gone && conversation.waiting();
     const working = !this.gone && !waiting && conversation.moving();
     const facts = [
