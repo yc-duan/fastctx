@@ -8,6 +8,7 @@ use crate::residents::Notice;
 use crate::run::{RunReply, RunRequest};
 use crate::town::WhoReply;
 use crate::world::MachineFacts;
+use crate::write::{WriteOp, WriteOutcome};
 use crate::{ResidentId, TownName};
 
 /// A call: asked of a machine that is online, answered at once.
@@ -16,6 +17,8 @@ use crate::{ResidentId, TownName};
 pub enum RemoteCall {
     /// Run a script there for a resident of the calling machine.
     Run { resident: ResidentId, town: Option<TownName>, request: RunRequest },
+    /// Write files there for a resident of the calling machine.
+    Write { resident: ResidentId, town: Option<TownName>, op: WriteOp },
     /// Who is on that machine and what each is doing, for `fastctx w`.
     Who { all: bool },
     /// What that machine is like, for `fastctx nodes`.
@@ -26,6 +29,7 @@ pub enum RemoteCall {
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
     Run(RunReply),
+    Written { outcome: WriteOutcome },
     Who(WhoReply),
     Facts(MachineFacts),
 }

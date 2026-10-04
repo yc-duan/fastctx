@@ -22,7 +22,12 @@ enum Command {
     /// Run this machine's node in the foreground.
     Node,
     /// Serve the World's tools to an agent session over MCP's stdio.
-    Serve,
+    Serve {
+        /// How the session writes files: `edit` lists edit and write,
+        /// `apply_patch` lists apply_patch.
+        #[arg(long, default_value = "edit", value_parser = ["edit", "apply_patch"])]
+        writer: String,
+    },
     /// Look at files: text with line numbers, images as images.
     View(view::ViewArgs),
     /// See who is here and what each is doing.
@@ -50,7 +55,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Node => node(),
-        Command::Serve => serve(),
+        Command::Serve { writer } => serve(&writer),
         Command::View(args) => view::run(args),
         Command::W(args) => w::run(args),
         Command::Nodes => world::nodes(),
@@ -75,9 +80,10 @@ fn node() -> anyhow::Result<()> {
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run(&root))
 }
 
-fn serve() -> anyhow::Result<()> {
+fn serve(writer: &str) -> anyhow::Result<()> {
     let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_serve::serve(world))
+    let writer = if writer == "apply_patch" { fastctx_serve::Writer::ApplyPatch } else { fastctx_serve::Writer::Edit };
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_serve::serve(world, writer))
 }
 
 /// A supervisor has no terminal: what it would print about its own failure

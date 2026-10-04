@@ -58,16 +58,22 @@ impl Writer {
     }
 
     fn head(&self, operation: &str, changes: usize) -> String {
-        format!("=== {operation} on {} ({changes} changes) ===", self.node)
+        format!("=== {operation} on {} ({}) ===", self.node, counted(changes))
     }
 
     fn failure(&self, operation: &str, mut error: WriteError) -> WriteError {
-        error.message = format!(
-            "=== {operation} on {} (failed; {} committed changes) ===\n{}",
-            self.node,
-            error.changes.len(),
-            error.message
-        );
+        let state = match error.changes.len() {
+            0 => "failed; nothing changed".to_string(),
+            n => format!("failed after {}", counted(n)),
+        };
+        error.message = format!("=== {operation} on {} ({state}) ===\n{}", self.node, error.message);
         error
+    }
+}
+
+fn counted(changes: usize) -> String {
+    match changes {
+        1 => "1 change".to_string(),
+        n => format!("{n} changes"),
     }
 }

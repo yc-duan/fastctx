@@ -17,6 +17,7 @@ mod residents;
 mod server;
 mod who;
 mod world;
+mod write;
 
 use std::path::Path;
 use std::sync::{Arc, RwLock};

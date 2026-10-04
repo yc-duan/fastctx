@@ -25,6 +25,9 @@ pub struct Message {
 pub enum Body {
     /// Asks the receiver to do something now.
     Call { call: RemoteCall },
+    /// A call too large for a message: it follows over a data connection,
+    /// as the JSON of a `RemoteCall`.
+    LargeCall { carried: Carried },
     /// The answer to the sender's call numbered `call`.
     Answer { call: u64, result: RemoteResult },
     /// The answer to the call numbered `call`, too large for a message: it

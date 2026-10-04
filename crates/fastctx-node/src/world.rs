@@ -160,6 +160,17 @@ impl fastctx_net::link::Node for Handler {
                     let (reply, _) = node.jobs.run(&node.world, &machine, owner, town, request, node.link()).await?;
                     Ok(RemoteReply::Run(reply))
                 }
+                RemoteCall::Write { resident, town, op } => {
+                    let owner = Address { machine: from, resident };
+                    let world = node.world.clone();
+                    let outcome = tokio::task::spawn_blocking(move || {
+                        crate::write::write_here(&world, &machine, &owner, town.as_ref(), op)
+                    })
+                    .await
+                    .map_err(|error| Failure::new(format!("writing: {error}")))?
+                    .map_err(|error| Failure::new(format!("writing: {error}")))?;
+                    Ok(RemoteReply::Written { outcome })
+                }
                 RemoteCall::Who { all } => crate::server::who_here(&node, all).await.map(RemoteReply::Who),
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&machine))),
             }

@@ -19,6 +19,7 @@ use tokio::task::{AbortHandle, JoinSet};
 
 use session::Session;
 use stdio::{Input, Output};
+pub use tools::Writer;
 
 /// The MCP revisions this server speaks; it answers in the client's when it
 /// knows it, and in the newest otherwise, as the protocol asks.
@@ -27,10 +28,10 @@ const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", 
 /// Serves one session until its host closes standard input, then lets the
 /// calls in flight answer. Each call ends within the `run` wait, so this
 /// ends too.
-pub async fn serve(world: WorldDir) -> anyhow::Result<()> {
+pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
     let session = Arc::new(Session::new(world)?);
     let mut input = stdio::input();
-    let (output, writer) = Output::start();
+    let (output, printing) = Output::start();
     let mut calls = JoinSet::new();
     let mut in_flight: HashMap<String, AbortHandle> = HashMap::new();
     while let Some(input) = input.recv().await {
@@ -69,7 +70,9 @@ pub async fn serve(world: WorldDir) -> anyhow::Result<()> {
                 ));
             }
             (Some("ping"), Some(id)) => output.send(&response(&id, json!({}))),
-            (Some("tools/list"), Some(id)) => output.send(&response(&id, json!({ "tools": tools::definitions() }))),
+            (Some("tools/list"), Some(id)) => {
+                output.send(&response(&id, json!({ "tools": tools::definitions(writer) })))
+            }
             (Some("tools/call"), Some(id)) => {
                 let (session, output, key) = (session.clone(), output.clone(), id.to_string());
                 let handle = calls.spawn(async move {
@@ -78,6 +81,10 @@ pub async fn serve(world: WorldDir) -> anyhow::Result<()> {
                     match name {
                         "run" => {
                             let answer = session.run(&arguments, params.get("_meta")).await;
+                            output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
+                        }
+                        name if writer.lists(name) => {
+                            let answer = session.write(name, &arguments, params.get("_meta")).await;
                             output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
                         }
                         _ => output.send(&error_response(&id, -32602, &format!("unknown tool: {name}"))),
@@ -110,7 +117,7 @@ pub async fn serve(world: WorldDir) -> anyhow::Result<()> {
     }
     while calls.join_next().await.is_some() {}
     drop(output);
-    writer.await??;
+    printing.await??;
     Ok(())
 }
 

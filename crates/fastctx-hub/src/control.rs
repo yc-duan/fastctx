@@ -302,7 +302,7 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: &Signed, reply: &imp
 
 fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: &Signed) -> CallStatus {
     let to = match open_message(hub, name, message) {
-        Ok(Message { to, body: Body::Call { .. }, .. }) => to,
+        Ok(Message { to, body: Body::Call { .. } | Body::LargeCall { .. }, .. }) => to,
         // A caller that sends something unreadable gets the plainest
         // answer: nobody by that description is there.
         Ok(_) | Err(_) => return CallStatus::NotMember,

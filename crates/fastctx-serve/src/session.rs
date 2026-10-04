@@ -9,6 +9,7 @@ use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Hints, Host, Whereabouts};
 use fastctx_types::run::RunRequest;
+use fastctx_types::write::{ApplyPatchRequest, EditRequest, WriteOp, WriteRequest};
 use fastctx_types::{Address, AgentName, Call, MachineName, Reply, ResidentId};
 use serde_json::Value;
 
@@ -111,6 +112,45 @@ impl Session {
         answer
     }
 
+    /// One of the writing tools: `edit`, `write` or `apply_patch`.
+    pub async fn write(self: &Arc<Self>, tool: &str, arguments: &Value, meta: Option<&Value>) -> Answer {
+        let op = match write_op(tool, arguments) {
+            Ok(op) => op,
+            Err(error) => return Answer::error(format!("=== {tool} (not done: {error}) ===")),
+        };
+        let node = match arguments.get("node") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(node)) => match MachineName::try_from(node.as_str()) {
+                Ok(node) => Some(node),
+                Err(error) => return Answer::error(format!("=== {tool} (not done: {error}) ===")),
+            },
+            Some(_) => {
+                return Answer::error(format!("=== {tool} (not done: `node` must be a string naming a machine) ==="));
+            }
+        };
+        let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
+        let whereabouts = match self.whereabouts(thread).await {
+            Ok(whereabouts) => whereabouts,
+            Err(error) => return Answer::error(format!("=== {tool} (not done: {error}) ===")),
+        };
+        let reply = async {
+            let mut client = self.client().await?;
+            let call = Call::Write { resident: whereabouts.resident.clone(), town: whereabouts.town.clone(), op, node };
+            client.call(call).await.map_err(|error| error.to_string())
+        }
+        .await;
+        let mut answer = match reply {
+            Ok(Reply::Written { outcome: Ok(result) }) => {
+                Answer { content: vec![Content::Text(result.text)], is_error: false }
+            }
+            Ok(Reply::Written { outcome: Err(error) }) => Answer::error(error.to_string()),
+            Ok(other) => Answer::error(format!("=== {tool} (the node answered something else: {other:?}) ===")),
+            Err(error) => Answer::error(format!("=== {tool} (not done: {error}) ===")),
+        };
+        self.add_waiting_words(&whereabouts, &mut answer).await;
+        answer
+    }
+
     /// Words waiting for the resident ride along with its answer, each in a
     /// block of its own (`world-colleagues.md`, 话怎样送到居民眼前).
     async fn add_waiting_words(&self, whereabouts: &Whereabouts, answer: &mut Answer) {
@@ -163,6 +203,30 @@ impl Session {
         let _starting = self.starting.lock().await;
         Client::connect_or_start(&self.world, Peer::Session { host }).await.map_err(|error| error.to_string())
     }
+}
+
+/// The write a tool call asks for, from its arguments.
+fn write_op(tool: &str, arguments: &Value) -> Result<WriteOp, String> {
+    let text = |name: &str| match arguments.get(name) {
+        Some(Value::String(text)) => Ok(text.clone()),
+        Some(_) => Err(format!("`{name}` must be a string")),
+        None => Err(format!("`{name}` is missing")),
+    };
+    Ok(match tool {
+        "edit" => WriteOp::Edit(EditRequest {
+            file_path: text("file_path")?.into(),
+            old_string: text("old_string")?,
+            new_string: text("new_string")?,
+            replace_all: match arguments.get("replace_all") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(all)) => *all,
+                Some(_) => return Err("`replace_all` must be true or false".to_string()),
+            },
+        }),
+        "write" => WriteOp::Write(WriteRequest { file_path: text("file_path")?.into(), content: text("content")? }),
+        "apply_patch" => WriteOp::ApplyPatch(ApplyPatchRequest { input: text("input")? }),
+        other => return Err(format!("{other} is not a writing tool")),
+    })
 }
 
 /// The agent a client name belongs to: `codex` and `claude` by the names

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct EditRequest {
     pub file_path: PathBuf,
     pub old_string: String,
@@ -12,16 +12,41 @@ pub struct EditRequest {
     pub replace_all: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct WriteRequest {
     pub file_path: PathBuf,
     pub content: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ApplyPatchRequest {
     pub input: String,
 }
+
+/// A write as a resident asks for it, through whichever of the tools its
+/// host has (`world-write.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "tool")]
+pub enum WriteOp {
+    Edit(EditRequest),
+    Write(WriteRequest),
+    ApplyPatch(ApplyPatchRequest),
+}
+
+impl WriteOp {
+    /// The tool's name, as the resident's actions record it.
+    pub fn tool(&self) -> &'static str {
+        match self {
+            WriteOp::Edit(_) => "edit",
+            WriteOp::Write(_) => "write",
+            WriteOp::ApplyPatch(_) => "apply_patch",
+        }
+    }
+}
+
+/// How a write came out: what it changed, or why it stopped and what it had
+/// changed by then.
+pub type WriteOutcome = Result<WriteResult, WriteError>;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

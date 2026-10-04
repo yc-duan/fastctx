@@ -383,18 +383,53 @@ impl Inner {
             name: to.clone(),
             reason: format!("numbering the call: {error}"),
         })?;
-        let message = Message {
-            world: self.membership.world.clone(),
-            from: self.membership.name.clone(),
-            to: to.clone(),
-            n,
-            body: Body::Call { call },
+        let sign = |body: Body| {
+            let message = Message {
+                world: self.membership.world.clone(),
+                from: self.membership.name.clone(),
+                to: to.clone(),
+                n,
+                body,
+            };
+            Signed::new(&self.key, Domain::Message, &message)
         };
-        let message = Signed::new(&self.key, Domain::Message, &message);
         let id = self.next_id();
+        let mut message = sign(Body::Call { call: call.clone() });
+        // A call too large for the control connection says what follows over
+        // a data connection, and this machine sends it as the source. The
+        // sending ends with the call, so a refused call leaves nothing waiting.
+        let mut sending = None;
+        if crate::wire::encode(&Up::Call { id, message: message.clone() }).len() > crate::wire::MAX_CONTROL_FRAME {
+            let bytes = serde_json::to_vec(&call).expect("calls serialize");
+            let stream =
+                crate::sign::random::<8>().map(u64::from_le_bytes).map_err(|error| CallFailure::Unreachable {
+                    name: to.clone(),
+                    reason: format!("choosing a stream for a large call: {error}"),
+                })?;
+            let ticket = crate::wire::Ticket {
+                world: self.membership.world.clone(),
+                stream,
+                source: self.membership.name.clone(),
+                sink: to.clone(),
+            };
+            let ticket = Signed::new(&self.key, Domain::Ticket, &ticket);
+            let carried = crate::wire::Carried {
+                ticket: ticket.clone(),
+                bytes: bytes.len() as u64,
+                sha256: crate::sign::Digest(crate::sign::sha256(&bytes)),
+            };
+            message = sign(Body::LargeCall { carried });
+            let inner = self.clone();
+            let name = to.clone();
+            sending = Some(tokio::spawn(async move {
+                if let Err(error) = crate::data::source(&inner.membership, &inner.key, ticket, &bytes).await {
+                    inner.node.log(format!("sending a large call to {name}: {error}"));
+                }
+            }));
+        }
         let (events, mut received) = mpsc::unbounded_channel();
         self.calls.lock().expect("never poisoned").insert(id, Waiter { to: to.clone(), n, events });
-        let mut waiting = Waiting { inner: self.clone(), id, connection: connection.clone(), answered: false };
+        let mut waiting = Waiting { inner: self.clone(), id, connection: connection.clone(), answered: false, sending };
         if connection.up.send(Up::Call { id, message }).is_err() {
             return Err(CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() });
         }
@@ -473,10 +508,15 @@ struct Waiting {
     id: u64,
     connection: Connection,
     answered: bool,
+    /// The data connection sending a large call.
+    sending: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Drop for Waiting {
     fn drop(&mut self) {
+        if let Some(sending) = &self.sending {
+            sending.abort();
+        }
         self.inner.calls.lock().expect("never poisoned").remove(&self.id);
         if !self.answered {
             let _ = self.connection.up.send(Up::Cancel { id: self.id });

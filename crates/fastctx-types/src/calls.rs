@@ -7,6 +7,7 @@ use crate::residents::{Hints, Host, Notice, Seen, Whereabouts};
 use crate::run::{RunReply, RunRequest};
 use crate::town::WorldWho;
 use crate::world::NodesReply;
+use crate::write::{WriteOp, WriteOutcome};
 use crate::{Address, JobId, MachineName, ResidentId, TownName};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -17,6 +18,9 @@ pub enum Call {
     /// Run a script for a resident of this machine, on this machine or on
     /// the machine `node` names.
     Run { resident: ResidentId, town: Option<TownName>, request: RunRequest, node: Option<MachineName> },
+    /// Writes files for a resident of this machine, on this machine or on
+    /// the machine `node` names.
+    Write { resident: ResidentId, town: Option<TownName>, op: WriteOp, node: Option<MachineName> },
     /// Records what a resident saw of files on this machine through
     /// `fastctx view`; the resident may live on another machine.
     Saw { owner: Address, town: Option<TownName>, seen: Vec<Seen> },
@@ -46,6 +50,7 @@ pub enum Call {
 pub enum Reply {
     Arrived(Whereabouts),
     Run(RunReply),
+    Written { outcome: WriteOutcome },
     Notices { notices: Vec<Notice> },
     Who(WorldWho),
     Joined { world: String, name: MachineName },

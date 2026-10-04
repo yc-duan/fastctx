@@ -505,13 +505,27 @@ async fn check_call(
         .await
         .ok_or_else(|| format!("{} is not a member this machine trusts", claimed.from))?;
     let opened: Message = message.open(&key, Domain::Message).map_err(|error| error.to_string())?;
-    let Body::Call { call } = opened.body else {
+    if !matches!(opened.body, Body::Call { .. } | Body::LargeCall { .. }) {
         return Err("it is not a call".to_string());
-    };
+    }
     match inner.taken.take(&opened.from, opened.n) {
-        Ok(Ok(())) => Ok(call),
-        Ok(Err(reason)) => Err(reason),
-        Err(error) => Err(format!("recording the call: {error}")),
+        Ok(Ok(())) => {}
+        Ok(Err(reason)) => return Err(reason),
+        Err(error) => return Err(format!("recording the call: {error}")),
+    }
+    match opened.body {
+        Body::Call { call } => Ok(call),
+        Body::LargeCall { carried } => {
+            let ticket: Ticket = carried.ticket.claim().map_err(|error| format!("the ticket: {error}"))?;
+            if ticket.source != opened.from || ticket.sink != inner.membership.name {
+                return Err(format!("its ticket is for {} to {}", ticket.source, ticket.sink));
+            }
+            let bytes = crate::data::sink(&inner.membership, &inner.key, &carried)
+                .await
+                .map_err(|error| format!("fetching it, too large for a message: {error}"))?;
+            serde_json::from_slice(&bytes).map_err(|error| format!("it cannot be read: {error}"))
+        }
+        _ => unreachable!("checked above"),
     }
 }
 
@@ -570,7 +584,7 @@ fn answered(inner: &Arc<Inner>, id: u64, message: Signed) {
                 }
             });
         }
-        Body::Call { .. } | Body::Letter { .. } => {
+        Body::Call { .. } | Body::LargeCall { .. } | Body::Letter { .. } => {
             if let Some((_, _, events)) = waiter {
                 let _ = events.send(CallEvent::Broken("what came back is not an answer".to_string()));
             }

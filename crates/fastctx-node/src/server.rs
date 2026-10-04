@@ -9,6 +9,7 @@ use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::run::{RunReply, RunRequest};
 use fastctx_types::town::{MachineWho, WhoReply, WorldWho};
 use fastctx_types::world::{Node as NodeView, NodesReply, Revoked};
+use fastctx_types::write::{WriteOp, WriteOutcome};
 use fastctx_types::{Address, Call, MachineName, Reply, ResidentId, TownName};
 
 use crate::Node;
@@ -70,6 +71,9 @@ async fn handle(node: &Arc<Node>, _peer: &Peer, call: Call) -> Result<Reply, Fai
         }
         Call::Run { resident, town, request, node: target } => {
             run(node, resident, town, request, target).await.map(Reply::Run)
+        }
+        Call::Write { resident, town, op, node: target } => {
+            write(node, resident, town, op, target).await.map(|outcome| Reply::Written { outcome })
         }
         Call::JobChanged { job, owner, town } => {
             node.jobs.changed(&node.world, &node.machine(), job, owner, town, node.link()).await.map(|()| Reply::Done)
@@ -152,6 +156,47 @@ async fn run(
     })
     .await?;
     Ok(reply)
+}
+
+/// Writes files for a resident of this machine, here or on `target`, and
+/// records the write in the resident's records here.
+async fn write(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    town: Option<TownName>,
+    op: WriteOp,
+    target: Option<MachineName>,
+) -> Result<WriteOutcome, Failure> {
+    let here = node.machine();
+    let started_at = jiff::Timestamp::now();
+    let (outcome, machine) = match target.filter(|target| *target != here) {
+        None => {
+            let owner = Address { machine: here.clone(), resident: resident.clone() };
+            let (world, machine, town, op) = (node.world.clone(), here.clone(), town.clone(), op.clone());
+            let outcome =
+                blocking("writing", move || crate::write::write_here(&world, &machine, &owner, town.as_ref(), op))
+                    .await?;
+            (outcome, here)
+        }
+        Some(target) => {
+            let link = node.link().ok_or_else(|| {
+                Failure::new(format!("there is no machine {target}: {here} is in no World with other machines"))
+            })?;
+            let call = RemoteCall::Write { resident: resident.clone(), town: town.clone(), op: op.clone() };
+            match link.call(&target, call).await.map_err(|failure| Failure::new(called(&failure)))? {
+                Ok(RemoteReply::Written { outcome }) => (outcome, target),
+                Ok(_) => return Err(Failure::new(format!("{target} answered something other than a write"))),
+                Err(failure) => return Err(failure),
+            }
+        }
+    };
+    let action = crate::write::action(&op, &outcome, &machine, started_at);
+    let world = node.world.clone();
+    blocking("recording the action", move || {
+        crate::residents::record_action(&world, &resident, town.as_ref(), &action)
+    })
+    .await?;
+    Ok(outcome)
 }
 
 /// A failed call, said for whoever reads the answer.
