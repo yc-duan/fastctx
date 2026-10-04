@@ -853,6 +853,18 @@ if (live) {
     decided = true;
     if (!world.nodes.world && !welcomed.read() && place.kind === "home") location.hash = link({ kind: "welcome" });
   });
+  // A computer the World cannot be asked on at all, before any answer: when
+  // fastctx is not on it yet, the way on is to put it there.
+  effect(() => {
+    const trouble = store.trouble.get();
+    if (!trouble || decided || store.world.peek()) return;
+    decided = true;
+    void setupState()
+      .then((setup) => {
+        if (!setup.installed && place.kind === "home") location.hash = link({ kind: "welcome" });
+      })
+      .catch(() => {});
+  });
 }
 
 installPens();

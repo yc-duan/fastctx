@@ -134,7 +134,7 @@ export class HomePage {
    *  what was last shown left as it was. */
   unreachable(why: string, now: Date): void {
     this.day.textContent = this.options.words.dateline(now);
-    this.facts.innerHTML = `<span class="fact unreachable">${escape(this.options.words.unreachable(why))}</span>`;
+    this.facts.innerHTML = `<span class="fact unreachable">${escape(this.options.words.unreachable(why))}</span><a class="text-button set-up" href="#/welcome">${escape(this.options.words.setUp)}</a>`;
     this.drawn = "";
   }
 
