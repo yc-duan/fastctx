@@ -6,7 +6,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { WorldState } from "../world/world";
+import type { WorldState } from "./model";
 import type { HomeWords } from "./words";
 
 export interface Asked {

@@ -1,0 +1,4667 @@
+{
+  "session": {
+    "events": [
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "turn_started",
+        "turn": "turn-1"
+      },
+      {
+        "at": "1970-01-01T00:00:00Z",
+        "event": "heard",
+        "delivery": null,
+        "turn": null,
+        "from": null,
+        "text": "old record"
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": "desktop-notice-1",
+        "turn": "turn-1",
+        "from": {
+          "kind": "user",
+          "machine": "desktop"
+        },
+        "text": "hello 世界",
+        "message": {
+          "id": "message-1",
+          "client_id": "client-1",
+          "content": [
+            {
+              "text": "hello 世界",
+              "type": "text"
+            },
+            {
+              "type": "image",
+              "url": "image.png"
+            }
+          ],
+          "hook_fragments": [
+            {
+              "source": "hook"
+            }
+          ],
+          "presentation": {
+            "mentions": []
+          },
+          "detail": {
+            "source": "host"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": "desktop-notice-1",
+        "turn": "turn-1",
+        "from": {
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          }
+        },
+        "text": "hello 世界",
+        "message": {
+          "id": "message-2",
+          "client_id": null,
+          "content": [],
+          "hook_fragments": [],
+          "presentation": null,
+          "detail": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": "desktop-notice-1",
+        "turn": "turn-1",
+        "from": {
+          "kind": "world"
+        },
+        "text": "hello 世界"
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "message",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": null,
+          "kind": "message",
+          "text": "hello"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "message",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": null,
+          "kind": "message",
+          "text": "hello"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "message",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": null,
+          "kind": "message",
+          "text": "hello"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "thinking",
+          "kind": "thinking",
+          "text": "thinking"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "thinking",
+          "kind": "thinking",
+          "text": "thinking"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "thinking",
+          "kind": "thinking",
+          "text": "thinking"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "plan",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "plan",
+          "text": "plan"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "plan",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "plan",
+          "text": "plan"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "plan",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "plan",
+          "text": "plan"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "compaction",
+          "kind": "compaction"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "compaction",
+          "kind": "compaction"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "compaction",
+          "kind": "compaction"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "activity",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "agent_activity",
+          "agent": "codex",
+          "path": "/root/check",
+          "activity": "reading"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "activity",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "agent_activity",
+          "agent": "codex",
+          "path": "/root/check",
+          "activity": "reading"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "activity",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "agent_activity",
+          "agent": "codex",
+          "path": "/root/check",
+          "activity": "reading"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "hidden",
+          "kind": "hidden",
+          "host_kind": "providerHidden"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "hidden",
+          "kind": "hidden",
+          "host_kind": "providerHidden"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "hidden",
+          "kind": "hidden",
+          "host_kind": "providerHidden"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "other",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "other",
+          "host_kind": "providerFutureItem"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "other",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "other",
+          "host_kind": "providerFutureItem"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "other",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "other",
+          "host_kind": "providerFutureItem"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-0",
+          "kind": "tool",
+          "name": "tool-0",
+          "server": null,
+          "machine": null,
+          "does": {
+            "as": "command",
+            "command": "pwd",
+            "cwd": null,
+            "exit": null,
+            "job": null
+          },
+          "input": null,
+          "output": [],
+          "status": "running",
+          "duration_ms": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-0",
+          "kind": "tool",
+          "name": "tool-0",
+          "server": null,
+          "machine": null,
+          "does": {
+            "as": "command",
+            "command": "pwd",
+            "cwd": null,
+            "exit": null,
+            "job": null
+          },
+          "input": null,
+          "output": [],
+          "status": "running",
+          "duration_ms": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-0",
+          "kind": "tool",
+          "name": "tool-0",
+          "server": null,
+          "machine": null,
+          "does": {
+            "as": "command",
+            "command": "pwd",
+            "cwd": null,
+            "exit": null,
+            "job": null
+          },
+          "input": null,
+          "output": [],
+          "status": "running",
+          "duration_ms": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-1",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-1",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "command",
+            "command": "exit 1",
+            "cwd": "/work",
+            "exit": -1,
+            "job": "j-abc123"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-1",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-1",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "command",
+            "command": "exit 1",
+            "cwd": "/work",
+            "exit": -1,
+            "job": "j-abc123"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-1",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-1",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "command",
+            "command": "exit 1",
+            "cwd": "/work",
+            "exit": -1,
+            "job": "j-abc123"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-2",
+          "kind": "tool",
+          "name": "tool-2",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "edit",
+            "changes": [
+              {
+                "path": "old.txt",
+                "how": "added",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "deleted",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "updated",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": {
+                  "moved": {
+                    "to": "new.txt"
+                  }
+                },
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "replaced",
+                "diff": "-old\n+new\n"
+              }
+            ]
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-2",
+          "kind": "tool",
+          "name": "tool-2",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "edit",
+            "changes": [
+              {
+                "path": "old.txt",
+                "how": "added",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "deleted",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "updated",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": {
+                  "moved": {
+                    "to": "new.txt"
+                  }
+                },
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "replaced",
+                "diff": "-old\n+new\n"
+              }
+            ]
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-2",
+          "kind": "tool",
+          "name": "tool-2",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "edit",
+            "changes": [
+              {
+                "path": "old.txt",
+                "how": "added",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "deleted",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "updated",
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": {
+                  "moved": {
+                    "to": "new.txt"
+                  }
+                },
+                "diff": "-old\n+new\n"
+              },
+              {
+                "path": "old.txt",
+                "how": "replaced",
+                "diff": "-old\n+new\n"
+              }
+            ]
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-3",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-3",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "search",
+            "query": "serde JSON"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "declined",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-3",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-3",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "search",
+            "query": "serde JSON"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "declined",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-3",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-3",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "search",
+            "query": "serde JSON"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "declined",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-4",
+          "kind": "tool",
+          "name": "tool-4",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "image",
+            "path": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "cut",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-4",
+          "kind": "tool",
+          "name": "tool-4",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "image",
+            "path": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "cut",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-4",
+          "kind": "tool",
+          "name": "tool-4",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "image",
+            "path": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "cut",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-5",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-5",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "image",
+            "path": "diagram.png"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "unknown",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-5",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-5",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "image",
+            "path": "diagram.png"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "unknown",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-5",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-5",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "image",
+            "path": "diagram.png"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "unknown",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-6",
+          "kind": "tool",
+          "name": "tool-6",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "colleague",
+            "to": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "running",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-6",
+          "kind": "tool",
+          "name": "tool-6",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "colleague",
+            "to": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "running",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-6",
+          "kind": "tool",
+          "name": "tool-6",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "colleague",
+            "to": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "running",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-7",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-7",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "colleague",
+            "to": "codex-ab12",
+            "task": "inspect"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-7",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-7",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "colleague",
+            "to": "codex-ab12",
+            "task": "inspect"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-7",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-7",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "colleague",
+            "to": "codex-ab12",
+            "task": "inspect"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-8",
+          "kind": "tool",
+          "name": "tool-8",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "call"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-8",
+          "kind": "tool",
+          "name": "tool-8",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "call"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-8",
+          "kind": "tool",
+          "name": "tool-8",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "call"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "grew",
+        "turn": "turn-1",
+        "item": "tool-0",
+        "part": "text",
+        "text": "more"
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "grew",
+        "revision": 0,
+        "turn": "turn-1",
+        "item": "tool-0",
+        "part": "output",
+        "text": "more"
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "grew",
+        "revision": 18446744073709551615,
+        "turn": "turn-1",
+        "item": "tool-0",
+        "part": "output",
+        "text": "more"
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "diff",
+          "diff": "-before\n+after\n"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "terminal",
+          "item": "tool-1",
+          "process": "process-1",
+          "input": "yes\n"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "usage",
+          "usage": {
+            "inputTokens": 42
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "status",
+          "status": "idle"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "status",
+          "status": {
+            "type": "active"
+          },
+          "waiting_for_user": false
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "status",
+          "status": null,
+          "waiting_for_user": true
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "metadata",
+          "metadata": [
+            null,
+            true,
+            1,
+            "metadata"
+          ]
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "lifecycle",
+          "state": "loaded"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "goal",
+          "goal": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "hook",
+          "run": {
+            "id": "hook-1"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "approval_review",
+          "review": {
+            "status": "running"
+          },
+          "complete": false
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "approval_review",
+          "review": null,
+          "complete": true
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "strict_review",
+          "notice": "review"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "safety",
+          "buffering": {
+            "showBufferingUi": true
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "safety",
+          "buffering": {
+            "showBufferingUi": false
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "safety",
+          "buffering": {
+            "showBufferingUi": "true"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "safety",
+          "buffering": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "rerouted",
+          "from": "model-a",
+          "to": "model-b",
+          "reason": "capacity"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "verification",
+          "verifications": [
+            {
+              "status": "done"
+            },
+            null
+          ]
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "error",
+          "error": {
+            "message": "retrying"
+          },
+          "will_retry": true
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "error",
+          "error": {
+            "message": ""
+          },
+          "will_retry": false
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "error",
+          "error": {
+            "message": 7
+          },
+          "will_retry": false
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "error",
+          "error": null,
+          "will_retry": false
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "warning",
+          "text": "warning"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "settings",
+          "settings": {
+            "model": "model-a"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "environment",
+          "environment": {
+            "name": "desktop"
+          },
+          "connected": true
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "environment",
+          "environment": null,
+          "connected": false
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "queue"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "tool_server",
+          "server": "tools",
+          "status": "failed",
+          "error": "unavailable",
+          "failure_reason": {
+            "kind": "startup"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "tool_server",
+          "server": "tools",
+          "status": "failed",
+          "error": {
+            "message": "unavailable"
+          },
+          "failure_reason": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "tool_server",
+          "server": "tools",
+          "status": "ready",
+          "error": null,
+          "failure_reason": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "tool_server",
+          "server": "tools",
+          "status": "failed",
+          "error": null,
+          "failure_reason": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "attachment",
+          "attachment": {
+            "path": "diagram.png"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "request",
+          "id": 42,
+          "request": "approve",
+          "params": {
+            "command": "pwd"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "request",
+          "id": "request-1",
+          "request": "input",
+          "params": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "resolved",
+          "id": "request-1",
+          "resolution": true
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "resolved",
+          "id": null,
+          "resolution": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "voice",
+          "event": "started",
+          "data": {
+            "sessionId": "voice-1"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "realtime",
+        "item": {
+          "id": "voice-item",
+          "realtimeSessionId": "voice-session"
+        },
+        "complete": false
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "realtime",
+        "item": {
+          "id": "voice-item",
+          "realtimeSessionId": "voice-session"
+        },
+        "complete": true
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "realtime_grew",
+        "item": "voice-item",
+        "text": "voice text"
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "steps",
+        "turn": "turn-1",
+        "steps": [
+          {
+            "text": "first",
+            "status": "pending"
+          },
+          {
+            "text": "second",
+            "status": "doing",
+            "id": "step-2",
+            "active_form": "checking",
+            "detail": null
+          },
+          {
+            "text": "third",
+            "status": "done",
+            "id": "step-3",
+            "active_form": "checked",
+            "detail": {
+              "owner": "host"
+            }
+          }
+        ],
+        "note": null
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "steps",
+        "turn": "turn-1",
+        "steps": [],
+        "note": "no steps"
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "context",
+        "used": 42,
+        "window": 1000
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "context",
+        "used": 18446744073709551615,
+        "window": null
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "titled",
+        "title": "Wire contract"
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "turn_ended",
+        "turn": "turn-0",
+        "end": {
+          "how": "completed",
+          "reason": null,
+          "duration_ms": null,
+          "last_message": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "turn_ended",
+        "turn": "turn-1",
+        "end": {
+          "how": "failed",
+          "reason": "reason",
+          "error": null,
+          "duration_ms": 0,
+          "last_message": "last message"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "turn_ended",
+        "turn": "turn-2",
+        "end": {
+          "how": "interrupted",
+          "reason": "reason",
+          "error": {
+            "code": "provider_error"
+          },
+          "duration_ms": 0,
+          "last_message": "last message"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "turn_ended",
+        "turn": "turn-3",
+        "end": {
+          "how": "provider_end",
+          "reason": "reason",
+          "error": {
+            "code": "provider_error"
+          },
+          "duration_ms": 0,
+          "last_message": "last message"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "health",
+        "turn": null,
+        "health": {
+          "kind": "reconnecting",
+          "text": "host notice"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "health",
+        "turn": null,
+        "health": {
+          "kind": "safety",
+          "text": "host notice"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "health",
+        "turn": null,
+        "health": {
+          "kind": "rerouted",
+          "text": "host notice"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "health",
+        "turn": null,
+        "health": {
+          "kind": "tools_missing",
+          "text": "host notice"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "health",
+        "turn": null,
+        "health": {
+          "kind": "tool_server",
+          "text": "host notice"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "health",
+        "turn": null,
+        "health": {
+          "kind": "warning",
+          "text": "host notice"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "health",
+        "turn": null,
+        "health": {
+          "kind": "error",
+          "text": "host notice"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "health",
+        "turn": "turn-1",
+        "health": {
+          "kind": "warning",
+          "text": "turn notice"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "delivery_uncertain",
+        "delivery": "desktop-notice-1",
+        "why": "host disconnected"
+      }
+    ],
+    "watched": [
+      {
+        "kind": "history",
+        "events": []
+      },
+      {
+        "kind": "history",
+        "events": [
+          {
+            "at": "2026-10-04T12:06:07.123456789Z",
+            "event": "turn_started",
+            "turn": "turn-1"
+          }
+        ]
+      },
+      {
+        "kind": "live",
+        "event": {
+          "at": "1970-01-01T00:00:00Z",
+          "event": "heard",
+          "delivery": null,
+          "turn": null,
+          "from": null,
+          "text": "old record"
+        }
+      }
+    ],
+    "health_cases": [
+      {
+        "change": {
+          "kind": "diff",
+          "diff": "-before\n+after\n"
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "terminal",
+          "item": "tool-1",
+          "process": "process-1",
+          "input": "yes\n"
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "usage",
+          "usage": {
+            "inputTokens": 42
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "status",
+          "status": "idle"
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "status",
+          "status": {
+            "type": "active"
+          },
+          "waiting_for_user": false
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "status",
+          "status": null,
+          "waiting_for_user": true
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "metadata",
+          "metadata": [
+            null,
+            true,
+            1,
+            "metadata"
+          ]
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "lifecycle",
+          "state": "loaded"
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "goal",
+          "goal": null
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "hook",
+          "run": {
+            "id": "hook-1"
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "approval_review",
+          "review": {
+            "status": "running"
+          },
+          "complete": false
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "approval_review",
+          "review": null,
+          "complete": true
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "strict_review",
+          "notice": "review"
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "safety",
+          "buffering": {
+            "showBufferingUi": true
+          }
+        },
+        "health": {
+          "kind": "safety",
+          "text": "OpenAI is holding this turn's output for extra safety processing"
+        }
+      },
+      {
+        "change": {
+          "kind": "safety",
+          "buffering": {
+            "showBufferingUi": false
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "safety",
+          "buffering": {
+            "showBufferingUi": "true"
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "safety",
+          "buffering": null
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "rerouted",
+          "from": "model-a",
+          "to": "model-b",
+          "reason": "capacity"
+        },
+        "health": {
+          "kind": "rerouted",
+          "text": "OpenAI moved this turn from model-a to model-b (capacity)"
+        }
+      },
+      {
+        "change": {
+          "kind": "verification",
+          "verifications": [
+            {
+              "status": "done"
+            },
+            null
+          ]
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "error",
+          "error": {
+            "message": "retrying"
+          },
+          "will_retry": true
+        },
+        "health": {
+          "kind": "reconnecting",
+          "text": "retrying"
+        }
+      },
+      {
+        "change": {
+          "kind": "error",
+          "error": {
+            "message": ""
+          },
+          "will_retry": false
+        },
+        "health": {
+          "kind": "error",
+          "text": ""
+        }
+      },
+      {
+        "change": {
+          "kind": "error",
+          "error": {
+            "message": 7
+          },
+          "will_retry": false
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "error",
+          "error": null,
+          "will_retry": false
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "warning",
+          "text": "warning"
+        },
+        "health": {
+          "kind": "warning",
+          "text": "warning"
+        }
+      },
+      {
+        "change": {
+          "kind": "settings",
+          "settings": {
+            "model": "model-a"
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "environment",
+          "environment": {
+            "name": "desktop"
+          },
+          "connected": true
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "environment",
+          "environment": null,
+          "connected": false
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "queue"
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "tool_server",
+          "server": "tools",
+          "status": "failed",
+          "error": "unavailable",
+          "failure_reason": {
+            "kind": "startup"
+          }
+        },
+        "health": {
+          "kind": "tool_server",
+          "text": "its tools tools did not start: unavailable"
+        }
+      },
+      {
+        "change": {
+          "kind": "tool_server",
+          "server": "tools",
+          "status": "failed",
+          "error": {
+            "message": "unavailable"
+          },
+          "failure_reason": null
+        },
+        "health": {
+          "kind": "tool_server",
+          "text": "its tools tools did not start: no reason given"
+        }
+      },
+      {
+        "change": {
+          "kind": "tool_server",
+          "server": "tools",
+          "status": "ready",
+          "error": null,
+          "failure_reason": null
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "tool_server",
+          "server": "tools",
+          "status": "failed",
+          "error": null,
+          "failure_reason": null
+        },
+        "health": {
+          "kind": "tool_server",
+          "text": "its tools tools did not start: no reason given"
+        }
+      },
+      {
+        "change": {
+          "kind": "attachment",
+          "attachment": {
+            "path": "diagram.png"
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "request",
+          "id": 42,
+          "request": "approve",
+          "params": {
+            "command": "pwd"
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "request",
+          "id": "request-1",
+          "request": "input",
+          "params": null
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "resolved",
+          "id": "request-1",
+          "resolution": true
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "resolved",
+          "id": null,
+          "resolution": null
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "voice",
+          "event": "started",
+          "data": {
+            "sessionId": "voice-1"
+          }
+        },
+        "health": null
+      }
+    ]
+  },
+  "world": {
+    "who": [
+      {
+        "machine": "desktop",
+        "scope": {
+          "kind": "world",
+          "towns": [
+            {
+              "town": "project-0",
+              "record": {
+                "version": 1,
+                "name": "Example project 世界",
+                "what": "Exercise the ledger contract",
+                "machines": [
+                  "desktop",
+                  "laptop"
+                ],
+                "places": [
+                  {
+                    "what": "checkout",
+                    "machine": "desktop",
+                    "path": "C:/work/project"
+                  }
+                ],
+                "canon": null,
+                "by": {
+                  "kind": "user"
+                },
+                "on": "desktop",
+                "at": "2026-10-04T12:06:07Z"
+              },
+              "journals": 0
+            },
+            {
+              "town": "project-1",
+              "record": {
+                "version": 2,
+                "name": "Example project 世界",
+                "what": "Exercise the ledger contract",
+                "machines": [
+                  "desktop",
+                  "laptop"
+                ],
+                "places": [
+                  {
+                    "what": "checkout",
+                    "machine": "desktop",
+                    "path": "C:/work/project"
+                  }
+                ],
+                "canon": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                },
+                "by": {
+                  "kind": "resident",
+                  "address": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  }
+                },
+                "on": "desktop",
+                "at": "2026-10-04T12:06:07Z"
+              },
+              "journals": 1
+            },
+            {
+              "town": "project-2",
+              "record": {
+                "version": 3,
+                "name": "Example project 世界",
+                "what": "Exercise the ledger contract",
+                "machines": [
+                  "desktop",
+                  "laptop"
+                ],
+                "places": [
+                  {
+                    "what": "checkout",
+                    "machine": "desktop",
+                    "path": "C:/work/project"
+                  }
+                ],
+                "canon": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                },
+                "by": {
+                  "kind": "session",
+                  "agent": "claude"
+                },
+                "on": "desktop",
+                "at": "2026-10-04T12:06:07Z"
+              },
+              "journals": 2
+            }
+          ]
+        },
+        "machines": [
+          {
+            "kind": "answered",
+            "reply": {
+              "machine": "desktop",
+              "residents": [
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": true,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "waiting_for_user": true
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "moved": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab11",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "colleague",
+                      "asked_by": {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      },
+                      "label": "Check JSON"
+                    },
+                    "session": "thread-1",
+                    "world_started": true,
+                    "model": "model-a"
+                  },
+                  "town": "project-0",
+                  "here": true,
+                  "now": {
+                    "activity": "idle",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": null,
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": {
+                    "to": "project-2",
+                    "at": "2026-10-04T12:06:07Z"
+                  }
+                },
+                {
+                  "about": {
+                    "id": "codex-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "colleague",
+                      "asked_by": {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      },
+                      "label": "Check JSON"
+                    },
+                    "session": "thread-1",
+                    "world_started": true,
+                    "model": "model-a"
+                  },
+                  "town": "project-0",
+                  "here": false,
+                  "now": {
+                    "activity": "asleep",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": {
+                      "at": "2026-10-04T12:06:07Z",
+                      "text": "host disconnected"
+                    },
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": {
+                    "to": null,
+                    "at": "2026-10-04T12:06:07Z"
+                  }
+                },
+                {
+                  "about": {
+                    "id": "claude-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": null,
+                  "last_action": null,
+                  "moved": null
+                },
+                {
+                  "about": {
+                    "id": "claude-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": {
+                    "activity": "idle",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": null,
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": null
+                }
+              ],
+              "jobs": [
+                {
+                  "job": "j-abc123",
+                  "machine": "desktop",
+                  "owner": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  },
+                  "started_at": "2026-10-04T12:06:07Z",
+                  "pid": null,
+                  "command": "echo fixture",
+                  "output": "C:/example/job.log"
+                },
+                {
+                  "job": "j-abc123",
+                  "machine": "desktop",
+                  "owner": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  },
+                  "started_at": "2026-10-04T12:06:07Z",
+                  "pid": 4294967295,
+                  "command": "echo fixture",
+                  "output": "C:/example/job.log"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "offline",
+            "machine": "laptop",
+            "since": "2026-10-04T12:06:07Z"
+          },
+          {
+            "kind": "offline",
+            "machine": "unknown",
+            "since": null
+          },
+          {
+            "kind": "no_answer",
+            "machine": "lab",
+            "reason": "node disconnected"
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "scope": {
+          "kind": "town",
+          "town": "project-0",
+          "record": {
+            "version": 1,
+            "name": "Example project 世界",
+            "what": "Exercise the ledger contract",
+            "machines": [
+              "desktop",
+              "laptop"
+            ],
+            "places": [
+              {
+                "what": "checkout",
+                "machine": "desktop",
+                "path": "C:/work/project"
+              }
+            ],
+            "canon": null,
+            "by": {
+              "kind": "user"
+            },
+            "on": "desktop",
+            "at": "2026-10-04T12:06:07Z"
+          }
+        },
+        "machines": [
+          {
+            "kind": "answered",
+            "reply": {
+              "machine": "desktop",
+              "residents": [
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": true,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "waiting_for_user": true
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "moved": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab11",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "colleague",
+                      "asked_by": {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      },
+                      "label": "Check JSON"
+                    },
+                    "session": "thread-1",
+                    "world_started": true,
+                    "model": "model-a"
+                  },
+                  "town": "project-0",
+                  "here": true,
+                  "now": {
+                    "activity": "idle",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": null,
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": {
+                    "to": "project-2",
+                    "at": "2026-10-04T12:06:07Z"
+                  }
+                },
+                {
+                  "about": {
+                    "id": "codex-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "colleague",
+                      "asked_by": {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      },
+                      "label": "Check JSON"
+                    },
+                    "session": "thread-1",
+                    "world_started": true,
+                    "model": "model-a"
+                  },
+                  "town": "project-0",
+                  "here": false,
+                  "now": {
+                    "activity": "asleep",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": {
+                      "at": "2026-10-04T12:06:07Z",
+                      "text": "host disconnected"
+                    },
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": {
+                    "to": null,
+                    "at": "2026-10-04T12:06:07Z"
+                  }
+                },
+                {
+                  "about": {
+                    "id": "claude-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": null,
+                  "last_action": null,
+                  "moved": null
+                },
+                {
+                  "about": {
+                    "id": "claude-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": {
+                    "activity": "idle",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": null,
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": null
+                }
+              ],
+              "jobs": [
+                {
+                  "job": "j-abc123",
+                  "machine": "desktop",
+                  "owner": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  },
+                  "started_at": "2026-10-04T12:06:07Z",
+                  "pid": null,
+                  "command": "echo fixture",
+                  "output": "C:/example/job.log"
+                },
+                {
+                  "job": "j-abc123",
+                  "machine": "desktop",
+                  "owner": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  },
+                  "started_at": "2026-10-04T12:06:07Z",
+                  "pid": 4294967295,
+                  "command": "echo fixture",
+                  "output": "C:/example/job.log"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "offline",
+            "machine": "laptop",
+            "since": "2026-10-04T12:06:07Z"
+          },
+          {
+            "kind": "offline",
+            "machine": "unknown",
+            "since": null
+          },
+          {
+            "kind": "no_answer",
+            "machine": "lab",
+            "reason": "node disconnected"
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "scope": {
+          "kind": "town",
+          "town": "project-unknown",
+          "record": null
+        },
+        "machines": [
+          {
+            "kind": "answered",
+            "reply": {
+              "machine": "desktop",
+              "residents": [
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": true,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "waiting_for_user": true
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "moved": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab11",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "colleague",
+                      "asked_by": {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      },
+                      "label": "Check JSON"
+                    },
+                    "session": "thread-1",
+                    "world_started": true,
+                    "model": "model-a"
+                  },
+                  "town": "project-0",
+                  "here": true,
+                  "now": {
+                    "activity": "idle",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": null,
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": {
+                    "to": "project-2",
+                    "at": "2026-10-04T12:06:07Z"
+                  }
+                },
+                {
+                  "about": {
+                    "id": "codex-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "colleague",
+                      "asked_by": {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      },
+                      "label": "Check JSON"
+                    },
+                    "session": "thread-1",
+                    "world_started": true,
+                    "model": "model-a"
+                  },
+                  "town": "project-0",
+                  "here": false,
+                  "now": {
+                    "activity": "asleep",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": {
+                      "at": "2026-10-04T12:06:07Z",
+                      "text": "host disconnected"
+                    },
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": {
+                    "to": null,
+                    "at": "2026-10-04T12:06:07Z"
+                  }
+                },
+                {
+                  "about": {
+                    "id": "claude-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": null,
+                  "last_action": null,
+                  "moved": null
+                },
+                {
+                  "about": {
+                    "id": "claude-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": {
+                    "activity": "idle",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": null,
+                    "desk": false,
+                    "waiting_for_user": false
+                  },
+                  "last_action": null,
+                  "moved": null
+                }
+              ],
+              "jobs": [
+                {
+                  "job": "j-abc123",
+                  "machine": "desktop",
+                  "owner": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  },
+                  "started_at": "2026-10-04T12:06:07Z",
+                  "pid": null,
+                  "command": "echo fixture",
+                  "output": "C:/example/job.log"
+                },
+                {
+                  "job": "j-abc123",
+                  "machine": "desktop",
+                  "owner": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  },
+                  "started_at": "2026-10-04T12:06:07Z",
+                  "pid": 4294967295,
+                  "command": "echo fixture",
+                  "output": "C:/example/job.log"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "offline",
+            "machine": "laptop",
+            "since": "2026-10-04T12:06:07Z"
+          },
+          {
+            "kind": "offline",
+            "machine": "unknown",
+            "since": null
+          },
+          {
+            "kind": "no_answer",
+            "machine": "lab",
+            "reason": "node disconnected"
+          }
+        ]
+      }
+    ],
+    "nodes": [
+      {
+        "machine": "desktop",
+        "world": null,
+        "link": {
+          "kind": "alone"
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "world": "Example world",
+        "link": {
+          "kind": "connecting",
+          "since": "2026-10-04T12:06:07Z",
+          "last_error": null
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "world": "Example world",
+        "link": {
+          "kind": "connecting",
+          "since": "2026-10-04T12:06:07Z",
+          "last_error": "hub unavailable"
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "world": "Example world",
+        "link": {
+          "kind": "stopped",
+          "reason": "machine revoked"
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "world": "Example world",
+        "link": {
+          "kind": "online",
+          "since": "2026-10-04T12:06:07Z",
+          "hub": "hub.example.test",
+          "route": {
+            "kind": "local"
+          }
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "world": "Example world",
+        "link": {
+          "kind": "online",
+          "since": "2026-10-04T12:06:07Z",
+          "hub": "hub.example.test",
+          "route": {
+            "kind": "card",
+            "name": "Ethernet"
+          }
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "world": "Example world",
+        "link": {
+          "kind": "online",
+          "since": "2026-10-04T12:06:07Z",
+          "hub": "hub.example.test",
+          "route": {
+            "kind": "proxy",
+            "proxy": "http://proxy.example.test:8080"
+          }
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "world": "Example world",
+        "link": {
+          "kind": "online",
+          "since": "2026-10-04T12:06:07Z",
+          "hub": "hub.example.test",
+          "route": {
+            "kind": "system"
+          }
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      }
+    ],
+    "towns": [
+      {
+        "town": "project-0",
+        "record": {
+          "version": 1,
+          "name": "Example project 世界",
+          "what": "Exercise the ledger contract",
+          "machines": [
+            "desktop",
+            "laptop"
+          ],
+          "places": [
+            {
+              "what": "checkout",
+              "machine": "desktop",
+              "path": "C:/work/project"
+            }
+          ],
+          "canon": null,
+          "by": {
+            "kind": "user"
+          },
+          "on": "desktop",
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "journals": 0
+      },
+      {
+        "town": "project-1",
+        "record": {
+          "version": 2,
+          "name": "Example project 世界",
+          "what": "Exercise the ledger contract",
+          "machines": [
+            "desktop",
+            "laptop"
+          ],
+          "places": [
+            {
+              "what": "checkout",
+              "machine": "desktop",
+              "path": "C:/work/project"
+            }
+          ],
+          "canon": {
+            "machine": "desktop",
+            "path": "C:/work/project"
+          },
+          "by": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            }
+          },
+          "on": "desktop",
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "journals": 1
+      },
+      {
+        "town": "project-2",
+        "record": {
+          "version": 3,
+          "name": "Example project 世界",
+          "what": "Exercise the ledger contract",
+          "machines": [
+            "desktop",
+            "laptop"
+          ],
+          "places": [
+            {
+              "what": "checkout",
+              "machine": "desktop",
+              "path": "C:/work/project"
+            }
+          ],
+          "canon": {
+            "machine": "desktop",
+            "path": "C:/work/project"
+          },
+          "by": {
+            "kind": "session",
+            "agent": "claude"
+          },
+          "on": "desktop",
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "journals": 2
+      }
+    ],
+    "journals": [
+      {
+        "journal": "empty",
+        "description": null,
+        "entries": 0,
+        "writers": 0,
+        "latest": null
+      },
+      {
+        "journal": "wire-0",
+        "description": {
+          "version": 1,
+          "text": "Wire shapes",
+          "by": {
+            "kind": "user"
+          },
+          "on": "desktop",
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "entries": 2,
+        "writers": 1,
+        "latest": {
+          "id": "20261004T120607Z-desktop",
+          "at": "2026-10-04T12:06:07Z",
+          "machine": "desktop",
+          "by": {
+            "kind": "user"
+          },
+          "agent": null,
+          "model": null,
+          "session": null,
+          "cites": [
+            "20261003T120607Z-laptop"
+          ],
+          "attachments": [
+            {
+              "name": "attachment-0",
+              "kind": "text",
+              "bytes": 0,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-1",
+              "kind": "image",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            },
+            {
+              "name": "attachment-2",
+              "kind": "pdf",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-3",
+              "kind": "binary",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "journal": "wire-1",
+        "description": {
+          "version": 1,
+          "text": "Wire shapes",
+          "by": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            }
+          },
+          "on": "desktop",
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "entries": 2,
+        "writers": 1,
+        "latest": {
+          "id": "20261004T120607Z-desktop",
+          "at": "2026-10-04T12:06:07Z",
+          "machine": "desktop",
+          "by": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            }
+          },
+          "agent": {
+            "agent": "codex",
+            "client": "codex-mcp-client",
+            "version": "fixture-version"
+          },
+          "model": {
+            "name": "model-a",
+            "self_reported": false
+          },
+          "session": "thread-1",
+          "cites": [
+            "20261003T120607Z-laptop"
+          ],
+          "attachments": [
+            {
+              "name": "attachment-0",
+              "kind": "text",
+              "bytes": 0,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-1",
+              "kind": "image",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            },
+            {
+              "name": "attachment-2",
+              "kind": "pdf",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-3",
+              "kind": "binary",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "journal": "wire-2",
+        "description": {
+          "version": 1,
+          "text": "Wire shapes",
+          "by": {
+            "kind": "session",
+            "agent": "claude"
+          },
+          "on": "desktop",
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "entries": 2,
+        "writers": 1,
+        "latest": {
+          "id": "20261004T120607Z-desktop",
+          "at": "2026-10-04T12:06:07Z",
+          "machine": "desktop",
+          "by": {
+            "kind": "session",
+            "agent": "claude"
+          },
+          "agent": {
+            "agent": "codex",
+            "client": "codex-mcp-client",
+            "version": "fixture-version"
+          },
+          "model": {
+            "name": "model-a",
+            "self_reported": true
+          },
+          "session": "thread-1",
+          "cites": [
+            "20261003T120607Z-laptop"
+          ],
+          "attachments": [
+            {
+              "name": "attachment-0",
+              "kind": "text",
+              "bytes": 0,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-1",
+              "kind": "image",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            },
+            {
+              "name": "attachment-2",
+              "kind": "pdf",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-3",
+              "kind": "binary",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

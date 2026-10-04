@@ -1,0 +1,319 @@
+use fastctx_types::Address;
+use fastctx_types::session::*;
+use jiff::Timestamp;
+use serde::Serialize;
+use serde_json::{Value, json};
+
+#[derive(Serialize)]
+pub struct Fixtures {
+    pub events: Vec<SessionEvent>,
+    pub watched: Vec<Watched>,
+    pub health_cases: Vec<HealthCase>,
+}
+
+#[derive(Serialize)]
+pub struct HealthCase {
+    pub change: SessionChange,
+    pub health: Option<Health>,
+}
+
+fn at() -> Timestamp {
+    "2026-10-04T05:06:07.123456789-07:00".parse().unwrap()
+}
+
+fn address() -> Address {
+    "codex-ab12@desktop".parse().unwrap()
+}
+
+fn event(happened: Happened) -> SessionEvent {
+    SessionEvent { at: at(), happened }
+}
+
+fn item(id: &str, what: What) -> Item {
+    Item { id: id.into(), started_at: None, detail: None, what }
+}
+
+fn changes() -> Vec<SessionChange> {
+    vec![
+        SessionChange::Diff { diff: "-before\n+after\n".into() },
+        SessionChange::Terminal { item: "tool-1".into(), process: "process-1".into(), input: "yes\n".into() },
+        SessionChange::Usage { usage: json!({"inputTokens": 42}) },
+        SessionChange::Status { status: json!("idle"), waiting_for_user: None },
+        SessionChange::Status { status: json!({"type": "active"}), waiting_for_user: Some(false) },
+        SessionChange::Status { status: Value::Null, waiting_for_user: Some(true) },
+        SessionChange::Metadata { metadata: json!([null, true, 1, "metadata"]) },
+        SessionChange::Lifecycle { state: "loaded".into() },
+        SessionChange::Goal { goal: Value::Null },
+        SessionChange::Hook { run: json!({"id": "hook-1"}) },
+        SessionChange::ApprovalReview { review: json!({"status": "running"}), complete: false },
+        SessionChange::ApprovalReview { review: Value::Null, complete: true },
+        SessionChange::StrictReview { notice: json!("review") },
+        SessionChange::Safety { buffering: json!({"showBufferingUi": true}) },
+        SessionChange::Safety { buffering: json!({"showBufferingUi": false}) },
+        SessionChange::Safety { buffering: json!({"showBufferingUi": "true"}) },
+        SessionChange::Safety { buffering: Value::Null },
+        SessionChange::Rerouted { from: "model-a".into(), to: "model-b".into(), reason: "capacity".into() },
+        SessionChange::Verification { verifications: vec![json!({"status": "done"}), Value::Null] },
+        SessionChange::Error { error: json!({"message": "retrying"}), will_retry: true },
+        SessionChange::Error { error: json!({"message": ""}), will_retry: false },
+        SessionChange::Error { error: json!({"message": 7}), will_retry: false },
+        SessionChange::Error { error: Value::Null, will_retry: false },
+        SessionChange::Warning { text: "warning".into() },
+        SessionChange::Settings { settings: json!({"model": "model-a"}) },
+        SessionChange::Environment { environment: json!({"name": "desktop"}), connected: true },
+        SessionChange::Environment { environment: Value::Null, connected: false },
+        SessionChange::Queue,
+        SessionChange::ToolServer {
+            server: "tools".into(),
+            status: "failed".into(),
+            error: json!("unavailable"),
+            failure_reason: json!({"kind": "startup"}),
+        },
+        SessionChange::ToolServer {
+            server: "tools".into(),
+            status: "failed".into(),
+            error: json!({"message": "unavailable"}),
+            failure_reason: Value::Null,
+        },
+        SessionChange::ToolServer {
+            server: "tools".into(),
+            status: "ready".into(),
+            error: Value::Null,
+            failure_reason: Value::Null,
+        },
+        // Defaults affect reading old data, but the normalized output still has failure_reason.
+        serde_json::from_value(json!({"kind": "tool_server", "server": "tools", "status": "failed", "error": null}))
+            .unwrap(),
+        SessionChange::Attachment { attachment: json!({"path": "diagram.png"}) },
+        SessionChange::Request { id: json!(42), request: "approve".into(), params: json!({"command": "pwd"}) },
+        SessionChange::Request { id: json!("request-1"), request: "input".into(), params: Value::Null },
+        SessionChange::Resolved { id: json!("request-1"), resolution: json!(true) },
+        SessionChange::Resolved { id: Value::Null, resolution: Value::Null },
+        SessionChange::Voice { event: "started".into(), data: json!({"sessionId": "voice-1"}) },
+    ]
+}
+
+fn tools() -> Vec<Tool> {
+    let edits = [
+        ChangeHow::Added,
+        ChangeHow::Deleted,
+        ChangeHow::Updated,
+        ChangeHow::Moved { to: "new.txt".into() },
+        ChangeHow::Replaced,
+    ]
+    .into_iter()
+    .map(|how| Change { path: "old.txt".into(), how, diff: "-old\n+new\n".into() })
+    .collect();
+    let does = vec![
+        Does::Command { command: "pwd".into(), cwd: None, exit: None, job: None },
+        Does::Command {
+            command: "exit 1".into(),
+            cwd: Some("/work".into()),
+            exit: Some(-1),
+            job: Some("j-abc123".into()),
+        },
+        Does::Edit { changes: edits },
+        Does::Search { query: "serde JSON".into() },
+        Does::Image { path: None },
+        Does::Image { path: Some("diagram.png".into()) },
+        Does::Colleague { to: None, task: None },
+        Does::Colleague { to: Some("codex-ab12".into()), task: Some("inspect".into()) },
+        Does::Call,
+    ];
+    let statuses = [
+        ToolStatus::Running,
+        ToolStatus::Done,
+        ToolStatus::Failed,
+        ToolStatus::Declined,
+        ToolStatus::Cut,
+        ToolStatus::Unknown,
+    ];
+    does.into_iter()
+        .enumerate()
+        .map(|(i, does)| Tool {
+            name: format!("tool-{i}"),
+            server: (i != 0).then(|| "tools".into()),
+            machine: (i != 0).then(|| "desktop".parse().unwrap()),
+            does,
+            input: if i == 0 { Value::Null } else { json!({"args": [null, false, 1, "text", {}]}) },
+            output: if i == 0 {
+                vec![]
+            } else {
+                vec![
+                    Content::Text { text: "output".into() },
+                    Content::Image { mime: "image/png".into(), base64: "aW1hZ2U=".into() },
+                    Content::ImageUrl { url: "https://example.test/image.png".into() },
+                    Content::AudioUrl { url: "https://example.test/audio.wav".into() },
+                    Content::Other { block: json!({"type": "resource_link", "uri": "file:///example.txt"}) },
+                    Content::Other { block: Value::Null },
+                ]
+            },
+            status: statuses[i % statuses.len()],
+            duration_ms: (i != 0).then_some(42),
+        })
+        .collect()
+}
+
+pub fn fixtures() -> Fixtures {
+    let turn = "turn-1".to_string();
+    let mut events = vec![
+        event(Happened::TurnStarted { turn: turn.clone() }),
+        // Exercise the default for delivery without inventing an optional output field.
+        serde_json::from_value(
+            json!({"at": "1970-01-01T00:00:00Z", "event": "heard", "turn": null, "from": null, "text": "old record"}),
+        )
+        .unwrap(),
+    ];
+    for (i, from) in [
+        Speaker::User { machine: "desktop".parse().unwrap() },
+        Speaker::Resident { address: address() },
+        Speaker::World,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let message = if i == 0 {
+            Some(Box::new(UserMessage {
+                id: "message-1".into(),
+                client_id: Some("client-1".into()),
+                content: vec![
+                    json!({"type": "text", "text": "hello 世界"}),
+                    json!({"type": "image", "url": "image.png"}),
+                ],
+                hook_fragments: vec![json!({"source": "hook"})],
+                presentation: json!({"mentions": []}),
+                detail: json!({"source": "host"}),
+            }))
+        } else if i == 1 {
+            Some(Box::new(
+                serde_json::from_value(
+                    json!({"id": "message-2", "client_id": null, "content": [], "hook_fragments": []}),
+                )
+                .unwrap(),
+            ))
+        } else {
+            None
+        };
+        events.push(event(Happened::Heard {
+            delivery: Some("desktop-notice-1".parse().unwrap()),
+            turn: Some(turn.clone()),
+            from: Some(from),
+            text: "hello 世界".into(),
+            message,
+        }));
+    }
+    let mut items = vec![
+        item("message", What::Message { text: "hello".into() }),
+        item("thinking", What::Thinking { text: "thinking".into() }),
+        item("plan", What::Plan { text: "plan".into() }),
+        item("compaction", What::Compaction),
+        item(
+            "activity",
+            What::AgentActivity { agent: "codex".into(), path: "/root/check".into(), activity: "reading".into() },
+        ),
+        item("hidden", What::Hidden { host_kind: "providerHidden".into() }),
+        item("other", What::Other { host_kind: "providerFutureItem".into() }),
+    ];
+    items.extend(
+        tools().into_iter().enumerate().map(|(i, tool)| item(&format!("tool-{i}"), What::Tool(Box::new(tool)))),
+    );
+    for (i, mut item) in items.into_iter().enumerate() {
+        if i % 2 == 0 {
+            item.started_at = Some("2026-10-04T12:06:07.120Z".parse().unwrap());
+            item.detail = Some(if i == 0 { Value::Null } else { json!({"source": "host"}) });
+        }
+        events.push(event(Happened::Began { turn: turn.clone(), item: item.clone() }));
+        events.push(event(Happened::Updated { turn: turn.clone(), item: item.clone() }));
+        events.push(event(Happened::Finished { turn: turn.clone(), item }));
+    }
+    for (part, revision) in [(Part::Text, None), (Part::Output, Some(0)), (Part::Output, Some(u64::MAX))] {
+        events.push(event(Happened::Grew {
+            turn: turn.clone(),
+            item: "tool-0".into(),
+            part,
+            revision,
+            text: "more".into(),
+        }));
+    }
+    let health_cases: Vec<_> =
+        changes().into_iter().map(|change| HealthCase { health: change.health(), change }).collect();
+    for (i, case) in health_cases.iter().enumerate() {
+        events.push(event(Happened::Changed { turn: (i % 2 == 0).then(|| turn.clone()), change: case.change.clone() }));
+    }
+    for complete in [false, true] {
+        events.push(event(Happened::Realtime {
+            item: json!({"id": "voice-item", "realtimeSessionId": "voice-session"}),
+            complete,
+        }));
+    }
+    events.push(event(Happened::RealtimeGrew { item: "voice-item".into(), text: "voice text".into() }));
+    events.push(event(Happened::Steps {
+        turn: turn.clone(),
+        note: None,
+        steps: vec![
+            Step { text: "first".into(), status: StepStatus::Pending, id: None, active_form: None, detail: None },
+            Step {
+                text: "second".into(),
+                status: StepStatus::Doing,
+                id: Some("step-2".into()),
+                active_form: Some("checking".into()),
+                detail: Some(Value::Null),
+            },
+            Step {
+                text: "third".into(),
+                status: StepStatus::Done,
+                id: Some("step-3".into()),
+                active_form: Some("checked".into()),
+                detail: Some(json!({"owner": "host"})),
+            },
+        ],
+    }));
+    events.push(event(Happened::Steps { turn: turn.clone(), note: Some("no steps".into()), steps: vec![] }));
+    events.push(event(Happened::Context { used: 42, window: Some(1000) }));
+    events.push(event(Happened::Context { used: u64::MAX, window: None }));
+    events.push(event(Happened::Titled { title: "Wire contract".into() }));
+    for (i, how) in [TurnHow::Completed, TurnHow::Failed, TurnHow::Interrupted, TurnHow::Other("provider_end".into())]
+        .into_iter()
+        .enumerate()
+    {
+        events.push(event(Happened::TurnEnded {
+            turn: format!("turn-{i}"),
+            end: TurnEnd {
+                how,
+                reason: (i != 0).then(|| "reason".into()),
+                duration_ms: (i != 0).then_some(0),
+                last_message: (i != 0).then(|| "last message".into()),
+                error: match i {
+                    0 => None,
+                    1 => Some(Value::Null),
+                    _ => Some(json!({"code": "provider_error"})),
+                },
+            },
+        }));
+    }
+    for kind in [
+        HealthKind::Reconnecting,
+        HealthKind::Safety,
+        HealthKind::Rerouted,
+        HealthKind::ToolsMissing,
+        HealthKind::ToolServer,
+        HealthKind::Warning,
+        HealthKind::Error,
+    ] {
+        events.push(event(Happened::Health { turn: None, health: Health { kind, text: "host notice".into() } }));
+    }
+    events.push(event(Happened::Health {
+        turn: Some(turn),
+        health: Health { kind: HealthKind::Warning, text: "turn notice".into() },
+    }));
+    events.push(event(Happened::DeliveryUncertain {
+        delivery: "desktop-notice-1".parse().unwrap(),
+        why: "host disconnected".into(),
+    }));
+    let watched = vec![
+        Watched::History { events: vec![] },
+        Watched::History { events: vec![events[0].clone()] },
+        Watched::Live { event: events[1].clone() },
+    ];
+    Fixtures { events, watched, health_cases }
+}

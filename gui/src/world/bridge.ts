@@ -5,7 +5,7 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Address, MachineName, SessionEvent } from "./events";
-import type { MachineWho, Node, TownSummary } from "./world";
+import type { NodesReply, TownSummary, WorldWho } from "./world";
 
 export function inShell(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -13,8 +13,8 @@ export function inShell(): boolean {
 
 export interface WorldNow {
   here: MachineName;
-  who: { machine: MachineName; scope: unknown; machines: MachineWho[] };
-  nodes: { machine: MachineName; world: string | null; link: unknown; machines: Node[] };
+  who: WorldWho;
+  nodes: NodesReply;
   towns: TownSummary[];
 }
 

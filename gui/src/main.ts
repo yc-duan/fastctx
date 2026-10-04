@@ -22,7 +22,7 @@ import { specimenWorld } from "./specimen/world";
 import { applyTheme } from "./theme";
 import type { Address } from "./world/events";
 import { inShell, open as openAgent, stop, talk, unwatch, watch, worldNow, type Piece, type WorldNow } from "./world/bridge";
-import type { WorldState } from "./world/world";
+import type { WorldState } from "./home/model";
 import { en, zh } from "./words";
 
 const params = new URLSearchParams(location.search);

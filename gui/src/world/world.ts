@@ -1,11 +1,11 @@
 // The World as the front page reads it: the JSON forms of what `fastctx w`
 // and `nodes` answer (`fastctx_types::town`, `::residents`, `::project`,
-// `::world`), and of what happened while the reader was away.
+// `::world`). These are serialized replies, before any presentation model.
 
-import type { Address, MachineName, ResidentId } from "./events";
+import type { Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, Result, Timestamp, TownName } from "./wire";
 
 export interface Host {
-  agent: string;
+  agent: AgentName;
   client: string;
   version: string;
 }
@@ -16,24 +16,33 @@ export interface About {
   id: ResidentId;
   host: Host;
   machine: MachineName;
-  born_at: string;
+  born_at: Timestamp;
   origin: Origin;
   session: string | null;
   world_started: boolean;
   model: string | null;
 }
 
+export type Activity = "busy" | "idle" | "asleep";
+
+export interface Trouble {
+  at: Timestamp;
+  text: string;
+}
+
 export interface Now {
-  activity: "busy" | "idle" | "asleep";
-  since: string;
+  activity: Activity;
+  since: Timestamp;
   turn: string | null;
-  trouble: { at: string; text: string } | null;
+  owed: Record<string, Address[]>;
+  answering: Address[];
+  trouble: Trouble | null;
   desk: boolean;
   waiting_for_user: boolean;
 }
 
 export interface Action {
-  at: string;
+  at: Timestamp;
   machine: MachineName;
   hand: string;
   what: string;
@@ -42,61 +51,170 @@ export interface Action {
 
 export interface ResidentNow {
   about: About;
-  town: string | null;
+  town: TownName | null;
   here: boolean;
   now: Now | null;
   last_action: Action | null;
+  moved: Moved | null;
+}
+
+export interface Moved {
+  to: TownName | null;
+  at: Timestamp;
 }
 
 export interface RunningJob {
-  job: string;
+  job: JobId;
   machine: MachineName;
   owner: Address;
-  started_at: string;
+  started_at: Timestamp;
   pid: number | null;
   command: string;
   output: string;
 }
 
+export interface WhoReply {
+  machine: MachineName;
+  residents: ResidentNow[];
+  jobs: RunningJob[];
+}
+
 export type MachineWho =
-  | { kind: "answered"; reply: { machine: MachineName; residents: ResidentNow[]; jobs: RunningJob[] } }
-  | { kind: "offline"; machine: MachineName; since: string | null }
+  | { kind: "answered"; reply: WhoReply }
+  | { kind: "offline"; machine: MachineName; since: Timestamp | null }
   | { kind: "no_answer"; machine: MachineName; reason: string };
 
+export type WhoScope =
+  | { kind: "town"; town: TownName; record: ProjectRecord | null }
+  | { kind: "world"; towns: TownSummary[] };
+
+export interface WorldWho {
+  machine: MachineName;
+  scope: WhoScope;
+  machines: MachineWho[];
+}
+
 export interface MachineFacts {
+  name: MachineName;
   os: string;
   arch: string;
   home: string;
+  temp: string;
+  path_separator: string;
+  case_sensitive: boolean;
+  version: string;
+}
+
+export type Route =
+  | { kind: "local" }
+  | { kind: "card"; name: string }
+  | { kind: "proxy"; proxy: string }
+  | { kind: "system" };
+
+export type LinkState =
+  | { kind: "alone" }
+  | { kind: "connecting"; since: Timestamp; last_error: string | null }
+  | { kind: "online"; since: Timestamp; hub: string; route: Route }
+  | { kind: "stopped"; reason: string };
+
+export interface NodesReply {
+  machine: MachineName;
+  world: string | null;
+  link: LinkState;
+  machines: Node[];
 }
 
 export interface Node {
   name: MachineName;
   online: boolean | null;
-  since: string | null;
-  facts: { Ok: MachineFacts } | { Err: string };
+  since: Timestamp | null;
+  facts: Result<MachineFacts, string>;
+  revoked: Revoked | null;
+}
+
+export interface Revoked {
+  by: MachineName;
+  at: Timestamp;
+  reason: string;
+}
+
+export type Writer =
+  | { kind: "user" }
+  | { kind: "resident"; address: Address }
+  | { kind: "session"; agent: AgentName };
+
+export interface Location {
+  machine: MachineName;
+  path: string;
+}
+
+/** Listing.location is flattened by serde. */
+export interface Listing extends Location {
+  what: string;
+}
+
+/** fastctx_types::project::Record; named to avoid shadowing TS Record<K, V>. */
+export interface ProjectRecord {
+  version: number;
+  name: string;
+  what: string;
+  machines: MachineName[];
+  places: Listing[];
+  canon: Location | null;
+  by: Writer;
+  on: MachineName;
+  at: Timestamp;
 }
 
 export interface TownSummary {
-  town: string;
-  record: { name: string; what: string; machines: MachineName[] };
+  town: TownName;
+  record: ProjectRecord;
   journals: number;
 }
 
-/** Something that happened, as the World can say it from its records. */
-export type Happening =
-  | { kind: "turn_ended"; at: string; who: Address; town: string | null; how: string; reason: string | null; said: string | null }
-  | { kind: "job_ended"; at: string; job: string; machine: MachineName; owner: Address; town: string | null; how: string }
-  | { kind: "journal"; at: string; town: string; journal: string; by: Address | null; first: string }
-  | { kind: "asked"; at: string; who: Address; colleague: Address; town: string | null; label: string }
-  | { kind: "machine"; at: string; machine: MachineName; online: boolean };
+export interface Description {
+  version: number;
+  text: string;
+  by: Writer;
+  on: MachineName;
+  at: Timestamp;
+}
 
-export interface WorldState {
-  /** The machine this interface runs on. */
-  here: MachineName;
-  machines: MachineWho[];
-  nodes: Node[];
-  towns: TownSummary[];
-  /** What happened lately, where the World can say it; `null` where it
-   *  cannot yet. */
-  happenings: Happening[] | null;
+export interface Model {
+  name: string;
+  self_reported: boolean;
+}
+
+export type AttachmentKind = "text" | "image" | "pdf" | "binary";
+
+export type Kept =
+  | { kind: "in_entry" }
+  | { kind: "on_machine"; location: Location };
+
+export interface Attachment {
+  name: string;
+  kind: AttachmentKind;
+  bytes: number;
+  sha256: string;
+  kept: Kept;
+}
+
+export interface EntryStamp {
+  id: EntryId;
+  at: Timestamp;
+  machine: MachineName;
+  by: Writer;
+  agent: Host | null;
+  model: Model | null;
+  session: string | null;
+  cites: EntryId[];
+  attachments: Attachment[];
+}
+
+export interface JournalSummary {
+  journal: JournalName;
+  description: Description | null;
+  entries: number;
+  writers: number;
+  latest: EntryStamp | null;
 }

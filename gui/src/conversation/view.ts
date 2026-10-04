@@ -22,7 +22,7 @@ export interface Context {
    *  word of where; one that acted elsewhere says so. */
   residentMachine: MachineName;
   /** Where another resident's conversation opens, where it can. */
-  link?: (address: { resident: string; machine: MachineName }) => string;
+  link?: ((address: { resident: string; machine: MachineName }) => string) | undefined;
 }
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;

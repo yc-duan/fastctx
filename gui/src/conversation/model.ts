@@ -3,7 +3,8 @@
 // terminal's (`crates/fastctx-tui/src/transcript.rs`), so every interface
 // shows a session alike.
 
-import type { Health, MachineName, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
+import type { Health, MachineName, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
+import type { JsonValue } from "../world/wire";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
@@ -311,7 +312,7 @@ export class Conversation {
 
 /** What a host's state change says of the session's health: the same
  *  mapping as `SessionChange::health()`. */
-export function changeHealth(change: { kind: string } & Record<string, unknown>): Health | null {
+export function changeHealth(change: SessionChange): Health | null {
   switch (change.kind) {
     case "rerouted":
       return {
@@ -319,23 +320,26 @@ export function changeHealth(change: { kind: string } & Record<string, unknown>)
         text: `OpenAI moved this turn from ${change.from} to ${change.to} (${change.reason})`,
       };
     case "safety": {
-      const buffering = change.buffering as { showBufferingUi?: boolean } | undefined;
-      return buffering?.showBufferingUi
+      return property(change.buffering, "showBufferingUi") === true
         ? { kind: "safety", text: "OpenAI is holding this turn's output for extra safety processing" }
         : null;
     }
     case "error": {
-      const error = change.error as { message?: string } | undefined;
-      if (!error?.message) return null;
-      return { kind: change.will_retry ? "reconnecting" : "error", text: error.message };
+      const message = property(change.error, "message");
+      if (typeof message !== "string") return null;
+      return { kind: change.will_retry ? "reconnecting" : "error", text: message };
     }
     case "tool_server":
       return change.status === "failed"
-        ? { kind: "tool_server", text: `its ${change.server} tools did not start: ${change.error ?? "no reason given"}` }
+        ? { kind: "tool_server", text: `its ${change.server} tools did not start: ${typeof change.error === "string" ? change.error : "no reason given"}` }
         : null;
     case "warning":
-      return { kind: "warning", text: String(change.text) };
+      return { kind: "warning", text: change.text };
     default:
       return null;
   }
+}
+
+function property(value: JsonValue, key: string): JsonValue | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value[key] : undefined;
 }

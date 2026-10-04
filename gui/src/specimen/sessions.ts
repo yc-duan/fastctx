@@ -35,7 +35,7 @@ class Script {
   }
 
   heard(turn: string | null, from: Speaker | null, text: string, after = 4): void {
-    this.events.push({ at: this.at(after), event: "heard", turn, from, text });
+    this.events.push({ at: this.at(after), event: "heard", delivery: null, turn, from, text });
   }
 
   started(turn: string): void {
@@ -444,7 +444,7 @@ function codex(): Specimen {
   s.ended("t2", "failed", "stream disconnected before completion: error decoding response body", 30);
 
   s.heard("t3", user, "继续，retry 那一处改完再跑一下测试。", 120);
-  s.push({ event: "delivery_uncertain", why: "its app-server stopped while the words were going in" }, 2);
+  s.push({ event: "delivery_uncertain", delivery: "desktop-notice-1", why: "its app-server stopped while the words were going in" }, 2);
   s.heard("t4", user, "继续，retry 那一处改完再跑一下测试。", 40);
   s.started("t4");
   s.push({ event: "began", turn: "t4", item: { id: "compact-1", kind: "compaction" } });
