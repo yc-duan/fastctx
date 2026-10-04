@@ -1,0 +1,17 @@
+[package]
+name = "fastctx-install"
+description = "Putting the World's tools into the user's own Codex and Claude Code sessions, taking them out, and taking over what an old fastctx left"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+fastctx-hands = { path = "../fastctx-hands" }
+fastctx-hosts = { path = "../fastctx-hosts" }
+fastctx-platform = { path = "../fastctx-platform" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

@@ -26,6 +26,12 @@ pub const MARKETPLACE: &str = "fastctx";
 /// The plugin's name.
 pub const PLUGIN: &str = "fastctx-world";
 
+/// Claude Code's limit on a tool answer, in tokens, set past the World's own
+/// (`world-view.md`, 一次给多少): the World gives at most 150,000
+/// characters, and every model is assumed to have a window of at least
+/// 200,000 tokens, which is where this limit stops mattering.
+pub const MAX_MCP_OUTPUT_TOKENS: u64 = 200_000;
+
 const MOD: &str = include_str!("world.js");
 
 /// The local marketplace: `<world>/claude-plugins`.

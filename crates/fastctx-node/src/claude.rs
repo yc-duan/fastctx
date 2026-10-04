@@ -524,7 +524,7 @@ pub async fn open_here(
 /// World's take their place.
 fn settings_json() -> String {
     let settings = serde_json::json!({
-        "env": { "MAX_MCP_OUTPUT_TOKENS": "200000" },
+        "env": { "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string() },
         "permissions": {
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         },

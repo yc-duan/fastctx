@@ -678,6 +678,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-install"
+version = "1.0.0"
+dependencies = [
+ "fastctx-hands",
+ "fastctx-hosts",
+ "fastctx-platform",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "fastctx-net"
 version = "1.0.0"
 dependencies = [
