@@ -308,7 +308,8 @@ pub fn check(
     for record in records.into_values() {
         match &record.credential {
             Credential::Founder if record.key == *founder => {
-                let member = Member { name: record.name.clone(), key: record.key, invited_by: None, kind: Kind::Machine };
+                let member =
+                    Member { name: record.name.clone(), key: record.key, invited_by: None, kind: Kind::Machine };
                 accepted.insert(record.name.clone(), (member, None));
             }
             Credential::Founder => table

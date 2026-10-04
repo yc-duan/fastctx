@@ -346,7 +346,10 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             users_voice(node, peer)?;
             let link = member(node)?;
             let kind = if device { fastctx_net::trust::Kind::Device } else { fastctx_net::trust::Kind::Machine };
-            link.invite(name, expires, kind).await.map(|code| Reply::Code { code: code.to_text() }).map_err(Failure::new)
+            link.invite(name, expires, kind)
+                .await
+                .map(|code| Reply::Code { code: code.to_text() })
+                .map_err(Failure::new)
         }
         Call::Revoke { name, reason } => {
             users_voice(node, peer)?;
