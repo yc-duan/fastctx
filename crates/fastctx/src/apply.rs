@@ -56,10 +56,14 @@ pub fn unapply(args: UnapplyArgs) -> anyhow::Result<()> {
     let hosts = hosts(&places, &args.target, false)?;
     let report = apply::unapply(&places, hosts)?;
     say(&report);
-    if report.changed.is_empty() && report.commands.is_empty() {
+    if report.changed.is_empty()
+        && report.commands.is_empty()
+        && report.notices.is_empty()
+        && report.leftovers.is_empty()
+    {
         println!("Nothing of the World's was in place.");
     } else {
-        println!("Sessions opened from now on no longer have the World's tools.");
+        println!("New sessions use the resulting host configuration; sessions open now keep what they started with.");
     }
     Ok(())
 }

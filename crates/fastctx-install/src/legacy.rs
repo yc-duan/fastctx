@@ -94,6 +94,13 @@ impl Receipt {
         &self.record.codex_agents.path
     }
 
+    /// The IO caller must first verify that these resolved paths name the
+    /// recorded files. Pure editing then uses the same identities as Snapshot.
+    pub(crate) fn bind_paths(&mut self, config: String, agents: String) {
+        self.record.codex_config.path = config;
+        self.record.codex_agents.path = agents;
+    }
+
     fn expected_server(&self) -> Result<toml::Value, Error> {
         let record = &self.record;
         let mut table = toml::Table::new();
@@ -136,6 +143,18 @@ impl Receipt {
         table.insert("env".into(), env.into());
         Ok(table.into())
     }
+}
+
+/// Retires only the old installer's ownership record, preserving other settings
+/// and comments byte for byte. Call after migration or withdrawal was planned,
+/// and publish in the same transaction as the affected host files.
+pub(crate) fn retire(file: File<'_>) -> Result<Vec<u8>, Error> {
+    let bytes = file.bytes.unwrap_or_default();
+    let source = Source::parse(bytes, file.path)?;
+    let edits = source.table_ranges(&["applied"])?.into_iter().map(|range| (range, vec![])).collect();
+    let result = splice(bytes, edits)?;
+    Source::parse(&result, file.path)?;
+    Ok(result)
 }
 
 fn percent(value: &toml::Value) -> Result<u64, Error> {

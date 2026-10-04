@@ -215,6 +215,27 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
     Ok(Unapplied { config: bytes, agents: guidance.bytes, receipt: still_owned.then_some(remaining), retained })
 }
 
+/// Withdraws a released install using the same ownership checks as migration,
+/// without first installing the World or requiring approval to raise a limit.
+pub fn unapply_legacy(config: File<'_>, agents: File<'_>, old: &legacy::Receipt) -> Result<Unapplied, Error> {
+    let migrated = legacy::take_over(config, agents, old)?;
+    let receipt = Receipt {
+        version: 1,
+        config_path: config.path.into(),
+        config_existed: migrated.config_existed,
+        server: None,
+        limit: migrated.limit,
+        guidance: migrated.guidance,
+    };
+    let mut result = unapply(
+        File { path: config.path, bytes: Some(&migrated.config) },
+        File { path: agents.path, bytes: migrated.agents.as_deref() },
+        Some(&receipt),
+    )?;
+    result.retained.extend(migrated.notices);
+    Ok(result)
+}
+
 impl Receipt {
     fn check(&self, path: &str) -> Result<(), Error> {
         check_path(path, &self.config_path)?;
