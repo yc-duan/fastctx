@@ -13,6 +13,7 @@
 //! against a stand-in host only; it has not yet run inside Claude Code.
 
 pub mod background;
+pub mod calls;
 mod content;
 pub mod exchange;
 mod tools;

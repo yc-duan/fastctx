@@ -109,7 +109,8 @@ impl Client {
                 Err(ConnectError::KeptByService { endpoint })
             }
             Err(ConnectError::NoNode { endpoint }) => {
-                let started = start_node().map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;
+                let started =
+                    start_node(world).map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;
                 loop {
                     match Self::connect(world, peer.clone()).await {
                         Err(ConnectError::NoNode { .. }) => {}
@@ -123,12 +124,23 @@ impl Client {
                         None => false,
                     };
                     if !alive {
-                        return match Self::connect(world, peer.clone()).await {
+                        match Self::connect(world, peer.clone()).await {
                             Err(ConnectError::NoNode { .. }) => {
-                                Err(ConnectError::NodeDidNotStart { log: world.node_log().display().to_string() })
+                                match fastctx_platform::FileLock::try_acquire(&world.node_lock()) {
+                                    // Another starter owns the World and is still
+                                    // opening its endpoint. Its ownership, rather
+                                    // than a guessed startup delay, keeps us waiting.
+                                    Ok(None) => {}
+                                    Ok(Some(_)) => {
+                                        return Err(ConnectError::NodeDidNotStart {
+                                            log: world.node_log().display().to_string(),
+                                        });
+                                    }
+                                    Err(error) => return Err(ConnectError::Io { endpoint: endpoint.clone(), error }),
+                                }
                             }
-                            connected => connected,
-                        };
+                            connected => return connected,
+                        }
                     }
                     // A node takes a moment to open its endpoint after it
                     // starts; asking again soon costs nothing.
@@ -218,11 +230,25 @@ pub fn command_peer() -> Peer {
 }
 
 /// Starts this binary's node on its own.
-fn start_node() -> std::io::Result<fastctx_platform::DetachedProcess> {
+fn start_node(world: &WorldDir) -> std::io::Result<fastctx_platform::DetachedProcess> {
+    let root = world
+        .path()
+        .parent()
+        .filter(|_| world.path().file_name() == Some(std::ffi::OsStr::new("world")))
+        .ok_or_else(|| std::io::Error::other("starting a node requires a World under <fastctx root>/world"))?;
     let executable = std::env::current_exe()?;
     let home = fastctx_platform::user_home()?;
-    let environment = fastctx_platform::world_process_environment()?;
-    fastctx_platform::spawn_detached(&executable, &[std::ffi::OsStr::new("node")], &home, &environment)
+    let mut environment = fastctx_platform::world_process_environment()?;
+    // The caller explicitly named a World. A Claude daemon's inherited
+    // FASTCTX_HOME may describe an entirely different one.
+    environment.retain(|(name, _)| !name.eq_ignore_ascii_case("FASTCTX_HOME"));
+    environment.push(("FASTCTX_HOME".into(), root.as_os_str().to_os_string()));
+    fastctx_platform::spawn_detached(
+        &executable,
+        &[std::ffi::OsStr::new("node"), std::ffi::OsStr::new("--dir"), root.as_os_str()],
+        &home,
+        &environment,
+    )
 }
 
 fn to_json(value: &impl serde::Serialize) -> Vec<u8> {

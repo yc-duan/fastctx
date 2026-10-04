@@ -27,16 +27,19 @@ pub fn sessions(world: &Path) -> PathBuf {
 }
 
 /// What the mod says of its session when it starts.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Registration {
     pub session: String,
+    /// One activation of this session's mod, retained across node restarts.
+    #[serde(default)]
+    pub instance: Option<String>,
     #[serde(default)]
     pub previous: Option<String>,
     #[serde(default)]
     pub at: Option<Timestamp>,
     #[serde(default)]
     pub process: Option<fastctx_types::ProcessIdentity>,
-    /// The session's inbox address, which pairs it with its MCP connection.
+    /// The session's inbox address, for commands from its native shell.
     pub inbox_address: Option<String>,
     /// How the session was started: `cli`, `claude-vscode` and the like.
     pub entrypoint: Option<String>,
@@ -102,6 +105,7 @@ pub enum Reported {
     /// The conversation ended, including /clear or resume within the process.
     Ended {
         reason: Option<String>,
+        instance: Option<String>,
     },
     /// The mod handed these inbox files to the model, in `turn`.
     Handed {
@@ -197,6 +201,8 @@ enum ModEvent {
     },
     SessionEnd {
         reason: Option<String>,
+        #[serde(default)]
+        instance: Option<String>,
     },
     StopFailed {
         at: Option<Timestamp>,
@@ -441,7 +447,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             );
             vec![happened(at, Happened::Health { turn: None, health: Health { kind: HealthKind::Error, text } })]
         }
-        ModEvent::SessionEnd { reason } => vec![Reported::Ended { reason }],
+        ModEvent::SessionEnd { reason, instance } => vec![Reported::Ended { reason, instance }],
         ModEvent::StopFailed { at, turn, text } => {
             let text = format!("the World's plugin could not stop the turn: {}", text.unwrap_or_default());
             vec![happened(at, Happened::Health { turn, health: Health { kind: HealthKind::Error, text } })]

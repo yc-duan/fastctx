@@ -3,11 +3,11 @@
 //! it works, what it is doing and who is owed the end of its turn.
 //!
 //! A resident the World started is named in its environment. A Codex
-//! session is recognised by its thread, which stays the same across the
-//! several MCP connections Codex may open for it. Any other session is a
-//! resident of its own from its first call. A session the user opened is
-//! here while a connection it arrived on stays open; one the World started
-//! is here unless it is asleep.
+//! session is recognised by its thread, which stays the same across MCP
+//! connections. A Claude session is registered by its mod; its process
+//! lifetime establishes presence. Other sessions are residents from their
+//! first call, present while their connection stays open. One the World
+//! started is here unless it is asleep.
 //!
 //! Who is owed the end of each running turn is kept in memory and written
 //! through to its `now` on every change, so a node that restarts knows whom
@@ -72,10 +72,12 @@ pub struct Heard {
 struct Live {
     about: About,
     town: Option<TownName>,
-    /// A Claude session's inbox address, from its MCP connection.
+    /// A Claude session's inbox address, for commands from its native shell.
     inbox: Option<String>,
     /// Open connections the resident arrived on.
     connections: usize,
+    /// Presence reported by a Claude mod, independent of its MCP connections.
+    claude_here: bool,
     now: Option<Now>,
     /// For each turn running, whose words went into it.
     owed: HashMap<String, BTreeSet<Address>>,
@@ -100,6 +102,7 @@ impl Live {
             town,
             inbox: None,
             connections: 0,
+            claude_here: false,
             now,
             owed,
             speaking: Arc::new(tokio::sync::Mutex::new(())),
@@ -261,9 +264,6 @@ impl Residents {
             return match state.live.get_mut(&resident) {
                 Some(live) => {
                     live.connections += 1;
-                    if hints.inbox.is_some() {
-                        live.inbox = hints.inbox;
-                    }
                     Ok(Whereabouts { resident, town: live.town.clone() })
                 }
                 None => Err(Failure::new(format!(
@@ -282,18 +282,7 @@ impl Residents {
             && let Some(live) = state.live.get_mut(&resident)
         {
             live.connections += 1;
-            // A Claude session arriving again after the node restarted pairs
-            // by this address again.
-            if hints.inbox.is_some() {
-                live.inbox = hints.inbox;
-            }
             return Ok(Whereabouts { resident, town: live.town.clone() });
-        }
-        if let Some(inbox) = &hints.inbox
-            && let Some(live) = state.live.values_mut().find(|live| live.inbox.as_ref() == Some(inbox))
-        {
-            live.connections += 1;
-            return Ok(Whereabouts { resident: live.about.id.clone(), town: live.town.clone() });
         }
         let resident = new_id(&host.agent, &state)?;
         let about = About {
@@ -313,7 +302,6 @@ impl Residents {
         }
         let mut live = Live::new(about, None, None);
         live.connections = 1;
-        live.inbox = hints.inbox;
         state.live.insert(resident.clone(), live);
         Ok(Whereabouts { resident, town: None })
     }
@@ -326,7 +314,7 @@ impl Residents {
         for resident in residents {
             if let Some(live) = state.live.get_mut(resident) {
                 live.connections = live.connections.saturating_sub(1);
-                if live.connections == 0 && !live.about.world_started {
+                if !here(live) && !live.about.world_started {
                     gone.push(resident.clone());
                 }
             }
@@ -338,13 +326,15 @@ impl Residents {
     pub fn create(&self, world: &WorldDir, about: About, town: Option<TownName>, now: Now) -> io::Result<()> {
         let directory = world.resident(town.as_ref(), &about.id);
         records::create(&directory, &about)?;
-        records::write_now(&directory, &now)?;
+        let recorded = records::write_now(&directory, &now);
         let mut state = self.lock();
         if let Some(session) = &about.session {
             state.threads.insert(session.clone(), about.id.clone());
         }
-        state.live.insert(about.id.clone(), Live::new(about, town, Some(now)));
-        Ok(())
+        // The durable identity already exists even if its initial activity
+        // could not be written. Retain it so a retry cannot create a second one.
+        state.live.insert(about.id.clone(), Live::new(about, town, recorded.as_ref().ok().map(|()| now)));
+        recorded
     }
 
     /// The resident whose Claude session has the inbox address `inbox`.
@@ -352,13 +342,22 @@ impl Residents {
         self.lock().live.values().find(|live| live.inbox.as_deref() == Some(inbox)).map(|live| live.about.id.clone())
     }
 
-    /// The resident's Claude session has the inbox address `inbox`, as its
-    /// mod reported: its MCP connection, arriving with the same address, is
-    /// known for the same resident.
+    /// The mod's inbox address identifies commands from the host's native
+    /// shell. MCP calls never use it as identity evidence.
     pub fn set_inbox(&self, id: &ResidentId, inbox: String) {
         if let Some(live) = self.lock().live.get_mut(id) {
             live.inbox = Some(inbox);
         }
+    }
+
+    /// Updates mod presence and says whether a user-opened resident left.
+    pub fn set_claude_here(&self, id: &ResidentId, present: bool) -> bool {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            let was_here = here(live);
+            live.claude_here = present;
+            return was_here && !here(live) && !live.about.world_started;
+        }
+        false
     }
 
     /// The resident's session is `session` on its host: its `about` says so
@@ -639,7 +638,7 @@ fn here(live: &Live) -> bool {
     if live.about.world_started {
         live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
     } else {
-        live.connections > 0
+        live.claude_here || live.connections > 0
     }
 }
 

@@ -32,11 +32,10 @@ pub struct Hints {
     /// the node broke and it arrives again, as after the node restarted.
     #[serde(default)]
     pub was: Option<ResidentId>,
-    /// The address of a Claude session's inbox, which its MCP servers
-    /// inherit and the World's mod reports too: what pairs the two. The
-    /// address only; the token beside it is never read.
+    /// The Claude tool call's `_meta["claudecode/toolUseId"]`. Its mod
+    /// publishes the same id before allowing this particular call through.
     #[serde(default)]
-    pub inbox: Option<String>,
+    pub tool_use_id: Option<String>,
 }
 
 /// A resident's `about` record: who it is and how it came to be, written

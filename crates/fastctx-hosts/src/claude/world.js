@@ -12,16 +12,20 @@ import { presentation } from './presentation.js'
 // directory, `<world>/claude/<session id>/`:
 //   session.json       written when the session starts
 //   transcript.json    where Claude Code keeps the session's own record
-//   events/<n>.json   a report or an ordered batch of stream events, and
+//   events/<n>.json    a report or an ordered batch of stream events, and
 //   events/<n>.done    written after it, once it is whole
 //   inbox/<id>.json    what the node has for the session; read, never changed
 //   receipts/<id>      written once something was handed to the model
 //   stop.json          the turn the node asks to be stopped; read, never changed
+// Active World calls have one indexed proof under `<world>/claude-calls/`.
+// A helper process owns it; normal completion releases it, and the node
+// observes the helper's death for cancellation, unloading and host exit.
 // Which turn took what it handed over is an event of its own, before the
 // end of that turn: the node owes that turn's end to whoever it was from.
 // It uses only on(), $.session.*, $.env.get, $.fs.read/write/list,
-// $.clock.every/after, $.prompt.submit, $.process.run and $.turn.abort. Of the session's inbox address it
-// reads the address alone, never the token beside it.
+// $.clock.every/after, $.prompt.submit, $.process.run/spawn and $.turn.abort.
+// MCP ownership is resolved from $.mcp.connect and $.session.usage at startup.
+// The inbox address identifies native-shell commands, never MCP calls.
 
 const WORLD = __FASTCTX_WORLD__
 const FASTCTX = __FASTCTX_COMMAND__
@@ -43,6 +47,7 @@ function conversation(sessionId, previous) {
     sequence: 0,
     logicalTime: 0,
     hostProcess: null,
+    registration: null,
     requestInFlight: false,
     submissionTurns: [],
     // A submission that entered before the turn taking it started.
@@ -443,7 +448,11 @@ async function startSession($, context) {
       else if (time === context.logicalTime) context.sequence = Math.max(context.sequence, count)
     }
   }
-  const registration = { session: id, previous: context.previous, at: stamp() }
+  const instance = reserved(context)
+  // A session can be resumed in the same process, even in the same clock
+  // tick. Preserve the registration's generation independently of reports.
+  await $.fs.write(context.dir + '/applied/' + instance.id + '.sequence', '')
+  const registration = { session: id, previous: context.previous, at: instance.at, instance: instance.id }
   const parent = await $.process.run([FASTCTX, 'parent-process'])
   if (parent.exitCode !== 0) throw new Error('identifying the Claude host: ' + parent.stderr)
   registration.process = JSON.parse(parent.stdout)
@@ -471,8 +480,8 @@ async function startSession($, context) {
       registration[name] = null
     }
   }
-  // Each session has its own inbox address, which its MCP servers inherit:
-  // it pairs this registration with the session's connection to the World.
+  // Native-shell commands can carry this address. MCP connections need the
+  // per-call proof below because their environment is a startup snapshot.
   await ask('inbox_address', () => $.env.get('CLAUDE_CODE_MESSAGING_SOCKET'))
   await ask('entrypoint', () => $.env.get('CLAUDE_CODE_ENTRYPOINT'))
   await ask('cwd', () => $.session.cwd())
@@ -483,6 +492,7 @@ async function startSession($, context) {
   // means a failure, never "nothing handed over yet".
   await $.fs.write(context.dir + '/receipts/.created', '')
   await $.fs.write(context.dir + '/session.json', JSON.stringify(registration))
+  context.registration = registration
   // What already waits when the session starts again is handed over, not
   // skipped: a closed session's answers are what it should see on return.
   context.timer = $.clock.every(LOOK_MS, () => look($, context))
@@ -563,6 +573,9 @@ async function boundary($, context, e, next) {
 
 async function endSession($, context, e, next) {
   context.closed = true
+  // The node may restart while this process runs another conversation.
+  // Process liveness alone would otherwise resurrect this closed one.
+  await $.fs.write(context.dir + '/closed/' + context.registration.instance, '')
   context.streamBatch = null
   if (context.awaiting !== null) {
     const { deliveries } = context.awaiting
@@ -571,7 +584,7 @@ async function endSession($, context, e, next) {
     await uncertain($, context, deliveries.map((delivery) => delivery.id), 'the session ended before a turn took what was submitted')
   }
   const { id: name, at } = reserved(context)
-  const body = JSON.stringify({ kind: 'session_end', at, reason: e.reason, pending: [...context.unwritten.keys()].map((name) => name + '.json') })
+  const body = JSON.stringify({ kind: 'session_end', at, instance: context.registration.instance, reason: e.reason, pending: [...context.unwritten.keys()].map((name) => name + '.json') })
   context.unwritten.set(name, { body })
   try {
     await writePending($, context, name)
@@ -601,8 +614,19 @@ async function transcript($, context, path) {
 async function session($, registry, id, renew = false) {
   let context = registry.sessions.get(id)
   if (!context || (renew && context.closed)) {
-    context = conversation(id, registry.currentSession)
-    registry.currentSession = id
+    context = conversation(id, registry.cleared)
+    // Session switches keep their order even within one clock tick or when
+    // the wall clock moves backwards. The node uses registration time to
+    // keep late reports from moving the resident's delivery address back.
+    for (const prior of registry.sessions.values()) {
+      if (prior.logicalTime > context.logicalTime) {
+        context.logicalTime = prior.logicalTime
+        context.sequence = prior.sequence
+      } else if (prior.logicalTime === context.logicalTime) {
+        context.sequence = Math.max(context.sequence, prior.sequence)
+      }
+    }
+    registry.cleared = null
     registry.sessions.set(id, context)
     context.ready = startSession($, context)
   }
@@ -622,9 +646,10 @@ async function route($, registry, name, e) {
 }
 
 export function register(on) {
-  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), currentSession: null }
+  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set() }
   on('session.start', async ($, e, next) => {
-    await session($, registry, await $.session.id())
+    await worldTools($, registry)
+    await session($, registry, await $.session.id(), true)
     return next(e)
   })
   on('turn.start', async ($, e, next) => {
@@ -639,7 +664,18 @@ export function register(on) {
   })
   on('tool.call', async ($, e, next) => {
     const context = await route($, registry, 'tool.call', e)
-    return context.shown.call(reports($, context), e, next)
+    if (!registry.worldTools.has(e.tool)) return context.shown.call(reports($, context), e, next)
+    let lease
+    try {
+      lease = await identifyCall($, context, e.tool_use_id)
+    } catch (error) {
+      return { deny: 'The fastctx plugin could not identify this MCP call to the World: ' + error }
+    }
+    try {
+      return await context.shown.call(reports($, context), e, next)
+    } finally {
+      await releaseCall($, e.tool_use_id, lease)
+    }
   })
   on('session.append', async ($, e, next) => {
     const context = await route($, registry, 'session.append', e)
@@ -660,11 +696,58 @@ export function register(on) {
     return boundary($, await route($, registry, 'classic.PostToolUseFailure', e), e, next)
   })
   on('session.end', async ($, e, next) => {
+    registry.cleared = e.reason === 'clear' ? e.sessionId : null
     return endSession($, await route($, registry, 'session.end', e), e, next)
   })
   on('classic.SessionStart', async ($, e, next) => {
+    await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
     await transcript($, context, e.transcript_path)
     return next(e)
   })
+}
+
+async function identifyCall($, context, id) {
+  if (typeof id !== 'string' || id.length === 0) throw new Error('the MCP call has no tool_use_id to pair with the World')
+  const stream = $.process.spawn({ argv: [FASTCTX, 'claude-call', 'begin', WORLD, id], input: JSON.stringify(context.registration) })
+  let output = '', errors = ''
+  try {
+    while (true) {
+      const piece = await stream.next()
+      if (piece.done) throw new Error('the call helper exited before registering it: ' + errors)
+      if (piece.value.stream === 'stderr') errors += piece.value.text
+      else output += piece.value.text
+      if (output.includes('\n')) return { stream, owner: JSON.parse(output.trim()) }
+    }
+  } catch (error) {
+    await stream.return()
+    throw error
+  }
+}
+
+async function releaseCall($, id, lease) {
+  try {
+    const result = await $.process.run([FASTCTX, 'claude-call', 'finish', WORLD, id], { stdin: JSON.stringify(lease.owner) })
+    if (result.exitCode !== 0) throw new Error('releasing the World call proof: ' + result.stderr)
+  } finally {
+    // The host also closes this stream on cancellation or module unload,
+    // even when an interrupted hook cannot finish its own cleanup.
+    await lease.stream.return()
+  }
+}
+
+async function worldTools($, registry) {
+  registry.worldTools = new Set()
+  const connected = await $.mcp.connect('fastctx')
+  if (!connected.isConnected) return
+  // Both fields are the host's names. In particular, a deduplicated server
+  // can have an alias whose wire spelling must not be guessed from its name.
+  const usage = await $.session.usage({ breakdown: 'summary' })
+  if (usage.context.breakdown === undefined) throw new Error('the host did not provide its MCP tool ownership map')
+  const owners = new Map()
+  for (const tool of usage.context.breakdown.mcpTools) {
+    if (owners.has(tool.name) && owners.get(tool.name) !== tool.serverName) owners.set(tool.name, null)
+    else if (!owners.has(tool.name)) owners.set(tool.name, tool.serverName)
+  }
+  registry.worldTools = new Set([...owners].filter(([, server]) => server === connected.server).map(([name]) => name))
 }

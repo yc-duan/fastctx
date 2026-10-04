@@ -20,10 +20,10 @@ pub struct Session {
     world: WorldDir,
     host: OnceLock<Host>,
     /// Set when the World started this session as a Codex thread.
-    resident: Option<ResidentId>,
+    resident: Option<String>,
     /// Set when the World started this session as someone's colleague,
     /// which asks for no colleagues of its own.
-    pub colleague: bool,
+    colleague: bool,
     /// The residents this session's calls belong to, by Codex thread; calls
     /// with no thread share the entry for `None`.
     residents: Mutex<HashMap<Option<String>, Whereabouts>>,
@@ -38,7 +38,7 @@ impl Session {
     pub fn new(world: WorldDir) -> anyhow::Result<Self> {
         // Set, as `<id>@<machine>`, when the World started this session.
         let resident = match std::env::var("FASTCTX_RESIDENT") {
-            Ok(address) => Some(address.parse::<Address>()?.resident),
+            Ok(address) => Some(address),
             Err(std::env::VarError::NotPresent) => None,
             Err(error) => return Err(error.into()),
         };
@@ -59,6 +59,10 @@ impl Session {
         let name = client_info.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
         let version = client_info.get("version").and_then(Value::as_str).unwrap_or_default().to_string();
         let _ = self.host.set(Host { agent: agent_of(&name), client: name, version });
+    }
+
+    pub fn colleague(&self) -> bool {
+        self.colleague && self.host.get().is_some_and(|host| host.agent.as_str() != "claude")
     }
 
     pub async fn run(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
@@ -87,8 +91,7 @@ impl Session {
                 return Answer::error("=== run (not run: `node` must be a string naming a machine) ===".to_string());
             }
         };
-        let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
-        let whereabouts = match self.whereabouts(thread).await {
+        let whereabouts = match self.whereabouts(meta).await {
             Ok(whereabouts) => whereabouts,
             Err(error) => return Answer::error(format!("=== run (not run: {error}) ===")),
         };
@@ -136,8 +139,7 @@ impl Session {
                 return Answer::error(format!("=== {tool} (not done: `node` must be a string naming a machine) ==="));
             }
         };
-        let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
-        let whereabouts = match self.whereabouts(thread).await {
+        let whereabouts = match self.whereabouts(meta).await {
             Ok(whereabouts) => whereabouts,
             Err(error) => return Answer::error(format!("=== {tool} (not done: {error}) ===")),
         };
@@ -168,8 +170,7 @@ impl Session {
             Ok(node) => node,
             Err(error) => return failed(error),
         };
-        let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
-        let whereabouts = match self.whereabouts(thread).await {
+        let whereabouts = match self.whereabouts(meta).await {
             Ok(whereabouts) => whereabouts,
             Err(error) => return failed(error),
         };
@@ -210,8 +211,7 @@ impl Session {
                 Err(error) => return failed(error.to_string()),
             },
         };
-        let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
-        let whereabouts = match self.whereabouts(thread).await {
+        let whereabouts = match self.whereabouts(meta).await {
             Ok(whereabouts) => whereabouts,
             Err(error) => return failed(error),
         };
@@ -296,23 +296,37 @@ impl Session {
         answer.bound(&self.world)
     }
 
-    /// The resident the calls of `thread` belong to, found or made by the
-    /// node on first use.
-    async fn whereabouts(self: &Arc<Self>, thread: Option<String>) -> Result<Whereabouts, String> {
+    /// Claude proves each call independently; other hosts keep their
+    /// connection or thread identity until the node connection closes.
+    async fn whereabouts(self: &Arc<Self>, meta: Option<&Value>) -> Result<Whereabouts, String> {
+        let host = self.host.get().cloned().ok_or("the session did not introduce itself with `initialize`")?;
+        let tool_use_id = meta.and_then(|meta| meta.get("claudecode/toolUseId"));
+        if host.agent.as_str() == "claude" || tool_use_id.is_some() {
+            let tool_use_id = tool_use_id.and_then(Value::as_str).filter(|id| !id.is_empty())
+                .ok_or("Claude did not supply a nonempty _meta[\"claudecode/toolUseId\"]; this call cannot be paired with its mod session")?;
+            let hints = Hints { tool_use_id: Some(tool_use_id.to_string()), ..Hints::default() };
+            let mut client = self.client().await?;
+            return match client.call(Call::Arrive { host, hints }).await {
+                Ok(Reply::Arrived(whereabouts)) => Ok(whereabouts),
+                Ok(other) => Err(format!("the node answered something else: {other:?}")),
+                Err(CallError::Failed(failure)) => Err(failure.message),
+                Err(error) => Err(error.to_string()),
+            };
+        }
+        let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
         if let Some(known) = self.residents.lock().expect("never poisoned").get(&thread) {
             return Ok(known.clone());
         }
         let host = self.host.get().cloned().ok_or("the session did not introduce itself with `initialize`")?;
         let was = self.were.lock().expect("never poisoned").get(&thread).cloned();
-        // A Claude session's inbox address pairs this connection with what
-        // the World's mod reports of the session; its token is never read.
-        let inbox = std::env::var("CLAUDE_CODE_MESSAGING_SOCKET").ok().filter(|address| !address.is_empty());
-        // The World names a resident in the environment only of servers it
-        // gives one to, Codex threads it holds. A Claude session's servers
-        // inherit Claude Code's daemon's environment, set by whoever started
-        // the daemon: a name found there is not about this session.
-        let resident = if host.agent.as_str() == "claude" { None } else { self.resident.clone() };
-        let hints = Hints { resident, thread: thread.clone(), was, inbox };
+        let resident = self
+            .resident
+            .as_deref()
+            .map(str::parse::<Address>)
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .map(|address| address.resident);
+        let hints = Hints { resident, thread: thread.clone(), was, tool_use_id: None };
         let mut client = self.client().await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {
