@@ -96,6 +96,17 @@ jobs:
           cargo zigbuild --locked --release -p fastctx --bin fastctx --target x86_64-unknown-linux-gnu.2.31
       - if: runner.os != 'Linux'
         run: cargo build --locked --release -p fastctx --bin fastctx --target '${{ matrix.target }}'
+      - name: Verify executable lifetime across node replacement
+        if: runner.os == 'Windows' || runner.os == 'Linux'
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            export FASTCTX_TEST_BASH="$(cygpath -m /usr/bin/bash.exe)"
+            export FASTCTX_TEST_ROOT="$(cygpath -m "$RUNNER_TEMP")"
+          else
+            export FASTCTX_TEST_BASH=/bin/bash
+            export FASTCTX_TEST_ROOT="$RUNNER_TEMP"
+          fi
+          cargo test --locked --release -p fastctx-node --test own_lifetime --target '${{ matrix.target }}'
       - name: Verify version and package the native program
         run: |
           binary='target/${{ matrix.target }}/release/${{ matrix.binary }}'

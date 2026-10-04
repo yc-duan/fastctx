@@ -161,6 +161,10 @@ pub struct JobRecord {
     /// The file holding every byte of its output, on this machine.
     pub output: String,
     pub started_at: Timestamp,
+    /// The program put on this job's PATH, reserved before its supervisor
+    /// starts. Older records did not identify their program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<JobProgram>,
     /// The supervisor process, once it is running.
     pub supervisor: Option<ProcessIdentity>,
     /// The PID of the shell, once it is running.
@@ -177,11 +181,21 @@ pub struct JobRecord {
     /// full: what failed, and how many bytes the log had kept by then. The
     /// rest of the output was read and dropped, so the job ran on.
     pub output_lost: Option<OutputLost>,
-    /// Set once nothing of the job runs any more and its output is complete.
+    /// The supervisor's final account. Finished and Stopped establish that
+    /// the tree ended; Interrupted and a failure after spawn may not.
     pub end: Option<Ended>,
     /// On Windows the supervisor could not leave the node's job object, so
     /// the job ends when the node ends.
     pub ends_with_node: bool,
+}
+
+/// The executable a job and its descendants may call for their lifetime.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobProgram {
+    pub executable: String,
+    /// Identifies the boot even if the starter dies before the supervisor
+    /// publishes its own identity.
+    pub starter: ProcessIdentity,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,6 +226,6 @@ pub enum EndedHow {
     /// Its supervisor was gone while it ran, as when the machine restarts;
     /// what happened to its processes after that is not known.
     Interrupted { reason: String },
-    /// It could not be started.
+    /// Starting or supervising failed; processes already started may remain.
     Failed { error: String },
 }
