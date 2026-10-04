@@ -73,6 +73,12 @@ enum Item {
         turn: String,
         kind: String,
     },
+    /// What one of the agent's own sub-agents is doing, as its host says.
+    Activity {
+        item: String,
+        turn: String,
+        text: String,
+    },
     Ended {
         turn: String,
         end: TurnEnd,
@@ -209,10 +215,7 @@ impl Transcript {
     pub fn event(&mut self, event: SessionEvent) {
         let at = event.at;
         match event.happened {
-            Happened::TurnStarted { .. }
-            | Happened::Changed { .. }
-            | Happened::Realtime { .. }
-            | Happened::RealtimeGrew { .. } => {}
+            Happened::TurnStarted { .. } | Happened::Realtime { .. } | Happened::RealtimeGrew { .. } => {}
             Happened::Heard { turn, from, text, .. } => {
                 // Words sent from here are now heard: they keep their place.
                 if matches!(from, Some(Speaker::User { .. }))
@@ -280,12 +283,21 @@ impl Transcript {
             Happened::DeliveryUncertain { why, .. } => {
                 self.items.push(Item::Uncertain { why });
             }
-            Happened::Health { health, .. } => {
-                let repeat = matches!(self.items.last(), Some(Item::Health { health: last, .. }) if *last == health);
-                if !repeat {
-                    self.items.push(Item::Health { health });
+            Happened::Health { health, .. } => self.health(health),
+            Happened::Changed { change, .. } => {
+                if let Some(health) = change.health() {
+                    self.health(health);
                 }
             }
+        }
+    }
+
+    /// Something of the session's own health, shown once however often the
+    /// host repeats it in a row.
+    fn health(&mut self, health: Health) {
+        let repeat = matches!(self.items.last(), Some(Item::Health { health: last, .. }) if *last == health);
+        if !repeat {
+            self.items.push(Item::Health { health });
         }
     }
 
@@ -307,7 +319,9 @@ impl Transcript {
             What::Message { text } => prose(Prose::Message, text),
             What::Thinking { text } => prose(Prose::Thinking, text),
             What::Plan { text } => prose(Prose::Plan, text),
-            What::AgentActivity { path, activity, .. } => prose(Prose::Message, format!("{path}: {activity}")),
+            What::AgentActivity { path, activity, .. } => {
+                Item::Activity { item: id.clone(), turn: turn.clone(), text: format!("{path}: {activity}") }
+            }
             What::Tool(tool) => {
                 let ended = match tool.status {
                     ToolStatus::Running => None,
@@ -336,7 +350,8 @@ impl Transcript {
                         Item::Prose { item, turn: own, .. }
                         | Item::Tool { item, turn: own, .. }
                         | Item::Compaction { item, turn: own }
-                        | Item::Other { item, turn: own, .. } => item != &id || own != &turn,
+                        | Item::Other { item, turn: own, .. }
+                        | Item::Activity { item, turn: own, .. } => item != &id || own != &turn,
                         _ => true,
                     });
                 }
@@ -382,7 +397,8 @@ impl Transcript {
             Item::Prose { item, turn: own, .. }
             | Item::Tool { item, turn: own, .. }
             | Item::Compaction { item, turn: own }
-            | Item::Other { item, turn: own, .. } => item == id && own == turn,
+            | Item::Other { item, turn: own, .. }
+            | Item::Activity { item, turn: own, .. } => item == id && own == turn,
             _ => false,
         })
     }
@@ -502,6 +518,11 @@ impl Transcript {
                 Item::Other { kind, .. } => {
                     blank(&mut out);
                     let line = Line::from(Span::styled(ctx.words.block(kind), look.text(Role::Faint)));
+                    out.push(paint::fit_line(&line, width));
+                }
+                Item::Activity { text, .. } => {
+                    blank(&mut out);
+                    let line = Line::from(Span::styled(text::first_line(text), look.text(Role::Faint)));
                     out.push(paint::fit_line(&line, width));
                 }
                 Item::Ended { end, .. } => {

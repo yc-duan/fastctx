@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::{Health, HealthKind};
+
 /// A user's original blocks and identity, including text spans, attachments,
 /// mentions and hook provenance. `Heard.text` is the readable projection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,6 +18,35 @@ pub struct UserMessage {
     pub presentation: Value,
     #[serde(default)]
     pub detail: Value,
+}
+
+impl SessionChange {
+    /// What the change says of the session's own health, if anything: it is
+    /// then told as any health report is (`world-colleagues.md`, 一轮怎样
+    /// 结束，会话健不健康), by the node to whoever is owed the turn, and by
+    /// every client that shows the session.
+    pub fn health(&self) -> Option<Health> {
+        let (kind, text) = match self {
+            SessionChange::Rerouted { from, to, reason } => {
+                (HealthKind::Rerouted, format!("OpenAI moved this turn from {from} to {to} ({reason})"))
+            }
+            // Codex shows its own notice only when the host asks for it.
+            SessionChange::Safety { buffering } if buffering["showBufferingUi"] == true => {
+                (HealthKind::Safety, "OpenAI is holding this turn's output for extra safety processing".into())
+            }
+            SessionChange::Error { error, will_retry } => (
+                if *will_retry { HealthKind::Reconnecting } else { HealthKind::Error },
+                error.get("message")?.as_str()?.to_string(),
+            ),
+            SessionChange::ToolServer { server, status, error, .. } if status == "failed" => (
+                HealthKind::ToolServer,
+                format!("its {server} tools did not start: {}", error.as_str().unwrap_or("no reason given")),
+            ),
+            SessionChange::Warning { text } => (HealthKind::Warning, text.clone()),
+            _ => return None,
+        };
+        Some(Health { kind, text })
+    }
 }
 
 /// State updates do not imply a chat bubble. Opaque values preserve the

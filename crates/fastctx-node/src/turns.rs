@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use fastctx_types::layout::ResidentDir;
 use fastctx_types::residents::{Delivery, MessageKind, MessageLine, Notice, Origin, Owing, Pending, Trouble};
-use fastctx_types::session::{Happened, Health, HealthKind, SessionChange, SessionEvent, TurnEnd, TurnHow};
+use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, TurnEnd, TurnHow};
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
 
@@ -402,29 +402,13 @@ fn health_at(
 
 /// Provider state retains the World's urgent delivery semantics without
 /// adding a second transcript notice beside the original presentation event.
+/// The World's own tools not starting is told with the words that find them
+/// missing instead.
 fn presentation_health(change: &SessionChange) -> Option<Health> {
-    let (kind, text) = match change {
-        SessionChange::Rerouted { from, to, reason } => {
-            (HealthKind::Rerouted, format!("OpenAI moved this turn from {from} to {to} ({reason})"))
-        }
-        SessionChange::Safety { buffering } if buffering["showBufferingUi"] == true => {
-            (HealthKind::Safety, "OpenAI is holding this turn's output for extra safety processing".into())
-        }
-        SessionChange::Error { error, will_retry } => (
-            if *will_retry { HealthKind::Reconnecting } else { HealthKind::Error },
-            error.get("message")?.as_str()?.to_string(),
-        ),
-        SessionChange::ToolServer { server, status, error, .. }
-            if status == "failed" && server != fastctx_hosts::codex::SERVER_NAME =>
-        {
-            (
-                HealthKind::ToolServer,
-                format!("its {server} tools did not start: {}", error.as_str().unwrap_or("no reason given")),
-            )
-        }
-        _ => return None,
-    };
-    Some(Health { kind, text })
+    if matches!(change, SessionChange::ToolServer { server, .. } if server == fastctx_hosts::codex::SERVER_NAME) {
+        return None;
+    }
+    change.health()
 }
 
 fn health_event(

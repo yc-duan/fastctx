@@ -214,17 +214,11 @@ impl Printer {
                 self.chunk((turn.clone(), item.clone()), text);
             }
             Happened::Grew { .. } | Happened::Updated { .. } => {}
+            // A change is shown when it says something of the session's
+            // health; the rest is state for richer clients.
             Happened::Changed { change, .. } => {
-                use fastctx_types::session::SessionChange;
-                match change {
-                    SessionChange::Diff { diff } => self.line(diff),
-                    SessionChange::Terminal { input, .. } => self.line(input),
-                    SessionChange::Warning { text } => self.line(text),
-                    SessionChange::Error { error, .. } => {
-                        self.line(error.get("message").and_then(serde_json::Value::as_str).unwrap_or_default())
-                    }
-                    SessionChange::Rerouted { from, to, reason } => self.line(&format!("  {from} → {to}: {reason}")),
-                    _ => {}
+                if let Some(health) = change.health() {
+                    self.line(&format!("  ! {}", health.text));
                 }
             }
             Happened::Realtime { item, complete: true } => {

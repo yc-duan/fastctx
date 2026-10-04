@@ -164,8 +164,12 @@ pub enum Speaker {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
+    /// Where the item first appeared, so completed-only history preserves
+    /// the presentation order of overlapping items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<Timestamp>,
+    /// Additional host data, without interpretation or loss: for example
+    /// a compaction's summary and counts, or a tool's structured result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<serde_json::Value>,
     #[serde(flatten)]
