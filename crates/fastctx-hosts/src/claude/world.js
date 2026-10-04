@@ -12,17 +12,19 @@ import { presentation } from './presentation.js'
 // directory, `<world>/claude/<session id>/`:
 //   session.json       written when the session starts
 //   transcript.json    where Claude Code keeps the session's own record
-//   calls/<id>.json    this call's session, published before calling next
-//   calls/<id>.done    the call proof is whole
 //   events/<n>.json    a report or an ordered batch of stream events, and
 //   events/<n>.done    written after it, once it is whole
 //   inbox/<id>.json    what the node has for the session; read, never changed
 //   receipts/<id>      written once something was handed to the model
 //   stop.json          the turn the node asks to be stopped; read, never changed
+// Active World calls have one indexed proof under `<world>/claude-calls/`.
+// A helper process owns it; normal completion releases it, and the node
+// observes the helper's death for cancellation, unloading and host exit.
 // Which turn took what it handed over is an event of its own, before the
 // end of that turn: the node owes that turn's end to whoever it was from.
 // It uses only on(), $.session.*, $.env.get, $.fs.read/write/list,
-// $.clock.every/after, $.prompt.submit, $.process.run and $.turn.abort.
+// $.clock.every/after, $.prompt.submit, $.process.run/spawn and $.turn.abort.
+// MCP ownership is resolved from $.mcp.connect and $.session.usage at startup.
 // The inbox address identifies native-shell commands, never MCP calls.
 
 const WORLD = __FASTCTX_WORLD__
@@ -640,8 +642,9 @@ async function route($, registry, name, e) {
 }
 
 export function register(on) {
-  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null }
+  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set() }
   on('session.start', async ($, e, next) => {
+    await worldTools($, registry)
     await session($, registry, await $.session.id(), true)
     return next(e)
   })
@@ -657,16 +660,18 @@ export function register(on) {
   })
   on('tool.call', async ($, e, next) => {
     const context = await route($, registry, 'tool.call', e)
-    // Subagents share the session's MCP connections, even though their
-    // presentation events do not belong to its main conversation.
-    if (e.tool.startsWith('mcp__')) {
-      try {
-        await identifyCall($, context, e.tool_use_id)
-      } catch (error) {
-        return { deny: 'The fastctx plugin could not identify this MCP call to the World: ' + error }
-      }
+    if (!registry.worldTools.has(e.tool)) return context.shown.call(reports($, context), e, next)
+    let lease
+    try {
+      lease = await identifyCall($, context, e.tool_use_id)
+    } catch (error) {
+      return { deny: 'The fastctx plugin could not identify this MCP call to the World: ' + error }
     }
-    return context.shown.call(reports($, context), e, next)
+    try {
+      return await context.shown.call(reports($, context), e, next)
+    } finally {
+      await releaseCall($, e.tool_use_id, lease)
+    }
   })
   on('session.append', async ($, e, next) => {
     const context = await route($, registry, 'session.append', e)
@@ -691,6 +696,7 @@ export function register(on) {
     return endSession($, await route($, registry, 'session.end', e), e, next)
   })
   on('classic.SessionStart', async ($, e, next) => {
+    await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
     await transcript($, context, e.transcript_path)
     return next(e)
@@ -699,10 +705,45 @@ export function register(on) {
 
 async function identifyCall($, context, id) {
   if (typeof id !== 'string' || id.length === 0) throw new Error('the MCP call has no tool_use_id to pair with the World')
-  // Encode UTF-16 units exactly as the node does; an id is never a path.
-  let name = ''
-  for (let index = 0; index < id.length; index++) name += id.charCodeAt(index).toString(16).padStart(4, '0')
-  const path = context.dir + '/calls/' + name
-  await $.fs.write(path + '.json', JSON.stringify({ tool_use_id: id, registration: context.registration }))
-  await $.fs.write(path + '.done', '')
+  const stream = $.process.spawn({ argv: [FASTCTX, 'claude-call', 'begin', WORLD, id], input: JSON.stringify(context.registration) })
+  let output = '', errors = ''
+  try {
+    while (true) {
+      const piece = await stream.next()
+      if (piece.done) throw new Error('the call helper exited before registering it: ' + errors)
+      if (piece.value.stream === 'stderr') errors += piece.value.text
+      else output += piece.value.text
+      if (output.includes('\n')) return { stream, owner: JSON.parse(output.trim()) }
+    }
+  } catch (error) {
+    await stream.return()
+    throw error
+  }
+}
+
+async function releaseCall($, id, lease) {
+  try {
+    const result = await $.process.run([FASTCTX, 'claude-call', 'finish', WORLD, id], { stdin: JSON.stringify(lease.owner) })
+    if (result.exitCode !== 0) throw new Error('releasing the World call proof: ' + result.stderr)
+  } finally {
+    // The host also closes this stream on cancellation or module unload,
+    // even when an interrupted hook cannot finish its own cleanup.
+    await lease.stream.return()
+  }
+}
+
+async function worldTools($, registry) {
+  registry.worldTools = new Set()
+  const connected = await $.mcp.connect('fastctx')
+  if (!connected.isConnected) return
+  // Both fields are the host's names. In particular, a deduplicated server
+  // can have an alias whose wire spelling must not be guessed from its name.
+  const usage = await $.session.usage({ breakdown: 'summary' })
+  if (usage.context.breakdown === undefined) throw new Error('the host did not provide its MCP tool ownership map')
+  const owners = new Map()
+  for (const tool of usage.context.breakdown.mcpTools) {
+    if (owners.has(tool.name) && owners.get(tool.name) !== tool.serverName) owners.set(tool.name, null)
+    else if (!owners.has(tool.name)) owners.set(tool.name, tool.serverName)
+  }
+  registry.worldTools = new Set([...owners].filter(([, server]) => server === connected.server).map(([name]) => name))
 }

@@ -250,6 +250,14 @@ async fn taken(
 
 async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
     match call {
+        Call::ClaudeCall { tool_use_id, registration, owner } => {
+            crate::claude::calls::begin(node, tool_use_id, registration, owner)?;
+            Ok(Reply::Done)
+        }
+        Call::ClaudeCallFinished { tool_use_id, owner } => {
+            crate::claude::calls::finish(node, &tool_use_id, &owner)?;
+            Ok(Reply::Done)
+        }
         Call::Arrive { host, hints } => {
             if host.agent.as_str() == "claude" || hints.tool_use_id.is_some() {
                 let id = hints.tool_use_id.as_deref().filter(|id| !id.is_empty()).ok_or_else(|| {

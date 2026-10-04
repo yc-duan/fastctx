@@ -17,6 +17,7 @@
 //! Built against the mod API as measured on Claude Code 2.1.287 and run
 //! against a stand-in host only; it has not yet run with Claude Code.
 
+pub(crate) mod calls;
 mod pairing;
 mod process;
 
@@ -40,6 +41,7 @@ use crate::Node;
 #[derive(Default)]
 pub struct Claude {
     state: Mutex<State>,
+    calls: Mutex<()>,
     /// Held to read while the World starts a session and learns its id;
     /// to write, while a mod registration is assigned to a resident.
     pub births: tokio::sync::RwLock<()>,
@@ -62,6 +64,7 @@ struct Session {
 
 /// Writes the plugin and starts watching the sessions.
 pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
+    calls::recover(node);
     let plugin = claude::write_plugin(node.world.path(), &node.fastctx)?;
     let checking = node.clone();
     tokio::task::spawn_blocking(move || check_plugin(&checking, &plugin));

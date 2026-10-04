@@ -27,7 +27,7 @@ pub fn sessions(world: &Path) -> PathBuf {
 }
 
 /// What the mod says of its session when it starts.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Registration {
     pub session: String,
     /// One activation of this session's mod, retained across node restarts.
