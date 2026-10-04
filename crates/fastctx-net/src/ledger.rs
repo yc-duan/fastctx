@@ -44,6 +44,11 @@ pub fn open(signed: &Signed, world: &WorldId, table: &Table) -> Result<Entry, St
         return Err(format!("a ledger entry for the World {}", claimed.world));
     }
     let key = match (table.get(&claimed.author), table.revoked(&claimed.author)) {
+        // A device writes nothing in the ledger: what the user writes from
+        // one, a machine's node writes for them.
+        (Some(member), _) if !member.kind.is_machine() => {
+            return Err(format!("{} is a device, and a device writes nothing in the ledger", claimed.author));
+        }
         (Some(member), _) => member.key,
         (None, Some(revocation)) if claimed.at < revocation.at => revocation.key,
         (None, Some(_)) => return Err(format!("{} wrote this after it was revoked", claimed.author)),

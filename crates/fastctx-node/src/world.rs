@@ -170,7 +170,9 @@ impl fastctx_net::link::Node for Handler {
                 return Err(Failure::new("the node is stopping"));
             };
             let machine = node.machine();
+            crate::devices::admit(&node, &from, &call)?;
             match call {
+                RemoteCall::Relay { made } => crate::devices::relay(&node, &from, made).await,
                 RemoteCall::Run { resident, town, request } => {
                     let owner = Address { machine: from, resident };
                     let (reply, _) = node.jobs.run(&node, owner, town, request).await?;
@@ -256,6 +258,9 @@ impl fastctx_net::link::Node for Handler {
             let Some(node) = node else {
                 return Err(io::Error::other("the node is stopping"));
             };
+            if crate::devices::is_device(&node, &from) {
+                return Ok(Err(format!("{from} is a device, and a device sends no letters")));
+            }
             let (letter, delivery_id) = match letter {
                 Letter::Fragment { id, index, total, text } => {
                     match crate::letters::receive(&node, &from, &id, index, total, &text)? {

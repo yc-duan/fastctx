@@ -84,7 +84,7 @@ pub async fn query(node: &Arc<Node>, machine: Option<MachineName>) -> Result<Wor
         let (table, presence) = link.members();
         let names: Vec<_> = match &machine {
             Some(name) => vec![name.clone()],
-            None => table.members().filter(|member| member.name != here).map(|member| member.name.clone()).collect(),
+            None => table.machines().filter(|member| member.name != here).map(|member| member.name.clone()).collect(),
         };
         for name in names {
             if let Err(error) = &refreshed {
@@ -94,7 +94,7 @@ pub async fn query(node: &Arc<Node>, machine: Option<MachineName>) -> Result<Wor
                 });
                 continue;
             }
-            if !table.members().any(|member| member.name == name) {
+            if !table.machines().any(|member| member.name == name) {
                 return Err(Failure::new(format!("no machine {name} belongs to this World")));
             }
             match presence.iter().find(|seen| seen.name == name) {

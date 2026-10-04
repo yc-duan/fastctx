@@ -248,7 +248,7 @@ async fn taken(
     Ok(Reply::Done)
 }
 
-async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
+pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
     match call {
         Call::Arrive { host, hints } => {
             if host.agent.as_str() == "claude" || hints.tool_use_id.is_some() {
@@ -521,7 +521,7 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
         let (table, presence) = link.members();
         let me = link.membership().name.clone();
         let mut asks = Vec::new();
-        for member in table.members().filter(|member| member.name != me && asks_for(&member.name)) {
+        for member in table.machines().filter(|member| member.name != me && asks_for(&member.name)) {
             if let Err(error) = &refreshed {
                 machines.push(MachineWho::NoAnswer {
                     machine: member.name.clone(),
@@ -574,6 +574,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
         since: None,
         facts: Ok(crate::world::facts(&here)),
         revoked: None,
+        device: false,
     }];
     if let Some(link) = &link {
         let refreshed = link.refresh().await;
@@ -581,13 +582,18 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
         let mut asks = Vec::new();
         for member in table.members().filter(|member| member.name != here) {
             let seen = presence.iter().find(|presence| presence.name == member.name).cloned();
+            let device = !member.kind.is_machine();
             let (online, since) =
                 seen.as_ref().map(|presence| (Some(presence.online), presence.since)).unwrap_or((None, None));
             let online = if refreshed.is_ok() { online } else { None };
             let (link, name) = (link.clone(), member.name.clone());
             let unknown = refreshed.as_ref().err().cloned();
             asks.push(tokio::spawn(async move {
-                let facts = if online == Some(true) {
+                // A device is listed as such and never asked: nothing runs
+                // on it that could answer.
+                let facts = if device {
+                    Err("a device".to_string())
+                } else if online == Some(true) {
                     match link.call(&name, RemoteCall::Facts).await {
                         Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts),
                         Ok(Ok(_)) => Err("it answered something else".to_string()),
@@ -602,7 +608,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                         None => "the hub did not say whether it is connected".to_string(),
                     })
                 };
-                NodeView { name, online, since, facts, revoked: None }
+                NodeView { name, online, since, facts, revoked: None, device }
             }));
         }
         for (name, revocation) in table.revoked_members() {
@@ -611,6 +617,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                 online: None,
                 since: None,
                 facts: Err("revoked".to_string()),
+                device: false,
                 revoked: Some(Revoked {
                     by: revocation.by.clone(),
                     at: revocation.at,

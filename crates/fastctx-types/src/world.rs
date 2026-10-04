@@ -92,6 +92,10 @@ pub struct Node {
     pub facts: Result<MachineFacts, String>,
     /// Set when the machine's key is revoked: no machine trusts it.
     pub revoked: Option<Revoked>,
+    /// A device, such as a phone: a member nothing runs on, which the
+    /// World does not ask or work on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub device: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

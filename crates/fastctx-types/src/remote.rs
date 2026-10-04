@@ -68,6 +68,12 @@ pub enum RemoteCall {
     /// the files the receiver asks for. `to` ends in a separator to copy
     /// into that directory.
     CopyReceive { to: String, manifest_bytes: u64, manifest_sha256: String },
+    /// A device's call that asks of the whole World (who is in it, what
+    /// happened since, its projects), made by this machine's node for the
+    /// user holding the device, as for a user at this machine. `made` is a
+    /// local `Call`, as JSON; what a device asks of one resident it asks of
+    /// that resident's machine itself.
+    Relay { made: serde_json::Value },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +113,10 @@ pub enum RemoteReply {
     Copied(CopyReport),
     Canon {
         heads: Vec<CanonHead>,
+    },
+    /// The answer to a relayed call: the local `Reply`, as JSON.
+    Relayed {
+        answer: serde_json::Value,
     },
 }
 

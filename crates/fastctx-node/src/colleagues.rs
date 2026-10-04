@@ -339,7 +339,7 @@ pub async fn find(node: &Arc<Node>, to: &ResidentId) -> Result<MachineName, Fail
     let (table, presence) = link.members();
     let mut asks = Vec::new();
     let mut offline = Vec::new();
-    for member in table.members().filter(|member| member.name != here) {
+    for member in table.machines().filter(|member| member.name != here) {
         if presence.iter().any(|presence| presence.name == member.name && presence.online) {
             let (link, name, to) = (link.clone(), member.name.clone(), to.clone());
             asks.push(tokio::spawn(async move {

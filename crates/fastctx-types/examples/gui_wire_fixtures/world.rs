@@ -194,6 +194,7 @@ fn nodes() -> Vec<NodesReply> {
                     online: Some(true),
                     since: Some(at()),
                     revoked: None,
+                    device: false,
                     facts: Ok(MachineFacts {
                         name: machine(),
                         os: "windows".into(),
@@ -210,6 +211,7 @@ fn nodes() -> Vec<NodesReply> {
                     online: None,
                     since: None,
                     revoked: None,
+                    device: true,
                     facts: Ok(MachineFacts {
                         name: "lab".parse().unwrap(),
                         os: "linux".into(),
@@ -227,6 +229,7 @@ fn nodes() -> Vec<NodesReply> {
                     since: Some(at()),
                     facts: Err("offline".into()),
                     revoked: Some(Revoked { by: machine(), at: at(), reason: "retired".into() }),
+                    device: false,
                 },
             ],
         })

@@ -18,6 +18,7 @@ mod control;
 mod copy;
 mod delivery;
 mod desk;
+mod devices;
 pub mod handoff;
 mod inbox;
 mod jobs;

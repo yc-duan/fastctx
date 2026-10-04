@@ -140,13 +140,14 @@ async fn checked(node: &Arc<Node>, mut record: Record) -> Result<Record, Failure
     Ok(record)
 }
 
-/// The machines of the World as this machine knows them now.
+/// The machines of the World as this machine knows them now; a device is
+/// never one of a town's machines.
 async fn machines(node: &Arc<Node>) -> Vec<MachineName> {
     match node.link() {
         Some(link) => {
             // Asked afresh, or as last heard when the hub cannot be asked.
             let _ = link.refresh().await;
-            link.members().0.members().map(|member| member.name.clone()).collect()
+            link.members().0.machines().map(|member| member.name.clone()).collect()
         }
         None => vec![node.machine()],
     }
