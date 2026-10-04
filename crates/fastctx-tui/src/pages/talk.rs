@@ -341,7 +341,7 @@ impl TalkPage {
             look,
         );
 
-        // The place to type, at the bottom: a rounded box, `>` before the
+        // The place to type, at the bottom: a rounded box, `❯` before the
         // first line, the keys right under it.
         let bottom = column.height.saturating_sub(1);
         let footer = at(bottom.saturating_sub(1));
@@ -372,7 +372,7 @@ impl TalkPage {
             layout.write_line(buffer, Rect::new(left, y, 1, 1), &Line::styled("│", border));
             layout.write_line(buffer, Rect::new(left + outer - 1, y, 1, 1), &Line::styled("│", border));
         }
-        layout.write_line(buffer, Rect::new(left + 2, box_top + 1, 1, 1), &Line::styled(">", look.text(Role::Muted)));
+        layout.write_line(buffer, Rect::new(left + 2, box_top + 1, 1, 1), &Line::styled("❯", look.text(Role::Muted)));
         for (row, line) in lines.iter().skip(first_shown).take(shown).enumerate() {
             paint::line(
                 buffer,

@@ -243,7 +243,7 @@ impl Transcript {
     }
 
     /// The conversation laid out in `width` cells. The words that went in
-    /// sit behind `>` on a band; what the agent writes sits on the ground
+    /// sit behind `❯` on a band; what the agent writes sits on the ground
     /// unmarked; the tools it uses in a row form one group, a line each,
     /// with a bar on the left whose colour says how each went. A blank line
     /// comes before each block. A turn that completed says nothing more;
@@ -339,7 +339,7 @@ fn blank(out: &mut Vec<Line<'static>>) {
 
 /// The bar before a tool's row.
 const BAR: &str = "▎";
-/// The words that went in start this far in, after `>`.
+/// The words that went in start this far in, after `❯`.
 const MARGIN: usize = 2;
 
 /// `lines` behind `mark`: the mark and a space before the first, as much
@@ -356,20 +356,26 @@ fn behind(mark: Span<'static>, lines: Vec<Line<'static>>) -> Vec<Line<'static>> 
         .collect()
 }
 
-/// Words that went in, behind `>` on a band across the column; without a
-/// colour for the band, behind `>` alone.
+/// Words that went in, behind a quieter `❯` on a band across the column;
+/// without a colour for the band, behind `❯` alone.
 fn said(ctx: &Ctx, words: &str, width: usize) -> Vec<Line<'static>> {
     let look = &ctx.look;
     let banded = look.color(Role::Bubble).is_some();
     let style = if banded { look.bubble() } else { look.text(Role::Text) };
+    let mark = match look.color(Role::Muted) {
+        Some(muted) => style.fg(muted),
+        None => style,
+    };
     let lines = text::wrap_plain(words, style, width.saturating_sub(MARGIN));
-    let mut out = behind(Span::styled(">", style), lines);
+    let mut out = behind(Span::styled("❯", mark), lines);
     if banded {
         for line in &mut out {
             let used = text::line_width(line);
             line.spans.push(Span::styled(" ".repeat(width.saturating_sub(used)), style));
             for span in &mut line.spans {
-                span.style = span.style.patch(style);
+                if span.style.bg.is_none() {
+                    span.style.bg = style.bg;
+                }
             }
         }
     }
