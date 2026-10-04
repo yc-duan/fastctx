@@ -612,3 +612,155 @@
   width: 7px;
   height: 7px;
 }
+
+/* What is attached to the words: a row of small cards above them, each
+   with its picture or its kind, its name and how it is going. */
+.attach-tray {
+  list-style: none;
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2) calc(-1 * var(--space-1));
+  padding: 2px 2px var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.attach-tray[hidden] {
+  display: none;
+}
+
+.attach-item {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 240px;
+  height: 48px;
+  padding: 4px 30px 4px 4px;
+  border-radius: var(--radius-m);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  overflow: hidden;
+}
+
+.attach-item.failed {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wrong) 60%, transparent);
+}
+
+.attach-thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-s);
+  object-fit: cover;
+}
+
+.attach-glyph {
+  display: grid;
+  place-items: center;
+  background: var(--hairline);
+  color: var(--text-2);
+}
+
+.attach-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text);
+}
+
+.attach-fact {
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attach-fact.wrong {
+  color: var(--wrong);
+}
+
+.attach-act {
+  flex: none;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.attach-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  color: var(--text-3);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.attach-remove:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.attach-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 0;
+  background: var(--accent);
+  transition: width var(--hover) linear;
+}
+
+.composer-attach {
+  width: 30px;
+  height: 30px;
+  color: var(--text-2);
+}
+
+.composer-attach[hidden],
+.composer-pick {
+  display: none;
+}
+
+/* A drop over the page: one plain card saying where it goes. */
+.drop-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  pointer-events: none;
+}
+
+.drop-veil[hidden] {
+  display: none;
+}
+
+.drop-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop), 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--text);
+}
+
+.drop-card .glyph {
+  color: var(--accent);
+}

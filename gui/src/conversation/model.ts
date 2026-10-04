@@ -16,8 +16,16 @@ export type SendState =
   | { state: "landed"; how: string; machine: MachineName; why?: string | null }
   | { state: "failed"; why: string };
 
+/** Something the user attached to their words, as it is shown with them. */
+export interface ShownAttachment {
+  name: string;
+  size: number | null;
+  image: boolean;
+  preview: string | null;
+}
+
 export type Entry =
-  | { kind: "heard"; key: string; from: Speaker | null; text: string; turn: string | null; sending?: SendState }
+  | { kind: "heard"; key: string; from: Speaker | null; text: string; turn: string | null; sending?: SendState; attached?: ShownAttachment[] }
   | {
       kind: "prose";
       key: string;
@@ -307,7 +315,7 @@ export class Conversation {
   }
 
   /** Words the user is sending, shown at once; returns their key. */
-  sending(text: string, here: MachineName | null): string {
+  sending(text: string, here: MachineName | null, attached: ShownAttachment[] = []): string {
     const key = this.key("heard");
     this.entries.push({
       kind: "heard",
@@ -316,6 +324,7 @@ export class Conversation {
       text,
       turn: null,
       sending: { state: "going" },
+      ...(attached.length ? { attached } : {}),
     });
     return key;
   }

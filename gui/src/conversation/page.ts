@@ -5,7 +5,9 @@
 import type { ComposerWords } from "../app/words";
 import type { Words } from "../words";
 import type { Control, Controlled, ModelOffer, Offers } from "../world/control";
+import type { JsonValue } from "../world/wire";
 import type { ResidentDetail, ResidentNow } from "../world/world";
+import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { Menu, commandRow, commandsOf, modelRow, type MenuCommand } from "./commands";
 import type { Details } from "./details";
 import { glyph } from "./glyphs";
@@ -53,8 +55,16 @@ export interface PageOptions {
   };
   /** Where the words being written are kept between visits. */
   draftKey?: string;
-  /** Sends the user's words; resolves once they are on their way. */
-  send(text: string): void;
+  /** Attaching files to the words, where the World can carry them. */
+  attach?: {
+    words: AttachWords;
+    seam: AttachSeam;
+    /** Files dropped onto the window, by path, where the shell gives
+     *  them so; returns how to stop listening. */
+    drops?(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void;
+  };
+  /** Sends the user's words, and what arrived of what was attached. */
+  send(text: string, attached: { refs: JsonValue[]; shown: Attached[] }): void;
   stop(): void;
 }
 
@@ -106,9 +116,10 @@ export class ConversationPage {
         <ul class="running" hidden></ul>
         <form class="composer">
           <div class="composer-menus"></div>
+          <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="composer-chip" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="composer-chip" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <span class="composer-context"></span>
             <button class="composer-action" type="submit"></button>
@@ -142,6 +153,7 @@ export class ConversationPage {
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus(options.controls);
+    if (options.attach) this.attaching(options.attach);
     const controls = options.controls;
     this.view = new ConversationView(main, options.conversation, {
       words,
@@ -186,13 +198,26 @@ export class ConversationPage {
     });
     // Whatever grows after it is drawn (fonts, formulas, diagrams, a card
     // being answered) keeps the newest in view while the reader follows.
-    new ResizeObserver(() => {
+    // The region itself shrinks when the composer grows (an attachment, a
+    // longer draft): the same holds.
+    const keep = new ResizeObserver(() => {
       if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-    }).observe(main);
+    });
+    keep.observe(main);
+    keep.observe(this.scroller);
+    // Only a scroll the reader made says whether they still follow: one
+    // that comes with the region or its content changing size (the
+    // browser keeping the view anchored) does not.
+    let sized = { client: 0, content: 0 };
     this.scroller.addEventListener("scroll", () => {
       const { scrollTop, clientHeight, scrollHeight } = this.scroller;
-      this.following = scrollTop + clientHeight >= scrollHeight - 48;
       this.element.classList.toggle("scrolled", scrollTop > 0);
+      if (clientHeight !== sized.client || scrollHeight !== sized.content) {
+        sized = { client: clientHeight, content: scrollHeight };
+        if (this.following) this.scroller.scrollTop = scrollHeight;
+        return;
+      }
+      this.following = scrollTop + clientHeight >= scrollHeight - 48;
     });
   }
 
@@ -217,6 +242,7 @@ export class ConversationPage {
     clearTimeout(this.looking);
     this.looking = -1;
     document.removeEventListener("keydown", this.findKey);
+    this.stopDrops?.();
   }
 
   private toggleDetails(open: boolean): void {
@@ -245,7 +271,12 @@ export class ConversationPage {
 
   private submit(): void {
     const text = this.input.value.trim();
-    if (!text) {
+    if (this.tray?.sending) {
+      this.say(this.options.attach!.words.wait);
+      return;
+    }
+    const attached = this.tray?.count ? this.tray.take() : { refs: [], shown: [] };
+    if (!text && !attached.refs.length) {
       if (this.options.conversation.moving()) this.options.stop();
       return;
     }
@@ -266,7 +297,7 @@ export class ConversationPage {
     }
     this.clear();
     this.following = true;
-    this.options.send(text);
+    this.options.send(text, attached);
   }
 
   private clear(): void {
@@ -344,6 +375,72 @@ export class ConversationPage {
   }
 
   private chosenModel: string | null = null;
+  private tray: AttachTray | null = null;
+  private stopDrops: (() => void) | null = null;
+
+  /** Files come with the words: picked with the paperclip, pasted, or
+   *  dropped anywhere on the page. */
+  private attaching(attach: NonNullable<PageOptions["attach"]>): void {
+    const tray = new AttachTray(attach.words, attach.seam, () => this.drawAction());
+    this.tray = tray;
+    this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
+    const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
+    const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;
+    button.hidden = false;
+    button.innerHTML = glyph("attach", 18);
+    button.setAttribute("aria-label", attach.words.attach);
+    button.title = attach.words.attach;
+    button.addEventListener("click", () => pick.click());
+    pick.addEventListener("change", () => {
+      if (pick.files) tray.addFiles(pick.files);
+      pick.value = "";
+      this.input.focus();
+    });
+    this.input.addEventListener("paste", (event) => {
+      const files = [...(event.clipboardData?.files ?? [])];
+      if (!files.length) return;
+      // Pasted files are attached; pasted words still go into the words.
+      if (!event.clipboardData?.getData("text/plain")) event.preventDefault();
+      tray.addFiles(files);
+    });
+    const veil = document.createElement("div");
+    veil.className = "drop-veil";
+    veil.hidden = true;
+    veil.innerHTML = `<div class="drop-card">${glyph("attach", 22)}<span>${escape(attach.words.drop(this.options.someone.agent))}</span></div>`;
+    this.element.append(veil);
+    // In a browser, files dragged over the page; in the shell, the window
+    // takes the drop and gives their paths.
+    let depth = 0;
+    this.element.addEventListener("dragenter", (event) => {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      depth += 1;
+      veil.hidden = false;
+    });
+    this.element.addEventListener("dragleave", () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) veil.hidden = true;
+    });
+    this.element.addEventListener("dragover", (event) => {
+      if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+    });
+    this.element.addEventListener("drop", (event) => {
+      depth = 0;
+      veil.hidden = true;
+      if (!event.dataTransfer?.files.length) return;
+      event.preventDefault();
+      tray.addFiles(event.dataTransfer.files);
+    });
+    this.stopDrops =
+      attach.drops?.({
+        over: (over) => {
+          if (this.element.isConnected) veil.hidden = !over;
+        },
+        dropped: (paths) => {
+          veil.hidden = true;
+          if (this.element.isConnected) tray.addPaths(paths);
+        },
+      }) ?? null;
+  }
 
   private async askOffers(): Promise<void> {
     const controls = this.options.controls;
@@ -495,7 +592,7 @@ export class ConversationPage {
 
   private drawAction(): void {
     const { words, conversation } = this.options;
-    const typed = this.input.value.trim() !== "";
+    const typed = this.input.value.trim() !== "" || (this.tray?.count ?? 0) > 0;
     const stop = !typed && conversation.moving();
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
     this.action.setAttribute("aria-label", stop ? words.stop : words.send);

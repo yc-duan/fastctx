@@ -9,7 +9,7 @@ import type { JsonValue } from "../world/wire";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
-import type { Activity, Block, Conversation, Entry, SendState } from "./model";
+import type { Activity, Block, Conversation, Entry, SendState, ShownAttachment } from "./model";
 import { escape, plain, render } from "./prose";
 import { numbered, parse, renderRows } from "./diff";
 import { groupHeading, headline, tenseOf } from "./tool";
@@ -113,7 +113,7 @@ export class ConversationView {
       case "tool":
         return `${entry.key}t${entry.tool.status}${entry.ended?.use ?? "-"}${entry.tool.output.length}`;
       case "heard":
-        return `${entry.key}h${JSON.stringify(entry.sending ?? null)}`;
+        return `${entry.key}h${JSON.stringify(entry.sending ?? null)}${entry.attached?.length ?? 0}`;
       case "steps":
         return `${entry.key}s${JSON.stringify(entry.steps)}${entry.note ?? ""}`;
       case "ask":
@@ -142,7 +142,7 @@ export class ConversationView {
     const { words } = this.context;
     switch (entry.kind) {
       case "heard":
-        return this.heard(entry.from, entry.text, entry.sending ?? null);
+        return this.attached(entry.attached ?? []) + this.heard(entry.from, entry.text, entry.sending ?? null);
       case "prose":
         if (entry.prose === "plan") {
           return `<div class="plan"><div class="plan-label">${escape(words.plan)}</div><div class="prose">${render(entry.text)}</div></div>`;
@@ -176,6 +176,18 @@ export class ConversationView {
       case "activity":
         return "";
     }
+  }
+
+  /** What the user attached to their words, above them. */
+  private attached(items: ShownAttachment[]): string {
+    if (!items.length) return "";
+    return `<ul class="bubble-attached">${items
+      .map((item) =>
+        item.preview
+          ? `<li class="bubble-picture"><img src="${escape(item.preview)}" alt="${escape(item.name)}" title="${escape(item.name)}"></li>`
+          : `<li class="bubble-file">${glyph(item.image ? "image" : "file", 16)}<span>${escape(item.name)}</span></li>`,
+      )
+      .join("")}</ul>`;
   }
 
   /** A request as its card: what it asks, and the answers it takes. */

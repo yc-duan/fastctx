@@ -1287,3 +1287,43 @@
   background-color: color-mix(in srgb, var(--accent) 45%, transparent);
   color: var(--text-strong);
 }
+
+/* What the user attached, above their words. */
+.bubble-attached {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  max-width: min(85%, calc(var(--body-size) * 36));
+  margin: 0 0 var(--space-2);
+  padding: 0;
+}
+
+.bubble-picture img {
+  display: block;
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: var(--radius-m);
+  object-fit: cover;
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+.bubble-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 260px;
+  padding: 6px 12px;
+  border-radius: var(--radius-m);
+  background: var(--bubble);
+  color: var(--on-bubble);
+  font-size: var(--size-small);
+}
+
+.bubble-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -3,7 +3,7 @@
 
 import type { Glyph } from "./tool";
 
-type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "stop" | "send" | Frame;
+type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "stop" | "send" | "attach" | "file" | Frame;
 
 /** The frame's own glyphs: the sidebar, new conversations, settings. */
 type Frame = "menu" | "plus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back";
@@ -33,6 +33,8 @@ const paths: Record<Named, string> = {
   expand: '<path d="M11.5 4.5h4v4M8.5 15.5h-4v-4M15.5 4.5L11 9M4.5 15.5L9 11"/>',
   stop: '<rect x="6" y="6" width="8" height="8" rx="1.5" fill="currentColor" stroke="none"/>',
   send: '<path d="M10 15.5v-11M5.5 9L10 4.5 14.5 9"/>',
+  attach: '<path d="M14.2 9.6l-4.6 4.6a3.1 3.1 0 0 1-4.4-4.4l5.3-5.3a2.1 2.1 0 0 1 3 3l-5.2 5.2a1 1 0 0 1-1.5-1.5l4.6-4.6"/>',
+  file: '<path d="M5.5 3.5h5.5l3.5 3.5v8.5a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z"/><path d="M11 3.5v3.5h3.5"/>',
 };
 
 export function glyph(name: keyof typeof paths, size = 20): string {

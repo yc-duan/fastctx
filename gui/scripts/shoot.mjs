@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find", "attach"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -125,10 +125,15 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" || session === "palette" ? "home" : session === "about" || session === "slash" || session === "find" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
+      const shown = session === "drawer" || session === "palette" ? "home" : session === "about" || session === "slash" || session === "find" || session === "attach" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
       const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
       await send("Page.navigate", { url: `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}` });
       await loaded;
+      // The interface loads after the engine check: wait until it is there.
+      await send("Runtime.evaluate", {
+        awaitPromise: true,
+        expression: "new Promise((r) => { const look = () => (document.querySelector('.shell') ? r(true) : setTimeout(look, 30)); look(); })",
+      });
       if (session === "drawer") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.menu-button')?.click()" });
       }
@@ -144,6 +149,37 @@ for (const session of sessions) {
         await send("Runtime.evaluate", {
           expression: "(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true })); const i = document.querySelector('.find-input'); i.value = 'commit'; i.dispatchEvent(new Event('input')); })()",
         });
+      }
+      if (session === "attach") {
+        // Files made in the page and dropped on it: two arrive and go with
+        // words, then one more is still on its way.
+        const made = await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `(async () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = 320; canvas.height = 200;
+            const g = canvas.getContext("2d");
+            const grad = g.createLinearGradient(0, 0, 320, 200);
+            grad.addColorStop(0, "#d97757"); grad.addColorStop(1, "#7fa8cf");
+            g.fillStyle = grad; g.fillRect(0, 0, 320, 200);
+            const png = await new Promise((r) => canvas.toBlob(r, "image/png"));
+            const drop = (files) => {
+              const dt = new DataTransfer();
+              for (const f of files) dt.items.add(f);
+              document.querySelector(".conversation-page").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+            };
+            drop([new File([png], "step-response.png", { type: "image/png" }), new File(["x".repeat(48000)], "train.log", { type: "text/plain" })]);
+            await new Promise((r) => setTimeout(r, 1600));
+            const t = document.querySelector(".composer textarea");
+            t.value = "看看这张图和这份日志，step_response 为什么停在 0.96？";
+            t.dispatchEvent(new Event("input"));
+            document.querySelector(".composer-action").click();
+            drop([new File(["y".repeat(9000000)], "capture.pcap", { type: "application/octet-stream" }), new File([png], "截图 2026-10-04.png", { type: "image/png" })]);
+            await new Promise((r) => setTimeout(r, 300));
+            await new Promise((r) => setTimeout(r, 1500));
+          })()`,
+        });
+        if (made.exceptionDetails) problems.push(`attach: ${made.exceptionDetails.exception?.description ?? made.exceptionDetails.text}`);
       }
       if (session === "new-codex") {
         await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=agent][data-value=codex]')?.click())", awaitPromise: true });

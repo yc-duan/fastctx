@@ -404,6 +404,25 @@ function specimenTalk(address: Address): Page {
       forked: () => {},
       open: openOutside,
     },
+    // A specimen carries nothing anywhere: an attachment arrives after a
+    // moment, so the tray can be looked at.
+    attach: {
+      words: composerWords.attach,
+      seam: {
+        upload: (source, name, progress) =>
+          new Promise((resolve) => {
+            const size = source.kind === "bytes" ? source.file.size : 0;
+            let sent = 0;
+            const step = () => {
+              sent = Math.min(size, sent + Math.max(1, size / 8));
+              progress(sent);
+              if (sent >= size) resolve({ specimen: name });
+              else setTimeout(step, 120);
+            };
+            step();
+          }),
+      },
+    },
     draftKey: `draft:${address.resident}@${address.machine}`,
     details: detailsOf(address, async () =>
       known
@@ -419,8 +438,12 @@ function specimenTalk(address: Address): Page {
         : null,
       exported(conversation, { agent: sample.agent === "claude" ? "Claude" : "Codex", machine: sample.machine, model: sample.model, town: sample.town }),
     ),
-    send(text) {
-      conversation.sending(text, sample.here);
+    send(text, attached) {
+      conversation.sending(
+        text,
+        sample.here,
+        attached.shown.map(({ name, size, image, preview }) => ({ name, size, image, preview })),
+      );
       page.update();
     },
     stop() {},

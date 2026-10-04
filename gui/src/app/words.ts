@@ -2,6 +2,7 @@
 // the settings. In the user's words (`world-gui.md`, 用词).
 
 import type { AskWords } from "../conversation/asks";
+import { sizeOf, type AttachWords } from "../conversation/attach";
 
 export interface ShellWords {
   app: string;
@@ -741,6 +742,7 @@ export const enWelcome: WelcomeWords = {
 
 export interface ComposerWords {
   asks: AskWords;
+  attach: AttachWords;
   commands: {
     world: string;
     compact: string;
@@ -762,6 +764,16 @@ export interface ComposerWords {
 }
 
 export const zhComposer: ComposerWords = {
+  attach: {
+    attach: "附上文件",
+    drop: (agent) => `放下，就附给 ${agent}`,
+    remove: "拿掉",
+    sending: "正在送过去…",
+    failed: (why) => `没送过去：${why}`,
+    retry: "再试一次",
+    size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
+    wait: "附上的文件还在送，送到了再发",
+  },
   asks: {
     waiting: "在等你回答",
     command: (machine) => `想在 ${machine} 上跑一条命令`,
@@ -834,6 +846,16 @@ export const zhComposer: ComposerWords = {
 };
 
 export const enComposer: ComposerWords = {
+  attach: {
+    attach: "Attach files",
+    drop: (agent) => `Drop to attach for ${agent}`,
+    remove: "Remove",
+    sending: "Sending…",
+    failed: (why) => `Not sent: ${why}`,
+    retry: "Try again",
+    size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
+    wait: "Attachments are still on their way; send when they arrive",
+  },
   asks: {
     waiting: "Waiting for you",
     command: (machine) => `Wants to run a command on ${machine}`,
