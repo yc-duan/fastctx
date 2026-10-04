@@ -11,24 +11,36 @@ use tokio::sync::mpsc;
 
 #[derive(Default)]
 pub struct Watchers {
-    watching: Mutex<HashMap<ResidentId, Vec<mpsc::UnboundedSender<SessionEvent>>>>,
+    watching: Mutex<HashMap<ResidentId, Watching>>,
+}
+
+#[derive(Default)]
+struct Watching {
+    senders: Vec<mpsc::UnboundedSender<SessionEvent>>,
+    live: crate::session_live::Live,
 }
 
 impl Watchers {
     /// Everything that happens in the resident's session from now on.
     pub fn watch(&self, id: &ResidentId) -> mpsc::UnboundedReceiver<SessionEvent> {
         let (sender, receiver) = mpsc::unbounded_channel();
-        self.watching.lock().expect("never poisoned").entry(id.clone()).or_default().push(sender);
+        let mut watching = self.watching.lock().expect("never poisoned");
+        let session = watching.entry(id.clone()).or_default();
+        for snapshot in session.live.snapshots() {
+            sender.send(snapshot.clone()).expect("receiver is still here");
+        }
+        session.senders.push(sender);
         receiver
     }
 
     pub fn publish(&self, id: &ResidentId, event: &SessionEvent) {
         let mut watching = self.watching.lock().expect("never poisoned");
-        if let Some(watchers) = watching.get_mut(id) {
-            watchers.retain(|watcher| watcher.send(event.clone()).is_ok());
-            if watchers.is_empty() {
-                watching.remove(id);
-            }
+        let session = watching.entry(id.clone()).or_default();
+        if session.live.observe(event) {
+            session.senders.retain(|watcher| watcher.send(event.clone()).is_ok());
+        }
+        if session.senders.is_empty() && session.live.snapshots().next().is_none() {
+            watching.remove(id);
         }
     }
 }

@@ -426,7 +426,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     let event =
         |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
     let turn = "t-1".to_string();
-    let item = |id: &str, what: What| Item { id: id.into(), what };
+    let item = |id: &str, what: What| Item { id: id.into(), started_at: None, detail: None, what };
     let used = |seconds: i64, id: &str, what: What| {
         let running = matches!(&what, What::Tool(tool) if tool.status == ToolStatus::Running);
         let mut events = vec![event(seconds, Happened::Began { turn: turn.clone(), item: item(id, what.clone()) })];
@@ -440,6 +440,9 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
             .iter()
             .enumerate()
             .map(|(index, text)| Step {
+                id: None,
+                active_form: None,
+                detail: None,
                 text: (*text).into(),
                 status: match index.cmp(&doing) {
                     std::cmp::Ordering::Less => StepStatus::Done,
@@ -457,7 +460,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
             from: Some(Speaker::Resident { address: address("claude-2b1c", "desktop") }),
             text: "Port the PID loop in D:/work/mark50/src/ctrl/pid.rs to fixed-point. The board has no FPU; keep the sampling period as it is.".into(),
         }),
-        event(860, Happened::Finished { turn: "t-0".into(), item: Item { id: "m0".into(), what: What::Message { text: "I'll read the loop and the board's timing first.".into() } } }),
+        event(860, Happened::Finished { turn: "t-0".into(), item: Item { id: "m0".into(), started_at: None, detail: None, what: What::Message { text: "I'll read the loop and the board's timing first.".into() } } }),
         event(600, Happened::TurnEnded { turn: "t-0".into(), end: TurnEnd { how: TurnHow::Completed, reason: None, duration_ms: Some(300_000), last_message: None } }),
         event(240, Happened::TurnStarted { turn: turn.clone() }),
         event(240, Happened::Heard { delivery: None, turn: Some(turn.clone()), from: Some(Speaker::User { machine: machine("desktop") }), text: "先别动采样周期，积分项用 Q8.24 试试看，跑一下 step 那组测试。".into() }),
@@ -573,6 +576,8 @@ fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
         |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
     let turn = "t-2".to_string();
     let tested = Item {
+        started_at: None,
+        detail: None,
         id: "c1".into(),
         what: world_tool("run", command("cargo test --workspace", Some(0), None), ToolStatus::Done, None),
     };
@@ -593,7 +598,12 @@ fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
             320,
             Happened::Finished {
                 turn: turn.clone(),
-                item: Item { id: "m3".into(), what: What::Message { text: answer.into() } },
+                item: Item {
+                    id: "m3".into(),
+                    started_at: None,
+                    detail: None,
+                    what: What::Message { text: answer.into() },
+                },
             },
         ),
         event(

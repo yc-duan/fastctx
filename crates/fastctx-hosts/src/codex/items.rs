@@ -138,7 +138,7 @@ pub fn read(item: &Value) -> Read {
             .done(),
         other => What::Other { host_kind: other.to_string() },
     };
-    Read::Item(Item { id, what })
+    Read::Item(Item { id, started_at: None, detail: None, what })
 }
 
 /// A tool item being read.

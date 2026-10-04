@@ -170,7 +170,7 @@ pub async fn watch_here(
 /// cut short. Words the World sent are told by its own record, which knows
 /// who said them; the host's copy of them carries the World's head note.
 fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Vec<SessionEvent> {
-    use fastctx_types::session::{Happened, Item, What};
+    use fastctx_types::session::Happened;
     let mut history: Vec<SessionEvent> = Vec::new();
     for event in hosted.into_iter().flatten() {
         let told = match &event.happened {
@@ -188,21 +188,9 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Ve
         }
     }
     history.extend(recorded);
-    // A turn whose end is known while its last message is not, as when its
-    // end was recovered after a restart, shows that message as it ended.
-    let finals: Vec<SessionEvent> = history
-        .iter()
-        .filter_map(|event| {
-            let Happened::TurnEnded { turn, end } = &event.happened else { return None };
-            let text = end.last_message.as_ref()?;
-            let said = history.iter().any(|other| {
-                matches!(&other.happened, Happened::Finished { turn: t, item: Item { what: What::Message { text: words }, .. } } if t == turn && words == text)
-            });
-            let item = Item { id: format!("{turn}-final"), what: What::Message { text: text.clone() } };
-            (!said).then(|| SessionEvent { at: event.at, happened: Happened::Finished { turn: turn.clone(), item } })
-        })
-        .collect();
-    history.extend(finals);
+    // Filter old records too. A turn's last_message is a host summary for
+    // its requester, not another transcript item with a fabricated identity.
+    history.retain(|event| event.happened.kept());
     // The host's record keeps times in whole seconds, the World's to the
     // microsecond, so time alone would put an answer before the words that
     // asked for it. Each turn stands where it began, and within it come its
@@ -215,6 +203,10 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Ve
         }
     }
     history.sort_by_key(|event| {
+        let at = match &event.happened {
+            Happened::Finished { item, .. } => item.started_at.unwrap_or(event.at),
+            _ => event.at,
+        };
         let phase = match &event.happened {
             Happened::TurnStarted { .. } => 0,
             Happened::Heard { .. } => 1,
@@ -222,8 +214,8 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Ve
             _ => 2,
         };
         match turn_of(&event.happened).and_then(|turn| began.get(turn)) {
-            Some(start) => (*start, phase, event.at),
-            None => (event.at, 2, event.at),
+            Some(start) => (*start, phase, at),
+            None => (at, 2, at),
         }
     });
     history
@@ -238,7 +230,7 @@ fn turn_of(happened: &fastctx_types::session::Happened) -> Option<&str> {
         | Happened::Began { turn, .. }
         | Happened::Grew { turn, .. }
         | Happened::Finished { turn, .. }
-        | Happened::Steps { turn, .. } => Some(turn),
+        | Happened::Steps { turn, .. } => (!turn.is_empty()).then_some(turn),
         Happened::Heard { turn, .. } | Happened::Health { turn, .. } => turn.as_deref(),
         Happened::Context { .. } | Happened::Titled { .. } | Happened::DeliveryUncertain { .. } => None,
     }
