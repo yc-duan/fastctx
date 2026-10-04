@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[test]]
+name = "own_lifetime"
+harness = false
+
 [dependencies]
 anyhow.workspace = true
 fastctx-hands = { path = "../fastctx-hands" }

@@ -20,3 +20,11 @@ tokio = "1"
 
 [profile.release]
 debug = "line-tables-only"
+lto = "off"
+
+# Keep the CLI's large async entry points buildable within a 1.2 GB build
+# budget. Library crates retain the release profile's full optimization.
+[profile.release.package.fastctx]
+opt-level = 0
+debug = false
+codegen-units = 256

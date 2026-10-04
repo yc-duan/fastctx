@@ -10,10 +10,10 @@ use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish_new, spawn_detached};
+use fastctx_platform::{Permissions, current_identity, ensure_private_dir, publish_new, spawn_detached};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::{ResidentDir, WorldDir};
-use fastctx_types::run::{JobRecord, RunRequest};
+use fastctx_types::run::{JobProgram, JobRecord, RunRequest};
 use fastctx_types::{Address, JobId, MachineName, ProcessIdentity, TownName};
 
 use super::record;
@@ -61,6 +61,10 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
         cwd: cwd.to_string_lossy().into_owned(),
         output: output.to_string_lossy().into_owned(),
         started_at: jiff::Timestamp::now(),
+        program: Some(JobProgram {
+            executable: launch.executable.to_string_lossy().into_owned(),
+            starter: current_identity().map_err(|error| failure("could not identify the job's starter", &error))?,
+        }),
         supervisor: None,
         pid: None,
         exit: None,
