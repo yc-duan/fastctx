@@ -18,7 +18,10 @@ regex-lite = "0.1"
 ryu-js = "1"
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 thiserror.workspace = true
+toml = "0.9"
+toml_edit = "0.25"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

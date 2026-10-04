@@ -1,0 +1,10 @@
+<!-- fastread:begin -->
+## Local file inspection
+
+The fastread MCP tools are the first-class way to read, search, and find
+local files: `mcp__fastread__read`, `mcp__fastread__grep`,
+`mcp__fastread__glob` — prefer them over `cat`/`Get-Content`,
+`rg`/`findstr`/`Select-String`, and `dir`/`ls -R`. Pass absolute paths. The
+last line of every result says `Complete` or `Partial` — continue only with
+the exact parameters a `Partial` note provides.
+<!-- fastread:end -->

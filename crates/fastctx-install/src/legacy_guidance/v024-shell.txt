@@ -1,0 +1,39 @@
+<!-- fastctx:begin -->
+## Local file inspection
+
+For reading, searching, and finding local files, prefer the FastCtx MCP
+tools — `mcp__fastctx__read`, `mcp__fastctx__grep`, `mcp__fastctx__glob` —
+over `cat`/`Get-Content`, `rg`/`findstr`/`Select-String`, and `dir`/`ls -R`.
+Read only what the task needs. When you need several files, pass them to
+one read call as files=[{"path": ...}, ...] instead of one call per file.
+Pass absolute paths. The last line of every result says `Complete` or
+`Partial` — continue only with the exact parameters a `Partial` note
+provides.
+
+### Batch replacement
+
+Use `mcp__fastctx__replace` for mechanical find-and-replace across files.
+It preserves each file's encoding and line endings, supports dry-run previews,
+and rejects concurrent changes before writing. Use apply_patch for generated
+content, semantic rewrites, or small local edits.
+
+### Shell commands
+
+Prefer `mcp__fastctx__run` over the built-in shell for terminal work: it
+executes with bash (Git Bash on Windows), so always write POSIX bash —
+never PowerShell syntax.
+
+Never pass `apply_patch` to `mcp__fastctx__run`: it is not a program and
+no shell can run it. Reach it through Codex itself — as its own tool
+call, or in Codex's built-in shell — never through the FastCtx tools.
+
+Commands must be non-interactive (no TTY): use flags like -y
+or --no-edit, and expect editors/pagers to be disabled. For anything
+that may outlast run's four-minute maximum, use
+`mcp__fastctx__run_background`, check on it with
+`mcp__fastctx__job_output`, and stop it with `mcp__fastctx__job_kill`.
+Background jobs run independently of this session and survive restarts;
+rediscover an earlier job with `mcp__fastctx__job_list` and read its
+output by job_id. A non-zero exit code is a normal result. The last line
+of every result says `Complete` or `Partial`.
+<!-- fastctx:end -->

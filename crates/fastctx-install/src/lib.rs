@@ -19,9 +19,17 @@
 
 pub mod briefing;
 pub mod claude;
+pub mod codex;
+mod edits;
 pub mod executable;
+pub mod guidance;
+pub mod legacy;
 pub mod plan;
+mod source;
 pub mod transaction;
 
 mod disk;
 mod snapshot;
+
+pub use edits::{Error, File, Notice};
+pub(crate) use edits::{check_path, finish};
