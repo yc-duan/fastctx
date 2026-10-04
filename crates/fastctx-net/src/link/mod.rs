@@ -8,6 +8,7 @@
 //! signature, that the sender is a member this machine trusts, that the
 //! message is for this machine, and that a call is not one it took before.
 
+mod changes;
 mod letters;
 mod session;
 pub mod state;
@@ -64,9 +65,8 @@ pub enum Status {
     /// Connected to the hub at `address`; `route` says the way the
     /// connection leaves this machine.
     Online { since: Timestamp, address: SocketAddr, route: fastctx_types::world::Route },
-    /// The hub refused this machine for good: it was revoked, is not a
-    /// member, or speaks another protocol. Nothing more is tried until the
-    /// node starts again.
+    /// The hub explicitly revoked this machine, or the link was stopped
+    /// locally. Other refusals remain retryable.
     Stopped { reason: String },
 }
 
@@ -150,6 +150,7 @@ impl Link {
     /// Starts the link of the machine `membership` describes. The node's
     /// device key signs everything it says.
     pub fn start(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
+        let changes = changes::Changes::new(node.clone())?;
         dir.prepare()?;
         let counter = Counter::open(dir.counter())?;
         let taken = Taken::open(dir.calls())?;
@@ -191,7 +192,7 @@ impl Link {
             outbox_changed: Notify::new(),
             task: Mutex::new(None),
         });
-        let task = tokio::spawn(session::run(inner.clone()));
+        let task = tokio::spawn(session::run(inner.clone(), changes));
         *inner.task.lock().expect("never poisoned") = Some(task);
         Ok(Self { inner })
     }
@@ -211,6 +212,13 @@ impl Link {
 
     pub fn status(&self) -> Status {
         self.inner.status.borrow().clone()
+    }
+
+    /// Whether the essential connection task ended unexpectedly. An
+    /// explicit revocation or local stop is a normal end.
+    pub fn failed(&self) -> bool {
+        let ended = self.inner.task.lock().expect("never poisoned").as_ref().is_some_and(|task| task.is_finished());
+        ended && !matches!(self.status(), Status::Stopped { .. })
     }
 
     /// The members this machine trusts and whether each is connected, as
@@ -375,7 +383,11 @@ impl Link {
             reason: reason.to_string(),
         };
         let revocation = Signed::new(&self.inner.key, Domain::Revocation, &revocation);
-        self.inner.ask(Question::Revoke { revocation }).await?;
+        let answer = self.inner.ask(Question::Revoke { revocation }).await;
+        if *name == membership.name && matches!(self.status(), Status::Stopped { .. }) {
+            return Ok(());
+        }
+        answer?;
         Ok(())
     }
 }

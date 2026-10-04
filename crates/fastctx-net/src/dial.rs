@@ -55,7 +55,7 @@ impl std::fmt::Display for Way {
 }
 
 /// The ways to try for `address`, in order: the physical card, then the
-/// system's proxy or, without one, its routes. Nothing captures a loopback
+/// system's proxy and its routes. Nothing captures a loopback
 /// address, so it is reached plainly.
 fn ways(address: SocketAddr) -> (Vec<Way>, Option<String>) {
     if address.ip().is_loopback() {
@@ -70,24 +70,40 @@ fn ways(address: SocketAddr) -> (Vec<Way>, Option<String>) {
         },
         Err(error) => note = Some(error),
     }
-    ways.push(match crate::proxy::system(address) {
-        Some(proxy) => Way::Proxy(proxy),
-        None => Way::System,
-    });
+    if let Some(proxy) = crate::proxy::system(address) {
+        ways.push(Way::Proxy(proxy));
+    }
+    ways.push(Way::System);
     (ways, note)
 }
 
 impl Way {
-    fn pinned(&self) -> bool {
-        matches!(self, Way::Pinned(_))
+    fn kind(&self) -> WayKind {
+        match self {
+            Self::Pinned(_) => WayKind::Pinned,
+            Self::Proxy(_) => WayKind::Proxy,
+            Self::System => WayKind::System,
+        }
     }
 }
 
-/// For each address, whether the way that last reached it was the pinned
-/// one. That way is tried first next time, so where the physical card
-/// cannot reach the hub, each new connection does not wait for it first.
-static LAST_WAY: std::sync::Mutex<std::collections::BTreeMap<SocketAddr, bool>> =
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WayKind {
+    Pinned,
+    Proxy,
+    System,
+}
+
+/// The way that last reached each address is tried first next time. A
+/// dead proxy must not delay every new data connection after the system
+/// route has already succeeded.
+static LAST_WAY: std::sync::Mutex<std::collections::BTreeMap<SocketAddr, WayKind>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// A formerly successful interface or proxy may no longer exist.
+pub(crate) fn network_changed() {
+    LAST_WAY.lock().expect("never poisoned").clear();
+}
 
 /// Connects to the first of the hub's addresses that answers, each by the
 /// first way that reaches it.
@@ -95,9 +111,9 @@ pub async fn dial(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usi
     let mut failures = Vec::new();
     for address in hub {
         let (mut ways, note) = ways(*address);
-        if let Some(pinned) = LAST_WAY.lock().expect("never poisoned").get(address).copied() {
+        if let Some(previous) = LAST_WAY.lock().expect("never poisoned").get(address).copied() {
             // A stable sort keeps the rest in order.
-            ways.sort_by_key(|way| way.pinned() != pinned);
+            ways.sort_by_key(|way| way.kind() != previous);
         }
         if let Some(note) = note {
             failures.push(format!("{address}: {note}"));
@@ -107,7 +123,7 @@ pub async fn dial(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usi
             // way that swallows packets does not use up the next one's.
             match tokio::time::timeout(SILENCE, dial_one(*address, &way, pin, path, max_message)).await {
                 Ok(Ok(dialed)) => {
-                    LAST_WAY.lock().expect("never poisoned").insert(*address, way.pinned());
+                    LAST_WAY.lock().expect("never poisoned").insert(*address, way.kind());
                     return Ok(dialed);
                 }
                 Ok(Err(error)) => failures.push(format!("{address} {way}: {error}")),

@@ -7,6 +7,7 @@
 //! platforms appear in this crate only.
 
 pub mod atomic;
+pub mod awake;
 #[cfg(any(target_os = "linux", windows))]
 pub mod child;
 pub mod detach;
