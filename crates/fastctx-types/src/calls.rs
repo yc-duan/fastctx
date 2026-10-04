@@ -97,8 +97,14 @@ pub enum Call {
     /// Joins this machine to a World with a code, under `name` or the name
     /// it has.
     Join { code: String, name: Option<MachineName> },
-    /// Makes an invitation for one more machine.
-    Invite { name: Option<MachineName>, expires: Timestamp },
+    /// Makes an invitation for one more machine, or for a device such as a
+    /// phone, which carries the user's words and looks and runs nothing.
+    Invite {
+        name: Option<MachineName>,
+        expires: Timestamp,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        device: bool,
+    },
     /// Revokes a member's key, so no machine trusts it any more.
     Revoke { name: MachineName, reason: String },
     /// This machine leaves its World and becomes a World of one again.

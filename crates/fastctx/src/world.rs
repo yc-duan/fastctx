@@ -72,7 +72,7 @@ pub fn join(args: JoinArgs) -> anyhow::Result<()> {
 
 pub fn invite(args: InviteArgs) -> anyhow::Result<()> {
     let expires = Timestamp::now() + SignedDuration::from_hours(i64::from(args.hours));
-    match call(Call::Invite { name: args.name.clone(), expires })? {
+    match call(Call::Invite { name: args.name.clone(), expires, device: false })? {
         Reply::Code { code } => {
             println!("{code}");
             let named = args.name.map(|name| format!(" as {name}")).unwrap_or_default();

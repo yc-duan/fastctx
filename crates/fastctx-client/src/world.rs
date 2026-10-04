@@ -306,9 +306,10 @@ impl World {
         }
     }
 
-    /// A code for one more machine to join with, until `expires`.
-    pub async fn invite(&self, name: Option<MachineName>, expires: Timestamp) -> Result<String, Error> {
-        match self.ask(Call::Invite { name, expires }).await? {
+    /// A code for one more machine, or a device, to join with, until
+    /// `expires`.
+    pub async fn invite(&self, name: Option<MachineName>, expires: Timestamp, device: bool) -> Result<String, Error> {
+        match self.ask(Call::Invite { name, expires, device }).await? {
             Reply::Code { code } => Ok(code),
             other => Err(unexpected(other)),
         }

@@ -324,11 +324,16 @@ async fn journal_add(
 
 /// A one-use code that lets one more machine join, valid for `hours`.
 #[tauri::command]
-async fn invite(shell: tauri::State<'_, Shell>, name: Option<String>, hours: u32) -> Result<String, String> {
+async fn invite(
+    shell: tauri::State<'_, Shell>,
+    name: Option<String>,
+    hours: u32,
+    device: Option<bool>,
+) -> Result<String, String> {
     let expires = jiff::Timestamp::now()
         .checked_add(jiff::SignedDuration::from_hours(i64::from(hours)))
         .map_err(|error| error.to_string())?;
-    shell.world.invite(machine(name)?, expires).await.map_err(|error| error.to_string())
+    shell.world.invite(machine(name)?, expires, device.unwrap_or(false)).await.map_err(|error| error.to_string())
 }
 
 /// No machine trusts `name`'s key any more.

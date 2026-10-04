@@ -20,6 +20,13 @@
 //! A member that is lost is revoked: any member signs a statement that a
 //! key is no longer trusted. Revocations are kept forever, and they name
 //! the key, not the name, so a revoked key is not trusted under any name.
+//!
+//! A member is a machine, which runs a node and its residents, or a device,
+//! such as a phone, which only carries the user's own words and looks. What
+//! a member is was signed by its inviter, never said by the member itself.
+//! A device invites nobody, and the only key it can revoke is its own, so
+//! a lost phone's key cannot bring anyone into the World or put a machine
+//! out of it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -95,6 +102,23 @@ impl fmt::Display for CertPin {
     }
 }
 
+/// What a member is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    /// Runs a node: residents live on it, and the World works on it.
+    #[default]
+    Machine,
+    /// Carries the user's words and looks, and nothing runs on it.
+    Device,
+}
+
+impl Kind {
+    pub fn is_machine(&self) -> bool {
+        *self == Kind::Machine
+    }
+}
+
 /// An inviter's endorsement of whoever holds the invitation key `invite`,
 /// signed by the inviter.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +130,9 @@ pub struct Endorsement {
     pub expires: Timestamp,
     /// The name the joining machine must take, when the inviter chose one.
     pub name: Option<MachineName>,
+    /// What the invitation admits. Left out, as before devices, a machine.
+    #[serde(default, skip_serializing_if = "Kind::is_machine")]
+    pub kind: Kind,
 }
 
 /// The invitation's holder naming the machine it admits, signed with the
@@ -164,6 +191,8 @@ pub struct Member {
     pub key: PublicKey,
     /// Who invited it; `None` for the founder.
     pub invited_by: Option<MachineName>,
+    /// What its inviter admitted it as; the founder is a machine.
+    pub kind: Kind,
 }
 
 /// The members this machine trusts, as checked from the hub's list.
@@ -187,6 +216,11 @@ impl Table {
 
     pub fn members(&self) -> impl Iterator<Item = &Member> {
         self.trusted.values()
+    }
+
+    /// The members that are machines: the ones the World asks and works on.
+    pub fn machines(&self) -> impl Iterator<Item = &Member> {
+        self.trusted.values().filter(|member| member.kind.is_machine())
     }
 
     pub fn revoked(&self, name: &MachineName) -> Option<&Revocation> {
@@ -274,7 +308,7 @@ pub fn check(
     for record in records.into_values() {
         match &record.credential {
             Credential::Founder if record.key == *founder => {
-                let member = Member { name: record.name.clone(), key: record.key, invited_by: None };
+                let member = Member { name: record.name.clone(), key: record.key, invited_by: None, kind: Kind::Machine };
                 accepted.insert(record.name.clone(), (member, None));
             }
             Credential::Founder => table
@@ -292,6 +326,11 @@ pub fn check(
             };
             match admitted(world, &record, admission, &accepted) {
                 Admitted::Yes { inviter, .. }
+                    if accepted.get(&inviter).is_some_and(|(member, _)| !member.kind.is_machine()) =>
+                {
+                    table.refused.push((record.name.to_string(), format!("it was invited by {inviter}, a device")));
+                }
+                Admitted::Yes { inviter, .. }
                     if !known.names.contains_key(&record.name)
                         && accepted.get(&inviter).is_some_and(|(member, _)| prior_revoked.contains(&member.key)) =>
                 {
@@ -300,8 +339,8 @@ pub fn check(
                         format!("it was invited by {inviter} after {inviter} was revoked"),
                     ));
                 }
-                Admitted::Yes { inviter, invite } => {
-                    let member = Member { name: record.name.clone(), key: record.key, invited_by: Some(inviter) };
+                Admitted::Yes { inviter, invite, kind } => {
+                    let member = Member { name: record.name.clone(), key: record.key, invited_by: Some(inviter), kind };
                     accepted.insert(record.name.clone(), (member, Some(invite)));
                     progressed = true;
                 }
@@ -365,6 +404,10 @@ pub fn check(
             table.refused.push((label, "its signer's key was revoked before it".to_string()));
             continue;
         }
+        if !signer.kind.is_machine() && revocation.key != signer.key {
+            table.refused.push((label, "a device revokes no key but its own".to_string()));
+            continue;
+        }
         match signed.open::<Revocation>(&signer.key, Domain::Revocation) {
             Ok(revocation) if revocation.world == *world => {
                 revoked_keys.insert(revocation.key, revocation);
@@ -392,6 +435,7 @@ enum Admitted {
     Yes {
         inviter: MachineName,
         invite: PublicKey,
+        kind: Kind,
     },
     /// The inviter has not been accepted yet; it may be later in this pass.
     NotYet,
@@ -434,7 +478,7 @@ fn admitted(
     {
         return Admitted::No(format!("it was invited as {name}"));
     }
-    Admitted::Yes { inviter: endorsement.inviter, invite: endorsement.invite }
+    Admitted::Yes { inviter: endorsement.inviter, invite: endorsement.invite, kind: endorsement.kind }
 }
 
 fn others(names: &[MachineName], except: &MachineName) -> String {

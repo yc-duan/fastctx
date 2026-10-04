@@ -409,7 +409,13 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
 
 fn invite(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
     let mut store = hub.store();
-    let key = store.table().get(name).map(|member| member.key).ok_or_else(|| format!("{name} is not a member"))?;
+    let member = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
+    // Every machine refuses whom a device invited; the hub keeps no such
+    // invitation to begin with.
+    if !member.kind.is_machine() {
+        return Err(format!("{name} is a device, and a device invites nobody"));
+    }
+    let key = member.key;
     let endorsement: Endorsement =
         signed.open(&key, Domain::Endorsement).map_err(|error| format!("the endorsement: {error}"))?;
     if endorsement.inviter != *name {
@@ -439,9 +445,13 @@ fn invite(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
 fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
     let revoked = {
         let mut store = hub.store();
-        let key = store.table().get(name).map(|member| member.key).ok_or_else(|| format!("{name} is not a member"))?;
+        let signer = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
+        let key = signer.key;
         let revocation: Revocation =
             signed.open(&key, Domain::Revocation).map_err(|error| format!("the revocation: {error}"))?;
+        if !signer.kind.is_machine() && revocation.key != key {
+            return Err(format!("{name} is a device, and a device revokes no key but its own"));
+        }
         if revocation.by != *name {
             return Err(format!("the revocation is by {}, sent by {name}", revocation.by));
         }

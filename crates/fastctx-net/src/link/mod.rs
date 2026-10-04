@@ -31,7 +31,7 @@ use crate::code::Code;
 use crate::data::Stream;
 use crate::message::{Body, LetterId, Message};
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
-use crate::trust::{self, Endorsement, Revocation, Table};
+use crate::trust::{self, Endorsement, Kind, Revocation, Table};
 use crate::wire::{CallStatus, Presence, Question, Told, Up};
 use state::{Counter, LettersFile, MembersFile, Taken};
 pub use state::{Membership, NetDir};
@@ -346,9 +346,10 @@ impl Link {
         crate::wire::encode(&Up::Send { seq: u64::MAX, message }).len()
     }
 
-    /// An invitation for one more machine, valid until `expires`; `name` is
-    /// the name it must take, if given.
-    pub async fn invite(&self, name: Option<MachineName>, expires: Timestamp) -> Result<Code, String> {
+    /// An invitation for one more member, valid until `expires`: a machine,
+    /// or a device such as a phone; `name` is the name it must take, if
+    /// given.
+    pub async fn invite(&self, name: Option<MachineName>, expires: Timestamp, kind: Kind) -> Result<Code, String> {
         let invite = SecretKey::generate().map_err(|error| error.to_string())?;
         let membership = &self.inner.membership;
         let endorsement = Endorsement {
@@ -357,6 +358,7 @@ impl Link {
             invite: invite.public(),
             expires,
             name,
+            kind,
         };
         let endorsement = Signed::new(&self.inner.key, Domain::Endorsement, &endorsement);
         self.inner.ask(Question::Invite { endorsement: endorsement.clone() }).await?;
