@@ -37,8 +37,9 @@ pub struct TalkPage {
     /// wherever they are.
     around: Result<Around, String>,
     /// The colleague picked among them, while the keys go to that list
-    /// rather than to the place to type.
-    picked: Option<usize>,
+    /// rather than to the place to type. Known by who it is: the list is
+    /// asked for again and again, and its order changes as they work.
+    picked: Option<Address>,
     /// What its host last reported it doing, and since when.
     state: Option<(Activity, Timestamp)>,
     transcript: Transcript,
@@ -143,6 +144,7 @@ impl TalkPage {
     }
 
     pub fn paste(&mut self, text: String) -> Act {
+        self.picked = None;
         self.editor.insert(&text);
         Act::Stay
     }
@@ -170,8 +172,10 @@ impl TalkPage {
             Data::Unwatched(why) => self.watching = Watching::Ended(why),
             Data::Around(around) => {
                 self.around = around;
-                let count = self.colleagues().len();
-                self.picked = self.picked.filter(|_| count > 0).map(|picked| picked.min(count - 1));
+                // One who is gone from the list leaves the pick at the first.
+                if self.picked.is_some() && self.picked_index().is_none() {
+                    self.picked = self.colleagues().first().map(fastctx_client::town::address);
+                }
             }
             Data::Done { job, result } => match (job, result) {
                 (Job::Talk { .. }, Ok(Done::Said(said))) => {
@@ -203,7 +207,14 @@ impl TalkPage {
     /// The session's state as its events tell it.
     fn follow_state(&mut self, happened: &Happened, at: Timestamp) {
         match happened {
-            Happened::TurnStarted { .. } => self.state = Some((Activity::Busy, at)),
+            Happened::TurnStarted { .. } => {
+                self.state = Some((Activity::Busy, at));
+                // A new turn makes an old note stale, and the turn at work
+                // shows where the note was; a stop asked for still shows.
+                if !self.stopping {
+                    self.note = None;
+                }
+            }
             Happened::TurnEnded { .. } => self.state = Some((Activity::Idle, at)),
             _ => {}
         }
@@ -213,16 +224,24 @@ impl TalkPage {
         self.around.as_ref().map(|around| around.colleagues.as_slice()).unwrap_or_default()
     }
 
+    /// Where the picked colleague sits in the list as it is now.
+    fn picked_index(&self) -> Option<usize> {
+        let picked = self.picked.as_ref()?;
+        self.colleagues().iter().position(|colleague| fastctx_client::town::address(colleague) == *picked)
+    }
+
     /// Keys while a colleague is picked: the arrows move among them, Enter
     /// goes to the one picked, and Tab or Esc returns to the place to type.
     /// Anything else is typing, and goes there too.
-    fn pick_key(&mut self, picked: usize, key: &KeyEvent) -> Option<Act> {
+    fn pick_key(&mut self, key: &KeyEvent) -> Option<Act> {
         let count = self.colleagues().len();
+        let index = self.picked_index().unwrap_or(0);
+        let pick = |index: usize| self.colleagues().get(index).map(fastctx_client::town::address);
         match key.code {
-            KeyCode::Up => self.picked = Some(picked.saturating_sub(1)),
-            KeyCode::Down => self.picked = Some((picked + 1).min(count.saturating_sub(1))),
+            KeyCode::Up => self.picked = pick(index.saturating_sub(1)),
+            KeyCode::Down => self.picked = pick((index + 1).min(count.saturating_sub(1))),
             KeyCode::Enter => {
-                let colleague = self.colleagues().get(picked)?.clone();
+                let colleague = self.colleagues().get(index)?.clone();
                 self.picked = None;
                 let page = TalkPage::new(colleague, self.project.clone(), self.here.clone());
                 return Some(Act::Push(Page::Talk(Box::new(page))));
@@ -238,15 +257,17 @@ impl TalkPage {
 
     pub fn key(&mut self, ctx: &Ctx, key: KeyEvent) -> Act {
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        if let Some(picked) = self.picked
-            && let Some(act) = self.pick_key(picked, &key)
+        if self.picked.is_some()
+            && let Some(act) = self.pick_key(&key)
         {
             return act;
         }
         match key.code {
             KeyCode::Esc => return Act::Back,
-            KeyCode::Tab if !self.colleagues().is_empty() => {
-                self.picked = Some(0);
+            // Tab goes to the colleagues only from an empty place to type,
+            // so that while typing it stays what it always was.
+            KeyCode::Tab if self.editor.is_empty() && !self.colleagues().is_empty() => {
+                self.picked = self.colleagues().first().map(fastctx_client::town::address);
                 return Act::Stay;
             }
             KeyCode::Char('x') if control => {
@@ -484,11 +505,23 @@ impl TalkPage {
             paint::line(buffer, status.x, status.y, status.width, &line, &Line::default(), false, look);
         }
 
-        // Its colleagues and what it started that still runs, above that.
-        let around = self.around_rows(ctx);
+        // Its colleagues and what it started that still runs, above that,
+        // in at most half the room left for the conversation.
+        let mut around = self.around_rows(ctx);
+        let room = (status.y.saturating_sub(column.y + 5) / 2).max(1) as usize;
+        let picked = self.picked_index();
+        if around.len() > room {
+            // Rows keep the colleague they belong to, so the pick still
+            // finds its row after the list is cut.
+            let shown = room - 1;
+            let first = picked.map_or(0, |picked| (picked + 1).saturating_sub(shown));
+            let hidden = around.len() - shown;
+            around = around.into_iter().skip(first).take(shown).collect();
+            around.push(paint::Row::new(quiet(ctx, words.more_rows(hidden))));
+        }
         let around_top = status.y.saturating_sub(around.len() as u16);
         let area = Rect { y: around_top, height: around.len() as u16, ..column };
-        paint::rows(buffer, area, &around, 0, self.picked, look);
+        paint::rows(buffer, area, &around, 0, picked, look);
         let above = around_top;
 
         // The conversation, above that.
@@ -522,7 +555,7 @@ impl TalkPage {
         } else {
             let mut keys =
                 vec![("Enter", words.key_send()), ("Ctrl+J", words.key_newline()), ("PgUp PgDn", words.key_scroll())];
-            if !self.colleagues().is_empty() {
+            if empty && !self.colleagues().is_empty() {
                 keys.push(("Tab", words.key_colleagues()));
             }
             if matches!(self.watching, Watching::Ended(_)) {

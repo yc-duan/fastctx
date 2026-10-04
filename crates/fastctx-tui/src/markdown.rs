@@ -372,8 +372,11 @@ impl Renderer<'_> {
         }
         let code = code.strip_suffix('\n').unwrap_or(&code);
         let block = self.code_blocks.replace(self.code_blocks.get() + 1);
-        // A quoted block stays one quiet colour, like the quote around it.
-        let painted = language.filter(|_| !quoted).and_then(|language| self.painted(block, language, code, room));
+        // A quoted block stays one quiet colour, like the quote around it;
+        // an empty one shows only its language, whether or not it is known.
+        let painted = language
+            .filter(|_| !quoted && !code.is_empty())
+            .and_then(|language| self.painted(block, language, code, room));
         if let Some(painted) = painted {
             lines.extend(painted);
         } else if !code.is_empty() {

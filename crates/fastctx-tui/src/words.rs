@@ -731,6 +731,14 @@ impl Words {
         self.pick("下面还有 ↓", "more below ↓")
     }
 
+    /// Rows below a conversation that did not fit.
+    pub fn more_rows(&self, count: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("还有 {count} 项"),
+            Lang::En => format!("{count} more"),
+        }
+    }
+
     pub fn pasting(&self, count: usize) -> String {
         match self.lang {
             Lang::Zh => format!("正在接收粘贴的内容（{count} 字）…"),

@@ -60,18 +60,20 @@ impl Memo {
             Some((state, stack)) => (state.clone(), stack.clone()),
             None => (ParseState::new(syntax), ScopeStack::new()),
         };
-        for line in &lines[same..] {
-            // Grammars are written for lines that end in a line break.
-            let line = format!("{line}\n");
+        for text in &lines[same..] {
+            // Grammars are written for lines that end in a line break; the
+            // break is read but never shown, whichever scope it closes.
+            let line = format!("{text}\n");
+            let shown = text.len();
             let mut pieces: Vec<Piece> = Vec::new();
             let mut at = 0;
             for (offset, op) in state.parse_line(&line, syntaxes).ok()? {
-                push(&mut pieces, role(&stack), &line[at..offset]);
+                push(&mut pieces, role(&stack), &line[at.min(shown)..offset.min(shown)]);
                 at = offset;
                 stack.apply(&op).ok()?;
             }
-            push(&mut pieces, role(&stack), line[at..].trim_end_matches('\n'));
-            remembered.lines.push(line.trim_end_matches('\n').to_string());
+            push(&mut pieces, role(&stack), &line[at.min(shown)..shown]);
+            remembered.lines.push(text.to_string());
             remembered.after.push((state.clone(), stack.clone()));
             remembered.pieces.push(pieces);
         }
