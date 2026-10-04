@@ -2,6 +2,7 @@
 // the settings. In the user's words (`world-gui.md`, 用词).
 
 import type { AskWords } from "../conversation/asks";
+import type { PresenceWords } from "./presence";
 import { sizeOf, type AttachWords } from "../conversation/attach";
 
 export interface ShellWords {
@@ -106,9 +107,30 @@ export const enNewTalk: NewTalkWords = {
   notOpened: (why) => `Could not ask it in: ${why}`,
 };
 
+export const zhPresence: PresenceWords = {
+  waiting: (who) => `${who} 在等你回答`,
+  waitingBody: (town) => (town ? `在项目 ${town} 里。打开它，看它要你答什么。` : "打开它，看它要你答什么。"),
+  finished: (who) => `${who} 说完了`,
+  finishedBody: (town, last) => [town ? `项目 ${town}` : null, last].filter(Boolean).join(" · ") || "打开它，看它说了什么。",
+  open: "打开",
+  stop: "停下",
+};
+
+export const enPresence: PresenceWords = {
+  waiting: (who) => `${who} is waiting for you`,
+  waitingBody: (town) => (town ? `In ${town}. Open it to see what it asks.` : "Open it to see what it asks."),
+  finished: (who) => `${who} finished`,
+  finishedBody: (town, last) => [town, last].filter(Boolean).join(" · ") || "Open it to see what it said.",
+  open: "Open",
+  stop: "Stop",
+};
+
 export interface SettingsWords {
   title: string;
   look: string;
+  notify: string;
+  notifyOn: string;
+  notifyOff: string;
   theme: string;
   system: string;
   themes: Record<"warm-black" | "ink-black" | "warm-white", string>;
@@ -130,6 +152,9 @@ export interface SettingsWords {
 export const zhSettings: SettingsWords = {
   title: "设置",
   look: "外观",
+  notify: "通知",
+  notifyOn: "在等你、说完了时叫我",
+  notifyOff: "不叫我",
   theme: "主题",
   system: "跟随系统",
   themes: { "warm-black": "暖黑", "ink-black": "墨黑", "warm-white": "暖白" },
@@ -151,6 +176,9 @@ export const zhSettings: SettingsWords = {
 export const enSettings: SettingsWords = {
   title: "Settings",
   look: "Look",
+  notify: "Notifications",
+  notifyOn: "Call me when an agent waits or finishes",
+  notifyOff: "Don't",
   theme: "Theme",
   system: "As the system",
   themes: { "warm-black": "Warm black", "ink-black": "Ink black", "warm-white": "Warm white" },

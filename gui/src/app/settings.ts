@@ -5,6 +5,8 @@
 import { escape } from "../conversation/prose";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { WorldNow } from "../world/bridge";
+import { desktopAvailable } from "../world/desktop";
+import { chooseNotifying, notifying } from "./presence";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
@@ -53,6 +55,9 @@ export class SettingsPage implements Page {
         case "language":
           options.chooseLanguage(value as "zh" | "en");
           return;
+        case "notify":
+          chooseNotifying(value === "on");
+          break;
       }
       this.drawLook();
     });
@@ -76,6 +81,8 @@ export class SettingsPage implements Page {
       row("theme", words.theme, [["", words.system], ...themes.map((theme): [string, string] => [theme, words.themes[theme]])], chosenTheme() ?? ""),
       row("size", words.textSize, [["", words.system], ...textSizes.map((size): [string, string] => [size, words.sizes[size]!])], chosenSize() ?? ""),
       row("language", words.language, [["zh", "中文"], ["en", "English"]], language),
+      // Only where the shell can call the user from outside the window.
+      desktopAvailable() ? row("notify", words.notify, [["on", words.notifyOn], ["off", words.notifyOff]], notifying() ? "on" : "off") : "",
     ].join("");
   }
 
