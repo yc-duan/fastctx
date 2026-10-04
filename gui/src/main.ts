@@ -275,7 +275,15 @@ const specimenOffers: Offers = {
   ],
   model: "gpt-6.1-sol",
   effort: "medium",
-  usage: null,
+  usage: {
+    context: null,
+    limits: [
+      { name: "codex primary 300m", used_percent: 34, resets_at: "2026-10-04T18:40:00Z" },
+      { name: "codex secondary 10080m", used_percent: 61, resets_at: "2026-10-08T03:00:00Z" },
+    ],
+    cost_usd: null,
+    raw: null,
+  },
 };
 
 /** A conversation as Markdown, named as its page names it. */

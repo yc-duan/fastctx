@@ -115,14 +115,14 @@ export class ConversationPage {
       <footer class="composer-dock">
         <ul class="running" hidden></ul>
         <form class="composer">
-          <div class="composer-menus"></div>
+          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="composer-chip" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
-            <span class="composer-context"></span>
+            <button class="composer-context" type="button" hidden></button>
             <button class="composer-action" type="submit"></button>
           </div>
         </form>
@@ -154,6 +154,10 @@ export class ConversationPage {
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus(options.controls);
+    this.context.addEventListener("click", () => this.toggleUsage());
+    this.element.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") this.element.querySelector<HTMLElement>(".usage-pop")!.hidden = true;
+    });
     if (options.attach) this.attaching(options.attach);
     const controls = options.controls;
     this.view = new ConversationView(main, options.conversation, {
@@ -461,6 +465,38 @@ export class ConversationPage {
     transcript.classList.toggle("can-fork", can.has("fork"));
   }
 
+  /** What the conversation has used, as its host says: its context, the
+   *  account's limits and when they reset, what it cost. */
+  private toggleUsage(): void {
+    const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
+    if (!pop.hidden) {
+      pop.hidden = true;
+      return;
+    }
+    const words = this.options.controls?.words.usage;
+    if (!words) return;
+    const usage = this.offered?.usage ?? null;
+    const context = this.options.conversation.context ?? usage?.context ?? null;
+    const rows: string[] = [];
+    if (context) {
+      const share = context.window ? Math.min(1, context.used / context.window) : null;
+      rows.push(
+        `<div class="usage-row"><span class="usage-name">${escape(words.context)}</span><span class="usage-fact">${escape(words.contextUsed(context.used, context.window))}${share !== null ? ` · ${Math.round(share * 100)}%` : ""}</span>${share !== null ? `<span class="usage-bar"><span style="width:${(share * 100).toFixed(1)}%"></span></span>` : ""}</div>`,
+      );
+    }
+    for (const limit of usage?.limits ?? []) {
+      const percent = limit.used_percent;
+      rows.push(
+        `<div class="usage-row"><span class="usage-name">${escape(words.window(limit.name))}</span><span class="usage-fact">${percent !== null ? escape(words.used(String(percent))) : ""}${limit.resets_at ? ` · ${escape(words.resets(new Date(limit.resets_at)))}` : ""}</span>${percent !== null ? `<span class="usage-bar"><span style="width:${Math.min(100, Number(percent))}%"></span></span>` : ""}</div>`,
+      );
+    }
+    if (usage?.cost_usd !== null && usage?.cost_usd !== undefined) {
+      rows.push(`<div class="usage-row"><span class="usage-fact">${escape(words.cost(String(usage.cost_usd)))}</span></div>`);
+    }
+    pop.innerHTML = `<div class="usage-title">${escape(words.title)}</div>${rows.join("") || `<div class="menu-empty">${escape(words.none)}</div>`}`;
+    pop.hidden = false;
+  }
+
   /** Starting again from the user's words, or forking from a turn: said
    *  plainly first, done once the user agrees. */
   private turnAct(act: "rewind" | "fork", turn: string, words: string | null): void {
@@ -626,10 +662,15 @@ export class ConversationPage {
       const arc = (2 * Math.PI * 7).toFixed(2);
       this.context.innerHTML = `<svg class="context-ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7"/><circle class="used" cx="9" cy="9" r="7" stroke-dasharray="${(share * 2 * Math.PI * 7).toFixed(2)} ${arc}"/></svg><span>${percent}%</span>`;
       this.context.title = label;
+      this.context.setAttribute("aria-label", label);
       this.context.classList.toggle("full", share >= 0.85);
+      this.context.hidden = false;
     } else {
       this.context.innerHTML = "";
       this.context.removeAttribute("title");
+      // Without a context to show, the limits still have a way in.
+      this.context.hidden = !this.offered?.usage?.limits.length;
+      if (!this.context.hidden) this.context.textContent = this.options.controls?.words.usage.title ?? "";
     }
   }
 

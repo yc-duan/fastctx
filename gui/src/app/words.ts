@@ -795,6 +795,17 @@ export interface ComposerWords {
   done(name: string): string;
   failed(why: string): string;
   context(percent: number, used: number, window: number): string;
+  usage: {
+    title: string;
+    context: string;
+    contextUsed(used: number, window: number | null): string;
+    limits: string;
+    window(name: string): string;
+    used(percent: string): string;
+    resets(at: Date): string;
+    cost(usd: string): string;
+    none: string;
+  };
 }
 
 export const zhComposer: ComposerWords = {
@@ -882,6 +893,24 @@ export const zhComposer: ComposerWords = {
   done: (name) => `/${name} 做完了`,
   failed: (why) => `没做成：${why}`,
   context: (percent, used, window) => `上下文用了 ${percent}%（${used.toLocaleString()} / ${window.toLocaleString()}）`,
+  usage: {
+    title: "用量",
+    context: "上下文",
+    contextUsed: (used, window) => (window ? `${used.toLocaleString()} / ${window.toLocaleString()}` : used.toLocaleString()),
+    limits: "额度",
+    window: (name) => {
+      const minutes = /(\d+)m$/.exec(name);
+      if (minutes) {
+        const m = Number(minutes[1]);
+        return m % 1440 === 0 ? `${m / 1440} 天的窗口` : m % 60 === 0 ? `${m / 60} 小时的窗口` : `${m} 分钟的窗口`;
+      }
+      return ({ five_hour: "5 小时的窗口", seven_day: "7 天的窗口" } as Record<string, string>)[name] ?? name;
+    },
+    used: (percent) => `用了 ${percent}%`,
+    resets: (at) => `${at.getMonth() + 1}月${at.getDate()}日 ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")} 重置`,
+    cost: (usd) => `这段对话花了 $${usd}`,
+    none: "它没有报出用量",
+  },
 };
 
 export const enComposer: ComposerWords = {
@@ -969,6 +998,24 @@ export const enComposer: ComposerWords = {
   done: (name) => `/${name} done`,
   failed: (why) => `It did not go through: ${why}`,
   context: (percent, used, window) => `${percent}% of the context used (${used.toLocaleString()} of ${window.toLocaleString()})`,
+  usage: {
+    title: "Usage",
+    context: "Context",
+    contextUsed: (used, window) => (window ? `${used.toLocaleString()} / ${window.toLocaleString()}` : used.toLocaleString()),
+    limits: "Limits",
+    window: (name) => {
+      const minutes = /(\d+)m$/.exec(name);
+      if (minutes) {
+        const m = Number(minutes[1]);
+        return m % 1440 === 0 ? `${m / 1440}-day window` : m % 60 === 0 ? `${m / 60}-hour window` : `${m}-minute window`;
+      }
+      return ({ five_hour: "5-hour window", seven_day: "7-day window" } as Record<string, string>)[name] ?? name;
+    },
+    used: (percent) => `${percent}% used`,
+    resets: (at) => `resets ${at.toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`,
+    cost: (usd) => `This conversation cost $${usd}`,
+    none: "It reported no usage",
+  },
 };
 
 function zhSpan(ms: number): string {

@@ -790,3 +790,69 @@
   gap: var(--space-2);
   margin-top: var(--space-3);
 }
+
+/* What the conversation has used, opened from the context ring. */
+button.composer-context {
+  height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  transition: background-color var(--hover) ease, color var(--hover) ease;
+}
+
+button.composer-context:hover {
+  background: var(--hairline);
+  color: var(--text-2);
+}
+
+button.composer-context[hidden] {
+  display: none;
+}
+
+.usage-pop {
+  left: auto;
+  width: min(360px, 100%);
+  padding: var(--space-3) var(--space-4);
+}
+
+.usage-title {
+  margin-bottom: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.usage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 4px;
+  padding: var(--space-2) 0;
+}
+
+.usage-row + .usage-row {
+  border-top: 1px solid var(--divider);
+}
+
+.usage-name {
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.usage-fact {
+  font-size: var(--size-small);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-bar {
+  display: block;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.usage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
