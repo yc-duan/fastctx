@@ -153,17 +153,19 @@ fn legacy(node: &Node) {
 
 /// Runs the node for the World under `fastctx_root`; `supervision` is the
 /// guardian's channel when a guardian keeps it (`handoff`).
-pub async fn run(fastctx_root: &Path, mut supervision: Option<handoff::Supervision>) -> anyhow::Result<()> {
+pub async fn run(fastctx_root: &Path, supervision: Option<handoff::Supervision>) -> anyhow::Result<()> {
     let world = WorldDir::under(fastctx_root);
+    let supervision = match supervision {
+        Some(supervision) => {
+            Some(tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?)
+        }
+        None => None,
+    };
     ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
-    let _lock = match &mut supervision {
+    let _lock = match &supervision {
         // A successor prepares, then waits to be let in, then waits for the
         // node before it to let the World go.
-        Some(supervision) => {
-            let prepared = tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?;
-            if prepared.is_none() {
-                return Ok(());
-            }
+        Some(_) => {
             let lock = world.node_lock();
             tokio::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
         }

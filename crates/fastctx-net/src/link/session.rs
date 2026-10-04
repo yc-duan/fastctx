@@ -15,6 +15,7 @@ use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use super::letters::{self, Outbox, Receipt};
+use super::outgoing::Outgoing;
 use super::{CallEvent, Connection, Inner, Status};
 use crate::dial;
 use crate::message::{Body, Message};
@@ -156,7 +157,7 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
     }
 
     let generation = inner.next_id();
-    let (up, mut outgoing) = mpsc::unbounded_channel::<Up>();
+    let (up, mut outgoing) = Outgoing::channel();
     *inner.connection.lock().expect("never poisoned") = Some(Connection { generation, up: up.clone() });
     inner.status.send_replace(Status::Online { since: Timestamp::now(), address, route: route.clone() });
     *online_since = Some(Instant::now());
@@ -172,8 +173,11 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
     let writer = tokio::spawn(async move {
         let _done = writer_done;
         while let Some(frame) = outgoing.recv().await {
-            if sink.send(WsMessage::Binary(wire::encode(&frame).into())).await.is_err() {
+            if sink.send(WsMessage::Binary(wire::encode(&frame.value).into())).await.is_err() {
                 return;
+            }
+            if let Some(written) = frame.written {
+                let _ = written.send(());
             }
         }
         let _ = sink.close().await;
@@ -327,7 +331,7 @@ fn refused(reason: Refusal) -> Ended {
     }
 }
 
-async fn heartbeat(up: mpsc::UnboundedSender<Up>) {
+async fn heartbeat(up: Outgoing) {
     let mut n = 0;
     loop {
         tokio::time::sleep(HEARTBEAT).await;
@@ -366,7 +370,7 @@ fn refused_letter(inner: &Inner, seq: u64, reason: &str) {
 
 /// Sends every letter in the outbox past `sent`, in order, and each new one
 /// as it is put there.
-async fn flush(inner: Arc<Inner>, up: mpsc::UnboundedSender<Up>, mut sent: u64) {
+async fn flush(inner: Arc<Inner>, up: Outgoing, mut sent: u64) {
     let outbox = Outbox::new(&inner.dir);
     loop {
         let numbers = match outbox.numbers() {
@@ -401,7 +405,7 @@ async fn flush(inner: Arc<Inner>, up: mpsc::UnboundedSender<Up>, mut sent: u64) 
 /// the hub each is taken.
 async fn take_letters(
     inner: Arc<Inner>,
-    up: mpsc::UnboundedSender<Up>,
+    up: Outgoing,
     hub_letters: u64,
     mut delivered: mpsc::UnboundedReceiver<(u64, Signed)>,
     failed: oneshot::Sender<String>,
@@ -478,7 +482,7 @@ async fn take_letter(inner: &Inner, message: &Signed) -> std::io::Result<()> {
 }
 
 /// Checks a call from another machine, has the node do it, and answers.
-async fn answer(inner: Arc<Inner>, up: mpsc::UnboundedSender<Up>, call: u64, message: Signed) {
+async fn answer(inner: Arc<Inner>, up: Outgoing, call: u64, message: Signed) {
     let claimed: Message = match message.claim() {
         Ok(claimed) => claimed,
         Err(error) => {
@@ -487,8 +491,15 @@ async fn answer(inner: Arc<Inner>, up: mpsc::UnboundedSender<Up>, call: u64, mes
         }
     };
     let caller = claimed.from.clone();
+    let mut _answering = None;
     let result: RemoteResult = match check_call(&inner, &message, &claimed).await {
-        Ok((remote, stream)) => inner.node.call(caller.clone(), remote, stream).await,
+        Ok((remote, stream)) => match inner.node.answering(&remote) {
+            Ok(guard) => {
+                _answering = guard;
+                inner.node.call(caller.clone(), remote, stream).await
+            }
+            Err(failure) => Err(failure),
+        },
         Err(reason) => {
             inner.node.log(format!("refused a call from {caller}: {reason}"));
             Err(Failure::new(format!("{} refused the call: {reason}", inner.membership.name)))
@@ -514,7 +525,9 @@ async fn answer(inner: Arc<Inner>, up: mpsc::UnboundedSender<Up>, call: u64, mes
     let small = sign(Body::Answer { call: claimed.n, result: result.clone() });
     let frame = Up::Answer { call, message: small };
     if wire::encode(&frame).len() <= wire::MAX_CONTROL_FRAME {
-        let _ = up.send(frame);
+        if let Err(error) = up.write(frame).await {
+            inner.node.log(format!("sending an answer to {caller}: {error}"));
+        }
         return;
     }
     // Too large for the control connection: the answer says what follows
@@ -536,7 +549,12 @@ async fn answer(inner: Arc<Inner>, up: mpsc::UnboundedSender<Up>, call: u64, mes
     let ticket = Signed::new(&inner.key, Domain::Ticket, &ticket);
     let carried =
         Carried { ticket: ticket.clone(), bytes: bytes.len() as u64, sha256: crate::sign::Digest(sha256(&bytes)) };
-    let _ = up.send(Up::Answer { call, message: sign(Body::LargeAnswer { call: claimed.n, carried }) });
+    if let Err(error) =
+        up.write(Up::Answer { call, message: sign(Body::LargeAnswer { call: claimed.n, carried }) }).await
+    {
+        inner.node.log(format!("announcing a large answer to {caller}: {error}"));
+        return;
+    }
     if let Err(error) = crate::data::source(&inner.membership, &inner.key, ticket, &bytes).await {
         inner.node.log(format!("sending a large answer to {caller}: {error}"));
     }

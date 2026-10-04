@@ -234,6 +234,8 @@ struct Thread {
     /// Turns that ended: an answer to `turn/start` that arrives after its
     /// turn ended must not make it run again.
     finished: HashSet<String>,
+    /// Ends reported by the host but not yet made durable by the node.
+    unsettled: HashSet<String>,
     /// Errors for turns not yet named by the answer that started them.
     failed_early: HashMap<String, String>,
     /// The agent's last message so far, and the turn it is in.
@@ -442,6 +444,34 @@ impl CodexHost {
         self.lock().threads.values().any(|entry| entry.turn.is_some())
     }
 
+    /// No turn runs and every reported end has been retained or applied by
+    /// the node. A host becoming idle alone does not make handoff safe.
+    pub fn settled(&self) -> bool {
+        self.lock().threads.values().all(|entry| entry.turn.is_none() && entry.unsettled.is_empty())
+    }
+
+    /// A report's effects are durable, or its unclaimed contents are kept
+    /// for the next node. Only then can its turn cease preventing handoff.
+    pub fn acknowledge(&self, event: &HostEvent) {
+        let mut state = self.lock();
+        let mut settled = |thread: &str, turn: &str| {
+            if let Some(entry) = state.threads.get_mut(thread) {
+                entry.unsettled.remove(turn);
+            }
+        };
+        match event {
+            HostEvent::Happened { thread, event: SessionEvent { happened: Happened::TurnEnded { turn, .. }, .. } } => {
+                settled(thread, turn);
+            }
+            HostEvent::Gone { turns, .. } => {
+                for (thread, turn) in turns {
+                    settled(thread, turn);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn running_turn(&self, thread: &str) -> Option<String> {
         self.lock().threads.get(thread).and_then(|entry| entry.turn.clone())
     }
@@ -592,6 +622,7 @@ impl CodexHost {
             if !entry.finished.insert(turn.to_string()) {
                 return;
             }
+            entry.unsettled.insert(turn.to_string());
             entry.started.remove(turn);
             if entry.turn.as_deref() == Some(turn) {
                 entry.turn = None;
@@ -883,6 +914,7 @@ impl CodexHost {
                 if let Some(turn) = entry.turn.take() {
                     entry.started.remove(&turn);
                     entry.finished.insert(turn.clone());
+                    entry.unsettled.insert(turn.clone());
                     entry.last_message = None;
                     turns.push((thread.clone(), turn));
                 }

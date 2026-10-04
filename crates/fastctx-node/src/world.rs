@@ -145,6 +145,19 @@ struct Handler {
 }
 
 impl fastctx_net::link::Node for Handler {
+    fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, Failure> {
+        if matches!(call, RemoteCall::Watch { .. }) {
+            return Ok(None);
+        }
+        let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
+        node.handoff.call().map(|guard| Some(Box::new(guard) as Box<dyn Send>)).ok_or_else(|| {
+            Failure::new(format!(
+                "the node on {} is handing over to its successor; ask again in a moment",
+                node.machine()
+            ))
+        })
+    }
+
     fn call(
         &self,
         from: MachineName,

@@ -86,6 +86,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             arrived.residents.push(whereabouts.resident.clone());
         }
         writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
+        writer.drain().await?;
     }
     Ok(())
 }

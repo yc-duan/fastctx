@@ -67,7 +67,14 @@ pub struct Connection {
 impl Connection {
     fn new(stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> Self {
         let (reader, writer) = tokio::io::split(Box::new(stream) as Box<dyn Stream>);
-        Self { reader: FrameReader(reader), writer: FrameWriter(writer) }
+        Self {
+            reader: FrameReader(reader),
+            writer: FrameWriter {
+                stream: writer,
+                #[cfg(windows)]
+                pipe: None,
+            },
+        }
     }
 
     /// Separates the two directions, so one task can read while another
@@ -106,7 +113,11 @@ impl FrameReader {
     }
 }
 
-pub struct FrameWriter(WriteHalf<Box<dyn Stream>>);
+pub struct FrameWriter {
+    stream: WriteHalf<Box<dyn Stream>>,
+    #[cfg(windows)]
+    pipe: Option<std::sync::Arc<std::fs::File>>,
+}
 
 impl FrameWriter {
     pub async fn send(&mut self, frame: &[u8]) -> io::Result<()> {
@@ -115,8 +126,34 @@ impl FrameWriter {
         let mut bytes = Vec::with_capacity(4 + frame.len());
         bytes.extend_from_slice(&length.to_le_bytes());
         bytes.extend_from_slice(frame);
-        self.0.write_all(&bytes).await?;
-        self.0.flush().await
+        self.stream.write_all(&bytes).await?;
+        self.stream.flush().await
+    }
+
+    /// Finishes a response before its server may exit. Tokio's named-pipe
+    /// flush does not wait for the client to consume the buffered bytes;
+    /// closing the process with those bytes pending can lose the response.
+    /// On Windows server pipes, FlushFileBuffers waits for that consumption.
+    pub async fn drain(&mut self) -> io::Result<()> {
+        #[cfg(windows)]
+        if let Some(pipe) = &self.pipe {
+            use std::os::windows::io::AsRawHandle as _;
+            use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
+
+            let pipe = pipe.clone();
+            tokio::task::spawn_blocking(move || {
+                // SAFETY: the owned duplicate keeps this server pipe valid
+                // until the blocking flush completes or its client closes.
+                if unsafe { FlushFileBuffers(pipe.as_raw_handle()) } == 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            })
+            .await
+            .map_err(io::Error::other)??;
+        }
+        Ok(())
     }
 }
 
@@ -226,16 +263,26 @@ mod imp {
         }
 
         pub async fn accept(&mut self) -> io::Result<Connection> {
-            let server = match self.next.take() {
-                Some(server) => server,
-                None => self.instance(false)?,
-            };
-            server.connect().await?;
+            if self.next.is_none() {
+                self.next = Some(self.instance(false)?);
+            }
+            // The watchdog may cancel this wait. Keep the pipe in the
+            // listener until connected, including any client arriving then.
+            if let Err(error) = self.next.as_ref().expect("a listening instance exists").connect().await {
+                self.next = None;
+                return Err(error);
+            }
+            let server = self.next.take().expect("the connected instance");
             // The next instance is made before this one is handed out, so a
             // client never finds the pipe missing. If it cannot be made, this
             // connection is still handed out and the next accept reports why.
             self.next = self.instance(false).ok();
-            Ok(Connection::new(server))
+            use std::os::windows::io::BorrowedHandle;
+            // SAFETY: server owns this handle through the duplication.
+            let handle = unsafe { BorrowedHandle::borrow_raw(server.as_raw_handle()) }.try_clone_to_owned()?;
+            let mut connection = Connection::new(server);
+            connection.writer.pipe = Some(std::sync::Arc::new(std::fs::File::from(handle)));
+            Ok(connection)
         }
 
         fn instance(&self, first: bool) -> io::Result<NamedPipeServer> {

@@ -160,7 +160,7 @@ async fn into_thread(
     let _speaking = speaking.lock().await;
     // A node handing the World on starts no turn; the words wait for its
     // successor, which hands them over when it serves.
-    let Some(_starting) = node.handoff.start_turn(node.codex.running_turn(thread).is_some()) else {
+    let Some(_starting) = node.handoff.start_turn() else {
         return Ok(Landed::Waiting { why: Some(crate::handoff::Handoff::waiting_why(node)), answered: true });
     };
     let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)
@@ -419,6 +419,38 @@ pub async fn recover(node: &Arc<Node>) {
             }.await;
             if let Err(error) = result {
                 node.log.line(format_args!("recovering deliveries for {}: {error}", resident.id));
+            }
+        });
+    }
+}
+
+/// A cancelled handoff reopens delivery of waiting words. Unlike startup
+/// recovery, this never treats an in-flight submission as interrupted.
+pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
+    for resident in node.residents.everyone() {
+        if !resident.about.world_started || resident.about.host.agent.as_str() != "codex" {
+            continue;
+        }
+        let node = node.clone();
+        runtime.spawn(async move {
+            let Some(_answering) = node.handoff.call() else { return };
+            let directory = node.world.resident(resident.town.as_ref(), &resident.id);
+            let result = async {
+                let speaking = node.residents.speaking(&resident.id).expect("resident on record");
+                let guard = speaking.lock().await;
+                let waiting =
+                    crate::inbox::pending(&directory)?.into_iter().find(|input| input.state == PendingState::Waiting);
+                drop(guard);
+                if let Some(input) = waiting {
+                    hand_over(&node, &resident.id, &resident.about, &directory, input)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.message))?;
+                }
+                Ok::<(), std::io::Error>(())
+            }
+            .await;
+            if let Err(error) = result {
+                node.log.line(format_args!("resuming delivery for {}: {error}", resident.id));
             }
         });
     }
