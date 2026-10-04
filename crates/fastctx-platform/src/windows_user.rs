@@ -118,7 +118,12 @@ impl OwnerOnly {
         let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
         // SAFETY: a NUL-terminated SDDL string; the descriptor is freed on drop.
         if unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut descriptor, ptr::null_mut())
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                ptr::null_mut(),
+            )
         } == 0
         {
             return Err(io::Error::last_os_error());

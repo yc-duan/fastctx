@@ -58,7 +58,9 @@ impl Drop for Arrived<'_> {
 
 async fn handle(node: &Node, _peer: &Peer, call: Call) -> Result<Reply, Failure> {
     match call {
-        Call::Arrive { host, hints } => node.residents.arrive(&node.world, &node.machine, host, hints).map(Reply::Arrived),
+        Call::Arrive { host, hints } => {
+            node.residents.arrive(&node.world, &node.machine, host, hints).map(Reply::Arrived)
+        }
         Call::Run { resident, town, request } => {
             node.jobs.run(&node.world, &node.machine, resident, town, request).await.map(Reply::Run)
         }

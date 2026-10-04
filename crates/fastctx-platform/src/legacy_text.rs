@@ -22,14 +22,26 @@ pub fn decode_legacy(bytes: &[u8]) -> Option<(String, String)> {
         }
         // SAFETY: a size query, then a conversion into a buffer of that size.
         unsafe {
-            let length =
-                MultiByteToWideChar(page, MB_ERR_INVALID_CHARS, bytes.as_ptr(), bytes.len() as i32, std::ptr::null_mut(), 0);
+            let length = MultiByteToWideChar(
+                page,
+                MB_ERR_INVALID_CHARS,
+                bytes.as_ptr(),
+                bytes.len() as i32,
+                std::ptr::null_mut(),
+                0,
+            );
             if length <= 0 {
                 continue;
             }
             let mut wide = vec![0u16; length as usize];
-            if MultiByteToWideChar(page, MB_ERR_INVALID_CHARS, bytes.as_ptr(), bytes.len() as i32, wide.as_mut_ptr(), length)
-                != length
+            if MultiByteToWideChar(
+                page,
+                MB_ERR_INVALID_CHARS,
+                bytes.as_ptr(),
+                bytes.len() as i32,
+                wide.as_mut_ptr(),
+                length,
+            ) != length
             {
                 continue;
             }

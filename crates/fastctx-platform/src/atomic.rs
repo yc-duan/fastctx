@@ -107,8 +107,8 @@ mod imp {
     use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
         CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_DISPOSITION_INFO, FILE_RENAME_INFO,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, FileRenameInfoEx,
-        FlushFileBuffers, SetFileInformationByHandle, WriteFile,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, FileRenameInfoEx, FlushFileBuffers,
+        SetFileInformationByHandle, WriteFile,
     };
 
     use super::{Permissions, temporary_beside};
@@ -212,7 +212,12 @@ mod imp {
         let info = FILE_DISPOSITION_INFO { DeleteFile: true };
         // SAFETY: a valid handle opened with DELETE access.
         unsafe {
-            SetFileInformationByHandle(handle, FileDispositionInfo, (&raw const info).cast(), size_of::<FILE_DISPOSITION_INFO>() as u32);
+            SetFileInformationByHandle(
+                handle,
+                FileDispositionInfo,
+                (&raw const info).cast(),
+                size_of::<FILE_DISPOSITION_INFO>() as u32,
+            );
         }
     }
 }

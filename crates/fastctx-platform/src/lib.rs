@@ -16,10 +16,10 @@ pub mod ipc;
 pub mod legacy_text;
 pub mod lock;
 pub mod private;
-#[cfg(windows)]
-pub mod registry;
 #[cfg(target_os = "linux")]
 pub mod procfs;
+#[cfg(windows)]
+pub mod registry;
 #[cfg(any(target_os = "linux", windows))]
 pub mod tree;
 #[cfg(unix)]

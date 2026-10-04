@@ -17,10 +17,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use fastctx_client::Client;
 use fastctx_platform::{FileLock, ProcessTree, current_identity, in_job};
+use fastctx_types::Call;
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::run::{Ended, EndedHow, ExitStatus, Exited, JobRecord, OutputLost};
-use fastctx_types::Call;
 use jiff::Timestamp;
 
 use super::{record, shell};
@@ -151,7 +151,8 @@ fn exit_status(status: std::process::ExitStatus) -> ExitStatus {
 /// reachable, reads the record when it starts; the record is the truth and
 /// this is only a prompt, so its failure is not the job's.
 fn tell_node(world: &WorldDir, record: &JobRecord) {
-    let call = Call::JobChanged { job: record.id.clone(), resident: record.resident.clone(), town: record.town.clone() };
+    let call =
+        Call::JobChanged { job: record.id.clone(), resident: record.resident.clone(), town: record.town.clone() };
     let peer = Peer::Supervisor { job: record.id.clone() };
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
     runtime.block_on(async {

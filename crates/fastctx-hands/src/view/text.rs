@@ -241,7 +241,9 @@ impl Reader {
         let mut piece = String::with_capacity(input.len() + 16);
         loop {
             piece.clear();
-            piece.reserve(self.decoder.max_utf8_buffer_length_without_replacement(input.len()).unwrap_or(input.len() * 3));
+            piece.reserve(
+                self.decoder.max_utf8_buffer_length_without_replacement(input.len()).unwrap_or(input.len() * 3),
+            );
             let (result, read) = self.decoder.decode_to_string_without_replacement(input, &mut piece, last);
             self.take(&piece);
             match result {

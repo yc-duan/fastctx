@@ -12,7 +12,8 @@ use fastctx_types::run::JobRecord;
 
 pub fn read(path: &Path) -> io::Result<JobRecord> {
     let bytes = std::fs::read(path)?;
-    serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
+    serde_json::from_slice(&bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
 
 pub fn write(path: &Path, record: &JobRecord) -> io::Result<()> {

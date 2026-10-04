@@ -62,7 +62,11 @@ impl Session {
     pub async fn run(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
         let command = match arguments.get("command") {
             Some(Value::String(command)) => command.clone(),
-            _ => return Answer::error("=== run (not run: `command` must be a string holding the script) ===".to_string()),
+            _ => {
+                return Answer::error(
+                    "=== run (not run: `command` must be a string holding the script) ===".to_string(),
+                );
+            }
         };
         let cwd = match arguments.get("cwd") {
             None | Some(Value::Null) => None,
@@ -103,8 +107,12 @@ impl Session {
         };
         match collected {
             Ok(Reply::Notices { notices }) => answer.content.extend(notices.iter().map(present_notice)),
-            Ok(other) => answer.content.push(Content::Text(format!("=== words for you could not be read: the node answered {other:?} ==="))),
-            Err(error) => answer.content.push(Content::Text(format!("=== words for you could not be read: {error} ==="))),
+            Ok(other) => answer
+                .content
+                .push(Content::Text(format!("=== words for you could not be read: the node answered {other:?} ==="))),
+            Err(error) => {
+                answer.content.push(Content::Text(format!("=== words for you could not be read: {error} ===")))
+            }
         }
     }
 

@@ -40,7 +40,9 @@ mod imp {
     use std::os::windows::ffi::OsStrExt as _;
     use std::path::Path;
 
-    use windows_sys::Win32::Security::{DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SetFileSecurityW};
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SetFileSecurityW,
+    };
 
     use crate::windows_user::OwnerOnly;
 
@@ -49,7 +51,11 @@ mod imp {
         let name: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
         // SAFETY: a NUL-terminated path and a valid descriptor.
         let applied = unsafe {
-            SetFileSecurityW(name.as_ptr(), DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, access.descriptor())
+            SetFileSecurityW(
+                name.as_ptr(),
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                access.descriptor(),
+            )
         };
         if applied == 0 {
             return Err(io::Error::last_os_error());

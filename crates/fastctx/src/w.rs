@@ -44,7 +44,8 @@ fn render(reply: &WhoReply, you: Option<&ResidentId>, now: Timestamp) -> String 
     let width = residents.iter().map(|resident| resident.about.id.len()).max().unwrap_or(0);
     for resident in residents {
         let you_mark = if Some(&resident.about.id) == you { "  (you)" } else { "" };
-        let since = if resident.here { format!("here {}", ago(resident.about.born_at, now)) } else { "left".to_string() };
+        let since =
+            if resident.here { format!("here {}", ago(resident.about.born_at, now)) } else { "left".to_string() };
         let origin = match &resident.about.origin {
             Origin::User => "opened by user".to_string(),
             Origin::Colleague { asked_by, label } => format!("for {asked_by} \"{label}\""),

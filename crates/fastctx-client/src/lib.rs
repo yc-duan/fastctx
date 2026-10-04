@@ -99,9 +99,9 @@ impl Client {
                     };
                     if !alive {
                         return match Self::connect(world, peer.clone()).await {
-                            Err(ConnectError::NoNode { .. }) => Err(ConnectError::NodeDidNotStart {
-                                log: world.node_log().display().to_string(),
-                            }),
+                            Err(ConnectError::NoNode { .. }) => {
+                                Err(ConnectError::NodeDidNotStart { log: world.node_log().display().to_string() })
+                            }
                             connected => connected,
                         };
                     }
@@ -137,7 +137,9 @@ impl Client {
             NodeFrame::Reply { id: answered, reply } if answered == id => reply.map_err(CallError::Failed),
             // Calls on one client go one at a time, so any other id is a
             // fault in the node.
-            NodeFrame::Reply { id: answered, .. } => Err(broken(format!("the node answered call {answered}, not {id}"))),
+            NodeFrame::Reply { id: answered, .. } => {
+                Err(broken(format!("the node answered call {answered}, not {id}")))
+            }
         }
     }
 }

@@ -69,7 +69,8 @@ fn supervise(world: &std::path::Path, record: &std::path::Path) -> anyhow::Resul
         .parent()
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("fastctx's own path has no directory"))?;
-    fastctx_hands::run::supervise(world, record, &fastctx_dir).inspect_err(|error| append(&diagnostics, &error.to_string()))?;
+    fastctx_hands::run::supervise(world, record, &fastctx_dir)
+        .inspect_err(|error| append(&diagnostics, &error.to_string()))?;
     Ok(())
 }
 

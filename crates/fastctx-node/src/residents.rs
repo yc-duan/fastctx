@@ -70,7 +70,13 @@ impl Residents {
     }
 
     /// The resident a session is, made now if it is new.
-    pub fn arrive(&self, world: &WorldDir, machine: &MachineName, host: Host, hints: Hints) -> Result<Whereabouts, Failure> {
+    pub fn arrive(
+        &self,
+        world: &WorldDir,
+        machine: &MachineName,
+        host: Host,
+        hints: Hints,
+    ) -> Result<Whereabouts, Failure> {
         let mut state = self.state.lock().expect("never poisoned");
         if let Some(resident) = hints.resident {
             return match state.known.get(&resident).cloned() {
@@ -135,11 +141,17 @@ impl Residents {
 }
 
 /// Appends one action to a resident's `actions`.
-pub fn record_action(world: &WorldDir, resident: &ResidentId, town: Option<&TownName>, action: &Action) -> io::Result<()> {
+pub fn record_action(
+    world: &WorldDir,
+    resident: &ResidentId,
+    town: Option<&TownName>,
+    action: &Action,
+) -> io::Result<()> {
     use std::io::Write as _;
     let mut line = serde_json::to_vec(action).map_err(io::Error::other)?;
     line.push(b'\n');
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(world.resident(town, resident).actions())?;
+    let mut file =
+        std::fs::OpenOptions::new().create(true).append(true).open(world.resident(town, resident).actions())?;
     file.write_all(&line)
 }
 
@@ -176,11 +188,17 @@ pub fn last_action(world: &WorldDir, resident: &ResidentId, town: Option<&TownNa
 }
 
 fn parse_action(path: &std::path::Path, line: &[u8]) -> io::Result<Action> {
-    serde_json::from_slice(line).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
+    serde_json::from_slice(line)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
 
 /// Appends what a resident saw to its `seen` record, one line per file.
-pub fn record_seen(world: &WorldDir, resident: &ResidentId, town: Option<&TownName>, seen: &[fastctx_types::residents::Seen]) -> io::Result<()> {
+pub fn record_seen(
+    world: &WorldDir,
+    resident: &ResidentId,
+    town: Option<&TownName>,
+    seen: &[fastctx_types::residents::Seen],
+) -> io::Result<()> {
     use std::io::Write as _;
     let directory = world.resident(town, resident);
     let mut lines = Vec::new();

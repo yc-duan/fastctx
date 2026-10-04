@@ -47,7 +47,10 @@ mod imp {
     /// Without /proc, `ps` gives the start time; at one-second precision a
     /// reused PID within the same second would look like the same process.
     pub fn token(pid: u32) -> io::Result<Option<String>> {
-        let output = Command::new("ps").args(["-p", &pid.to_string(), "-o", "lstart=", "-o", "stat="]).env("LC_ALL", "C").output()?;
+        let output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "lstart=", "-o", "stat="])
+            .env("LC_ALL", "C")
+            .output()?;
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !output.status.success() || text.is_empty() || text.ends_with('Z') {
             return Ok(None);
@@ -82,8 +85,11 @@ mod imp {
                 };
             }
             // An exited process keeps its handle valid while anyone holds one.
-            let result =
-                if WaitForSingleObject(handle, 0) == WAIT_OBJECT_0 { Ok(None) } else { creation_time(handle).map(Some) };
+            let result = if WaitForSingleObject(handle, 0) == WAIT_OBJECT_0 {
+                Ok(None)
+            } else {
+                creation_time(handle).map(Some)
+            };
             CloseHandle(handle);
             result
         }

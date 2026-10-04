@@ -397,7 +397,8 @@ mod imp {
                 // the value of STILL_ACTIVE, counts as running.)
                 let mut code = 0;
                 // SAFETY: a live handle with query access.
-                if unsafe { GetExitCodeProcess(member.as_raw_handle(), &mut code) } != 0 && code != STILL_ACTIVE as u32 {
+                if unsafe { GetExitCodeProcess(member.as_raw_handle(), &mut code) } != 0 && code != STILL_ACTIVE as u32
+                {
                     continue;
                 }
                 // The console host Windows adds for a console is not one of
@@ -413,8 +414,7 @@ mod imp {
         pub fn kill(&self) -> io::Result<()> {
             // With at most one active process allowed, no member can start
             // another; existing members are not evicted by the change.
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
-                query(&self.job, JobObjectExtendedLimitInformation)?;
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = query(&self.job, JobObjectExtendedLimitInformation)?;
             limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
             limits.BasicLimitInformation.ActiveProcessLimit = 1;
             set(&self.job, JobObjectExtendedLimitInformation, &limits)?;

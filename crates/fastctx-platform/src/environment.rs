@@ -84,7 +84,8 @@ mod imp {
                     // separator is the first `=` after the first character.
                     if let Some(split) = entry.iter().skip(1).position(|&unit| unit == u16::from(b'=')) {
                         let split = split + 1;
-                        variables.push((OsString::from_wide(&entry[..split]), OsString::from_wide(&entry[split + 1..])));
+                        variables
+                            .push((OsString::from_wide(&entry[..split]), OsString::from_wide(&entry[split + 1..])));
                     }
                     cursor = cursor.add(length + 1);
                 }
@@ -245,7 +246,11 @@ mod imp {
                     return Err(io::Error::other(format!("user {uid} has no entry in the account database")));
                 }
                 let text = |field: *const libc::c_char| -> OsString {
-                    if field.is_null() { OsString::new() } else { OsStr::from_bytes(CStr::from_ptr(field).to_bytes()).into() }
+                    if field.is_null() {
+                        OsString::new()
+                    } else {
+                        OsStr::from_bytes(CStr::from_ptr(field).to_bytes()).into()
+                    }
                 };
                 let shell = text(entry.pw_shell);
                 Ok(Self {

@@ -28,7 +28,13 @@ impl Jobs {
 
     /// A supervisor said its job's record changed: wake whoever waits for
     /// it, and tell its resident if it ended and that is owed.
-    pub async fn changed(&self, world: &WorldDir, job: JobId, resident: ResidentId, town: Option<TownName>) -> Result<(), Failure> {
+    pub async fn changed(
+        &self,
+        world: &WorldDir,
+        job: JobId,
+        resident: ResidentId,
+        town: Option<TownName>,
+    ) -> Result<(), Failure> {
         // With nobody waiting there is nobody to wake.
         let _ = self.changes.send(job.clone());
         let world = world.clone();
@@ -145,7 +151,9 @@ fn outcome(reply: &RunReply) -> String {
     };
     match &reply.state {
         RunState::Ended { status: exit } => status(exit),
-        RunState::Exited { status: exit, remaining } => format!("{}; {remaining} still running as {}", status(exit), reply.job),
+        RunState::Exited { status: exit, remaining } => {
+            format!("{}; {remaining} still running as {}", status(exit), reply.job)
+        }
         RunState::Running => format!("running as {}", reply.job),
         RunState::Stopped => "stopped".to_string(),
         RunState::Interrupted { .. } => "interrupted".to_string(),
@@ -163,7 +171,9 @@ fn state(record: &JobRecord) -> RunState {
     match (&record.end, &record.exit) {
         (Some(Ended { how: EndedHow::Failed { error }, .. }), _) => RunState::Failed { error: error.clone() },
         (Some(Ended { how: EndedHow::Stopped, .. }), _) => RunState::Stopped,
-        (Some(Ended { how: EndedHow::Interrupted { reason }, .. }), _) => RunState::Interrupted { reason: reason.clone() },
+        (Some(Ended { how: EndedHow::Interrupted { reason }, .. }), _) => {
+            RunState::Interrupted { reason: reason.clone() }
+        }
         (Some(Ended { how: EndedHow::Finished, .. }), Some(exit)) => RunState::Ended { status: exit.status },
         (Some(Ended { how: EndedHow::Finished, .. }), None) => {
             RunState::Failed { error: "its record says it finished but holds no exit status".to_string() }
@@ -179,7 +189,9 @@ async fn supervisor_gone(record: &JobRecord, launched: &run::Launched) -> bool {
     let identity = record.supervisor.clone().or_else(|| launched.supervisor.clone());
     match identity {
         // A supervisor that cannot be checked is not taken for gone.
-        Some(identity) => tokio::task::spawn_blocking(move || !is_alive(&identity).unwrap_or(true)).await.unwrap_or(false),
+        Some(identity) => {
+            tokio::task::spawn_blocking(move || !is_alive(&identity).unwrap_or(true)).await.unwrap_or(false)
+        }
         // The supervisor had already exited when it was started.
         None => true,
     }
@@ -238,7 +250,8 @@ pub fn reconcile(world: &WorldDir) -> std::io::Result<Reconciled> {
                 }
                 let checked = record::read(&entry).and_then(|job| match job.end {
                     Some(_) => Ok(false),
-                    None => interrupt_now(&entry, "its supervisor was gone when the node started").map(|job| job.end.is_some()),
+                    None => interrupt_now(&entry, "its supervisor was gone when the node started")
+                        .map(|job| job.end.is_some()),
                 });
                 match checked {
                     Ok(true) => found.interrupted.push(entry),

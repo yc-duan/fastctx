@@ -80,7 +80,10 @@ enum State {
     /// After ESC, deciding what kind of sequence follows.
     Escape,
     /// Inside an OSC (`ESC ]`) or APC (`ESC _`) string, until BEL or `ESC \`.
-    String { apc: bool, escape: bool },
+    String {
+        apc: bool,
+        escape: bool,
+    },
 }
 
 impl<R: Read> Lines<R> {
@@ -165,7 +168,10 @@ impl<R: Read> Lines<R> {
         if let State::String { apc, .. } = self.state {
             let what = if apc { "kitty" } else { "OSC" };
             if is_image_sequence(apc, sequence) {
-                self.push_unreadable(format!("an image ({what} sequence) cut off before its end, {} bytes", sequence.len()));
+                self.push_unreadable(format!(
+                    "an image ({what} sequence) cut off before its end, {} bytes",
+                    sequence.len()
+                ));
             }
         }
         if self.kitty.take().is_some() {

@@ -27,7 +27,10 @@ fn absolute(what: &str, path: OsString) -> io::Result<PathBuf> {
     if path.is_absolute() {
         Ok(path)
     } else {
-        Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{what} must be an absolute path, not {}", path.display())))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{what} must be an absolute path, not {}", path.display()),
+        ))
     }
 }
 

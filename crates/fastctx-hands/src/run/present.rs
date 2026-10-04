@@ -30,7 +30,11 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
                 answer.text(text);
             }
             OutputPiece::Omitted { first_line, last_line } => {
-                let lines = if first_line == last_line { format!("line {first_line}") } else { format!("lines {first_line}-{last_line}") };
+                let lines = if first_line == last_line {
+                    format!("line {first_line}")
+                } else {
+                    format!("lines {first_line}-{last_line}")
+                };
                 answer.line(&format!(
                     "=== {lines} of {} not shown; read them with: fastctx view --lines {first_line}-{last_line} -- {log} ===",
                     output.lines
@@ -47,10 +51,9 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
         RunState::Running => {
             answer.line(&format!("=== {} goes on in the background; its output continues in {log} ===", reply.job))
         }
-        RunState::Exited { remaining, .. } if *remaining > 0 => answer.line(&format!(
-            "=== what it started goes on as {}; further output goes to {log} ===",
-            reply.job
-        )),
+        RunState::Exited { remaining, .. } if *remaining > 0 => {
+            answer.line(&format!("=== what it started goes on as {}; further output goes to {log} ===", reply.job))
+        }
         _ => {}
     }
     answer.finish()
@@ -68,7 +71,10 @@ pub fn present_notice(notice: &Notice) -> Content {
                 (EndedHow::Failed { error }, _) => format!("could not run: {error}"),
             };
             let at = at.strftime("%Y-%m-%d %H:%M:%S UTC");
-            Content::Text(format!("=== {job} on {machine} ended ({how}) at {at}; its output is in {} ===", display_path(output)))
+            Content::Text(format!(
+                "=== {job} on {machine} ended ({how}) at {at}; its output is in {} ===",
+                display_path(output)
+            ))
         }
     }
 }
@@ -78,8 +84,16 @@ fn facts(reply: &RunReply) -> String {
     let mut facts = vec![match &reply.state {
         RunState::Ended { status } => status_text(*status),
         RunState::Exited { status, remaining } => {
-            let processes = if *remaining == 1 { "1 process it started is".to_string() } else { format!("{remaining} processes it started are") };
-            if *remaining == 0 { status_text(*status) } else { format!("{}; {processes} still running", status_text(*status)) }
+            let processes = if *remaining == 1 {
+                "1 process it started is".to_string()
+            } else {
+                format!("{remaining} processes it started are")
+            };
+            if *remaining == 0 {
+                status_text(*status)
+            } else {
+                format!("{}; {processes} still running", status_text(*status))
+            }
         }
         RunState::Running => format!("still running after {}s; {}", WAIT.as_secs(), reply.job),
         RunState::Stopped => "stopped".to_string(),
@@ -100,7 +114,11 @@ fn output_facts(output: &OutputWindow) -> Vec<String> {
         facts.push(format!("{lines} decoded as {}", legacy.encoding));
     }
     if output.escaped_lines > 0 {
-        let lines = if output.escaped_lines == 1 { "1 line has".to_string() } else { format!("{} lines have", output.escaped_lines) };
+        let lines = if output.escaped_lines == 1 {
+            "1 line has".to_string()
+        } else {
+            format!("{} lines have", output.escaped_lines)
+        };
         facts.push(format!("{lines} bytes that decode in no known encoding, shown as \\xNN"));
     }
     facts

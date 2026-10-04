@@ -104,7 +104,8 @@ pub fn window(log: &Path, budget: usize) -> io::Result<OutputWindow> {
         if let Some(line) = &first_cut {
             assembly.start_of(line, head_budget);
         }
-        let shown_until = head.last().map(|line| line.number).or(first_cut.as_ref().map(|line| line.number)).unwrap_or(0);
+        let shown_until =
+            head.last().map(|line| line.number).or(first_cut.as_ref().map(|line| line.number)).unwrap_or(0);
         let shown_from = tail_first.unwrap_or(total + 1);
         if shown_from > shown_until + 1 {
             assembly.omitted(shown_until + 1, shown_from - 1);
@@ -182,7 +183,13 @@ impl Assembly {
         let of = text.chars().count();
         let shown: String = text.chars().take(budget).collect();
         let to = shown.chars().count();
-        self.pieces.push(OutputPiece::PartOfLine { line: line.number, from: 1, to: to as u64, of: of as u64, text: shown });
+        self.pieces.push(OutputPiece::PartOfLine {
+            line: line.number,
+            from: 1,
+            to: to as u64,
+            of: of as u64,
+            text: shown,
+        });
     }
 
     /// The last `budget` characters of a line too long to show whole.

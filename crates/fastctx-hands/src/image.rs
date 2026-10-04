@@ -56,8 +56,10 @@ fn webp_size(bytes: &[u8]) -> Option<(u32, u32)> {
             Some(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1))
         }
         b"VP8X" => {
-            let width = u32::from_le_bytes([*bytes.get(data + 4)?, *bytes.get(data + 5)?, *bytes.get(data + 6)?, 0]) + 1;
-            let height = u32::from_le_bytes([*bytes.get(data + 7)?, *bytes.get(data + 8)?, *bytes.get(data + 9)?, 0]) + 1;
+            let width =
+                u32::from_le_bytes([*bytes.get(data + 4)?, *bytes.get(data + 5)?, *bytes.get(data + 6)?, 0]) + 1;
+            let height =
+                u32::from_le_bytes([*bytes.get(data + 7)?, *bytes.get(data + 8)?, *bytes.get(data + 9)?, 0]) + 1;
             Some((width, height))
         }
         _ => None,

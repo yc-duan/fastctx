@@ -38,7 +38,10 @@ pub fn spawn_detached(
     env: &[(OsString, OsString)],
 ) -> io::Result<DetachedProcess> {
     if !program.is_absolute() || !cwd.is_absolute() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "program and working directory must be absolute paths"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "program and working directory must be absolute paths",
+        ));
     }
     check_environment(env)?;
     imp::spawn_detached(program, args, cwd, env)

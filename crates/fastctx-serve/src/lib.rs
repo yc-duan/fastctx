@@ -96,7 +96,9 @@ pub async fn serve(world: WorldDir) -> anyhow::Result<()> {
                 }
             }
             (Some(_), None) => {}
-            (Some(method), Some(id)) => output.send(&error_response(&id, -32601, &format!("method not found: {method}"))),
+            (Some(method), Some(id)) => {
+                output.send(&error_response(&id, -32601, &format!("method not found: {method}")))
+            }
             // Answers to requests this server never sends.
             (None, _) => {}
         }

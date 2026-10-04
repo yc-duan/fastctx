@@ -41,7 +41,8 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
     let files = plural(paths.len() as u64, "file", "files");
     let summary_at_longest = format!("=== view ({files}: {n} shown, {n} not shown) ===\n", n = paths.len());
     let notes: Vec<Section> = paths.iter().map(|path| not_shown(path, options)).collect();
-    let mut left = BUDGET.saturating_sub(summary_at_longest.chars().count() + notes.iter().map(|note| note.cost).sum::<usize>());
+    let mut left =
+        BUDGET.saturating_sub(summary_at_longest.chars().count() + notes.iter().map(|note| note.cost).sum::<usize>());
     let mut sections = Vec::new();
     let mut seen = Vec::new();
     let mut stopped = false;
@@ -126,7 +127,11 @@ fn look(path: &Path, options: &Options, budget: usize) -> io::Result<(Section, O
     }
     if start.starts_with(b"%PDF-") {
         return Ok((
-            Section::note(path, options, &format!("a PDF, {}; reading PDFs is not in this build yet", size(metadata.len()))),
+            Section::note(
+                path,
+                options,
+                &format!("a PDF, {}; reading PDFs is not in this build yet", size(metadata.len())),
+            ),
             None,
         ));
     }

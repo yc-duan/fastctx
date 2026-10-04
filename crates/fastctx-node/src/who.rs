@@ -29,8 +29,9 @@ pub fn who(
                 continue;
             }
         }
-        let about: About = serde_json::from_slice(&std::fs::read(directory.about())?)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", directory.about().display())))?;
+        let about: About = serde_json::from_slice(&std::fs::read(directory.about())?).map_err(|error| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", directory.about().display()))
+        })?;
         let last_action = last_action(world, &id, town.as_ref())?;
         residents.push(ResidentNow { about, town, here, last_action, running });
     }
