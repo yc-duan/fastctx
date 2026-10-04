@@ -1388,3 +1388,13 @@
     margin-left: 0;
   }
 }
+
+.divider a {
+  color: var(--text-2);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.divider a:hover {
+  color: var(--text);
+}

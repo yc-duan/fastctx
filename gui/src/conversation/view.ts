@@ -187,6 +187,11 @@ export class ConversationView {
         return `<div class="note caution">${escape(words.uncertain(entry.why))}</div>`;
       case "ask":
         return this.ask(entry);
+      case "forked": {
+        const from = `${entry.source.resident} · ${entry.source.machine}`;
+        const link = this.context.link ? `<a href="${escape(this.context.link(entry.source))}">${escape(from)}</a>` : escape(from);
+        return `<div class="divider"><span>${words.forkedFrom(link)}</span></div>`;
+      }
       case "tool":
       case "activity":
         return "";

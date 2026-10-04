@@ -45,6 +45,8 @@ export interface Words {
   copyMessage: string;
   rewind: string;
   fork: string;
+  /** Said with the source already escaped as a link. */
+  forkedFrom(source: string): string;
   find: FindWords;
   you(machine: string): string;
   world: string;
@@ -155,6 +157,7 @@ export const zh: Words = {
   copyMessage: "复制这段话",
   rewind: "改了重发",
   fork: "从这里分叉",
+  forkedFrom: (source) => `从 ${source} 的对话分出来`,
   find: {
     find: "在这段对话里找",
     placeholder: "在这段对话里找…",
@@ -247,6 +250,7 @@ export const en: Words = {
   copyMessage: "Copy this message",
   rewind: "Edit and resend",
   fork: "Fork from here",
+  forkedFrom: (source) => `Forked from ${source}`,
   find: {
     find: "Find in this conversation",
     placeholder: "Find in this conversation…",

@@ -45,6 +45,8 @@ export type Entry =
   | { kind: "ended"; key: string; turn: string; end: TurnEnd }
   | { kind: "health"; key: string; health: Health }
   | { kind: "uncertain"; key: string; why: string }
+  /** This conversation was forked from another one. */
+  | { kind: "forked"; key: string; source: import("../world/wire").Address }
   /** A request the session waits on the user for, as its host made it. */
   | { kind: "ask"; key: string; id: JsonValue; turn: string | null; request: string; params: JsonValue; state: AskState; version: number };
 
@@ -192,6 +194,12 @@ export class Conversation {
         if (change.kind === "resolved") {
           const ask = this.ask(change.id);
           if (ask && ask.state.state !== "answered") this.settle(ask, { state: "gone" });
+          return;
+        }
+        if (change.kind === "forked") {
+          if (!this.entries.some((entry) => entry.kind === "forked")) {
+            this.entries.unshift({ kind: "forked", key: this.key("forked"), source: change.source });
+          }
           return;
         }
         if (change.kind === "history_changed") {
