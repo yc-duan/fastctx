@@ -95,7 +95,10 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
     let search = item(json!({"type":"webSearch","id":"s","query":"","action":null,"results":null}), false);
     assert!(matches!(search.what,What::Tool(tool) if tool.status == ToolStatus::Running));
     for kind in ["sleep", "enteredReviewMode", "exitedReviewMode", "functionCallOutput"] {
-        assert!(matches!(items::read(&json!({"id":"hidden","type":kind}), true), items::Read::Hidden));
+        assert!(matches!(
+            items::read(&json!({"id":"hidden","type":kind}), true),
+            items::Read::Item(fastctx_types::session::Item { what: What::Other { .. }, .. })
+        ));
     }
     for name in ["update_running_summary", "update_up_next", "load_workspace_dependencies", "automation_update"] {
         assert!(matches!(
@@ -103,7 +106,7 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
                 &json!({"id":"hidden","type":"dynamicToolCall","tool":name,"namespace":"codex_app","status":"inProgress"}),
                 false
             ),
-            items::Read::Hidden
+            items::Read::Item(fastctx_types::session::Item { what: What::Other { .. }, .. })
         ));
     }
     let hook = items::read(

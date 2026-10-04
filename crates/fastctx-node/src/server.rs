@@ -43,7 +43,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     // The residents that arrived on this connection are here until it
     // closes, however it closes; what was collected for them and not taken
     // is free to be handed over again then.
-    let mut arrived = Arrived { node, residents: Vec::new(), collected: Vec::new() };
+    let mut arrived = Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new() };
     while let Some(frame) = reader.recv().await? {
         let ClientFrame::Call { id, call } = parse(&frame)?;
         if let Call::Watch { resident, machine } = call {
@@ -78,8 +78,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         };
         let arriving = matches!(call, Call::Arrive { .. });
         let reply = match call {
-            Call::Collect { resident } => collect(node, resident, &mut arrived.collected).await,
-            Call::Taken { resident, ids } => taken(node, resident, ids, &mut arrived.collected).await,
+            Call::Collect { resident } => collect(node, resident, &mut arrived.collected, &mut arrived.notes).await,
+            Call::Taken { resident, ids } => {
+                taken(node, resident, ids, &mut arrived.collected, &mut arrived.notes).await
+            }
             call => handle(node, &hello.peer, call).await,
         };
         if arriving && let Ok(Reply::Arrived(whereabouts)) = &reply {
@@ -94,6 +96,7 @@ struct Arrived<'a> {
     node: &'a Arc<Node>,
     residents: Vec<ResidentId>,
     collected: Vec<(ResidentId, NoticeId, Option<String>)>,
+    notes: Vec<(ResidentId, crate::residents::Heard)>,
 }
 
 impl Drop for Arrived<'_> {
@@ -115,14 +118,15 @@ async fn collect(
     node: &Arc<Node>,
     resident: ResidentId,
     collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
+    collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
     if native_delivery(node, &resident) {
-        return notices_without_collection(node, &resident).await;
+        return collect_notes(node, resident, Vec::new(), collected_notes).await;
     }
     let speaking = node.residents.speaking(&resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let _speaking = speaking.lock().await;
     if native_delivery(node, &resident) {
-        return notices_without_collection(node, &resident).await;
+        return collect_notes(node, resident, Vec::new(), collected_notes).await;
     }
     let town = town_of(node, &resident)?;
     let directory = node.world.resident(town.as_ref(), &resident);
@@ -160,26 +164,30 @@ async fn collect(
             }
         }
     }
-    let notes = {
-        let node = node.clone();
-        blocking("reading the town", move || crate::town::notes::notes(&node, &resident)).await?
-    };
-    Ok(Reply::Notices { notices, notes })
+    collect_notes(node, resident, notices, collected_notes).await
 }
 
 fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
+    // Native subagents inherit their parent's MCP configuration. A tool
+    // response cannot deliver the parent's words to the intended thread;
+    // sessions with a native channel exclusively use that channel.
     node.residents.about(resident).is_some_and(|(about, _)| {
         (about.world_started && about.host.agent.as_str() == "codex") || crate::claude::paired(node, resident)
     })
 }
 
-async fn notices_without_collection(node: &Arc<Node>, resident: &ResidentId) -> Result<Reply, Failure> {
-    // Native subagents inherit their parent's MCP configuration. A tool
-    // response cannot deliver the parent's words to the intended thread;
-    // sessions with a native channel exclusively use that channel.
-    let (node, resident) = (node.clone(), resident.clone());
-    let notes = blocking("reading the town", move || crate::town::notes::notes(&node, &resident)).await?;
-    Ok(Reply::Notices { notices: Vec::new(), notes })
+async fn collect_notes(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    notices: Vec<fastctx_types::residents::Delivery>,
+    collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
+) -> Result<Reply, Failure> {
+    let (node, id) = (node.clone(), resident.clone());
+    let (notes, heard) = blocking("reading the town", move || crate::town::notes::notes(&node, &id)).await?;
+    if let Some(heard) = heard {
+        collected_notes.push((resident, heard));
+    }
+    Ok(Reply::Notices { notices, notes })
 }
 
 /// What `collect` gave went out with an answer: it went into the turn the
@@ -189,6 +197,7 @@ async fn taken(
     resident: ResidentId,
     ids: Vec<NoticeId>,
     collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
+    collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
     let town = town_of(node, &resident)?;
     let directory = node.world.resident(town.as_ref(), &resident);
@@ -228,6 +237,13 @@ async fn taken(
         collected.retain(|(owner, notice, _)| *owner != resident || *notice != id);
         node.taking.lock().expect("never poisoned").remove(&(resident.clone(), id));
     }
+    collected_notes.retain(|(owner, heard)| {
+        if *owner != resident {
+            return true;
+        }
+        node.residents.acknowledge_heard(owner, heard.clone());
+        false
+    });
     Ok(Reply::Done)
 }
 

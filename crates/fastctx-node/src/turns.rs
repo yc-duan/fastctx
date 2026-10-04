@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use fastctx_types::layout::ResidentDir;
 use fastctx_types::residents::{Delivery, MessageKind, MessageLine, Notice, Origin, Owing, Pending, Trouble};
-use fastctx_types::session::{Happened, Health, SessionEvent, TurnEnd, TurnHow};
+use fastctx_types::session::{Happened, Health, HealthKind, SessionChange, SessionEvent, TurnEnd, TurnHow};
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
 
@@ -35,6 +35,14 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
         return Err(std::io::Error::other("unknown resident"));
     };
     let directory = node.world.resident(town.as_ref(), id);
+    if let Happened::Changed { turn, change } = &event.happened
+        && let Some(report) = presentation_health(change)
+    {
+        let turn = turn.clone();
+        let speaking = node.residents.speaking(id).expect("known resident");
+        let _speaking = speaking.lock().await;
+        return health_event(node, id, turn, report, event);
+    }
     match event.happened {
         Happened::TurnEnded { turn, end } => {
             let speaking = node.residents.speaking(id).expect("known resident");
@@ -388,9 +396,47 @@ fn health_at(
     report: Health,
     at: Timestamp,
 ) -> std::io::Result<()> {
+    let event = SessionEvent { at, happened: Happened::Health { turn: turn.clone(), health: report.clone() } };
+    health_event(node, id, turn, report, event)
+}
+
+/// Provider state retains the World's urgent delivery semantics without
+/// adding a second transcript notice beside the original presentation event.
+fn presentation_health(change: &SessionChange) -> Option<Health> {
+    let (kind, text) = match change {
+        SessionChange::Rerouted { from, to, reason } => {
+            (HealthKind::Rerouted, format!("OpenAI moved this turn from {from} to {to} ({reason})"))
+        }
+        SessionChange::Safety { buffering } if buffering["showBufferingUi"] == true => {
+            (HealthKind::Safety, "OpenAI is holding this turn's output for extra safety processing".into())
+        }
+        SessionChange::Error { error, will_retry } => (
+            if *will_retry { HealthKind::Reconnecting } else { HealthKind::Error },
+            error.get("message")?.as_str()?.to_string(),
+        ),
+        SessionChange::ToolServer { server, status, error, .. }
+            if status == "failed" && server != fastctx_hosts::codex::SERVER_NAME =>
+        {
+            (
+                HealthKind::ToolServer,
+                format!("its {server} tools did not start: {}", error.as_str().unwrap_or("no reason given")),
+            )
+        }
+        _ => return None,
+    };
+    Some(Health { kind, text })
+}
+
+fn health_event(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    turn: Option<String>,
+    report: Health,
+    event: SessionEvent,
+) -> std::io::Result<()> {
+    let at = event.at;
     let Some((about, town)) = node.residents.about(id) else { return Ok(()) };
     let directory = node.world.resident(town.as_ref(), id);
-    let event = SessionEvent { at, happened: Happened::Health { turn: turn.clone(), health: report.clone() } };
     let key = serde_json::to_string(&event).map_err(std::io::Error::other)?;
     let first = crate::delivery::event(&directory, &key, &event)?;
     let finished = turn.as_deref().map(|turn| crate::delivery::terminal(&directory, turn)).transpose()?.flatten();

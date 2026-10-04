@@ -2,6 +2,7 @@
 //! writing core behind `edit`, `write` and `apply_patch`; and how what the
 //! World tells a resident reads.
 
+pub mod answer;
 pub mod copy;
 pub mod encoding;
 pub mod files;

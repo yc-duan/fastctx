@@ -745,7 +745,6 @@ impl CodexHost {
                         return;
                     }
                     items::Read::Item(item) => item,
-                    items::Read::Hidden => return,
                 };
                 let mut state = self.lock();
                 let entry = state.threads.entry(thread.clone()).or_default();
@@ -1093,6 +1092,8 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
     let env: serde_json::Map<String, Value> =
         env.iter().map(|(name, value)| (name.clone(), Value::String(value.clone()))).collect();
     let limit = output_limit(budget);
+    let limits: serde_json::Map<String, Value> =
+        tools.iter().map(|name| (name.to_string(), json!({ "output_token_limit": limit }))).collect();
     json!({
         // Media is part of the watched session, including while it streams.
         "features": { "omit_app_server_notification_media": false },
@@ -1108,7 +1109,7 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "omit_tools_from": [],
             "startup_timeout_sec": STARTUP_TIMEOUT.as_secs(),
             "tool_timeout_sec": TOOL_TIMEOUT.as_secs(),
-            "tools": { "run": { "output_token_limit": limit } },
+            "tools": limits,
         }},
     })
 }

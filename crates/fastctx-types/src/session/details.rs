@@ -14,6 +14,8 @@ pub struct UserMessage {
     pub hook_fragments: Vec<Value>,
     #[serde(default)]
     pub presentation: Value,
+    #[serde(default)]
+    pub detail: Value,
 }
 
 /// State updates do not imply a chat bubble. Opaque values preserve the
@@ -21,27 +23,86 @@ pub struct UserMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionChange {
-    Diff { diff: String },
-    Terminal { item: String, process: String, input: String },
-    Usage { usage: Value },
-    Status { status: Value },
-    Metadata { metadata: Value },
-    Lifecycle { state: String },
-    Goal { goal: Value },
-    Hook { run: Value },
-    ApprovalReview { review: Value, complete: bool },
-    StrictReview { notice: Value },
-    Safety { buffering: Value },
-    Rerouted { from: String, to: String, reason: String },
-    Verification { verifications: Vec<Value> },
-    Error { error: Value, will_retry: bool },
-    Warning { text: String },
-    Settings { settings: Value },
-    Environment { environment: Value, connected: bool },
+    Diff {
+        diff: String,
+    },
+    Terminal {
+        item: String,
+        process: String,
+        input: String,
+    },
+    Usage {
+        usage: Value,
+    },
+    Status {
+        status: Value,
+    },
+    Metadata {
+        metadata: Value,
+    },
+    Lifecycle {
+        state: String,
+    },
+    Goal {
+        goal: Value,
+    },
+    Hook {
+        run: Value,
+    },
+    ApprovalReview {
+        review: Value,
+        complete: bool,
+    },
+    StrictReview {
+        notice: Value,
+    },
+    Safety {
+        buffering: Value,
+    },
+    Rerouted {
+        from: String,
+        to: String,
+        reason: String,
+    },
+    Verification {
+        verifications: Vec<Value>,
+    },
+    Error {
+        error: Value,
+        will_retry: bool,
+    },
+    Warning {
+        text: String,
+    },
+    Settings {
+        settings: Value,
+    },
+    Environment {
+        environment: Value,
+        connected: bool,
+    },
     Queue,
-    ToolServer { server: String, status: String, error: Value, failure_reason: Value },
-    Attachment { attachment: Value },
-    Request { id: Value, request: String, params: Value },
-    Resolved { id: Value, resolution: Value },
-    Voice { event: String, data: Value },
+    ToolServer {
+        server: String,
+        status: String,
+        error: Value,
+        #[serde(default)]
+        failure_reason: Value,
+    },
+    Attachment {
+        attachment: Value,
+    },
+    Request {
+        id: Value,
+        request: String,
+        params: Value,
+    },
+    Resolved {
+        id: Value,
+        resolution: Value,
+    },
+    Voice {
+        event: String,
+        data: Value,
+    },
 }

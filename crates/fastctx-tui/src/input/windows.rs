@@ -58,9 +58,10 @@ pub(super) fn start(sender: UnboundedSender<Input>) -> io::Result<()> {
     }
     let input = input as usize;
     let stop = stop as usize;
+    super::focus::set(super::Focus::Unknown);
     let thread = std::thread::Builder::new().name("console input".into()).spawn(move || {
         if let Err(error) = read(input as HANDLE, stop as HANDLE, &sender) {
-            let _ = sender.send(Input::Failed(error.to_string()));
+            let _ = super::send(&sender, Input::Failed(error.to_string()));
         }
     });
     match thread {
@@ -142,7 +143,7 @@ fn read(input: HANDLE, stop: HANDLE, sender: &UnboundedSender<Input>) -> io::Res
             // Deliver valid earlier events even if a subsequent record is bad.
             if let Err(error) = result {
                 for event in out {
-                    let _ = sender.send(event);
+                    let _ = super::send(sender, event);
                 }
                 return Err(error);
             }
@@ -155,7 +156,7 @@ fn read(input: HANDLE, stop: HANDLE, sender: &UnboundedSender<Input>) -> io::Res
             decoder.boundary(waiting > 0 || keys.pending(), &mut out);
         }
         for event in out {
-            if sender.send(event).is_err() {
+            if super::send(sender, event).is_err() {
                 return Ok(());
             }
         }

@@ -60,7 +60,9 @@ pub enum Call {
     /// tool, oldest first, with what it is to be told of where it is. It is
     /// handed to no other answer meanwhile.
     Collect { resident: ResidentId },
-    /// What `Collect` gave went out with the answer: it is handed over.
+    /// The named notices from `Collect`, and all its town notes, went out
+    /// with the answer. Unnamed notices remain waiting; an empty list can
+    /// acknowledge the town notes alone.
     Taken { resident: ResidentId, ids: Vec<NoticeId> },
     /// `fastctx project`.
     Project(ProjectCall),

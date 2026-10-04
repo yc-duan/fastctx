@@ -202,7 +202,6 @@ async fn pages_with_voice(
 
 fn completed(turn: &str, raw: &Value, messages: &mut HashMap<String, String>) -> Option<Happened> {
     match items::read(raw, true) {
-        items::Read::Hidden => None,
         items::Read::Words { text, message } => Some(Happened::Heard {
             delivery: None,
             turn: Some(turn.into()),
@@ -240,7 +239,6 @@ pub(super) fn project(answer: &Value, running: Option<&str>) -> Vec<SessionEvent
                         message: Some(Box::new(message)),
                     },
                 ),
-                items::Read::Hidden => {}
                 items::Read::Item(item) => {
                     if let What::Message { text } = &item.what {
                         last_message = Some(text.clone());

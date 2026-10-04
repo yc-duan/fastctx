@@ -196,7 +196,8 @@ pub enum What {
         path: String,
         activity: String,
     },
-    /// An item of a kind the World does not know, by the host's name for it.
+    /// A host item without a common visible representation. Its original
+    /// record remains in `Item.detail`, including for conditional host panels.
     Other {
         host_kind: String,
     },

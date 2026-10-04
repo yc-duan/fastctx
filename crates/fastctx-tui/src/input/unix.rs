@@ -51,9 +51,10 @@ pub(super) fn start(sender: UnboundedSender<Input>) -> io::Result<()> {
     rustix::fs::fcntl_setfl(&input, before | OFlags::NONBLOCK)?;
     let thread_input = Arc::clone(&input);
     let thread_stop = Arc::clone(&stop);
+    super::focus::set(super::Focus::Unknown);
     let thread = std::thread::Builder::new().name("terminal input".into()).spawn(move || {
         if let Err(error) = read(&thread_input, &thread_stop, poll, signals, &sender) {
-            let _ = sender.send(Input::Failed(error.to_string()));
+            let _ = super::send(&sender, Input::Failed(error.to_string()));
         }
     });
     match thread {
@@ -126,7 +127,7 @@ fn read(
                         Err(Errno::AGAIN) => {
                             decoder.boundary(utf8.pending(), &mut out);
                             for event in out {
-                                if sender.send(event).is_err() {
+                                if super::send(sender, event).is_err() {
                                     return Ok(());
                                 }
                             }
@@ -147,7 +148,7 @@ fn read(
                         out.push(Input::Resize);
                     }
                     for event in out {
-                        if sender.send(event).is_err() {
+                        if super::send(sender, event).is_err() {
                             return Ok(());
                         }
                     }
@@ -157,7 +158,7 @@ fn read(
                     waiting?;
                 },
                 RESIZE => {
-                    if signals.pending().next().is_some() && sender.send(Input::Resize).is_err() {
+                    if signals.pending().next().is_some() && super::send(sender, Input::Resize).is_err() {
                         return Ok(());
                     }
                 }

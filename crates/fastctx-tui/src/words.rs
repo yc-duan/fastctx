@@ -784,6 +784,10 @@ impl Words {
         self.pick("—— 上下文压缩过了 ——", "—— context compacted ——")
     }
 
+    pub fn turn_done(&self) -> &'static str {
+        self.pick("这一轮做完了", "this turn is done")
+    }
+
     pub fn turn_stopped(&self) -> &'static str {
         self.pick("这一轮被停下了", "this turn was stopped")
     }

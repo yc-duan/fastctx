@@ -63,6 +63,8 @@ pub(super) fn csi(sequence: &str) -> Option<Input> {
     let numbers: Vec<u32> =
         if body.is_empty() { Vec::new() } else { body.split(';').map(str::parse).collect::<Result<_, _>>().ok()? };
     match (last, numbers.as_slice()) {
+        ('I', []) => Some(Input::Focus(super::Focus::Focused)),
+        ('O', []) => Some(Input::Focus(super::Focus::Unfocused)),
         ('Z', []) => Some(key(KeyCode::BackTab, KeyModifiers::SHIFT)),
         ('u', [value]) => Some(key(character(*value)?, KeyModifiers::NONE)),
         ('u', [value, flags]) | ('~', [27, flags, value]) => Some(key(character(*value)?, modifiers(*flags)?)),

@@ -17,7 +17,6 @@ pub enum Read {
         text: String,
         message: UserMessage,
     },
-    Hidden,
     Item(Item),
 }
 
@@ -26,7 +25,7 @@ pub fn read(item: &Value, completed: bool) -> Read {
     let kind = text(item, "type").unwrap_or_default();
     let mut what = match kind.as_str() {
         "userMessage" => {
-            let Some((text, presentation)) = super::presentation::user_message(item) else { return Read::Hidden };
+            let Some((text, presentation)) = super::presentation::user_message(item) else { return unshown(item) };
             return Read::Words {
                 text,
                 message: UserMessage {
@@ -35,6 +34,7 @@ pub fn read(item: &Value, completed: bool) -> Read {
                     content: array(item, "content"),
                     hook_fragments: Vec::new(),
                     presentation,
+                    detail: item.clone(),
                 },
             };
         }
@@ -45,7 +45,7 @@ pub fn read(item: &Value, completed: bool) -> Read {
 ",
             );
             if text.trim().is_empty() {
-                return Read::Hidden;
+                return unshown(item);
             }
             return Read::Words {
                 text,
@@ -55,15 +55,19 @@ pub fn read(item: &Value, completed: bool) -> Read {
                     content: Vec::new(),
                     hook_fragments: fragments,
                     presentation: Value::Null,
+                    detail: item.clone(),
                 },
             };
         }
         "functionCallOutput" => {
-            return super::presentation::function_message(item)
-                .map(|item| read(&item, completed))
-                .unwrap_or(Read::Hidden);
+            let Some(message) = super::presentation::function_message(item) else { return unshown(item) };
+            let mut projected = read(&message, completed);
+            if let Read::Words { message, .. } = &mut projected {
+                message.detail = item.clone();
+            }
+            return projected;
         }
-        "sleep" | "enteredReviewMode" | "exitedReviewMode" => return Read::Hidden,
+        "sleep" | "enteredReviewMode" | "exitedReviewMode" => return unshown(item),
         "subAgentActivity" => What::AgentActivity {
             agent: text(item, "agentThreadId").unwrap_or_default(),
             path: text(item, "agentPath").unwrap_or_default(),
@@ -162,7 +166,7 @@ pub fn read(item: &Value, completed: bool) -> Read {
         }
         "dynamicToolCall" => {
             if super::presentation::hidden_tool(item) {
-                return Read::Hidden;
+                return unshown(item);
             }
             let output = item
                 .get("contentItems")
@@ -179,7 +183,7 @@ pub fn read(item: &Value, completed: bool) -> Read {
         }
         "collabAgentToolCall" => {
             if text(item, "tool").as_deref() == Some("wait") {
-                return Read::Hidden;
+                return unshown(item);
             }
             let to = item.pointer("/receiverThreadIds/0").and_then(Value::as_str).map(str::to_string);
             tool(
@@ -322,4 +326,14 @@ fn text(value: &Value, key: &str) -> Option<String> {
 
 fn array(value: &Value, key: &str) -> Vec<Value> {
     value.get(key).and_then(Value::as_array).cloned().unwrap_or_default()
+}
+
+/// Hidden items still have identities that an approval review can reference.
+fn unshown(item: &Value) -> Read {
+    Read::Item(Item {
+        id: text(item, "id").unwrap_or_default(),
+        started_at: None,
+        detail: Some(item.clone()),
+        what: What::Other { host_kind: text(item, "type").unwrap_or_default() },
+    })
 }

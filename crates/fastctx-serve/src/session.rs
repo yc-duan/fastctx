@@ -14,6 +14,8 @@ use fastctx_types::write::{ApplyPatchRequest, EditRequest, WriteOp, WriteRequest
 use fastctx_types::{Address, AgentName, Call, MachineName, Reply, ResidentId};
 use serde_json::Value;
 
+use crate::answer::{self, Answer};
+
 pub struct Session {
     world: WorldDir,
     host: OnceLock<Host>,
@@ -30,27 +32,6 @@ pub struct Session {
     were: Mutex<HashMap<Option<String>, ResidentId>>,
     /// Starting the node is done by one call at a time.
     starting: tokio::sync::Mutex<()>,
-}
-
-/// What a tool call answers.
-pub struct Answer {
-    pub content: Vec<Content>,
-    pub is_error: bool,
-    receipt: Option<(Client, ResidentId, Vec<fastctx_types::NoticeId>)>,
-}
-
-impl Answer {
-    pub async fn sent(mut self) {
-        if let Some((mut client, resident, ids)) = self.receipt.take()
-            && let Err(error) = client.call(Call::Taken { resident, ids }).await
-        {
-            eprintln!("fastctx serve: the response was written but its receipt could not be recorded: {error}");
-        }
-    }
-
-    fn error(text: String) -> Self {
-        Self { content: vec![Content::Text(text)], is_error: true, receipt: None }
-    }
 }
 
 impl Session {
@@ -122,7 +103,16 @@ impl Session {
         }
         .await;
         let mut answer = match reply {
-            Ok(Reply::Run(reply)) => Answer { content: present(&reply), is_error: false, receipt: None },
+            Ok(Reply::Run(reply)) => Answer {
+                content: present(&reply),
+                is_error: false,
+                receipt: None,
+                source: Some(format!(
+                    "{} {}",
+                    reply.machine,
+                    fastctx_hands::run::present::display_path(&reply.output.log)
+                )),
+            },
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run: {error}) ===")),
         };
@@ -158,9 +148,7 @@ impl Session {
         }
         .await;
         let mut answer = match reply {
-            Ok(Reply::Written { outcome: Ok(result) }) => {
-                Answer { content: vec![Content::Text(result.text)], is_error: false, receipt: None }
-            }
+            Ok(Reply::Written { outcome: Ok(result) }) => Answer::text(result.text, false),
             Ok(Reply::Written { outcome: Err(error) }) => Answer::error(error.to_string()),
             Ok(other) => Answer::error(format!("=== {tool} (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== {tool} (not done: {error}) ===")),
@@ -199,6 +187,7 @@ impl Session {
                 ))],
                 is_error: false,
                 receipt: None,
+                source: None,
             },
             Ok(other) => Answer::error(format!("=== ask_colleague (the node answered something else: {other:?}) ===")),
             Err(error) => failed(error),
@@ -254,6 +243,7 @@ impl Session {
                     ))],
                     is_error: false,
                     receipt: None,
+                    source: None,
                 }
             }
             Ok(other) => {
@@ -280,15 +270,18 @@ impl Session {
         let collected = client.call(collect).await.map_err(|error| error.to_string());
         match collected {
             Ok(Reply::Notices { notices, notes }) => {
-                answer.content.extend(notes.into_iter().map(Content::Text));
-                answer.content.extend(notices.iter().map(|delivery| Content::Text(told::told(&delivery.notice))));
+                let messages = notices.into_iter().map(|delivery| (delivery.id, told::told(&delivery.notice)));
+                let ids = match answer::assemble(&self.world, answer, notes, messages) {
+                    Ok(ids) => ids,
+                    Err(error) => {
+                        answer.content.push(Content::Text(format!("=== could not prepare words for you: {error} ===")));
+                        return;
+                    }
+                };
                 // They go out with this answer; until the node hears so, no
                 // other answer hands them over, and if it never does, a later
                 // one does.
-                if !notices.is_empty() {
-                    let ids = notices.into_iter().map(|delivery| delivery.id).collect();
-                    answer.receipt = Some((client, whereabouts.resident.clone(), ids));
-                }
+                answer.receipt = Some((client, whereabouts.resident.clone(), ids));
             }
             Ok(other) => answer
                 .content
@@ -297,6 +290,10 @@ impl Session {
                 answer.content.push(Content::Text(format!("=== words for you could not be read: {error} ===")))
             }
         }
+    }
+
+    pub fn bound(&self, answer: &mut Answer) -> std::io::Result<()> {
+        answer.bound(&self.world)
     }
 
     /// The resident the calls of `thread` belong to, found or made by the
