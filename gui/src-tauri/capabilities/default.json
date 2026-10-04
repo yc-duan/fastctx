@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the World's window may do: the core's default, and the shell's own commands.",
+  "description": "What the World's window may do: the core's default, the shell's own commands, and opening web links in the system's browser.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "opener:allow-open-url", "opener:allow-default-urls"]
 }

@@ -103,6 +103,8 @@ export interface UserMessage {
 }
 
 export type SessionChange =
+  | { kind: "history_changed" }
+  | { kind: "forked"; source: Address; thread: string; through: string | null }
   | { kind: "diff"; diff: string }
   | { kind: "terminal"; item: string; process: string; input: string }
   | { kind: "usage"; usage: JsonValue }

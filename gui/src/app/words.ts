@@ -1,6 +1,8 @@
 // What the frame around every page says: the sidebar, the new conversation,
 // the settings. In the user's words (`world-gui.md`, 用词).
 
+import type { AskWords } from "../conversation/asks";
+
 export interface ShellWords {
   app: string;
   world: string;
@@ -666,6 +668,7 @@ export const enWelcome: WelcomeWords = {
 };
 
 export interface ComposerWords {
+  asks: AskWords;
   commands: {
     world: string;
     compact: string;
@@ -687,6 +690,57 @@ export interface ComposerWords {
 }
 
 export const zhComposer: ComposerWords = {
+  asks: {
+    waiting: "在等你回答",
+    command: (machine) => `想在 ${machine} 上跑一条命令`,
+    stdin: (machine) => `想往 ${machine} 上一个在跑的程序里送输入`,
+    network: (host, protocol) => `想连上 ${host}${protocol ? `（${protocol}）` : ""}`,
+    files: "想改文件",
+    filesNamed: (count) => `想改 ${count} 个文件`,
+    grantRoot: (root) => `并请你允许它在这段对话里随意写 ${root} 下的东西`,
+    reason: (why) => `它说：${why}`,
+    inDir: (cwd) => `在 ${cwd}`,
+    accept: "允许",
+    acceptForSession: "这段对话里都允许",
+    acceptPrefix: (prefix) => `以后 ${prefix} 开头的都允许`,
+    networkRule: (allow, host) => (allow ? `以后都允许连 ${host}` : `以后都不许连 ${host}`),
+    decline: "不允许，让它接着做",
+    cancel: "不允许，停下这一轮",
+    question: "它有一个问题",
+    questions: (count) => `它有 ${count} 个问题`,
+    otherAnswer: "或者写下你自己的回答",
+    secret: "写下的字不会显示出来",
+    submit: "回答",
+    fill: "提交",
+    skip: "跳过",
+    form: (server) => `${server} 想请你填一张表`,
+    link: (server) => `${server} 请你打开一个网址`,
+    openLink: "打开网址，接着做",
+    refuse: "拒绝",
+    dismiss: "先不管",
+    required: "这一项要填",
+    formUnreadable: "这张表在这里画不出来，只能拒绝或先不管",
+    sending: "正在送出…",
+    failed: (why) => `没送出去：${why}`,
+    cannot: (request) => `它在等一个这里还答不了的回答（${request}）`,
+    permissions: "它在请你给它更多权限，这里还答不了",
+    verification: "它在请你做一次身份验证，这里还答不了",
+    answered: (said) => said,
+    gone: "已在别处答过，或不再需要了",
+    settledBy: {
+      accept: "你允许了",
+      session: "你允许了，这段对话里不再问",
+      rule: "你定下了一条以后照办的规矩",
+      decline: "你没有允许，它接着做别的",
+      cancel: "你没有允许，这一轮停下了",
+      answered: "你回答了",
+      skipped: "你跳过了",
+      submitted: "你提交了",
+      refused: "你拒绝了",
+      dismissed: "你没有理会",
+      opened: "你打开了网址",
+    },
+  },
   commands: {
     world: "世界",
     compact: "现在压缩这段对话",
@@ -708,6 +762,57 @@ export const zhComposer: ComposerWords = {
 };
 
 export const enComposer: ComposerWords = {
+  asks: {
+    waiting: "Waiting for you",
+    command: (machine) => `Wants to run a command on ${machine}`,
+    stdin: (machine) => `Wants to send input to a program running on ${machine}`,
+    network: (host, protocol) => `Wants to reach ${host}${protocol ? ` (${protocol})` : ""}`,
+    files: "Wants to change files",
+    filesNamed: (count) => `Wants to change ${count} ${count === 1 ? "file" : "files"}`,
+    grantRoot: (root) => `and asks to write anything under ${root} for the rest of this conversation`,
+    reason: (why) => `It says: ${why}`,
+    inDir: (cwd) => `In ${cwd}`,
+    accept: "Allow",
+    acceptForSession: "Allow for this conversation",
+    acceptPrefix: (prefix) => `Always allow commands starting ${prefix}`,
+    networkRule: (allow, host) => (allow ? `Always allow ${host}` : `Never allow ${host}`),
+    decline: "Don't allow, carry on",
+    cancel: "Don't allow, stop this turn",
+    question: "It has a question",
+    questions: (count) => `It has ${count} questions`,
+    otherAnswer: "Or write your own answer",
+    secret: "What you type is hidden",
+    submit: "Answer",
+    fill: "Submit",
+    skip: "Skip",
+    form: (server) => `${server} asks you to fill in a form`,
+    link: (server) => `${server} asks you to open a link`,
+    openLink: "Open it and carry on",
+    refuse: "Refuse",
+    dismiss: "Not now",
+    required: "This one is needed",
+    formUnreadable: "This form can't be drawn here; it can only be refused or left",
+    sending: "Sending…",
+    failed: (why) => `Not sent: ${why}`,
+    cannot: (request) => `It waits for an answer that can't be given here (${request})`,
+    permissions: "It asks for more permissions, which can't be granted here",
+    verification: "It asks you to verify who you are, which can't be done here",
+    answered: (said) => said,
+    gone: "Answered elsewhere, or no longer needed",
+    settledBy: {
+      accept: "You allowed it",
+      session: "You allowed it for this conversation",
+      rule: "You set a rule it keeps from now on",
+      decline: "You didn't allow it; it carried on",
+      cancel: "You didn't allow it; the turn stopped",
+      answered: "You answered",
+      skipped: "You skipped it",
+      submitted: "You submitted it",
+      refused: "You refused",
+      dismissed: "You left it",
+      opened: "You opened the link",
+    },
+  },
   commands: {
     world: "World",
     compact: "Compact this conversation now",

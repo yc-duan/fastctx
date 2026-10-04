@@ -512,4 +512,186 @@ function codex(): Specimen {
   };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex };
+/** A Codex conversation that waits on the user: an approval answered
+ *  elsewhere, then one request still waiting, of the kind `?ask=` names
+ *  (command, question, form, link). */
+function asking(): Specimen {
+  const s = new Script("2026-10-04T15:10:00Z");
+  const kind = new URLSearchParams(location.search).get("ask") ?? "command";
+  const server = "s-41708";
+
+  s.heard("t1", user, "在 laptop 上把 ingest 的迁移跑一遍，看看新的 batches 表能不能建起来。");
+  s.started("t1");
+  s.say("t1", "thinking", "**Checking the migration**\n\nThe new migration adds `batches` and moves the commit point; running it needs the local database.", 2);
+  s.push({
+    event: "changed",
+    turn: "t1",
+    change: {
+      kind: "request",
+      id: { server, id: 0 },
+      request: "item/commandExecution/requestApproval",
+      params: {
+        kind: "command",
+        threadId: "th-1",
+        turnId: "t1",
+        itemId: "item-cmd-1",
+        startedAtMs: 0,
+        environmentId: null,
+        command: "cargo sqlx migrate run",
+        cwd: "/srv/ingest",
+        reason: "needs to reach the local Postgres",
+      },
+    },
+  });
+  s.push({ event: "changed", turn: "t1", change: { kind: "resolved", id: { server, id: 0 }, resolution: { threadId: "th-1", requestId: { server, id: 0 } } } }, 20);
+  s.tool(
+    "t1",
+    run("cargo sqlx migrate run", "=== run on laptop (exited 0) ===", "Applied 20261004150000/migrate add batches (31.2ms)", { duration_ms: 900 }),
+  );
+  s.say("t1", "message", "迁移跑完了：`batches` 表已经建好，旧的 `ingest_files` 没有动。接下来要把离线查询缓存重新生成一遍，`cargo sqlx prepare` 会覆盖 `.sqlx/` 下的文件。", 2);
+  s.ended("t1", "completed");
+
+  s.heard("t2", user, "好，接着做。");
+  s.started("t2");
+  switch (kind) {
+    case "question":
+      s.say("t2", "message", "生成缓存之前要连上测试库，有两件事得问你。", 2);
+      s.push({
+        event: "changed",
+        turn: "t2",
+        change: {
+          kind: "request",
+          id: { server, id: 1 },
+          request: "item/tool/requestUserInput",
+          params: {
+            threadId: "th-1",
+            turnId: "t2",
+            itemId: "item-ask-1",
+            isBlocking: true,
+            autoResolutionMs: null,
+            questions: [
+              {
+                id: "where",
+                header: "连接串",
+                question: "测试库的连接串放在哪里？",
+                isOther: true,
+                isSecret: false,
+                options: [
+                  { label: ".env", description: "仓库根目录下，已在 .gitignore 里" },
+                  { label: "环境变量", description: "DATABASE_URL，只在这台机器上" },
+                ],
+              },
+              { id: "password", header: "密码", question: "测试库 ingest_test 的密码是什么？", isOther: false, isSecret: true, options: null },
+            ],
+          },
+        },
+      });
+      break;
+    case "form":
+      s.say("t2", "message", "缓存重新生成了。我把这次迁移记成一个 issue。", 2);
+      s.push({
+        event: "changed",
+        turn: "t2",
+        change: {
+          kind: "request",
+          id: { server, id: 1 },
+          request: "mcpServer/elicitation/request",
+          params: {
+            threadId: "th-1",
+            turnId: "t2",
+            serverName: "linear",
+            mode: "form",
+            _meta: null,
+            message: "新建 issue 之前，请确认这几样：",
+            requestedSchema: {
+              type: "object",
+              required: ["title", "priority"],
+              properties: {
+                title: { type: "string", title: "标题", default: "ingest: commit in batches of 5000" },
+                priority: {
+                  type: "string",
+                  title: "优先级",
+                  oneOf: [
+                    { const: "urgent", title: "紧急" },
+                    { const: "high", title: "高" },
+                    { const: "normal", title: "普通" },
+                    { const: "low", title: "低" },
+                  ],
+                  default: "normal",
+                },
+                labels: { type: "array", title: "标签", items: { type: "string", enum: ["ingest", "database", "migration"] }, default: ["ingest"] },
+                due: { type: "string", title: "截止日期", format: "date" },
+                notify: { type: "boolean", title: "通知团队", description: "在 #ingest 频道里说一声", default: true },
+              },
+            },
+          },
+        },
+      });
+      break;
+    case "link":
+      s.say("t2", "message", "要把分支推上去，GitHub 那边需要你授权一次。", 2);
+      s.push({
+        event: "changed",
+        turn: "t2",
+        change: {
+          kind: "request",
+          id: { server, id: 1 },
+          request: "mcpServer/elicitation/request",
+          params: {
+            threadId: "th-1",
+            turnId: "t2",
+            serverName: "github",
+            mode: "url",
+            _meta: null,
+            message: "在浏览器里登录 GitHub，并授权 fastctx-ingest 读写这个仓库。",
+            url: "https://github.com/login/device",
+            elicitationId: "el-1",
+          },
+        },
+      });
+      break;
+    default:
+      s.push({
+        event: "changed",
+        turn: "t2",
+        change: {
+          kind: "request",
+          id: { server, id: 1 },
+          request: "item/commandExecution/requestApproval",
+          params: {
+            kind: "command",
+            threadId: "th-1",
+            turnId: "t2",
+            itemId: "item-cmd-2",
+            startedAtMs: 0,
+            environmentId: null,
+            command: "rm -rf .sqlx && cargo sqlx prepare -- --all-targets",
+            cwd: "/srv/ingest",
+            reason: "regenerates the offline query cache; the old files under .sqlx are removed first",
+            proposedExecpolicyAmendment: ["cargo", "sqlx", "prepare"],
+            availableDecisions: [
+              "accept",
+              "acceptForSession",
+              { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["cargo", "sqlx", "prepare"] } },
+              "decline",
+              "cancel",
+            ],
+          },
+        },
+      }, 3);
+  }
+  s.push({ event: "context", used: 61_400, window: 272_000 });
+
+  return {
+    title: "ingest 迁移",
+    agent: "codex",
+    resident: "codex-a51c",
+    machine: "laptop",
+    model: "gpt-6.1-sol",
+    town: "ingest",
+    here: "desktop",
+    events: s.events,
+  };
+}
+
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking };

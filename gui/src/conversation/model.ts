@@ -5,6 +5,7 @@
 
 import type { Health, MachineName, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { JsonValue } from "../world/wire";
+import { askKey, forPeople, type AskState } from "./asks";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
@@ -35,7 +36,9 @@ export type Entry =
   | { kind: "activity"; key: string; item: string; turn: string; text: string }
   | { kind: "ended"; key: string; turn: string; end: TurnEnd }
   | { kind: "health"; key: string; health: Health }
-  | { kind: "uncertain"; key: string; why: string };
+  | { kind: "uncertain"; key: string; why: string }
+  /** A request the session waits on the user for, as its host made it. */
+  | { kind: "ask"; key: string; id: JsonValue; turn: string | null; request: string; params: JsonValue; state: AskState; version: number };
 
 /** One stretch of what a turn did between things it said: tools and
  *  thinking in a row, folded under one heading. */
@@ -54,6 +57,8 @@ export class Conversation {
   entries: Entry[] = [];
   context: { used: number; window: number | null } | null = null;
   title: string | null = null;
+  /** The host replaced or removed turns: what is shown must be read again. */
+  stale = false;
   private serial = 0;
 
   private key(prefix: string): string {
@@ -63,8 +68,15 @@ export class Conversation {
 
   /** What came before, replacing what is shown. */
   history(events: SessionEvent[]): void {
+    // Requests still waiting are kept: the host asked them, and they are
+    // not part of the history it gives back.
+    const waiting = this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting");
     this.entries = [];
+    this.stale = false;
     for (const event of events) this.event(event);
+    for (const ask of waiting) {
+      if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.entries.push(ask);
+    }
   }
 
   event(event: SessionEvent): void {
@@ -154,11 +166,52 @@ export class Conversation {
         this.health(event.health);
         return;
       case "changed": {
-        const health = changeHealth(event.change);
+        const change = event.change;
+        if (change.kind === "request") {
+          if (!forPeople(change.request) || this.ask(change.id)) return;
+          this.entries.push({
+            kind: "ask",
+            key: this.key("ask"),
+            id: change.id,
+            turn: event.turn,
+            request: change.request,
+            params: change.params,
+            state: { state: "waiting" },
+            version: 0,
+          });
+          return;
+        }
+        if (change.kind === "resolved") {
+          const ask = this.ask(change.id);
+          if (ask && ask.state.state !== "answered") this.settle(ask, { state: "gone" });
+          return;
+        }
+        if (change.kind === "history_changed") {
+          this.stale = true;
+          return;
+        }
+        const health = changeHealth(change);
         if (health) this.health(health);
         return;
       }
     }
+  }
+
+  private ask(id: JsonValue): Extract<Entry, { kind: "ask" }> | undefined {
+    const key = askKey(id);
+    return this.entries.find((entry): entry is Extract<Entry, { kind: "ask" }> => entry.kind === "ask" && askKey(entry.id) === key);
+  }
+
+  /** How a request now stands: being answered, answered, or no longer
+   *  waited on. */
+  settle(ask: Extract<Entry, { kind: "ask" }>, state: AskState): void {
+    ask.state = state;
+    ask.version += 1;
+  }
+
+  /** Whether the session waits on the user for anything. */
+  waiting(): boolean {
+    return this.entries.some((entry) => entry.kind === "ask" && entry.state.state === "waiting");
   }
 
   /** Something of the session's own health, shown once however often the

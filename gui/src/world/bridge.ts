@@ -4,12 +4,20 @@
 // `inShell` says so.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Control, Controlled, Offers } from "./control";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
 export function inShell(): boolean {
   return "__TAURI_INTERNALS__" in window;
+}
+
+/** Opens a web link in the system's browser, outside the app. */
+export async function openOutside(url: string): Promise<void> {
+  if (!/^https?:\/\//i.test(url)) throw new Error(`not a web link: ${url}`);
+  if (inShell()) await openUrl(url);
+  else window.open(url, "_blank", "noopener");
 }
 
 export interface WorldNow {

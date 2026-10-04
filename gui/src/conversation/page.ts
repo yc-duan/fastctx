@@ -47,6 +47,8 @@ export interface PageOptions {
     control(what: Control): Promise<Controlled>;
     /** A fork was made: where it lives. */
     forked(resident: { resident: string; machine: string }): void;
+    /** Opens a link in the system's browser. */
+    open(url: string): Promise<void>;
   };
   /** Where the words being written are kept between visits. */
   draftKey?: string;
@@ -123,11 +125,20 @@ export class ConversationPage {
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus(options.controls);
+    const controls = options.controls;
     this.view = new ConversationView(main, options.conversation, {
       words,
       here: options.here,
       residentMachine: someone.machine,
       link: options.link,
+      asks: controls && {
+        words: controls.words.asks,
+        answer: async (request, answer) => {
+          await controls.control({ do: "answer", request, answer });
+        },
+        open: controls.open,
+        settled: () => this.update(),
+      },
     });
 
     const form = this.element.querySelector("form")!;
@@ -156,6 +167,11 @@ export class ConversationPage {
         this.submit();
       }
     });
+    // Whatever grows after it is drawn (fonts, formulas, diagrams, a card
+    // being answered) keeps the newest in view while the reader follows.
+    new ResizeObserver(() => {
+      if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
+    }).observe(main);
     this.scroller.addEventListener("scroll", () => {
       const { scrollTop, clientHeight, scrollHeight } = this.scroller;
       this.following = scrollTop + clientHeight >= scrollHeight - 48;
@@ -424,17 +440,20 @@ export class ConversationPage {
       ? `${escape(title)}`
       : `${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span>`;
     if (this.name.innerHTML !== name) this.name.innerHTML = name;
-    const working = !this.gone && conversation.moving();
+    const waiting = !this.gone && conversation.waiting();
+    const working = !this.gone && !waiting && conversation.moving();
     const facts = [
-      this.gone ?? (working ? words.working : words.idle),
+      this.gone ?? (waiting ? words.waitingForYou : working ? words.working : words.idle),
       title ? `${someone.agent} · ${someone.machine}` : null,
       someone.town,
       someone.model,
     ].filter(Boolean) as string[];
-    this.state.innerHTML = `${working ? `<span class="pulse" aria-hidden="true"></span>` : ""}<span>${facts
-      .map(escape)
-      .join(" · ")}</span>`;
+    const mark = waiting ? `<span class="ask-mark" aria-hidden="true"></span>` : working ? `<span class="pulse" aria-hidden="true"></span>` : "";
+    // Waiting for the user is said in the accent; the rest stays quiet.
+    const [first, ...rest] = facts.map(escape);
+    this.state.innerHTML = `${mark}<span><span class="who-first">${first}</span>${rest.map((fact) => ` · ${fact}`).join("")}</span>`;
     this.state.classList.toggle("working", working);
+    this.state.classList.toggle("waiting", waiting);
     this.state.classList.toggle("gone", this.gone !== null);
     // How much of the context is used: the host's latest report, from the
     // conversation's events, or from what it offers when it says.

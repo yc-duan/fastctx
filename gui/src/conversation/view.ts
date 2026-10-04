@@ -5,6 +5,8 @@
 // keeps them.
 
 import type { Content, MachineName, Speaker, Tool } from "../world/events";
+import type { JsonValue } from "../world/wire";
+import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
 import type { Activity, Block, Conversation, Entry, SendState } from "./model";
@@ -23,9 +25,22 @@ export interface Context {
   residentMachine: MachineName;
   /** Where another resident's conversation opens, where it can. */
   link?: ((address: { resident: string; machine: MachineName }) => string) | undefined;
+  /** Answering what the session waits on the user for, where the page
+   *  can. */
+  asks?:
+    | {
+        words: AskWords;
+        answer(id: JsonValue, answer: JsonValue): Promise<void>;
+        /** Opens a link outside the app, in the system's browser. */
+        open(url: string): Promise<void>;
+        /** A request was settled here. */
+        settled(): void;
+      }
+    | undefined;
 }
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
+type AskEntry = Extract<Entry, { kind: "ask" }>;
 
 export class ConversationView {
   private open = new Set<string>();
@@ -45,6 +60,13 @@ export class ConversationView {
   ) {
     root.classList.add("transcript");
     root.addEventListener("click", (event) => this.click(event));
+    // Enter in an answer's field answers, as the card's first button would.
+    root.addEventListener("keydown", (event) => {
+      const field = (event.target as HTMLElement).closest(".ask-card .ask-input");
+      if (!field || event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      field.closest(".ask-card")?.querySelector<HTMLButtonElement>(".ask-primary")?.click();
+    });
   }
 
   /** Brings the page up to the conversation as it now stands. */
@@ -94,6 +116,8 @@ export class ConversationView {
         return `${entry.key}h${JSON.stringify(entry.sending ?? null)}`;
       case "steps":
         return `${entry.key}s${JSON.stringify(entry.steps)}${entry.note ?? ""}`;
+      case "ask":
+        return `${entry.key}a${entry.version}`;
       default:
         return entry.key;
     }
@@ -144,9 +168,75 @@ export class ConversationView {
         return `<div class="note caution">${escape(entry.health.text)}</div>`;
       case "uncertain":
         return `<div class="note caution">${escape(words.uncertain(entry.why))}</div>`;
+      case "ask":
+        return this.ask(entry);
       case "tool":
       case "activity":
         return "";
+    }
+  }
+
+  /** A request as its card: what it asks, and the answers it takes. */
+  private ask(entry: AskEntry): string {
+    const asks = this.context.asks;
+    if (!asks) return `<div class="note caution">${escape(this.context.words.waitingForYou)} · ${escape(entry.request)}</div>`;
+    const ask = readAsk(entry.request, entry.params, asks.words);
+    // A change waiting for approval is the edit already shown above: its
+    // files are named from there.
+    if (ask.kind === "files" && ask.item && !ask.paths.length) {
+      const tool = this.conversation.entries.find(
+        (candidate): candidate is ToolEntry => candidate.kind === "tool" && candidate.item === ask.item && candidate.turn === entry.turn,
+      );
+      if (tool?.tool.does.as === "edit") ask.paths = tool.tool.does.changes.map((change) => change.path);
+    }
+    return drawAsk(entry.key, ask, entry.state, this.context.residentMachine, asks.words);
+  }
+
+  /** The user chose in a card: an option is marked, an answer is sent. */
+  private async choose(target: HTMLElement): Promise<void> {
+    const asks = this.context.asks;
+    const card = target.closest<HTMLElement>(".ask-card");
+    if (!asks || !card) return;
+    if (target.classList.contains("ask-option")) {
+      const pressed = target.getAttribute("aria-pressed") !== "true";
+      if (!target.dataset.many) {
+        const group = target.dataset.question !== undefined ? `[data-question="${target.dataset.question}"]` : `[data-field="${target.dataset.field}"]`;
+        for (const other of card.querySelectorAll<HTMLElement>(`.ask-option${group}`)) {
+          other.setAttribute("aria-pressed", "false");
+          other.classList.remove("chosen");
+        }
+      }
+      target.setAttribute("aria-pressed", String(pressed));
+      target.classList.toggle("chosen", pressed);
+      return;
+    }
+    const entry = this.conversation.entries.find((candidate): candidate is AskEntry => candidate.kind === "ask" && candidate.key === target.dataset.ask);
+    if (!entry || entry.state.state !== "waiting") return;
+    const ask = readAsk(entry.request, entry.params, asks.words);
+    const given = target.dataset.decision !== undefined ? { decision: Number(target.dataset.decision) } : { submit: target.dataset.submit ?? "" };
+    const status = card.querySelector<HTMLElement>(".ask-status")!;
+    const answer = answerOf(card, ask, given, asks.words);
+    if ("missing" in answer) {
+      status.textContent = answer.missing;
+      status.classList.add("wrong");
+      return;
+    }
+    const controls = [...card.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")];
+    for (const control of controls) control.disabled = true;
+    card.classList.add("busy");
+    status.classList.remove("wrong");
+    status.textContent = asks.words.sending;
+    try {
+      if (ask.kind === "link" && given.submit === "open") await asks.open(ask.url);
+      await asks.answer(entry.id, answer.answer);
+      this.conversation.settle(entry, { state: "answered", said: answer.said });
+      this.update();
+      asks.settled();
+    } catch (error) {
+      for (const control of controls) control.disabled = false;
+      card.classList.remove("busy");
+      status.textContent = asks.words.failed(String(error));
+      status.classList.add("wrong");
     }
   }
 
@@ -323,8 +413,12 @@ export class ConversationView {
   }
 
   private click(event: Event): void {
-    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-open], [data-fold], [data-whole], .code-copy");
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-open], [data-fold], [data-whole], .code-copy, .ask-option, [data-ask]");
     if (!target) return;
+    if (target.classList.contains("ask-option") || target.dataset.ask) {
+      void this.choose(target);
+      return;
+    }
     if (target.classList.contains("code-copy")) {
       const code = target.parentElement?.querySelector("code")?.textContent ?? "";
       void navigator.clipboard?.writeText(code).then(() => {

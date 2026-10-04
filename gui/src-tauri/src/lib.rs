@@ -352,6 +352,9 @@ pub fn run() {
     let world =
         World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None }).starting_node_from(program);
     tauri::Builder::default()
+        // Its script also sends every link that opens a new window to the
+        // system's browser, where the webview alone would drop it.
+        .plugin(tauri_plugin_opener::init())
         .manage(Shell { world, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
         .invoke_handler(tauri::generate_handler![
             world_now,

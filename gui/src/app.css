@@ -602,3 +602,13 @@
     width: auto;
   }
 }
+
+.who-state.waiting .who-first {
+  color: var(--accent);
+}
+
+.who-state .ask-mark {
+  flex: none;
+  width: 7px;
+  height: 7px;
+}

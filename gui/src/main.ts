@@ -86,6 +86,7 @@ import {
   projectEdit,
   projectNew,
   open as openAgent,
+  openOutside,
   project as readProject,
   revoke,
   stop,
@@ -291,7 +292,7 @@ function home(): Page {
 
 function specimenTalk(address: Address): Page {
   const name = address.resident;
-  const sample = (specimens[name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+  const sample = (specimens[name === "codex-a51c" ? "asking" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
   const known = residentsOf(specimen.world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
   const page = new ConversationPage({
@@ -311,6 +312,7 @@ function specimenTalk(address: Address): Page {
       offers: async () => specimenOffers,
       control: async () => ({ kind: "done", said: english ? "this is a specimen" : "这是样例，没有连着世界" }),
       forked: () => {},
+      open: openOutside,
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
     details: detailsOf(address, async () =>
@@ -383,6 +385,7 @@ function liveTalk(address: Address): Page {
         void store.refresh();
         location.hash = talkLink(resident);
       },
+      open: openOutside,
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
     details: detailsOf(address, async () => {
@@ -423,36 +426,52 @@ function liveTalk(address: Address): Page {
     const jobs = jobsOf(world).filter((job) => job.owner.resident === address.resident && job.owner.machine === address.machine);
     page.running(jobs, now);
   });
-  // Events can come before the history does; they wait for it.
-  let ready = false;
-  const early: Piece[] = [];
   const take = (piece: Piece) => {
     if (piece.kind === "event") conversation.event(piece.event);
     else page.lost(piece.error);
   };
-  watch(address, (piece) => {
-    if (left) return;
-    if (!ready) early.push(piece);
-    else {
-      take(piece);
-      page.update();
-    }
-  })
-    .then((started) => {
-      watchId = started.id;
-      if (left) {
-        void unwatch(started.id);
-        return;
+  // Each watch is one reading of the session; when the host replaces or
+  // removes turns, what is shown is read again from a fresh one.
+  let reading = 0;
+  const read = () => {
+    const mine = ++reading;
+    // Events can come before the history does; they wait for it.
+    let ready = false;
+    const early: Piece[] = [];
+    const settle = () => {
+      if (conversation.stale) {
+        if (watchId !== null) void unwatch(watchId);
+        watchId = null;
+        read();
       }
-      conversation.history(started.history);
-      for (const piece of early) take(piece);
-      ready = true;
       page.update();
+    };
+    watch(address, (piece) => {
+      if (left || mine !== reading) return;
+      if (!ready) early.push(piece);
+      else {
+        take(piece);
+        settle();
+      }
     })
-    .catch((error: unknown) => {
-      page.lost(String(error));
-      page.update();
-    });
+      .then((started) => {
+        if (left || mine !== reading) {
+          void unwatch(started.id);
+          return;
+        }
+        watchId = started.id;
+        conversation.history(started.history);
+        for (const piece of early) take(piece);
+        ready = true;
+        settle();
+      })
+      .catch((error: unknown) => {
+        if (mine !== reading) return;
+        page.lost(String(error));
+        page.update();
+      });
+  };
+  read();
   return {
     element: page.element,
     title: `${someone.agent} · ${someone.machine}`,
@@ -628,6 +647,8 @@ function specimenPlace(): Place | null {
       return { kind: "settings" };
     case "codex":
       return { kind: "talk", address: { resident: "codex-7f3a", machine: "laptop" } };
+    case "asks":
+      return { kind: "talk", address: { resident: "codex-a51c", machine: "laptop" } };
     default:
       return { kind: "talk", address: { resident: "claude-2b1c", machine: "laptop" } };
   }
