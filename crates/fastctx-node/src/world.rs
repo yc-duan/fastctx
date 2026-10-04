@@ -212,6 +212,9 @@ impl fastctx_net::link::Node for Handler {
                     Ok(RemoteReply::Written { outcome })
                 }
                 RemoteCall::Who { all, town } => crate::server::who_here(&node, all, town).await.map(RemoteReply::Who),
+                RemoteCall::Since { since, town } => {
+                    crate::since::here(&node, since, town).await.map(RemoteReply::Since)
+                }
                 RemoteCall::Canon { path } => {
                     tokio::task::spawn_blocking(move || crate::town::map::heads(std::path::Path::new(&path)))
                         .await

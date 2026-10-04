@@ -41,6 +41,9 @@ pub enum Call {
     /// (`fastctx w`); without a town, the caller's, or the World as a whole
     /// for a caller in none. With `all`, also the residents who have left.
     Who { all: bool, town: Option<TownName> },
+    /// Existing records strictly after `since`, from every machine of `town`
+    /// or the whole World when absent. No caller-town default is applied.
+    Since { since: Timestamp, town: Option<TownName> },
     /// One resident or job in detail, by its id, from every machine that
     /// has it (`fastctx w <id>`).
     Look { ids: Vec<String> },
@@ -125,6 +128,7 @@ pub enum Reply {
         notes: Vec<String>,
     },
     Who(WorldWho),
+    Since(crate::since::WorldSince),
     Towns {
         towns: Vec<TownSummary>,
     },
