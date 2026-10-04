@@ -12,6 +12,21 @@ publish = false
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-platform = { path = "../fastctx-platform" }
+getrandom = { version = "0.3", features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+xattr = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+] }
+
+[dev-dependencies]
+tempfile = "3"
