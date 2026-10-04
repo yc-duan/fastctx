@@ -1,0 +1,28 @@
+[package]
+name = "fastctx-gui"
+description = "The World's graphical interface: a Tauri shell around the web front end, reaching the World through the core's client"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.92"
+license = "Apache-2.0"
+publish = false
+
+# Its own workspace: the shell's dependencies stay out of the core's builds
+# and tests, and the core is reached by path.
+[workspace]
+
+[lib]
+name = "fastctx_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+fastctx-client = { path = "../../crates/fastctx-client" }
+fastctx-platform = { path = "../../crates/fastctx-platform" }
+fastctx-types = { path = "../../crates/fastctx-types" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tokio = { version = "1", features = ["sync"] }

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the World's window may do: the core's default, and the shell's own commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

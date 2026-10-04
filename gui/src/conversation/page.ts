@@ -35,6 +35,7 @@ export class ConversationPage {
   private input: HTMLTextAreaElement;
   private action: HTMLButtonElement;
   private following = true;
+  private gone: string | null = null;
 
   constructor(private readonly options: PageOptions) {
     const { words, someone } = options;
@@ -121,14 +122,24 @@ export class ConversationPage {
     this.input.style.height = `${this.input.scrollHeight}px`;
   }
 
+  /** The watch on the session is over: what is shown stays, and the bar
+   *  says it is no longer live. */
+  lost(why: string | null): void {
+    this.gone = this.options.words.watchEnded(why);
+    this.drawState();
+  }
+
   private drawState(): void {
     const { words, someone, conversation } = this.options;
-    const working = conversation.moving();
-    const facts = [working ? words.working : words.idle, someone.town, someone.model].filter(Boolean) as string[];
+    const working = !this.gone && conversation.moving();
+    const facts = [this.gone ?? (working ? words.working : words.idle), someone.town, someone.model].filter(
+      Boolean,
+    ) as string[];
     this.state.innerHTML = `${working ? `<span class="pulse" aria-hidden="true"></span>` : ""}<span>${facts
       .map(escape)
       .join(" · ")}</span>`;
     this.state.classList.toggle("working", working);
+    this.state.classList.toggle("gone", this.gone !== null);
     const used = conversation.context;
     this.context.textContent =
       used && used.window ? words.context(Math.round((used.used / used.window) * 100)) : "";

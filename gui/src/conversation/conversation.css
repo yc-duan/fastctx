@@ -67,6 +67,22 @@
   box-shadow: inset 0 0 0 1px var(--wrong);
 }
 
+.bubble.landed {
+  opacity: 0.8;
+}
+
+.bubble-note {
+  max-width: min(85%, calc(var(--body-size) * 36));
+  margin: var(--space-1) var(--space-2) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  text-align: right;
+}
+
+.bubble-note.wrong {
+  color: var(--wrong);
+}
+
 .bubble-from {
   font-size: var(--size-small);
   color: var(--text-3);

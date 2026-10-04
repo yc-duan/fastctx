@@ -104,13 +104,24 @@ impl Client {
     /// A node a system service keeps is started by nobody else: a second
     /// one would hold the World while the service's waits for it.
     pub async fn connect_or_start(world: &WorldDir, peer: Peer) -> Result<Self, ConnectError> {
+        Self::connect_or_start_with(world, peer, None).await
+    }
+
+    /// As [`Client::connect_or_start`], starting the node from `program`
+    /// rather than from this process's own executable: for a program that
+    /// is not fastctx itself, such as the graphical interface.
+    pub async fn connect_or_start_with(
+        world: &WorldDir,
+        peer: Peer,
+        program: Option<&std::path::Path>,
+    ) -> Result<Self, ConnectError> {
         match Self::connect(world, peer.clone()).await {
             Err(ConnectError::NoNode { endpoint }) if world.node_service().exists() => {
                 Err(ConnectError::KeptByService { endpoint })
             }
             Err(ConnectError::NoNode { endpoint }) => {
-                let started =
-                    start_node(world).map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;
+                let started = start_node(world, program)
+                    .map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;
                 loop {
                     match Self::connect(world, peer.clone()).await {
                         Err(ConnectError::NoNode { .. }) => {}
@@ -229,14 +240,20 @@ pub fn command_peer() -> Peer {
     Peer::Command { resident, session }
 }
 
-/// Starts this binary's node on its own.
-fn start_node(world: &WorldDir) -> std::io::Result<fastctx_platform::DetachedProcess> {
+/// Starts a node on its own, from `program` or else this binary.
+fn start_node(
+    world: &WorldDir,
+    program: Option<&std::path::Path>,
+) -> std::io::Result<fastctx_platform::DetachedProcess> {
     let root = world
         .path()
         .parent()
         .filter(|_| world.path().file_name() == Some(std::ffi::OsStr::new("world")))
         .ok_or_else(|| std::io::Error::other("starting a node requires a World under <fastctx root>/world"))?;
-    let executable = std::env::current_exe()?;
+    let executable = match program {
+        Some(program) => program.to_path_buf(),
+        None => std::env::current_exe()?,
+    };
     let home = fastctx_platform::user_home()?;
     let mut environment = fastctx_platform::world_process_environment()?;
     // The caller explicitly named a World. A Claude daemon's inherited

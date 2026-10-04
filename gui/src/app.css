@@ -94,6 +94,10 @@
   color: var(--text-2);
 }
 
+.who-state.gone {
+  color: var(--caution);
+}
+
 .who-state .pulse {
   flex: none;
   width: 6px;

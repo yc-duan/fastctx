@@ -8,15 +8,14 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
 import type { Happening, ResidentNow, RunningJob, WorldState } from "../world/world";
-import { drawFrontispiece } from "./frontispiece";
+import { Frontispiece } from "./frontispiece";
 import type { HomeWords } from "./words";
 
 export interface HomeOptions {
   words: HomeWords;
   /** The conversation words, for how an ending is said. */
   ended(how: string): string;
-  world: WorldState;
-  now: Date;
+  /** When the reader was last here, when known. */
   lastVisit: Date | null;
   /** Where a resident's conversation opens. */
   link(address: Address): string;
@@ -26,15 +25,40 @@ const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === 
 
 export class HomePage {
   readonly element: HTMLElement;
+  private world: WorldState | null = null;
+  private now = new Date();
+  private drawn = "";
+  private frontispiece: Frontispiece;
+  private day: HTMLElement;
+  private facts: HTMLElement;
+  private sections: HTMLElement;
 
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
     this.element.className = "page home-page";
-    this.draw();
+    this.element.innerHTML = `
+      <div class="home">
+        <figure class="frontispiece" aria-hidden="true"></figure>
+        <header class="dateline">
+          <h1 class="dateline-day"></h1>
+          <p class="dateline-facts"></p>
+        </header>
+        <div class="home-sections"></div>
+      </div>`;
+    this.frontispiece = new Frontispiece(this.element.querySelector<HTMLElement>(".frontispiece")!);
+    this.day = this.element.querySelector<HTMLElement>(".dateline-day")!;
+    this.facts = this.element.querySelector<HTMLElement>(".dateline-facts")!;
+    this.sections = this.element.querySelector<HTMLElement>(".home-sections")!;
   }
 
-  private draw(): void {
-    const { world, words } = this.options;
+  /** Shows the World as it now stands; when nothing shown has changed, the
+   *  page is left as it is. */
+  update(world: WorldState, now: Date): void {
+    this.world = world;
+    this.now = now;
+    const { words } = this.options;
+    this.day.textContent = words.dateline(now);
+
     const residents = this.residents();
     const jobs = world.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));
     const waiting = residents.filter((r) => r.now?.waiting_for_user);
@@ -43,41 +67,69 @@ export class HomePage {
     const present = new Set(residents.filter((r) => r.here).map((r) => `${r.about.id}@${r.about.machine}`));
     const unattended = jobs.filter((job) => !present.has(`${job.owner.resident}@${job.owner.machine}`));
     const online = world.nodes.filter((node) => node.online).length;
+    const idleLine = idle.length
+      ? `<p class="idle">${escape(words.idle(idle.map((r) => this.name(r)).join(words.listSeparator)))}</p>`
+      : "";
 
-    this.element.innerHTML = `
-      <div class="home">
-        <figure class="frontispiece" aria-hidden="true"></figure>
-        <header class="dateline">
-          <h1 class="dateline-day">${escape(words.dateline(this.options.now))}</h1>
-          <p class="dateline-facts">${[
-            this.options.lastVisit
-              ? words.lastHere(words.ago(this.options.now.getTime() - this.options.lastVisit.getTime()))
-              : words.firstTime,
-            words.machinesOnline(online, world.nodes.length),
-            words.agentsWorking(busy.length + waiting.length),
-          ]
-            // A separator keeps to the fact after it, so no line starts with one.
-            .map((fact, index) => `<span class="fact">${index ? `<span class="sep">·</span>` : ""}${escape(fact)}</span> `)
-            .join("")}</p>
-        </header>
-        ${waiting.length ? this.section("waiting", words.waiting, `<ul class="people">${waiting.map((r) => this.someone(r, true)).join("")}</ul>`) : ""}
-        ${this.section(
-          "now",
-          words.now,
-          busy.length
-            ? `<ul class="people">${busy.map((r) => this.someone(r, false)).join("")}</ul>${idle.length ? `<p class="idle">${escape(words.idle(idle.map((r) => this.name(r)).join("、")))}</p>` : ""}`
-            : `<p class="quiet">${escape(words.nobodyWorking)}</p>`,
-        )}
-        ${this.section("away", words.away, this.chronicle())}
-        ${unattended.length ? this.section("unattended", words.unattended, `<ul class="jobs">${unattended.map((job) => this.job(job)).join("")}</ul>`) : ""}
-        ${this.section("projects", words.projects, `<ul class="projects">${world.towns.map((town) => this.project(town, residents)).join("")}</ul>`)}
-        ${this.section("machines", words.machines, `<ul class="machines">${world.nodes.map((node) => this.machine(node, residents, jobs)).join("")}</ul>`)}
-      </div>`;
-    drawFrontispiece(this.element.querySelector<HTMLElement>(".frontispiece")!, world, residents);
+    const facts = [
+      this.options.lastVisit ? words.lastHere(words.ago(now.getTime() - this.options.lastVisit.getTime())) : null,
+      words.machinesOnline(online, world.nodes.length),
+      words.agentsWorking(busy.length + waiting.length),
+    ].filter((fact): fact is string => fact !== null);
+    // A separator keeps to the fact after it, so no line starts with one.
+    const factsHtml = facts
+      .map((fact, index) => `<span class="fact">${index ? `<span class="sep">·</span>` : ""}${escape(fact)}</span> `)
+      .join("");
+
+    const sections = [
+      waiting.length
+        ? this.section("waiting", words.waiting, `<ul class="people">${waiting.map((r) => this.someone(r, true)).join("")}</ul>`)
+        : "",
+      this.section(
+        "now",
+        words.now,
+        busy.length
+          ? `<ul class="people">${busy.map((r) => this.someone(r, false)).join("")}</ul>${idleLine}`
+          : `<p class="quiet">${escape(words.nobodyWorking)}</p>${idleLine}`,
+      ),
+      // What happened meanwhile is shown only where the World can say it.
+      world.happenings ? this.section("away", words.away, this.chronicle(world.happenings)) : "",
+      unattended.length
+        ? this.section("unattended", words.unattended, `<ul class="jobs">${unattended.map((job) => this.job(job)).join("")}</ul>`)
+        : "",
+      world.towns.length
+        ? this.section(
+            "projects",
+            words.projects,
+            `<ul class="projects">${world.towns.map((town) => this.project(town, residents)).join("")}</ul>`,
+          )
+        : "",
+      this.section(
+        "machines",
+        words.machines,
+        `<ul class="machines">${world.nodes.map((node) => this.machine(node, residents, jobs)).join("")}</ul>`,
+      ),
+    ].join("");
+
+    const drawn = factsHtml + sections;
+    if (drawn !== this.drawn) {
+      this.drawn = drawn;
+      this.facts.innerHTML = factsHtml;
+      this.sections.innerHTML = sections;
+    }
+    this.frontispiece.update(world, residents);
+  }
+
+  /** The World could not be asked: said where the facts would be, with
+   *  what was last shown left as it was. */
+  unreachable(why: string, now: Date): void {
+    this.day.textContent = this.options.words.dateline(now);
+    this.facts.innerHTML = `<span class="fact unreachable">${escape(this.options.words.unreachable(why))}</span>`;
+    this.drawn = "";
   }
 
   private residents(): ResidentNow[] {
-    return this.options.world.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
+    return (this.world?.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
   }
 
   private section(kind: string, title: string, body: string): string {
@@ -94,7 +146,7 @@ export class HomePage {
   }
 
   private since(at: string): string {
-    return this.options.words.lasted(this.options.now.getTime() - Date.parse(at));
+    return this.options.words.lasted(this.now.getTime() - Date.parse(at));
   }
 
   private someone(r: ResidentNow, waiting: boolean): string {
@@ -110,7 +162,7 @@ export class HomePage {
         ? `<span class="someone-doing">${action.machine !== r.about.machine ? `<span class="where">${escape(action.machine)}</span>` : ""}<span class="what">${escape(action.what)}</span></span>`
         : "";
     const trouble = r.now?.trouble
-      ? `<span class="someone-trouble">${escape(r.now.trouble.text)} · ${escape(words.ago(this.options.now.getTime() - Date.parse(r.now.trouble.at)))}</span>`
+      ? `<span class="someone-trouble">${escape(r.now.trouble.text)} · ${escape(words.ago(this.now.getTime() - Date.parse(r.now.trouble.at)))}</span>`
       : "";
     const mark = waiting ? `<span class="ask" aria-hidden="true"></span>` : `<span class="pulse" aria-hidden="true"></span>`;
     return `<li><a class="someone${waiting ? " waiting" : ""}" href="${this.options.link({ machine: r.about.machine, resident: r.about.id })}">
@@ -123,10 +175,10 @@ export class HomePage {
     </a></li>`;
   }
 
-  private chronicle(): string {
-    const { words, now } = this.options;
+  private chronicle(happenings: Happening[]): string {
+    const { words } = this.options;
     const since = this.options.lastVisit?.getTime() ?? 0;
-    const events = this.options.world.happenings
+    const events = happenings
       .filter((event) => Date.parse(event.at) >= since)
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
     if (!events.length) return `<p class="quiet">${escape(words.nothingAway)}</p>`;
@@ -135,7 +187,7 @@ export class HomePage {
     for (const event of events) {
       const at = new Date(event.at);
       const thisDay = words.day(at);
-      if (thisDay !== day && (day || thisDay !== words.day(now))) items.push(`<li class="day">${escape(thisDay)}</li>`);
+      if (thisDay !== day && (day || thisDay !== words.day(this.now))) items.push(`<li class="day">${escape(thisDay)}</li>`);
       day = thisDay;
       items.push(this.happening(event, at));
     }
@@ -146,7 +198,7 @@ export class HomePage {
     const { words } = this.options;
     const time = `<time datetime="${escape(event.at)}">${escape(words.clock(at))}</time>`;
     const town = "town" in event && event.town ? `<span class="tag">${escape(event.town)}</span>` : "";
-    let mark = "colleague";
+    let mark: Parameters<typeof glyph>[0] = "colleague";
     let line: string;
     let detail = "";
     let tone = "";
@@ -184,7 +236,7 @@ export class HomePage {
         tone = event.online ? "" : " caution";
         break;
     }
-    return `<li class="event${tone}">${time}<span class="rail">${glyph(mark as Parameters<typeof glyph>[0], 18)}</span><div class="event-body"><span class="event-line">${escape(line)}${town}</span>${detail}</div></li>`;
+    return `<li class="event${tone}">${time}<span class="rail">${glyph(mark, 18)}</span><div class="event-body"><span class="event-line">${escape(line)}${town}</span>${detail}</div></li>`;
   }
 
   private job(job: RunningJob): string {
@@ -199,23 +251,23 @@ export class HomePage {
     return `<li><a class="project" href="#/project/${encodeURIComponent(town.town)}">
       <span class="project-name">${escape(town.record.name)}</span>
       <span class="project-what">${escape(town.record.what)}</span>
-      <span class="project-facts">${facts.map(escape).join("<span class=\"sep\">·</span>")}</span>
+      <span class="project-facts">${facts.map(escape).join(`<span class="sep">·</span>`)}</span>
     </a></li>`;
   }
 
   private machine(node: WorldState["nodes"][number], residents: ResidentNow[], jobs: RunningJob[]): string {
-    const { words, now } = this.options;
+    const { words } = this.options;
     const os = "Ok" in node.facts ? node.facts.Ok.os : "";
     const state =
       node.online === true
         ? words.online
         : node.online === false
-          ? words.offlineSince(node.since ? words.ago(now.getTime() - Date.parse(node.since)) : "")
+          ? words.offlineSince(node.since ? words.ago(this.now.getTime() - Date.parse(node.since)) : "")
           : words.unknownLink;
     const on = residents.filter((r) => r.about.machine === node.name && r.here).length;
     const running = jobs.filter((job) => job.machine === node.name).length;
     const facts = [os, on ? words.residents(on) : "", running ? words.jobsRunning(running) : ""].filter(Boolean);
-    const here = node.name === this.options.world.here ? " here" : "";
-    return `<li class="machine${node.online ? " online" : " offline"}${here}"><span class="dot" aria-hidden="true"></span><span class="machine-name">${escape(node.name)}</span><span class="machine-state">${escape(state)}</span><span class="machine-facts">${facts.map(escape).join("<span class=\"sep\">·</span>")}</span></li>`;
+    const here = node.name === this.world?.here ? " here" : "";
+    return `<li class="machine${node.online ? " online" : " offline"}${here}"><span class="dot" aria-hidden="true"></span><span class="machine-name">${escape(node.name)}</span><span class="machine-state">${escape(state)}</span><span class="machine-facts">${facts.map(escape).join(`<span class="sep">·</span>`)}</span></li>`;
   }
 }

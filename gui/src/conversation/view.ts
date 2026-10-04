@@ -7,7 +7,7 @@
 import type { Content, MachineName, Speaker, Tool } from "../world/events";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
-import type { Activity, Block, Conversation, Entry } from "./model";
+import type { Activity, Block, Conversation, Entry, SendState } from "./model";
 import { escape, plain, render } from "./prose";
 import { numbered, parse, renderRows } from "./diff";
 import { groupHeading, headline, tenseOf } from "./tool";
@@ -89,7 +89,7 @@ export class ConversationView {
       case "tool":
         return `${entry.key}t${entry.tool.status}${entry.ended?.use ?? "-"}${entry.tool.output.length}`;
       case "heard":
-        return `${entry.key}h${entry.sending?.state ?? ""}`;
+        return `${entry.key}h${JSON.stringify(entry.sending ?? null)}`;
       case "steps":
         return `${entry.key}s${JSON.stringify(entry.steps)}${entry.note ?? ""}`;
       default:
@@ -116,7 +116,7 @@ export class ConversationView {
     const { words } = this.context;
     switch (entry.kind) {
       case "heard":
-        return this.heard(entry.from, entry.text, entry.sending?.state ?? null);
+        return this.heard(entry.from, entry.text, entry.sending ?? null);
       case "prose":
         if (entry.prose === "plan") {
           return `<div class="plan"><div class="plan-label">${escape(words.plan)}</div><div class="prose">${render(entry.text)}</div></div>`;
@@ -148,15 +148,20 @@ export class ConversationView {
     }
   }
 
-  private heard(from: Speaker | null, text: string, sending: string | null): string {
+  private heard(from: Speaker | null, text: string, sending: SendState | null): string {
     const { words } = this.context;
     if (!from || from.kind === "user") {
       // The user's own words; which machine they came from is said only
-      // when it is not this one.
+      // when it is not this one. Words not yet heard say how they stand.
       const who =
         from && from.machine !== this.context.here ? `<div class="bubble-from">${escape(words.you(from.machine))}</div>` : "";
-      const state = sending === "going" ? " going" : sending === "failed" ? " failed" : "";
-      return `${who}<div class="bubble${state}">${plain(text)}</div>`;
+      const state = sending ? ` ${sending.state}` : "";
+      let note = "";
+      if (sending?.state === "failed") note = `<div class="bubble-note wrong">${escape(words.notSent(sending.why))}</div>`;
+      if (sending?.state === "landed") {
+        note = `<div class="bubble-note">${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
+      }
+      return `${who}<div class="bubble${state}">${plain(text)}</div>${note}`;
     }
     // Words from another resident, or the World's own telling: never in the
     // user's bubble. The head notes written for the model are said again

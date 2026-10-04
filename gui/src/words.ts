@@ -67,6 +67,15 @@ export interface Words {
   listSeparator: string;
   moreLines(n: number): string;
   unchangedLines(n: number): string;
+  /** The watch on the session ended: the node ended it, or the connection
+   *  to it broke. */
+  watchEnded(why: string | null): string;
+  /** Words that could not be sent. */
+  notSent(why: string): string;
+  /** Words in the World but in no turn yet: waiting for the session's next
+   *  call of a World tool, gone as a letter, or handed over without knowing
+   *  whether they went in. */
+  landed(how: string, machine: string, why: string | null): string;
   /** A job the resident started has ended, on that machine. */
   jobEnded(job: string, machine: string): string;
   /** How a job or a colleague's turn ended, from the World's own wording
@@ -159,6 +168,14 @@ export const zh: Words = {
   listSeparator: "、",
   moreLines: (n) => `还有 ${n} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
+  watchEnded: (why) => (why ? `没在看着它了：${why}` : "没在看着它了"),
+  notSent: (why) => `没送出去：${why}`,
+  landed: (how, machine, why) =>
+    how === "sent"
+      ? `寄到了 ${machine}，那台机器收到时送进去`
+      : how === "uncertain"
+        ? `话交出去了，但不知道它进没进去${why ? `：${why}` : ""}`
+        : `它此刻没给世界开口，话等它下次用世界的工具时送到${why ? `（${why}）` : ""}`,
   jobEnded: (job, machine) => `后台作业 ${job} 在 ${machine} 上结束了`,
   ended: (how) =>
     endedIn(how, {
@@ -226,6 +243,14 @@ export const en: Words = {
   listSeparator: ", ",
   moreLines: (n) => `${n} more lines`,
   unchangedLines: (n) => `${n} unchanged lines`,
+  watchEnded: (why) => (why ? `No longer watching: ${why}` : "No longer watching"),
+  notSent: (why) => `Not sent: ${why}`,
+  landed: (how, machine, why) =>
+    how === "sent"
+      ? `Sent to ${machine}; it goes in when that machine has it`
+      : how === "uncertain"
+        ? `Handed over, but whether it went in is unknown${why ? `: ${why}` : ""}`
+        : `It gives the World no way in now; the words wait for its next call of a World tool${why ? ` (${why})` : ""}`,
   jobEnded: (job, machine) => `Job ${job} on ${machine} ended`,
   ended: (how) =>
     endedIn(how, {

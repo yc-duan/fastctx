@@ -10,18 +10,41 @@ import type { ResidentNow, WorldState } from "../world/world";
 const ringRadius = 24;
 const knotRadius = 7;
 
-/** Draws the World into `figure`, and again whenever the figure changes
- *  between a wide and a narrow shape: a phone gets a taller composition
- *  rather than the wide one shrunk. */
-export function drawFrontispiece(figure: HTMLElement, world: WorldState, residents: ResidentNow[]): void {
-  let narrow: boolean | null = null;
-  const observer = new ResizeObserver(() => {
-    const now = figure.clientWidth < 600;
-    if (now === narrow) return;
-    narrow = now;
-    draw(figure, world, residents, now);
-  });
-  observer.observe(figure);
+/** The drawing in `figure`: drawn again when the World changes, and when
+ *  the figure changes between a wide and a narrow shape, since a phone gets
+ *  a taller composition rather than the wide one shrunk. */
+export class Frontispiece {
+  private narrow: boolean | null = null;
+  private shown: { world: WorldState; residents: ResidentNow[]; key: string } | null = null;
+  private drawn = "";
+
+  constructor(private readonly figure: HTMLElement) {
+    new ResizeObserver(() => {
+      const narrow = figure.clientWidth < 600;
+      if (narrow === this.narrow) return;
+      this.narrow = narrow;
+      this.draw();
+    }).observe(figure);
+  }
+
+  update(world: WorldState, residents: ResidentNow[]): void {
+    // Only what the drawing shows decides whether it is drawn again.
+    const key = JSON.stringify([
+      world.here,
+      world.nodes.map((node) => [node.name, node.online, "Ok" in node.facts ? node.facts.Ok.os : ""]),
+      residents.map((r) => [r.about.id, r.about.machine, r.now?.activity, r.now?.waiting_for_user]),
+    ]);
+    this.shown = { world, residents, key };
+    this.draw();
+  }
+
+  private draw(): void {
+    if (!this.shown || this.narrow === null) return;
+    const key = `${this.narrow}${this.shown.key}`;
+    if (key === this.drawn) return;
+    this.drawn = key;
+    draw(this.figure, this.shown.world, this.shown.residents, this.narrow);
+  }
 }
 
 function draw(figure: HTMLElement, world: WorldState, residents: ResidentNow[], narrow: boolean): void {

@@ -1,3 +1,6 @@
 node_modules/
 dist/
 shots/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/icon-source.png

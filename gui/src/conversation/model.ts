@@ -9,7 +9,9 @@ export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
 export type SendState =
   | { state: "going" }
-  | { state: "landed"; how: string; machine: MachineName }
+  /** In the World, not yet in a turn: `how` is the way they landed
+   *  (`waiting`, `sent`, `uncertain`), as the node said. */
+  | { state: "landed"; how: string; machine: MachineName; why?: string | null }
   | { state: "failed"; why: string };
 
 export type Entry =
@@ -262,6 +264,13 @@ export class Conversation {
       sending: { state: "going" },
     });
     return key;
+  }
+
+  /** What became of words being sent: they are kept, with how they stand,
+   *  until the session hears them. */
+  sent(key: string, state: SendState): void {
+    const entry = this.entries.find((candidate) => candidate.key === key);
+    if (entry?.kind === "heard" && entry.sending) entry.sending = state;
   }
 
   /** Whether anything shown is happening now. */

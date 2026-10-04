@@ -169,6 +169,11 @@
   white-space: nowrap;
 }
 
+.fact.unreachable {
+  white-space: normal;
+  color: var(--caution);
+}
+
 /* Sections: a quiet title with a rule running out from it. */
 .home-section {
   margin-top: var(--space-10);

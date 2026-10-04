@@ -35,6 +35,9 @@ pub enum Error {
 pub struct World {
     dir: WorldDir,
     peer: Peer,
+    /// The program a node is started from when none runs; this process's
+    /// own executable when unset.
+    node_program: Option<std::path::PathBuf>,
 }
 
 /// What became of words said to a resident.
@@ -55,7 +58,14 @@ pub struct TownRecord {
 
 impl World {
     pub fn new(dir: WorldDir, peer: Peer) -> Self {
-        Self { dir, peer }
+        Self { dir, peer, node_program: None }
+    }
+
+    /// The same World, whose node, when none runs, is started from
+    /// `program`: for an interface that is not itself fastctx.
+    pub fn starting_node_from(mut self, program: std::path::PathBuf) -> Self {
+        self.node_program = Some(program);
+        self
     }
 
     /// The World kept for this user on this machine, speaking as whoever
@@ -69,7 +79,7 @@ impl World {
     }
 
     async fn connect(&self) -> Result<Client, Error> {
-        Ok(Client::connect_or_start(&self.dir, self.peer.clone()).await?)
+        Ok(Client::connect_or_start_with(&self.dir, self.peer.clone(), self.node_program.as_deref()).await?)
     }
 
     /// Sends one call and returns its answer and the machine that answered.

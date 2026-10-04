@@ -16,6 +16,10 @@ export interface HomeWords {
   now: string;
   nobodyWorking: string;
   idle(names: string): string;
+  /** Between the names in a short list. */
+  listSeparator: string;
+  /** The World could not be asked, and why. */
+  unreachable(why: string): string;
   away: string;
   nothingAway: string;
   projects: string;
@@ -92,6 +96,8 @@ export const zhHome: HomeWords = {
   now: "此刻",
   nobodyWorking: "此刻没有谁在干活。",
   idle: (names) => `空闲：${names}`,
+  listSeparator: "、",
+  unreachable: (why) => `问不到这台机器上的世界：${why}`,
   away: "你不在时",
   nothingAway: "你不在时，世界里没有新的事。",
   projects: "项目",
@@ -138,6 +144,8 @@ export const enHome: HomeWords = {
   now: "Now",
   nobodyWorking: "Nobody is working right now.",
   idle: (names) => `Idle: ${names}`,
+  listSeparator: ", ",
+  unreachable: (why) => `The World on this machine could not be asked: ${why}`,
   away: "While you were away",
   nothingAway: "Nothing new happened in the World while you were away.",
   projects: "Projects",

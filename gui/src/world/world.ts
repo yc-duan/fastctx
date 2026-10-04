@@ -96,5 +96,7 @@ export interface WorldState {
   machines: MachineWho[];
   nodes: Node[];
   towns: TownSummary[];
-  happenings: Happening[];
+  /** What happened lately, where the World can say it; `null` where it
+   *  cannot yet. */
+  happenings: Happening[] | null;
 }
