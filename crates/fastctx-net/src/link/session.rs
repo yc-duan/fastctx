@@ -32,22 +32,31 @@ enum Ended {
     Stop(String),
 }
 
-pub(super) async fn run(inner: Arc<Inner>) {
+pub(super) async fn run(inner: Arc<Inner>, mut changes: super::changes::Changes) {
     let mut failures: u32 = 0;
     loop {
-        let started = Instant::now();
-        match connect(&inner).await {
+        let mut online_since = None;
+        let ended = tokio::select! {
+            ended = connect(&inner, &mut online_since) => ended,
+            changed = changes.changed() => {
+                let reason = changed.expect("watching network and resume notifications");
+                reconnect(&inner, reason);
+                failures = 0;
+                continue;
+            }
+        };
+        match ended {
             Ended::Stop(reason) => {
                 inner.node.log(format!("the link to the hub stopped: {reason}"));
                 inner.status.send_replace(Status::Stopped { reason });
                 return;
             }
             Ended::Retry(reason) => {
-                if started.elapsed() >= STABLE {
+                let was_online = matches!(*inner.status.borrow(), Status::Online { .. });
+                if online_since.is_some_and(|since| since.elapsed() >= STABLE) {
                     failures = 0;
                 }
-                failures += 1;
-                let was_online = matches!(*inner.status.borrow(), Status::Online { .. });
+                failures = failures.saturating_add(1);
                 if was_online || failures == 1 {
                     inner.node.log(format!("the link to the hub is down: {reason}"));
                 }
@@ -56,10 +65,22 @@ pub(super) async fn run(inner: Arc<Inner>) {
                     _ => Timestamp::now(),
                 };
                 inner.status.send_replace(Status::Connecting { since, last_error: Some(reason) });
-                tokio::time::sleep(backoff(failures)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(backoff(failures)) => {},
+                    changed = changes.changed() => {
+                        reconnect(&inner, changed.expect("watching network and resume notifications"));
+                        failures = 0;
+                    }
+                }
             }
         }
     }
+}
+
+fn reconnect(inner: &Inner, reason: &str) {
+    inner.node.log(format!("reconnecting immediately: {reason}"));
+    inner.status.send_replace(Status::Connecting { since: Timestamp::now(), last_error: Some(reason.to_string()) });
+    dial::network_changed();
 }
 
 /// The first retry is at once; after that a random wait up to a ceiling that
@@ -74,7 +95,7 @@ fn backoff(failures: u32) -> Duration {
     Duration::from_millis(250 + random % ceiling_ms.saturating_sub(250).max(1))
 }
 
-async fn connect(inner: &Arc<Inner>) -> Ended {
+async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ended {
     let membership = &inner.membership;
     let dialed = match dial::dial(&membership.hub, membership.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await {
         Ok(dialed) => dialed,
@@ -92,8 +113,10 @@ async fn connect(inner: &Arc<Inner>) -> Ended {
         version: env!("CARGO_PKG_VERSION").to_string(),
         intent: Intent::Session { key: inner.key.public(), proof, letters: position },
     };
-    if let Err(error) = dial::send(&mut socket, &hello).await {
-        return Ended::Retry(error);
+    match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Ended::Retry(error),
+        Err(_) => return Ended::Retry("sending the hello to the hub timed out".to_string()),
     }
     let welcome = match tokio::time::timeout(SILENCE, dial::recv(&mut socket)).await {
         Ok(Ok(Some(frame))) => frame,
@@ -106,7 +129,7 @@ async fn connect(inner: &Arc<Inner>) -> Ended {
     let (taken, hub_letters) = match welcome {
         Down::Welcome { world, name, taken, letters, .. } => {
             if world != membership.world || name != membership.name {
-                return Ended::Stop(format!(
+                return Ended::Retry(format!(
                     "the hub knows this machine as {name} in {world}, not {} in {}",
                     membership.name, membership.world
                 ));
@@ -136,7 +159,13 @@ async fn connect(inner: &Arc<Inner>) -> Ended {
     let (up, mut outgoing) = mpsc::unbounded_channel::<Up>();
     *inner.connection.lock().expect("never poisoned") = Some(Connection { generation, up: up.clone() });
     inner.status.send_replace(Status::Online { since: Timestamp::now(), address, route: route.clone() });
+    *online_since = Some(Instant::now());
     inner.node.log(format!("connected to the hub at {address}, {route}"));
+
+    // This guard also runs when a network event cancels connect(). Pending
+    // callers must learn that their old connection ended before another
+    // connection can be published.
+    let mut connected = Connected { inner, generation, reason: "the connection was interrupted".to_string() };
 
     let (mut sink, mut stream) = socket.split();
     let (writer_done, mut writer_stopped) = oneshot::channel::<()>();
@@ -170,30 +199,40 @@ async fn connect(inner: &Arc<Inner>) -> Ended {
         }));
     }
 
+    let mut last_pong = Instant::now();
+    let mut last_ping = 0;
     let ended = loop {
         let next = tokio::select! {
-            next = tokio::time::timeout(SILENCE, stream.next()) => next,
+            // A continuous stream of unrelated frames must not postpone
+            // the heartbeat deadline once it has expired.
+            biased;
+            _ = tokio::time::sleep_until(last_pong + SILENCE) => {
+                break Ended::Retry(format!("the hub did not answer a heartbeat for {} s", SILENCE.as_secs()));
+            },
             _ = &mut writer_stopped => break Ended::Retry("writing to the hub failed".to_string()),
             failed = &mut letters_failed => break Ended::Retry(failed.unwrap_or_else(|_| "taking letters stopped".to_string())),
+            next = stream.next() => next,
         };
         let frame: Down = match next {
-            Err(_) => {
-                break Ended::Retry(format!("nothing was heard from the hub for {} s", SILENCE.as_secs()));
-            }
-            Ok(None | Some(Ok(WsMessage::Close(_)))) => {
+            None | Some(Ok(WsMessage::Close(_))) => {
                 break Ended::Retry("the hub closed the connection".to_string());
             }
-            Ok(Some(Err(error))) => break Ended::Retry(dial::describe(&error)),
-            Ok(Some(Ok(WsMessage::Binary(bytes)))) => match serde_json::from_slice(&bytes) {
+            Some(Err(error)) => break Ended::Retry(dial::describe(&error)),
+            Some(Ok(WsMessage::Binary(bytes))) => match serde_json::from_slice(&bytes) {
                 Ok(frame) => frame,
                 Err(error) => {
                     break Ended::Retry(format!("an unreadable frame from the hub: {error}"));
                 }
             },
-            Ok(Some(Ok(_))) => continue,
+            Some(Ok(_)) => continue,
         };
         match frame {
-            Down::Pong { .. } => {}
+            Down::Pong { n } => {
+                if n > last_ping {
+                    last_ping = n;
+                    last_pong = Instant::now();
+                }
+            }
             Down::Ack { seq, refused } => {
                 if let Some(reason) = refused {
                     refused_letter(inner, seq, &reason);
@@ -235,24 +274,38 @@ async fn connect(inner: &Arc<Inner>) -> Ended {
         }
     };
 
-    {
-        let mut connection = inner.connection.lock().expect("never poisoned");
-        if connection.as_ref().is_some_and(|connection| connection.generation == generation) {
-            *connection = None;
-        }
-    }
     drop(tasks);
     drop(up);
-    let reason = match &ended {
+    connected.reason = match &ended {
         Ended::Retry(reason) | Ended::Stop(reason) => reason.clone(),
     };
-    // Calls and questions waiting on this connection get no answer on
-    // another one.
-    for waiter in inner.calls.lock().expect("never poisoned").values() {
-        let _ = waiter.events.send(CallEvent::Disconnected(reason.clone()));
+    if matches!(ended, Ended::Stop(_)) {
+        // Publish the authenticated revocation before dropping pending
+        // questions. When leaving, the hub may close the revoked session
+        // before the separate acknowledgement of the revocation arrives.
+        inner.status.send_replace(Status::Stopped { reason: connected.reason.clone() });
     }
-    inner.asks.lock().expect("never poisoned").clear();
     ended
+}
+
+struct Connected<'a> {
+    inner: &'a Inner,
+    generation: u64,
+    reason: String,
+}
+
+impl Drop for Connected<'_> {
+    fn drop(&mut self) {
+        let mut connection = self.inner.connection.lock().expect("never poisoned");
+        if connection.as_ref().is_some_and(|connection| connection.generation == self.generation) {
+            *connection = None;
+        }
+        drop(connection);
+        for waiter in self.inner.calls.lock().expect("never poisoned").values() {
+            let _ = waiter.events.send(CallEvent::Disconnected(self.reason.clone()));
+        }
+        self.inner.asks.lock().expect("never poisoned").clear();
+    }
 }
 
 /// The tasks of one connection, ended with it however it ends, even when
@@ -269,7 +322,7 @@ impl Drop for Tasks {
 
 fn refused(reason: Refusal) -> Ended {
     match reason {
-        Refusal::Protocol { .. } | Refusal::NotMember | Refusal::Revoked { .. } => Ended::Stop(reason.to_string()),
+        Refusal::Revoked { .. } => Ended::Stop(reason.to_string()),
         other => Ended::Retry(other.to_string()),
     }
 }
