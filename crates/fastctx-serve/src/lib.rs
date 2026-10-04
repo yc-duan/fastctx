@@ -72,7 +72,7 @@ pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
             }
             (Some("ping"), Some(id)) => output.send(&response(&id, json!({}))),
             (Some("tools/list"), Some(id)) => {
-                output.send(&response(&id, json!({ "tools": tools::definitions(writer, session.colleague) })))
+                output.send(&response(&id, json!({ "tools": tools::definitions(writer, session.colleague()) })))
             }
             (Some("tools/call"), Some(id)) => {
                 let (session, output, key) = (session.clone(), output.clone(), id.to_string());
@@ -82,8 +82,8 @@ pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
                     let mut answer = match name {
                         "run" => session.run(&arguments, params.get("_meta")).await,
                         name if writer.lists(name) => session.write(name, &arguments, params.get("_meta")).await,
-                        "ask_colleague" if !session.colleague => session.ask(&arguments, params.get("_meta")).await,
-                        "message_colleague" if !session.colleague => {
+                        "ask_colleague" if !session.colleague() => session.ask(&arguments, params.get("_meta")).await,
+                        "message_colleague" if !session.colleague() => {
                             session.message(&arguments, params.get("_meta")).await
                         }
                         _ => {

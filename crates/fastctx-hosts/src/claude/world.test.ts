@@ -25,20 +25,20 @@ test('loads, streams without waiting for disk, and retains the old session after
   on('session.version', () => ({ value: { version: '2.1.289' } }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('fs.write', async (_, e) => {
-    if (blockWrites && e.path.endsWith('.json') && JSON.parse(e.text).kind === 'batch') {
+    if (blockWrites && e.path.replaceAll('\\', '/').endsWith('.json') && JSON.parse(e.text).kind === 'batch') {
       writing()
       await blocked
     }
-    files.set(e.path, e.text)
+    files.set(e.path.replaceAll('\\', '/'), e.text)
     return { value: undefined }
   })
   on('fs.read', (_, e) => {
-    if (!files.has(e.path)) throw new Error('missing fixture file: ' + e.path)
-    return { value: files.get(e.path)! }
+    if (!files.has(e.path.replaceAll('\\', '/'))) throw new Error('missing fixture file: ' + e.path.replaceAll('\\', '/'))
+    return { value: files.get(e.path.replaceAll('\\', '/'))! }
   })
   on('fs.list', (_, e) => ({ value: [...files.keys()]
-    .filter((path) => path.startsWith(e.path + '/') && !path.slice(e.path.length + 1).includes('/'))
-    .map((path) => ({ name: path.slice(e.path.length + 1), kind: 'file', size: files.get(path)!.length, mtimeMs: 0, isLink: false })) }))
+    .filter((path) => path.startsWith(e.path.replaceAll('\\', '/') + '/') && !path.slice(e.path.replaceAll('\\', '/').length + 1).includes('/'))
+    .map((path) => ({ name: path.slice(e.path.replaceAll('\\', '/').length + 1), kind: 'file', size: files.get(path)!.length, mtimeMs: 0, isLink: false })) }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('classic.SessionStart', () => ({}))
@@ -63,8 +63,9 @@ test('loads, streams without waiting for disk, and retains the old session after
   await $.classic.SessionStart({ source: 'clear' })
   await $.turn.start({ turnId: 'new', text: 'new work' })
   for (const piece of pieces.slice(1)) expect((await iterator.next()).value).toEqual(piece)
-  expect((await iterator.next()).done).toBe(true)
-  expect((await stream.result).answer).toBe('engine result')
+  const completed = await iterator.next()
+  expect(completed.done).toBe(true)
+  expect(completed.value).toEqual(expect.objectContaining({ answer: 'engine result' }))
   // Only now let the World's first stream write finish. The host already got
   // every original piece and the result while that write was blocked.
   releaseWrite()
@@ -82,4 +83,67 @@ test('loads, streams without waiting for disk, and retains the old session after
     .toEqual(['  思考\r\n', 'samesame\u0000🦊\n'])
   expect(batches.length < observations.length).toBe(true)
   expect(JSON.parse(files.get([...files.keys()].find((path) => path.endsWith('/second/activity.json'))!)!).turn).toBe('new')
+})
+
+// This freezes the host boundary: a tool reaches core only after its own
+// proof is complete, including tools executed by an Agent loop.
+test('pairs each MCP call before execution and distinguishes clear from resume', async ($, on) => {
+  mock.clock(on)
+  mock.env(on, {})
+  const files = new Map<string, string>()
+  let sessionId = 'one'
+  let failProof = false
+  let executed = 0
+  on('session.id', () => ({ value: sessionId }))
+  on('session.cwd', () => ({ value: '/fixture' }))
+  on('session.model', () => ({ value: 'fixture' }))
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('session.version', () => ({ value: { version: '2.1.289' } }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('fs.write', (_, e) => {
+    if (failProof && e.path.replaceAll('\\', '/').includes('/calls/')) throw new Error('fixture disk failure')
+    files.set(e.path.replaceAll('\\', '/'), e.text)
+    return { value: undefined }
+  })
+  on('fs.read', (_, e) => {
+    if (!files.has(e.path.replaceAll('\\', '/'))) throw new Error('missing fixture file: ' + e.path.replaceAll('\\', '/'))
+    return { value: files.get(e.path.replaceAll('\\', '/'))! }
+  })
+  on('fs.list', (_, e) => ({ value: [...files.keys()]
+    .filter((path) => path.startsWith(e.path.replaceAll('\\', '/') + '/') && !path.slice(e.path.replaceAll('\\', '/').length + 1).includes('/'))
+    .map((path) => ({ name: path.slice(e.path.replaceAll('\\', '/').length + 1), kind: 'file', size: files.get(path)!.length, mtimeMs: 0, isLink: false })) }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+  on('classic.SessionStart', () => ({}))
+  on('tool.call', (_, e) => {
+    const entries = [...files.entries()].filter(([path, body]) => path.includes('/calls/') && path.endsWith('.json') && JSON.parse(body).tool_use_id === e.tool_use_id)
+    expect(entries.length).toBe(1)
+    const [path, body] = entries[0]
+    expect(files.has(path.slice(0, -5) + '.done')).toBe(true)
+    expect(JSON.parse(body).registration.session).toBe(sessionId)
+    executed += 1
+    return { result: 'ran' }
+  })
+
+  await $.session.start({ cwd: '/fixture', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__fixture__run', command: 'first' })
+  await $.tool.call({ tool: 'mcp__fixture__run', command: 'child', agentId: 'child' })
+  await $.session.end({ sessionId: 'one', reason: 'clear', resume: { id: 'one' } })
+  sessionId = 'two'
+  await $.classic.SessionStart({ source: 'clear' })
+  await $.tool.call({ tool: 'mcp__fixture__run', command: 'cleared' })
+  const registration = (id: string) => JSON.parse(files.get([...files.keys()].find((path) => path.endsWith('/' + id + '/session.json'))!)!)
+  expect(registration('two').previous).toBe('one')
+  expect(registration('two').at > registration('one').at).toBe(true)
+  await $.session.end({ sessionId: 'two', reason: 'resume', resume: { id: 'two' } })
+  sessionId = 'unrelated'
+  await $.classic.SessionStart({ source: 'resume' })
+  await $.tool.call({ tool: 'mcp__fixture__run', command: 'resumed' })
+  expect(registration('unrelated').previous).toBe(null)
+  expect(registration('unrelated').at > registration('two').at).toBe(true)
+  expect(executed).toBe(4)
+  failProof = true
+  const refused = await $.tool.call({ tool: 'mcp__fixture__run', command: 'must not run' })
+  expect(refused.deny).toContain('could not identify this MCP call')
+  expect(executed).toBe(4)
 })

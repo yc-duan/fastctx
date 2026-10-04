@@ -76,7 +76,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
             continue;
         };
-        let arriving = matches!(call, Call::Arrive { .. });
+        let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
         let reply = match call {
             Call::Collect { resident } => collect(node, resident, &mut arrived.collected, &mut arrived.notes).await,
             Call::Taken { resident, ids } => {
@@ -251,23 +251,13 @@ async fn taken(
 async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
     match call {
         Call::Arrive { host, hints } => {
-            let claude = hints.inbox.is_some();
-            // A Claude session registers through its mod when it starts, before
-            // its first tool call brings its MCP connection here. One not yet
-            // placed waits for the sessions the World is starting to be known,
-            // and for registrations not yet read, so that the connection is
-            // known for the resident the session already is.
-            if let Some(inbox) = &hints.inbox
-                && hints.resident.is_none()
-                && node.residents.resident_of_inbox(inbox).is_none()
-            {
-                drop(node.claude.births.write().await);
-                crate::claude::replay(node).await;
+            if host.agent.as_str() == "claude" || hints.tool_use_id.is_some() {
+                let id = hints.tool_use_id.as_deref().filter(|id| !id.is_empty()).ok_or_else(|| {
+                    Failure::new("Claude did not supply a tool use id; its session cannot be identified")
+                })?;
+                return crate::claude::identify(node, id).await.map(Reply::Arrived);
             }
             let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
-            if claude {
-                crate::claude::arrived(node, &whereabouts.resident).await;
-            }
             Ok(Reply::Arrived(whereabouts))
         }
         Call::Run { resident, request, node: target } => {

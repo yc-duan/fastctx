@@ -5,8 +5,8 @@
 //! Every session the plugin runs in has a directory under `<world>/claude`,
 //! which the node watches. A session's registration pairs it with its
 //! resident: the one the World started under its id, the one the session
-//! it continues was, or the one whose MCP connection gave the same inbox
-//! address.
+//! it continues after a clear was, or a new resident for this session.
+//! MCP calls identify it by the call id its mod published before execution.
 //! What it reports is read once it is paired, in the order it was written,
 //! and goes to that resident; what waited for the resident goes to its mod.
 //! What the World has for a paired session goes into its mod's inbox, and
@@ -17,6 +17,7 @@
 //! Built against the mod API as measured on Claude Code 2.1.287 and run
 //! against a stand-in host only; it has not yet run with Claude Code.
 
+mod pairing;
 mod process;
 
 use std::collections::{HashMap, HashSet};
@@ -40,7 +41,7 @@ use crate::Node;
 pub struct Claude {
     state: Mutex<State>,
     /// Held to read while the World starts a session and learns its id;
-    /// to write, by an MCP connection that waits for those to be known.
+    /// to write, while a mod registration is assigned to a resident.
     pub births: tokio::sync::RwLock<()>,
 }
 
@@ -137,86 +138,10 @@ async fn look(node: &Arc<Node>, directory: &Path) {
         return;
     };
     match exchange::registration(directory) {
-        Ok(Some(registration)) => {
-            if let Some(process) = &registration.process {
-                match fastctx_platform::is_alive(process) {
-                    Ok(false) => match exchange::recover_reports(directory) {
-                        Ok(problems) => {
-                            for problem in problems {
-                                node.log.line(problem);
-                            }
-                        }
-                        Err(error) => {
-                            node.log.line(format_args!("recovering the exited host's reports: {error}"));
-                            return;
-                        }
-                    },
-                    Ok(true) => {}
-                    Err(error) => {
-                        node.log.line(format_args!("checking the Claude host process: {error}"));
-                        return;
-                    }
-                }
-            }
-            let prior = {
-                let state = node.claude.state.lock().expect("never poisoned");
-                state
-                    .sessions
-                    .get(&session)
-                    .and_then(|entry| Some((entry.resident.clone()?, entry.registration.process.clone()?)))
-            };
-            if let Some((resident, process)) = &prior
-                && registration.process.as_ref() != Some(process)
-            {
-                match fastctx_platform::is_alive(process) {
-                    Ok(false) => {
-                        if let Err(error) = ended_for_process(
-                            node,
-                            resident,
-                            &session,
-                            Some("its host process exited".to_string()),
-                            Some(process),
-                        )
-                        .await
-                        {
-                            node.log.line(format_args!("settling the previous Claude host: {error}"));
-                            return;
-                        }
-                    }
-                    Ok(true) => {}
-                    Err(error) => {
-                        node.log.line(format_args!("checking the previous Claude host: {error}"));
-                        return;
-                    }
-                }
-            }
-            let speaking = prior.as_ref().and_then(|(resident, _)| node.residents.speaking(resident));
-            let guard = match speaking {
-                Some(lock) => Some(lock.lock_owned().await),
-                None => None,
-            };
-            let changed = {
-                let mut state = node.claude.state.lock().expect("never poisoned");
-                match state.sessions.get_mut(&session) {
-                    Some(entry) if entry.registration == registration => false,
-                    Some(entry) => {
-                        entry.registration = registration;
-                        entry.resident = None;
-                        true
-                    }
-                    None => {
-                        state.sessions.insert(
-                            session.clone(),
-                            Session { registration, resident: None, reading: Arc::new(tokio::sync::Mutex::new(())) },
-                        );
-                        true
-                    }
-                }
-            };
-            drop(guard);
-            if changed {
-                pair(node, &session).await;
-            }
+        Ok(Some(registration)) if registration.session == session => hear(node, registration).await,
+        Ok(Some(_)) => {
+            node.log.line(format_args!("{} contains a registration for a different session", directory.display()));
+            return;
         }
         Ok(None) => return,
         Err(error) => {
@@ -299,7 +224,19 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                         .await?;
                         exchange::acknowledge_handover(directory, &ids, &turn)?;
                     }
-                    exchange::Reported::Ended { reason } => ended(node, &resident, &session, reason).await?,
+                    exchange::Reported::Ended { reason, instance } => {
+                        let current = node
+                            .claude
+                            .state
+                            .lock()
+                            .expect("never poisoned")
+                            .sessions
+                            .get(&session)
+                            .is_some_and(|entry| instance.is_none() || entry.registration.instance == instance);
+                        if current {
+                            ended(node, &resident, &session, reason).await?;
+                        }
+                    }
                 }
             }
             exchange::acknowledge(directory, &report.name)
@@ -331,6 +268,113 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     }
     if let Err(error) = exchange::handed_over(directory) {
         node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));
+    }
+}
+
+// Register synchronously with the caller, without depending on a filesystem
+// watcher having run. Registration, alias persistence and publication are one
+// serialized operation; report consumption holds a separate per-session lock.
+async fn hear(node: &Arc<Node>, registration: exchange::Registration) {
+    if let Err(error) = pairing::validate_session(&registration.session) {
+        node.log.line(format_args!("registering a Claude session: {error}"));
+        return;
+    }
+    let session = registration.session.clone();
+    let directory = exchange::sessions(node.world.path()).join(&session);
+    if let Some(process) = &registration.process {
+        match fastctx_platform::is_alive(process) {
+            Ok(false) => match exchange::recover_reports(&directory) {
+                Ok(problems) => {
+                    for problem in problems {
+                        node.log.line(problem);
+                    }
+                }
+                Err(error) => {
+                    node.log.line(format_args!("recovering the exited host's reports: {error}"));
+                    return;
+                }
+            },
+            Ok(true) => {}
+            Err(error) => {
+                node.log.line(format_args!("checking the Claude host process: {error}"));
+                return;
+            }
+        }
+    }
+    // Even known sessions recover their last incomplete reports after the
+    // host exits. They need not wait for unrelated background births.
+    if node.claude.state.lock().expect("never poisoned").sessions.get(&session).is_some_and(|entry| {
+        entry.resident.is_some() && (entry.registration == registration || entry.registration.at > registration.at)
+    }) {
+        return;
+    }
+    let _births = node.claude.births.write().await;
+    let prior = {
+        let state = node.claude.state.lock().expect("never poisoned");
+        state
+            .sessions
+            .get(&session)
+            .and_then(|entry| Some((entry.resident.clone()?, entry.registration.process.clone()?)))
+    };
+    if let Some((resident, process)) = &prior
+        && registration.process.as_ref() != Some(process)
+    {
+        match fastctx_platform::is_alive(process) {
+            Ok(false) => {
+                if let Err(error) = ended_for_process(
+                    node,
+                    resident,
+                    &session,
+                    Some("its host process exited".to_string()),
+                    Some(process),
+                )
+                .await
+                {
+                    node.log.line(format_args!("settling the previous Claude host: {error}"));
+                    return;
+                }
+            }
+            Ok(true) => {}
+            Err(error) => {
+                node.log.line(format_args!("checking the previous Claude host: {error}"));
+                return;
+            }
+        }
+    }
+    let speaking = prior.as_ref().and_then(|(resident, _)| node.residents.speaking(resident));
+    let guard = match speaking {
+        Some(lock) => Some(lock.lock_owned().await),
+        None => None,
+    };
+    let changed = {
+        let mut state = node.claude.state.lock().expect("never poisoned");
+        match state.sessions.get_mut(&session) {
+            Some(entry) if entry.registration == registration || entry.registration.at > registration.at => false,
+            Some(entry) => {
+                entry.registration = registration;
+                entry.resident = None;
+                true
+            }
+            None => {
+                state.sessions.insert(
+                    session.clone(),
+                    Session { registration, resident: None, reading: Arc::new(tokio::sync::Mutex::new(())) },
+                );
+                true
+            }
+        }
+    };
+    drop(guard);
+    let unpaired = node
+        .claude
+        .state
+        .lock()
+        .expect("never poisoned")
+        .sessions
+        .get(&session)
+        .is_some_and(|entry| entry.resident.is_none());
+    if changed || unpaired {
+        pair(node, &session).await;
     }
 }
 
@@ -471,11 +515,15 @@ async fn ended_for_process(
     uncertain_inputs(node, resident, session, None,
         "the conversation ended before the host identified which turn consumed these words; their acceptance is unknown".to_string()).await?;
     if current {
+        let departed = node.residents.set_claude_here(resident, false);
         node.residents.change_now(&node.world, resident, |now| {
             now.activity = Activity::Asleep;
             now.since = Timestamp::now();
             now.turn = None;
         })?;
+        if departed && reason.as_deref() != Some("clear") {
+            crate::colleagues::left(node, resident.clone());
+        }
     }
     Ok(())
 }
@@ -496,19 +544,25 @@ pub fn paired(node: &Node, resident: &ResidentId) -> bool {
     node.claude.state.lock().expect("never poisoned").paired.contains_key(resident)
 }
 
-/// A Claude session's MCP connection arrived: its session may have
-/// registered already.
-pub async fn arrived(node: &Arc<Node>, resident: &ResidentId) {
-    let sessions: Vec<String> = {
-        let state = node.claude.state.lock().expect("never poisoned");
-        state.sessions.iter().filter(|(_, session)| session.resident.is_none()).map(|(id, _)| id.clone()).collect()
-    };
-    for session in sessions {
-        pair(node, &session).await;
-        if node.claude.state.lock().expect("never poisoned").paired.contains_key(resident) {
-            return;
-        }
-    }
+/// Resolves this call's own evidence, including before the watcher has seen
+/// its registration. No connection-wide or process-wide identity is reused.
+pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_types::residents::Whereabouts, Failure> {
+    let world = node.world.path().to_path_buf();
+    let id = tool_use_id.to_string();
+    let registration = tokio::task::spawn_blocking(move || claude::calls::registration(&world, &id))
+        .await
+        .map_err(|error| Failure::new(format!("reading Claude call evidence: {error}")))?
+        .map_err(|error| Failure::new(format!("pairing Claude call {tool_use_id}: {error}")))?;
+    let session = registration.session.clone();
+    hear(node, registration).await;
+    // The reports preceding the call may establish its turn and deliveries.
+    look(node, &exchange::sessions(node.world.path()).join(&session)).await;
+    let resident = node.claude.state.lock().expect("never poisoned").sessions.get(&session)
+        .and_then(|entry| entry.resident.clone())
+        .ok_or_else(|| Failure::new(format!("Claude call {tool_use_id} belongs to session {session}, whose resident could not be registered; see the node log")))?;
+    let town =
+        node.residents.town_of(&resident).ok_or_else(|| Failure::new("the paired Claude resident is missing"))?;
+    Ok(fastctx_types::residents::Whereabouts { resident, town })
 }
 
 /// Pairs a registered session with its resident, if it is known yet.
@@ -520,18 +574,12 @@ async fn pair(node: &Arc<Node>, session: &str) {
             _ => return,
         }
     };
-    // The session paired before the node restarted, or the one the World
-    // started, known by the start of its id (`background::started`); the
-    // conversation it continues after `/clear`; or the session whose MCP
-    // connection gave the same inbox address.
-    let resident = node
-        .residents
-        .resident_of_thread(&registration.session)
-        .or_else(|| registration.session.get(..8).and_then(|short| node.residents.resident_of_thread(short)))
-        .or_else(|| registration.previous.as_deref().and_then(|previous| node.residents.resident_of_thread(previous)))
-        .or_else(|| registration.inbox_address.as_deref().and_then(|inbox| node.residents.resident_of_inbox(inbox)));
-    let Some(resident) = resident.filter(|resident| node.residents.about(resident).is_some()) else {
-        return;
+    let resident = match pairing::resident(node, &registration) {
+        Ok(resident) => resident,
+        Err(error) => {
+            node.log.line(format_args!("pairing Claude session {session}: {error}"));
+            return;
+        }
     };
     let speaking = node.residents.speaking(&resident).expect("known resident");
     let guard = speaking.lock().await;
@@ -552,10 +600,6 @@ async fn pair(node: &Arc<Node>, session: &str) {
             }
         },
     };
-    // Every conversation keeps its resident for replay. Only a newer
-    // registration can replace the address used for future words.
-    node.claude.state.lock().expect("never poisoned").sessions.get_mut(session).expect("looked up above").resident =
-        Some(resident.clone());
     if newer {
         if let Some(prior) = current.as_deref().filter(|prior| *prior != session)
             && let Some((_, town)) = node.residents.about(&resident)
@@ -583,6 +627,20 @@ async fn pair(node: &Arc<Node>, session: &str) {
             node.residents.set_inbox(&resident, inbox.clone());
         }
         node.claude.state.lock().expect("never poisoned").paired.insert(resident.clone(), session.to_string());
+    }
+    // Publish the association only after both the durable alias and about
+    // record are written. A failed write can then be retried on the next look.
+    node.claude.state.lock().expect("never poisoned").sessions.get_mut(session).expect("looked up above").resident =
+        Some(resident.clone());
+    if newer {
+        let present = match pairing::present(node, &registration) {
+            Ok(present) => present,
+            Err(error) => {
+                node.log.line(format_args!("checking Claude presence: {error}"));
+                return;
+            }
+        };
+        node.residents.set_claude_here(&resident, present);
     }
     // What waited for the resident before its mod was there goes to the mod,
     // and stays kept until the mod says which turn took it.
@@ -620,9 +678,6 @@ async fn pair(node: &Arc<Node>, session: &str) {
         Err(_) => {}
     }
     drop(guard);
-    // What it reported before it was paired is read now.
-    let directory = exchange::sessions(node.world.path()).join(session);
-    Box::pin(look(node, &directory)).await;
     process::observe(node, registration.process);
 }
 
