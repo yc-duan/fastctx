@@ -83,14 +83,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
 struct Arrived<'a> {
     node: &'a Arc<Node>,
     residents: Vec<ResidentId>,
-    collected: Vec<(ResidentId, NoticeId)>,
+    collected: Vec<(ResidentId, NoticeId, Option<String>)>,
 }
 
 impl Drop for Arrived<'_> {
     fn drop(&mut self) {
         let mut taking = self.node.taking.lock().expect("never poisoned");
-        for collected in &self.collected {
-            taking.remove(collected);
+        for (resident, id, _) in &self.collected {
+            taking.remove(&(resident.clone(), id.clone()));
         }
         drop(taking);
         for resident in self.node.residents.left(&self.residents) {
@@ -104,8 +104,16 @@ impl Drop for Arrived<'_> {
 async fn collect(
     node: &Arc<Node>,
     resident: ResidentId,
-    collected: &mut Vec<(ResidentId, NoticeId)>,
+    collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
 ) -> Result<Reply, Failure> {
+    if native_delivery(node, &resident) {
+        return notices_without_collection(node, &resident).await;
+    }
+    let speaking = node.residents.speaking(&resident).ok_or_else(|| Failure::new("unknown resident"))?;
+    let _speaking = speaking.lock().await;
+    if native_delivery(node, &resident) {
+        return notices_without_collection(node, &resident).await;
+    }
     let town = town_of(node, &resident)?;
     let directory = node.world.resident(town.as_ref(), &resident);
     let kept = blocking("reading what waits", move || crate::inbox::pending(&directory)).await?;
@@ -113,9 +121,31 @@ async fn collect(
     {
         let mut taking = node.taking.lock().expect("never poisoned");
         for pending in kept.into_iter().filter(|pending| pending.state == PendingState::Waiting) {
+            let town = town_of(node, &resident)?;
+            let directory = node.world.resident(town.as_ref(), &resident);
+            if crate::inbox::read(&directory, &pending.delivery.id)
+                .map_err(|error| Failure::new(error.to_string()))?
+                .is_none_or(|current| current.state != PendingState::Waiting)
+            {
+                continue;
+            }
             let key = (resident.clone(), pending.delivery.id.clone());
             if taking.insert(key.clone()) {
-                collected.push(key);
+                let turn = node
+                    .residents
+                    .now(&resident)
+                    .filter(|now| now.activity == Activity::Busy)
+                    .and_then(|now| now.turn)
+                    .or_else(|| {
+                        node.residents.about(&resident).and_then(|(about, _)| {
+                            if about.world_started && about.host.agent.as_str() == "codex" {
+                                about.session.and_then(|thread| node.codex.running_turn(&thread))
+                            } else {
+                                None
+                            }
+                        })
+                    });
+                collected.push((key.0, key.1, turn));
                 notices.push(pending.delivery);
             }
         }
@@ -127,28 +157,66 @@ async fn collect(
     Ok(Reply::Notices { notices, notes })
 }
 
+fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
+    node.residents.about(resident).is_some_and(|(about, _)| {
+        (about.world_started && about.host.agent.as_str() == "codex") || crate::claude::paired(node, resident)
+    })
+}
+
+async fn notices_without_collection(node: &Arc<Node>, resident: &ResidentId) -> Result<Reply, Failure> {
+    // Native subagents inherit their parent's MCP configuration. A tool
+    // response cannot deliver the parent's words to the intended thread;
+    // sessions with a native channel exclusively use that channel.
+    let (node, resident) = (node.clone(), resident.clone());
+    let notes = blocking("reading the town", move || crate::town::notes::notes(&node, &resident)).await?;
+    Ok(Reply::Notices { notices: Vec::new(), notes })
+}
+
 /// What `collect` gave went out with an answer: it went into the turn the
 /// resident runs, when the World sees its turns.
 async fn taken(
     node: &Arc<Node>,
     resident: ResidentId,
     ids: Vec<NoticeId>,
-    collected: &mut Vec<(ResidentId, NoticeId)>,
+    collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
 ) -> Result<Reply, Failure> {
     let town = town_of(node, &resident)?;
     let directory = node.world.resident(town.as_ref(), &resident);
-    let turn = node.residents.now(&resident).filter(|now| now.activity == Activity::Busy).and_then(|now| now.turn);
-    for id in ids {
-        let key = (resident.clone(), id.clone());
-        collected.retain(|collected| *collected != key);
-        node.taking.lock().expect("never poisoned").remove(&key);
-        let Some(pending) = crate::speech::settle(&directory, &id).await? else { continue };
-        if let Some(turn) = &turn {
-            node.residents
-                .owe(&node.world, &resident, turn, &pending.readers)
-                .map_err(|error| Failure::new(format!("recording who is owed the turn: {error}")))?;
-            crate::speech::heard(node, &resident, &pending.delivery, turn);
+    let speaking = node.residents.speaking(&resident).ok_or_else(|| Failure::new("unknown resident"))?;
+    let _speaking = speaking.lock().await;
+    let mut by_turn: std::collections::BTreeMap<Option<String>, Vec<fastctx_types::residents::Pending>> =
+        std::collections::BTreeMap::new();
+    for id in &ids {
+        let reserved = collected
+            .iter()
+            .find(|(owner, notice, _)| *owner == resident && notice == id)
+            .ok_or_else(|| Failure::new("this connection did not collect that delivery"))?;
+        if let Some(mut pending) =
+            crate::inbox::read(&directory, id).map_err(|error| Failure::new(error.to_string()))?
+        {
+            if pending.working {
+                pending.readers = node.residents.working_for(&resident);
+                pending.working = false;
+            }
+            by_turn.entry(reserved.2.clone()).or_default().push(pending);
         }
+    }
+    for (turn, inputs) in by_turn {
+        if let Some(turn) = turn {
+            let mut handover =
+                crate::delivery::begin(&directory, inputs).map_err(|error| Failure::new(error.to_string()))?;
+            crate::speech::bind(node, &resident, &directory, &mut handover, &turn).await?;
+        } else {
+            // A host that exposes no turn identity can acknowledge transport
+            // delivery, but cannot establish an answer obligation for a turn.
+            for input in inputs {
+                crate::speech::settle(&directory, &input.delivery.id).await?;
+            }
+        }
+    }
+    for id in ids {
+        collected.retain(|(owner, notice, _)| *owner != resident || *notice != id);
+        node.taking.lock().expect("never poisoned").remove(&(resident.clone(), id));
     }
     Ok(Reply::Done)
 }

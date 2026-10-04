@@ -109,6 +109,9 @@ pub enum Notice {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Landed {
+    /// Submission crossed a host boundary without an acceptance result.
+    /// Its exact words remain recorded, and are not submitted again.
+    Uncertain { why: String },
     /// It was idle: a new turn started with them.
     NewTurn { turn: String },
     /// It was working: they join its running turn at its next tool boundary.
@@ -128,7 +131,7 @@ pub enum Landed {
     Sent,
     /// Handed to the World's plugin in its session, which brings them in at
     /// once when it is idle and at its next tool boundary when it is busy.
-    Handed,
+    Handed { id: NoticeId },
 }
 
 /// What a resident is doing now, and what that commits the World to: its
@@ -146,7 +149,7 @@ pub struct Now {
     /// reader's machine has its own.
     #[serde(default)]
     pub owed: BTreeMap<String, Vec<Address>>,
-    /// Who the latest turn that anyone was owed was for. A turn the World
+    /// Who the latest completed turn was for. A turn the World
     /// starts with a fact of the resident's own work, such as a job's end,
     /// is owed to them: they are who it is working for.
     pub answering: Vec<Address>,
@@ -261,6 +264,14 @@ pub struct Pending {
     /// Who is owed the end of the turn it goes into.
     pub readers: Vec<Address>,
     pub state: PendingState,
+    /// Resolve the audience when these words actually enter a turn, after
+    /// any earlier submission has recorded its readers.
+    #[serde(default)]
+    pub working: bool,
+    /// A Claude conversation already entrusted with these words. A later
+    /// /clear must not move them into the replacement conversation.
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

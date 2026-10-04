@@ -138,6 +138,9 @@ async fn follow(conversation: &mut Conversation, printer: &mut Printer) -> anyho
 fn gone(said: &Said) -> String {
     let to = &said.to.resident;
     match &said.landed {
+        Landed::Uncertain { why } => format!(
+            "whether {to} received your words is unknown: {why}; they remain recorded and will not be submitted again"
+        ),
         Landed::Waiting { why, answered } => {
             let wait = match why {
                 Some(why) => format!("your words wait for {to}: {why}"),
@@ -177,6 +180,9 @@ impl Printer {
 
     fn event(&mut self, event: &SessionEvent) {
         match &event.happened {
+            Happened::DeliveryUncertain { why, .. } => {
+                self.line(&format!("── delivery acceptance is unknown: {why}; the original words remain recorded"))
+            }
             Happened::TurnStarted { .. } => self.line("── turn started"),
             Happened::Heard { from, text, .. } => {
                 let from = match from {

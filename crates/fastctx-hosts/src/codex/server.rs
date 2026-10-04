@@ -39,7 +39,10 @@ pub enum Inbound {
     },
     /// It stopped: how it exited, such as `exit code: 1`. Nothing more
     /// comes.
-    Exited(String),
+    Exited {
+        why: String,
+        drained: oneshot::Sender<()>,
+    },
 }
 
 pub struct AppServer {
@@ -151,11 +154,16 @@ impl AppServer {
             let reason = format!("the Codex app-server stopped ({why})");
             let mut pending = pending.lock().expect("never poisoned");
             pending.stopped = Some(reason.clone());
-            for (_, waiter) in pending.waiting.drain() {
+            let waiting = pending.waiting.drain().map(|(_, waiter)| waiter).collect::<Vec<_>>();
+            drop(pending);
+            // Every preceding notification must reach the host state before
+            // an unanswered submission is classified as unknown.
+            let (drained, heard) = oneshot::channel();
+            let _ = inbound.send(Inbound::Exited { why, drained });
+            let _ = heard.blocking_recv();
+            for waiter in waiting {
                 let _ = waiter.send(Err(Unanswered::Stopped(reason.clone())));
             }
-            drop(pending);
-            let _ = inbound.send(Inbound::Exited(why));
         })?;
 
         let server = Arc::new(Self { child, lines, next: AtomicU64::new(1), pending });

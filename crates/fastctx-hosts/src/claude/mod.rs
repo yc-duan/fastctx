@@ -75,6 +75,8 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
     // forward slashes, which every system it runs on reads.
     let directory = world.to_string_lossy().replace('\\', "/");
     let module = MOD.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
+    let module = module
+        .replace("__FASTCTX_COMMAND__", &serde_json::to_string(&fastctx.to_string_lossy()).expect("strings serialize"));
     write(&plugin.join("hooks").join("world.js"), module.as_bytes())?;
     Ok(plugin)
 }

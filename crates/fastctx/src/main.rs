@@ -24,6 +24,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Identifies the process invoking the World mod helper.
+    #[command(hide = true)]
+    ParentProcess,
     /// Run this machine's node in the foreground.
     Node,
     /// Serve the World's tools to an agent session over MCP's stdio.
@@ -71,6 +74,7 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Command::ParentProcess => parent_process(),
         Command::Node => node(),
         Command::Serve { writer } => serve(&writer),
         Command::View(args) => view::run(args),
@@ -134,4 +138,10 @@ fn append(path: &std::path::Path, text: &str) {
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{text}");
     }
+}
+
+fn parent_process() -> anyhow::Result<()> {
+    let identity = fastctx_platform::host_process::parent_identity()?;
+    println!("{}", serde_json::to_string(&identity)?);
+    Ok(())
 }

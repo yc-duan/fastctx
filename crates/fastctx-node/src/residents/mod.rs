@@ -26,7 +26,6 @@ use std::sync::{Arc, Mutex};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{About, Activity, Hints, Host, Moved, Now, Origin, Trouble, Whereabouts};
-use fastctx_types::session::HealthKind;
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
@@ -80,13 +79,11 @@ struct Live {
     now: Option<Now>,
     /// For each turn running, whose words went into it.
     owed: HashMap<String, BTreeSet<Address>>,
-    /// The urgent kinds of health already told to those owed the running
-    /// turn's end: each is told once a turn.
-    told: BTreeSet<HealthKind>,
     /// Held while words go into its session until the turn they joined is
     /// known and owed, and while a turn's end is taken: so a turn's end goes
     /// to exactly those whose words went into it.
     speaking: Arc<tokio::sync::Mutex<()>>,
+    paying: Arc<tokio::sync::Mutex<()>>,
     /// `None` until it is told who and where it is.
     heard: Option<Heard>,
 }
@@ -105,8 +102,8 @@ impl Live {
             connections: 0,
             now,
             owed,
-            told: BTreeSet::new(),
             speaking: Arc::new(tokio::sync::Mutex::new(())),
+            paying: Arc::new(tokio::sync::Mutex::new(())),
             heard: None,
         }
     }
@@ -162,6 +159,9 @@ impl Residents {
                 }
             };
             for (left, moved) in &homes {
+                if *left != town {
+                    records::carry_obligations(world, &id, left.as_ref(), town.as_ref())?;
+                }
                 if let Some(moved) = moved
                     && *left != town
                 {
@@ -181,10 +181,7 @@ impl Residents {
                     continue;
                 }
             };
-            let now = records::read_now(&directory).unwrap_or_else(|error| {
-                problems.push((directory.now(), error));
-                None
-            });
+            let now = records::read_now(&directory)?;
             if let Some(session) = &about.session {
                 state.threads.insert(session.clone(), about.id.clone());
             }
@@ -402,6 +399,10 @@ impl Residents {
         self.lock().live.get(id).map(|live| live.speaking.clone())
     }
 
+    pub fn paying(&self, id: &ResidentId) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        self.lock().live.get(id).map(|live| live.paying.clone())
+    }
+
     /// Every resident on record.
     pub fn everyone(&self) -> Vec<OnRecord> {
         let state = self.lock();
@@ -426,10 +427,15 @@ impl Residents {
         self.lock()
             .live
             .values()
-            .filter(|live| live.about.world_started && live.about.host.agent.as_str() == "codex")
-            .filter_map(|live| {
-                let now = live.now.as_ref()?;
-                (now.activity == Activity::Busy).then(|| (live.about.id.clone(), now.turn.clone().unwrap_or_default()))
+            .flat_map(|live| {
+                let mut turns: BTreeSet<String> = live.owed.keys().cloned().collect();
+                if let Some(now) = &live.now
+                    && now.activity == Activity::Busy
+                    && let Some(turn) = &now.turn
+                {
+                    turns.insert(turn.clone());
+                }
+                turns.into_iter().map(|turn| (live.about.id.clone(), turn)).collect::<Vec<_>>()
             })
             .collect()
     }
@@ -483,22 +489,26 @@ impl Residents {
     /// The session runs `turn`: what was told about an earlier one is not
     /// told about it.
     pub fn turn_started(&self, world: &WorldDir, id: &ResidentId, turn: &str) -> io::Result<()> {
-        self.with_live(world, id, |live, now| {
-            if now.turn.as_deref() != Some(turn) {
-                live.told.clear();
-            }
+        self.with_live(world, id, |_live, now| {
             enter(now, turn);
         })
     }
 
     /// Words of `readers` went into `turn`: each is owed its end.
-    pub fn owe(&self, world: &WorldDir, id: &ResidentId, turn: &str, readers: &[Address]) -> io::Result<()> {
-        self.with_live(world, id, |live, now| {
-            if now.turn.as_deref() != Some(turn) {
-                live.told.clear();
-            }
+    pub fn owe(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        turn: &str,
+        readers: &[Address],
+        active: bool,
+    ) -> io::Result<()> {
+        self.with_proof(world, id, |live, now| {
+            let already = live.owed.contains_key(turn);
             live.owed.entry(turn.to_string()).or_default().extend(readers.iter().cloned());
-            enter(now, turn);
+            if !already && active {
+                enter(now, turn);
+            }
             now.owed = owed(live);
         })
     }
@@ -519,10 +529,12 @@ impl Residents {
         let state = self.lock();
         let Some(live) = state.live.get(id) else { return Vec::new() };
         let Some(now) = &live.now else { return Vec::new() };
-        match now.turn.as_ref().filter(|_| now.activity == Activity::Busy).and_then(|turn| live.owed.get(turn)) {
-            Some(readers) if !readers.is_empty() => readers.iter().cloned().collect(),
-            _ => now.answering.clone(),
+        if now.activity == Activity::Busy
+            && let Some(turn) = &now.turn
+        {
+            return live.owed.get(turn).map(|readers| readers.iter().cloned().collect()).unwrap_or_default();
         }
+        now.answering.clone()
     }
 
     /// Who was owed `turn`'s end, taken now that it ended; the resident is
@@ -538,43 +550,65 @@ impl Residents {
         trouble: Option<Trouble>,
     ) -> io::Result<Vec<Address>> {
         let mut readers = Vec::new();
-        self.with_live(world, id, |live, now| {
+        self.with_proof(world, id, |live, now| {
+            let current = now.turn.as_deref() == Some(turn)
+                || (now.turn.is_none() && now.activity == Activity::Busy && turn.is_empty());
             readers = live.owed.remove(turn).unwrap_or_default().into_iter().collect();
             // Words may meanwhile have started the next turn, whose state
             // stands.
-            if now.turn.as_deref() == Some(turn) || now.turn.is_none() {
+            if current {
                 now.turn = None;
                 now.activity = if requester_here { Activity::Idle } else { Activity::Asleep };
                 now.since = Timestamp::now();
-                live.told.clear();
             }
             if !readers.is_empty() {
                 now.answering = readers.clone();
             }
             now.owed = owed(live);
-            now.trouble = trouble;
+            if current {
+                now.trouble = trouble;
+            }
         })?;
         Ok(readers)
     }
 
-    /// Whether an urgent kind of health is told now: the first of its kind
-    /// in the running turn. Returns who is owed the turn's end then.
-    pub fn first_told(&self, id: &ResidentId, kind: HealthKind) -> Vec<Address> {
-        let mut state = self.lock();
-        let Some(live) = state.live.get_mut(id) else {
-            return Vec::new();
-        };
-        if live.told.insert(kind) { everyone_owed(live) } else { Vec::new() }
+    fn with_live(&self, world: &WorldDir, id: &ResidentId, change: impl FnOnce(&mut Live, &mut Now)) -> io::Result<()> {
+        self.change_live(world, id, change, false)
     }
 
-    fn with_live(&self, world: &WorldDir, id: &ResidentId, change: impl FnOnce(&mut Live, &mut Now)) -> io::Result<()> {
+    fn with_proof(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        change: impl FnOnce(&mut Live, &mut Now),
+    ) -> io::Result<()> {
+        self.change_live(world, id, change, true)
+    }
+
+    fn change_live(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        change: impl FnOnce(&mut Live, &mut Now),
+        proven: bool,
+    ) -> io::Result<()> {
         let mut state = self.lock();
         let Some(live) = state.live.get_mut(id) else {
             return Ok(());
         };
         let mut now = live.now.clone().unwrap_or_else(|| idle(Timestamp::now()));
+        let previous_owed = live.owed.clone();
         change(live, &mut now);
-        records::write_now(&world.resident(live.town.as_ref(), id), &now)?;
+        if let Err(error) = records::write_now(&world.resident(live.town.as_ref(), id), &now) {
+            // A receipt or terminal record is authoritative even while its
+            // replaceable now projection cannot be written.
+            if proven {
+                live.now = Some(now);
+            } else {
+                live.owed = previous_owed;
+            }
+            return Err(error);
+        }
         live.now = Some(now);
         Ok(())
     }
@@ -603,11 +637,6 @@ fn owed(live: &Live) -> BTreeMap<String, Vec<Address>> {
         .filter(|(_, readers)| !readers.is_empty())
         .map(|(turn, readers)| (turn.clone(), readers.iter().cloned().collect()))
         .collect()
-}
-
-/// Everyone owed any running turn, once each.
-fn everyone_owed(live: &Live) -> Vec<Address> {
-    live.owed.values().flatten().cloned().collect::<BTreeSet<_>>().into_iter().collect()
 }
 
 pub fn idle(since: Timestamp) -> Now {

@@ -128,18 +128,37 @@ pub async fn ask_here(
         },
         readers: vec![asker],
         state: PendingState::Waiting,
+        working: false,
+        session: None,
     };
     crate::inbox::keep(&directory, &first).map_err(|error| Failure::new(format!("keeping the request: {error}")))?;
     let (node, colleague) = (node.clone(), id.clone());
     tokio::spawn(async move {
         let why = match speech::hand_over(&node, &colleague, &about, &directory, first.clone()).await {
-            Ok(Landed::NewTurn { .. } | Landed::JoinedTurn { .. } | Landed::Sent | Landed::Handed) => return,
+            Ok(
+                Landed::NewTurn { .. }
+                | Landed::JoinedTurn { .. }
+                | Landed::Sent
+                | Landed::Handed { .. }
+                | Landed::Uncertain { .. },
+            ) => return,
             Ok(Landed::Waiting { why, .. }) => why.unwrap_or_else(|| "its session could not be reached".to_string()),
             Err(failure) => failure.message,
         };
         // Its first turn never began: whoever asked hears so, and it is idle.
         crate::turns::unsettled(&node, &colleague, &directory, first, TurnHow::Failed, why.clone()).await;
-        crate::turns::stopped(&node, &colleague, "", why).await;
+        crate::turns::ended(
+            &node,
+            &colleague,
+            "",
+            fastctx_types::session::TurnEnd {
+                how: TurnHow::Failed,
+                reason: Some(why),
+                duration_ms: None,
+                last_message: None,
+            },
+        )
+        .await;
     });
     Ok(id)
 }
@@ -257,7 +276,8 @@ pub async fn message(
         Landed::JoinedTurn { .. } => "joined its turn".to_string(),
         Landed::Waiting { .. } => "waiting for it".to_string(),
         Landed::Sent => "sent".to_string(),
-        Landed::Handed => "handed to its session".to_string(),
+        Landed::Handed { .. } => "handed to its session".to_string(),
+        Landed::Uncertain { why } => format!("acceptance unknown: {why}"),
     };
     let action = Action {
         at,
