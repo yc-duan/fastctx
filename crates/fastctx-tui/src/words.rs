@@ -1116,8 +1116,8 @@ impl Words {
 
     pub fn running_unseen(&self, why: &str) -> String {
         match self.lang {
-            Lang::Zh => format!("看不到它起的、还在跑的东西：{why}"),
-            Lang::En => format!("cannot see what it started that still runs: {why}"),
+            Lang::Zh => format!("看不到它请的同事和它起的、还在跑的东西：{why}"),
+            Lang::En => format!("cannot see its colleagues or what it started that still runs: {why}"),
         }
     }
 
