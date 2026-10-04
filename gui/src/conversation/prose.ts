@@ -1,0 +1,175 @@
+// What an agent writes, as it reads: Markdown with code, tables, formulas
+// and diagrams. Raw HTML in the text is shown as text, never run; a
+// formula or a diagram that cannot be drawn stays as its source.
+
+import MarkdownIt from "markdown-it";
+import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
+import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
+import hljs from "highlight.js/lib/common";
+import katex from "katex";
+
+const markdown: MarkdownIt = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: false,
+  highlight: (code, language) => highlight(code, language),
+});
+
+markdown.use(math);
+
+// Links leave the conversation in the system's browser, never inside it.
+const defaultLink =
+  markdown.renderer.rules.link_open ?? ((tokens, index, options, _env, self) => self.renderToken(tokens, index, options));
+markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
+  tokens[index].attrSet("target", "_blank");
+  tokens[index].attrSet("rel", "noreferrer noopener");
+  return defaultLink(tokens, index, options, env, self);
+};
+
+// A diagram is drawn later, when the turn is done; until then its source.
+const defaultFence =
+  markdown.renderer.rules.fence ?? ((tokens, index, options, _env, self) => self.renderToken(tokens, index, options));
+markdown.renderer.rules.fence = (tokens, index, options, env, self) => {
+  const token = tokens[index];
+  const language = token.info.trim().split(/\s+/)[0] ?? "";
+  if (language === "mermaid") {
+    return `<figure class="diagram" data-mermaid>${escape(token.content)}</figure>`;
+  }
+  const label = language ? `<span class="code-language">${escape(language)}</span>` : "";
+  const body = defaultFence(tokens, index, options, env, self);
+  return `<div class="code-block">${label}<button class="code-copy" type="button" aria-label="Copy code"></button>${body}</div>`;
+};
+
+/** Markdown as HTML. Safe to place in the page: raw HTML is escaped. */
+export function render(text: string): string {
+  return markdown.render(text);
+}
+
+/** Text with no Markdown, as one escaped paragraph per blank-line block. */
+export function plain(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${escape(paragraph).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
+function highlight(code: string, language: string): string {
+  const name = language.trim().toLowerCase();
+  if (name && hljs.getLanguage(name)) {
+    return hljs.highlight(code, { language: name, ignoreIllegals: true }).value;
+  }
+  // Unlabelled code is guessed only while it is small enough to guess fast.
+  if (!name && code.length <= 8000) return hljs.highlightAuto(code).value;
+  return escape(code);
+}
+
+export function escape(text: string): string {
+  return text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
+}
+
+// Formulas: `$…$` and `\(…\)` inline, `$$…$$` and `\[…\]` on their own
+// lines. A dollar sign is a formula only where TeX writers mean one: not
+// before a digit-led amount, not with a space inside its edges.
+function math(md: MarkdownIt): void {
+  md.inline.ruler.after("escape", "math_inline", inlineMath);
+  md.block.ruler.after("blockquote", "math_block", blockMath, { alt: ["paragraph", "reference", "blockquote", "list"] });
+  md.renderer.rules.math_inline = (tokens, index) => tex(tokens[index].content, false);
+  md.renderer.rules.math_block = (tokens, index) => `<div class="math-display">${tex(tokens[index].content, true)}</div>`;
+}
+
+function inlineMath(state: StateInline, silent: boolean): boolean {
+  const source = state.src;
+  const start = state.pos;
+  let open: string;
+  let close: string;
+  if (source.startsWith("\\(", start)) {
+    open = "\\(";
+    close = "\\)";
+  } else if (source[start] === "$" && source[start + 1] !== "$") {
+    open = "$";
+    close = "$";
+    const next = source[start + 1];
+    if (next === undefined || /\s/.test(next)) return false;
+  } else {
+    return false;
+  }
+  let end = start + open.length;
+  for (;;) {
+    end = source.indexOf(close, end);
+    if (end === -1) return false;
+    if (source[end - 1] === "\\") {
+      end += 1;
+      continue;
+    }
+    break;
+  }
+  const content = source.slice(start + open.length, end);
+  if (!content.trim()) return false;
+  if (open === "$") {
+    if (/\s$/.test(content)) return false;
+    // `$5 and $6`: a closing dollar right before a digit is a price.
+    if (/\d/.test(source[end + 1] ?? "")) return false;
+  }
+  if (!silent) {
+    const token = state.push("math_inline", "math", 0);
+    token.content = content;
+    token.markup = open;
+  }
+  state.pos = end + close.length;
+  return true;
+}
+
+function blockMath(state: StateBlock, startLine: number, endLine: number, silent: boolean): boolean {
+  const lineStart = state.bMarks[startLine] + state.tShift[startLine];
+  const lineEnd = state.eMarks[startLine];
+  const first = state.src.slice(lineStart, lineEnd);
+  let open: string;
+  let close: string;
+  if (first.startsWith("$$")) {
+    open = "$$";
+    close = "$$";
+  } else if (first.startsWith("\\[")) {
+    open = "\\[";
+    close = "\\]";
+  } else {
+    return false;
+  }
+  let content = "";
+  let line = startLine;
+  const rest = first.slice(open.length);
+  const sameLine = rest.indexOf(close);
+  if (sameLine !== -1 && rest.slice(sameLine + close.length).trim() === "") {
+    content = rest.slice(0, sameLine);
+  } else {
+    const parts = [rest];
+    let found = false;
+    while (++line < endLine) {
+      const text = state.src.slice(state.bMarks[line] + state.tShift[line], state.eMarks[line]);
+      const at = text.indexOf(close);
+      if (at !== -1 && text.slice(at + close.length).trim() === "") {
+        parts.push(text.slice(0, at));
+        found = true;
+        break;
+      }
+      parts.push(text);
+    }
+    if (!found) return false;
+    content = parts.join("\n");
+  }
+  if (silent) return true;
+  state.line = line + 1;
+  const token = state.push("math_block", "math", 0);
+  token.block = true;
+  token.content = content;
+  token.map = [startLine, state.line];
+  return true;
+}
+
+function tex(source: string, display: boolean): string {
+  try {
+    return katex.renderToString(source, { displayMode: display, throwOnError: true, trust: false, strict: "ignore" });
+  } catch {
+    const fence = display ? "$$" : "$";
+    return `<span class="math-source">${escape(fence + source + fence)}</span>`;
+  }
+}

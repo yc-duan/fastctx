@@ -1,0 +1,177 @@
+/* The page around a conversation: a bar that names who it is with, and a
+   composer that stays at hand at the foot of the screen. The document
+   scrolls, so a phone's own bars come and go as they should. */
+
+.page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-top: env(safe-area-inset-top);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  -webkit-backdrop-filter: saturate(1.2) blur(14px);
+  backdrop-filter: saturate(1.2) blur(14px);
+  box-shadow: 0 1px 0 transparent;
+  transition: box-shadow var(--hover) ease;
+}
+
+.scrolled .bar {
+  box-shadow: 0 1px 0 var(--hairline);
+}
+
+.bar-inner {
+  max-width: calc(var(--column) + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: var(--space-3) var(--gutter);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.who {
+  min-width: 0;
+}
+
+.who-name {
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h2);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.who-at {
+  font-family: var(--font-reading);
+  color: var(--text-2);
+}
+
+.who-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.who-state span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.who-state.working {
+  color: var(--text-2);
+}
+
+.who-state .pulse {
+  flex: none;
+  width: 6px;
+  height: 6px;
+}
+
+.conversation {
+  flex: 1;
+}
+
+/* The composer: a raised sheet resting on the foot of the page, the
+   conversation fading out beneath it. */
+
+.composer-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: var(--space-6) var(--gutter) calc(var(--space-4) + env(safe-area-inset-bottom));
+  background: linear-gradient(to bottom, transparent, var(--bg) var(--space-6));
+}
+
+.composer {
+  max-width: var(--column);
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 1px var(--hairline), 0 6px 24px rgba(0, 0, 0, 0.12);
+  transition: box-shadow var(--hover) ease;
+}
+
+.composer:focus-within {
+  box-shadow: 0 0 0 1px var(--rule), 0 6px 24px rgba(0, 0, 0, 0.16);
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  max-height: 40dvh;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--body-size);
+  line-height: var(--leading-prose);
+}
+
+.composer textarea::placeholder {
+  color: var(--text-3);
+}
+
+.composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.composer-context {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-action {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--bg);
+  transition: background-color var(--hover) ease, opacity var(--hover) ease, transform var(--hover) ease;
+}
+
+.composer-action:hover:not(:disabled) {
+  background: var(--accent-bright);
+}
+
+.composer-action:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.composer-action:disabled {
+  background: var(--hairline);
+  color: var(--text-3);
+}
+
+.composer-action.stop {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.composer-action .glyph {
+  stroke-width: 2;
+}

@@ -1,0 +1,220 @@
+/* The World's design tokens (`world-gui.md`, 审美). Every value the
+   interface uses comes from here; components never write a colour, a size
+   or a duration of their own.
+
+   Colour is by role. The three themes are the user's own, from incipit,
+   value for value, and the terminal interface takes the same ones
+   (`crates/fastctx-tui/src/design.rs`): warm black, the default dark; ink
+   black, its colourless sibling; warm white, the light one. The page names
+   its theme on the root before it paints (`theme.ts`): the one chosen, or
+   the system's light or dark. */
+
+:root {
+  /* Type. The whole layout is reckoned in the body size, so a reader who
+     sets a larger size keeps the same words to a line. */
+  --body-size: 15px;
+  --font-reading: "Reading", "IBM Plex Serif", "Noto Sans SC", "Microsoft YaHei UI", serif;
+  --font-emphasis: "Emphasis", var(--font-reading);
+  --font-code: "Rec Mono Linear", "Cascadia Mono", "Noto Sans SC", monospace;
+  --code-axes: "MONO" 1, "CASL" 0, "slnt" 0;
+
+  --size-small: calc(var(--body-size) - 2px);
+  --size-ui: calc(var(--body-size) - 1px);
+  --size-code: calc(var(--body-size) * 0.88);
+  /* Headings inside what an agent writes stay close to the body: a message
+     nests in the page, so it never raises a heading that competes with the
+     page's own. Levels part by face and space more than by size. */
+  --size-h1: calc(var(--body-size) * 1.154);
+  --size-h2: calc(var(--body-size) * 1.154);
+  --size-h3: calc(var(--body-size) * 1.077);
+  --size-title: calc(var(--body-size) * 1.6);
+
+  --leading-prose: 1.68;
+  --leading-ui: 1.45;
+  --leading-code: 1.55;
+  --leading-heading: 1.36;
+
+  /* The reading column: 46 body widths, as claude.ai measures, whatever
+     the size. Gutters close in on a phone and open out on a wide screen. */
+  --column: calc(var(--body-size) * 46);
+  --gutter: clamp(16px, 4.5vw, 36px);
+
+  /* Space, on a 4px step. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 16px;
+  --radius-full: 999px;
+
+  /* The activity rail: a 20px column of glyphs, then 10px. */
+  --rail-glyph: 20px;
+  --rail-gap: 10px;
+  --tool-header: 28px;
+
+  /* Motion. Hover moves only colour, opacity and transform; folding has one
+     duration and one curve everywhere. Nothing moves for itself. */
+  --hover: 180ms;
+  --fold: 220ms;
+  --fold-easing: cubic-bezier(0.2, 0, 0, 1);
+  --enter: 220ms;
+}
+
+/* On a phone the body is a size larger: the same words are read at arm's
+   length, and a smaller one makes browsers zoom into the composer. */
+@media (max-width: 600px) {
+  :root {
+    --body-size: 16px;
+  }
+}
+
+/* Warm black. */
+:root,
+[data-theme="warm-black"] {
+  color-scheme: dark;
+  --bg: #1f1f1e;
+  --bg-sunken: #1a1a19;
+  --bg-elevated: #2c2c2a;
+  --surface-code: #272727;
+  --surface-code-2: #1f1f1e;
+  --surface-header: #2e2e2c;
+  --bubble: #121212;
+  --on-bubble: #f5f2e8;
+
+  --text: #f8f8f6;
+  --text-strong: #f5f2e8;
+  --text-2: #bcbcb9;
+  --text-3: #989898;
+  --text-quote: #c3c2b7;
+
+  --accent: #d97757;
+  --accent-bright: #e0a18b;
+  --accent-wash: rgba(217, 119, 87, 0.22);
+  --selection: rgba(217, 119, 87, 0.32);
+  --focus: rgba(217, 119, 87, 0.6);
+
+  --hairline: rgba(245, 242, 232, 0.1);
+  --divider: rgba(245, 242, 232, 0.06);
+  --rule: rgba(245, 242, 232, 0.16);
+
+  --add-fg: #7cb27c;
+  --add-line: #23863633;
+  --add-bar: #3fb950;
+  --add-char: #2ea04366;
+  --del-fg: #c96a6a;
+  --del-line: #da363333;
+  --del-bar: #f85149;
+  --del-char: #f8514966;
+
+  --alive: #7cb27c;
+  --caution: #d4a85a;
+  --wrong: #c96a6a;
+  --scrollbar: #3c3c3c;
+  --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Ink black: warm black without hue. Its accent is a grey, and the words
+   that went in sit on an inverted, near-white ground. */
+[data-theme="ink-black"] {
+  color-scheme: dark;
+  --bg: #0a0b0b;
+  --bg-sunken: #141516;
+  --bg-elevated: #212121;
+  --surface-code: #1a1b1c;
+  --surface-code-2: #0a0b0b;
+  --surface-header: #222324;
+  --bubble: #fbfbfc;
+  --on-bubble: #0a0b0b;
+
+  --text: #fbfbfc;
+  --text-strong: #fbfbfc;
+  --text-2: #aaaaab;
+  --text-3: #838484;
+  --text-quote: #c7c6c7;
+
+  --accent: #c2c4c7;
+  --accent-bright: #dadce0;
+  --accent-wash: rgba(194, 196, 199, 0.2);
+  --selection: rgba(194, 196, 199, 0.32);
+  --focus: rgba(194, 196, 199, 0.6);
+
+  --hairline: rgba(255, 255, 255, 0.1);
+  --divider: rgba(255, 255, 255, 0.08);
+  --rule: rgba(255, 255, 255, 0.16);
+
+  --add-fg: #7cb27c;
+  --add-line: #23863633;
+  --add-bar: #3fb950;
+  --add-char: #2ea04366;
+  --del-fg: #c96a6a;
+  --del-line: #da363333;
+  --del-bar: #f85149;
+  --del-char: #f8514966;
+
+  --alive: #7cb27c;
+  --caution: #d4a85a;
+  --wrong: #c96a6a;
+  --scrollbar: #2c2c2d;
+  --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Warm white. */
+[data-theme="warm-white"] {
+  color-scheme: light;
+  --bg: #f8f8f6;
+  --bg-sunken: #f1efe9;
+  --bg-elevated: #ffffff;
+  --surface-code: #ecebe5;
+  --surface-code-2: #f8f8f6;
+  --surface-header: #e3e1da;
+  --bubble: #e6e4de;
+  --on-bubble: #0d0d0d;
+
+  --text: #0d0d0d;
+  --text-strong: #0d0d0d;
+  --text-2: #797569;
+  --text-3: #9a968b;
+  --text-quote: #797569;
+
+  --accent: #bf5d3a;
+  --accent-bright: #8f452b;
+  --accent-wash: rgba(191, 93, 58, 0.16);
+  --selection: rgba(191, 93, 58, 0.22);
+  --focus: rgba(191, 93, 58, 0.55);
+
+  --hairline: rgba(60, 55, 40, 0.1);
+  --divider: rgba(60, 55, 40, 0.06);
+  --rule: rgba(60, 55, 40, 0.16);
+
+  --add-fg: #1c9c1c;
+  --add-line: #dafbe180;
+  --add-bar: #1f883d;
+  --add-char: #aceebb99;
+  --del-fg: #c92626;
+  --del-line: #ffebe980;
+  --del-bar: #cf222e;
+  --del-char: #ff818266;
+
+  --alive: #1c9c1c;
+  --caution: #9a6d1a;
+  --wrong: #c92626;
+  --scrollbar: #c6c4bd;
+  --shadow-pop: 0 12px 36px rgba(60, 55, 40, 0.16), 0 2px 8px rgba(60, 55, 40, 0.1);
+}
+
+/* A system that asks for less motion gets none that is not information. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --hover: 0ms;
+    --fold: 0ms;
+    --enter: 0ms;
+  }
+}

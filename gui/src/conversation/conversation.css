@@ -1,0 +1,747 @@
+/* A conversation: a column read like a letter, the user's words set apart
+   on their own ground, and what the agent did between its words kept quiet
+   in a rail of glyphs until the reader opens it. */
+
+.transcript {
+  --row-line: 30px;
+  max-width: calc(var(--column) + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: var(--space-6) var(--gutter) var(--space-12);
+  display: flex;
+  flex-direction: column;
+}
+
+.block {
+  min-width: 0;
+}
+
+/* Rhythm: blocks part by a line's space; a turn begins further down. */
+.block + .block {
+  margin-top: var(--space-4);
+}
+
+.block + .block.from-user {
+  margin-top: var(--space-8);
+}
+
+.block-ended:empty {
+  display: none;
+}
+
+.block-ended:empty + .block {
+  margin-top: var(--space-8);
+}
+
+/* The user's words. */
+
+.block.from-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.bubble {
+  max-width: min(85%, calc(var(--body-size) * 36));
+  padding: 10px 16px;
+  border-radius: var(--radius-l);
+  background: var(--bubble);
+  color: var(--on-bubble);
+  line-height: var(--leading-prose);
+  overflow-wrap: anywhere;
+  transition: opacity var(--hover) ease;
+}
+
+.bubble p {
+  margin: 0;
+}
+
+.bubble p + p {
+  margin-top: 0.7em;
+}
+
+.bubble.going {
+  opacity: 0.62;
+}
+
+.bubble.failed {
+  box-shadow: inset 0 0 0 1px var(--wrong);
+}
+
+.bubble-from {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  margin: 0 var(--space-2) var(--space-1) 0;
+}
+
+/* Words relayed from a colleague or told by the World: not the user's, so
+   on the agent's side, set off by a rule. */
+
+.relayed {
+  border-left: 2px solid var(--rule);
+  padding-left: var(--space-4);
+}
+
+.relayed-from {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-2);
+  margin-bottom: var(--space-1);
+}
+
+.relayed-from .glyph {
+  color: var(--text-3);
+}
+
+.relayed-how {
+  color: var(--text-3);
+}
+
+.relayed-how::before {
+  content: "·";
+  margin-right: var(--space-2);
+}
+
+.relayed-text {
+  color: var(--text-quote);
+  line-height: var(--leading-prose);
+}
+
+.told-line {
+  margin: 0;
+}
+
+.told-how {
+  margin-left: var(--space-2);
+  color: var(--text-2);
+}
+
+.told-how::before {
+  content: "·";
+  margin-right: var(--space-2);
+}
+
+.told-path {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.told-plain p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.told-plain p + p {
+  margin-top: 0.7em;
+}
+
+/* A proposed plan: a page of its own inside the column. */
+
+.plan {
+  background: var(--bg-sunken);
+  border-radius: var(--radius-m);
+  padding: var(--space-4) var(--space-5);
+}
+
+.plan-label {
+  font-size: var(--size-small);
+  color: var(--text-2);
+  margin-bottom: var(--space-2);
+}
+
+/* A step list: done, doing, waiting. */
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+}
+
+.step {
+  display: grid;
+  grid-template-columns: var(--rail-glyph) 1fr;
+  column-gap: var(--rail-gap);
+  align-items: start;
+  padding: 3px 0;
+  color: var(--text-2);
+}
+
+.step-mark {
+  width: 14px;
+  height: 14px;
+  margin: calc((1lh - 14px) / 2) auto 0;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+  display: grid;
+  place-items: center;
+}
+
+.step-done .step-mark {
+  box-shadow: none;
+  color: var(--text-3);
+}
+
+.step-done .step-text {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--rule);
+}
+
+.step-doing {
+  color: var(--text);
+}
+
+.step-doing .step-mark {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  background: radial-gradient(circle, var(--accent) 3px, transparent 3.5px);
+}
+
+.steps-note {
+  margin: var(--space-2) 0 0;
+  color: var(--text-2);
+  font-size: var(--size-small);
+}
+
+/* Notes: what the World knows of the session, said in a line. */
+
+.note {
+  font-size: var(--size-small);
+  color: var(--text-2);
+  line-height: var(--leading-ui);
+}
+
+.note.caution {
+  color: var(--caution);
+}
+
+.note.wrong {
+  color: var(--wrong);
+}
+
+.note.faint {
+  color: var(--text-3);
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+/* An activity group: a heading that says what the stretch did, and the
+   rail beneath it. */
+
+.group-head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  min-height: 28px;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+  border-radius: var(--radius-s);
+  transition: color var(--hover) ease;
+}
+
+.group-head:hover {
+  color: var(--text);
+}
+
+.group-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-head .glyph {
+  flex: none;
+  color: var(--text-3);
+  transform: rotate(-90deg);
+  transition: transform var(--fold) var(--fold-easing), color var(--hover) ease;
+}
+
+.group-head[aria-expanded="true"] .glyph {
+  transform: rotate(0deg);
+}
+
+.group-head:hover .glyph {
+  color: var(--text-2);
+}
+
+/* While something runs, the heading says what, and a light passes over
+   the words. */
+.group-head.running .group-title {
+  background: linear-gradient(
+      100deg,
+      var(--text-2) 0%,
+      var(--text-2) 40%,
+      var(--text-strong) 50%,
+      var(--text-2) 60%,
+      var(--text-2) 100%
+    )
+    0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+
+/* Folding: one duration and one curve, the height carried by the grid so
+   nothing is measured. */
+.fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--fold) var(--fold-easing);
+}
+
+.fold.open {
+  grid-template-rows: 1fr;
+}
+
+.fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fold:not(.open) > .fold-inner {
+  visibility: hidden;
+  transition: visibility 0s var(--fold);
+}
+
+.rows {
+  padding-top: var(--space-1);
+}
+
+/* A row: a glyph in the rail, then the line. Rails are joined by a thin
+   line that breaks a little before each glyph. */
+
+.row {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--rail-glyph) minmax(0, 1fr);
+  column-gap: var(--rail-gap);
+}
+
+.row:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--rail-glyph) / 2 - 0.5px);
+  width: 1px;
+  top: calc(var(--row-line) / 2 + var(--rail-glyph) / 2 + 3px);
+  bottom: calc(-1 * (var(--row-line) / 2 - var(--rail-glyph) / 2 - 3px));
+  background: var(--hairline);
+}
+
+.rail {
+  grid-column: 1;
+  grid-row: 1;
+  height: var(--row-line);
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.row-line {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row-line);
+  min-width: 0;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text-2);
+  border-radius: var(--radius-s);
+  transition: color var(--hover) ease;
+}
+
+.row-line:not(:disabled):hover {
+  color: var(--text);
+}
+
+.row-action {
+  flex: none;
+  white-space: nowrap;
+}
+
+.row-object {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  transition: color var(--hover) ease;
+}
+
+.row-line:not(:disabled):hover .row-object {
+  color: var(--text-2);
+}
+
+.row-line.static .row-object {
+  white-space: normal;
+}
+
+.row-stats {
+  flex: none;
+  display: inline-flex;
+  gap: 0.4em;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-stats .add {
+  color: var(--add-fg);
+}
+
+.row-stats .del {
+  color: var(--del-fg);
+}
+
+.row-outcome,
+.row-machine {
+  flex: none;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.row-outcome.wrong {
+  color: var(--wrong);
+}
+
+.row-outcome.went-on {
+  color: var(--accent);
+}
+
+.row-machine::before {
+  content: "·";
+  margin-right: var(--space-2);
+}
+
+/* The arrow that opens a row appears only when it can be used. */
+.row-chevron {
+  flex: none;
+  display: inline-grid;
+  margin-left: calc(-1 * var(--space-1));
+  color: var(--text-3);
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: opacity var(--hover) ease, transform var(--fold) var(--fold-easing);
+}
+
+.row-line:hover .row-chevron,
+.row-line:focus-visible .row-chevron,
+.row-line[aria-expanded="true"] .row-chevron {
+  opacity: 1;
+}
+
+.row-line[aria-expanded="true"] .row-chevron {
+  transform: rotate(0deg);
+}
+
+@media (hover: none) {
+  .row-chevron {
+    opacity: 1;
+  }
+}
+
+.row-failed .row-action {
+  color: var(--wrong);
+}
+
+.row-failed .rail {
+  color: var(--wrong);
+}
+
+.row-thinking.withheld .row-action {
+  color: var(--text-3);
+}
+
+.row > .fold {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.row > .fold > .fold-inner > :first-child {
+  margin-top: var(--space-1);
+}
+
+.row > .fold > .fold-inner > :last-child {
+  margin-bottom: var(--space-3);
+}
+
+.thinking-text {
+  font-size: var(--size-ui);
+  color: var(--text-2);
+  line-height: var(--leading-prose);
+}
+
+/* A running tool: its glyph gives way to a slow pulse. */
+.pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+.row-running .row-action,
+.row-tool.row-running .row-action {
+  color: var(--text);
+}
+
+/* A tool that arrives in a live conversation comes in once, quietly. */
+.row.entering {
+  animation: enter var(--enter) var(--fold-easing) both;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group-head.running .group-title {
+    animation: none;
+    background: none;
+    color: var(--text);
+  }
+  .pulse {
+    animation: none;
+  }
+  .row.entering {
+    animation: none;
+  }
+}
+
+/* Surfaces: solid, borderless; a surface inside another takes the other
+   shade, so nesting reads without lines. */
+
+.surface {
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
+  overflow: hidden;
+}
+
+.surface + .surface {
+  margin-top: var(--space-2);
+}
+
+.surface-head {
+  display: flex;
+  align-items: center;
+  height: var(--tool-header);
+  padding: 0 var(--space-3);
+  background: var(--surface-header);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.surface-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+/* A change: a row a line, wrapped rather than scrolled. Added and removed
+   lines are tinted whole, with a bar at the edge. */
+
+.diff-rows {
+  max-height: calc(var(--size-code) * var(--leading-code) * 24);
+  overflow-y: auto;
+  padding: var(--space-1) 0;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  scrollbar-width: thin;
+}
+
+.diff-row {
+  display: grid;
+  grid-template-columns: 3.2ch 3.2ch 2ch minmax(0, 1fr);
+  padding-right: var(--space-3);
+}
+
+.diff-rows.unnumbered .diff-row {
+  grid-template-columns: 2.4ch minmax(0, 1fr);
+}
+
+.diff-rows.unnumbered .diff-num {
+  display: none;
+}
+
+.diff-rows.unnumbered .diff-gap {
+  padding-left: 2.4ch;
+}
+
+.diff-num {
+  text-align: right;
+  color: var(--text-3);
+  opacity: 0.7;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-sign {
+  text-align: center;
+  color: var(--text-3);
+  user-select: none;
+}
+
+.diff-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-add {
+  background: var(--add-line);
+  box-shadow: inset 3px 0 0 var(--add-bar);
+}
+
+.diff-add .diff-sign {
+  color: var(--add-fg);
+}
+
+.diff-del {
+  background: var(--del-line);
+  box-shadow: inset 3px 0 0 var(--del-bar);
+}
+
+.diff-del .diff-sign {
+  color: var(--del-fg);
+}
+
+.diff-gap {
+  padding: 2px 0 2px calc(6.4ch + 2ch);
+  color: var(--text-3);
+  font-family: var(--font-reading);
+  font-size: var(--size-small);
+  background: var(--surface-code-2);
+}
+
+/* Words in and out of a tool. */
+
+.io-part {
+  display: grid;
+  grid-template-columns: 3em minmax(0, 1fr);
+  align-items: start;
+  padding: var(--space-2) var(--space-3);
+}
+
+.io-part + .io-part {
+  border-top: 1px solid var(--divider);
+}
+
+.io-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  line-height: calc(var(--size-code) * var(--leading-code));
+  user-select: none;
+}
+
+.io-text {
+  margin: 0;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.io-more {
+  margin-top: var(--space-1);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  transition: color var(--hover) ease;
+}
+
+.io-more:hover {
+  color: var(--text);
+}
+
+.io-image {
+  display: block;
+  max-width: 100%;
+  margin-top: var(--space-2);
+  border-radius: var(--radius-s);
+}
+
+/* Diagrams sit unboxed: nodes are quiet chips, edges keep their stroke. */
+.diagram.drawn svg .node rect,
+.diagram.drawn svg .node circle,
+.diagram.drawn svg .node ellipse,
+.diagram.drawn svg .node polygon,
+.diagram.drawn svg .node path {
+  stroke: none;
+}
+
+.diagram.unreadable {
+  border-left: 2px solid var(--rule);
+  padding-left: var(--space-3);
+}
+
+/* A message still being written. */
+.prose.writing > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 0.25em;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  vertical-align: 0.05em;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prose.writing > :last-child::after {
+    animation: none;
+  }
+}

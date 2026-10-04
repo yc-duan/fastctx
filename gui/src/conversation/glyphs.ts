@@ -1,0 +1,27 @@
+// The activity rail's glyphs: 20px, drawn on a 20-unit grid with a 1.5
+// stroke, in the colour of the text around them.
+
+import type { Glyph } from "./tool";
+
+const paths: Record<Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "stop" | "send", string> = {
+  read: '<path d="M4.5 4.5h7l4 4v7a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M11.5 4.5v4h4"/><path d="M7 11h6M7 13.5h4"/>',
+  edit: '<path d="M12.6 4.6l2.8 2.8-8.2 8.2H4.4v-2.8z"/><path d="M11 6.2l2.8 2.8"/>',
+  command: '<path d="M4.5 6l3.5 4-3.5 4"/><path d="M10 14.5h5.5"/>',
+  search: '<circle cx="9" cy="9" r="4.25"/><path d="M12.2 12.2l3.6 3.6"/>',
+  image: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="1.5"/><circle cx="7.75" cy="8.5" r="1.25"/><path d="M4 13.5l3.5-3 2.8 2.4 2.2-1.9 3.5 2.8"/>',
+  colleague: '<circle cx="7.5" cy="7.5" r="2.5"/><path d="M3.5 15.5c.6-2.4 2.1-3.6 4-3.6s3.4 1.2 4 3.6"/><circle cx="13.5" cy="8.5" r="2"/><path d="M13.2 12.1c1.6 0 2.8.9 3.3 2.9"/>',
+  web: '<circle cx="10" cy="10" r="6.25"/><path d="M3.75 10h12.5M10 3.75c1.8 1.8 2.6 3.9 2.6 6.25S11.8 14.45 10 16.25C8.2 14.45 7.4 12.35 7.4 10S8.2 5.55 10 3.75z"/>',
+  tasks: '<path d="M4.5 6l1.2 1.2L8 5"/><path d="M10.5 6.2h5"/><path d="M4.5 12l1.2 1.2L8 11"/><path d="M10.5 12.2h5"/>',
+  tool: '<path d="M12.4 4.2a3.4 3.4 0 0 0-4 4.4l-4.2 4.2 2.9 2.9 4.2-4.2a3.4 3.4 0 0 0 4.4-4l-2 2-1.9-.5-.5-1.9z"/>',
+  thinking: '<path d="M10 4.5c-2.9 0-5 1.9-5 4.4 0 1.5.8 2.8 2 3.6v2.5l2.4-1.6c.2 0 .4.1.6.1 2.9 0 5-1.9 5-4.6S12.9 4.5 10 4.5z"/>',
+  chevron: '<path d="M7.5 8.5l2.5 2.5 2.5-2.5"/>',
+  copy: '<rect x="7" y="7" width="8.5" height="8.5" rx="1.5"/><path d="M5 12.5h-.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V5"/>',
+  check: '<path d="M5 10.5l3.2 3 6.8-7"/>',
+  expand: '<path d="M11.5 4.5h4v4M8.5 15.5h-4v-4M15.5 4.5L11 9M4.5 15.5L9 11"/>',
+  stop: '<rect x="6" y="6" width="8" height="8" rx="1.5" fill="currentColor" stroke="none"/>',
+  send: '<path d="M10 15.5v-11M5.5 9L10 4.5 14.5 9"/>',
+};
+
+export function glyph(name: keyof typeof paths, size = 20): string {
+  return `<svg class="glyph" width="${size}" height="${size}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
+}

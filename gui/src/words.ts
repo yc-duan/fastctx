@@ -1,0 +1,272 @@
+// Every word the interface says on its own account, in the user's words
+// (`world-gui.md`, 用词): plain, without role-play; what agents and tools
+// produce is never translated.
+
+export type Tense = "running" | "done" | "failed";
+
+/** What a tool did, before it is put into words. */
+export type Act =
+  | "read"
+  | "edit"
+  | "create"
+  | "delete"
+  | "move"
+  | "write"
+  | "command"
+  | "search"
+  | "image"
+  | "ask"
+  | "message"
+  | "fetch"
+  | "websearch"
+  | "tasks";
+
+export interface Tally {
+  read: number;
+  edited: number;
+  ran: number;
+  searched: number;
+  asked: number;
+  other: number;
+  failed: number;
+  thinking: number;
+}
+
+export interface Words {
+  act(act: Act, tense: Tense): string;
+  failedTool(name: string): string;
+  tally(tally: Tally): string;
+  thought: string;
+  thinking: string;
+  thoughtWithheld: string;
+  plan: string;
+  you(machine: string): string;
+  world: string;
+  compacted: string;
+  turn(how: string, reason: string | null): string | null;
+  wentOnAs(job: string): string;
+  exited(code: number): string;
+  cut: string;
+  unknown: string;
+  declined: string;
+  showMore: string;
+  showLess: string;
+  copy: string;
+  copied: string;
+  sendPlaceholder(agent: string): string;
+  send: string;
+  stop: string;
+  uncertain(why: string): string;
+  sending: string;
+  context(percent: number): string;
+  working: string;
+  idle: string;
+  waitingForYou: string;
+  on(machine: string): string;
+  /** Between the names in a short list. */
+  listSeparator: string;
+  moreLines(n: number): string;
+  unchangedLines(n: number): string;
+  /** A job the resident started has ended, on that machine. */
+  jobEnded(job: string, machine: string): string;
+  /** How a job or a colleague's turn ended, from the World's own wording
+   *  (`exited 0`, `turn completed, 14m`); a wording not known is kept. */
+  ended(how: string): string;
+}
+
+const zhActs: Record<Act, [string, string, string]> = {
+  read: ["读了", "正在读", "读取失败"],
+  edit: ["改了", "正在改", "修改失败"],
+  create: ["新建了", "正在新建", "新建失败"],
+  delete: ["删了", "正在删", "删除失败"],
+  move: ["挪了", "正在挪", "挪动失败"],
+  write: ["写了", "正在写", "写入失败"],
+  command: ["跑了命令", "正在跑命令", "命令失败"],
+  search: ["搜了", "正在搜", "搜索失败"],
+  image: ["看了图", "正在看图", "看图失败"],
+  ask: ["请了同事", "正在请同事", "请同事失败"],
+  message: ["给同事发了话", "正在给同事发话", "发话失败"],
+  fetch: ["取了网页", "正在取网页", "取网页失败"],
+  websearch: ["搜了网页", "正在搜网页", "网页搜索失败"],
+  tasks: ["更新了待办", "正在更新待办", "待办更新失败"],
+};
+
+const enActs: Record<Act, [string, string, string]> = {
+  read: ["Read", "Reading", "Read Failed"],
+  edit: ["Edited", "Editing", "Edit Failed"],
+  create: ["Created", "Creating", "Create Failed"],
+  delete: ["Deleted", "Deleting", "Delete Failed"],
+  move: ["Moved", "Moving", "Move Failed"],
+  write: ["Wrote", "Writing", "Write Failed"],
+  command: ["Ran command", "Running command", "Command Failed"],
+  search: ["Searched", "Searching", "Search Failed"],
+  image: ["Viewed image", "Viewing image", "Image Failed"],
+  ask: ["Asked a colleague", "Asking a colleague", "Colleague Failed"],
+  message: ["Wrote to a colleague", "Writing to a colleague", "Message Failed"],
+  fetch: ["Fetched", "Fetching", "Fetch Failed"],
+  websearch: ["Searched the web", "Searching the web", "Web search Failed"],
+  tasks: ["Updated tasks", "Updating tasks", "Tasks Failed"],
+};
+
+const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 : 2);
+
+export const zh: Words = {
+  act: (act, tense) => zhActs[act][index(tense)],
+  failedTool: (name) => `${name} 失败`,
+  tally: (t) => {
+    const parts: string[] = [];
+    if (t.read) parts.push(`读了 ${t.read} 个文件`);
+    if (t.edited) parts.push(`改了 ${t.edited} 个文件`);
+    if (t.ran) parts.push(`跑了 ${t.ran} 条命令`);
+    if (t.searched) parts.push(`搜了 ${t.searched} 次`);
+    if (t.asked) parts.push(`请了 ${t.asked} 位同事`);
+    if (t.other) parts.push(`用了 ${t.other} 个工具`);
+    let heading = parts.join("，");
+    if (!heading) heading = t.thinking ? "思考" : "活动";
+    return t.failed ? `${heading} · ${t.failed} 个失败` : heading;
+  },
+  thought: "思考",
+  thinking: "正在思考",
+  thoughtWithheld: "想过，没有交出内容",
+  plan: "提出的计划",
+  you: (machine) => `你 · ${machine}`,
+  world: "世界",
+  compacted: "上下文已压缩",
+  turn: (how, reason) => {
+    if (how === "completed") return null;
+    const said = how === "failed" ? "这一轮失败了" : how === "interrupted" ? "这一轮被停下了" : `这一轮结束：${how}`;
+    return reason ? `${said}：${reason}` : said;
+  },
+  wentOnAs: (job) => `转到后台 ${job}`,
+  exited: (code) => `退出码 ${code}`,
+  cut: "这一轮结束时还没跑完",
+  unknown: "结果不明",
+  declined: "没让它用",
+  showMore: "展开全部",
+  showLess: "收起",
+  copy: "复制",
+  copied: "已复制",
+  sendPlaceholder: (agent) => `对 ${agent} 说…`,
+  send: "发送",
+  stop: "停下这一轮",
+  uncertain: (why) => `话交出去了，但不知道它进没进去：${why}`,
+  sending: "正在送出",
+  context: (percent) => `上下文 ${percent}%`,
+  working: "正在干活",
+  idle: "空闲",
+  waitingForYou: "在等你回答",
+  on: (machine) => `在 ${machine}`,
+  listSeparator: "、",
+  moreLines: (n) => `还有 ${n} 行`,
+  unchangedLines: (n) => `${n} 行未改动`,
+  jobEnded: (job, machine) => `后台作业 ${job} 在 ${machine} 上结束了`,
+  ended: (how) =>
+    endedIn(how, {
+      exited: (code) => `退出码 ${code}`,
+      signal: (signal) => `被信号 ${signal} 结束`,
+      stopped: "被停掉了",
+      finished: "跑完了",
+      interrupted: (reason) => `中断：${reason}`,
+      couldNotRun: (error) => `没能跑起来：${error}`,
+      turn: (how, reason) =>
+        (how === "completed" ? "这一轮完成" : how === "failed" ? "这一轮失败" : how === "interrupted" ? "这一轮中断" : `这一轮 ${how}`) +
+        (reason ? `：${reason}` : ""),
+      inTurn: "这一轮还在跑",
+    }),
+};
+
+export const en: Words = {
+  act: (act, tense) => enActs[act][index(tense)],
+  failedTool: (name) => `${name} Failed`,
+  tally: (t) => {
+    const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+    const parts: string[] = [];
+    if (t.read) parts.push(`read ${plural(t.read, "file", "files")}`);
+    if (t.edited) parts.push(`edited ${plural(t.edited, "file", "files")}`);
+    if (t.ran) parts.push(`ran ${plural(t.ran, "command", "commands")}`);
+    if (t.searched) parts.push(t.searched === 1 ? "searched once" : `searched ${t.searched} times`);
+    if (t.asked) parts.push(`asked ${plural(t.asked, "colleague", "colleagues")}`);
+    if (t.other) parts.push(plural(t.other, "tool call", "tool calls"));
+    let heading = parts.join(", ");
+    if (!heading) heading = t.thinking ? "Thinking" : "Activity";
+    heading = heading.charAt(0).toUpperCase() + heading.slice(1);
+    return t.failed ? `${heading} · ${t.failed} failed` : heading;
+  },
+  thought: "Thought",
+  thinking: "Thinking",
+  thoughtWithheld: "Thought, without sharing it",
+  plan: "Proposed plan",
+  you: (machine) => `You · ${machine}`,
+  world: "The World",
+  compacted: "Context compacted",
+  turn: (how, reason) => {
+    if (how === "completed") return null;
+    const said = how === "failed" ? "The turn failed" : how === "interrupted" ? "The turn was stopped" : `The turn ended: ${how}`;
+    return reason ? `${said}: ${reason}` : said;
+  },
+  wentOnAs: (job) => `went on as ${job}`,
+  exited: (code) => `exit ${code}`,
+  cut: "still running when the turn ended",
+  unknown: "outcome unknown",
+  declined: "not allowed",
+  showMore: "Show more",
+  showLess: "Show less",
+  copy: "Copy",
+  copied: "Copied",
+  sendPlaceholder: (agent) => `Say something to ${agent}…`,
+  send: "Send",
+  stop: "Stop the turn",
+  uncertain: (why) => `Sent, but whether it went in is unknown: ${why}`,
+  sending: "Sending",
+  context: (percent) => `Context ${percent}%`,
+  working: "Working",
+  idle: "Idle",
+  waitingForYou: "Waiting for you",
+  on: (machine) => `on ${machine}`,
+  listSeparator: ", ",
+  moreLines: (n) => `${n} more lines`,
+  unchangedLines: (n) => `${n} unchanged lines`,
+  jobEnded: (job, machine) => `Job ${job} on ${machine} ended`,
+  ended: (how) =>
+    endedIn(how, {
+      exited: (code) => `exit ${code}`,
+      signal: (signal) => `ended by signal ${signal}`,
+      stopped: "stopped",
+      finished: "finished",
+      interrupted: (reason) => `interrupted: ${reason}`,
+      couldNotRun: (error) => `could not run: ${error}`,
+      turn: (how, reason) => `turn ${how}${reason ? `: ${reason}` : ""}`,
+      inTurn: "in its turn",
+    }),
+};
+
+interface EndedWords {
+  exited(code: string): string;
+  signal(signal: string): string;
+  stopped: string;
+  finished: string;
+  interrupted(reason: string): string;
+  couldNotRun(error: string): string;
+  turn(how: string, reason: string | null): string;
+  inTurn: string;
+}
+
+/** Reads the World's wording of how something ended, and says it again;
+ *  a trailing duration (`, 14m`) is kept as it is. */
+function endedIn(how: string, say: EndedWords): string {
+  const timed = /^(.*), (\d+[smhd](?:\d+[mh])?)$/.exec(how);
+  const what = timed ? timed[1] : how;
+  const took = timed ? ` · ${timed[2]}` : "";
+  let said: string;
+  let match: RegExpExecArray | null;
+  if ((match = /^exited (\S+)$/.exec(what))) said = say.exited(match[1]);
+  else if ((match = /^ended by signal (\d+)$/.exec(what))) said = say.signal(match[1]);
+  else if (what === "stopped") said = say.stopped;
+  else if (what === "finished") said = say.finished;
+  else if ((match = /^interrupted: (.*)$/.exec(what))) said = say.interrupted(match[1]);
+  else if ((match = /^could not run: (.*)$/.exec(what))) said = say.couldNotRun(match[1]);
+  else if (what === "in its turn") said = say.inTurn;
+  else if ((match = /^turn (\w+)(?:: (.*))?$/.exec(what))) said = say.turn(match[1], match[2] ?? null);
+  else said = what;
+  return said + took;
+}

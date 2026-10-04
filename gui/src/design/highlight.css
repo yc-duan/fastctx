@@ -1,0 +1,145 @@
+/* Highlighted code, as incipit shows it: Visual Studio's 2015 dark palette
+   on the dark themes and its light one on warm white, the colours most
+   people already read code in. Only the foreground is taken; the surface
+   is the theme's own. */
+
+.hljs-keyword,
+.hljs-literal,
+.hljs-symbol,
+.hljs-name {
+  color: #569cd6;
+}
+
+.hljs-link {
+  color: #569cd6;
+  text-decoration: underline;
+}
+
+.hljs-built_in,
+.hljs-type {
+  color: #4ec9b0;
+}
+
+.hljs-number,
+.hljs-class {
+  color: #b8d7a3;
+}
+
+.hljs-string,
+.hljs-meta .hljs-string {
+  color: #d69d85;
+}
+
+.hljs-regexp,
+.hljs-template-tag {
+  color: #9a5334;
+}
+
+.hljs-subst,
+.hljs-function,
+.hljs-title,
+.hljs-params,
+.hljs-formula {
+  color: inherit;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #57a64a;
+  font-style: italic;
+}
+
+.hljs-doctag {
+  color: #608b4e;
+}
+
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-tag {
+  color: #9b9b9b;
+}
+
+.hljs-variable,
+.hljs-template-variable {
+  color: #bd63c5;
+}
+
+.hljs-attr,
+.hljs-attribute {
+  color: #9cdcfe;
+}
+
+.hljs-section {
+  color: #ffd700;
+}
+
+.hljs-bullet,
+.hljs-selector-tag,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: #d7ba7d;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+/* Warm white: Visual Studio's light palette. Its groups differ from the
+   dark one's, so each is given whole. */
+[data-theme="warm-white"] .hljs-comment,
+[data-theme="warm-white"] .hljs-quote,
+[data-theme="warm-white"] .hljs-variable {
+  color: #008000;
+}
+
+[data-theme="warm-white"] .hljs-keyword,
+[data-theme="warm-white"] .hljs-selector-tag,
+[data-theme="warm-white"] .hljs-built_in,
+[data-theme="warm-white"] .hljs-name,
+[data-theme="warm-white"] .hljs-tag {
+  color: #0000ff;
+}
+
+[data-theme="warm-white"] .hljs-string,
+[data-theme="warm-white"] .hljs-title,
+[data-theme="warm-white"] .hljs-section,
+[data-theme="warm-white"] .hljs-attribute,
+[data-theme="warm-white"] .hljs-literal,
+[data-theme="warm-white"] .hljs-template-tag,
+[data-theme="warm-white"] .hljs-template-variable,
+[data-theme="warm-white"] .hljs-type,
+[data-theme="warm-white"] .hljs-addition {
+  color: #a31515;
+}
+
+[data-theme="warm-white"] .hljs-number,
+[data-theme="warm-white"] .hljs-class,
+[data-theme="warm-white"] .hljs-regexp,
+[data-theme="warm-white"] .hljs-params,
+[data-theme="warm-white"] .hljs-function,
+[data-theme="warm-white"] .hljs-subst {
+  color: inherit;
+}
+
+[data-theme="warm-white"] .hljs-deletion,
+[data-theme="warm-white"] .hljs-selector-attr,
+[data-theme="warm-white"] .hljs-selector-pseudo,
+[data-theme="warm-white"] .hljs-meta {
+  color: #2b91af;
+}
+
+[data-theme="warm-white"] .hljs-doctag {
+  color: #808080;
+}
+
+[data-theme="warm-white"] .hljs-attr {
+  color: #ff0000;
+}
+
+[data-theme="warm-white"] .hljs-symbol,
+[data-theme="warm-white"] .hljs-bullet,
+[data-theme="warm-white"] .hljs-link {
+  color: #00b0e8;
+}

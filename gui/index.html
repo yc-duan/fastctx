@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>World</title>
+    <link rel="preload" href="/fonts/ibm-plex-serif/IBMPlexSerif-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/noto-sans-sc/NotoSansSC-400.woff2" as="font" type="font/woff2" crossorigin />
+    <script>
+      // The theme is named before the first paint, so no page flashes in the
+      // wrong one; `theme.ts` keeps it named after.
+      (function () {
+        var themes = ["warm-black", "ink-black", "warm-white"];
+        var asked = new URLSearchParams(location.search).get("theme");
+        try {
+          asked = themes.indexOf(asked) >= 0 ? asked : localStorage.getItem("theme");
+        } catch (e) {}
+        var light = matchMedia("(prefers-color-scheme: light)").matches;
+        document.documentElement.dataset.theme = themes.indexOf(asked) >= 0 ? asked : light ? "warm-white" : "warm-black";
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

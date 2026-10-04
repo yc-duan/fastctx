@@ -1,0 +1,378 @@
+/* The page, and what an agent writes as it reads. Values come from the
+   tokens; the reading itself follows incipit's typesetting, measured there
+   on real conversations: paragraph rhythm at 1.68, headings parted by face
+   and space, book-style tables, inline code in the body face, formulas at
+   the classical TeX scale. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Glyphs drawn by CSS alone, as masks in the current colour; the same
+   paths as `glyphs.ts`. */
+:root {
+  --glyph-copy: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='7' y='7' width='8.5' height='8.5' rx='1.5'/%3E%3Cpath d='M5 12.5h-.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V5'/%3E%3C/svg%3E");
+  --glyph-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 10.5l3.2 3 6.8-7'/%3E%3C/svg%3E");
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--body-size);
+  line-height: var(--leading-ui);
+  font-feature-settings: "kern", "liga", "calt";
+  /* Space between Chinese and Latin, and trimmed fullwidth punctuation,
+     where the engine can do it. */
+  text-autospace: normal;
+  text-spacing-trim: normal;
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: var(--selection);
+  color: inherit;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: inherit;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}
+
+/* Prose: an agent's words. */
+
+.prose {
+  line-height: var(--leading-prose);
+  overflow-wrap: break-word;
+}
+
+.prose > :first-child {
+  margin-top: 0;
+}
+
+.prose > :last-child {
+  margin-bottom: 0;
+}
+
+.prose p {
+  margin: 1em 0;
+}
+
+.prose strong,
+.prose b {
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+}
+
+.prose em {
+  font-style: italic;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  color: var(--text-strong);
+  line-height: var(--leading-heading);
+}
+
+.prose h1 {
+  font-size: var(--size-h1);
+  margin: 1.8em 0 0.45em;
+  letter-spacing: -0.008em;
+}
+
+.prose h2 {
+  font-size: var(--size-h2);
+  margin: 1.5em 0 0.4em;
+  letter-spacing: -0.008em;
+}
+
+.prose h3 {
+  font-size: var(--size-h3);
+  margin: 1.2em 0 0.3em;
+  line-height: 1.44;
+}
+
+.prose h4,
+.prose h5,
+.prose h6 {
+  font-size: 1em;
+  margin: 0.9em 0 0.2em;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.55em;
+  margin: 0.8em 0;
+}
+
+.prose li {
+  margin: 0.32em 0;
+}
+
+.prose li > p {
+  margin: 0.25em 0;
+}
+
+.prose li::marker {
+  color: var(--text-2);
+}
+
+.prose blockquote {
+  margin: 0.8em 0;
+  padding: 0.15em 0 0.15em 0.9em;
+  border-left: 2px solid var(--rule);
+  color: var(--text-quote);
+}
+
+.prose blockquote p {
+  margin: 0.2em 0;
+}
+
+.prose hr {
+  border: 0;
+  height: 1px;
+  background: var(--rule);
+  margin: 1.8em 0;
+}
+
+/* Links keep the text's colour; the affordance is a row of dots set well
+   below the baseline, and a wash under the words on hover. */
+.prose a {
+  color: inherit;
+  text-decoration: none;
+  background-image: radial-gradient(circle, var(--accent) 1px, transparent 1.6px);
+  background-size: 7px 2px;
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  padding: 0 2px 2px;
+  margin: 0 -2px;
+  border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color var(--hover) ease;
+}
+
+.prose a:hover {
+  background-color: var(--accent-wash);
+}
+
+/* Inline code reads in the body face: a name in a sentence, not a chip. */
+.prose :not(pre) > code {
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0 0.08em;
+}
+
+/* Fenced code: a solid surface, wrapped rather than scrolled, so a phone
+   reads it whole. */
+.code-block {
+  position: relative;
+  margin: 1em 0;
+  border-radius: var(--radius-s);
+  background: var(--surface-code);
+}
+
+.code-block pre {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.code-block:has(.code-language) pre {
+  padding-top: calc(var(--space-3) + 18px);
+}
+
+.code-block code,
+pre code {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  word-break: break-word;
+}
+
+.code-language {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-4);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  line-height: 1;
+  user-select: none;
+}
+
+.code-copy {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.code-copy::before {
+  content: "";
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: auto;
+  background: currentColor;
+  -webkit-mask: var(--glyph-copy) center / contain no-repeat;
+  mask: var(--glyph-copy) center / contain no-repeat;
+}
+
+.code-copy.copied::before {
+  -webkit-mask-image: var(--glyph-check);
+  mask-image: var(--glyph-check);
+}
+
+.code-block:hover .code-copy,
+.code-copy:focus-visible,
+.code-copy.copied {
+  opacity: 1;
+}
+
+.code-copy:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+/* Where nothing hovers, the copy button is always there. */
+@media (hover: none) {
+  .code-copy {
+    opacity: 1;
+  }
+}
+
+/* Tables: a ledger in a printed book. A heavier rule closes the header, a
+   lighter one parts the rows, the last row sits on open air. A table wider
+   than the column scrolls on its own. */
+.prose table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  border-spacing: 0;
+  margin: 1.2em 0;
+  font-size: 0.95em;
+  line-height: var(--leading-ui);
+}
+
+.prose th,
+.prose td {
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  padding: 7px 14px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  min-width: 4em;
+}
+
+.prose th:first-child,
+.prose td:first-child {
+  padding-left: 0;
+}
+
+.prose thead th {
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  color: var(--text-strong);
+  padding-bottom: 6px;
+}
+
+.prose tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Formulas at the classical TeX scale; a display formula wider than the
+   column scrolls rather than shrinks. */
+.katex {
+  font-size: 1.21em;
+}
+
+.katex,
+.katex * {
+  text-indent: 0;
+  letter-spacing: 0;
+  word-spacing: 0;
+}
+
+.math-display {
+  margin: 1.1em 0;
+  padding: 0.3em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.math-display .katex-display {
+  margin: 0;
+}
+
+.math-source {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  color: var(--text-2);
+}
+
+/* A diagram: its source until it is drawn, then the drawing, unboxed. */
+.diagram {
+  margin: 1em 0;
+  white-space: pre-wrap;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  color: var(--text-2);
+  overflow-x: auto;
+}
+
+.diagram.drawn {
+  display: flex;
+  justify-content: center;
+  white-space: normal;
+}
+
+.diagram svg {
+  max-width: 100%;
+  height: auto;
+}
