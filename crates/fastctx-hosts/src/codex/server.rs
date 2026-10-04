@@ -1,29 +1,20 @@
-//! One running `codex app-server` and the client half of its protocol:
-//! JSON-RPC messages, one per line, over its standard input and output.
-//!
-//! The process is the node's own child (`fastctx_platform::Child`): it ends
-//! when the node does, and takes the tool servers it started with it. Its
-//! end is read from the process, never from its output closing, since a
-//! program it started may hold that output open. Once it has exited, what
-//! it started is ended too, the last lines it wrote are read, and every
-//! request still waiting fails with the reason; nothing is sent to it after.
-//!
-//! Standard output is read on a thread of its own, as is standard error,
-//! which goes to the node's log line by line; writing is a thread too, so
-//! a full pipe never holds up the async runtime.
+//! One running app-server and its JSON-RPC client. The transport owns the
+//! socket connection and watches the real process. Responses are delivered
+//! after preceding notifications; unanswered requests fail after the host
+//! has applied the process's exit.
 
 use std::collections::HashMap;
-use std::ffi::{OsStr, OsString};
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use fastctx_platform::Child;
 use serde_json::{Value, json};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio_tungstenite::tungstenite::Message;
 
-use super::Log;
+use super::{Log, transport};
 
 /// What the app-server says that is not the answer to one of our requests.
 #[derive(Debug)]
@@ -54,7 +45,8 @@ pub enum Inbound {
 
 pub struct AppServer {
     child: Arc<Child>,
-    lines: std::sync::mpsc::Sender<Vec<u8>>,
+    messages: mpsc::UnboundedSender<Message>,
+    ended: watch::Receiver<bool>,
     next: AtomicU64,
     pending: Arc<Mutex<Pending>>,
 }
@@ -100,87 +92,46 @@ impl AppServer {
         env: &[(OsString, OsString)],
         log: Log,
     ) -> std::io::Result<(Arc<Self>, mpsc::UnboundedReceiver<Inbound>)> {
-        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
-        let mut child = Child::spawn(program, &args, cwd, env)?;
-        let (stdin, stdout, stderr) = (
-            child.stdin.take().expect("piped at spawn"),
-            child.stdout.take().expect("piped at spawn"),
-            child.stderr.take().expect("piped at spawn"),
-        );
-        let child = Arc::new(child);
         let pending = Arc::new(Mutex::new(Pending::default()));
         let (inbound, receiver) = mpsc::unbounded_channel();
-
-        let (lines, to_write) = std::sync::mpsc::channel::<Vec<u8>>();
-        std::thread::Builder::new().name("app-server input".to_string()).spawn(move || {
-            let mut stdin = stdin;
-            for line in to_write {
-                if stdin.write_all(&line).and_then(|()| stdin.flush()).is_err() {
-                    // It stopped reading, which is its exit; that is
-                    // reported from the process.
-                    return;
-                }
-            }
+        let (routed, reports, logger) = (pending.clone(), inbound.clone(), log.clone());
+        let transport = transport::spawn(program, args, cwd, env, log, move |bytes| {
+            route(bytes, &routed, &reports, &logger);
         })?;
-
-        let stderr_log = log.clone();
-        std::thread::Builder::new().name("app-server stderr".to_string()).spawn(move || {
-            for line in BufReader::new(stderr).lines() {
-                match line {
-                    Ok(line) => stderr_log(format!("app-server: {line}")),
-                    Err(_) => return,
-                }
-            }
-        })?;
-
-        let reader = {
-            let (pending, inbound, log) = (pending.clone(), inbound.clone(), log.clone());
-            std::thread::Builder::new().name("app-server output".to_string()).spawn(move || {
-                let mut stdout = BufReader::new(stdout);
-                let mut line = Vec::new();
-                loop {
-                    line.clear();
-                    match stdout.read_until(b'\n', &mut line) {
-                        Ok(0) => return,
-                        Ok(_) => route(&line, &pending, &inbound, &log),
-                        Err(error) => {
-                            log(format!("reading the app-server's output: {error}"));
-                            return;
-                        }
-                    }
-                }
-            })?
-        };
-
-        let (waited, ended) = (child.clone(), pending.clone());
-        std::thread::Builder::new().name("app-server exit".to_string()).spawn(move || {
-            let pending = ended;
-            let status = waited.wait();
-            // What it started goes with it, so its output closes and the
-            // last of it can be read.
-            let _ = waited.kill();
-            let _ = reader.join();
-            let why = match status {
-                Ok(status) => status.to_string(),
-                Err(error) => format!("its exit could not be watched: {error}"),
-            };
+        let (ended, ending) = watch::channel(false);
+        let waited = pending.clone();
+        tokio::spawn(async move {
+            let why = transport.exited.await.unwrap_or_else(|_| "its transport stopped".into());
             let reason = format!("the Codex app-server stopped ({why})");
-            let mut pending = pending.lock().expect("never poisoned");
-            pending.stopped = Some(reason.clone());
-            let waiting = pending.waiting.drain().map(|(_, waiter)| waiter).collect::<Vec<_>>();
-            drop(pending);
-            // Every preceding notification must reach the host state before
-            // an unanswered submission is classified as unknown.
+            let waiting = {
+                let mut pending = waited.lock().expect("never poisoned");
+                pending.stopped = Some(reason.clone());
+                pending.waiting.drain().map(|(_, waiter)| waiter).collect::<Vec<_>>()
+            };
+            // The host applies all preceding notifications and this exit
+            // before deciding whether an unanswered submission went in.
             let (drained, heard) = oneshot::channel();
             let _ = inbound.send(Inbound::Exited { why, drained });
-            let _ = heard.blocking_recv();
+            let _ = heard.await;
             for waiter in waiting {
                 let _ = waiter.send(Err(Unanswered::Stopped(reason.clone())));
             }
-        })?;
-
-        let server = Arc::new(Self { child, lines, next: AtomicU64::new(1), pending });
+            let _ = ended.send(true);
+        });
+        let server = Arc::new(Self {
+            child: transport.child,
+            messages: transport.outgoing,
+            ended: ending,
+            next: AtomicU64::new(1),
+            pending,
+        });
         Ok((server, receiver))
+    }
+
+    /// Waits for the actual process to end and its events to reach the host.
+    pub async fn wait(&self) {
+        let mut ended = self.ended.clone();
+        let _ = ended.wait_for(|ended| *ended).await;
     }
 
     pub fn pid(&self) -> u32 {
@@ -230,9 +181,8 @@ impl AppServer {
         if let Some(reason) = &self.pending.lock().expect("never poisoned").stopped {
             return Err(reason.clone());
         }
-        let mut line = serde_json::to_vec(message).expect("JSON values serialize");
-        line.push(b'\n');
-        self.lines.send(line).map_err(|_| "the Codex app-server is not reading its input".to_string())
+        let text = serde_json::to_string(message).expect("JSON values serialize");
+        self.messages.send(Message::Text(text.into())).map_err(|_| "the Codex app-server connection closed".to_string())
     }
 }
 

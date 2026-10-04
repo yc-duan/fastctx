@@ -15,7 +15,7 @@ use clap::Args;
 use fastctx_client::{Conversation, Said, World};
 use fastctx_hands::told::turn_end;
 use fastctx_types::residents::Landed;
-use fastctx_types::session::{Happened, Part, SessionEvent, Speaker, StepStatus, ToolStatus, What};
+use fastctx_types::session::{Happened, Part, SessionChange, SessionEvent, Speaker, StepStatus, ToolStatus, What};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 
 /// Talk to a resident on any machine, or open a session to talk to.
@@ -217,7 +217,9 @@ impl Printer {
             // A change is shown when it says something of the session's
             // health; the rest is state for richer clients.
             Happened::Changed { change, .. } => {
-                if let Some(health) = change.health() {
+                if matches!(change, SessionChange::Status { waiting_for_user: Some(true), .. }) {
+                    self.line("  · waiting for you");
+                } else if let Some(health) = change.health() {
                     self.line(&format!("  ! {}", health.text));
                 }
             }

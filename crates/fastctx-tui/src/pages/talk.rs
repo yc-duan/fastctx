@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fastctx_types::residents::{Activity, Origin};
-use fastctx_types::session::Happened;
+use fastctx_types::session::{Happened, SessionChange};
 use fastctx_types::town::ResidentNow;
 use fastctx_types::{Address, MachineName, TownName};
 use jiff::Timestamp;
@@ -42,6 +42,7 @@ pub struct TalkPage {
     picked: Option<Address>,
     /// What its host last reported it doing, and since when.
     state: Option<(Activity, Timestamp)>,
+    waiting_for_user: bool,
     transcript: Transcript,
     editor: Editor,
     /// The first row shown, when the view is not following the end.
@@ -80,6 +81,7 @@ impl TalkPage {
         page.origin = Some(resident.about.origin.clone());
         page.model = resident.about.model.clone();
         page.state = state;
+        page.waiting_for_user = resident.now.as_ref().is_some_and(|now| now.waiting_for_user);
         page
     }
 
@@ -112,6 +114,7 @@ impl TalkPage {
             around: Ok(Around::default()),
             picked: None,
             state: None,
+            waiting_for_user: false,
             editor: Editor::multi(),
             top: None,
             watching: Watching::Starting,
@@ -140,7 +143,7 @@ impl TalkPage {
 
     pub fn animating(&self) -> bool {
         self.transcript.moving()
-            || matches!(self.state, Some((Activity::Busy, _)))
+            || (matches!(self.state, Some((Activity::Busy, _))) && !self.waiting_for_user)
             || self
                 .around
                 .as_ref()
@@ -230,13 +233,20 @@ impl TalkPage {
         match happened {
             Happened::TurnStarted { .. } => {
                 self.state = Some((Activity::Busy, at));
+                self.waiting_for_user = false;
                 // A new turn makes an old note stale, and the turn at work
                 // shows where the note was; a stop asked for still shows.
                 if !self.stopping {
                     self.note = None;
                 }
             }
-            Happened::TurnEnded { .. } => self.state = Some((Activity::Idle, at)),
+            Happened::TurnEnded { .. } => {
+                self.state = Some((Activity::Idle, at));
+                self.waiting_for_user = false;
+            }
+            Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } => {
+                self.waiting_for_user = *waiting;
+            }
             _ => {}
         }
     }
@@ -393,6 +403,9 @@ impl TalkPage {
             }
             let state = match colleague.now.as_ref().map(|now| (now.activity, now.since)) {
                 _ if !colleague.here => words.left().to_string(),
+                Some((Activity::Busy, _)) if colleague.now.as_ref().is_some_and(|now| now.waiting_for_user) => {
+                    words.waiting_for_user().to_string()
+                }
                 Some((Activity::Busy, since)) => format!("{} {}", words.busy(), words.since(since, ctx.now)),
                 Some((Activity::Idle, since)) => format!("{} {}", words.idle(), words.since(since, ctx.now)),
                 Some((Activity::Asleep, _)) => words.asleep().to_string(),
@@ -530,6 +543,8 @@ impl TalkPage {
             })
         } else if self.note.is_some() {
             self.note.clone()
+        } else if self.waiting_for_user {
+            Some(quiet(ctx, words.waiting_for_user()))
         } else if let Some((Activity::Busy, since)) = self.state {
             // Braille turns in one cell, in the terminal's own font.
             const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

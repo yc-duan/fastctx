@@ -578,6 +578,7 @@ impl Residents {
             // stands.
             if current {
                 now.turn = None;
+                now.waiting_for_user = false;
                 now.activity = if requester_here { Activity::Idle } else { Activity::Asleep };
                 now.since = Timestamp::now();
             }
@@ -645,6 +646,7 @@ fn here(live: &Live) -> bool {
 fn enter(now: &mut Now, turn: &str) {
     if now.turn.as_deref() != Some(turn) || now.activity != Activity::Busy {
         now.since = Timestamp::now();
+        now.waiting_for_user = false;
     }
     now.turn = Some(turn.to_string());
     now.activity = Activity::Busy;
@@ -668,6 +670,7 @@ pub fn idle(since: Timestamp) -> Now {
         answering: Vec::new(),
         trouble: None,
         desk: false,
+        waiting_for_user: false,
     }
 }
 

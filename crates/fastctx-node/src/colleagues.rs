@@ -107,6 +107,7 @@ pub async fn ask_here(
         answering: vec![asker.clone()],
         trouble: None,
         desk: false,
+        waiting_for_user: false,
     };
     node.residents
         .create(&node.world, about.clone(), town.clone(), now)

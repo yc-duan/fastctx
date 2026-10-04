@@ -67,6 +67,10 @@ pub enum SessionChange {
     },
     Status {
         status: Value,
+        /// Whether the host is waiting for a human answer; absent when its
+        /// status is not understood by the host adapter.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting_for_user: Option<bool>,
     },
     Metadata {
         metadata: Value,
