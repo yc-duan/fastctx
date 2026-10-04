@@ -322,8 +322,19 @@ impl Transcript {
             // Shown once it is done: the context it leaves is what counts.
             What::Compaction if !finished => return,
             What::Compaction => Item::Compaction { item: id.clone(), turn: turn.clone() },
-            // A kind the World does not know is not drawn.
-            What::Other { .. } => return,
+            // A completed item can remove a transient placeholder, for
+            // example an image attempt that ended without an image.
+            What::Other { .. } => {
+                if !id.is_empty() {
+                    self.items.retain(|shown| match shown {
+                        Item::Prose { item, turn: own, .. }
+                        | Item::Tool { item, turn: own, .. }
+                        | Item::Compaction { item, turn: own } => item != &id || own != &turn,
+                        _ => true,
+                    });
+                }
+                return;
+            }
         };
         if id.is_empty() {
             self.items.push(fresh);

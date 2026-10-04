@@ -163,6 +163,8 @@ struct Printer {
     streamed: HashMap<(String, String), String>,
     /// Items whose text is not shown as it grows: thinking and plans.
     quiet: HashSet<(String, String)>,
+    /// Tools shown as they began; a history holds only how they finished.
+    tools: HashSet<(String, String)>,
     /// Whether the cursor is in the middle of a line.
     open_line: bool,
 }
@@ -201,6 +203,7 @@ impl Printer {
                 }
                 What::Message { text } if !text.is_empty() => self.chunk((turn.clone(), item.id.clone()), text),
                 What::Tool(tool) => {
+                    self.tools.insert((turn.clone(), item.id.clone()));
                     self.line(&format!("  · {} {}", tool.name, fastctx_client::shown::tool_detail(tool)))
                 }
                 _ => {}
@@ -243,8 +246,14 @@ impl Printer {
                     }
                 }
                 What::Plan { text } => self.line(&format!("── proposed plan\n{text}")),
-                What::Tool(tool) if matches!(tool.status, ToolStatus::Failed | ToolStatus::Declined) => {
-                    self.line(&format!("  ✗ {} {} failed", tool.name, fastctx_client::shown::tool_detail(tool)))
+                What::Tool(tool) => {
+                    let detail = fastctx_client::shown::tool_detail(tool);
+                    let failed = matches!(tool.status, ToolStatus::Failed | ToolStatus::Declined);
+                    match (self.tools.remove(&(turn.clone(), item.id.clone())), failed) {
+                        (_, true) => self.line(&format!("  ✗ {} {detail} failed", tool.name)),
+                        (false, false) => self.line(&format!("  · {} {detail}", tool.name)),
+                        (true, false) => {}
+                    }
                 }
                 What::AgentActivity { path, activity, .. } => self.line(&format!("  · {path}: {activity}")),
                 What::Compaction => self.line("── context compacted"),
@@ -264,6 +273,7 @@ impl Printer {
             Happened::TurnEnded { turn, end } => {
                 self.streamed.retain(|(t, _), _| t != turn);
                 self.quiet.retain(|(t, _)| t != turn);
+                self.tools.retain(|(t, _)| t != turn);
                 self.line(&format!("── {}", turn_end(end)));
             }
             Happened::Health { health, .. } => self.line(&format!("  ! {}", health.text)),

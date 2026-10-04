@@ -36,8 +36,6 @@ pub struct Registration {
     pub at: Option<Timestamp>,
     #[serde(default)]
     pub process: Option<fastctx_types::ProcessIdentity>,
-    /// `FASTCTX_RESIDENT`, as `<id>@<machine>`, when the World started it.
-    pub resident: Option<String>,
     /// The session's inbox address, which pairs it with its MCP connection.
     pub inbox_address: Option<String>,
     /// How the session was started: `cli`, `claude-vscode` and the like.

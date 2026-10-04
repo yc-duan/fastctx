@@ -98,6 +98,9 @@ pub fn read(item: &Value, completed: bool) -> Read {
             .done()
         }
         "fileChange" => {
+            if item.get("changes").and_then(Value::as_array).is_some_and(Vec::is_empty) {
+                return unshown(item);
+            }
             let changes = item
                 .get("changes")
                 .and_then(Value::as_array)
@@ -200,6 +203,15 @@ pub fn read(item: &Value, completed: bool) -> Read {
             .done(),
         "imageView" => tool(item, "view_image", None, Does::Image { path: text(item, "path") }).done(),
         "imageGeneration" => {
+            let source = ["savedPath", "result"]
+                .iter()
+                .any(|key| item.get(key).and_then(Value::as_str).is_some_and(|value| !value.trim().is_empty()));
+            let running = matches!(item.get("status").and_then(Value::as_str), Some("inProgress" | "in_progress"));
+            let limit = item.pointer("/failure/type").and_then(Value::as_str) == Some("usageLimitExceeded")
+                && item.pointer("/failure/limitId").and_then(Value::as_str) == Some("image_gen");
+            if !source && !running && !limit {
+                return unshown(item);
+            }
             let mut output = Vec::new();
             if let Some(result) = text(item, "result").filter(|result| !result.trim().is_empty()) {
                 let image = result.trim();

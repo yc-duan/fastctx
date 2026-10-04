@@ -252,6 +252,18 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
     match call {
         Call::Arrive { host, hints } => {
             let claude = hints.inbox.is_some();
+            // A Claude session registers through its mod when it starts, before
+            // its first tool call brings its MCP connection here. One not yet
+            // placed waits for the sessions the World is starting to be known,
+            // and for registrations not yet read, so that the connection is
+            // known for the resident the session already is.
+            if let Some(inbox) = &hints.inbox
+                && hints.resident.is_none()
+                && node.residents.resident_of_inbox(inbox).is_none()
+            {
+                drop(node.claude.births.write().await);
+                crate::claude::replay(node).await;
+            }
             let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
             if claude {
                 crate::claude::arrived(node, &whereabouts.resident).await;

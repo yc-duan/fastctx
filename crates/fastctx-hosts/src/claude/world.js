@@ -44,6 +44,8 @@ function conversation(sessionId, previous) {
     hostProcess: null,
     requestInFlight: false,
     submissionTurns: [],
+    // A submission that entered before the turn taking it started.
+    awaiting: null,
     handled: new Set(),
     failing: new Set(),
     held: [],
@@ -237,14 +239,20 @@ async function submit($, context, deliveries, prompt) {
     context.requestInFlight = false
     if (result.drop !== undefined) throw new Error(result.drop)
     const candidates = context.submissionTurns.filter((started) => started.text === result.text)
+    if (candidates.length === 0) {
+      // The prompt entered; the turn it starts begins once the session is
+      // idle, which may be only after this very hook returns (a submission at
+      // the end of a turn). The next turn with its text is the one that took
+      // it (`startTurn`); meanwhile nothing else is submitted.
+      context.awaiting = { text: result.text, deliveries }
+      return true
+    }
     context.submitting.splice(0, context.submitting.length)
     if (candidates.length !== 1) {
       await uncertain($, context, deliveries.map((delivery) => delivery.id), 'the host did not identify one consuming turn for this submission')
       return true
     }
-    const acceptedTurn = candidates[0].turnId
-    const report = handed($, context, deliveries, acceptedTurn, 'submitted')
-    await Promise.all([report, ...deliveries.map((delivery) => receipt($, context, delivery, 'submitted', acceptedTurn))])
+    await submitted($, context, deliveries, candidates[0].turnId)
     return true
   } catch (error) {
     context.requestInFlight = false
@@ -257,6 +265,12 @@ async function submit($, context, deliveries, prompt) {
     await trouble($, context, deliveries[0].id, 'it could not be handed over: ' + error)
     return false
   }
+}
+
+// Says that `acceptedTurn` took what was submitted.
+async function submitted($, context, deliveries, acceptedTurn) {
+  const report = handed($, context, deliveries, acceptedTurn, 'submitted')
+  await Promise.all([report, ...deliveries.map((delivery) => receipt($, context, delivery, 'submitted', acceptedTurn))])
 }
 
 // Hands everything held to the model in one new turn; on failure it is
@@ -455,7 +469,6 @@ async function startSession($, context) {
       registration[name] = null
     }
   }
-  await ask('resident', () => $.env.get('FASTCTX_RESIDENT'))
   // Each session has its own inbox address, which its MCP servers inherit:
   // it pairs this registration with the session's connection to the World.
   await ask('inbox_address', () => $.env.get('CLAUDE_CODE_MESSAGING_SOCKET'))
@@ -479,9 +492,15 @@ async function startTurn($, context, e, next) {
   context.busy = true
   context.turn = e.turnId
   if (context.requestInFlight) context.submissionTurns.push({ turnId: e.turnId, text: e.text })
+  const awaited = context.awaiting !== null && context.awaiting.text === e.text ? context.awaiting : null
+  if (awaited !== null) {
+    context.awaiting = null
+    context.submitting.splice(0, context.submitting.length)
+  }
   const started = event($, context, 'turn_start', { turn: context.turn })
   const saved = activity($, context)
   await Promise.all([started, saved])
+  if (awaited !== null) await submitted($, context, awaited.deliveries, e.turnId)
   return next(e)
 }
 
@@ -540,6 +559,12 @@ async function boundary($, context, e, next) {
 async function endSession($, context, e, next) {
   context.closed = true
   context.streamBatch = null
+  if (context.awaiting !== null) {
+    const { deliveries } = context.awaiting
+    context.awaiting = null
+    context.submitting.splice(0, context.submitting.length)
+    await uncertain($, context, deliveries.map((delivery) => delivery.id), 'the session ended before a turn took what was submitted')
+  }
   const { id: name, at } = reserved(context)
   const body = JSON.stringify({ kind: 'session_end', at, reason: e.reason, pending: [...context.unwritten.keys()].map((name) => name + '.json') })
   context.unwritten.set(name, { body })

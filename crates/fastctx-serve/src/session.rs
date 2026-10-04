@@ -19,7 +19,7 @@ use crate::answer::{self, Answer};
 pub struct Session {
     world: WorldDir,
     host: OnceLock<Host>,
-    /// Set when the World started this session.
+    /// Set when the World started this session as a Codex thread.
     resident: Option<ResidentId>,
     /// Set when the World started this session as someone's colleague,
     /// which asks for no colleagues of its own.
@@ -307,7 +307,12 @@ impl Session {
         // A Claude session's inbox address pairs this connection with what
         // the World's mod reports of the session; its token is never read.
         let inbox = std::env::var("CLAUDE_CODE_MESSAGING_SOCKET").ok().filter(|address| !address.is_empty());
-        let hints = Hints { resident: self.resident.clone(), thread: thread.clone(), was, inbox };
+        // The World names a resident in the environment only of servers it
+        // gives one to, Codex threads it holds. A Claude session's servers
+        // inherit Claude Code's daemon's environment, set by whoever started
+        // the daemon: a name found there is not about this session.
+        let resident = if host.agent.as_str() == "claude" { None } else { self.resident.clone() };
+        let hints = Hints { resident, thread: thread.clone(), was, inbox };
         let mut client = self.client().await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {

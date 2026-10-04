@@ -116,6 +116,19 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
     assert!(
         matches!(hook,items::Read::Words{text,message} if text == "first\nsecond" && message.hook_fragments.len()==2)
     );
+    for raw in [
+        json!({"type":"imageGeneration","id":"g","status":"failed","result":"","failure":null}),
+        json!({"type":"fileChange","id":"p","status":"completed","changes":[]}),
+    ] {
+        let hidden = item(raw.clone(), true);
+        assert!(matches!(hidden.what, What::Other { .. }));
+        assert_eq!(hidden.detail, Some(raw));
+    }
+    let limit = item(
+        json!({"type":"imageGeneration","id":"g","status":"failed","result":"","failure":{"type":"usageLimitExceeded","limitId":"image_gen","resetsAt":null}}),
+        true,
+    );
+    assert!(matches!(limit.what, What::Tool(tool) if tool.status == ToolStatus::Failed));
 }
 
 #[test]

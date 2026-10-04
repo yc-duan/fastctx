@@ -59,6 +59,10 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
     let plugin = plugin_dir(world);
     let version = env!("CARGO_PKG_VERSION");
     let description = "The World: its tools, and word of what happens in it, for every Claude Code session";
+    // The plugin belongs to this World, and its server says so itself: a
+    // background session's environment is the Claude Code daemon's, set by
+    // whoever started the daemon, so it cannot be trusted to name the World.
+    let root = world.parent().ok_or_else(|| io::Error::other("the World's directory has no parent"))?;
     let files = [
         (
             market.join(".claude-plugin").join("marketplace.json"),
@@ -75,7 +79,9 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
                 "version": version,
                 "description": description,
                 "author": { "name": "FastCtx" },
-                "mcpServers": { "fastctx": { "command": fastctx, "args": ["serve"] } },
+                "mcpServers": {
+                    "fastctx": { "command": fastctx, "args": ["serve"], "env": { "FASTCTX_HOME": root } },
+                },
             }),
         ),
         (plugin.join("hooks").join("hooks.json"), json!({ "modules": ["./world.js"] })),
