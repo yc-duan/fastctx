@@ -306,7 +306,8 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
                     Some(format!("{category}: {explanation}"))
                 }
                 Some(Refusal { category, explanation }) => explanation.or(category).or(reason),
-                None if reason.as_deref() == Some("answer") => None,
+                // How the turn ended says these already.
+                None if matches!(reason.as_deref(), Some("answer" | "aborted")) => None,
                 None => reason,
             };
             let end = TurnEnd { how, reason, duration_ms: ms, last_message: answer };

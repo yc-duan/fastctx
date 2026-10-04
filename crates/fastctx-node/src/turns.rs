@@ -125,8 +125,10 @@ pub async fn finish_locked(
         Origin::Colleague { asked_by, .. } => node.residents.requester_here(asked_by, &node.machine()),
         Origin::User => true,
     };
+    // A turn someone stopped ended as they wanted: it is no trouble of
+    // the session's. The World's own interruptions say why.
     let trouble = match (&finished.end.how, &finished.end.reason) {
-        (TurnHow::Completed, _) => None,
+        (TurnHow::Completed, _) | (TurnHow::Interrupted, None) => None,
         (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
         (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };

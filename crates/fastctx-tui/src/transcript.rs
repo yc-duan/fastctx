@@ -817,6 +817,8 @@ fn ended(ctx: &Ctx, end: &TurnEnd, width: usize) -> Option<Line<'static>> {
     let (said, role) = match &end.how {
         TurnHow::Completed => return None,
         TurnHow::Failed => (words.turn_failed(reason.as_deref()), Role::Wrong),
+        // Stopped by someone, not cut short by anything going wrong.
+        TurnHow::Interrupted if reason.is_none() => (words.turn_stopped().to_string(), Role::Muted),
         TurnHow::Interrupted => (words.turn_interrupted(reason.as_deref()), Role::Caution),
         TurnHow::Other(how) => (words.turn_ended_as(how), Role::Muted),
     };
