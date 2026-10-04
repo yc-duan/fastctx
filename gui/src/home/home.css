@@ -16,118 +16,60 @@
   margin: var(--space-4) 0 0 calc(50% - var(--wide) / 2);
 }
 
-.frontispiece svg {
+.frontispiece {
+  position: relative;
+}
+
+.frontispiece canvas {
   display: block;
   width: 100%;
-  height: auto;
-  overflow: visible;
+  height: 100%;
 }
 
-.frontispiece .link {
-  fill: none;
-  stroke: var(--text-3);
-  stroke-width: 0.7;
-  opacity: 0.5;
+/* Names are text on the page, set where the drawing puts each machine. */
+.frontispiece-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
-.frontispiece .link.lost {
-  stroke-dasharray: 1.5 7;
-  opacity: 0.28;
+.frontispiece .label {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
 }
 
-.frontispiece .flow {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-dasharray: 2 16;
-  animation: flow 2.6s linear infinite;
+.frontispiece .label.start {
+  align-items: flex-start;
+  transform: translate(0, -50%);
 }
 
-@keyframes flow {
-  to {
-    stroke-dashoffset: -36;
-  }
+.frontispiece .label.middle {
+  align-items: center;
 }
 
-.frontispiece .knot {
-  fill: none;
-  stroke: var(--text-2);
-  stroke-width: 0.8;
-  opacity: 0.8;
-}
-
-.frontispiece .ring {
-  fill: none;
-  stroke: var(--text-2);
-  stroke-width: 0.85;
-  opacity: 0.62;
-}
-
-.frontispiece .ring.lost {
-  stroke: var(--text-3);
-  stroke-dasharray: 2.5 5;
-  opacity: 0.4;
-}
-
-.frontispiece .here {
-  fill: var(--text-2);
-}
-
-.frontispiece .mark {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-.frontispiece .mark.busy {
-  fill: var(--accent);
-  animation: breathe 2.8s ease-in-out infinite;
-}
-
-.frontispiece .mark.idle {
-  fill: none;
-  stroke: var(--text-3);
-  stroke-width: 1.1;
-}
-
-.frontispiece .mark.waiting {
-  fill: var(--bg);
-  stroke: var(--accent);
-  stroke-width: 1.8;
-  animation: breathe 1.6s ease-in-out infinite;
-}
-
-@keyframes breathe {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(0.82);
-    opacity: 0.6;
-  }
-}
-
-.frontispiece text {
-  font-family: var(--font-reading);
+.frontispiece .label.end {
+  align-items: flex-end;
+  transform: translate(-100%, -50%);
 }
 
 .frontispiece .name {
   font-family: var(--font-emphasis);
-  font-size: 16px;
-  fill: var(--text);
+  font-size: var(--size-ui);
+  color: var(--text);
 }
 
-.frontispiece .name.lost {
-  fill: var(--text-3);
+.frontispiece .lost .name {
+  color: var(--text-3);
 }
 
 .frontispiece .os {
-  font-size: 12.5px;
-  fill: var(--text-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
 }
-
 
 /* The day. Its title comes into focus once, when the page opens. */
 .dateline {
@@ -561,8 +503,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .frontispiece .flow,
-  .frontispiece .mark,
   .ask,
   .dateline-day {
     animation: none;

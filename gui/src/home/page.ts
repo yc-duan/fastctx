@@ -9,7 +9,7 @@ import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
 import type { ResidentNow, RunningJob } from "../world/world";
 import { AskIn, type Asked } from "./ask-in";
-import { Frontispiece } from "./frontispiece";
+import { Frontispiece, osName } from "./frontispiece";
 import type { Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
 
@@ -85,9 +85,12 @@ export class HomePage {
       words.machinesOnline(online, world.nodes.length),
       words.agentsWorking(busy.length + waiting.length),
     ].filter((fact): fact is string => fact !== null);
-    // A separator keeps to the fact after it, so no line starts with one.
+    // A separator keeps to the fact before it, so no line starts with one.
     const factsHtml = facts
-      .map((fact, index) => `<span class="fact">${index ? `<span class="sep">·</span>` : ""}${escape(fact)}</span> `)
+      .map(
+        (fact, index) =>
+          `<span class="fact">${escape(fact)}${index < facts.length - 1 ? `<span class="sep">·</span>` : ""}</span> `,
+      )
       .join("");
 
     const sections = [
@@ -267,7 +270,7 @@ export class HomePage {
 
   private machine(node: WorldState["nodes"][number], residents: ResidentNow[], jobs: RunningJob[]): string {
     const { words } = this.options;
-    const os = "Ok" in node.facts ? node.facts.Ok.os : "";
+    const os = "Ok" in node.facts && node.facts.Ok ? osName(node.facts.Ok.os) : "";
     const state =
       node.online === true
         ? words.online
