@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::residents::{Hints, Host, Notice, Seen, Whereabouts};
 use crate::run::{RunReply, RunRequest};
+use crate::town::WhoReply;
 use crate::{JobId, ResidentId, TownName};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -15,6 +16,9 @@ pub enum Call {
     Run { resident: ResidentId, town: Option<TownName>, request: RunRequest },
     /// Records what a resident saw of files through `fastctx view`.
     Saw { resident: ResidentId, town: Option<TownName>, seen: Vec<Seen> },
+    /// Who is on this machine and what each is doing (`fastctx w`); with
+    /// `all`, also the residents who have left.
+    Who { all: bool },
     /// Takes what waits in a resident's inbox, oldest first.
     Collect { resident: ResidentId, town: Option<TownName> },
     /// A supervisor says its job's record has changed: the shell started
@@ -28,5 +32,6 @@ pub enum Reply {
     Arrived(Whereabouts),
     Run(RunReply),
     Notices { notices: Vec<Notice> },
+    Who(WhoReply),
     Done,
 }

@@ -14,6 +14,7 @@ mod log;
 mod machine;
 mod residents;
 mod server;
+mod who;
 
 use std::path::Path;
 use std::sync::Arc;

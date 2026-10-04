@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 mod view;
+mod w;
 
 #[derive(Parser)]
 #[command(name = "fastctx", version, about = "One world, many machines.")]
@@ -23,6 +24,8 @@ enum Command {
     Serve,
     /// Look at files: text with line numbers, images as images.
     View(view::ViewArgs),
+    /// See who is here and what each is doing.
+    W(w::WArgs),
     /// Supervise one job; started by the node, not by people.
     #[command(hide = true)]
     Supervise { world: PathBuf, record: PathBuf },
@@ -34,6 +37,7 @@ fn main() -> ExitCode {
         Command::Node => node(),
         Command::Serve => serve(),
         Command::View(args) => view::run(args),
+        Command::W(args) => w::run(args),
         Command::Supervise { world, record } => supervise(&world, &record),
     };
     match result {

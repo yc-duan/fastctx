@@ -114,6 +114,13 @@ impl Client {
         }
     }
 
+    /// Waits until the node closes this connection, as when it stops. Kept
+    /// open, a connection a session arrived on is how the node knows the
+    /// resident is here.
+    pub async fn closed(mut self) {
+        while let Ok(Some(_)) = self.connection.recv().await {}
+    }
+
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
         self.next += 1;

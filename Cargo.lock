@@ -229,6 +229,7 @@ dependencies = [
  "fastctx-platform",
  "fastctx-serve",
  "fastctx-types",
+ "jiff",
  "serde_json",
  "tokio",
 ]

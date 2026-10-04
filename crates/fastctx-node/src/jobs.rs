@@ -7,6 +7,7 @@ use fastctx_hands::run::{self, Launch, WAIT, record, window};
 use fastctx_platform::{FileLock, is_alive, user_home, world_process_environment};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
+use fastctx_types::residents::Action;
 use fastctx_types::run::{Ended, EndedHow, JobRecord, RunReply, RunRequest, RunState};
 use fastctx_types::{JobId, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
@@ -108,7 +109,47 @@ impl Jobs {
                 .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
                 .map_err(|error| failure("noting that the job's end is owed", error))?;
         }
-        Ok(RunReply { machine: machine.clone(), job: launched.job, state: state(&record), output })
+        let reply = RunReply { machine: machine.clone(), job: launched.job, state: state(&record), output };
+        let action = Action {
+            at: record.started_at,
+            machine: machine.clone(),
+            hand: "run".to_string(),
+            what: first_line(&record.script),
+            result: outcome(&reply),
+        };
+        let world = world.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::residents::record_action(&world, &record.resident, record.town.as_ref(), &action)
+        })
+        .await
+        .map_err(|error| Failure::new(format!("recording the action: {error}")))?
+        .map_err(|error| failure("recording the action", error))?;
+        Ok(reply)
+    }
+}
+
+/// A script's first line, marked when more lines follow.
+pub fn first_line(script: &str) -> String {
+    let trimmed = script.trim();
+    match trimmed.split_once('\n') {
+        Some((first, _)) => format!("{} …", first.trim_end()),
+        None => trimmed.to_string(),
+    }
+}
+
+/// How a `run` came out, in a few words.
+fn outcome(reply: &RunReply) -> String {
+    let status = |status: &fastctx_types::run::ExitStatus| match status {
+        fastctx_types::run::ExitStatus::Code(code) => format!("exit {code}"),
+        fastctx_types::run::ExitStatus::Signal(signal) => format!("signal {signal}"),
+    };
+    match &reply.state {
+        RunState::Ended { status: exit } => status(exit),
+        RunState::Exited { status: exit, remaining } => format!("{}; {remaining} still running as {}", status(exit), reply.job),
+        RunState::Running => format!("running as {}", reply.job),
+        RunState::Stopped => "stopped".to_string(),
+        RunState::Interrupted { .. } => "interrupted".to_string(),
+        RunState::Failed { .. } => "could not run".to_string(),
     }
 }
 

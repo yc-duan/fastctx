@@ -88,6 +88,11 @@ impl ResidentDir {
         self.path.join("about")
     }
 
+    /// What the World saw the resident do, one JSON line each.
+    pub fn actions(&self) -> PathBuf {
+        self.path.join("actions")
+    }
+
     /// What the resident saw of files, one JSON line each.
     pub fn seen(&self) -> PathBuf {
         self.path.join("seen")

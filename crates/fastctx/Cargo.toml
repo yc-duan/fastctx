@@ -21,5 +21,6 @@ fastctx-node = { path = "../fastctx-node" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-serve = { path = "../fastctx-serve" }
 fastctx-types = { path = "../fastctx-types" }
+jiff.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }

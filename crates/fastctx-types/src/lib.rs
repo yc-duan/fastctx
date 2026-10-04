@@ -14,6 +14,7 @@ pub mod names;
 pub mod process;
 pub mod residents;
 pub mod run;
+pub mod town;
 
 pub use calls::{Call, Reply};
 pub use names::{Address, AgentName, EntryId, JobId, MachineName, NameError, ResidentId, TownName};

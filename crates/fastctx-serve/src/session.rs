@@ -1,7 +1,7 @@
 //! One agent session: who it is in the World, and its calls to the node.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use fastctx_client::{CallError, Client};
 use fastctx_hands::run::{Content, present, present_notice};
@@ -59,7 +59,7 @@ impl Session {
         let _ = self.host.set(Host { agent: agent_of(&name), client: name, version });
     }
 
-    pub async fn run(&self, arguments: &Value, meta: Option<&Value>) -> Answer {
+    pub async fn run(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
         let command = match arguments.get("command") {
             Some(Value::String(command)) => command.clone(),
             _ => return Answer::error("=== run (not run: `command` must be a string holding the script) ===".to_string()),
@@ -110,7 +110,7 @@ impl Session {
 
     /// The resident the calls of `thread` belong to, found or made by the
     /// node on first use.
-    async fn whereabouts(&self, thread: Option<String>) -> Result<Whereabouts, String> {
+    async fn whereabouts(self: &Arc<Self>, thread: Option<String>) -> Result<Whereabouts, String> {
         if let Some(known) = self.residents.lock().expect("never poisoned").get(&thread) {
             return Ok(known.clone());
         }
@@ -119,7 +119,15 @@ impl Session {
         let mut client = self.client().await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {
-                self.residents.lock().expect("never poisoned").insert(thread, whereabouts.clone());
+                self.residents.lock().expect("never poisoned").insert(thread.clone(), whereabouts.clone());
+                // The connection the resident arrived on stays open for as
+                // long as the session lives; if the node closes it, as when
+                // it restarts, the next call arrives again.
+                let session = self.clone();
+                tokio::spawn(async move {
+                    client.closed().await;
+                    session.residents.lock().expect("never poisoned").remove(&thread);
+                });
                 Ok(whereabouts)
             }
             Ok(other) => Err(format!("the node answered something else: {other:?}")),

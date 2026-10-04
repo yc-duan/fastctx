@@ -30,12 +30,30 @@ async fn converse(node: &Node, connection: Connection) -> std::io::Result<()> {
     }
     let welcome = Welcome::Accepted { machine: node.machine.clone(), version: env!("CARGO_PKG_VERSION").to_string() };
     writer.send(&json(&welcome)).await?;
+    // The residents that arrived on this connection are here until it
+    // closes, however it closes.
+    let mut arrived = Arrived { node, residents: Vec::new() };
     while let Some(frame) = reader.recv().await? {
         let ClientFrame::Call { id, call } = parse(&frame)?;
+        let arriving = matches!(call, Call::Arrive { .. });
         let reply = handle(node, &hello.peer, call).await;
+        if arriving && let Ok(Reply::Arrived(whereabouts)) = &reply {
+            arrived.residents.push(whereabouts.resident.clone());
+        }
         writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
     }
     Ok(())
+}
+
+struct Arrived<'a> {
+    node: &'a Node,
+    residents: Vec<fastctx_types::ResidentId>,
+}
+
+impl Drop for Arrived<'_> {
+    fn drop(&mut self) {
+        self.node.residents.left(&self.residents);
+    }
 }
 
 async fn handle(node: &Node, _peer: &Peer, call: Call) -> Result<Reply, Failure> {
@@ -54,6 +72,15 @@ async fn handle(node: &Node, _peer: &Peer, call: Call) -> Result<Reply, Failure>
                 .map_err(|error| Failure::new(format!("recording what was seen: {error}")))?
                 .map(|()| Reply::Done)
                 .map_err(|error| Failure::new(format!("recording what was seen: {error}")))
+        }
+        Call::Who { all } => {
+            let everyone = node.residents.everyone();
+            let (world, machine) = (node.world.clone(), node.machine.clone());
+            tokio::task::spawn_blocking(move || crate::who::who(&world, &machine, everyone, all))
+                .await
+                .map_err(|error| Failure::new(format!("looking around: {error}")))?
+                .map(Reply::Who)
+                .map_err(|error| Failure::new(format!("looking around: {error}")))
         }
         Call::Collect { resident, town } => {
             let world = node.world.clone();

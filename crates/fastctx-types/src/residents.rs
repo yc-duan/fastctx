@@ -83,6 +83,20 @@ pub struct Seen {
     pub encoding: Option<String>,
 }
 
+/// One thing the World saw a resident do: one line of its `actions`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Action {
+    pub at: Timestamp,
+    /// Where it happened, which may be another machine than the resident's.
+    pub machine: MachineName,
+    /// The hand it used: `run`, `edit`, `write`, `apply_patch`, `view`.
+    pub hand: String,
+    /// What it did, in a line: the command's first line, the file written.
+    pub what: String,
+    /// How it came out: `exit 0`, `running as j-k3x9a2`, `3 edits`.
+    pub result: String,
+}
+
 /// Where a resident is.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Whereabouts {
