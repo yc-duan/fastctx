@@ -11,14 +11,14 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::design::{Look, Role};
 use crate::text;
 
+mod table;
+
 /// Renders a Markdown snapshot into owned, styled lines. A zero width produces no lines.
 ///
 /// Code, HTML and mathematics remain readable source; images expose their alt text and address.
-/// Tables use fixed column widths, so appending rows does not resize earlier rows. An indivisible
-/// grapheme wider than the available space still occupies its natural terminal width. Quotes
-/// and code retain their specified gutters, even when those cannot fit. A table requires at
-/// least `4 * columns - 2` cells (plus enclosing indentation) to fit its CJK-capable columns;
-/// below that width it retains its geometry rather than silently discarding cell contents.
+/// Tables start at their natural column widths, wrap when space is scarce, and become labeled
+/// records when the columns cannot fit. An indivisible grapheme wider than the available space
+/// still occupies its natural terminal width. Quotes and code retain their specified gutters.
 ///
 /// This function has no streaming state. Markdown that changes the interpretation of earlier
 /// input (such as a setext underline or a reference definition) necessarily changes those lines.
@@ -99,7 +99,12 @@ impl Renderer<'_> {
             let mut block = match event {
                 Event::Start(Tag::Paragraph) => Block::prose(self.prose(inner, width, quoted, Modifier::empty())),
                 Event::Start(Tag::Heading { level, .. }) => {
-                    let lines = self.prose(inner, width, quoted, Modifier::BOLD);
+                    let mut lines = self.prose(inner, width, quoted, Modifier::BOLD);
+                    let role =
+                        if matches!(level, HeadingLevel::H1 | HeadingLevel::H2) { Role::Text } else { Role::Muted };
+                    for span in lines.iter_mut().flat_map(|line| &mut line.spans) {
+                        span.style = self.style(role, quoted).add_modifier(span.style.add_modifier | Modifier::BOLD);
+                    }
                     let (before, after) = match level {
                         HeadingLevel::H1 => (2, 1),
                         HeadingLevel::H2 => (1, 1),
@@ -124,7 +129,7 @@ impl Renderer<'_> {
                 Event::Start(Tag::BlockQuote(_)) => {
                     let indent = 2;
                     let mut block = self.blocks(inner, width.saturating_sub(indent).max(1), true, false);
-                    indent_lines(&mut block.lines, &" ".repeat(indent), self.style(Role::Muted, true));
+                    indent_lines(&mut block.lines, "│ ", self.look.text(Role::Faint));
                     block.before = 1;
                     block.after = 1;
                     block
@@ -372,35 +377,8 @@ impl Renderer<'_> {
             rows.push(cells);
             index = end + 1;
         }
-        let count = alignments.len();
-        // Two cells hold an ordinary CJK grapheme; neighboring columns require two more cells.
-        // If even this minimum does not fit, retain the requested table geometry without clipping.
-        let room = width.saturating_sub((count - 1) * 2).max(count * 2);
-        let widths: Vec<_> = (0..count).map(|column| room / count + usize::from(column < room % count)).collect();
-        let mut lines = Vec::new();
-        for row in &rows {
-            let wrapped: Vec<_> = (0..count).map(|column| text::wrap(&row[column], widths[column])).collect();
-            let height = wrapped.iter().map(Vec::len).max().unwrap_or(0);
-            for line in 0..height {
-                let mut spans = Vec::new();
-                for column in 0..count {
-                    let cell = wrapped[column].get(line).cloned().unwrap_or_default();
-                    let free = widths[column].saturating_sub(text::line_width(&cell));
-                    let left = match alignments[column] {
-                        Alignment::Center => free / 2,
-                        Alignment::Right => free,
-                        _ => 0,
-                    };
-                    push(&mut spans, &" ".repeat(left), self.style(Role::Text, quoted));
-                    spans.extend(cell.spans);
-                    if column + 1 < count {
-                        push(&mut spans, &" ".repeat(free - left + 2), self.style(Role::Text, quoted));
-                    }
-                }
-                lines.push(Line::from(spans));
-            }
-        }
-        Block::prose(lines)
+        let style = self.style(Role::Text, quoted);
+        Block::prose(table::render(&rows, alignments, width, style, self.look.text(Role::Faint)))
     }
 }
 

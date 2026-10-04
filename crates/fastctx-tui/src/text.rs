@@ -151,6 +151,28 @@ fn atoms(cells: &[Cell<'_>]) -> Vec<(usize, usize)> {
     atoms
 }
 
+/// The widest run that ordinary wrapping keeps together, excluding trailing whitespace.
+/// This uses the same CJK and punctuation boundaries as `wrap`; long runs can still be split
+/// when a caller deliberately allocates less space.
+pub fn unbreakable_width(text: &str) -> usize {
+    text.lines()
+        .map(|line| {
+            let cells: Vec<_> =
+                line.graphemes(true).map(|text| Cell { text, style: Style::default(), width: width(text) }).collect();
+            atoms(&cells)
+                .into_iter()
+                .map(|(start, end)| {
+                    let atom = &cells[start..end];
+                    let body = atom.iter().rposition(|cell| !cell.text.chars().all(char::is_whitespace));
+                    body.map_or(0, |last| atom[..=last].iter().map(|cell| cell.width).sum())
+                })
+                .max()
+                .unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 fn wrap_paragraph(cells: &[Cell<'_>], width: usize, preserve_spaces: bool) -> Vec<Line<'static>> {
     if cells.is_empty() {
         return vec![Line::default()];

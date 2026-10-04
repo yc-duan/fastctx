@@ -464,13 +464,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     events
 }
 
-/// A finished turn whose answer is written the way agents write: a
-/// heading, lists, code, a table.
-fn answered(now: Timestamp) -> Vec<SessionEvent> {
-    let event =
-        |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
-    let turn = "t-2".to_string();
-    let answer = "## 定点化完成
+const ANSWER: &str = "## 定点化完成
 
 积分项改成 **Q8.24** 之后，`step_profile` 在 41 s 处的饱和消失了。原因是限幅放在累加之后：
 
@@ -484,6 +478,8 @@ let next = self.integral.saturating_add(error * self.ki);
 self.integral = next.clamp(-LIMIT, LIMIT);
 ```
 
+### 验证结果
+
 | 测试 | 浮点 | Q8.24 |
 |---|---|---|
 | step_profile | 通过 | 通过 |
@@ -493,6 +489,21 @@ self.integral = next.clamp(-LIMIT, LIMIT);
 > 采样周期没动，仍是 1 ms。
 
 还剩 `noise_reject` 那 0.3%，要不要再看，你定。";
+const TABLE_ANSWER: &str = "## 验证明细
+
+| 检查项 | 工作节点 | 运行阶段 | 结果 |
+|---|---|---|---|
+| accumulator_boundary_guard checks the upper and lower limits under sustained input | controller_primary on revision B | fixed_point_validation with steady input | completed_without_error after saturation |
+| accumulator_boundary_guard checks recovery after saturation | controller_secondary on revision C | fixed_point_validation with noisy input | completed_without_error after recovery |
+
+> 两块板子的采样周期都是 1 ms。";
+
+/// A finished turn whose answer is written the way agents write: a
+/// heading, lists, code, a table.
+fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
+    let event =
+        |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
+    let turn = "t-2".to_string();
     vec![
         event(400, Happened::TurnStarted { turn: turn.clone() }),
         event(
@@ -556,7 +567,10 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     talk.data(ctx, Data::History(conversation(now)));
     let mut answer =
         TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
-    answer.data(ctx, Data::History(answered(now)));
+    answer.data(ctx, Data::History(answered(now, ANSWER)));
+    let mut table_answer =
+        TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
+    table_answer.data(ctx, Data::History(answered(now, TABLE_ANSWER)));
     let mut typing =
         TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     typing.data(ctx, Data::History(Vec::new()));
@@ -580,6 +594,7 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         ("project", Page::Project(Box::new(ProjectPage::with(town("mark50"), town_view, map(now))))),
         ("talk", Page::Talk(Box::new(talk))),
         ("answer", Page::Talk(Box::new(answer))),
+        ("answer-table", Page::Talk(Box::new(table_answer))),
         ("typing", Page::Talk(Box::new(typing))),
         ("journal", Page::Journal(Box::new(JournalPage::with("Mark 50 研发".into(), journal(now))))),
         ("machines", Page::Machines(MachinesPage::with(nodes(now)))),
