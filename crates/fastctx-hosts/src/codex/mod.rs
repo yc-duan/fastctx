@@ -88,8 +88,9 @@ pub const TOOL_TIMEOUT: Duration = Duration::from_secs(300);
 ///   Direct MCP history reuses its already computed allowance from metadata;
 ///   Code Mode history uses the root policy. Neither adds another header.
 ///
-/// Code Mode also truncates prints *before* adding its header, under a separate
-/// exec/wait `max_output_tokens` (10,000 by default, without the 20% allowance).
+/// Code Mode also truncates prints *before* adding its header, under each exec's
+/// `max_output_tokens` pragma or wait's `max_tokens` argument (each defaults to
+/// 10,000, without the 20% allowance; wait does not inherit the exec budget).
 /// That limit must independently accommodate the prints; changing this setting
 /// cannot prevent earlier truncation, arbitrary script expansion, or hook edits.
 pub fn output_limit(budget: usize) -> u64 {
