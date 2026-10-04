@@ -9,6 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fastctx_client::{Said, TownRecord, TownView};
 use fastctx_types::project::{JournalView, MapView, RecordFields, TownSummary};
 use fastctx_types::session::SessionEvent;
+use fastctx_types::town::RunningJob;
 use fastctx_types::world::NodesReply;
 use fastctx_types::{AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
@@ -88,6 +89,9 @@ pub enum Feed {
     Watch {
         resident: ResidentId,
         machine: MachineName,
+        /// Its town, whose machines say what it started that still runs;
+        /// outside a town, every machine of the World says.
+        town: Option<TownName>,
         round: u32,
     },
 }
@@ -112,6 +116,8 @@ pub enum Data {
     Event(SessionEvent),
     /// The watch ended, with why when it broke.
     Unwatched(Option<String>),
+    /// What the agent being watched started that still runs, wherever.
+    Running(Result<Vec<RunningJob>, String>),
     /// What the World answered a job the page asked for.
     Done {
         job: Job,

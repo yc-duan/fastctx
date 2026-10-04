@@ -9,6 +9,7 @@
 use std::time::Duration;
 
 use fastctx_client::{Conversation, TownView, World};
+use fastctx_types::{Address, TownName};
 use jiff::Timestamp;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
@@ -56,8 +57,13 @@ impl Drop for Feeds {
 }
 
 async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
-    if let Feed::Watch { resident, machine, .. } = feed {
-        return watch(world, sender, page, resident, machine).await;
+    if let Feed::Watch { resident, machine, town, .. } = feed {
+        let owner = Address { machine: machine.clone(), resident: resident.clone() };
+        tokio::join!(
+            watch(world.clone(), sender.clone(), page, resident, machine),
+            running(world, sender, page, owner, town),
+        );
+        return;
     }
     loop {
         let data = ask(&world, &feed).await;
@@ -118,6 +124,22 @@ async fn watch(
         if sender.send((page, data)).is_err() || ended {
             return;
         }
+    }
+}
+
+/// What `owner` started that still runs, asked as often as a page that
+/// shows who is where, of the machines that would list it.
+async fn running(world: World, sender: Sender, page: u64, owner: Address, town: Option<TownName>) {
+    loop {
+        let jobs = world
+            .who(town.clone(), false)
+            .await
+            .map(|who| TownView::new(who, None).jobs_by(&owner).into_iter().cloned().collect())
+            .map_err(|error| error.to_string());
+        if sender.send((page, Data::Running(jobs))).is_err() {
+            return;
+        }
+        tokio::time::sleep(EVERY).await;
     }
 }
 

@@ -121,8 +121,12 @@ impl TownView {
 
     /// The jobs a resident started that still run.
     pub fn jobs_of(&self, resident: &ResidentNow) -> Vec<&RunningJob> {
-        let owner = address(resident);
-        self.jobs.iter().filter(|job| job.owner == owner).collect()
+        self.jobs_by(&address(resident))
+    }
+
+    /// What `owner` started that still runs, on whichever machine.
+    pub fn jobs_by(&self, owner: &Address) -> Vec<&RunningJob> {
+        self.jobs.iter().filter(|job| job.owner == *owner).collect()
     }
 
     /// What runs on with nobody here who started it.

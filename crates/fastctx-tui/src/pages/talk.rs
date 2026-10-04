@@ -8,8 +8,8 @@ use std::collections::VecDeque;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fastctx_types::residents::{Activity, Origin};
 use fastctx_types::session::Happened;
-use fastctx_types::town::ResidentNow;
-use fastctx_types::{Address, MachineName};
+use fastctx_types::town::{ResidentNow, RunningJob};
+use fastctx_types::{Address, MachineName, TownName};
 use jiff::Timestamp;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -32,6 +32,9 @@ pub struct TalkPage {
     origin: Option<Origin>,
     model: Option<String>,
     project: Option<String>,
+    town: Option<TownName>,
+    /// What it started that still runs, wherever it runs.
+    running: Result<Vec<RunningJob>, String>,
     /// What its host last reported it doing, and since when.
     state: Option<(Activity, Timestamp)>,
     transcript: Transcript,
@@ -65,6 +68,7 @@ impl TalkPage {
         let agent = resident.about.host.agent.to_string();
         let state = resident.now.as_ref().map(|now| (now.activity, now.since));
         let mut page = Self::bare(address, agent, project, here);
+        page.town = resident.town.clone();
         page.origin = Some(resident.about.origin.clone());
         page.model = resident.about.model.clone();
         page.state = state;
@@ -73,14 +77,15 @@ impl TalkPage {
 
     /// A session just opened with the user's first words.
     pub fn opened(
-        address: Address,
         agent: String,
+        town: Option<TownName>,
         project: Option<String>,
         first: String,
         said: fastctx_client::Said,
         here: MachineName,
     ) -> Self {
-        let mut page = Self::bare(address, agent, project, Some(here.clone()));
+        let mut page = Self::bare(said.to.clone(), agent, project, Some(here.clone()));
+        page.town = town;
         page.origin = Some(Origin::User);
         let local = page.transcript.sending(first, Some(here));
         page.transcript.landed(local, said.landed, said.to.machine);
@@ -95,6 +100,8 @@ impl TalkPage {
             origin: None,
             model: None,
             project,
+            town: None,
+            running: Ok(Vec::new()),
             state: None,
             editor: Editor::multi(),
             top: None,
@@ -115,13 +122,16 @@ impl TalkPage {
             _ => Some(Feed::Watch {
                 resident: self.address.resident.clone(),
                 machine: self.address.machine.clone(),
+                town: self.town.clone(),
                 round: self.round,
             }),
         }
     }
 
     pub fn animating(&self) -> bool {
-        self.transcript.moving() || matches!(self.state, Some((Activity::Busy, _)))
+        self.transcript.moving()
+            || matches!(self.state, Some((Activity::Busy, _)))
+            || self.running.as_ref().is_ok_and(|jobs| !jobs.is_empty())
     }
 
     pub fn paste(&mut self, text: String) -> Act {
@@ -150,6 +160,7 @@ impl TalkPage {
                 self.transcript.event(event);
             }
             Data::Unwatched(why) => self.watching = Watching::Ended(why),
+            Data::Running(running) => self.running = running,
             Data::Done { job, result } => match (job, result) {
                 (Job::Talk { .. }, Ok(Done::Said(said))) => {
                     if let Some(local) = self.pending.pop_front() {
@@ -259,6 +270,29 @@ impl TalkPage {
         self.top = if top >= bottom { None } else { Some(top) };
     }
 
+    /// A row for each thing it started that still runs: the command, then
+    /// where and for how long.
+    fn running_rows(&self, ctx: &Ctx) -> Vec<(Line<'static>, Line<'static>)> {
+        let look = &ctx.look;
+        match &self.running {
+            Err(why) => vec![(quiet(ctx, ctx.words.running_unseen(&text::first_line(why))), Line::default())],
+            Ok(jobs) => jobs
+                .iter()
+                .map(|job| {
+                    let left = Line::from(vec![
+                        Span::styled("◌  ", look.faded(Role::Alive, ctx.breath)),
+                        Span::styled(text::first_line(&job.command), look.text(Role::Muted)),
+                    ]);
+                    let right = Line::from(Span::styled(
+                        format!("{} · {}", job.machine, ctx.words.since(job.started_at, ctx.now)),
+                        look.text(Role::Faint),
+                    ));
+                    (left, right)
+                })
+                .collect(),
+        }
+    }
+
     pub fn draw(&mut self, ctx: &Ctx, frame: &mut Frame, area: Rect, pasting: Option<usize>) {
         let words = &ctx.words;
         let look = &ctx.look;
@@ -338,9 +372,17 @@ impl TalkPage {
             );
         }
 
-        // The conversation, above it.
+        // What it started that still runs, just above the place to type.
+        let running = self.running_rows(ctx);
+        let running_top = box_top.saturating_sub(1 + running.len() as u16);
+        for (row, (left, right)) in running.iter().enumerate() {
+            paint::line(buffer, column.x, running_top + row as u16, column.width, left, right, false, look);
+        }
+        let above = if running.is_empty() { box_top } else { running_top };
+
+        // The conversation, above that.
         let body =
-            Rect { x: column.x, y: column.y + 4, width: column.width, height: box_top.saturating_sub(column.y + 5) };
+            Rect { x: column.x, y: column.y + 4, width: column.width, height: above.saturating_sub(column.y + 5) };
         let all = self.transcript.lines(ctx, width);
         let height = body.height as usize;
         self.last_total = all.len();

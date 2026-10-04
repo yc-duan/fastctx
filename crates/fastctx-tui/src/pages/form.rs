@@ -300,16 +300,10 @@ impl FormPage {
                 let here =
                     self.nodes.as_ref().map(|nodes| nodes.machine.clone()).unwrap_or_else(|| said.to.machine.clone());
                 let project = self.chosen_project_name();
+                let town = self.chosen_town();
                 let agent = self.value(Key::Agent);
                 let first = self.value(Key::FirstWords);
-                Act::Replace(Page::Talk(Box::new(talk::TalkPage::opened(
-                    said.to.clone(),
-                    agent,
-                    project,
-                    first,
-                    said,
-                    here,
-                ))))
+                Act::Replace(Page::Talk(Box::new(talk::TalkPage::opened(agent, town, project, first, said, here))))
             }
             (Kind::NewProject, Done::Record(record)) => {
                 Act::Replace(Page::Project(Box::new(project::ProjectPage::new(record.town))))
@@ -351,6 +345,11 @@ impl FormPage {
             Kind::Revoke { .. } => Finish::Revoke,
             Kind::Leave => Finish::Leave,
         }
+    }
+
+    fn chosen_town(&self) -> Option<TownName> {
+        let town = self.value(Key::Project);
+        self.towns.iter().find(|summary| summary.town.as_str() == town).map(|summary| summary.town.clone())
     }
 
     fn chosen_project_name(&self) -> Option<String> {
