@@ -4,6 +4,7 @@
 // `inShell` says so.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { Control, Controlled, Offers } from "./control";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
@@ -170,4 +171,14 @@ export function hubHere(publicAddresses: string[]): Promise<string> {
 
 export function applyHosts(codex: boolean, claude: boolean, raise: boolean, into: boolean): Promise<string[]> {
   return invoke("apply_hosts", { codex, claude, raise, into });
+}
+
+/** Does something to a resident's conversation, besides speaking into it. */
+export function control(who: Address, what: Control): Promise<Controlled> {
+  return invoke("control", { residentId: who.resident, machineName: who.machine, control: what });
+}
+
+/** What a resident's conversation offers now. */
+export function offers(who: Address): Promise<Offers> {
+  return invoke("offers", { residentId: who.resident, machineName: who.machine });
 }

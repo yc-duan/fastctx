@@ -2,8 +2,11 @@
 // conversation itself in a region that scrolls on its own, and the words
 // the user is about to send, always at the foot.
 
+import type { ComposerWords } from "../app/words";
 import type { Words } from "../words";
+import type { Control, Controlled, ModelOffer, Offers } from "../world/control";
 import type { ResidentDetail, ResidentNow } from "../world/world";
+import { Menu, commandRow, commandsOf, modelRow, type MenuCommand } from "./commands";
 import type { Details } from "./details";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
@@ -36,6 +39,17 @@ export interface PageOptions {
     look(): Promise<ResidentDetail | null>;
     colleagues(): ResidentNow[];
   };
+  /** What the conversation offers, and doing it: its commands, its
+   *  model, its usage. */
+  controls?: {
+    words: ComposerWords;
+    offers(): Promise<Offers>;
+    control(what: Control): Promise<Controlled>;
+    /** A fork was made: where it lives. */
+    forked(resident: { resident: string; machine: string }): void;
+  };
+  /** Where the words being written are kept between visits. */
+  draftKey?: string;
   /** Sends the user's words; resolves once they are on their way. */
   send(text: string): void;
   stop(): void;
@@ -53,6 +67,13 @@ export class ConversationPage {
   private looking = 0;
   private following = true;
   private gone: string | null = null;
+  private offered: Offers | null = null;
+  private wasMoving = false;
+  private commandMenu: Menu<MenuCommand> | null = null;
+  private modelMenu: Menu<ModelOffer> | null = null;
+  private effortMenu: Menu<string> | null = null;
+  private note: HTMLElement;
+  private chip: HTMLButtonElement;
 
   constructor(private readonly options: PageOptions) {
     const { words, someone } = options;
@@ -72,8 +93,11 @@ export class ConversationPage {
       <footer class="composer-dock">
         <ul class="running" hidden></ul>
         <form class="composer">
+          <div class="composer-menus"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
+            <div class="composer-tools"><button class="composer-chip" type="button" hidden></button></div>
+            <span class="composer-note" aria-live="polite"></span>
             <span class="composer-context"></span>
             <button class="composer-action" type="submit"></button>
           </div>
@@ -95,6 +119,10 @@ export class ConversationPage {
     this.context = this.element.querySelector<HTMLElement>(".composer-context")!;
     this.input = this.element.querySelector("textarea")!;
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
+    this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
+    this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
+    this.input.value = this.draft() ?? "";
+    if (options.controls) this.menus(options.controls);
     this.view = new ConversationView(main, options.conversation, {
       words,
       here: options.here,
@@ -110,8 +138,17 @@ export class ConversationPage {
     this.input.addEventListener("input", () => {
       this.fit();
       this.drawAction();
+      this.keepDraft();
+      this.slash();
     });
+    this.input.addEventListener("blur", () => this.commandMenu?.hide());
     this.input.addEventListener("keydown", (event) => {
+      for (const menu of [this.effortMenu, this.modelMenu, this.commandMenu]) {
+        if (menu?.key(event)) {
+          event.preventDefault();
+          return;
+        }
+      }
       // Enter sends where there is a keyboard; on a touch screen it is a new
       // line, and the button sends.
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !matchMedia("(pointer: coarse)").matches) {
@@ -134,6 +171,11 @@ export class ConversationPage {
     this.drawState();
     this.drawAction();
     if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
+    // What it offers is asked again whenever a turn ends: a command, a
+    // compaction or a new model may have changed it.
+    const moving = this.options.conversation.moving();
+    if (this.wasMoving && !moving) void this.askOffers();
+    this.wasMoving = moving;
   }
 
   /** Stops what the page keeps asking for. */
@@ -172,10 +214,177 @@ export class ConversationPage {
       if (this.options.conversation.moving()) this.options.stop();
       return;
     }
-    this.input.value = "";
-    this.fit();
+    if (this.options.controls && text.startsWith("/")) {
+      const space = text.indexOf(" ");
+      const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
+      const args = space < 0 ? "" : text.slice(space + 1).trim();
+      const command = commandsOf(this.offered, this.options.controls.words.commands).find((c) => c.name === name);
+      if (command) {
+        this.clear();
+        void this.run(command, args);
+        return;
+      }
+      if (this.offered) {
+        this.say(this.options.controls.words.unknown(name));
+        return;
+      }
+    }
+    this.clear();
     this.following = true;
     this.options.send(text);
+  }
+
+  private clear(): void {
+    this.input.value = "";
+    this.fit();
+    this.keepDraft();
+    this.commandMenu?.hide();
+    this.drawAction();
+  }
+
+  /** A line beside the composer: what a command did, or why it did not. */
+  private say(text: string): void {
+    this.note.textContent = text;
+  }
+
+  private draft(): string | null {
+    if (!this.options.draftKey) return null;
+    try {
+      return localStorage.getItem(this.options.draftKey);
+    } catch {
+      return null;
+    }
+  }
+
+  private keepDraft(): void {
+    if (!this.options.draftKey) return;
+    try {
+      if (this.input.value) localStorage.setItem(this.options.draftKey, this.input.value);
+      else localStorage.removeItem(this.options.draftKey);
+    } catch {
+      // Not kept: the words are lost if the page is left.
+    }
+  }
+
+  private menus(controls: NonNullable<PageOptions["controls"]>): void {
+    const holder = this.element.querySelector<HTMLElement>(".composer-menus")!;
+    const words = controls.words;
+    this.commandMenu = new Menu<MenuCommand>("commands", (command) => commandRow(command), (command) => {
+      this.commandMenu!.hide();
+      if (command.args) {
+        this.input.value = `/${command.name} `;
+        this.input.focus();
+        this.drawAction();
+      } else {
+        this.clear();
+        void this.run(command, "");
+      }
+    });
+    this.modelMenu = new Menu<ModelOffer>(
+      "models",
+      (model) => modelRow(model, this.offered?.model ?? null, words.commands),
+      (model) => {
+        this.modelMenu!.hide();
+        if (model.efforts.length > 1) {
+          this.effortMenu!.show(model.efforts, "");
+          this.chosenModel = model.id;
+        } else void this.setModel(model.id, model.default_effort);
+      },
+    );
+    this.effortMenu = new Menu<string>(
+      "efforts",
+      (effort) => `<span class="menu-name">${escape(effort)}${effort === this.offered?.effort ? `<span class="menu-current"> · ${escape(words.commands.current)}</span>` : ""}</span>`,
+      (effort) => {
+        this.effortMenu!.hide();
+        void this.setModel(this.chosenModel, effort);
+      },
+    );
+    holder.append(this.commandMenu.element, this.modelMenu.element, this.effortMenu.element);
+    this.chip.addEventListener("click", () => {
+      if (this.modelMenu!.open) return this.modelMenu!.hide();
+      this.modelMenu!.show(this.offered?.models ?? [], words.noModels);
+      this.input.focus();
+    });
+    void this.askOffers();
+  }
+
+  private chosenModel: string | null = null;
+
+  private async askOffers(): Promise<void> {
+    const controls = this.options.controls;
+    if (!controls) return;
+    try {
+      this.offered = await controls.offers();
+    } catch {
+      this.offered = null;
+    }
+    this.drawChip();
+    this.drawState();
+  }
+
+  private drawChip(): void {
+    const offered = this.offered;
+    const shown = !!offered && offered.controls.includes("model");
+    this.chip.hidden = !shown;
+    if (!shown) return;
+    const model = offered.models.find((m) => m.id === offered.model);
+    this.chip.innerHTML = `<span>${escape(model?.name ?? offered.model ?? this.options.controls!.words.modelChip)}</span>${offered.effort ? `<span class="chip-effort">${escape(offered.effort)}</span>` : ""}${glyph("chevron", 14)}`;
+  }
+
+  /** Opens the command menu while the words are a command being typed. */
+  private slash(): void {
+    const menu = this.commandMenu;
+    if (!menu || !this.options.controls) return;
+    const typed = /^\/(\S*)$/.exec(this.input.value);
+    if (!typed) return menu.hide();
+    const prefix = typed[1]!.toLowerCase();
+    const found = commandsOf(this.offered, this.options.controls.words.commands).filter((command) =>
+      command.name.toLowerCase().startsWith(prefix),
+    );
+    menu.show(found, this.options.controls.words.commands.noCommands);
+  }
+
+  private async setModel(model: string | null, effort: string | null): Promise<void> {
+    await this.run({ name: "model", description: "", args: null, control: "model", source: null }, "", { do: "model", model, effort });
+  }
+
+  /** Does a command: the World's own control, or the host's command. */
+  private async run(command: MenuCommand, args: string, given?: Control): Promise<void> {
+    const controls = this.options.controls;
+    if (!controls) return;
+    const words = controls.words;
+    if (command.control === "stop") {
+      this.options.stop();
+      return;
+    }
+    if (command.control === "model" && !given && !args) {
+      this.modelMenu!.show(this.offered?.models ?? [], words.noModels);
+      return;
+    }
+    const what: Control =
+      given ??
+      (command.control === "compact"
+        ? { do: "compact" }
+        : command.control === "model"
+          ? { do: "model", model: args, effort: null }
+          : command.control === "rename"
+            ? { do: "rename", name: args }
+            : command.control === "fork"
+              ? { do: "fork", through: null }
+              : { do: "command", name: command.name, args });
+    this.say(words.running(command.name));
+    try {
+      const done = await controls.control(what);
+      if (done.kind === "forked") {
+        this.say(words.done(command.name));
+        controls.forked(done.resident);
+        return;
+      }
+      this.say(done.said ?? words.done(command.name));
+      void this.askOffers();
+    } catch (error) {
+      this.say(words.failed(String(error)));
+    }
   }
 
   private fit(): void {
@@ -227,9 +436,23 @@ export class ConversationPage {
       .join(" · ")}</span>`;
     this.state.classList.toggle("working", working);
     this.state.classList.toggle("gone", this.gone !== null);
-    const used = conversation.context;
-    this.context.textContent =
-      used && used.window ? words.context(Math.round((used.used / used.window) * 100)) : "";
+    // How much of the context is used: the host's latest report, from the
+    // conversation's events, or from what it offers when it says.
+    const used = conversation.context ?? this.offered?.usage?.context ?? null;
+    if (used && used.window) {
+      const share = Math.min(1, used.used / used.window);
+      const percent = Math.round(share * 100);
+      const label = this.options.controls
+        ? this.options.controls.words.context(percent, used.used, used.window)
+        : words.context(percent);
+      const arc = (2 * Math.PI * 7).toFixed(2);
+      this.context.innerHTML = `<svg class="context-ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7"/><circle class="used" cx="9" cy="9" r="7" stroke-dasharray="${(share * 2 * Math.PI * 7).toFixed(2)} ${arc}"/></svg><span>${percent}%</span>`;
+      this.context.title = label;
+      this.context.classList.toggle("full", share >= 0.85);
+    } else {
+      this.context.innerHTML = "";
+      this.context.removeAttribute("title");
+    }
   }
 
   private drawAction(): void {

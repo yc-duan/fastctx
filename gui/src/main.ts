@@ -29,6 +29,7 @@ import { Shell, pageHead, type Page } from "./app/shell";
 import { effect } from "./app/signals";
 import { createStore, jobsOf, residentsOf } from "./app/store";
 import {
+  enComposer,
   enDetails,
   enDevices,
   enMachines,
@@ -38,6 +39,7 @@ import {
   enSettings,
   enShell,
   enWelcome,
+  zhComposer,
   zhDetails,
   zhDevices,
   zhMachines,
@@ -67,9 +69,12 @@ import { specimenNow } from "./specimen/world";
 import { applyTheme, chooseTheme, themes } from "./theme";
 import type { Address } from "./world/events";
 import type { ResidentDetail } from "./world/world";
+import type { Offers } from "./world/control";
 import {
   applyHosts,
+  control,
   hubHere,
+  offers,
   invite,
   joinWorld,
   placeFastctx,
@@ -209,6 +214,24 @@ function stateOf(world: WorldNow, happenings: Happening[] | null): WorldState {
 }
 
 const detailsWords = english ? enDetails : zhDetails;
+const composerWords = english ? enComposer : zhComposer;
+
+/** What a specimen conversation offers, so its menus can be looked at. */
+const specimenOffers: Offers = {
+  controls: ["command", "compact", "model", "rename", "fork", "answer"],
+  commands: [
+    { name: "review", description: "Review the changes so far", args: null, source: "Codex" },
+    { name: "init", description: "Write an AGENTS.md for this place", args: null, source: "Codex" },
+    { name: "mention", description: "Mention a file", args: "<path>", source: "Codex" },
+  ],
+  models: [
+    { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: "The default", efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium", default: true },
+    { id: "gpt-6-astra", name: "GPT-6 Astra", description: "Deeper, slower", efforts: ["medium", "high", "xhigh"], default_effort: "high", default: false },
+  ],
+  model: "gpt-6.1-sol",
+  effort: "medium",
+  usage: null,
+};
 
 /** "Claude · laptop" for a resident the World answered with; its id
  *  where it did not. */
@@ -283,6 +306,13 @@ function specimenTalk(address: Address): Page {
     head,
     link: talkLink,
     conversation,
+    controls: {
+      words: composerWords,
+      offers: async () => specimenOffers,
+      control: async () => ({ kind: "done", said: english ? "this is a specimen" : "这是样例，没有连着世界" }),
+      forked: () => {},
+    },
+    draftKey: `draft:${address.resident}@${address.machine}`,
     details: detailsOf(address, async () =>
       known
         ? {
@@ -345,6 +375,16 @@ function liveTalk(address: Address): Page {
     head,
     link: talkLink,
     conversation,
+    controls: {
+      words: composerWords,
+      offers: () => offers(address),
+      control: (what) => control(address, what),
+      forked: (resident) => {
+        void store.refresh();
+        location.hash = talkLink(resident);
+      },
+    },
+    draftKey: `draft:${address.resident}@${address.machine}`,
     details: detailsOf(address, async () => {
       const [found] = await look([address.resident]);
       const there = found?.found.find(

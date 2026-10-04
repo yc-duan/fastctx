@@ -665,6 +665,69 @@ export const enWelcome: WelcomeWords = {
   back: "Back",
 };
 
+export interface ComposerWords {
+  commands: {
+    world: string;
+    compact: string;
+    model: string;
+    rename: string;
+    fork: string;
+    stop: string;
+    noCommands: string;
+    effort: string;
+    current: string;
+  };
+  modelChip: string;
+  noModels: string;
+  unknown(name: string): string;
+  running(name: string): string;
+  done(name: string): string;
+  failed(why: string): string;
+  context(percent: number, used: number, window: number): string;
+}
+
+export const zhComposer: ComposerWords = {
+  commands: {
+    world: "世界",
+    compact: "现在压缩这段对话",
+    model: "换模型与推理强度",
+    rename: "给这段对话起名",
+    fork: "从这里分叉出一段新的对话",
+    stop: "停下这一轮",
+    noCommands: "没有对得上的命令",
+    effort: "推理强度",
+    current: "现在用的",
+  },
+  modelChip: "模型",
+  noModels: "它没有报出可选的模型",
+  unknown: (name) => `没有 /${name} 这个命令`,
+  running: (name) => `正在执行 /${name}…`,
+  done: (name) => `/${name} 做完了`,
+  failed: (why) => `没做成：${why}`,
+  context: (percent, used, window) => `上下文用了 ${percent}%（${used.toLocaleString()} / ${window.toLocaleString()}）`,
+};
+
+export const enComposer: ComposerWords = {
+  commands: {
+    world: "World",
+    compact: "Compact this conversation now",
+    model: "Change the model and effort",
+    rename: "Name this conversation",
+    fork: "Fork a new conversation from here",
+    stop: "Stop this turn",
+    noCommands: "No command matches",
+    effort: "effort",
+    current: "in use",
+  },
+  modelChip: "Model",
+  noModels: "It lists no models to choose from",
+  unknown: (name) => `There is no /${name}`,
+  running: (name) => `Running /${name}…`,
+  done: (name) => `/${name} done`,
+  failed: (why) => `It did not go through: ${why}`,
+  context: (percent, used, window) => `${percent}% of the context used (${used.toLocaleString()} of ${window.toLocaleString()})`,
+};
+
 function zhSpan(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 1) return "不到一分钟";

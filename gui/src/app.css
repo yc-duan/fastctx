@@ -204,10 +204,160 @@
   margin-top: var(--space-1);
 }
 
+/* How much of the context is used: a small ring and its share. */
 .composer-context {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: var(--size-small);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+
+.context-ring {
+  transform: rotate(-90deg);
+}
+
+.context-ring circle {
+  fill: none;
+  stroke: var(--hairline);
+  stroke-width: 2.2;
+}
+
+.context-ring .used {
+  stroke: var(--text-3);
+  stroke-linecap: round;
+}
+
+.composer-context.full {
+  color: var(--caution);
+}
+
+.composer-context.full .used {
+  stroke: var(--caution);
+}
+
+.composer-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: calc(-1 * var(--space-2));
+}
+
+.composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.composer-chip:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.chip-effort {
+  color: var(--text-3);
+}
+
+.composer-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* The composer's menus float just above it. */
+.composer {
+  position: relative;
+}
+
+.composer-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  max-height: min(42dvh, 340px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: var(--space-1);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop), 0 0 0 1px var(--hairline);
+  animation: sheet-in var(--enter) var(--fold-easing) both;
+}
+
+.composer-menu[hidden] {
+  display: none;
+}
+
+.composer-menu.models,
+.composer-menu.efforts {
+  right: auto;
+  width: min(420px, 100%);
+}
+
+.menu-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  min-height: 32px;
+  padding: 5px var(--space-3);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  font-size: var(--size-ui);
+}
+
+.composer-menu.models .menu-row,
+.composer-menu.efforts .menu-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.menu-row.chosen {
+  background: var(--hairline);
+}
+
+.menu-name {
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.menu-args,
+.menu-current {
+  color: var(--text-3);
+}
+
+.menu-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.menu-source {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.menu-empty {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
 }
 
 .composer-action {

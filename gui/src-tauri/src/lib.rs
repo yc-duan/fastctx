@@ -17,6 +17,7 @@ use fastctx_types::layout::WorldDir;
 use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use fastctx_types::residents::Landed;
 use fastctx_types::session::SessionEvent;
+use fastctx_types::session::control::{Control, Controlled, Offers};
 use fastctx_types::town::{LookedUp, WorldWho};
 use fastctx_types::world::NodesReply;
 use fastctx_types::{Address, AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
@@ -200,6 +201,31 @@ async fn stop(
     Ok(stopped)
 }
 
+/// Does something to a resident's conversation for the user, besides
+/// speaking into it.
+#[tauri::command]
+async fn control(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: Option<String>,
+    control: Control,
+) -> Result<Controlled, String> {
+    let (_, controlled) = shell
+        .world
+        .control(resident(resident_id)?, machine(machine_name)?, control)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(controlled)
+}
+
+/// What a resident's conversation offers now.
+#[tauri::command]
+async fn offers(shell: tauri::State<'_, Shell>, resident_id: String, machine_name: Option<String>) -> Result<Offers, String> {
+    let (_, offers) =
+        shell.world.offers(resident(resident_id)?, machine(machine_name)?).await.map_err(|error| error.to_string())?;
+    Ok(offers)
+}
+
 /// Residents or jobs in detail, by id, from every machine that has them.
 #[tauri::command]
 async fn look(shell: tauri::State<'_, Shell>, ids: Vec<String>) -> Result<Vec<LookedUp>, String> {
@@ -341,6 +367,8 @@ pub fn run() {
             open,
             stop,
             look,
+            control,
+            offers,
             invite,
             revoke,
             leave,
