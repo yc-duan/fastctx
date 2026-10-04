@@ -1,0 +1,218 @@
+//! A node a guardian keeps, and how it hands the World to its successor
+//! (`world-network.md`, 加入了就一直连着; the contract is in
+//! `dev-notes/research_notes/世界的网络/2026-10-04-看护与节点的交接约定.md`).
+//!
+//! On Windows a guardian runs as the system and keeps the user's node
+//! running: under the user's restricted identity before they sign in, under
+//! their full one after. To change identities it starts a successor, which
+//! says it is prepared and waits; it asks the running node to yield when
+//! idle; the running node stops starting turns, lets the running ones end,
+//! says it yielded and exits; the successor is then told to take over.
+//! Words that come meanwhile are kept and go in once the successor serves.
+//!
+//! Idle here means: no Codex turn runs in this node's app-server, none is
+//! being started, and no call is being answered. Claude Code's sessions run
+//! in its own processes and go on across the change; a watch is a stream,
+//! not a call, and its watcher comes back to the successor.
+
+use std::fs::File;
+use std::sync::{Arc, Mutex};
+
+use fastctx_platform::service_channel::{ServiceCommand, ServiceEvent};
+use tokio::sync::Notify;
+
+use crate::Node;
+
+/// What a guardian handed the node: the channel, and which identity it
+/// runs under.
+pub struct Supervision {
+    pub control: File,
+    pub events: File,
+    pub identity: Identity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Identity {
+    /// The user's restricted identity, before they sign in.
+    S4u,
+    /// The user's full identity, from their signed-in session.
+    Interactive,
+}
+
+impl Supervision {
+    /// Says the node is prepared, and waits for the guardian to let it take
+    /// the World. `None` when the guardian is gone before it does.
+    pub fn prepare(&mut self) -> std::io::Result<Option<()>> {
+        ServiceEvent::Prepared.write(&mut self.events)?;
+        loop {
+            match ServiceCommand::read(&mut self.control)? {
+                Some(ServiceCommand::Activate) => return Ok(Some(())),
+                // A yield asked of a node not yet serving has nothing to
+                // yield; the guardian asks only nodes that serve.
+                Some(ServiceCommand::YieldWhenIdle | ServiceCommand::CancelYield) => {}
+                None => return Ok(None),
+            }
+        }
+    }
+}
+
+/// Whether the node may start turns, and what it is in the middle of.
+#[derive(Default)]
+pub(crate) struct Handoff {
+    state: Mutex<State>,
+    changed: Notify,
+}
+
+#[derive(Default)]
+struct State {
+    /// The guardian asked for the World to be handed on when idle.
+    yielding: bool,
+    /// Idle while yielding: the node is on its way out, and takes nothing
+    /// more on.
+    committed: bool,
+    /// Codex turns being started now.
+    starting: usize,
+    /// Calls being answered now.
+    calls: usize,
+}
+
+/// Something under way the node waits for before it yields; dropping it
+/// says it is done.
+pub(crate) struct Busy {
+    handoff: Arc<Handoff>,
+    kind: Kind,
+}
+
+enum Kind {
+    Starting,
+    Call,
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        {
+            let mut state = self.handoff.state.lock().expect("never poisoned");
+            match self.kind {
+                Kind::Starting => state.starting -= 1,
+                Kind::Call => state.calls -= 1,
+            }
+        }
+        self.handoff.changed.notify_waiters();
+    }
+}
+
+impl Handoff {
+    /// May a Codex turn start now? While the node yields, words for an
+    /// idle thread wait for the successor; words for a turn already running
+    /// join it, as that turn is let finish anyway.
+    pub fn start_turn(self: &Arc<Self>, joining: bool) -> Option<Busy> {
+        let mut state = self.state.lock().expect("never poisoned");
+        if state.committed || (state.yielding && !joining) {
+            return None;
+        }
+        state.starting += 1;
+        Some(Busy { handoff: self.clone(), kind: Kind::Starting })
+    }
+
+    /// A call is being answered; `None` once the node is on its way out.
+    pub fn call(self: &Arc<Self>) -> Option<Busy> {
+        let mut state = self.state.lock().expect("never poisoned");
+        if state.committed {
+            return None;
+        }
+        state.calls += 1;
+        Some(Busy { handoff: self.clone(), kind: Kind::Call })
+    }
+
+    /// Something the node waits on to yield may have changed, such as a
+    /// turn ending.
+    pub fn changed(&self) {
+        self.changed.notify_waiters();
+    }
+
+    /// Why words wait while the node hands over.
+    pub(crate) fn waiting_why(node: &Node) -> String {
+        format!("the node on {} is handing over to its successor; the words go in once it serves", node.machine())
+    }
+}
+
+/// Follows the guardian's commands until it is gone, and exits once the
+/// node has yielded. The guardian's channel closing means it is gone, and a
+/// node nobody keeps does not stay.
+pub(crate) fn follow(node: Arc<Node>, supervision: Supervision) {
+    let Supervision { mut control, events, identity } = supervision;
+    node.log.line(format_args!("serving under the guardian, as {identity:?}"));
+    let events = Arc::new(Mutex::new(events));
+    let say = {
+        let node = node.clone();
+        let events = events.clone();
+        move |event: ServiceEvent| {
+            if let Err(error) = event.write(&mut *events.lock().expect("never poisoned")) {
+                node.log.line(format_args!("telling the guardian {event:?}: {error}"));
+            }
+        }
+    };
+    say(ServiceEvent::Serving);
+    let watching = node.clone();
+    let say_yielded = say.clone();
+    tokio::spawn(async move { yield_when_idle(watching, say_yielded).await });
+    let reading = node.clone();
+    std::thread::spawn(move || {
+        loop {
+            match ServiceCommand::read(&mut control) {
+                Ok(Some(ServiceCommand::YieldWhenIdle)) => {
+                    reading.log.line("the guardian asks for the World to be handed on when idle");
+                    reading.handoff.state.lock().expect("never poisoned").yielding = true;
+                    reading.handoff.changed();
+                }
+                Ok(Some(ServiceCommand::CancelYield)) => {
+                    let resumed = {
+                        let mut state = reading.handoff.state.lock().expect("never poisoned");
+                        let resumed = state.yielding && !state.committed;
+                        if resumed {
+                            state.yielding = false;
+                        }
+                        resumed
+                    };
+                    if resumed {
+                        reading.log.line("the guardian called the handover off; serving on");
+                        say(ServiceEvent::Serving);
+                        reading.handoff.changed();
+                    }
+                }
+                // Activate is for a node not yet serving.
+                Ok(Some(ServiceCommand::Activate)) => {}
+                Ok(None) => {
+                    reading.log.line("the guardian is gone; a node nobody keeps stops");
+                    std::process::exit(0);
+                }
+                Err(error) => {
+                    reading.log.line(format_args!("reading the guardian's channel: {error}; stopping"));
+                    std::process::exit(1);
+                }
+            }
+        }
+    });
+}
+
+/// Waits until the node yields: asked to, with no Codex turn running or
+/// starting and no call being answered. Then nothing more is taken on, the
+/// guardian is told, and the node exits; its successor takes the World.
+async fn yield_when_idle(node: Arc<Node>, say: impl Fn(ServiceEvent)) {
+    loop {
+        let changed = node.handoff.changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        {
+            let mut state = node.handoff.state.lock().expect("never poisoned");
+            if state.yielding && state.starting == 0 && state.calls == 0 && !node.codex.any_turn_running() {
+                state.committed = true;
+                break;
+            }
+        }
+        changed.await;
+    }
+    node.log.line("idle: handing the World on to the successor");
+    say(ServiceEvent::Yielded);
+    std::process::exit(0);
+}

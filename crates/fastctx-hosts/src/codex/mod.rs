@@ -437,6 +437,11 @@ impl CodexHost {
         Ok(history(&answer, running.as_deref()))
     }
 
+    /// Whether a turn runs in any thread this host holds.
+    pub fn any_turn_running(&self) -> bool {
+        self.lock().threads.values().any(|entry| entry.turn.is_some())
+    }
+
     pub fn running_turn(&self, thread: &str) -> Option<String> {
         self.lock().threads.get(thread).and_then(|entry| entry.turn.clone())
     }

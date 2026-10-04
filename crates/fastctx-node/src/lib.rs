@@ -15,6 +15,7 @@ mod colleagues;
 mod copy;
 mod delivery;
 mod desk;
+pub mod handoff;
 mod inbox;
 mod jobs;
 mod ledger;
@@ -81,6 +82,9 @@ pub(crate) struct Node {
     taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
     effects_ready: std::sync::atomic::AtomicBool,
     effects_changed: tokio::sync::Notify,
+    /// Whether turns may start, while a guardian may ask for the World to
+    /// be handed on.
+    handoff: Arc<handoff::Handoff>,
 }
 
 impl Node {
@@ -147,11 +151,25 @@ fn legacy(node: &Node) {
     }
 }
 
-pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
+/// Runs the node for the World under `fastctx_root`; `supervision` is the
+/// guardian's channel when a guardian keeps it (`handoff`).
+pub async fn run(fastctx_root: &Path, mut supervision: Option<handoff::Supervision>) -> anyhow::Result<()> {
     let world = WorldDir::under(fastctx_root);
     ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
-    let _lock = FileLock::try_acquire(&world.node_lock())?
-        .ok_or_else(|| anyhow!("a node is already running for the World in {}", world.path().display()))?;
+    let _lock = match &mut supervision {
+        // A successor prepares, then waits to be let in, then waits for the
+        // node before it to let the World go.
+        Some(supervision) => {
+            let prepared = tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?;
+            if prepared.is_none() {
+                return Ok(());
+            }
+            let lock = world.node_lock();
+            tokio::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
+        }
+        None => FileLock::try_acquire(&world.node_lock())?
+            .ok_or_else(|| anyhow!("a node is already running for the World in {}", world.path().display()))?,
+    };
     let log = Arc::new(log::Log::open(&world.node_log())?);
     // The node usually has no terminal: a panic in any of its tasks is
     // written to its log, or it would leave no trace.
@@ -220,6 +238,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         taking: Default::default(),
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),
+        handoff: Arc::new(handoff::Handoff::default()),
     });
     for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));
@@ -262,6 +281,10 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     // still in use is touched (`world-upgrade.md`).
     let cleaning = node.clone();
     tokio::task::spawn_blocking(move || legacy(&cleaning));
+
+    if let Some(supervision) = supervision {
+        handoff::follow(node.clone(), supervision);
+    }
 
     let watchdog = watchdog::Watchdog::start(&node.world.node_log()).context("starting the control-loop watchdog")?;
     loop {

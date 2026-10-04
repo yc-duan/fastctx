@@ -158,6 +158,11 @@ async fn into_thread(
     let missing = node.codex.prepare(thread).await.map_err(Failure::new)?;
     let speaking = node.residents.speaking(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
     let _speaking = speaking.lock().await;
+    // A node handing the World on starts no turn; the words wait for its
+    // successor, which hands them over when it serves.
+    let Some(_starting) = node.handoff.start_turn(node.codex.running_turn(thread).is_some()) else {
+        return Ok(Landed::Waiting { why: Some(crate::handoff::Handoff::waiting_why(node)), answered: true });
+    };
     let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)
         .map_err(|error| Failure::new(error.to_string()))?
         .into_iter()

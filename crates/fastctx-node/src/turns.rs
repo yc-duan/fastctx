@@ -36,7 +36,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
         Happened::TurnEnded { turn, end } => {
             let speaking = node.residents.speaking(id).expect("known resident");
             let _speaking = speaking.lock().await;
-            finish_locked(node, id, &turn, end, &[]).await
+            let finished = finish_locked(node, id, &turn, end, &[]).await;
+            node.handoff.changed();
+            finished
         }
         Happened::Health { turn, health: report } => {
             let speaking = node.residents.speaking(id).expect("known resident");
@@ -92,6 +94,7 @@ pub async fn ended(node: &Arc<Node>, id: &ResidentId, turn: &str, end: TurnEnd) 
     if let Err(error) = finish_locked(node, id, turn, end, &[]).await {
         node.log.line(format_args!("settling {id}'s turn {turn}: {error}"));
     }
+    node.handoff.changed();
 }
 
 /// The caller holds the resident's speech lock. Acceptance that arrives

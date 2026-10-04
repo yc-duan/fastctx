@@ -35,6 +35,11 @@ pub enum ConnectError {
     Io { endpoint: String, error: std::io::Error },
     #[error("the node was started but exited before it was ready; its log is {log}")]
     NodeDidNotStart { log: String },
+    #[error(
+        "the node is not running ({endpoint}); a system service keeps it and brings it back, \
+         and `fastctx service node status` says how it stands"
+    )]
+    KeptByService { endpoint: String },
 }
 
 /// A failed call: the node said no, or the connection broke on the way.
@@ -95,8 +100,13 @@ impl Client {
     /// Connects to the node, first starting it if it is not running. The
     /// node is started on its own, with the user's environment, so that it
     /// outlives whatever started it and carries nothing of that process.
+    /// A node a system service keeps is started by nobody else: a second
+    /// one would hold the World while the service's waits for it.
     pub async fn connect_or_start(world: &WorldDir, peer: Peer) -> Result<Self, ConnectError> {
         match Self::connect(world, peer.clone()).await {
+            Err(ConnectError::NoNode { endpoint }) if world.node_service().exists() => {
+                Err(ConnectError::KeptByService { endpoint })
+            }
             Err(ConnectError::NoNode { endpoint }) => {
                 let started = start_node().map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;
                 loop {
