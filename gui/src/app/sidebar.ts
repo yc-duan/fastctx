@@ -20,6 +20,7 @@ export interface SidebarOptions {
   /** The place shown now. */
   place(): Place;
   newTalk(): void;
+  newProject(): void;
   fold(): void;
 }
 
@@ -68,6 +69,10 @@ export class Sidebar {
     this.element.querySelector(".new-talk")!.addEventListener("click", () => options.newTalk());
     this.element.querySelector(".sidebar-fold")!.addEventListener("click", () => options.fold());
     this.list.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest("[data-new-project]")) {
+        options.newProject();
+        return;
+      }
       const toggle = (event.target as HTMLElement).closest<HTMLElement>("[data-fold]");
       if (!toggle) return;
       event.preventDefault();
@@ -126,7 +131,7 @@ export class Sidebar {
         </li>`;
       })
       .join("");
-    const projects = `<section class="sidebar-group"><h2 class="side-group-title">${escape(words.projects)}</h2>
+    const projects = `<section class="sidebar-group"><h2 class="side-group-title">${escape(words.projects)}<button class="side-add" type="button" data-new-project aria-label="${escape(words.newProject)}" title="${escape(words.newProject)}">${glyph("plus", 14)}</button></h2>
       ${projectRows ? `<ul class="projects-places">${projectRows}</ul>` : `<p class="sidebar-quiet">${escape(words.noProjects)}</p>`}
     </section>`;
 

@@ -9,6 +9,8 @@ export interface ShellWords {
   machines: string;
   settings: string;
   newTalk: string;
+  newProject: string;
+  edit: string;
   openSidebar: string;
   foldSidebar: string;
   /** "Claude · laptop". */
@@ -286,6 +288,84 @@ export const enDetails: DetailsWords = {
   notFound: "It was not found in the World.",
 };
 
+export interface ProjectFormWords {
+  newTitle: string;
+  editTitle(name: string): string;
+  name: string;
+  namePlaceholder: string;
+  slug: string;
+  slugHint: string;
+  what: string;
+  whatPlaceholder: string;
+  machines: string;
+  places: string;
+  placesHint: string;
+  placeWhat: string;
+  placePath: string;
+  addPlace: string;
+  removePlace: string;
+  canon: string;
+  canonHint: string;
+  noCanon: string;
+  open: string;
+  save: string;
+  saving: string;
+  cancel: string;
+  failed(why: string): string;
+}
+
+export const zhProjectForm: ProjectFormWords = {
+  newTitle: "新项目",
+  editTitle: (name) => `修改「${name}」`,
+  name: "名字",
+  namePlaceholder: "给它起个名字，比如 mark50 研发",
+  slug: "短名",
+  slugHint: "小写字母、数字与连字符，以字母开头；命令里、目录里用它，开了就不再改",
+  what: "它是什么",
+  whatPlaceholder: "一两句话，说这个项目为了什么",
+  machines: "横跨哪几台机器",
+  places: "在哪里能找到什么",
+  placesHint: "一行一样东西：它是什么、在哪台机器、原生的绝对路径",
+  placeWhat: "是什么",
+  placePath: "路径",
+  addPlace: "再加一行",
+  removePlace: "删掉这一行",
+  canon: "定论在哪",
+  canonHint: "存放定论的文件夹",
+  noCanon: "不写",
+  open: "开这个项目",
+  save: "存成新的一版",
+  saving: "正在写…",
+  cancel: "关闭",
+  failed: (why) => `没能写下：${why}`,
+};
+
+export const enProjectForm: ProjectFormWords = {
+  newTitle: "New project",
+  editTitle: (name) => `Edit “${name}”`,
+  name: "Name",
+  namePlaceholder: "Name it, such as Mark 50 research",
+  slug: "Short name",
+  slugHint: "lowercase letters, digits and hyphens, starting with a letter; used in commands and directories, and never changed",
+  what: "What it is",
+  whatPlaceholder: "A sentence or two on what the project is for",
+  machines: "Machines it spans",
+  places: "Where things are",
+  placesHint: "One thing a line: what it is, on which machine, its native absolute path",
+  placeWhat: "What",
+  placePath: "Path",
+  addPlace: "Add a line",
+  removePlace: "Remove this line",
+  canon: "Decisions",
+  canonHint: "the folder holding the decisions",
+  noCanon: "none",
+  open: "Open the project",
+  save: "Save as the next version",
+  saving: "Writing…",
+  cancel: "Close",
+  failed: (why) => `Could not write it: ${why}`,
+};
+
 function zhSpan(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 1) return "不到一分钟";
@@ -313,6 +393,8 @@ export const zhShell: ShellWords = {
   machines: "机器",
   settings: "设置",
   newTalk: "新对话",
+  newProject: "新项目",
+  edit: "修改",
   openSidebar: "打开侧栏",
   foldSidebar: "收起侧栏",
   someone: (agent, machine) => `${agent} · ${machine}`,
@@ -338,6 +420,8 @@ export const enShell: ShellWords = {
   machines: "Machines",
   settings: "Settings",
   newTalk: "New conversation",
+  newProject: "New project",
+  edit: "Edit",
   openSidebar: "Open the sidebar",
   foldSidebar: "Fold the sidebar",
   someone: (agent, machine) => `${agent} · ${machine}`,

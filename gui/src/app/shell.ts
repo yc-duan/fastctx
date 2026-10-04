@@ -22,6 +22,7 @@ export interface ShellOptions {
   store: Store;
   words: ShellWords;
   newTalk(): void;
+  newProject(): void;
 }
 
 const narrow = matchMedia("(max-width: 760px)");
@@ -54,6 +55,10 @@ export class Shell {
       newTalk: () => {
         this.closeDrawer();
         options.newTalk();
+      },
+      newProject: () => {
+        this.closeDrawer();
+        options.newProject();
       },
       fold: () => this.fold(true),
     });

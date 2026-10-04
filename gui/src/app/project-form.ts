@@ -1,0 +1,220 @@
+// Opening a project, or writing the next version of its record
+// (`world-projects.md`, 开一个项目): its name, its short name, what it is,
+// the machines it spans, the address book of where things are, and where
+// its decisions are kept. The World stamps who wrote each version, where
+// and when; every version is kept.
+
+import { glyph } from "../conversation/glyphs";
+import { escape } from "../conversation/prose";
+import type { RecordFields, TownRecord } from "../world/bridge";
+import type { ProjectRecord } from "../world/world";
+import type { Store } from "./store";
+import type { ProjectFormWords } from "./words";
+
+export interface ProjectFormOptions {
+  store: Store;
+  words: ProjectFormWords;
+  create(town: string, fields: RecordFields): Promise<TownRecord>;
+  edit(town: string, fields: RecordFields): Promise<TownRecord>;
+  /** The project was written: go to it, or show it again. */
+  done(town: string): void;
+}
+
+interface Place {
+  what: string;
+  machine: string;
+  path: string;
+}
+
+const slugRule = /^[a-z][a-z0-9-]{0,31}$/;
+
+/** A short name suggested from a Latin name; nothing from other scripts. */
+function suggest(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^[^a-z]+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 32);
+  return slugRule.test(slug) ? slug : "";
+}
+
+export class ProjectForm {
+  private readonly dialog: HTMLDialogElement;
+  private readonly body: HTMLElement;
+  private editing: { town: string; record: ProjectRecord } | null = null;
+  private machines = new Set<string>();
+  private places: Place[] = [];
+  private slugTouched = false;
+  private busy = false;
+
+  constructor(private readonly options: ProjectFormOptions) {
+    this.dialog = document.createElement("dialog");
+    this.dialog.className = "sheet form-sheet";
+    this.dialog.innerHTML = `<form class="sheet-body" method="dialog"></form>`;
+    document.body.append(this.dialog);
+    this.body = this.dialog.querySelector("form")!;
+    this.dialog.addEventListener("click", (event) => {
+      if (event.target === this.dialog) this.close();
+      const target = event.target as HTMLElement;
+      if (target.closest(".sheet-close")) this.close();
+      const machine = target.closest<HTMLButtonElement>("[data-machine]");
+      if (machine) {
+        const name = machine.dataset.machine!;
+        if (this.machines.has(name)) this.machines.delete(name);
+        else this.machines.add(name);
+        machine.classList.toggle("chosen", this.machines.has(name));
+        machine.setAttribute("aria-checked", String(this.machines.has(name)));
+      }
+      if (target.closest(".add-place")) {
+        this.read();
+        this.places.push({ what: "", machine: [...this.machines][0] ?? this.options.store.world.peek()?.here ?? "", path: "" });
+        this.draw();
+        this.body.querySelector<HTMLInputElement>(".address-row:last-of-type .place-what-input")?.focus();
+      }
+      const remove = target.closest<HTMLButtonElement>("[data-remove]");
+      if (remove) {
+        this.read();
+        this.places.splice(Number(remove.dataset.remove), 1);
+        this.draw();
+      }
+    });
+    this.body.addEventListener("input", (event) => {
+      const target = event.target as HTMLInputElement;
+      if (target.name === "slug") this.slugTouched = true;
+      if (target.name === "name" && !this.editing && !this.slugTouched) {
+        const slug = this.body.querySelector<HTMLInputElement>("[name=slug]");
+        if (slug) slug.value = suggest(target.value);
+      }
+    });
+    this.body.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void this.submit();
+    });
+  }
+
+  /** Opens the form for a new project, or for the next version of one. */
+  open(editing: { town: string; record: ProjectRecord } | null = null): void {
+    this.editing = editing;
+    this.slugTouched = false;
+    const here = this.options.store.world.peek()?.here;
+    this.machines = new Set(editing ? editing.record.machines : here ? [here] : []);
+    this.places = editing ? editing.record.places.map((place) => ({ ...place })) : [];
+    this.draw(editing?.record ?? null);
+    if (!this.dialog.open) this.dialog.showModal();
+    this.body.querySelector<HTMLInputElement>("[name=name]")?.focus();
+  }
+
+  close(): void {
+    if (!this.busy) this.dialog.close();
+  }
+
+  /** Keeps what was typed in the address book before it is drawn again. */
+  private read(): void {
+    this.places = [...this.body.querySelectorAll<HTMLElement>(".address-row")].map((row) => ({
+      what: row.querySelector<HTMLInputElement>(".place-what-input")!.value,
+      machine: row.querySelector<HTMLSelectElement>(".place-machine-input")!.value,
+      path: row.querySelector<HTMLInputElement>(".place-path-input")!.value,
+    }));
+  }
+
+  private draw(record: ProjectRecord | null = null): void {
+    const { words, store } = this.options;
+    const world = store.world.peek();
+    const nodes = (world?.nodes.machines ?? []).filter((node) => !node.revoked).map((node) => node.name);
+    // A machine the record names that this one no longer knows stays a
+    // choice, so writing the next version does not drop it unawares.
+    const names = [...new Set([...nodes, ...this.machines])];
+    const kept = {
+      name: this.body.querySelector<HTMLInputElement>("[name=name]")?.value ?? record?.name ?? "",
+      slug: this.body.querySelector<HTMLInputElement>("[name=slug]")?.value ?? "",
+      what: this.body.querySelector<HTMLTextAreaElement>("[name=what]")?.value ?? record?.what ?? "",
+      canonMachine: this.body.querySelector<HTMLSelectElement>("[name=canon-machine]")?.value ?? record?.canon?.machine ?? "",
+      canonPath: this.body.querySelector<HTMLInputElement>("[name=canon-path]")?.value ?? record?.canon?.path ?? "",
+    };
+    const options = (chosen: string, none?: string) =>
+      `${none !== undefined ? `<option value="">${escape(none)}</option>` : ""}${names
+        .map((name) => `<option value="${escape(name)}"${name === chosen ? " selected" : ""}>${escape(name)}</option>`)
+        .join("")}`;
+    this.body.innerHTML = `
+      <header class="sheet-head">
+        <h2 class="sheet-title">${escape(this.editing ? words.editTitle(this.editing.record.name) : words.newTitle)}</h2>
+        <button class="icon-button sheet-close" type="button" aria-label="${escape(words.cancel)}">${glyph("close", 18)}</button>
+      </header>
+      <div class="form-scroll">
+        <label class="field"><span class="field-label">${escape(words.name)}</span>
+          <input name="name" autocomplete="off" required placeholder="${escape(words.namePlaceholder)}" value="${escape(kept.name)}"></label>
+        ${
+          this.editing
+            ? ""
+            : `<label class="field"><span class="field-label">${escape(words.slug)}</span>
+          <input name="slug" autocomplete="off" required pattern="[a-z][a-z0-9-]{0,31}" spellcheck="false" class="mono" value="${escape(kept.slug)}">
+          <span class="field-hint">${escape(words.slugHint)}</span></label>`
+        }
+        <label class="field"><span class="field-label">${escape(words.what)}</span>
+          <textarea name="what" rows="2" required placeholder="${escape(words.whatPlaceholder)}">${escape(kept.what)}</textarea></label>
+        <div class="field"><span class="field-label">${escape(words.machines)}</span>
+          <div class="choice-options" role="group">${names
+            .map(
+              (name) =>
+                `<button type="button" class="choice${this.machines.has(name) ? " chosen" : ""}" role="checkbox" aria-checked="${this.machines.has(name)}" data-machine="${escape(name)}">${escape(name)}</button>`,
+            )
+            .join("")}</div></div>
+        <div class="field"><span class="field-label">${escape(words.places)}</span>
+          <span class="field-hint">${escape(words.placesHint)}</span>
+          <div class="address-rows">${this.places
+            .map(
+              (place, index) => `<div class="address-row">
+                <input class="place-what-input" placeholder="${escape(words.placeWhat)}" value="${escape(place.what)}">
+                <select class="place-machine-input">${options(place.machine)}</select>
+                <input class="place-path-input mono" placeholder="${escape(words.placePath)}" spellcheck="false" value="${escape(place.path)}">
+                <button class="icon-button" type="button" data-remove="${index}" aria-label="${escape(words.removePlace)}">${glyph("close", 16)}</button>
+              </div>`,
+            )
+            .join("")}</div>
+          <button class="text-button add-place" type="button">${glyph("plus", 16)}<span>${escape(words.addPlace)}</span></button></div>
+        <div class="field"><span class="field-label">${escape(words.canon)}</span>
+          <div class="canon-row"><select name="canon-machine">${options(kept.canonMachine, words.noCanon)}</select>
+          <input name="canon-path" class="mono" spellcheck="false" placeholder="${escape(words.canonHint)}" value="${escape(kept.canonPath)}"></div></div>
+      </div>
+      <p class="sheet-note" hidden></p>
+      <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(this.editing ? words.save : words.open)}</button></footer>`;
+  }
+
+  private async submit(): Promise<void> {
+    if (this.busy) return;
+    const { words } = this.options;
+    this.read();
+    const value = (name: string) => this.body.querySelector<HTMLInputElement>(`[name="${name}"]`)?.value.trim() ?? "";
+    const canonMachine = value("canon-machine");
+    const canonPath = value("canon-path");
+    const fields: RecordFields = {
+      name: value("name"),
+      what: value("what"),
+      machines: [...this.machines],
+      places: this.places
+        .map((place) => ({ what: place.what.trim(), machine: place.machine, path: place.path.trim() }))
+        .filter((place) => place.what || place.path),
+      canon: canonMachine && canonPath ? { machine: canonMachine, path: canonPath } : null,
+    };
+    const town = this.editing?.town ?? value("slug");
+    const note = this.body.querySelector<HTMLElement>(".sheet-note")!;
+    const go = this.body.querySelector<HTMLButtonElement>(".sheet-go")!;
+    this.busy = true;
+    go.disabled = true;
+    go.textContent = words.saving;
+    note.hidden = true;
+    try {
+      const written = this.editing ? await this.options.edit(town, fields) : await this.options.create(town, fields);
+      this.busy = false;
+      this.dialog.close();
+      this.options.done(written.town);
+    } catch (error) {
+      this.busy = false;
+      note.textContent = words.failed(String(error));
+      note.hidden = false;
+      go.disabled = false;
+      go.textContent = this.editing ? words.save : words.open;
+    }
+  }
+}

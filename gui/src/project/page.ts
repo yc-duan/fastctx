@@ -7,7 +7,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
-import type { MapView, ResidentNow, WorldWho, Writer } from "../world/world";
+import type { MapView, ProjectRecord, ResidentNow, WorldWho, Writer } from "../world/world";
 import type { HomeWords } from "../home/words";
 import type { ProjectWords } from "./words";
 
@@ -16,9 +16,12 @@ export interface ProjectOptions {
   home: HomeWords;
   town: string;
   head(title: string, actions?: string): string;
-  /** What the action that begins a conversation here is called. */
+  /** What the actions here are called. */
   newTalk: string;
+  edit: string;
   begin(town: string): void;
+  /** Opens the form for the next version of its record. */
+  revise(town: string, record: ProjectRecord): void;
   link(address: Address): string;
   journalLink(town: string, journal: string): string;
 }
@@ -34,13 +37,17 @@ export class ProjectPage {
   private tabs: HTMLElement;
   private board: HTMLElement;
   private tab: Tab = "here";
+  private record: ProjectRecord | null = null;
   private drawn = "";
 
   constructor(private readonly options: ProjectOptions) {
     this.element = document.createElement("div");
     this.element.className = "project-page";
     this.element.innerHTML = `
-      ${options.head(`<h1 class="page-title"></h1>`, `<button class="text-button begin-here" type="button">${glyph("plus", 16)}<span>${escape(options.newTalk)}</span></button>`)}
+      ${options.head(
+        `<h1 class="page-title"></h1>`,
+        `<button class="text-button revise" type="button" disabled>${glyph("edit", 16)}<span>${escape(options.edit)}</span></button><button class="text-button begin-here" type="button">${glyph("plus", 16)}<span>${escape(options.newTalk)}</span></button>`,
+      )}
       <header class="project-intro"></header>
       <div class="tabs" role="tablist"></div>
       <div class="project-board"></div>`;
@@ -50,6 +57,9 @@ export class ProjectPage {
     this.tabs = this.element.querySelector<HTMLElement>(".tabs")!;
     this.board = this.element.querySelector<HTMLElement>(".project-board")!;
     this.element.querySelector(".begin-here")!.addEventListener("click", () => options.begin(options.town));
+    this.element.querySelector(".revise")!.addEventListener("click", () => {
+      if (this.record) options.revise(options.town, this.record);
+    });
     this.tabs.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
       if (!button) return;
@@ -63,6 +73,8 @@ export class ProjectPage {
     const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
     const here = residents.filter((r) => r.here);
     const record = map.record;
+    this.record = record;
+    this.element.querySelector<HTMLButtonElement>(".revise")!.disabled = false;
     this.title.textContent = record.name;
     const intro = `
       <p class="project-lede">${escape(record.what)}</p>

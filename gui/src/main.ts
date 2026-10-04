@@ -19,6 +19,7 @@ import "./project/project.css";
 
 import { MachinesPage } from "./app/machines";
 import { NewTalk } from "./app/new-talk";
+import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage } from "./app/settings";
 import { Shell, pageHead, type Page } from "./app/shell";
@@ -28,11 +29,13 @@ import {
   enDetails,
   enMachines,
   enNewTalk,
+  enProjectForm,
   enSettings,
   enShell,
   zhDetails,
   zhMachines,
   zhNewTalk,
+  zhProjectForm,
   zhSettings,
   zhShell,
 } from "./app/words";
@@ -57,6 +60,8 @@ import type { ResidentDetail } from "./world/world";
 import {
   journal as readJournal,
   look,
+  projectEdit,
+  projectNew,
   open as openAgent,
   project as readProject,
   stop,
@@ -107,10 +112,30 @@ const newTalk = new NewTalk({
   },
 });
 
+const projectForm = new ProjectForm({
+  store,
+  words: english ? enProjectForm : zhProjectForm,
+  create(town, fields) {
+    if (!live) return Promise.reject(new Error((english ? "this is a specimen" : "这是样例，没有连着世界")));
+    return projectNew(town, fields);
+  },
+  edit(town, fields) {
+    if (!live) return Promise.reject(new Error((english ? "this is a specimen" : "这是样例，没有连着世界")));
+    return projectEdit(town, fields);
+  },
+  done(town) {
+    void store.refresh();
+    const there = link({ kind: "project", town });
+    if (location.hash === there) show(placeOf(there));
+    else location.hash = there;
+  },
+});
+
 const shell = new Shell({
   store,
   words: shellWords,
   newTalk: () => newTalk.open(place.kind === "project" ? place.town : null),
+  newProject: () => projectForm.open(),
 });
 document.getElementById("app")!.append(shell.element);
 
@@ -365,7 +390,9 @@ function projectPage(town: string): Page {
     town,
     head,
     newTalk: shellWords.newTalk,
+    edit: shellWords.edit,
     begin: (town) => newTalk.open(town),
+    revise: (town, record) => projectForm.open({ town, record }),
     link: talkLink,
     journalLink: (town, journal) => link({ kind: "journal", town, journal }),
   });
@@ -483,6 +510,7 @@ function specimenPlace(): Place | null {
   switch (asked) {
     case "home":
     case "new":
+    case "new-project":
       return { kind: "home" };
     case "project":
       return { kind: "project", town: "mark50" };
@@ -507,3 +535,4 @@ applyTheme(() => {
 });
 show(specimenPlace() ?? placeOf(location.hash));
 if (!live && params.get("s") === "new") newTalk.open();
+if (!live && params.get("s") === "new-project") projectForm.open();

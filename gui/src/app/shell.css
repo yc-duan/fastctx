@@ -230,6 +230,40 @@ body {
   color: var(--text-3);
 }
 
+.side-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.side-add {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.sidebar-group:hover .side-add,
+.side-add:focus-visible {
+  opacity: 1;
+}
+
+.side-add:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+@media (hover: none) {
+  .side-add {
+    opacity: 1;
+  }
+}
+
 .side-group-title a {
   color: inherit;
   text-decoration: none;

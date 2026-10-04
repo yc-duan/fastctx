@@ -46,6 +46,24 @@
   color: var(--accent);
 }
 
+.text-button.revise .glyph {
+  color: currentColor;
+}
+
+.text-button:disabled {
+  opacity: 0.5;
+}
+
+@media (max-width: 760px) {
+  .page-head-actions .text-button span {
+    display: none;
+  }
+
+  .page-head-actions .text-button {
+    padding: 0 var(--space-2);
+  }
+}
+
 .project-intro {
   flex: none;
   width: var(--board);
