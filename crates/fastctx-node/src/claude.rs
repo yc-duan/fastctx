@@ -52,8 +52,7 @@ struct Session {
 
 /// Writes the plugin and starts watching the sessions.
 pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
-    let fastctx = std::env::current_exe()?;
-    claude::write_plugin(node.world.path(), &fastctx)?;
+    claude::write_plugin(node.world.path(), &node.fastctx)?;
     let sessions = exchange::sessions(node.world.path());
     fastctx_platform::ensure_private_dir(&sessions)?;
     let (changed, mut changes) = mpsc::unbounded_channel::<PathBuf>();

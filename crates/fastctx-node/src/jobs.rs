@@ -59,10 +59,9 @@ impl Jobs {
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
         let launched = {
-            let (world, machine) = (world.clone(), machine.clone());
+            let (world, machine, executable) = (world.clone(), machine.clone(), node.fastctx.clone());
             tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
                 let home = user_home().map_err(|error| failure("finding the home directory", error))?;
-                let executable = std::env::current_exe().map_err(|error| failure("finding fastctx itself", error))?;
                 let environment =
                     world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
                 run::launch(&Launch {
