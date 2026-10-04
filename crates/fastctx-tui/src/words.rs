@@ -562,13 +562,6 @@ impl Words {
         self.pick("；它的宿主不告诉世界一轮何时结束", "; its host does not tell the World when its turns end")
     }
 
-    pub fn tool_running(&self, took: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("在跑… {took}"),
-            Lang::En => format!("running… {took}"),
-        }
-    }
-
     pub fn tool_failed(&self, took: &str) -> String {
         match self.lang {
             Lang::Zh => format!("失败 · {took}"),

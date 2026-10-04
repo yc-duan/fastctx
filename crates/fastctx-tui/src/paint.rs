@@ -92,14 +92,12 @@ pub fn rows(buffer: &mut Buffer, area: Rect, rows: &[Row], top: usize, selected:
                 let band = Rect { x: area.x.saturating_sub(2), y, width: area.width + 3, height: 1 };
                 buffer.set_style(band.intersection(buffer.area), look.raised(Role::Text));
             }
-            let first = rows[..top + offset].last().is_none_or(|before| before.item != row.item);
-            if first {
-                text::Layout::default().write_line(
-                    buffer,
-                    Rect::new(area.x.saturating_sub(2), y, text::width(MARK) as u16, 1),
-                    &Line::styled(MARK, look.raised(Role::Accent)),
-                );
-            }
+            // The mark runs the item's whole height, like its band.
+            text::Layout::default().write_line(
+                buffer,
+                Rect::new(area.x.saturating_sub(2), y, text::width(MARK) as u16, 1),
+                &Line::styled(MARK, look.raised(Role::Accent)),
+            );
         }
         if row.rule {
             let right = text::line_width(&row.right);
