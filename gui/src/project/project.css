@@ -1,34 +1,253 @@
-/* A project's overview and its journals: read like the front page, with a
-   title of their own. */
+/* A project's overview and its journals, each on one screen: a head with
+   the name, a few lines on what it is, then what is long in regions that
+   scroll on their own. */
 
-.project-head {
-  margin-top: var(--space-8);
+.project-page,
+.journal-page {
+  --board: min(100% - 2 * var(--gutter), var(--column));
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
-.project-title {
+.page-title {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-emphasis);
   font-weight: 400;
-  font-size: var(--size-title);
+  font-size: var(--size-h2);
   line-height: var(--leading-heading);
   color: var(--text-strong);
-  animation: focus 1.1s cubic-bezier(0.2, 0, 0, 1) both;
 }
 
-.journal-title {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-h1);
+.text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  white-space: nowrap;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.text-button:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.text-button .glyph {
+  color: var(--accent);
+}
+
+.project-intro {
+  flex: none;
+  width: var(--board);
+  margin: var(--space-2) auto 0;
 }
 
 .project-lede {
-  margin: var(--space-3) 0 0;
+  margin: 0;
   font-size: var(--body-size);
   line-height: var(--leading-prose);
   color: var(--text);
 }
 
-.project-head .project-facts {
+.project-intro .project-facts {
+  margin: var(--space-2) 0 0;
+}
+
+.project-facts {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.project-facts.unreachable {
+  color: var(--caution);
+}
+
+/* Tabs, on a narrow screen only: the sections one at a time. */
+.tabs {
+  flex: none;
+  display: flex;
+  gap: var(--space-1);
+  width: var(--board);
+  margin: var(--space-5) auto 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab {
+  flex: none;
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text-3);
+  font-size: var(--size-ui);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.chosen {
+  color: var(--text-strong);
+  background: var(--hairline);
+}
+
+.project-board {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: var(--board);
+  margin: var(--space-3) auto 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-8)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-8)), transparent);
+}
+
+.project-board .board-column {
+  display: contents;
+}
+
+.project-board .home-section {
+  display: none;
+  padding: var(--space-3) 0 var(--space-10);
+}
+
+.project-board .home-section.chosen {
+  display: block;
+}
+
+.project-board .home-section .section-title {
+  display: none;
+}
+
+@container (min-width: 920px) {
+  .project-page {
+    --board: min(100% - 2 * var(--gutter), 1080px);
+  }
+
+  .tabs {
+    display: none;
+  }
+
+  .project-board {
+    margin-top: var(--space-6);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--space-12);
+    overflow: hidden;
+  }
+
+  .project-board .board-column {
+    display: block;
+    min-width: 0;
+    margin: 0 calc(-1 * var(--space-3));
+    padding: var(--space-3) var(--space-3) var(--space-10);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .project-board .home-section,
+  .project-board .home-section .section-title {
+    display: block;
+    padding: 0;
+  }
+
+  .project-board .home-section .section-title {
+    display: flex;
+  }
+}
+
+/* Where things are: what, then its machine and path. */
+.place-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0;
+}
+
+.place-what {
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.place-where {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.place-machine {
+  flex: none;
+  color: var(--text-2);
+}
+
+.place-where code {
+  min-width: 0;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  overflow-wrap: anywhere;
+}
+
+/* A journal's head: the project it belongs to, then its name. */
+.crumb {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  text-decoration: none;
+  transition: color var(--hover) ease;
+}
+
+.crumb:hover {
+  color: var(--text);
+}
+
+.crumb-sep {
+  flex: none;
+  color: var(--text-3);
+}
+
+.journal-name-title {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-ui);
+}
+
+.journal-reading {
+  flex: 1;
+}
+
+.journal-reading > * {
+  width: var(--board);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.journal-intro {
+  padding-top: var(--space-4);
+}
+
+.journal-intro .project-facts {
   margin: var(--space-2) 0 0;
 }
 
@@ -124,10 +343,10 @@
 }
 
 /* Entries: each under its stamp, the words as written. */
-.home .entries {
+.journal-page .entries {
   list-style: none;
-  margin: var(--space-10) 0 0;
-  padding: 0;
+  margin: var(--space-8) auto 0;
+  padding: 0 0 var(--space-12);
 }
 
 .entry + .entry {
@@ -176,6 +395,7 @@
 }
 
 .earlier {
+  display: block;
   margin-top: var(--space-6);
   font-size: var(--size-small);
   color: var(--text-2);
@@ -189,8 +409,3 @@
   color: var(--text);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .project-title {
-    animation: none;
-  }
-}

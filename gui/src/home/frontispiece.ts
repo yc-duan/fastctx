@@ -21,8 +21,21 @@ interface Composition {
   grid: number;
 }
 
-const wide: Composition = { width: 960, height: 320, spread: { x: 0.34, y: 0.3 }, grid: 32 };
-const narrow: Composition = { width: 420, height: 400, spread: { x: 0.27, y: 0.31 }, grid: 28 };
+/** A composition for the box the page gives the drawing, in its own
+ *  pixels: the machines spread round an ellipse that leaves room at the
+ *  edges for a ring and the name beside it. */
+function fitted(width: number, height: number): Composition {
+  const margin = { x: ringRadius + 70, y: ringRadius + 52 };
+  return {
+    width,
+    height,
+    spread: {
+      x: Math.max(0.18, Math.min(0.34, (width / 2 - margin.x) / width)),
+      y: Math.max(0.16, Math.min(0.31, (height / 2 - margin.y) / height)),
+    },
+    grid: width < 600 ? 28 : 32,
+  };
+}
 
 interface Label {
   x: number;
@@ -44,11 +57,16 @@ export class Frontispiece {
     figure.innerHTML = `<div class="frontispiece-drawing"></div><div class="frontispiece-labels"></div>`;
     this.drawing = figure.querySelector<HTMLElement>(".frontispiece-drawing")!;
     this.labels = figure.querySelector<HTMLElement>(".frontispiece-labels")!;
+    // Drawn again only when the box changes by more than a grid's step:
+    // the pen's grain is costly, and a window being dragged wider should
+    // not redraw it at every pixel.
     new ResizeObserver(() => {
-      const fit = figure.clientWidth < 600 ? narrow : wide;
-      if (fit === this.composition) return;
-      this.composition = fit;
-      figure.style.aspectRatio = `${fit.width} / ${fit.height}`;
+      const width = Math.round(figure.clientWidth);
+      const height = Math.round(figure.clientHeight);
+      if (!width || !height) return;
+      const last = this.composition;
+      if (last && Math.abs(last.width - width) < 16 && Math.abs(last.height - height) < 16) return;
+      this.composition = fitted(width, height);
       this.draw();
     }).observe(figure);
   }
@@ -65,6 +83,7 @@ export class Frontispiece {
     // pen's grain is costly, and a drawing that has not changed is kept.
     const key = JSON.stringify([
       composition.width,
+      composition.height,
       shown.world.here,
       shown.world.nodes.map((node) => [node.name, node.online, "Ok" in node.facts && node.facts.Ok ? node.facts.Ok.os : ""]),
       shown.residents.map((r) => [r.about.id, r.about.machine, r.now?.activity, r.now?.waiting_for_user]),

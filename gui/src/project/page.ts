@@ -1,6 +1,8 @@
-// A project's overview: what it is, who is in it now, its journals, its
-// decisions and where its things are, as its map has them. Like the front
-// page, every line is the World's record, nothing summarised.
+// A project's overview, on one screen: what it is, who is in it now, its
+// journals, its decisions and where its things are, as its map has them.
+// Side by side where there is room, each column scrolling on its own;
+// behind tabs on a narrow screen. Like the front page, every line is the
+// World's record, nothing summarised.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -12,30 +14,48 @@ import type { ProjectWords } from "./words";
 export interface ProjectOptions {
   words: ProjectWords;
   home: HomeWords;
-  back: { href: string; label: string };
+  town: string;
+  head(title: string, actions?: string): string;
+  /** What the action that begins a conversation here is called. */
+  newTalk: string;
+  begin(town: string): void;
   link(address: Address): string;
   journalLink(town: string, journal: string): string;
 }
+
+type Tab = "here" | "journals" | "decisions" | "places";
 
 const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 export class ProjectPage {
   readonly element: HTMLElement;
-  private body: HTMLElement;
+  private title: HTMLElement;
+  private intro: HTMLElement;
+  private tabs: HTMLElement;
+  private board: HTMLElement;
+  private tab: Tab = "here";
   private drawn = "";
 
   constructor(private readonly options: ProjectOptions) {
     this.element = document.createElement("div");
-    this.element.className = "page project-page";
+    this.element.className = "project-page";
     this.element.innerHTML = `
-      <header class="bar">
-        <div class="bar-inner">
-          <a class="bar-back" href="${escape(options.back.href)}" aria-label="${escape(options.back.label)}">${glyph("chevron", 20)}</a>
-          <div class="who"><div class="who-state">${escape(options.words.overview)}</div></div>
-        </div>
-      </header>
-      <main class="home overview"></main>`;
-    this.body = this.element.querySelector<HTMLElement>(".overview")!;
+      ${options.head(`<h1 class="page-title"></h1>`, `<button class="text-button begin-here" type="button">${glyph("plus", 16)}<span>${escape(options.newTalk)}</span></button>`)}
+      <header class="project-intro"></header>
+      <div class="tabs" role="tablist"></div>
+      <div class="project-board"></div>`;
+    this.title = this.element.querySelector<HTMLElement>(".page-title")!;
+    this.title.textContent = options.town;
+    this.intro = this.element.querySelector<HTMLElement>(".project-intro")!;
+    this.tabs = this.element.querySelector<HTMLElement>(".tabs")!;
+    this.board = this.element.querySelector<HTMLElement>(".project-board")!;
+    this.element.querySelector(".begin-here")!.addEventListener("click", () => options.begin(options.town));
+    this.tabs.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
+      if (!button) return;
+      this.tab = button.dataset.tab as Tab;
+      this.choose();
+    });
   }
 
   update(map: MapView, who: WorldWho, now: Date): void {
@@ -43,24 +63,25 @@ export class ProjectPage {
     const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
     const here = residents.filter((r) => r.here);
     const record = map.record;
-    const html = `
-      <header class="project-head">
-        <h1 class="project-title">${escape(record.name)}</h1>
-        <p class="project-lede">${escape(record.what)}</p>
-        <p class="project-facts">${[
-          record.machines.join(" · "),
-          words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at))),
-        ]
-          .map((fact) => `<span class="fact">${escape(fact)}</span>`)
-          .join(`<span class="sep">·</span>`)}</p>
-      </header>
-      ${this.section(
+    this.title.textContent = record.name;
+    const intro = `
+      <p class="project-lede">${escape(record.what)}</p>
+      <p class="project-facts">${[
+        record.machines.join(" · "),
+        words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at))),
+      ]
+        .map((fact) => `<span class="fact">${escape(fact)}</span>`)
+        .join(`<span class="sep">·</span>`)}</p>`;
+    const sections: [Tab, string, string][] = [
+      [
+        "here",
         words.here,
         here.length
           ? `<ul class="people">${here.map((r) => this.someone(r, now)).join("")}</ul>`
           : `<p class="quiet">${escape(words.nobodyHere)}</p>`,
-      )}
-      ${this.section(
+      ],
+      [
+        "journals",
         words.journals,
         map.journals.length
           ? `<ul class="journals">${map.journals
@@ -82,28 +103,42 @@ export class ProjectPage {
               )
               .join("")}</ul>`
           : `<p class="quiet">${escape(words.noJournals)}</p>`,
-      )}
-      ${this.section(words.decisions, this.canon(map))}
-      ${record.places.length ? this.section(words.places, this.places(map)) : ""}`;
+      ],
+      ["decisions", words.decisions, this.canon(map)],
+      ["places", words.places, record.places.length ? this.places(map) : `<p class="quiet">${escape(words.noPlaces)}</p>`],
+    ];
+    const section = ([tab, title, body]: [Tab, string, string]) =>
+      `<section class="home-section" data-tab="${tab}"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
+    const board = `<div class="board-column scroller">${section(sections[0])}</div><div class="board-column scroller">${sections
+      .slice(1)
+      .map(section)
+      .join("")}</div>`;
+    const tabs = sections
+      .map(([tab, title]) => `<button class="tab" type="button" role="tab" data-tab="${tab}">${escape(title)}</button>`)
+      .join("");
+    const html = intro + tabs + board;
     if (html !== this.drawn) {
       this.drawn = html;
-      this.body.innerHTML = html;
+      this.intro.innerHTML = intro;
+      this.tabs.innerHTML = tabs;
+      this.board.innerHTML = board;
+      this.choose();
     }
-    const state = this.element.querySelector<HTMLElement>(".who-state")!;
-    state.textContent = words.overview;
-    state.classList.remove("gone");
   }
 
-  /** The project could not be asked: said in the bar, with what was last
-   *  shown left as it was. */
+  /** The project could not be asked: said under its name, with what was
+   *  last shown left as it was. */
   unreachable(why: string): void {
-    const state = this.element.querySelector<HTMLElement>(".who-state")!;
-    state.textContent = this.options.home.unreachable(why);
-    state.classList.add("gone");
+    this.intro.innerHTML = `<p class="project-facts unreachable">${escape(this.options.home.unreachable(why))}</p>`;
+    this.drawn = "";
   }
 
-  private section(title: string, body: string): string {
-    return `<section class="home-section"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
+  private choose(): void {
+    for (const element of this.element.querySelectorAll<HTMLElement>("[data-tab]")) {
+      const chosen = element.dataset.tab === this.tab;
+      element.classList.toggle("chosen", chosen);
+      if (element.getAttribute("role") === "tab") element.setAttribute("aria-selected", String(chosen));
+    }
   }
 
   private writer(writer: Writer): string {
@@ -126,12 +161,14 @@ export class ProjectPage {
       : r.last_action
         ? `${r.last_action.machine !== r.about.machine ? `${r.last_action.machine} · ` : ""}${r.last_action.what}`
         : "";
+    const origin =
+      r.about.origin.kind === "colleague" ? `<span class="someone-origin">${escape(r.about.origin.label)}</span>` : "";
     const since = r.now?.since ?? r.about.born_at;
     return `<li><a class="someone${waiting ? " waiting" : ""}" href="${escape(this.options.link({ resident: r.about.id, machine: r.about.machine }))}">
       <span class="rail">${mark}</span>
       <span class="someone-body">
         <span class="someone-line"><span class="someone-name">${escape(home.someone(agentName(r.about.host.agent), r.about.machine))}</span><span class="someone-since">${escape(busy || waiting ? home.for(home.lasted(now.getTime() - Date.parse(since))) : home.ago(now.getTime() - Date.parse(since)))}</span></span>
-        ${doing ? `<span class="someone-doing">${escape(doing)}</span>` : ""}
+        ${origin}${doing ? `<span class="someone-doing">${escape(doing)}</span>` : ""}
       </span>
       <span class="someone-go">${glyph("chevron", 16)}</span>
     </a></li>`;
@@ -154,12 +191,11 @@ export class ProjectPage {
   }
 
   private places(map: MapView): string {
-    const { words } = this.options;
-    return `<div class="prose"><table><thead><tr><th>${escape(words.what)}</th><th>${escape(words.machine)}</th><th>${escape(words.path)}</th></tr></thead><tbody>${map.record.places
+    return `<ul class="places">${map.record.places
       .map(
         (place) =>
-          `<tr><td>${escape(place.what)}</td><td>${escape(place.machine)}</td><td><code>${escape(place.path)}</code></td></tr>`,
+          `<li class="place-line"><span class="place-what">${escape(place.what)}</span><span class="place-where"><span class="place-machine">${escape(place.machine)}</span><code>${escape(place.path)}</code></span></li>`,
       )
-      .join("")}</tbody></table></div>`;
+      .join("")}</ul>`;
   }
 }

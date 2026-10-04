@@ -1,0 +1,110 @@
+// The settings: how the interface looks and reads on this device, and what
+// this device is in the World. Choices take effect at once and are kept on
+// this device; the language takes effect as the interface starts again.
+
+import { escape } from "../conversation/prose";
+import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
+import type { WorldNow } from "../world/bridge";
+import type { Page } from "./shell";
+import { effect } from "./signals";
+import type { Store } from "./store";
+import type { SettingsWords } from "./words";
+
+export interface SettingsOptions {
+  store: Store;
+  words: SettingsWords;
+  head(title: string, actions?: string): string;
+  language: "zh" | "en";
+  chooseLanguage(language: "zh" | "en"): void;
+  /** Says a moment as the front page does: how long ago. */
+  ago(at: Date, now: Date): string;
+}
+
+export class SettingsPage implements Page {
+  readonly element: HTMLElement;
+  readonly title: string;
+  private stop: () => void;
+  private device: HTMLElement;
+
+  constructor(private readonly options: SettingsOptions) {
+    const { words } = options;
+    this.title = words.title;
+    this.element = document.createElement("div");
+    this.element.className = "settings-page";
+    this.element.innerHTML = `
+      ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
+      <div class="settings scroller">
+        <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
+        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl></section>
+      </div>`;
+    this.device = this.element.querySelector<HTMLElement>(".device")!;
+    this.drawLook();
+    this.element.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-choice]");
+      if (!button) return;
+      const value = button.dataset.value!;
+      switch (button.dataset.choice) {
+        case "theme":
+          chooseTheme(value ? (value as Theme) : null);
+          break;
+        case "size":
+          chooseSize(value || null);
+          break;
+        case "language":
+          options.chooseLanguage(value as "zh" | "en");
+          return;
+      }
+      this.drawLook();
+    });
+    this.stop = effect(() => this.drawDevice(options.store.world.get(), options.store.clock.get()));
+  }
+
+  leave(): void {
+    this.stop();
+  }
+
+  private drawLook(): void {
+    const { words, language } = this.options;
+    const row = (kind: string, label: string, choices: [string, string][], chosen: string) =>
+      `<div class="choice-row" role="radiogroup" aria-label="${escape(label)}"><span class="choice-label">${escape(label)}</span><div class="choice-options">${choices
+        .map(
+          ([value, name]) =>
+            `<button type="button" class="choice${value === chosen ? " chosen" : ""}" role="radio" aria-checked="${value === chosen}" data-choice="${kind}" data-value="${escape(value)}">${escape(name)}</button>`,
+        )
+        .join("")}</div></div>`;
+    this.element.querySelector(".look")!.innerHTML = [
+      row("theme", words.theme, [["", words.system], ...themes.map((theme): [string, string] => [theme, words.themes[theme]])], chosenTheme() ?? ""),
+      row("size", words.textSize, [["", words.system], ...textSizes.map((size): [string, string] => [size, words.sizes[size]!])], chosenSize() ?? ""),
+      row("language", words.language, [["zh", "中文"], ["en", "English"]], language),
+    ].join("");
+  }
+
+  private drawDevice(world: WorldNow | null, now: Date): void {
+    const { words, store } = this.options;
+    if (!store.live || !world) {
+      this.device.innerHTML = `<p class="quiet">${escape(words.notInShell)}</p>`;
+      return;
+    }
+    const link = world.nodes.link;
+    const linked =
+      link.kind === "alone"
+        ? words.alone
+        : link.kind === "online"
+          ? words.online(link.hub, this.options.ago(new Date(link.since), now))
+          : link.kind === "connecting"
+            ? words.connecting(link.last_error)
+            : words.stopped(link.reason);
+    const here = world.nodes.machines.find((node) => node.name === world.here);
+    const version = here && "Ok" in here.facts && here.facts.Ok ? here.facts.Ok.version : "";
+    const facts: [string, string][] = [
+      [words.machine, world.here],
+      [words.world, world.nodes.world ?? words.alone],
+      [words.link, linked],
+      [words.version, version],
+    ];
+    this.device.innerHTML = facts
+      .filter(([, value]) => value)
+      .map(([name, value]) => `<dt>${escape(name)}</dt><dd>${escape(value)}</dd>`)
+      .join("");
+  }
+}

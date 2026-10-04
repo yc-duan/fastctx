@@ -20,13 +20,8 @@ export interface HomeWords {
   listSeparator: string;
   /** The World could not be asked, and why. */
   unreachable(why: string): string;
-  /** The composer that asks an agent in: "ask [Codex] on [laptop] · [project]". */
-  askIn: string;
-  onMachine: string;
-  noProject: string;
-  firstWords: string;
-  askInSend: string;
-  notOpened(why: string): string;
+  /** Begins a conversation, where nobody is at work. */
+  begin: string;
   away: string;
   nothingAway: string;
   projects: string;
@@ -105,12 +100,7 @@ export const zhHome: HomeWords = {
   idle: (names) => `空闲：${names}`,
   listSeparator: "、",
   unreachable: (why) => `问不到这台机器上的世界：${why}`,
-  askIn: "请",
-  onMachine: "在",
-  noProject: "不进项目",
-  firstWords: "请一位智能体进来，对它说的第一句话…",
-  askInSend: "请它进来",
-  notOpened: (why) => `没能请它进来：${why}`,
+  begin: "开一段新对话",
   away: "你不在时",
   nothingAway: "你不在时，世界里没有新的事。",
   projects: "项目",
@@ -159,12 +149,7 @@ export const enHome: HomeWords = {
   idle: (names) => `Idle: ${names}`,
   listSeparator: ", ",
   unreachable: (why) => `The World on this machine could not be asked: ${why}`,
-  askIn: "Ask",
-  onMachine: "on",
-  noProject: "no project",
-  firstWords: "Ask an agent in, with the first thing to say…",
-  askInSend: "Ask it in",
-  notOpened: (why) => `Could not ask it in: ${why}`,
+  begin: "Begin a conversation",
   away: "While you were away",
   nothingAway: "Nothing new happened in the World while you were away.",
   projects: "Projects",

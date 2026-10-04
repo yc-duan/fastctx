@@ -1,23 +1,37 @@
-/* The front page: a drawing of the World, then the day, then what needs
-   the reader and what happened, read top to bottom like the first page of
-   a paper. No cards and no boxes; parts are set apart by space and by fine
-   rules, as in a book. */
+/* The front page, on one screen: the drawing, the day, then a board of
+   what needs the reader and what happened, side by side where there is
+   room. Each column of the board scrolls on its own; the drawing and the
+   day stay. No cards and no boxes; parts are set apart by space and by
+   fine rules, as in a book. */
 
-.home {
-  max-width: calc(var(--column) + 2 * var(--gutter));
-  margin: 0 auto;
-  padding: 0 var(--gutter) var(--space-12);
-}
-
-/* The drawing breaks out of the reading column on a wide screen. */
-.frontispiece {
-  --wide: min(100vw - 2 * var(--gutter), 980px);
-  width: var(--wide);
-  margin: var(--space-4) 0 0 calc(50% - var(--wide) / 2);
-}
-
-.frontispiece {
+.home-page {
+  --board: min(100% - 2 * var(--gutter), var(--column));
+  container-type: inline-size;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Here the head carries only the way back to the sidebar, over the
+   drawing; the day is the page's title. */
+.home-page > .page-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+.home-page > .page-head .page-head-title {
+  display: none;
+}
+
+.frontispiece {
+  flex: none;
+  position: relative;
+  width: min(100% - 2 * var(--gutter), 1080px);
+  height: clamp(200px, 31dvh, 330px);
+  margin: var(--space-2) auto 0;
 }
 
 .frontispiece-drawing,
@@ -144,7 +158,9 @@
 
 /* The day. Its title comes into focus once, when the page opens. */
 .dateline {
-  margin-top: var(--space-6);
+  flex: none;
+  width: var(--board);
+  margin: var(--space-3) auto 0;
 }
 
 .dateline-day {
@@ -200,9 +216,70 @@
   color: var(--caution);
 }
 
+/* The board: one column that scrolls on a narrow screen; two that scroll
+   each on their own on a wide one. The edges fade, so what scrolls slips
+   under the day rather than being cut. */
+.board {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: var(--board);
+  margin: var(--space-5) auto 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-8)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-8)), transparent);
+}
+
+.board-column {
+  min-width: 0;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: var(--space-3) var(--space-3) var(--space-10);
+}
+
+.board-column.away {
+  padding-top: 0;
+}
+
+@container (min-width: 920px) {
+  .home-page {
+    --board: min(100% - 2 * var(--gutter), 1080px);
+  }
+
+  .board {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--space-12);
+    overflow: hidden;
+  }
+
+  .board-column {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .board-column.away {
+    padding-top: var(--space-3);
+  }
+}
+
 /* Sections: a quiet title with a rule running out from it. */
-.home-section {
-  margin-top: var(--space-10);
+.home-section + .home-section {
+  margin-top: var(--space-8);
+}
+
+.board-column.away .home-section {
+  margin-top: var(--space-8);
+}
+
+@container (min-width: 920px) {
+  .board-column.away .home-section {
+    margin-top: 0;
+  }
 }
 
 .section-title {
@@ -226,8 +303,7 @@
   mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
-.home ul,
-.home ol {
+:is(.home-page, .project-page, .journal-page) :is(ul, ol):not(.prose *) {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -243,6 +319,19 @@
 .idle {
   margin-top: var(--space-2);
   padding-left: calc(var(--rail-glyph) + var(--rail-gap));
+}
+
+.begin {
+  color: var(--text-2);
+  background: radial-gradient(circle, var(--accent) 1px, transparent 1.6px) 0 100% / 7px 2px repeat-x;
+  padding: 0 2px 2px;
+  border-radius: 2px;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.begin:hover {
+  color: var(--text);
+  background-color: var(--accent-wash);
 }
 
 .tag {
@@ -417,6 +506,27 @@
   padding: 6px 0;
 }
 
+.event:has(> .event-link) {
+  display: block;
+  padding: 0;
+}
+
+.event-link {
+  display: grid;
+  grid-template-columns: var(--time) 18px minmax(0, 1fr);
+  column-gap: var(--rail-gap);
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-s);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color var(--hover) ease;
+}
+
+.event-link:hover {
+  background: var(--hairline);
+}
+
 .event + .event::before {
   content: "";
   position: absolute;
@@ -520,111 +630,6 @@
   grid-column: 1 / -1;
 }
 
-/* The index: projects and machines, ruled like a book's contents. */
-.projects li + li,
-.machines li + li {
-  position: relative;
-}
-
-.projects li + li::before,
-.machines li + li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -4px;
-  height: 8px;
-  background: var(--pen-rule);
-  opacity: 0.7;
-  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-}
-
-.machines li:nth-child(odd)::before {
-  -webkit-mask-image: var(--pen-rule-3);
-  mask-image: var(--pen-rule-3);
-}
-
-.project {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-3) 0;
-  color: inherit;
-  text-decoration: none;
-}
-
-.project-name {
-  font-family: var(--font-emphasis);
-  font-size: var(--size-h3);
-  color: var(--text-strong);
-  transition: color var(--hover) ease;
-}
-
-.project:hover .project-name {
-  color: var(--accent-bright);
-}
-
-.project-what {
-  font-size: var(--size-ui);
-  color: var(--text-2);
-  line-height: var(--leading-prose);
-}
-
-.project-facts {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.machine {
-  display: grid;
-  grid-template-columns: 10px auto minmax(0, 1fr);
-  grid-template-areas: "dot name state" ". facts facts";
-  column-gap: var(--space-3);
-  align-items: center;
-  padding: var(--space-3) 0;
-  font-size: var(--size-ui);
-}
-
-.machine .dot {
-  grid-area: dot;
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-}
-
-.machine.offline .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.2px var(--text-3);
-}
-
-.machine-name {
-  grid-area: name;
-  font-family: var(--font-emphasis);
-  color: var(--text-strong);
-}
-
-.machine.offline .machine-name {
-  color: var(--text-2);
-}
-
-.machine-state {
-  grid-area: state;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.machine.offline .machine-state {
-  color: var(--caution);
-}
-
-.machine-facts {
-  grid-area: facts;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .frontispiece .flow,
   .frontispiece-drawing.arriving .paper,
@@ -634,53 +639,4 @@
   .dateline-day {
     animation: none;
   }
-}
-
-/* The front page's composer: who to ask in, where, set in the sentence. */
-.page > .home {
-  flex: 1;
-  width: 100%;
-}
-
-.ask-in-who {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 0.35em;
-  min-width: 0;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.pick {
-  appearance: none;
-  -webkit-appearance: none;
-  margin: 0;
-  padding: 0 2px 2px;
-  border: 0;
-  border-radius: 2px;
-  background: radial-gradient(circle, var(--text-3) 0.8px, transparent 1.3px) 0 100% / 5px 2px repeat-x;
-  color: var(--text-2);
-  font: inherit;
-  cursor: pointer;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
-}
-
-.pick:hover,
-.pick:focus-visible {
-  color: var(--text);
-  background-color: var(--hairline);
-}
-
-.pick option {
-  background: var(--bg-elevated);
-  color: var(--text);
-}
-
-.ask-in-note {
-  max-width: var(--column);
-  margin: 0 auto var(--space-2);
-  padding: 0 var(--space-4);
-  font-size: var(--size-small);
-  color: var(--wrong);
 }

@@ -1,0 +1,512 @@
+/* The frame: the sidebar and the place shown, one screen high. The window
+   never scrolls; a page's long parts scroll in their own regions, and the
+   frame around them stays where it is. */
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.shell {
+  --sidebar: 268px;
+  display: grid;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  height: 100dvh;
+  transition: grid-template-columns var(--fold) var(--fold-easing);
+}
+
+.shell.folded {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+/* The sidebar is the book's contents, on a sheet a shade under the page,
+   its edge a line ruled by hand. */
+.sidebar-frame {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-sunken);
+}
+
+.sidebar-frame::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 6px;
+  background: var(--pen-rule);
+  opacity: 0.55;
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+.scrim {
+  display: none;
+}
+
+.sidebar {
+  width: var(--sidebar);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--space-2) + env(safe-area-inset-top)) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom));
+}
+
+.sidebar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidebar-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 0 0 var(--space-3);
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  letter-spacing: 0.01em;
+  color: var(--text-strong);
+  text-decoration: none;
+}
+
+.wordmark-mark {
+  color: var(--text-2);
+}
+
+.icon-button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.icon-button:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.new-talk {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  margin: var(--space-2) 0 var(--space-3);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 1px var(--hairline);
+  color: var(--text);
+  font-size: var(--size-ui);
+  transition: box-shadow var(--hover) ease, background-color var(--hover) ease;
+}
+
+.new-talk:hover {
+  box-shadow: 0 0 0 1px var(--rule), 0 2px 10px rgba(0, 0, 0, 0.12);
+}
+
+.new-talk .glyph {
+  color: var(--accent);
+}
+
+.new-talk kbd {
+  margin-left: auto;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: 11px;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--hover) ease;
+}
+
+.new-talk:hover kbd {
+  opacity: 1;
+}
+
+.sidebar-places {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding-bottom: var(--space-4);
+}
+
+.place {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  text-decoration: none;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.place:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.place.current {
+  color: var(--text-strong);
+  background: var(--hairline);
+}
+
+.place .glyph,
+.place-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.place.current .place-mark,
+.place.current .glyph {
+  color: var(--text-2);
+}
+
+.place-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  flex: none;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.count.waiting {
+  color: var(--accent);
+}
+
+.sidebar-trouble {
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-3);
+  font-size: var(--size-small);
+  color: var(--caution);
+}
+
+.sidebar-group {
+  margin-top: var(--space-5);
+}
+
+.side-group-title {
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-3);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-small);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.side-group-title a {
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--hover) ease;
+}
+
+.side-group-title a:hover {
+  color: var(--text-2);
+}
+
+.sidebar-quiet {
+  margin: 0;
+  padding: 2px var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.place-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.place-row .place {
+  flex: 1;
+  min-width: 0;
+  padding-right: 34px;
+}
+
+.place-fold {
+  position: absolute;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.place-fold .glyph {
+  transition: transform var(--fold) var(--fold-easing);
+}
+
+.place-row:hover .place-fold,
+.place-fold:focus-visible {
+  opacity: 1;
+}
+
+.place-fold:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.shut .place-fold .glyph {
+  transform: rotate(-90deg);
+}
+
+@media (hover: none) {
+  .place-fold {
+    opacity: 1;
+  }
+}
+
+/* Agents: a mark for what each is doing, its name, and a quiet line under
+   it. Who waits on the reader is marked in clay. */
+.agents {
+  margin: 1px 0 var(--space-1);
+}
+
+.agent-place {
+  align-items: flex-start;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-left: calc(var(--space-3) + 8px);
+}
+
+.agents.loose .agent-place {
+  padding-left: var(--space-3);
+}
+
+.agent-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.place-meta {
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-place.mark-ask .place-meta {
+  color: var(--accent);
+}
+
+.mark {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+}
+
+.agent-place .mark {
+  margin-top: calc((var(--size-ui) * var(--leading-ui) - 8px) / 2);
+}
+
+.mark.mark-busy {
+  background: var(--accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.mark.mark-ask {
+  box-shadow: inset 0 0 0 1.6px var(--accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.mark.mark-idle {
+  box-shadow: inset 0 0 0 1.2px var(--text-3);
+}
+
+.machine-place .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 1px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.machine-place.offline .dot,
+.machine-place.unknown .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.2px var(--text-3);
+}
+
+.machine-place.offline .place-name {
+  color: var(--text-3);
+}
+
+.place-note {
+  flex: none;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.sidebar-foot {
+  flex: none;
+  padding-top: var(--space-2);
+}
+
+/* The place shown. */
+.main {
+  min-width: 0;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.main > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Every page's head: the way back to the sidebar where it is hidden, the
+   page's name, what can be done here. */
+.page-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 52px;
+  padding: env(safe-area-inset-top) var(--space-4) 0;
+}
+
+.menu-button {
+  display: none;
+  margin-left: -6px;
+}
+
+.shell.folded .menu-button {
+  display: grid;
+}
+
+.page-head-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.page-head-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* A region of a page that scrolls on its own. It is positioned so that
+   what is placed absolutely inside it (KaTeX's hidden MathML among them)
+   scrolls and is clipped with it, not with the window. */
+.scroller {
+  position: relative;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 760px) {
+  .shell,
+  .shell.folded {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar-frame {
+    position: fixed;
+    z-index: 20;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(86vw, 320px);
+    transform: translateX(-102%);
+    transition: transform var(--fold) var(--fold-easing);
+    box-shadow: var(--shadow-pop);
+  }
+
+  .sidebar-frame::after {
+    display: none;
+  }
+
+  .shell.drawer-open .sidebar-frame {
+    transform: none;
+  }
+
+  .sidebar {
+    width: 100%;
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    background: rgba(0, 0, 0, 0.42);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--fold) ease;
+  }
+
+  .shell.drawer-open .scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .menu-button {
+    display: grid;
+  }
+
+  .new-talk kbd {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mark.busy,
+  .mark.mark-ask {
+    animation: none;
+  }
+}

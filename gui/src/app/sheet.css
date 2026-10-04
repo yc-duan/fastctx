@@ -1,0 +1,220 @@
+/* A sheet over the page: raised a little, the page dimmed behind it. On a
+   phone it rises from the foot of the screen, where the thumb is. */
+
+.sheet {
+  margin: 12vh auto auto;
+  padding: 0;
+  border: 0;
+  max-width: none;
+  max-height: none;
+  background: transparent;
+  color: var(--text);
+  overflow: visible;
+}
+
+.sheet::backdrop {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.sheet[open] .sheet-body {
+  animation: sheet-in var(--enter) var(--fold-easing) both;
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
+.sheet-body {
+  width: min(560px, 100vw - 32px);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop), 0 0 0 1px var(--hairline);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.sheet-title {
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h2);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+}
+
+.sheet-close {
+  margin-right: -8px;
+}
+
+/* A choice among a few: the question on the left, its answers as quiet
+   pills, the chosen one washed in clay. */
+.choice-row {
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  column-gap: var(--space-4);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+}
+
+.choice-label {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.choice-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.choice {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  transition: color var(--hover) ease, background-color var(--hover) ease, box-shadow var(--hover) ease;
+}
+
+.choice:hover:not(:disabled) {
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.choice.chosen {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.choice:disabled {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+.choice-note {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.choice-none {
+  font-size: var(--size-small);
+  color: var(--caution);
+}
+
+.first-words {
+  display: block;
+  width: 100%;
+  min-height: 6em;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: 0;
+  resize: none;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--body-size);
+  line-height: var(--leading-prose);
+  transition: box-shadow var(--hover) ease;
+}
+
+.first-words:focus {
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.first-words::placeholder {
+  color: var(--text-3);
+}
+
+.sheet-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--size-small);
+  color: var(--wrong);
+}
+
+.sheet-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.sheet-hint {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.sheet-go {
+  flex: none;
+  height: 34px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--bg);
+  font-size: var(--size-ui);
+  transition: background-color var(--hover) ease, transform var(--hover) ease;
+}
+
+.sheet-go:hover:not(:disabled) {
+  background: var(--accent-bright);
+}
+
+.sheet-go:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.sheet-go:disabled {
+  background: var(--hairline);
+  color: var(--text-3);
+}
+
+@media (max-width: 760px) {
+  .sheet {
+    margin: auto 0 0;
+    width: 100%;
+  }
+
+  .sheet-body {
+    width: 100%;
+    padding: var(--space-5) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+  }
+
+  .sheet[open] .sheet-body {
+    animation-name: sheet-rise;
+  }
+
+  @keyframes sheet-rise {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+  }
+
+  .choice-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-2);
+  }
+
+  .sheet-hint {
+    display: none;
+  }
+}

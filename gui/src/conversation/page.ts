@@ -1,5 +1,6 @@
 // A conversation's page: who it is with and what they are doing, the
-// conversation itself, and the words the user is about to send.
+// conversation itself in a region that scrolls on its own, and the words
+// the user is about to send, always at the foot.
 
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
@@ -19,8 +20,9 @@ export interface PageOptions {
   words: Words;
   here: string;
   someone: Someone;
-  /** Where the reader came from, to go back to. */
-  back: { href: string; label: string } | null;
+  /** The head every page has: the way back to the sidebar where it is
+   *  hidden, a title, and actions. */
+  head(title: string, actions?: string): string;
   /** Where another resident's conversation opens. */
   link?: (address: { resident: string; machine: string }) => string;
   conversation: Conversation;
@@ -36,24 +38,20 @@ export class ConversationPage {
   private context: HTMLElement;
   private input: HTMLTextAreaElement;
   private action: HTMLButtonElement;
+  private scroller: HTMLElement;
   private following = true;
   private gone: string | null = null;
 
   constructor(private readonly options: PageOptions) {
     const { words, someone } = options;
     this.element = document.createElement("div");
-    this.element.className = "page conversation-page";
+    this.element.className = "conversation-page";
     this.element.innerHTML = `
-      <header class="bar">
-        <div class="bar-inner">
-          ${options.back ? `<a class="bar-back" href="${escape(options.back.href)}" aria-label="${escape(options.back.label)}">${glyph("chevron", 20)}</a>` : ""}
-          <div class="who">
-            <h1 class="who-name">${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span></h1>
-            <div class="who-state"></div>
-          </div>
-        </div>
-      </header>
-      <main class="conversation"></main>
+      ${options.head(`<div class="who">
+        <h1 class="who-name">${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span></h1>
+        <div class="who-state"></div>
+      </div>`)}
+      <div class="talk-scroller scroller"><div class="conversation"></div></div>
       <footer class="composer-dock">
         <ul class="running" hidden></ul>
         <form class="composer">
@@ -64,6 +62,7 @@ export class ConversationPage {
           </div>
         </form>
       </footer>`;
+    this.scroller = this.element.querySelector<HTMLElement>(".talk-scroller")!;
     const main = this.element.querySelector<HTMLElement>(".conversation")!;
     this.state = this.element.querySelector<HTMLElement>(".who-state")!;
     this.context = this.element.querySelector<HTMLElement>(".composer-context")!;
@@ -93,9 +92,10 @@ export class ConversationPage {
         this.submit();
       }
     });
-    addEventListener("scroll", () => {
-      this.following = innerHeight + scrollY >= document.documentElement.scrollHeight - 48;
-      this.element.classList.toggle("scrolled", scrollY > 0);
+    this.scroller.addEventListener("scroll", () => {
+      const { scrollTop, clientHeight, scrollHeight } = this.scroller;
+      this.following = scrollTop + clientHeight >= scrollHeight - 48;
+      this.element.classList.toggle("scrolled", scrollTop > 0);
     });
   }
 
@@ -106,7 +106,7 @@ export class ConversationPage {
     this.view.update();
     this.drawState();
     this.drawAction();
-    if (follow) scrollTo({ top: document.documentElement.scrollHeight });
+    if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
   }
 
   private submit(): void {

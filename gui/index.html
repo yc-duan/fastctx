@@ -17,6 +17,10 @@
         } catch (e) {}
         var light = matchMedia("(prefers-color-scheme: light)").matches;
         document.documentElement.dataset.theme = themes.indexOf(asked) >= 0 ? asked : light ? "warm-white" : "warm-black";
+        try {
+          var size = localStorage.getItem("bodySize");
+          if (["14", "15", "16", "17"].indexOf(size) >= 0) document.documentElement.style.setProperty("--body-size", size + "px");
+        } catch (e) {}
       })();
     </script>
   </head>

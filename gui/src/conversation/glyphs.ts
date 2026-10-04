@@ -3,7 +3,20 @@
 
 import type { Glyph } from "./tool";
 
-const paths: Record<Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "stop" | "send", string> = {
+type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "stop" | "send" | Frame;
+
+/** The frame's own glyphs: the sidebar, new conversations, settings. */
+type Frame = "menu" | "plus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back";
+
+const paths: Record<Named, string> = {
+  menu: '<path d="M4 7h12M4 13h8"/>',
+  plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+  settings: '<circle cx="10" cy="10" r="2.4"/><path d="M10 3.5v1.6M10 14.9v1.6M16.5 10h-1.6M5.1 10H3.5M14.6 5.4l-1.1 1.1M6.5 13.5l-1.1 1.1M14.6 14.6l-1.1-1.1M6.5 6.5L5.4 5.4"/>',
+  sidebar: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="1.5"/><path d="M8.25 4.75v10.5"/>',
+  machine: '<rect x="3.75" y="4.25" width="12.5" height="8.75" rx="1.25"/><path d="M7.5 15.75h5M10 13v2.75"/>',
+  close: '<path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/>',
+  more: '<circle cx="5.5" cy="10" r="0.6" fill="currentColor"/><circle cx="10" cy="10" r="0.6" fill="currentColor"/><circle cx="14.5" cy="10" r="0.6" fill="currentColor"/>',
+  back: '<path d="M11.5 5.5L7 10l4.5 4.5"/>',
   read: '<path d="M4.5 4.5h7l4 4v7a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M11.5 4.5v4h4"/><path d="M7 11h6M7 13.5h4"/>',
   edit: '<path d="M12.6 4.6l2.8 2.8-8.2 8.2H4.4v-2.8z"/><path d="M11 6.2l2.8 2.8"/>',
   command: '<path d="M4.5 6l3.5 4-3.5 4"/><path d="M10 14.5h5.5"/>',

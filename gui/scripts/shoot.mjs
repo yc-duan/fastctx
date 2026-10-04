@@ -1,9 +1,13 @@
 // Screenshots of the interface for looking at it: every specimen at a
-// phone's, a tablet's and a desktop's width, in each theme, whole pages.
+// phone's, a tablet's and a desktop's size, in each theme, one screen each,
+// as the interface is meant to be seen. A page that scrolls as a whole or
+// reaches past the screen's edge is named among the problems.
 // Drives a headless Chromium over the DevTools protocol; the dev server
 // must be running (`npm run dev`).
 //
-//   node scripts/shoot.mjs [--url http://localhost:5317] [--only claude] [--out shots]
+//   node scripts/shoot.mjs [--url http://localhost:5317] [--only claude] [--theme warm-black] [--width phone] [--out shots]
+//
+// `drawer` is the front page with the sidebar pulled out as a drawer.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -34,8 +38,9 @@ const widths = [
   { name: "tablet", width: 820, height: 1180, scale: 2, mobile: true },
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
-const themes = ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? [only] : ["home", "claude", "codex", "project", "journal"];
+const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "drawer"];
+const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
 const port = 9300 + Math.floor(Math.random() * 500);
@@ -109,7 +114,7 @@ listeners.add((data) => {
 
 mkdirSync(out, { recursive: true });
 for (const session of sessions) {
-  for (const size of widths) {
+  for (const size of sizes) {
     for (const theme of themes) {
       await send("Emulation.setDeviceMetricsOverride", {
         width: size.width,
@@ -119,8 +124,12 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      await send("Page.navigate", { url: `${base}/?s=${session}&theme=${theme}${extra ? `&${extra}` : ""}` });
+      const shown = session === "drawer" ? "home" : session;
+      await send("Page.navigate", { url: `${base}/?s=${shown}&theme=${theme}${extra ? `&${extra}` : ""}` });
       await loaded;
+      if (session === "drawer") {
+        await send("Runtime.evaluate", { expression: "document.querySelector('.menu-button')?.click()" });
+      }
       // Fonts, then any diagram, then two frames for layout to settle.
       await send("Runtime.evaluate", {
         expression:
@@ -128,7 +137,7 @@ for (const session of sessions) {
         awaitPromise: true,
       });
       const { result } = await send("Runtime.evaluate", {
-        expression: "JSON.stringify({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight })",
+        expression: "JSON.stringify({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight, inner: innerHeight })",
         returnByValue: true,
       });
       const page = JSON.parse(result.value);
@@ -144,29 +153,11 @@ for (const session of sessions) {
         });
         problems.push(`${session} ${size.name} ${theme}: the page is ${page.w}px wide: ${wide.value}`);
       }
-      // The screen made as tall as the page, so what sticks to its edges
-      // sits where it would at either end.
-      await send("Runtime.evaluate", { expression: "scrollTo(0, 0)" });
-      await send("Emulation.setDeviceMetricsOverride", {
-        width: size.width,
-        height: page.h,
-        deviceScaleFactor: size.scale,
-        mobile: size.mobile,
-      });
-      const { result: settled } = await send("Runtime.evaluate", {
-        expression:
-          "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(document.documentElement.scrollHeight))))",
-        awaitPromise: true,
-        returnByValue: true,
-      });
-      const shot = await send("Page.captureScreenshot", {
-        format: "png",
-        clip: { x: 0, y: 0, width: size.width, height: settled.value, scale: 1 },
-        captureBeyondViewport: true,
-      });
+      if (page.h > page.inner + 1) problems.push(`${session} ${size.name} ${theme}: the page scrolls, ${page.h}px in a ${page.inner}px screen`);
+      const shot = await send("Page.captureScreenshot", { format: "png" });
       const file = join(out, `${session}-${size.name}-${theme}.png`);
       writeFileSync(file, Buffer.from(shot.data, "base64"));
-      console.log(`${file} (${size.width}×${page.h})`);
+      console.log(`${file} (${size.width}×${size.height})`);
     }
   }
 }

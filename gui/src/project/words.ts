@@ -12,9 +12,7 @@ export interface ProjectWords {
   noDecisions: string;
   decisionsUnreadable(why: string): string;
   places: string;
-  what: string;
-  machine: string;
-  path: string;
+  noPlaces: string;
   opened(by: string, on: string, day: string): string;
   you: string;
   entries(n: number): string;
@@ -48,9 +46,7 @@ export const zhProject: ProjectWords = {
   noDecisions: "还没有写下定论的地方。",
   decisionsUnreadable: (why) => `定论此刻读不到：${why}`,
   places: "在哪里能找到什么",
-  what: "是什么",
-  machine: "机器",
-  path: "路径",
+  noPlaces: "地址簿还是空的。",
   opened: (by, on, day) => `${then(by)}在 ${on} 上开启 · ${day}`,
   you: "你",
   entries: (n) => `${n} 条`,
@@ -78,9 +74,7 @@ export const enProject: ProjectWords = {
   noDecisions: "No place for decisions has been written down.",
   decisionsUnreadable: (why) => `The decisions cannot be read now: ${why}`,
   places: "Where things are",
-  what: "What",
-  machine: "Machine",
-  path: "Path",
+  noPlaces: "The address book is empty.",
   opened: (by, on, day) => `Opened by ${by} on ${on}, ${day}`,
   you: "you",
   entries: (n) => `${n} entr${n === 1 ? "y" : "ies"}`,

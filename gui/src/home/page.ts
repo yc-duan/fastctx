@@ -1,15 +1,16 @@
-// The World's front page: what the reader finds on coming back. A drawing
-// of the World as it is, the day and how long they were away, who is
-// waiting on them, who is at work, what happened meanwhile, and the
-// projects and machines as an index. Every line is a fact the World holds;
-// nothing is summarised by a model.
+// The World's front page: what the reader finds on coming back, on one
+// screen. A drawing of the World as it is; the day and how long they were
+// away; then, side by side where there is room, who is waiting on them and
+// who is at work, and what happened meanwhile. Each of those scrolls on its
+// own; the drawing and the day stay. Every line is a fact the World holds;
+// nothing is summarised by a model. Projects and machines are in the
+// sidebar, not here.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
 import type { ResidentNow, RunningJob } from "../world/world";
-import { AskIn, type Asked } from "./ask-in";
-import { Frontispiece, osName } from "./frontispiece";
+import { Frontispiece } from "./frontispiece";
 import type { Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
 
@@ -17,12 +18,14 @@ export interface HomeOptions {
   words: HomeWords;
   /** The conversation words, for how an ending is said. */
   ended(how: string): string;
-  /** When the reader was last here, when known. */
+  /** When the reader last looked at this page, when known. */
   lastVisit: Date | null;
   /** Where a resident's conversation opens. */
   link(address: Address): string;
-  /** Asks an agent in; where it is given, the page has a composer for it. */
-  open?: (asked: Asked) => Promise<void>;
+  /** The head every page has, with the button that brings back the sidebar. */
+  head: string;
+  /** Begins a conversation. */
+  newTalk(): void;
 }
 
 const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
@@ -35,29 +38,31 @@ export class HomePage {
   private frontispiece: Frontispiece;
   private day: HTMLElement;
   private facts: HTMLElement;
-  private sections: HTMLElement;
-  private askIn: AskIn | null = null;
+  private present: HTMLElement;
+  private away: HTMLElement;
 
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
-    this.element.className = "page home-page";
+    this.element.className = "home-page";
     this.element.innerHTML = `
-      <div class="home">
-        <figure class="frontispiece" aria-hidden="true"></figure>
-        <header class="dateline">
-          <h1 class="dateline-day"></h1>
-          <p class="dateline-facts"></p>
-        </header>
-        <div class="home-sections"></div>
+      ${options.head}
+      <figure class="frontispiece" aria-hidden="true"></figure>
+      <header class="dateline">
+        <h1 class="dateline-day"></h1>
+        <p class="dateline-facts"></p>
+      </header>
+      <div class="board">
+        <div class="board-column present scroller"></div>
+        <div class="board-column away scroller"></div>
       </div>`;
     this.frontispiece = new Frontispiece(this.element.querySelector<HTMLElement>(".frontispiece")!);
     this.day = this.element.querySelector<HTMLElement>(".dateline-day")!;
     this.facts = this.element.querySelector<HTMLElement>(".dateline-facts")!;
-    this.sections = this.element.querySelector<HTMLElement>(".home-sections")!;
-    if (options.open) {
-      this.askIn = new AskIn(options.words, options.open);
-      this.element.append(this.askIn.element);
-    }
+    this.present = this.element.querySelector<HTMLElement>(".present")!;
+    this.away = this.element.querySelector<HTMLElement>(".away")!;
+    this.element.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest(".begin")) options.newTalk();
+    });
   }
 
   /** Shows the World as it now stands; when nothing shown has changed, the
@@ -81,10 +86,10 @@ export class HomePage {
       : "";
 
     const facts = [
-      this.options.lastVisit ? words.lastHere(words.ago(now.getTime() - this.options.lastVisit.getTime())) : null,
+      this.options.lastVisit ? words.lastHere(words.ago(now.getTime() - this.options.lastVisit.getTime())) : words.firstTime,
       words.machinesOnline(online, world.nodes.length),
       words.agentsWorking(busy.length + waiting.length),
-    ].filter((fact): fact is string => fact !== null);
+    ];
     // A separator keeps to the fact before it, so no line starts with one.
     const factsHtml = facts
       .map(
@@ -93,7 +98,7 @@ export class HomePage {
       )
       .join("");
 
-    const sections = [
+    const presentHtml = [
       waiting.length
         ? this.section("waiting", words.waiting, `<ul class="people">${waiting.map((r) => this.someone(r, true)).join("")}</ul>`)
         : "",
@@ -102,35 +107,24 @@ export class HomePage {
         words.now,
         busy.length
           ? `<ul class="people">${busy.map((r) => this.someone(r, false)).join("")}</ul>${idleLine}`
-          : `<p class="quiet">${escape(words.nobodyWorking)}</p>${idleLine}`,
+          : `<p class="quiet">${escape(words.nobodyWorking)} <button class="begin" type="button">${escape(words.begin)}</button></p>${idleLine}`,
       ),
-      // What happened meanwhile is shown only where the World can say it.
-      world.happenings ? this.section("away", words.away, this.chronicle(world.happenings)) : "",
       unattended.length
         ? this.section("unattended", words.unattended, `<ul class="jobs">${unattended.map((job) => this.job(job)).join("")}</ul>`)
         : "",
-      world.towns.length
-        ? this.section(
-            "projects",
-            words.projects,
-            `<ul class="projects">${world.towns.map((town) => this.project(town, residents)).join("")}</ul>`,
-          )
-        : "",
-      this.section(
-        "machines",
-        words.machines,
-        `<ul class="machines">${world.nodes.map((node) => this.machine(node, residents, jobs)).join("")}</ul>`,
-      ),
     ].join("");
+    // What happened meanwhile is shown only where the World can say it.
+    const awayHtml = world.happenings ? this.section("away", words.away, this.chronicle(world.happenings)) : "";
 
-    const drawn = factsHtml + sections;
+    const drawn = factsHtml + presentHtml + awayHtml;
     if (drawn !== this.drawn) {
       this.drawn = drawn;
       this.facts.innerHTML = factsHtml;
-      this.sections.innerHTML = sections;
+      this.present.innerHTML = presentHtml;
+      this.away.innerHTML = awayHtml;
+      this.away.hidden = !awayHtml;
     }
     this.frontispiece.update(world, residents);
-    this.askIn?.update(world);
   }
 
   /** The World could not be asked: said where the facts would be, with
@@ -249,38 +243,15 @@ export class HomePage {
         tone = event.online ? "" : " caution";
         break;
     }
-    return `<li class="event${tone}">${time}<span class="rail">${glyph(mark, 18)}</span><div class="event-body"><span class="event-line">${escape(line)}${town}</span>${detail}</div></li>`;
+    const href = "who" in event ? this.options.link(event.who) : null;
+    const body = `${time}<span class="rail">${glyph(mark, 18)}</span><div class="event-body"><span class="event-line">${escape(line)}${town}</span>${detail}</div>`;
+    return href
+      ? `<li class="event${tone}"><a class="event-link" href="${href}">${body}</a></li>`
+      : `<li class="event${tone}">${body}</li>`;
   }
 
   private job(job: RunningJob): string {
     const { words } = this.options;
     return `<li class="job"><span class="job-id">${escape(job.job)}</span><span class="job-where">${escape(job.machine)} · ${escape(this.since(job.started_at))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(words.startedBy(this.nameOf(job.owner)))}</span></li>`;
-  }
-
-  private project(town: WorldState["towns"][number], residents: ResidentNow[]): string {
-    const { words } = this.options;
-    const here = residents.filter((r) => r.town === town.town && r.here).length;
-    const facts = [town.record.machines.join(" · "), words.here(here), words.journals(town.journals)];
-    return `<li><a class="project" href="#/project/${encodeURIComponent(town.town)}">
-      <span class="project-name">${escape(town.record.name)}</span>
-      <span class="project-what">${escape(town.record.what)}</span>
-      <span class="project-facts">${facts.map(escape).join(`<span class="sep">·</span>`)}</span>
-    </a></li>`;
-  }
-
-  private machine(node: WorldState["nodes"][number], residents: ResidentNow[], jobs: RunningJob[]): string {
-    const { words } = this.options;
-    const os = "Ok" in node.facts && node.facts.Ok ? osName(node.facts.Ok.os) : "";
-    const state =
-      node.online === true
-        ? words.online
-        : node.online === false
-          ? words.offlineSince(node.since ? words.ago(this.now.getTime() - Date.parse(node.since)) : "")
-          : words.unknownLink;
-    const on = residents.filter((r) => r.about.machine === node.name && r.here).length;
-    const running = jobs.filter((job) => job.machine === node.name).length;
-    const facts = [os, on ? words.residents(on) : "", running ? words.jobsRunning(running) : ""].filter(Boolean);
-    const here = node.name === this.world?.here ? " here" : "";
-    return `<li class="machine${node.online ? " online" : " offline"}${here}"><span class="dot" aria-hidden="true"></span><span class="machine-name">${escape(node.name)}</span><span class="machine-state">${escape(state)}</span><span class="machine-facts">${facts.map(escape).join(`<span class="sep">·</span>`)}</span></li>`;
   }
 }

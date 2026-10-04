@@ -1,16 +1,19 @@
 // A journal, read: its description, then its entries in the order they
-// were written, each under the stamp the World put on it. Entries are
+// were written, each under the stamp the World put on it, in a region that
+// scrolls on its own under the page's head. Entries are
 // never changed; what later entries said of one is shown beneath it, so
 // the meaning that grew around it can be seen without a word of it moved.
 
-import { glyph } from "../conversation/glyphs";
 import { escape, render } from "../conversation/prose";
 import type { EntryView, JournalView, Writer } from "../world/world";
 import type { ProjectWords } from "./words";
 
 export interface JournalOptions {
   words: ProjectWords;
-  back: { href: string; label: string };
+  /** The project it belongs to, to go back to. */
+  project: { href: string; name: string };
+  journal: string;
+  head(title: string, actions?: string): string;
   /** Asks for the entries before the first one shown. */
   earlier(before: string): Promise<JournalView>;
 }
@@ -25,15 +28,10 @@ export class JournalPage {
 
   constructor(private readonly options: JournalOptions) {
     this.element = document.createElement("div");
-    this.element.className = "page journal-page";
+    this.element.className = "journal-page";
     this.element.innerHTML = `
-      <header class="bar">
-        <div class="bar-inner">
-          <a class="bar-back" href="${escape(options.back.href)}" aria-label="${escape(options.back.label)}">${glyph("chevron", 20)}</a>
-          <div class="who"><div class="who-state">${escape(options.words.journals)}</div></div>
-        </div>
-      </header>
-      <main class="home journal-reading"></main>`;
+      ${options.head(`<a class="crumb" href="${escape(options.project.href)}">${escape(options.project.name)}</a><span class="crumb-sep">/</span><h1 class="page-title journal-name-title">${escape(options.journal)}</h1>`)}
+      <div class="journal-reading scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".journal-reading")!;
     this.body.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".earlier");
@@ -53,11 +51,9 @@ export class JournalPage {
     });
   }
 
-  /** The journal could not be read: said in the bar. */
+  /** The journal could not be read: said where it would be. */
   unreachable(why: string): void {
-    const state = this.element.querySelector<HTMLElement>(".who-state")!;
-    state.textContent = why;
-    state.classList.add("gone");
+    this.body.innerHTML = `<p class="project-facts unreachable">${escape(why)}</p>`;
   }
 
   show(view: JournalView): void {
@@ -74,8 +70,7 @@ export class JournalPage {
     const last = first + this.shown.length - 1;
     const about = view.description;
     this.body.innerHTML = `
-      <header class="project-head">
-        <h1 class="project-title journal-title">${escape(view.journal)}</h1>
+      <header class="journal-intro">
         ${about ? `<p class="project-lede">${escape(about.text)}</p><p class="project-facts">${escape(words.edited(this.writer(about.by), words.day(new Date(about.at))))}</p>` : ""}
         <p class="project-facts">${escape(words.shown(first, last, view.total))}<span class="sep">·</span>${escape(words.writers(view.writers))}</p>
       </header>

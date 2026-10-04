@@ -3,7 +3,8 @@
 
 import type { Address } from "../world/events";
 import type { About, Action, MachineFacts, ProjectRecord, ResidentNow } from "../world/world";
-import type { WorldState } from "../home/model";
+import type { Happening, WorldState } from "../home/model";
+import type { WorldNow } from "../world/bridge";
 
 const at = (time: string) => `2026-10-04T${time}Z`;
 
@@ -150,4 +151,25 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
     ],
   };
   return { world, now: new Date(at("13:40:00")), lastVisit: new Date(at("04:30:00")) };
+}
+
+/** The same morning as the shell answers it: what `world_now` returns. */
+export function specimenNow(): { world: WorldNow; now: Date; lastVisit: Date; happenings: Happening[] } {
+  const { world, now, lastVisit } = specimenWorld();
+  return {
+    world: {
+      here: world.here,
+      who: { machine: world.here, scope: { kind: "world", towns: world.towns }, machines: world.machines },
+      nodes: {
+        machine: world.here,
+        world: "w-5be1fcee3751dc7a",
+        link: { kind: "online", since: at("01:10:02"), hub: "121.40.82.28:7443", route: { kind: "card", name: "以太网 2" } },
+        machines: world.nodes,
+      },
+      towns: world.towns,
+    },
+    now,
+    lastVisit,
+    happenings: world.happenings ?? [],
+  };
 }
