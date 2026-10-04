@@ -746,6 +746,11 @@ impl Words {
         }
     }
 
+    /// A block of a tool's answer the World does not read, by its type.
+    pub fn block(&self, kind: &str) -> String {
+        format!("[{kind}]")
+    }
+
     /// The key that shows or hides each tool's input and output.
     pub fn key_details(&self, shown: bool) -> &'static str {
         if shown { self.pick("收起工具", "fold tools") } else { self.pick("展开工具", "unfold tools") }

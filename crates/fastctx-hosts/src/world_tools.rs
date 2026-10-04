@@ -19,6 +19,10 @@ pub fn read(tool: &str, input: &Value, output: &[Content]) -> (Does, Option<Mach
     let head = output.iter().find_map(|piece| match piece {
         Content::Text { text } => text.lines().next(),
         Content::Image { .. } => None,
+        Content::Other { block } if block.get("type").and_then(Value::as_str) == Some("text") => {
+            block.get("text").and_then(Value::as_str).and_then(|text| text.lines().next())
+        }
+        Content::Other { .. } => None,
     });
     let machine = text("node").and_then(|node| node.parse().ok()).or_else(|| head.and_then(machine_of));
     let does = match tool {
@@ -105,8 +109,7 @@ fn push_lines(diff: &mut String, mark: char, text: &str) {
     }
 }
 
-/// An MCP tool result's content blocks: text and images, in order. A block
-/// of another type is said as what it is.
+/// An MCP tool result's content blocks in order, retaining unknown blocks.
 pub fn mcp_content(blocks: &[Value]) -> Vec<Content> {
     blocks
         .iter()
@@ -115,7 +118,7 @@ pub fn mcp_content(blocks: &[Value]) -> Vec<Content> {
             match block.get("type").and_then(Value::as_str) {
                 Some("text") => Content::Text { text: text("text") },
                 Some("image") => Content::Image { mime: text("mimeType"), base64: text("data") },
-                other => Content::Text { text: format!("[{} content]", other.unwrap_or("unknown")) },
+                _ => Content::Other { block: block.clone() },
             }
         })
         .collect()

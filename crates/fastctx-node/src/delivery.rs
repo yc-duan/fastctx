@@ -196,19 +196,13 @@ pub fn event(directory: &ResidentDir, key: &str, event: &SessionEvent) -> io::Re
     let (_transaction, current) = crate::resident_storage::current(directory)?;
     let directory = &current;
     let key = crate::speech::fixed_id("event", &[key]);
-    match create(&directory.path().join("session-events").join(format!("{key}.json")), event) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(error),
-    }
+    crate::session_record::append(directory.path(), key.as_str(), event)
 }
 
 pub fn history(directory: &ResidentDir) -> io::Result<Vec<SessionEvent>> {
     let (_transaction, current) = crate::resident_storage::current(directory)?;
     let directory = &current;
-    let mut events: Vec<SessionEvent> = list(&directory.path().join("session-events"))?;
-    events.sort_by_key(|event| event.at);
-    Ok(events)
+    crate::session_record::history(directory.path())
 }
 
 fn handover_path(directory: &ResidentDir, id: &NoticeId) -> PathBuf {

@@ -790,6 +790,10 @@ fn tool_details(ctx: &Ctx, tool: &Tool, width: usize) -> Vec<Line<'static>> {
         match piece {
             fastctx_types::session::Content::Text { text } => output.extend(text.lines().map(str::to_string)),
             fastctx_types::session::Content::Image { mime, .. } => output.push(words.image(mime)),
+            // A block of a kind the World does not read, by its type.
+            fastctx_types::session::Content::Other { block } => {
+                output.push(words.block(block.get("type").and_then(serde_json::Value::as_str).unwrap_or("?")))
+            }
         }
     }
     if !matches!(tool.does, Does::Edit { .. }) || tool.status != fastctx_types::session::ToolStatus::Done {

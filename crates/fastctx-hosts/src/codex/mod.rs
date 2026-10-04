@@ -697,6 +697,9 @@ impl CodexHost {
                     .into_iter()
                     .flatten()
                     .map(|step| Step {
+                        id: None,
+                        active_form: None,
+                        detail: None,
                         text: step.get("step").and_then(Value::as_str).unwrap_or_default().to_string(),
                         status: match step.get("status").and_then(Value::as_str) {
                             Some("completed") => StepStatus::Done,

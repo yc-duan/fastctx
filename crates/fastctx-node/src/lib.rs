@@ -27,6 +27,8 @@ mod own;
 mod resident_storage;
 mod residents;
 mod server;
+mod session_live;
+mod session_record;
 mod speech;
 mod talk;
 mod town;

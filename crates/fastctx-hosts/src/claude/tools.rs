@@ -14,7 +14,9 @@ pub fn tool(full_name: &str, input: Value, output: Vec<Content>, status: ToolSta
         Some((server, name)) => (Some(server.to_string()), name.to_string()),
         None => (None, full_name.to_string()),
     };
-    let world = server.as_deref().is_some_and(|server| server.ends_with(&format!("_{}", world_tools::SERVER)));
+    let world = server
+        .as_deref()
+        .is_some_and(|server| server == world_tools::SERVER || server.ends_with(&format!("_{}", world_tools::SERVER)));
     let (does, machine) = if world {
         world_tools::read(&name, &input, &output)
     } else if server.is_none() {

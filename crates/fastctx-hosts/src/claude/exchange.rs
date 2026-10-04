@@ -98,6 +98,25 @@ pub enum Reported {
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum ModEvent {
+    Session {
+        at: Option<Timestamp>,
+        happened: Happened,
+    },
+    ToolStored {
+        at: Option<Timestamp>,
+        turn: Option<String>,
+        item: String,
+        tool: String,
+        input: Value,
+        started_at: Timestamp,
+        content: Value,
+        failed: bool,
+        declined: bool,
+        #[serde(default)]
+        cut: bool,
+        ms: Option<u64>,
+        detail: Value,
+    },
     Uncertain {
         deliveries: Vec<String>,
         text: String,
@@ -114,6 +133,8 @@ enum ModEvent {
         refusal: Option<Refusal>,
         ms: Option<u64>,
         answer: Option<String>,
+        #[serde(default)]
+        streamed: bool,
     },
     /// A tool use began: its arguments, as the tool receives them.
     ToolStart {
@@ -123,6 +144,8 @@ enum ModEvent {
         tool: Option<String>,
         #[serde(default)]
         input: Value,
+        #[serde(default)]
+        started_at: Option<Timestamp>,
     },
     /// A tool use ended: what it gave back, as the model reads it.
     ToolEnd {
@@ -180,12 +203,16 @@ pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
     }
     let path = directory.join("events").join(name);
     remove(&path)?;
-    remove(&path.with_extension("done"))
+    remove(&path.with_extension("done"))?;
+    match std::fs::remove_dir_all(path.with_extension("parts")) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }
 
 /// Takes every whole event the mod wrote, oldest first. An event that
 /// cannot be read is moved to `damaged/` and said in the problems; the
-/// newest without its marker is left, as it may still be being written.
+/// first without its marker blocks later reports until its write completes.
 pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
     let events = directory.join("events");
     let mut names: Vec<String> = match std::fs::read_dir(&events) {
@@ -202,10 +229,14 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
     let mut reported = Vec::new();
     let mut problems = Vec::new();
     for name in &names {
+        if directory.join("applied").join(name).exists() {
+            acknowledge(directory, name)?;
+            continue;
+        }
         let path = events.join(name);
         let done = path.with_extension("done");
         if !done.exists() {
-            continue;
+            break;
         }
         match read_report(&path).map(|bytes| serde_json::from_slice::<ModEvent>(&bytes)) {
             Ok(Ok(event)) => {
@@ -219,8 +250,11 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
                 remove(&done)?;
                 problems.push(format!("{} could not be read and was set aside: {error}", path.display()));
             }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-            Err(error) => problems.push(format!("{} could not be read: {error}", path.display())),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+            Err(error) => {
+                problems.push(format!("{} could not be read: {error}", path.display()));
+                break;
+            }
         }
     }
     Ok((reported, problems))
@@ -251,8 +285,15 @@ pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
 }
 
 fn read_report(path: &Path) -> io::Result<Vec<u8>> {
-    let bytes = std::fs::read(path)?;
-    let value: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    let mut bytes = std::fs::read(path)?;
+    let mut value: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    if let Some(parts) = value.get("parts").and_then(Value::as_u64) {
+        bytes.clear();
+        for index in 0..parts {
+            bytes.extend(std::fs::read(path.with_extension("parts").join(index.to_string()))?);
+        }
+        value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    }
     if let Some(pending) = value.get("pending").and_then(Value::as_array) {
         let applied = path.parent().and_then(Path::parent).expect("an event is inside a session").join("applied");
         for name in pending {
@@ -265,12 +306,7 @@ fn read_report(path: &Path) -> io::Result<Vec<u8>> {
             }
         }
     }
-    let Some(parts) = value.get("parts").and_then(Value::as_u64) else { return Ok(bytes) };
-    let mut body = Vec::new();
-    for index in 0..parts {
-        body.extend(std::fs::read(path.with_extension("parts").join(index.to_string()))?);
-    }
-    Ok(body)
+    Ok(bytes)
 }
 
 fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
@@ -278,13 +314,50 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
         |at: Option<Timestamp>, happened| Reported::Happened(SessionEvent { at: at.unwrap_or(recorded_at), happened });
     let turn_of = |turn: Option<String>| turn.unwrap_or_default();
     match event {
+        ModEvent::Session { at, happened: observed } => vec![happened(at, observed)],
+        ModEvent::ToolStored {
+            at,
+            turn,
+            item,
+            tool,
+            input,
+            started_at,
+            content,
+            failed,
+            declined,
+            cut,
+            ms,
+            detail,
+        } => {
+            let status = if declined {
+                ToolStatus::Declined
+            } else if failed {
+                ToolStatus::Failed
+            } else if cut {
+                ToolStatus::Cut
+            } else {
+                ToolStatus::Done
+            };
+            let output = super::content::content(&content);
+            let tool = super::tools::tool(&tool, input, output, status, ms);
+            let item =
+                Item { id: item, started_at: Some(started_at), detail: Some(detail), what: What::Tool(Box::new(tool)) };
+            vec![happened(at, Happened::Finished { turn: turn_of(turn), item })]
+        }
         ModEvent::Uncertain { deliveries, text } => vec![Reported::Uncertain { ids: deliveries, text }],
         ModEvent::TurnStart { turn, at } => vec![happened(at, Happened::TurnStarted { turn: turn_of(turn) })],
-        ModEvent::TurnComplete { turn, at, aborted, reason, refusal, ms, answer } => {
+        ModEvent::TurnComplete { turn, at, aborted, reason, refusal, ms, answer, streamed } => {
             let turn = turn_of(turn);
             let mut reported = Vec::new();
-            if let Some(text) = &answer {
-                let item = Item { id: format!("{turn}-answer"), what: What::Message { text: text.clone() } };
+            // Legacy mod reports had no completed blocks. Never manufacture
+            // a second message from the host's trimmed summary of a stream.
+            if !streamed && let Some(text) = &answer {
+                let item = Item {
+                    id: format!("{turn}-answer"),
+                    started_at: None,
+                    detail: None,
+                    what: What::Message { text: text.clone() },
+                };
                 reported.push(happened(at, Happened::Finished { turn: turn.clone(), item }));
             }
             let how = match reason.as_deref() {
@@ -314,9 +387,10 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             reported.push(happened(at, Happened::TurnEnded { turn, end }));
             reported
         }
-        ModEvent::ToolStart { turn, at, item, tool, input } => {
+        ModEvent::ToolStart { turn, at, item, tool, input, started_at } => {
             let tool = super::tools::tool(&tool.unwrap_or_default(), input, Vec::new(), ToolStatus::Running, None);
-            let item = Item { id: item.unwrap_or_default(), what: What::Tool(Box::new(tool)) };
+            let item =
+                Item { id: item.unwrap_or_default(), started_at, detail: None, what: What::Tool(Box::new(tool)) };
             vec![happened(at, Happened::Began { turn: turn_of(turn), item })]
         }
         ModEvent::ToolEnd { turn, at, item, tool, input, output, failed, declined, ms } => {
@@ -326,7 +400,8 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
                 (false, false) => ToolStatus::Done,
             };
             let tool = super::tools::tool(&tool.unwrap_or_default(), input, output, status, ms);
-            let item = Item { id: item.unwrap_or_default(), what: What::Tool(Box::new(tool)) };
+            let item =
+                Item { id: item.unwrap_or_default(), started_at: None, detail: None, what: What::Tool(Box::new(tool)) };
             vec![happened(at, Happened::Finished { turn: turn_of(turn), item })]
         }
         ModEvent::Trouble { at, file, text } => {

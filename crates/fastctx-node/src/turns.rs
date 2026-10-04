@@ -75,13 +75,13 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
 /// back; Claude Code does not. What the World itself saw, such as who said
 /// words and how a turn ended, is always kept.
 fn recorded(agent: &str, happened: &Happened) -> bool {
+    if !happened.kept() {
+        return false;
+    }
     match happened {
-        Happened::Grew { .. } => false,
-        Happened::Began { .. }
-        | Happened::Finished { .. }
-        | Happened::Steps { .. }
-        | Happened::Context { .. }
-        | Happened::Titled { .. } => agent != "codex",
+        Happened::Finished { .. } | Happened::Steps { .. } | Happened::Context { .. } | Happened::Titled { .. } => {
+            agent != "codex"
+        }
         _ => true,
     }
 }
