@@ -8,7 +8,17 @@ pub fn read(method: &str, params: &Value) -> Option<Happened> {
     let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
     let change = match method {
         "thread/started" => SessionChange::Metadata { metadata: value("thread") },
-        "thread/status/changed" => SessionChange::Status { status: value("status") },
+        "thread/status/changed" => {
+            let status = value("status");
+            let waiting_for_user = match status.get("type").and_then(Value::as_str) {
+                Some("active") => status.get("activeFlags").and_then(Value::as_array).map(|flags| {
+                    flags.iter().any(|flag| matches!(flag.as_str(), Some("waitingOnApproval" | "waitingOnUserInput")))
+                }),
+                Some("idle" | "notLoaded" | "systemError") => Some(false),
+                _ => None,
+            };
+            SessionChange::Status { status, waiting_for_user }
+        }
         "thread/archived" => SessionChange::Lifecycle { state: "archived".into() },
         "thread/unarchived" => SessionChange::Lifecycle { state: "unarchived".into() },
         "thread/deleted" => SessionChange::Lifecycle { state: "deleted".into() },

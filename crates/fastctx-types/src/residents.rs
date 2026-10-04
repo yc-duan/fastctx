@@ -159,6 +159,9 @@ pub struct Now {
     /// It sits at this machine's Computer Use desk until its turn ends.
     #[serde(default)]
     pub desk: bool,
+    /// The running turn cannot continue until a user answers its host.
+    #[serde(default)]
+    pub waiting_for_user: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

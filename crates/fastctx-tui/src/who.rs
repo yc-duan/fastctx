@@ -75,6 +75,7 @@ pub fn second_line(ctx: &Ctx, resident: &ResidentNow, job: Option<&RunningJob>) 
     if let Some(now) = &resident.now {
         let since = words.since(now.since, ctx.now);
         parts.push(match now.activity {
+            Activity::Busy if now.waiting_for_user => Span::styled(words.waiting_for_user(), look.text(Role::Alive)),
             Activity::Busy => Span::styled(format!("{} {since}", words.busy()), look.text(Role::Alive)),
             Activity::Idle => Span::styled(format!("{} {since}", words.idle()), look.text(Role::Muted)),
             Activity::Asleep => Span::styled(format!("{} {since}", words.asleep()), look.text(Role::Faint)),

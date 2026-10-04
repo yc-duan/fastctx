@@ -42,7 +42,7 @@ pub fn is_from_earlier_boot(identity: &ProcessIdentity) -> io::Result<bool> {
                 "process identity has an invalid boot or start time",
             ));
         }
-        Ok(!recorded.eq_ignore_ascii_case(&boot))
+        Ok(!recorded.eq_ignore_ascii_case(boot))
     }
     #[cfg(not(target_os = "linux"))]
     {

@@ -229,6 +229,10 @@ impl Words {
         self.pick("在忙", "busy")
     }
 
+    pub fn waiting_for_user(&self) -> &'static str {
+        self.pick("等你回答", "waiting for you")
+    }
+
     pub fn idle(&self) -> &'static str {
         self.pick("空闲", "idle")
     }

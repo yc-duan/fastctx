@@ -10,12 +10,15 @@ publish = false
 
 [dependencies]
 fastctx-types = { path = "../fastctx-types" }
-tokio = { workspace = true, features = ["io-util", "net", "rt", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "net", "rt", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+async-io = "2"
+tokio-util = { version = "0.7", features = ["compat"] }
+uds_windows = "1.1.0"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",

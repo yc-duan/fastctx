@@ -12,10 +12,12 @@ publish = false
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 filetime = "0.2"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 jiff.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 toml = "0.9"
 unicode-normalization = "0.1"
 roxmltree = "0.21"

@@ -30,6 +30,7 @@ pub mod service_channel;
 pub mod tree;
 #[cfg(unix)]
 mod unix_fds;
+pub mod unix_socket;
 #[cfg(windows)]
 mod windows_job;
 #[cfg(windows)]

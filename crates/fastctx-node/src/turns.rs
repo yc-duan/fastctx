@@ -35,6 +35,11 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
         return Err(std::io::Error::other("unknown resident"));
     };
     let directory = node.world.resident(town.as_ref(), id);
+    if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
+        &event.happened
+    {
+        node.residents.change_now(&node.world, id, |now| now.waiting_for_user = *waiting)?;
+    }
     if let Happened::Changed { turn, change } = &event.happened
         && let Some(report) = presentation_health(change)
     {

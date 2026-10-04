@@ -92,6 +92,7 @@ fn state(now: Timestamp, activity: Activity, since: i64) -> Now {
         answering: Vec::new(),
         trouble: None,
         desk: false,
+        waiting_for_user: false,
     }
 }
 

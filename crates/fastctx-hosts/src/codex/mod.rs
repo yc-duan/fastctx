@@ -20,6 +20,7 @@ pub mod launch;
 mod notifications;
 mod presentation;
 mod server;
+mod transport;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -370,8 +371,8 @@ impl CodexHost {
         let mut params = json!({
             "threadId": thread,
             "input": [],
-            // The thread does not keep it: without it its own shell and file
-            // editing come back.
+            // A remote client may have selected a local environment since
+            // our last turn. Restore the World's empty default for this turn.
             "environments": [],
         });
         match input {
@@ -548,8 +549,9 @@ impl CodexHost {
             return Err("the app-server stopped while loading the thread".to_string());
         }
         let entry = state.threads.entry(thread.to_string()).or_default();
+        // Another client may have started a turn while resume's reply was
+        // in flight. Preserve any turn already reported by a notification.
         entry.loaded = true;
-        entry.turn = None;
         Ok(())
     }
 
@@ -560,7 +562,7 @@ impl CodexHost {
     async fn server(self: &Arc<Self>) -> Result<Arc<AppServer>, String> {
         let config = launch::read_config(&self.codex_home)?;
         let _starting = self.starting.lock().await;
-        {
+        let replaced = {
             let _generation = self.generation.lock().expect("never poisoned");
             let mut state = self.lock();
             let busy = state.threads.values().any(|thread| thread.turn.is_some() || thread.submitted);
@@ -569,15 +571,18 @@ impl CodexHost {
                 Some((server, _)) => {
                     (self.log)("the user's Codex configuration changed; restarting the app-server".to_string());
                     server.kill();
+                    let replaced = server.clone();
                     state.server = None;
+                    Some(replaced)
                 }
-                None => {}
+                None => None,
             }
+        };
+        if let Some(replaced) = replaced {
+            replaced.wait().await;
         }
         let path = self.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("PATH")).map(|(_, value)| value);
         let launch = launch::resolve(&self.codex_home, path)?;
-        std::fs::create_dir_all(&self.workdir)
-            .map_err(|error| format!("making {}: {error}", self.workdir.display()))?;
         let (server, inbound) =
             AppServer::spawn(&launch.binary, &launch.args, &self.workdir, &self.env, self.log.clone())
                 .map_err(|error| format!("starting {}: {error}", launch.binary.display()))?;
@@ -1060,23 +1065,29 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                         | "item/tool/requestUserInput"
                         | "mcpServer/elicitation/request"
                         | "item/permissions/requestApproval"
-                ) && let Some(thread) = params.get("threadId").and_then(Value::as_str)
-                {
-                    host.emit(
-                        thread,
-                        Timestamp::now(),
-                        Happened::Changed {
-                            turn: params.get("turnId").and_then(Value::as_str).map(str::to_string),
-                            change: SessionChange::Request {
-                                id: id.clone(),
-                                request: method.clone(),
-                                params: params.clone(),
+                        | "applyPatchApproval"
+                        | "execCommandApproval"
+                ) {
+                    if let Some(thread) =
+                        params.get("threadId").or_else(|| params.get("conversationId")).and_then(Value::as_str)
+                    {
+                        host.emit(
+                            thread,
+                            Timestamp::now(),
+                            Happened::Changed {
+                                turn: params.get("turnId").and_then(Value::as_str).map(str::to_string),
+                                change: SessionChange::Request {
+                                    id: id.clone(),
+                                    request: method.clone(),
+                                    params: params.clone(),
+                                },
                             },
-                        },
-                    );
+                        );
+                    }
+                    // Requests are broadcast to subscribers; even an error
+                    // would consume the user's opportunity to answer.
+                    continue;
                 }
-                // The World answers nothing the app-server asks: it gives no
-                // approvals, and its threads ask for none.
                 (host.log)(format!("declined the app-server's {method} request"));
                 let _ = server.refuse(id, -32601, "The World does not answer this request.");
             }
@@ -1128,7 +1139,11 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
         tools.iter().map(|name| (name.to_string(), json!({ "output_token_limit": limit }))).collect();
     json!({
         // Media is part of the watched session, including while it streams.
-        "features": { "omit_app_server_notification_media": false },
+        "features": {
+            "omit_app_server_notification_media": false,
+            "shell_tool": false,
+            "view_image": false,
+        },
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {
             "command": binary,
