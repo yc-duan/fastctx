@@ -90,6 +90,7 @@ import {
   projectEdit,
   projectNew,
   agents,
+  attachHere,
   open as openAgent,
   openOutside,
   since,
@@ -103,6 +104,7 @@ import {
   type WorldNow,
 } from "./world/bridge";
 import { en, zh } from "./words";
+import { desktopAvailable } from "./world/desktop";
 import { startPresence } from "./app/presence";
 
 const params = new URLSearchParams(location.search);
@@ -314,6 +316,13 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
       link: talkLink,
       span: shellWords.span,
       stop: () => (live ? stop(address) : Promise.resolve(false)),
+      here: () => store.world.peek()?.here ?? (live ? null : specimen.world.here),
+      // A specimen opens nothing; its button only shows where it would be.
+      attach: desktopAvailable()
+        ? () => attachHere(address.resident)
+        : live
+          ? undefined
+          : () => new Promise<void>((resolve) => setTimeout(resolve, 2400)),
       markdown,
     }),
     label: detailsWords.open,
@@ -785,6 +794,9 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "codex-7f3a", machine: "laptop" } };
     case "asks":
       return { kind: "talk", address: { resident: "codex-a51c", machine: "laptop" } };
+    case "about":
+      // On this machine, so the card offers its own interface too.
+      return { kind: "talk", address: { resident: "codex-5e2a", machine: "desktop" } };
     default:
       return { kind: "talk", address: { resident: "claude-2b1c", machine: "laptop" } };
   }

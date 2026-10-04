@@ -433,6 +433,7 @@
 
 .details-acts {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   margin: var(--space-3) calc(-1 * var(--space-3)) 0;
@@ -539,7 +540,7 @@
 
 .details-actions li {
   display: grid;
-  grid-template-columns: 3em 4.5em minmax(0, 1fr);
+  grid-template-columns: 3em minmax(0, 1fr);
   column-gap: var(--space-2);
   padding: 3px 0;
   font-size: var(--size-small);
@@ -552,9 +553,8 @@
 }
 
 .details-hand {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  color: var(--text-2);
+  margin-right: 0.6em;
+  color: var(--text-3);
 }
 
 .details-what {
@@ -568,7 +568,7 @@
 }
 
 .details-result {
-  grid-column: 3;
+  grid-column: 2;
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;

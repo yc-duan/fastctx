@@ -18,6 +18,11 @@ export interface DetailsOptions {
   /** Says a span of time: "4 分钟". */
   span(ms: number): string;
   stop(): Promise<boolean>;
+  /** The machine this device is, where it is one. */
+  here(): string | null;
+  /** Opens the agent in its own official interface on this computer;
+   *  resolves when that ends. */
+  attach?: (() => Promise<void>) | undefined;
   /** The conversation as Markdown, for copying out. */
   markdown?: (() => string) | undefined;
 }
@@ -39,14 +44,17 @@ export class Details {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-act]");
       if (!button || button.disabled) return;
       if (button.dataset.act === "export" && options.markdown) {
-        const say = (text: string) => {
-          this.note = text;
-          const note = this.element.querySelector<HTMLElement>(".details-note");
-          if (note) note.textContent = text;
-        };
         void navigator.clipboard.writeText(options.markdown()).then(
-          () => say(options.words.exported),
-          (error: unknown) => say(String(error)),
+          () => this.say(options.words.exported),
+          (error: unknown) => this.say(String(error)),
+        );
+        return;
+      }
+      if (button.dataset.act === "attach" && options.attach) {
+        this.say(options.words.openedOwn);
+        options.attach().then(
+          () => this.say(""),
+          (error: unknown) => this.say(String(error)),
         );
         return;
       }
@@ -62,11 +70,16 @@ export class Details {
           })
           .finally(() => {
             button.disabled = false;
-            const note = this.element.querySelector<HTMLElement>(".details-note");
-            if (note) note.textContent = this.note;
+            this.say(this.note);
           });
       }
     });
+  }
+
+  private say(text: string): void {
+    this.note = text;
+    const note = this.element.querySelector<HTMLElement>(".details-note");
+    if (note) note.textContent = text;
   }
 
   get open(): boolean {
@@ -113,6 +126,9 @@ export class Details {
       ? `<p class="details-trouble">${escape(r.now.trouble.text)} · ${escape(words.since(ago(r.now.trouble.at)))}</p>`
       : "";
     const busy = r.now?.activity === "busy";
+    // Only what the World started has an interface of its own to open; a
+    // session the user opened is already open where they opened it.
+    const own = this.options.attach && about.world_started && about.machine === this.options.here();
     const section = (title: string, body: string) =>
       body ? `<section class="details-section"><h3 class="details-title">${escape(title)}</h3>${body}</section>` : "";
     const task = detail.asked ? `<p class="details-task">${escape(detail.asked)}</p>` : "";
@@ -137,7 +153,7 @@ export class Details {
           .reverse()
           .map(
             (action) =>
-              `<li><time>${escape(clock(new Date(action.at)))}</time><span class="details-hand">${escape(action.hand)}</span><span class="details-what">${action.machine !== about.machine ? `<span class="details-faint">${escape(action.machine)} · </span>` : ""}${escape(action.what)}</span><span class="details-result">${escape(action.result)}</span></li>`,
+              `<li><time>${escape(clock(new Date(action.at)))}</time><span class="details-what"><span class="details-hand">${escape(action.hand)}</span>${action.machine !== about.machine ? `<span class="details-faint">${escape(action.machine)} · </span>` : ""}${escape(action.what)}</span><span class="details-result">${escape(action.result)}</span></li>`,
           )
           .join("")}</ol>`
       : `<p class="quiet">${escape(words.noActions)}</p>`;
@@ -149,6 +165,7 @@ export class Details {
       ${trouble}
       <div class="details-acts">
         <button class="text-button" type="button" data-act="stop"${busy ? "" : " disabled"}>${glyph("stop", 14)}<span>${escape(words.stop)}</span></button>
+        ${own ? `<button class="text-button" type="button" data-act="attach">${glyph("command", 14)}<span>${escape(words.openOwn(agentName(about.host.agent)))}</span></button>` : ""}
         ${this.options.markdown ? `<button class="text-button" type="button" data-act="export">${glyph("copy", 14)}<span>${escape(words.exportMarkdown)}</span></button>` : ""}
         <span class="details-note">${escape(this.note)}</span>
       </div>

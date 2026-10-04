@@ -347,6 +347,8 @@ export interface DetailsWords {
   notRunning: string;
   exportMarkdown: string;
   exported: string;
+  openOwn(agent: string): string;
+  openedOwn: string;
   cannotLook(why: string): string;
   notFound: string;
 }
@@ -382,6 +384,8 @@ export const zhDetails: DetailsWords = {
   notRunning: "它此刻没有在跑的一轮",
   exportMarkdown: "复制整段对话（Markdown）",
   exported: "整段对话已复制为 Markdown",
+  openOwn: (agent) => `在 ${agent} 自己的界面里打开`,
+  openedOwn: "已在一个新的终端窗口里打开",
   cannotLook: (why) => `问不到它的详情：${why}`,
   notFound: "世界里没有找到它。",
 };
@@ -417,6 +421,8 @@ export const enDetails: DetailsWords = {
   notRunning: "It is running no turn now",
   exportMarkdown: "Copy the conversation as Markdown",
   exported: "The conversation is copied as Markdown",
+  openOwn: (agent) => `Open in ${agent}'s own interface`,
+  openedOwn: "Opened in a new terminal window",
   cannotLook: (why) => `Its details could not be asked: ${why}`,
   notFound: "It was not found in the World.",
 };

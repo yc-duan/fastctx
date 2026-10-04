@@ -6,8 +6,11 @@
 
 #[cfg(desktop)]
 mod setup;
+#[cfg(desktop)]
+mod terminal;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -30,6 +33,10 @@ mod desktop_presence;
 
 struct Shell {
     world: World,
+    /// The copy of fastctx placed for the hosts, which starts the node and
+    /// opens residents in their own interfaces.
+    #[cfg_attr(mobile, allow(dead_code))]
+    program: PathBuf,
     watches: Mutex<HashMap<u64, JoinHandle<()>>>,
     next: AtomicU64,
 }
@@ -349,6 +356,18 @@ async fn leave(shell: tauri::State<'_, Shell>) -> Result<(), String> {
     shell.world.leave().await.map_err(|error| error.to_string())
 }
 
+/// Opens a resident on this computer in its own official interface, in a
+/// terminal window of its own; resolves when that window's attach ends.
+#[cfg(desktop)]
+#[tauri::command]
+async fn attach_here(shell: tauri::State<'_, Shell>, resident_id: String) -> Result<(), String> {
+    let program = shell.program.clone();
+    let resident = resident(resident_id)?;
+    tauri::async_runtime::spawn_blocking(move || terminal::attach(&program, &resident))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 /// Where this computer stands with the World.
 #[cfg(desktop)]
 #[tauri::command]
@@ -395,13 +414,13 @@ pub fn run() {
     // When no node runs, it is started from the stable copy fastctx keeps
     // for the hosts, never from this program.
     let program = root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
-    let world =
-        World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None }).starting_node_from(program);
+    let world = World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None })
+        .starting_node_from(program.clone());
     let builder = tauri::Builder::default()
         // Its script also sends every link that opens a new window to the
         // system's browser, where the webview alone would drop it.
         .plugin(tauri_plugin_opener::init())
-        .manage(Shell { world, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
+        .manage(Shell { world, program, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
         .invoke_handler(tauri::generate_handler![
             world_now,
             since,
@@ -432,7 +451,9 @@ pub fn run() {
             #[cfg(desktop)]
             hub_here,
             #[cfg(desktop)]
-            apply_hosts
+            apply_hosts,
+            #[cfg(desktop)]
+            attach_here
         ]);
     #[cfg(windows)]
     let builder = builder.plugin(desktop_presence::plugin(desktop));

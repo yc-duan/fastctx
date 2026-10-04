@@ -70,7 +70,6 @@ export function talk(who: Address, text: string): Promise<{ to: Address; landed:
   return invoke("talk", { residentId: who.resident, machineName: who.machine, text });
 }
 
-/** Asks an agent into the World, with the user's first words. */
 /** Opens a conversation with an agent; the model and reasoning effort are
  *  the official program's own names, and its defaults where not given. */
 export function open(
@@ -148,8 +147,8 @@ export function journalAdd(name: string, journal: string, text: string, descript
   return invoke("journal_add", { name, journal, text, description });
 }
 
-/** A one-use code for one more machine, valid for `hours`. */
-/** An invitation for one more machine, or for a phone (`device`). */
+/** An invitation for one more machine, or for a phone (`device`), valid
+ *  for `hours`. */
 export function invite(name: string | null, hours: number, device = false): Promise<string> {
   return invoke("invite", { name, hours, device });
 }
@@ -194,6 +193,12 @@ export function joinWorld(code: string, name: string | null): Promise<{ world: s
 /** Founds a hub on this computer; resolves to the code that founds its World. */
 export function hubHere(publicAddresses: string[]): Promise<string> {
   return invoke("hub_here", { public: publicAddresses });
+}
+
+/** Opens a resident on this computer in its own official interface, in a
+ *  terminal window of its own; resolves when that attach ends. */
+export function attachHere(resident: string): Promise<void> {
+  return invoke("attach_here", { residentId: resident });
 }
 
 export function applyHosts(codex: boolean, claude: boolean, raise: boolean, into: boolean): Promise<string[]> {
