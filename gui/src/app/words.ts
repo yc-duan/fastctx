@@ -42,6 +42,13 @@ export interface NewTalkWords {
   here: string;
   offline: string;
   noMachine: string;
+  model: string;
+  effort: string;
+  defaultModel: string;
+  asking: string;
+  unsure: string;
+  notInstalled: string;
+  loggedOut: string;
   firstWords: string;
   hint: string;
   start: string;
@@ -59,6 +66,13 @@ export const zhNewTalk: NewTalkWords = {
   here: "这台",
   offline: "离线",
   noMachine: "没有在线的机器",
+  model: "模型",
+  effort: "推理强度",
+  defaultModel: "默认",
+  asking: "正在问…",
+  unsure: "说不准能不能用",
+  notInstalled: "没装",
+  loggedOut: "没登录",
   firstWords: "对它说的第一句话…",
   hint: "Enter 开始 · Shift+Enter 换行",
   start: "开始",
@@ -76,6 +90,13 @@ export const enNewTalk: NewTalkWords = {
   here: "this one",
   offline: "offline",
   noMachine: "No machine is online",
+  model: "Model",
+  effort: "Reasoning",
+  defaultModel: "default",
+  asking: "asking…",
+  unsure: "may or may not work",
+  notInstalled: "not installed",
+  loggedOut: "not logged in",
   firstWords: "The first thing to say…",
   hint: "Enter to begin · Shift+Enter for a new line",
   start: "Begin",

@@ -182,11 +182,41 @@ async fn open(
     town: Option<String>,
     machine_name: Option<String>,
     text: String,
+    model: Option<String>,
+    effort: Option<String>,
 ) -> Result<Spoken, String> {
     let agent = AgentName::try_from(agent.as_str()).map_err(|error| error.to_string())?;
     let town = town.map(|town| TownName::try_from(town).map_err(|error| error.to_string())).transpose()?;
-    let said = shell.world.open(agent, town, machine(machine_name)?, text).await.map_err(|error| error.to_string())?;
+    let options = fastctx_types::agents::SessionOptions { model, reasoning_effort: effort };
+    let said = shell
+        .world
+        .open_with_options(agent, town, machine(machine_name)?, text, options)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(Spoken { to: said.to, landed: said.landed })
+}
+
+/// What happened in the World after a moment, as each machine's records
+/// say now; the whole World, or one project's machines.
+#[tauri::command]
+async fn since(
+    shell: tauri::State<'_, Shell>,
+    since: String,
+    town: Option<String>,
+) -> Result<fastctx_types::since::WorldSince, String> {
+    let since: jiff::Timestamp = since.parse().map_err(|error: jiff::Error| error.to_string())?;
+    let town = town.map(|town| TownName::try_from(town).map_err(|error| error.to_string())).transpose()?;
+    shell.world.since(since, town).await.map_err(|error| error.to_string())
+}
+
+/// The agents each machine can start, as their official programs say:
+/// one machine, or every machine in the World.
+#[tauri::command]
+async fn agents(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+) -> Result<fastctx_types::agents::WorldAgents, String> {
+    shell.world.agents(machine(machine_name)?).await.map_err(|error| error.to_string())
 }
 
 /// Stops the turn a resident is running; says whether one was.
@@ -358,6 +388,8 @@ pub fn run() {
         .manage(Shell { world, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
         .invoke_handler(tauri::generate_handler![
             world_now,
+            since,
+            agents,
             project,
             journal,
             journals,

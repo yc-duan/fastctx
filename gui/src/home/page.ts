@@ -9,9 +9,9 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
-import type { ResidentNow, RunningJob } from "../world/world";
+import type { ResidentNow, RunningJob, Writer } from "../world/world";
 import { Frontispiece } from "./frontispiece";
-import type { Happening, WorldState } from "./model";
+import type { Away, Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
 
 export interface HomeOptions {
@@ -114,7 +114,7 @@ export class HomePage {
         : "",
     ].join("");
     // What happened meanwhile is shown only where the World can say it.
-    const awayHtml = world.happenings ? this.section("away", words.away, this.chronicle(world.happenings)) : "";
+    const awayHtml = world.away ? this.section("away", words.away, this.chronicle(world.away)) : "";
 
     const drawn = factsHtml + presentHtml + awayHtml;
     if (drawn !== this.drawn) {
@@ -182,13 +182,19 @@ export class HomePage {
     </a></li>`;
   }
 
-  private chronicle(happenings: Happening[]): string {
+  private chronicle(away: Away): string {
     const { words } = this.options;
     const since = this.options.lastVisit?.getTime() ?? 0;
-    const events = happenings
+    const events = away.happenings
       .filter((event) => Date.parse(event.at) >= since)
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-    if (!events.length) return `<p class="quiet">${escape(words.nothingAway)}</p>`;
+    // What could not be asked is said under what was.
+    const missing = away.trouble
+      ? `<p class="away-missing wrong">${escape(words.awayTrouble(away.trouble))}</p>`
+      : away.unasked.length
+        ? `<p class="away-missing">${escape(words.unasked(away.unasked.map((u) => (u.offline ? words.unaskedOffline(u.machine) : words.unaskedWhy(u.machine, u.why ?? ""))).join(words.listSeparator)))}</p>`
+        : "";
+    if (!events.length) return `<p class="quiet">${escape(away.trouble ? "" : words.nothingAway)}</p>${missing}`;
     let day = "";
     const items: string[] = [];
     for (const event of events) {
@@ -198,7 +204,20 @@ export class HomePage {
       day = thisDay;
       items.push(this.happening(event, at));
     }
-    return `<ol class="chronicle">${items.join("")}</ol>`;
+    return `<ol class="chronicle">${items.join("")}</ol>${missing}`;
+  }
+
+  /** Who wrote a record: the reader, an agent, or a session by its
+   *  program. */
+  private writer(by: Writer): string {
+    switch (by.kind) {
+      case "user":
+        return this.options.words.you;
+      case "resident":
+        return this.nameOf(by.address);
+      case "session":
+        return by.agent;
+    }
   }
 
   private happening(event: Happening, at: Date): string {
@@ -229,8 +248,38 @@ export class HomePage {
       }
       case "journal":
         line = words.journalAdded(event.journal);
-        detail = `<q class="said entry">${escape(event.first)}</q>${event.by ? `<span class="detail">${escape(this.nameOf(event.by))}</span>` : ""}`;
+        detail = `${event.first ? `<q class="said entry">${escape(event.first)}</q>` : ""}<span class="detail">${escape(this.writer(event.by))}</span>`;
         mark = "read";
+        break;
+      case "arrived":
+        line = words.arrived(this.nameOf(event.who));
+        mark = "plus";
+        break;
+      case "moved":
+        line =
+          event.from && event.to
+            ? words.movedTo(this.nameOf(event.who), event.from, event.to)
+            : event.to
+              ? words.entered(this.nameOf(event.who), event.to)
+              : words.leftProject(this.nameOf(event.who), event.from ?? "");
+        mark = "colleague";
+        break;
+      case "project":
+        line = event.version === 1 ? words.projectOpened(event.name) : words.projectEdited(event.name, event.version);
+        detail = `<span class="detail">${escape(this.writer(event.by))}</span>`;
+        mark = "edit";
+        break;
+      case "uncertain":
+        line = words.uncertain(this.nameOf(event.who));
+        detail = `<span class="detail">${escape(event.why)}</span>`;
+        mark = "thinking";
+        tone = " caution";
+        break;
+      case "undelivered":
+        line = words.undelivered(this.nameOf(event.who), this.nameOf(event.to));
+        detail = `<span class="detail">${escape(event.why)}</span>`;
+        mark = "colleague";
+        tone = " caution";
         break;
       case "asked":
         line = words.asked(this.nameOf(event.who), event.colleague.resident);

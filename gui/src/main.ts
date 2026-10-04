@@ -55,7 +55,8 @@ import { Conversation } from "./conversation/model";
 import { ConversationPage, type Someone } from "./conversation/page";
 import { redrawDiagrams } from "./conversation/diagrams";
 import { HomePage } from "./home/page";
-import type { Happening, WorldState } from "./home/model";
+import type { Away, Happening, WorldState } from "./home/model";
+import { happeningsOf } from "./home/since";
 import { enHome, zhHome } from "./home/words";
 import { installPens } from "./pen/filters";
 import { installRules } from "./pen/rules";
@@ -65,7 +66,7 @@ import { ProjectPage } from "./project/page";
 import { enProject, zhProject } from "./project/words";
 import { specimenJournal, specimenMap } from "./specimen/project";
 import { specimens } from "./specimen/sessions";
-import { specimenNow } from "./specimen/world";
+import { specimenAgents, specimenNow } from "./specimen/world";
 import { applyTheme, chooseTheme, themes } from "./theme";
 import type { Address } from "./world/events";
 import type { ResidentDetail } from "./world/world";
@@ -85,8 +86,10 @@ import {
   look,
   projectEdit,
   projectNew,
+  agents,
   open as openAgent,
   openOutside,
+  since,
   project as readProject,
   revoke,
   stop,
@@ -126,9 +129,10 @@ let place: Place = { kind: "home" };
 const newTalk = new NewTalk({
   store,
   words: english ? enNewTalk : zhNewTalk,
-  async begin({ agent, machine, town, text }) {
+  agents: (machine) => (live ? agents(machine) : Promise.resolve(specimenAgents(machine))),
+  async begin({ agent, machine, town, text, model, effort }) {
     if (!live) throw new Error(english ? "this is a specimen" : "这是样例，没有连着世界");
-    const { to } = await openAgent(agent, machine, town, text);
+    const { to } = await openAgent(agent, machine, town, text, model, effort);
     void store.refresh();
     return to;
   },
@@ -210,8 +214,44 @@ const seen = {
   },
 };
 
-function stateOf(world: WorldNow, happenings: Happening[] | null): WorldState {
-  return { here: world.here, machines: world.who.machines, nodes: world.nodes.machines, towns: world.towns, happenings };
+function stateOf(world: WorldNow, away: Away | null): WorldState {
+  return { here: world.here, machines: world.who.machines, nodes: world.nodes.machines, towns: world.towns, away };
+}
+
+/** The parts of the World's present whose change leaves something behind
+ *  to tell: a turn ending, a job going, a machine coming or going, a
+ *  journal growing, someone arriving. */
+function shapeOf(world: WorldNow): string {
+  return JSON.stringify([
+    residentsOf(world).map((r) => [r.about.id, r.about.machine, r.now?.activity ?? null, r.now?.turn ?? null, r.town]),
+    jobsOf(world).map((job) => job.job),
+    world.nodes.machines.map((node) => [node.name, node.online]),
+    world.towns.map((town) => [town.town, town.journals]),
+  ]);
+}
+
+/** The first line of each journal entry in the chronicle, read from the
+ *  journal on this machine; where it cannot be read, the line goes
+ *  without it. */
+async function withFirstLines(happenings: Happening[]): Promise<Happening[]> {
+  const journals = new Map<string, Promise<Map<string, string>>>();
+  const firsts = (town: string, name: string) => {
+    const key = `${town}/${name}`;
+    let read = journals.get(key);
+    if (!read) {
+      read = readJournal(town, name, null).then(
+        (view) => new Map(view.entries.map((entry) => [entry.stamp.id, entry.text.trim().split("\n")[0] ?? ""])),
+        () => new Map<string, string>(),
+      );
+      journals.set(key, read);
+    }
+    return read;
+  };
+  return Promise.all(
+    happenings.map(async (happening) =>
+      happening.kind === "journal" ? { ...happening, first: (await firsts(happening.town, happening.journal)).get(happening.entry) ?? null } : happening,
+    ),
+  );
 }
 
 const detailsWords = english ? enDetails : zhDetails;
@@ -264,19 +304,55 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>)
 }
 
 function home(): Page {
+  const lastVisit = live ? seen.read() : specimen.lastVisit;
   const page = new HomePage({
     words: homeWords,
     ended: words.ended,
-    lastVisit: live ? seen.read() : specimen.lastVisit,
+    lastVisit,
     link: talkLink,
     head: head(""),
     newTalk: () => newTalk.open(),
   });
+  let away: Away | null = live ? null : specimen.away;
+  // What happened while the reader was away is asked of every machine when
+  // the page opens, and again whenever the present changes in a way that
+  // leaves something to tell; one question at a time.
+  let shape = "";
+  let asking = false;
+  let again = false;
+  const ask = async (): Promise<void> => {
+    if (!lastVisit) return;
+    if (asking) {
+      again = true;
+      return;
+    }
+    asking = true;
+    try {
+      const read = happeningsOf(await since(lastVisit, null));
+      away = { happenings: await withFirstLines(read.happenings), unasked: read.unasked, trouble: null };
+    } catch (error) {
+      away = { happenings: away?.happenings ?? [], unasked: [], trouble: String(error) };
+    }
+    asking = false;
+    const world = store.world.peek();
+    if (world) page.update(stateOf(world, away), store.clock.peek());
+    if (again) {
+      again = false;
+      void ask();
+    }
+  };
   const stop = effect(() => {
     const world = store.world.get();
     const trouble = store.trouble.get();
     const now = store.clock.get();
-    if (world) page.update(stateOf(world, live ? null : specimen.happenings), now);
+    if (world) page.update(stateOf(world, away), now);
+    if (live && world) {
+      const next = shapeOf(world);
+      if (next !== shape) {
+        shape = next;
+        void ask();
+      }
+    }
     if (trouble) page.unreachable(trouble, now);
     if (live && document.visibilityState === "visible" && world) seen.now();
   });

@@ -7,6 +7,7 @@
 // waiting, never answered by guess.
 
 import type { JsonValue } from "../world/wire";
+import { forPeople, type AskState } from "./ask-state";
 import { glyph } from "./glyphs";
 import { escape, plain } from "./prose";
 
@@ -85,17 +86,10 @@ export type Ask =
   /** Not for a person to answer: the node itself refuses these. */
   | { kind: "hidden" };
 
-/** Requests the node answers itself, never a person. */
-const machineOnly = new Set(["account/chatgptAuthTokens/refresh", "attestation/generate", "item/tool/call", "currentTime/read"]);
-
-/** Whether a request is one a person answers. */
-export function forPeople(request: string): boolean {
-  return !machineOnly.has(request);
-}
 
 /** Reads a request as the card shows it. */
 export function readAsk(request: string, params: JsonValue, words: AskWords): Ask {
-  if (machineOnly.has(request)) return { kind: "hidden" };
+  if (!forPeople(request)) return { kind: "hidden" };
   const p = object(params);
   switch (request) {
     case "item/commandExecution/requestApproval": {
@@ -294,22 +288,6 @@ function text(value: JsonValue | undefined): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** A request's id as a key: the same id however its keys were ordered. */
-export function askKey(id: JsonValue): string {
-  return JSON.stringify(sorted(id));
-}
-
-function sorted(value: JsonValue): JsonValue {
-  if (Array.isArray(value)) return value.map(sorted);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sorted((value as Record<string, JsonValue>)[key]!)]));
-  }
-  return value;
-}
-
-/** How a request stands. While an answer is on its way the card says so
- *  itself; the request is settled only once the host has it. */
-export type AskState = { state: "waiting" } | { state: "answered"; said: string } | { state: "gone" };
 
 /** The card, drawn: its question while it waits, one quiet line once
  *  settled. `machine` is where the agent lives; `changes` lists the files a

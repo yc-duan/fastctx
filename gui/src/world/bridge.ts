@@ -5,7 +5,9 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import type { WorldAgents } from "./agents";
 import type { Control, Controlled, Offers } from "./control";
+import type { WorldSince } from "./since";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
@@ -69,13 +71,29 @@ export function talk(who: Address, text: string): Promise<{ to: Address; landed:
 }
 
 /** Asks an agent into the World, with the user's first words. */
+/** Opens a conversation with an agent; the model and reasoning effort are
+ *  the official program's own names, and its defaults where not given. */
 export function open(
   agent: string,
   machine: MachineName,
   town: string | null,
   text: string,
+  model: string | null = null,
+  effort: string | null = null,
 ): Promise<{ to: Address; landed: Landed }> {
-  return invoke("open", { agent, town, machineName: machine, text });
+  return invoke("open", { agent, town, machineName: machine, text, model, effort });
+}
+
+/** What happened in the World after a moment, as each machine's records
+ *  say now. */
+export function since(at: Date, town: string | null): Promise<WorldSince> {
+  return invoke("since", { since: at.toISOString(), town });
+}
+
+/** The agents each machine can start, as their own programs say; one
+ *  machine, or all of them. */
+export function agents(machine: MachineName | null): Promise<WorldAgents> {
+  return invoke("agents", { machineName: machine });
 }
 
 export function stop(who: Address): Promise<boolean> {

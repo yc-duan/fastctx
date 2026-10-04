@@ -5,7 +5,7 @@
 
 import type { Health, MachineName, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { JsonValue } from "../world/wire";
-import { askKey, forPeople, type AskState } from "./asks";
+import { askKey, forPeople, type AskState } from "./ask-state";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 

@@ -3,7 +3,8 @@
 
 import type { Address } from "../world/events";
 import type { About, Action, MachineFacts, ProjectRecord, ResidentNow } from "../world/world";
-import type { Happening, WorldState } from "../home/model";
+import type { Away, WorldState } from "../home/model";
+import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
 
 const at = (time: string) => `2026-10-04T${time}Z`;
@@ -138,23 +139,27 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
       { town: "mark50", record: record("mark50 研发", "为 Mark 50 战衣研发纳米单元的控制固件，并在真机上验证。", ["desktop", "laptop", "lab"]), journals: 7 },
       { town: "ingest", record: record("ingest 服务", "把传感器日志批量写进时序库的服务，跑在 lab 上。", ["laptop", "desktop", "lab"]), journals: 2 },
     ],
-    happenings: [
+    away: {
+      unasked: [{ machine: "studio", offline: true, why: null }],
+      trouble: null,
+      happenings: [
       { kind: "machine", at: at("12:52:00"), machine: "studio", online: false },
       { kind: "turn_ended", at: at("13:34:00"), who: address("laptop", "codex-91c0"), town: "mark50", how: "completed", reason: null, said: "Found one. With ki = 0x7FFF_0000 and a constant error of 32767 at dt = 1, narrow() wraps instead of saturating." },
-      { kind: "journal", at: at("13:10:00"), town: "mark50", journal: "q16-fixed-point", by: address("laptop", "claude-2b1c"), first: "To see why step_response settled at 0.9612 on lab, measured the integral's rounding at Ki = 0.8, dt = 1 ms." },
+      { kind: "journal", at: at("13:10:00"), town: "mark50", journal: "q16-fixed-point", entry: "20261004T131000Z-laptop", by: { kind: "resident", address: address("laptop", "claude-2b1c") }, first: "To see why step_response settled at 0.9612 on lab, measured the integral's rounding at Ki = 0.8, dt = 1 ms." },
       { kind: "job_ended", at: at("13:09:12"), job: "j-k3x9a2", machine: "lab", owner: address("laptop", "claude-2b1c"), town: "mark50", how: "exited 0" },
       { kind: "asked", at: at("13:09:40"), who: address("laptop", "claude-2b1c"), colleague: address("laptop", "codex-91c0"), town: "mark50", label: "造出让 Q32 积分溢出的输入" },
       { kind: "turn_ended", at: at("09:31:00"), who: address("laptop", "codex-7f3a"), town: "ingest", how: "completed", reason: null, said: "Done. The writer now commits every 5 000 rows and at end of file, and a retry replays only the rows since the last commit." },
       { kind: "turn_ended", at: at("08:52:00"), who: address("laptop", "codex-7f3a"), town: "ingest", how: "failed", reason: "stream disconnected before completion", said: null },
-      { kind: "journal", at: at("07:40:00"), town: "ingest", journal: "batch-commit", by: address("laptop", "codex-7f3a"), first: "Writer opened one transaction per file; a 2.1 GB file held it for 41 min on 2026-10-03 (log attached)." },
+      { kind: "journal", at: at("07:40:00"), town: "ingest", journal: "batch-commit", entry: "20261004T074000Z-laptop", by: { kind: "resident", address: address("laptop", "codex-7f3a") }, first: "Writer opened one transaction per file; a 2.1 GB file held it for 41 min on 2026-10-03 (log attached)." },
       { kind: "job_ended", at: at("06:05:00"), job: "j-m8v2t0", machine: "lab", owner: address("lab", "codex-0d1e"), town: "mark50", how: "exited 1" },
-    ],
+      ],
+    },
   };
   return { world, now: new Date(at("13:40:00")), lastVisit: new Date(at("04:30:00")) };
 }
 
 /** The same morning as the shell answers it: what `world_now` returns. */
-export function specimenNow(): { world: WorldNow; now: Date; lastVisit: Date; happenings: Happening[] } {
+export function specimenNow(): { world: WorldNow; now: Date; lastVisit: Date; away: Away | null } {
   const { world, now, lastVisit } = specimenWorld();
   return {
     world: {
@@ -170,6 +175,46 @@ export function specimenNow(): { world: WorldNow; now: Date; lastVisit: Date; ha
     },
     now,
     lastVisit,
-    happenings: world.happenings ?? [],
+    away: world.away,
+  };
+}
+
+
+/** What the programs on a specimen machine say of themselves: Codex from
+ *  the desktop app with its models, Claude Code logged in; on lab, Claude
+ *  Code installed but not logged in. */
+export function specimenAgents(machine: string): WorldAgents {
+  const efforts = (names: string[]) => names.map((effort) => ({ effort, description: "" }));
+  const codex: AgentFacts = {
+    agent: "codex",
+    program: { kind: "known", value: { path: "C:/Program Files/WindowsApps/OpenAI.Codex/app/codex.exe", source: "desktop_app", exists: true } },
+    version: { kind: "known", value: "codex-cli 0.160.0" },
+    launch: { kind: "known", value: { kind: "codex_app_server", program: "codex.exe", pid: 4120 } },
+    login: { kind: "known", value: { kind: "logged_in", method: "ChatGPT" } },
+    models: {
+      kind: "known",
+      value: [
+        { id: "gpt-6.1-sol", model: "gpt-6.1-sol", display_name: "GPT-6.1 Sol", description: "", is_default: true, default_reasoning_effort: "medium", reasoning_efforts: efforts(["low", "medium", "high", "xhigh", "max", "ultra"]) },
+        { id: "gpt-6-astra", model: "gpt-6-astra", display_name: "GPT-6 Astra", description: "", is_default: false, default_reasoning_effort: "high", reasoning_efforts: efforts(["low", "medium", "high", "xhigh", "max", "ultra"]) },
+        { id: "gpt-6-luna", model: "gpt-6-luna", display_name: "GPT-6 Luna", description: "", is_default: false, default_reasoning_effort: "medium", reasoning_efforts: efforts(["low", "medium", "high", "xhigh", "max"]) },
+        { id: "gpt-5.5", model: "gpt-5.5", display_name: "GPT-5.5", description: "", is_default: false, default_reasoning_effort: "medium", reasoning_efforts: efforts(["low", "medium", "high", "xhigh"]) },
+      ],
+    },
+    integration: { kind: "known", value: "in" },
+    timings: [],
+  };
+  const claude: AgentFacts = {
+    agent: "claude",
+    program: { kind: "known", value: { path: "C:/Users/lenovo/.local/bin/claude.exe", source: "path", exists: true } },
+    version: { kind: "known", value: "2.1.289 (Claude Code)" },
+    launch: { kind: "known", value: { kind: "claude_command" } },
+    login: { kind: "known", value: machine === "lab" ? { kind: "logged_out" } : { kind: "logged_in", method: "claude.ai" } },
+    models: { kind: "unavailable", reason: "no public non-session CLI catalog" },
+    integration: { kind: "known", value: "in" },
+    timings: [],
+  };
+  return {
+    machine,
+    machines: [{ kind: "answered", reply: { machine, checked_at: new Date().toISOString(), elapsed_ms: 180, agents: [codex, claude] } }],
   };
 }

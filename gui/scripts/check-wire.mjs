@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { build } from "esbuild";
 
 const gui = fileURLToPath(new URL("../", import.meta.url));
 const fixturePath = path.join(gui, "fixtures/wire.json");
@@ -26,6 +27,8 @@ const virtualFile = path.join(gui, "fixtures/contract.ts");
 const source = `
 import type { SessionEvent, Watched, SessionChange, Health } from "../src/world/events";
 import type { WorldWho, NodesReply, TownSummary, JournalSummary } from "../src/world/world";
+import type { WorldSince } from "../src/world/since";
+import type { WorldAgents } from "../src/world/agents";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
     events: SessionEvent[];
@@ -33,6 +36,10 @@ export const fixture = ${json.trimEnd()} satisfies {
     health_cases: { change: SessionChange; health: Health | null }[];
   };
   world: { who: WorldWho[]; nodes: NodesReply[]; towns: TownSummary[]; journals: JournalSummary[] };
+  // Only the replies reach the interface; calls and the machines' own
+  // telephone go through the shell and the node.
+  since: { replies: ({ reply: "since" } & WorldSince)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
+  agents: { replies: ({ reply: "agents" } & WorldAgents)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
 };
 `;
 const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);
@@ -55,9 +62,16 @@ if (diagnostics.length) {
   process.exit(1);
 }
 
-// The model has only type imports, so its emitted module runs without a DOM.
-const modelSource = readFileSync(path.join(gui, "src/conversation/model.ts"), "utf8");
-const { outputText } = ts.transpileModule(modelSource, { compilerOptions: config.options });
+// The model and what it imports run without a DOM: bundled into one module.
+const bundled = await build({
+  entryPoints: [path.join(gui, "src/conversation/model.ts")],
+  bundle: true,
+  write: false,
+  format: "esm",
+  platform: "neutral",
+  logLevel: "silent",
+});
+const outputText = bundled.outputFiles[0].text;
 const { changeHealth, Conversation } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 for (const { change, health } of fixture.session.health_cases) {
   assert.deepEqual(changeHealth(change), health, `SessionChange::health() differs for ${JSON.stringify(change)}`);

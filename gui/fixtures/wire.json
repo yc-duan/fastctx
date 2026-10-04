@@ -4663,5 +4663,2399 @@
         }
       }
     ]
+  },
+  "since": {
+    "calls": [
+      {
+        "call": "since",
+        "since": "2026-10-04T12:06:07.123456Z",
+        "town": "project-0"
+      },
+      {
+        "call": "since",
+        "since": "2026-10-04T12:06:07.123456Z",
+        "town": null
+      }
+    ],
+    "replies": [
+      {
+        "reply": "since",
+        "machine": "desktop",
+        "since": "2026-10-04T12:06:07.123456Z",
+        "town": "project-0",
+        "machines": [
+          {
+            "kind": "answered",
+            "reply": {
+              "machine": "desktop",
+              "read_started_at": "2026-10-04T12:06:07.123456Z",
+              "read_finished_at": "2026-10-04T12:06:07.123456Z",
+              "issues": [
+                {
+                  "source": "C:/world/record.json",
+                  "reason": "unreadable record"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "offline",
+            "machine": "laptop",
+            "since": "2026-10-04T12:06:07.123456Z"
+          },
+          {
+            "kind": "offline",
+            "machine": "server",
+            "since": null
+          },
+          {
+            "kind": "no_answer",
+            "machine": "workstation",
+            "reason": "the connection broke"
+          }
+        ],
+        "events": [
+          {
+            "id": "event-0",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "resident_born",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "host": {
+              "agent": "codex",
+              "client": "codex app-server",
+              "version": "fixture"
+            },
+            "origin": {
+              "kind": "user"
+            }
+          },
+          {
+            "id": "event-1",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "resident_born",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "host": {
+              "agent": "codex",
+              "client": "codex app-server",
+              "version": "fixture"
+            },
+            "origin": {
+              "kind": "colleague",
+              "asked_by": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "label": "Check 世界 records"
+            }
+          },
+          {
+            "id": "event-2",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "colleague_asked",
+            "asker": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "label": "Check 世界 records"
+          },
+          {
+            "id": "event-3",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "resident_moved",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "from": null,
+            "to": "project-0"
+          },
+          {
+            "id": "event-4",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "claude_registered",
+            "resident": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "session": "session-1",
+            "instance": "activation-1"
+          },
+          {
+            "id": "event-5",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "machine_connected"
+          },
+          {
+            "id": "event-6",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "machine_offline"
+          },
+          {
+            "id": "event-7",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "submission_uncertain",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "delivery": "n-ab12",
+            "why": "host stopped before receipt",
+            "end": null,
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-8",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "turn-1",
+            "end": {
+              "how": "completed",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
+            },
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-9",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "turn-1",
+            "end": {
+              "how": "failed",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
+            },
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-10",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "turn-1",
+            "end": {
+              "how": "interrupted",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
+            },
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-11",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "turn-1",
+            "end": {
+              "how": "future-outcome",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
+            },
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-12",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "",
+            "end": {
+              "how": "failed",
+              "reason": null,
+              "duration_ms": null,
+              "last_message": null
+            },
+            "readers": null
+          },
+          {
+            "id": "event-13",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "finished"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
+          },
+          {
+            "id": "event-14",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "stopped"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
+          },
+          {
+            "id": "event-15",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "interrupted",
+              "reason": "supervisor disappeared"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
+          },
+          {
+            "id": "event-16",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "failed",
+              "error": "spawn failed"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
+          },
+          {
+            "id": "event-17",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "delivered"
+            }
+          },
+          {
+            "id": "event-18",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "waiting",
+              "why": null
+            }
+          },
+          {
+            "id": "event-19",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "sent"
+            }
+          },
+          {
+            "id": "event-20",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "failed",
+              "reason": "offline"
+            }
+          },
+          {
+            "id": "event-21",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_entry",
+            "journal": "measurements",
+            "entry": "20261004T120607Z-desktop",
+            "by": {
+              "kind": "user"
+            }
+          },
+          {
+            "id": "event-22",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_description",
+            "journal": "measurements",
+            "version": 2,
+            "by": {
+              "kind": "user"
+            }
+          },
+          {
+            "id": "event-23",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
+            "by": {
+              "kind": "user"
+            }
+          },
+          {
+            "id": "event-24",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_entry",
+            "journal": "measurements",
+            "entry": "20261004T120607Z-desktop",
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              }
+            }
+          },
+          {
+            "id": "event-25",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_description",
+            "journal": "measurements",
+            "version": 2,
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              }
+            }
+          },
+          {
+            "id": "event-26",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              }
+            }
+          },
+          {
+            "id": "event-27",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_entry",
+            "journal": "measurements",
+            "entry": "20261004T120607Z-desktop",
+            "by": {
+              "kind": "session",
+              "agent": "claude"
+            }
+          },
+          {
+            "id": "event-28",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_description",
+            "journal": "measurements",
+            "version": 2,
+            "by": {
+              "kind": "session",
+              "agent": "claude"
+            }
+          },
+          {
+            "id": "event-29",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
+            "by": {
+              "kind": "session",
+              "agent": "claude"
+            }
+          }
+        ],
+        "undated": [
+          {
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                "project-0"
+              ]
+            },
+            "source": {
+              "machine": "desktop",
+              "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+            },
+            "kind": "asleep"
+          },
+          {
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                "project-0"
+              ]
+            },
+            "source": {
+              "machine": "desktop",
+              "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+            },
+            "kind": "claude_closed",
+            "session": "session-1",
+            "instance": "activation-1"
+          },
+          {
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                "project-0"
+              ]
+            },
+            "source": {
+              "machine": "desktop",
+              "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+            },
+            "kind": "claude_registered",
+            "session": "legacy-session",
+            "instance": null
+          },
+          {
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                "project-0"
+              ]
+            },
+            "source": {
+              "machine": "desktop",
+              "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+            },
+            "kind": "submission_uncertain",
+            "delivery": "n-ab12",
+            "why": "host stopped before receipt",
+            "end": null,
+            "readers": null
+          }
+        ],
+        "issues": [],
+        "limitations": [
+          "No earlier presence intervals are retained."
+        ]
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "since",
+        "since": "2026-10-04T12:06:07.123456Z",
+        "town": "project-0"
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "since",
+        "machine": "desktop",
+        "read_started_at": "2026-10-04T12:06:07.123456Z",
+        "read_finished_at": "2026-10-04T12:06:07.123456Z",
+        "issues": [
+          {
+            "source": "C:/world/record.json",
+            "reason": "unreadable record"
+          }
+        ],
+        "events": [
+          {
+            "id": "event-0",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "resident_born",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "host": {
+              "agent": "codex",
+              "client": "codex app-server",
+              "version": "fixture"
+            },
+            "origin": {
+              "kind": "user"
+            }
+          },
+          {
+            "id": "event-1",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "resident_born",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "host": {
+              "agent": "codex",
+              "client": "codex app-server",
+              "version": "fixture"
+            },
+            "origin": {
+              "kind": "colleague",
+              "asked_by": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "label": "Check 世界 records"
+            }
+          },
+          {
+            "id": "event-2",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "colleague_asked",
+            "asker": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "label": "Check 世界 records"
+          },
+          {
+            "id": "event-3",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "resident_moved",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "from": null,
+            "to": "project-0"
+          },
+          {
+            "id": "event-4",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "claude_registered",
+            "resident": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "session": "session-1",
+            "instance": "activation-1"
+          },
+          {
+            "id": "event-5",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "machine_connected"
+          },
+          {
+            "id": "event-6",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "machine_offline"
+          },
+          {
+            "id": "event-7",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "submission_uncertain",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "delivery": "n-ab12",
+            "why": "host stopped before receipt",
+            "end": null,
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-8",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "turn-1",
+            "end": {
+              "how": "completed",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
+            },
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-9",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "turn-1",
+            "end": {
+              "how": "failed",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
+            },
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-10",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "turn-1",
+            "end": {
+              "how": "interrupted",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
+            },
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-11",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "turn-1",
+            "end": {
+              "how": "future-outcome",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
+            },
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
+          },
+          {
+            "id": "event-12",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "turn": "",
+            "end": {
+              "how": "failed",
+              "reason": null,
+              "duration_ms": null,
+              "last_message": null
+            },
+            "readers": null
+          },
+          {
+            "id": "event-13",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "finished"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
+          },
+          {
+            "id": "event-14",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "stopped"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
+          },
+          {
+            "id": "event-15",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "interrupted",
+              "reason": "supervisor disappeared"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
+          },
+          {
+            "id": "event-16",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "failed",
+              "error": "spawn failed"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
+          },
+          {
+            "id": "event-17",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "delivered"
+            }
+          },
+          {
+            "id": "event-18",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "waiting",
+              "why": null
+            }
+          },
+          {
+            "id": "event-19",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "sent"
+            }
+          },
+          {
+            "id": "event-20",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "failed",
+              "reason": "offline"
+            }
+          },
+          {
+            "id": "event-21",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_entry",
+            "journal": "measurements",
+            "entry": "20261004T120607Z-desktop",
+            "by": {
+              "kind": "user"
+            }
+          },
+          {
+            "id": "event-22",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_description",
+            "journal": "measurements",
+            "version": 2,
+            "by": {
+              "kind": "user"
+            }
+          },
+          {
+            "id": "event-23",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
+            "by": {
+              "kind": "user"
+            }
+          },
+          {
+            "id": "event-24",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_entry",
+            "journal": "measurements",
+            "entry": "20261004T120607Z-desktop",
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              }
+            }
+          },
+          {
+            "id": "event-25",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_description",
+            "journal": "measurements",
+            "version": 2,
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              }
+            }
+          },
+          {
+            "id": "event-26",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              }
+            }
+          },
+          {
+            "id": "event-27",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_entry",
+            "journal": "measurements",
+            "entry": "20261004T120607Z-desktop",
+            "by": {
+              "kind": "session",
+              "agent": "claude"
+            }
+          },
+          {
+            "id": "event-28",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_description",
+            "journal": "measurements",
+            "version": 2,
+            "by": {
+              "kind": "session",
+              "agent": "claude"
+            }
+          },
+          {
+            "id": "event-29",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
+            "by": {
+              "kind": "session",
+              "agent": "claude"
+            }
+          }
+        ],
+        "undated": [
+          {
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                "project-0"
+              ]
+            },
+            "source": {
+              "machine": "desktop",
+              "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+            },
+            "kind": "asleep"
+          },
+          {
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                "project-0"
+              ]
+            },
+            "source": {
+              "machine": "desktop",
+              "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+            },
+            "kind": "claude_closed",
+            "session": "session-1",
+            "instance": "activation-1"
+          },
+          {
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                "project-0"
+              ]
+            },
+            "source": {
+              "machine": "desktop",
+              "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+            },
+            "kind": "claude_registered",
+            "session": "legacy-session",
+            "instance": null
+          },
+          {
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "town": {
+              "kind": "unrecorded",
+              "recorded_in": [
+                "project-0"
+              ]
+            },
+            "source": {
+              "machine": "desktop",
+              "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+            },
+            "kind": "submission_uncertain",
+            "delivery": "n-ab12",
+            "why": "host stopped before receipt",
+            "end": null,
+            "readers": null
+          }
+        ]
+      }
+    ]
+  },
+  "agents": {
+    "calls": [
+      {
+        "call": "agents",
+        "machine": null
+      },
+      {
+        "call": "agents",
+        "machine": "desktop"
+      },
+      {
+        "call": "open",
+        "agent": "codex",
+        "town": null,
+        "node": "desktop",
+        "text": "First words",
+        "model": "model-a",
+        "reasoning_effort": "medium"
+      },
+      {
+        "call": "open",
+        "agent": "claude",
+        "town": null,
+        "node": null,
+        "text": "Defaults",
+        "model": null,
+        "reasoning_effort": null
+      }
+    ],
+    "replies": [
+      {
+        "reply": "agents",
+        "machine": "desktop",
+        "machines": [
+          {
+            "kind": "answered",
+            "reply": {
+              "machine": "desktop",
+              "checked_at": "2026-10-04T12:06:07Z",
+              "elapsed_ms": 420,
+              "agents": [
+                {
+                  "agent": "codex",
+                  "program": {
+                    "kind": "known",
+                    "value": {
+                      "path": "C:/app/codex.exe",
+                      "source": "desktop_app",
+                      "exists": true
+                    }
+                  },
+                  "version": {
+                    "kind": "known",
+                    "value": "codex-cli fixture-version"
+                  },
+                  "launch": {
+                    "kind": "known",
+                    "value": {
+                      "kind": "codex_app_server",
+                      "program": "C:/app/codex.exe",
+                      "pid": 123
+                    }
+                  },
+                  "login": {
+                    "kind": "known",
+                    "value": {
+                      "kind": "logged_in",
+                      "method": "chatgpt"
+                    }
+                  },
+                  "models": {
+                    "kind": "known",
+                    "value": [
+                      {
+                        "id": "model-a",
+                        "model": "model-a",
+                        "display_name": "Example model",
+                        "description": "Catalog fixture",
+                        "is_default": true,
+                        "default_reasoning_effort": "medium",
+                        "reasoning_efforts": [
+                          {
+                            "effort": "medium",
+                            "description": "Example effort"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "integration": {
+                    "kind": "known",
+                    "value": "in"
+                  },
+                  "timings": [
+                    {
+                      "step": "model/list",
+                      "elapsed_ms": 0
+                    }
+                  ]
+                },
+                {
+                  "agent": "claude",
+                  "program": {
+                    "kind": "known",
+                    "value": {
+                      "path": "/usr/bin/claude",
+                      "source": "path",
+                      "exists": true
+                    }
+                  },
+                  "version": {
+                    "kind": "known",
+                    "value": "fixture-version (Claude Code)"
+                  },
+                  "launch": {
+                    "kind": "known",
+                    "value": {
+                      "kind": "claude_command"
+                    }
+                  },
+                  "login": {
+                    "kind": "known",
+                    "value": {
+                      "kind": "logged_out"
+                    }
+                  },
+                  "models": {
+                    "kind": "unavailable",
+                    "reason": "no public non-session CLI catalog"
+                  },
+                  "integration": {
+                    "kind": "known",
+                    "value": "out"
+                  },
+                  "timings": []
+                },
+                {
+                  "agent": "codex",
+                  "program": {
+                    "kind": "known",
+                    "value": null
+                  },
+                  "version": {
+                    "kind": "unavailable",
+                    "reason": "not installed"
+                  },
+                  "launch": {
+                    "kind": "unavailable",
+                    "reason": "not installed"
+                  },
+                  "login": {
+                    "kind": "unavailable",
+                    "reason": "not installed"
+                  },
+                  "models": {
+                    "kind": "unavailable",
+                    "reason": "not installed"
+                  },
+                  "integration": {
+                    "kind": "known",
+                    "value": "absent"
+                  },
+                  "timings": [
+                    {
+                      "step": "model/list",
+                      "elapsed_ms": 0
+                    }
+                  ]
+                },
+                {
+                  "agent": "codex",
+                  "program": {
+                    "kind": "known",
+                    "value": {
+                      "path": "C:/old/codex.exe",
+                      "source": "desktop_app",
+                      "exists": false
+                    }
+                  },
+                  "version": {
+                    "kind": "failed",
+                    "reason": "program disappeared"
+                  },
+                  "launch": {
+                    "kind": "failed",
+                    "reason": "cannot spawn"
+                  },
+                  "login": {
+                    "kind": "failed",
+                    "reason": "status command failed"
+                  },
+                  "models": {
+                    "kind": "failed",
+                    "reason": "model/list failed"
+                  },
+                  "integration": {
+                    "kind": "known",
+                    "value": "old"
+                  },
+                  "timings": [
+                    {
+                      "step": "model/list",
+                      "elapsed_ms": 0
+                    }
+                  ]
+                },
+                {
+                  "agent": "claude",
+                  "program": {
+                    "kind": "failed",
+                    "reason": "configuration unreadable"
+                  },
+                  "version": {
+                    "kind": "known",
+                    "value": "fixture-version (Claude Code)"
+                  },
+                  "launch": {
+                    "kind": "known",
+                    "value": {
+                      "kind": "claude_command"
+                    }
+                  },
+                  "login": {
+                    "kind": "known",
+                    "value": {
+                      "kind": "logged_in",
+                      "method": null
+                    }
+                  },
+                  "models": {
+                    "kind": "known",
+                    "value": []
+                  },
+                  "integration": {
+                    "kind": "failed",
+                    "reason": "receipt unreadable"
+                  },
+                  "timings": []
+                }
+              ]
+            }
+          },
+          {
+            "kind": "offline",
+            "machine": "laptop",
+            "since": "2026-10-04T12:06:07Z"
+          },
+          {
+            "kind": "offline",
+            "machine": "unknown",
+            "since": null
+          },
+          {
+            "kind": "no_answer",
+            "machine": "lab",
+            "reason": "connection broke"
+          }
+        ]
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "agents"
+      },
+      {
+        "call": "open",
+        "agent": "claude",
+        "town": null,
+        "text": "First words",
+        "model": "opus",
+        "reasoning_effort": "high"
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "agents",
+        "machine": "desktop",
+        "checked_at": "2026-10-04T12:06:07Z",
+        "elapsed_ms": 420,
+        "agents": [
+          {
+            "agent": "codex",
+            "program": {
+              "kind": "known",
+              "value": {
+                "path": "C:/app/codex.exe",
+                "source": "desktop_app",
+                "exists": true
+              }
+            },
+            "version": {
+              "kind": "known",
+              "value": "codex-cli fixture-version"
+            },
+            "launch": {
+              "kind": "known",
+              "value": {
+                "kind": "codex_app_server",
+                "program": "C:/app/codex.exe",
+                "pid": 123
+              }
+            },
+            "login": {
+              "kind": "known",
+              "value": {
+                "kind": "logged_in",
+                "method": "chatgpt"
+              }
+            },
+            "models": {
+              "kind": "known",
+              "value": [
+                {
+                  "id": "model-a",
+                  "model": "model-a",
+                  "display_name": "Example model",
+                  "description": "Catalog fixture",
+                  "is_default": true,
+                  "default_reasoning_effort": "medium",
+                  "reasoning_efforts": [
+                    {
+                      "effort": "medium",
+                      "description": "Example effort"
+                    }
+                  ]
+                }
+              ]
+            },
+            "integration": {
+              "kind": "known",
+              "value": "in"
+            },
+            "timings": [
+              {
+                "step": "model/list",
+                "elapsed_ms": 0
+              }
+            ]
+          },
+          {
+            "agent": "claude",
+            "program": {
+              "kind": "known",
+              "value": {
+                "path": "/usr/bin/claude",
+                "source": "path",
+                "exists": true
+              }
+            },
+            "version": {
+              "kind": "known",
+              "value": "fixture-version (Claude Code)"
+            },
+            "launch": {
+              "kind": "known",
+              "value": {
+                "kind": "claude_command"
+              }
+            },
+            "login": {
+              "kind": "known",
+              "value": {
+                "kind": "logged_out"
+              }
+            },
+            "models": {
+              "kind": "unavailable",
+              "reason": "no public non-session CLI catalog"
+            },
+            "integration": {
+              "kind": "known",
+              "value": "out"
+            },
+            "timings": []
+          },
+          {
+            "agent": "codex",
+            "program": {
+              "kind": "known",
+              "value": null
+            },
+            "version": {
+              "kind": "unavailable",
+              "reason": "not installed"
+            },
+            "launch": {
+              "kind": "unavailable",
+              "reason": "not installed"
+            },
+            "login": {
+              "kind": "unavailable",
+              "reason": "not installed"
+            },
+            "models": {
+              "kind": "unavailable",
+              "reason": "not installed"
+            },
+            "integration": {
+              "kind": "known",
+              "value": "absent"
+            },
+            "timings": [
+              {
+                "step": "model/list",
+                "elapsed_ms": 0
+              }
+            ]
+          },
+          {
+            "agent": "codex",
+            "program": {
+              "kind": "known",
+              "value": {
+                "path": "C:/old/codex.exe",
+                "source": "desktop_app",
+                "exists": false
+              }
+            },
+            "version": {
+              "kind": "failed",
+              "reason": "program disappeared"
+            },
+            "launch": {
+              "kind": "failed",
+              "reason": "cannot spawn"
+            },
+            "login": {
+              "kind": "failed",
+              "reason": "status command failed"
+            },
+            "models": {
+              "kind": "failed",
+              "reason": "model/list failed"
+            },
+            "integration": {
+              "kind": "known",
+              "value": "old"
+            },
+            "timings": [
+              {
+                "step": "model/list",
+                "elapsed_ms": 0
+              }
+            ]
+          },
+          {
+            "agent": "claude",
+            "program": {
+              "kind": "failed",
+              "reason": "configuration unreadable"
+            },
+            "version": {
+              "kind": "known",
+              "value": "fixture-version (Claude Code)"
+            },
+            "launch": {
+              "kind": "known",
+              "value": {
+                "kind": "claude_command"
+              }
+            },
+            "login": {
+              "kind": "known",
+              "value": {
+                "kind": "logged_in",
+                "method": null
+              }
+            },
+            "models": {
+              "kind": "known",
+              "value": []
+            },
+            "integration": {
+              "kind": "failed",
+              "reason": "receipt unreadable"
+            },
+            "timings": []
+          }
+        ]
+      }
+    ]
   }
 }

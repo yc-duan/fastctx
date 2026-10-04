@@ -640,3 +640,15 @@
     animation: none;
   }
 }
+
+/* Under the chronicle: the machines whose part could not be asked, so an
+   empty or short list is never taken for a quiet World. */
+.away-missing {
+  margin: var(--space-3) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.away-missing.wrong {
+  color: var(--wrong);
+}

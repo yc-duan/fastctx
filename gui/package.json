@@ -25,6 +25,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "2.12.1",
     "@types/markdown-it": "14.1.2",
+    "esbuild": "0.25.12",
     "typescript": "5.9.3",
     "vite": "7.1.12"
   }

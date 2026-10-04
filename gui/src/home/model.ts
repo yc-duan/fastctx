@@ -1,13 +1,34 @@
 import type { Address, MachineName, Timestamp, TownName } from "../world/wire";
-import type { MachineWho, Node, TownSummary } from "../world/world";
+import type { MachineWho, Node, TownSummary, Writer } from "../world/world";
 
-/** Local presentation data. No Rust reply currently supplies this chronicle. */
+/** One line of what happened while the reader was away, read from what
+ *  the World answered (`home/since.ts`). */
 export type Happening =
   | { kind: "turn_ended"; at: Timestamp; who: Address; town: TownName | null; how: string; reason: string | null; said: string | null }
   | { kind: "job_ended"; at: Timestamp; job: string; machine: MachineName; owner: Address; town: TownName | null; how: string }
-  | { kind: "journal"; at: Timestamp; town: TownName; journal: string; by: Address | null; first: string }
+  | { kind: "journal"; at: Timestamp; town: TownName; journal: string; entry: string; by: Writer; first: string | null }
   | { kind: "asked"; at: Timestamp; who: Address; colleague: Address; town: TownName | null; label: string }
+  | { kind: "arrived"; at: Timestamp; who: Address; town: TownName | null; agent: string }
+  | { kind: "moved"; at: Timestamp; who: Address; town: TownName | null; from: TownName | null; to: TownName | null }
+  | { kind: "project"; at: Timestamp; town: TownName; version: number; name: string; by: Writer }
+  | { kind: "uncertain"; at: Timestamp; who: Address; town: TownName | null; why: string }
+  | { kind: "undelivered"; at: Timestamp; who: Address; to: Address; town: TownName | null; why: string }
   | { kind: "machine"; at: Timestamp; machine: MachineName; online: boolean };
+
+/** A machine whose part of the answer is missing or partial, and why. */
+export interface Unasked {
+  machine: MachineName;
+  offline: boolean;
+  why: string | null;
+}
+
+/** What happened while the reader was away, as far as the World said. */
+export interface Away {
+  happenings: Happening[];
+  unasked: Unasked[];
+  /** The World could not be asked at all. */
+  trouble: string | null;
+}
 
 /** The homepage's assembled view, not a serialized WorldWho or NodesReply. */
 export interface WorldState {
@@ -15,7 +36,7 @@ export interface WorldState {
   machines: MachineWho[];
   nodes: Node[];
   towns: TownSummary[];
-  /** What happened lately, where the World can say it; `null` where it
-   *  cannot yet. */
-  happenings: Happening[] | null;
+  /** What happened while the reader was away; `null` before the World
+   *  has been asked, or where there is no earlier visit to ask from. */
+  away: Away | null;
 }

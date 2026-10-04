@@ -49,6 +49,19 @@ export interface HomeWords {
   asked(who: string, colleague: string): string;
   machineLeft(machine: string): string;
   machineCame(machine: string): string;
+  arrived(who: string): string;
+  entered(who: string, project: string): string;
+  leftProject(who: string, project: string): string;
+  movedTo(who: string, from: string, to: string): string;
+  projectOpened(name: string): string;
+  projectEdited(name: string, version: number): string;
+  uncertain(who: string): string;
+  undelivered(colleague: string, to: string): string;
+  you: string;
+  unasked(list: string): string;
+  unaskedOffline(machine: string): string;
+  unaskedWhy(machine: string, why: string): string;
+  awayTrouble(why: string): string;
   startedBy(who: string): string;
   ownerLeft(ago: string): string;
   open: string;
@@ -127,6 +140,19 @@ export const zhHome: HomeWords = {
   asked: (who, colleague) => `${who} 请了同事 ${colleague}`,
   machineLeft: (machine) => `${machine} 离线了`,
   machineCame: (machine) => `${machine} 回来了`,
+  arrived: (who) => `${who} 来了`,
+  entered: (who, project) => `${who} 进了项目 ${project}`,
+  leftProject: (who, project) => `${who} 离开了项目 ${project}`,
+  movedTo: (who, from, to) => `${who} 从项目 ${from} 换到了 ${to}`,
+  projectOpened: (name) => `开了项目「${name}」`,
+  projectEdited: (name, version) => `「${name}」的立项写到了第 ${version} 版`,
+  uncertain: (who) => `给 ${who} 的话，进没进去不知道`,
+  undelivered: (colleague, to) => `${colleague} 的答案没能送到 ${to}`,
+  you: "你",
+  unasked: (list) => `没问到：${list}`,
+  unaskedOffline: (machine) => `${machine}（离线）`,
+  unaskedWhy: (machine, why) => `${machine}（${why}）`,
+  awayTrouble: (why) => `问不到你不在时的事：${why}`,
   startedBy: (who) => `${who} 起的`,
   ownerLeft: (ago) => `它的主人 ${ago}走了`,
   open: "打开",
@@ -176,6 +202,19 @@ export const enHome: HomeWords = {
   asked: (who, colleague) => `${who} asked colleague ${colleague}`,
   machineLeft: (machine) => `${machine} went offline`,
   machineCame: (machine) => `${machine} came back`,
+  arrived: (who) => `${who} arrived`,
+  entered: (who, project) => `${who} entered ${project}`,
+  leftProject: (who, project) => `${who} left ${project}`,
+  movedTo: (who, from, to) => `${who} moved from ${from} to ${to}`,
+  projectOpened: (name) => `Opened the project “${name}”`,
+  projectEdited: (name, version) => `“${name}” is at version ${version} of its record`,
+  uncertain: (who) => `Words for ${who}: whether they got in is not known`,
+  undelivered: (colleague, to) => `${colleague}'s answer did not reach ${to}`,
+  you: "You",
+  unasked: (list) => `Not asked: ${list}`,
+  unaskedOffline: (machine) => `${machine} (offline)`,
+  unaskedWhy: (machine, why) => `${machine} (${why})`,
+  awayTrouble: (why) => `What happened while you were away could not be asked: ${why}`,
   startedBy: (who) => `started by ${who}`,
   ownerLeft: (ago) => `its owner left ${ago}`,
   open: "Open",
