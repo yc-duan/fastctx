@@ -192,6 +192,31 @@ pub struct Address {
     pub resident: ResidentId,
 }
 
+impl Address {
+    /// The address as one word, `codex-7f3a@desktop`: how it is written in
+    /// environment variables and in directory names on other machines.
+    pub fn tag(&self) -> String {
+        format!("{}@{}", self.resident, self.machine)
+    }
+}
+
+impl std::str::FromStr for Address {
+    type Err = NameError;
+
+    fn from_str(text: &str) -> Result<Self, NameError> {
+        let invalid = || NameError {
+            kind: "resident address",
+            value: text.to_string(),
+            rule: "a resident id, `@`, and a machine name",
+        };
+        let (resident, machine) = text.split_once('@').ok_or_else(invalid)?;
+        Ok(Self {
+            machine: MachineName::try_from(machine).map_err(|_| invalid())?,
+            resident: ResidentId::try_from(resident).map_err(|_| invalid())?,
+        })
+    }
+}
+
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} on {}", self.resident, self.machine)

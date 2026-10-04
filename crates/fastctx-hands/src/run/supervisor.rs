@@ -52,12 +52,12 @@ impl Job {
     fn run(&mut self, fastctx_dir: &Path) -> io::Result<()> {
         #[cfg(unix)]
         let stop_signals = signals::block()?;
-        let resident = self.world.resident(self.record.town.as_ref(), &self.record.resident);
+        let resident = self.world.owner(&self.record.machine, self.record.town.as_ref(), &self.record.owner);
         let (program, args) = shell::command(&resident.job_script(&self.record.id))?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
         let env = shell::environment(&shell::Context {
             machine: &self.record.machine,
-            resident: &self.record.resident,
+            owner: &self.record.owner,
             town: self.record.town.as_ref(),
             fastctx_dir,
             fastctx_home: fastctx_home.as_deref(),
@@ -151,10 +151,11 @@ fn exit_status(status: std::process::ExitStatus) -> ExitStatus {
 /// reachable, reads the record when it starts; the record is the truth and
 /// this is only a prompt, so its failure is not the job's.
 fn tell_node(world: &WorldDir, record: &JobRecord) {
-    let call =
-        Call::JobChanged { job: record.id.clone(), resident: record.resident.clone(), town: record.town.clone() };
+    let call = Call::JobChanged { job: record.id.clone(), owner: record.owner.clone(), town: record.town.clone() };
     let peer = Peer::Supervisor { job: record.id.clone() };
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+        return;
+    };
     runtime.block_on(async {
         if let Ok(mut client) = Client::connect(world, peer).await {
             let _ = client.call(call).await;

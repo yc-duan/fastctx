@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 fastctx-hands = { path = "../fastctx-hands" }
+fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }

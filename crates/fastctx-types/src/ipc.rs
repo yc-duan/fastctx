@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::residents::Host;
-use crate::{JobId, MachineName, ResidentId};
+use crate::{Address, JobId, MachineName};
 
 /// Raised whenever a change would make an older client or node misread a
 /// frame. A node refuses a client speaking another protocol.
@@ -30,7 +30,7 @@ pub struct Hello {
 pub enum Peer {
     /// A command such as `fastctx w`, typed by a person or run by a
     /// resident; `resident` is set when a resident's `run` started it.
-    Command { resident: Option<ResidentId> },
+    Command { resident: Option<Address> },
     /// The supervisor of one job, reporting on it.
     Supervisor { job: JobId },
     /// The MCP adapter of one agent session.

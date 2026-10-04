@@ -9,7 +9,7 @@ use fastctx_client::Client;
 use fastctx_hands::view::{Options, view};
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::{Call, ResidentId, TownName};
+use fastctx_types::{Address, Call, TownName};
 
 /// Look at files: text with line numbers, images as images.
 #[derive(Args)]
@@ -79,13 +79,15 @@ fn machine(world: &WorldDir) -> Option<String> {
 /// In a resident's `run`, what it saw goes on its record, so a later
 /// `write` can tell whether a file changed since.
 fn record(world: &WorldDir, seen: Vec<fastctx_types::residents::Seen>) -> anyhow::Result<()> {
-    let Ok(resident) = std::env::var("FASTCTX_RESIDENT") else { return Ok(()) };
+    let Ok(resident) = std::env::var("FASTCTX_RESIDENT") else {
+        return Ok(());
+    };
     if seen.is_empty() {
         return Ok(());
     }
-    let resident = ResidentId::try_from(resident)?;
+    let resident: Address = resident.parse()?;
     let town = std::env::var("FASTCTX_TOWN").ok().map(TownName::try_from).transpose()?;
-    let call = Call::Saw { resident: resident.clone(), town, seen };
+    let call = Call::Saw { owner: resident.clone(), town, seen };
     let recorded = tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let mut client = Client::connect(world, Peer::Command { resident: Some(resident) }).await?;
         client.call(call).await?;

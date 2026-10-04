@@ -4,9 +4,10 @@
 //! It holds the World's lock for as long as it runs, so a machine has one
 //! node per World; it listens on the World's local endpoint, where every
 //! client (commands, the MCP adapter of each agent session, the TUI, the
-//! supervisors of running jobs) reaches it; and on start it records what
-//! happened while it was away, such as jobs whose supervisor did not
-//! survive a restart of the machine.
+//! supervisors of running jobs) reaches it; it holds the machine's link to
+//! the hub when the machine has joined a World with others; and on start
+//! it records what happened while it was away, such as jobs whose
+//! supervisor did not survive a restart of the machine.
 
 mod inbox;
 mod jobs;
@@ -15,11 +16,13 @@ mod machine;
 mod residents;
 mod server;
 mod who;
+mod world;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context as _, anyhow};
+use fastctx_net::link::Link;
 use fastctx_platform::ipc::{Endpoint, Listener};
 use fastctx_platform::{FileLock, ensure_private_dir};
 use fastctx_types::MachineName;
@@ -28,10 +31,27 @@ use fastctx_types::layout::WorldDir;
 /// What every connection shares.
 pub(crate) struct Node {
     world: WorldDir,
-    machine: MachineName,
+    /// This machine's name; it changes only when the machine joins a World.
+    machine: RwLock<MachineName>,
     jobs: jobs::Jobs,
     residents: residents::Residents,
     log: log::Log,
+    /// Present while the machine is a member of a World with others.
+    link: RwLock<Option<Arc<Link>>>,
+}
+
+impl Node {
+    pub(crate) fn machine(&self) -> MachineName {
+        self.machine.read().expect("never poisoned").clone()
+    }
+
+    pub(crate) fn set_machine(&self, name: MachineName) {
+        *self.machine.write().expect("never poisoned") = name;
+    }
+
+    pub(crate) fn link(&self) -> Option<Arc<Link>> {
+        self.link.read().expect("never poisoned").clone()
+    }
 }
 
 /// Runs the node of the World kept under `fastctx_root` until the process
@@ -57,19 +77,34 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         log.line(format_args!("could not check {}: {error}", path.display()));
     }
 
-    for (path, error) in inbox::settle(&world)? {
-        log.line(format_args!("could not tell what {} owes: {error}", path.display()));
-    }
-
     let (residents, problems) = residents::Residents::load(&world)?;
     for (path, error) in &problems {
         log.line(format_args!("could not read {}: {error}", path.display()));
     }
 
+    let membership = world::load(&world).context("reading this machine's membership")?;
     let endpoint = Endpoint::for_world(world.path())?;
     let mut listener = Listener::bind(&endpoint)?;
     log.line(format_args!("listening at {endpoint}"));
-    let node = Arc::new(Node { world, machine, jobs: jobs::Jobs::new(), residents, log });
+    let node = Arc::new(Node {
+        world,
+        machine: RwLock::new(machine),
+        jobs: jobs::Jobs::new(),
+        residents,
+        log,
+        link: RwLock::new(None),
+    });
+    if let Some((membership, key)) = membership {
+        node.log.line(format_args!("a member of the World {} as {}", membership.world, membership.name));
+        world::start(&node, membership, key).context("starting the link to the hub")?;
+    }
+
+    // What a node that stopped left owed, now that letters can be sent.
+    let link = node.link();
+    for (path, error) in inbox::settle(&node.world, &node.machine(), link.as_deref())? {
+        node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
+    }
+
     loop {
         match listener.accept().await {
             Ok(connection) => {

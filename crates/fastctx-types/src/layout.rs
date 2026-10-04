@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{JobId, ResidentId, TownName};
+use crate::{Address, JobId, MachineName, ResidentId, TownName};
 
 /// The World's directory on this machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,9 +41,19 @@ impl WorldDir {
         self.root.join("node.log")
     }
 
-    /// This machine's settings: its name, and later its membership.
+    /// This machine's name.
     pub fn machine_file(&self) -> PathBuf {
         self.root.join("machine.json")
+    }
+
+    /// This machine's private key, made when it first joins a World.
+    pub fn device_key(&self) -> PathBuf {
+        self.root.join("device.key")
+    }
+
+    /// The link to the hub: membership, letters, what was accepted.
+    pub fn net(&self) -> PathBuf {
+        self.root.join("net")
     }
 
     /// Every directory that holds residents' directories: `outside` and
@@ -62,13 +72,30 @@ impl WorldDir {
         Ok(parents)
     }
 
-    /// A resident's directory: in its town, or outside every town.
+    /// The directory of a resident that lives on this machine: in its town,
+    /// or outside every town.
     pub fn resident(&self, town: Option<&TownName>, resident: &ResidentId) -> ResidentDir {
+        ResidentDir { path: self.residents(town).join(resident.as_str()) }
+    }
+
+    /// The directory of what a resident of another machine did here, such
+    /// as the jobs it ran: named with its machine, since a resident's id is
+    /// only unique on the machine it lives on.
+    pub fn visitor(&self, town: Option<&TownName>, owner: &Address) -> ResidentDir {
+        ResidentDir { path: self.residents(town).join(owner.tag()) }
+    }
+
+    /// The directory for `owner` on the machine `here`.
+    pub fn owner(&self, here: &MachineName, town: Option<&TownName>, owner: &Address) -> ResidentDir {
+        if owner.machine == *here { self.resident(town, &owner.resident) } else { self.visitor(town, owner) }
+    }
+
+    fn residents(&self, town: Option<&TownName>) -> PathBuf {
         let base = match town {
             Some(town) => self.root.join("towns").join(town.as_str()),
             None => self.root.join("outside"),
         };
-        ResidentDir { path: base.join("residents").join(resident.as_str()) }
+        base.join("residents")
     }
 }
 

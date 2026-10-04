@@ -14,7 +14,7 @@ use fastctx_platform::{Permissions, ensure_private_dir, publish_new, spawn_detac
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::{ResidentDir, WorldDir};
 use fastctx_types::run::{JobRecord, RunRequest};
-use fastctx_types::{JobId, MachineName, ProcessIdentity, ResidentId, TownName};
+use fastctx_types::{Address, JobId, MachineName, ProcessIdentity, TownName};
 
 use super::record;
 
@@ -22,7 +22,8 @@ use super::record;
 pub struct Launch<'a> {
     pub world: &'a WorldDir,
     pub machine: &'a MachineName,
-    pub resident: &'a ResidentId,
+    /// Who asks, at the machine it lives on.
+    pub owner: &'a Address,
     pub town: Option<&'a TownName>,
     pub request: &'a RunRequest,
     /// The machine's home, where a script without a `cwd` starts.
@@ -45,7 +46,7 @@ pub struct Launched {
 
 pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
     let cwd = starting_directory(launch)?;
-    let resident = launch.world.resident(launch.town, launch.resident);
+    let resident = launch.world.owner(launch.machine, launch.town, launch.owner);
     let (job, output) = reserve(&resident).map_err(|error| failure("could not reserve a job", &error))?;
     let record_path = resident.job_record(&job);
     let script = resident.job_script(&job);
@@ -54,7 +55,7 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
     let record = JobRecord {
         id: job.clone(),
         machine: launch.machine.clone(),
-        resident: launch.resident.clone(),
+        owner: launch.owner.clone(),
         town: launch.town.cloned(),
         script: launch.request.script.clone(),
         cwd: cwd.to_string_lossy().into_owned(),
@@ -83,7 +84,9 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
 /// The directory the script starts in: the one asked for, which must be an
 /// absolute path to a directory on this machine, or the home.
 fn starting_directory(launch: &Launch<'_>) -> Result<PathBuf, Failure> {
-    let Some(cwd) = &launch.request.cwd else { return Ok(launch.home.to_path_buf()) };
+    let Some(cwd) = &launch.request.cwd else {
+        return Ok(launch.home.to_path_buf());
+    };
     let path = PathBuf::from(cwd);
     if !path.is_absolute() {
         let example = if cfg!(windows) { "C:/Users/me/project" } else { "/home/me/project" };

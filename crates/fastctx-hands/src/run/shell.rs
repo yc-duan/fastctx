@@ -11,12 +11,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use fastctx_platform::user_environment;
-use fastctx_types::{MachineName, ResidentId, TownName};
+use fastctx_types::{Address, MachineName, TownName};
 
 /// What the shell is told besides the user's environment.
 pub struct Context<'a> {
     pub machine: &'a MachineName,
-    pub resident: &'a ResidentId,
+    /// The resident the job is for, at the machine it lives on.
+    pub owner: &'a Address,
     pub town: Option<&'a TownName>,
     /// The directory of the fastctx binary, put first on the PATH so that
     /// `fastctx view` and the other commands are this same version.
@@ -36,7 +37,7 @@ pub fn command(script: &Path) -> io::Result<(PathBuf, Vec<OsString>)> {
 pub fn environment(context: &Context<'_>) -> io::Result<Vec<(OsString, OsString)>> {
     let mut env = user_environment()?;
     set(&mut env, "FASTCTX_MACHINE", context.machine.as_str());
-    set(&mut env, "FASTCTX_RESIDENT", context.resident.as_str());
+    set(&mut env, "FASTCTX_RESIDENT", context.owner.tag());
     match context.town {
         Some(town) => set(&mut env, "FASTCTX_TOWN", town.as_str()),
         None => unset(&mut env, "FASTCTX_TOWN"),

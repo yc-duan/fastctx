@@ -37,6 +37,13 @@ pub fn name(world: &WorldDir) -> io::Result<MachineName> {
     }
 }
 
+/// Records `name` as this machine's name, as when it joins a World under it.
+pub fn rename(world: &WorldDir, name: &MachineName) -> io::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(&MachineFile { name: name.clone() }).map_err(io::Error::other)?;
+    bytes.push(b'\n');
+    publish(&world.machine_file(), &bytes, Permissions::Private)
+}
+
 /// A machine name made from a host name: lowercase, every run of other
 /// characters turned into one hyphen, cut to the length a machine name
 /// allows. A host name with no letters or digits becomes `machine`.

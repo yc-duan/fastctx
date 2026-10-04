@@ -8,7 +8,7 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::{JobId, MachineName, ProcessIdentity, ResidentId, TownName};
+use crate::{Address, JobId, MachineName, ProcessIdentity, TownName};
 
 /// A resident's request to run a bash script.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,8 +108,8 @@ pub enum ExitStatus {
 pub struct JobRecord {
     pub id: JobId,
     pub machine: MachineName,
-    /// Who started it.
-    pub resident: ResidentId,
+    /// Who started it, at the machine it lives on, which may be another.
+    pub owner: Address,
     /// The town the resident was in, if any.
     pub town: Option<TownName>,
     pub script: String,

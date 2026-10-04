@@ -12,9 +12,11 @@ pub mod ipc;
 pub mod layout;
 pub mod names;
 pub mod process;
+pub mod remote;
 pub mod residents;
 pub mod run;
 pub mod town;
+pub mod world;
 
 pub use calls::{Call, Reply};
 pub use names::{Address, AgentName, EntryId, JobId, MachineName, NameError, ResidentId, TownName};

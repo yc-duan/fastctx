@@ -1,12 +1,15 @@
-//! `fastctx w`: who is here and what each is doing (`world-town.md`).
+//! `fastctx w`: who is here and what each is doing, on every machine of the
+//! World (`world-town.md`).
+
+use std::collections::BTreeSet;
 
 use clap::Args;
 use fastctx_client::Client;
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Action, Host, Origin};
-use fastctx_types::town::{ResidentNow, RunningJob, WhoReply};
-use fastctx_types::{Call, Reply, ResidentId};
+use fastctx_types::town::{MachineWho, ResidentNow, RunningJob, WorldWho};
+use fastctx_types::{Address, Call, Reply};
 use jiff::Timestamp;
 
 /// See who is here and what each is doing.
@@ -19,7 +22,7 @@ pub struct WArgs {
 
 pub fn run(args: WArgs) -> anyhow::Result<()> {
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let you = std::env::var("FASTCTX_RESIDENT").ok().and_then(|id| ResidentId::try_from(id).ok());
+    let you = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse::<Address>().ok());
     let reply = tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let mut client = Client::connect_or_start(&world, Peer::Command { resident: you.clone() }).await?;
         match client.call(Call::Who { all: args.all }).await? {
@@ -31,19 +34,49 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn render(reply: &WhoReply, you: Option<&ResidentId>, now: Timestamp) -> String {
-    let mut residents: Vec<&ResidentNow> = reply.residents.iter().collect();
+fn render(reply: &WorldWho, you: Option<&Address>, now: Timestamp) -> String {
+    let mut residents: Vec<&ResidentNow> = Vec::new();
+    let mut jobs: Vec<&RunningJob> = Vec::new();
+    let mut answered = Vec::new();
+    let mut missing = Vec::new();
+    for machine in &reply.machines {
+        match machine {
+            MachineWho::Answered { reply } => {
+                answered.push(reply.machine.clone());
+                residents.extend(&reply.residents);
+                jobs.extend(&reply.jobs);
+            }
+            MachineWho::Offline { machine, since } => missing.push(match since {
+                Some(since) => format!("{machine} offline since {}", clock(*since, now)),
+                None => format!("{machine} offline"),
+            }),
+            MachineWho::NoAnswer { machine, reason } => missing.push(format!("{machine} did not answer ({reason})")),
+        }
+    }
+    let address = |resident: &ResidentNow| Address {
+        machine: resident.about.machine.clone(),
+        resident: resident.about.id.clone(),
+    };
     // The caller first, then whoever acted most recently.
     residents.sort_by_key(|resident| {
-        let is_you = Some(&resident.about.id) == you;
         let latest = resident.last_action.as_ref().map(|action| action.at).unwrap_or(resident.about.born_at);
-        (!is_you, std::cmp::Reverse(latest))
+        (Some(&address(resident)) != you, std::cmp::Reverse(latest))
     });
-    let here = reply.residents.iter().filter(|resident| resident.here).count();
-    let mut text = format!("=== w: {} ({here} here) ===\n", reply.machine);
+
+    let here = residents.iter().filter(|resident| resident.here).count();
+    let mut facts = vec![format!("{here} here")];
+    if reply.machines.len() > 1 {
+        facts.push(format!("{} online", answered.iter().map(|name| name.as_str()).collect::<Vec<_>>().join(", ")));
+    }
+    facts.extend(missing);
+    let title = if reply.machines.len() > 1 { "w".to_string() } else { format!("w: {}", reply.machine) };
+    let mut text = format!("=== {title} ({}) ===\n", facts.join("; "));
+
+    let present: BTreeSet<Address> =
+        residents.iter().filter(|resident| resident.here).map(|resident| address(resident)).collect();
     let width = residents.iter().map(|resident| resident.about.id.len()).max().unwrap_or(0);
-    for resident in residents {
-        let you_mark = if Some(&resident.about.id) == you { "  (you)" } else { "" };
+    for resident in &residents {
+        let you_mark = if Some(&address(resident)) == you { "  (you)" } else { "" };
         let since =
             if resident.here { format!("here {}", ago(resident.about.born_at, now)) } else { "left".to_string() };
         let origin = match &resident.about.origin {
@@ -56,18 +89,33 @@ fn render(reply: &WhoReply, you: Option<&ResidentId>, now: Timestamp) -> String 
             host(&resident.about.host),
             resident.about.machine,
         ));
-        text.push_str(&format!("    {}\n", doing(resident, now)));
+        let own: Vec<&&RunningJob> = jobs.iter().filter(|job| job.owner == address(resident)).collect();
+        let doing = match own.last() {
+            Some(job) => running(job, now),
+            None => match &resident.last_action {
+                Some(action) => last(action, now),
+                None => "no actions yet".to_string(),
+            },
+        };
+        text.push_str(&format!("    {doing}\n"));
     }
-    if !reply.unattended.is_empty() {
+
+    // What runs on with nobody here who started it.
+    let unattended: Vec<&&RunningJob> = jobs.iter().filter(|job| !present.contains(&job.owner)).collect();
+    if !unattended.is_empty() {
         text.push_str("unattended\n");
-        for job in &reply.unattended {
+        for job in unattended {
+            let owner = if answered.contains(&job.owner.machine) {
+                format!("started by {}", job.owner.resident)
+            } else {
+                format!("started by {} on {}, which did not answer", job.owner.resident, job.owner.machine)
+            };
             text.push_str(&format!(
-                "    {}  {}  {}  {}   started by {}\n",
+                "    {}  {}  {}  {}   {owner}\n",
                 job.job,
                 job.machine,
                 ago(job.started_at, now),
-                job.command,
-                job.resident
+                job.command
             ));
         }
     }
@@ -83,16 +131,6 @@ fn host(host: &Host) -> String {
         host.client.as_str()
     };
     if host.version.is_empty() { name.to_string() } else { format!("{name} {}", host.version) }
-}
-
-fn doing(resident: &ResidentNow, now: Timestamp) -> String {
-    if let Some(job) = resident.running.last() {
-        return running(job, now);
-    }
-    match &resident.last_action {
-        Some(action) => last(action, now),
-        None => "no actions yet".to_string(),
-    }
 }
 
 fn running(job: &RunningJob, now: Timestamp) -> String {
@@ -113,4 +151,11 @@ fn ago(then: Timestamp, now: Timestamp) -> String {
         3600..86_400 => format!("{}h{:02}m", seconds / 3600, seconds % 3600 / 60),
         _ => format!("{}d", seconds / 86_400),
     }
+}
+
+/// A moment as the local clock reads it: the time today, the date before.
+fn clock(at: Timestamp, now: Timestamp) -> String {
+    let zone = jiff::tz::TimeZone::system();
+    let (at, now) = (at.to_zoned(zone.clone()), now.to_zoned(zone));
+    if at.date() == now.date() { at.strftime("%H:%M").to_string() } else { at.strftime("%Y-%m-%d %H:%M").to_string() }
 }

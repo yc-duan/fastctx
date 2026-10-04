@@ -133,6 +133,12 @@ impl Residents {
         }
     }
 
+    /// The town of the resident `id` living on this machine; `None` when no
+    /// such resident lives here.
+    pub fn town_of(&self, id: &ResidentId) -> Option<Option<TownName>> {
+        self.state.lock().expect("never poisoned").known.get(id).cloned()
+    }
+
     /// Every resident on record, with its town and whether it is here.
     pub fn everyone(&self) -> Vec<(ResidentId, Option<TownName>, bool)> {
         let state = self.state.lock().expect("never poisoned");
@@ -192,15 +198,18 @@ fn parse_action(path: &std::path::Path, line: &[u8]) -> io::Result<Action> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
 
-/// Appends what a resident saw to its `seen` record, one line per file.
+/// Appends what a resident saw on this machine to its `seen` record here,
+/// one line per file.
 pub fn record_seen(
     world: &WorldDir,
-    resident: &ResidentId,
+    here: &MachineName,
+    owner: &fastctx_types::Address,
     town: Option<&TownName>,
     seen: &[fastctx_types::residents::Seen],
 ) -> io::Result<()> {
     use std::io::Write as _;
-    let directory = world.resident(town, resident);
+    let directory = world.owner(here, town, owner);
+    ensure_private_dir(directory.path())?;
     let mut lines = Vec::new();
     for one in seen {
         serde_json::to_writer(&mut lines, one).map_err(io::Error::other)?;

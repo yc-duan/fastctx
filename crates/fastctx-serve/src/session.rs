@@ -9,7 +9,7 @@ use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Hints, Host, Whereabouts};
 use fastctx_types::run::RunRequest;
-use fastctx_types::{AgentName, Call, Reply, ResidentId};
+use fastctx_types::{Address, AgentName, Call, MachineName, Reply, ResidentId};
 use serde_json::Value;
 
 pub struct Session {
@@ -38,8 +38,9 @@ impl Answer {
 
 impl Session {
     pub fn new(world: WorldDir) -> anyhow::Result<Self> {
+        // Set, as `<id>@<machine>`, when the World started this session.
         let resident = match std::env::var("FASTCTX_RESIDENT") {
-            Ok(id) => Some(ResidentId::try_from(id)?),
+            Ok(address) => Some(address.parse::<Address>()?.resident),
             Err(std::env::VarError::NotPresent) => None,
             Err(error) => return Err(error.into()),
         };
@@ -71,7 +72,19 @@ impl Session {
         let cwd = match arguments.get("cwd") {
             None | Some(Value::Null) => None,
             Some(Value::String(cwd)) => Some(cwd.clone()),
-            Some(_) => return Answer::error("=== run (not run: `cwd` must be a string) ===".to_string()),
+            Some(_) => {
+                return Answer::error("=== run (not run: `cwd` must be a string) ===".to_string());
+            }
+        };
+        let node = match arguments.get("node") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(node)) => match MachineName::try_from(node.as_str()) {
+                Ok(node) => Some(node),
+                Err(error) => return Answer::error(format!("=== run (not run: {error}) ===")),
+            },
+            Some(_) => {
+                return Answer::error("=== run (not run: `node` must be a string naming a machine) ===".to_string());
+            }
         };
         let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
         let whereabouts = match self.whereabouts(thread).await {
@@ -84,6 +97,7 @@ impl Session {
                 resident: whereabouts.resident.clone(),
                 town: whereabouts.town.clone(),
                 request: RunRequest { script: command, cwd },
+                node,
             };
             client.call(call).await.map_err(|error| error.to_string())
         }

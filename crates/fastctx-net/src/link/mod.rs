@@ -1,0 +1,485 @@
+//! A machine's link to the hub, held by its node.
+//!
+//! The link keeps one control connection to the hub open for as long as the
+//! node runs, connecting again whenever it drops. Over it the node calls
+//! other machines and answers their calls, sends letters and takes the
+//! letters kept for it, and asks the hub who the members are. Everything
+//! another machine says is checked here before the node sees it: the
+//! signature, that the sender is a member this machine trusts, that the
+//! message is for this machine, and that a call is not one it took before.
+
+mod letters;
+mod session;
+pub mod state;
+
+use std::collections::HashMap;
+use std::future::Future;
+use std::io;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use fastctx_types::MachineName;
+use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
+use jiff::Timestamp;
+use tokio::sync::{Notify, mpsc, oneshot, watch};
+
+use crate::code::Code;
+use crate::message::{Body, LetterId, Message};
+use crate::sign::{Domain, PublicKey, SecretKey, Signed};
+use crate::trust::{self, Endorsement, Revocation, Table};
+use crate::wire::{CallStatus, Presence, Question, Told, Up};
+use state::{Counter, LettersFile, MembersFile, Taken};
+pub use state::{Membership, NetDir};
+
+pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// What the link hands the node: calls to answer and letters to keep.
+pub trait Node: Send + Sync + 'static {
+    /// Does what `from` asks and answers. The future is dropped if the
+    /// caller gives up.
+    fn call(&self, from: MachineName, call: RemoteCall) -> BoxFuture<RemoteResult>;
+    /// Keeps a letter from `from`. An inner error says why the letter cannot
+    /// be taken, and it is set aside with that reason; an outer one is a
+    /// failure of this machine, and the letter comes again.
+    fn letter(&self, from: MachineName, letter: Letter) -> BoxFuture<io::Result<Result<(), String>>>;
+    fn log(&self, line: String);
+}
+
+/// How the link stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// Not connected; trying. `last_error` says why the last try failed.
+    Connecting {
+        since: Timestamp,
+        last_error: Option<String>,
+    },
+    Online {
+        since: Timestamp,
+        address: SocketAddr,
+    },
+    /// The hub refused this machine for good: it was revoked, is not a
+    /// member, or speaks another protocol. Nothing more is tried until the
+    /// node starts again.
+    Stopped {
+        reason: String,
+    },
+}
+
+/// Why a call got no answer.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum CallFailure {
+    #[error("this machine is not connected to the hub ({reason}); nothing was sent")]
+    NotConnected { reason: String },
+    #[error("no member of the World is named {0}")]
+    NotMember(MachineName),
+    #[error("{name} is offline{}", last_seen.map(|at| format!(", last seen {}", at.strftime("%Y-%m-%d %H:%M:%S UTC"))).unwrap_or_default())]
+    Offline { name: MachineName, last_seen: Option<Timestamp> },
+    #[error("{name} did not answer ({reason}); whether it did what was asked is not known")]
+    Unknown { name: MachineName, reason: String },
+    #[error("the call did not reach {name} ({reason}); nothing ran there")]
+    Unreachable { name: MachineName, reason: String },
+}
+
+pub struct Link {
+    inner: Arc<Inner>,
+}
+
+pub(crate) struct Inner {
+    dir: NetDir,
+    membership: Membership,
+    key: SecretKey,
+    node: Arc<dyn Node>,
+    counter: Counter,
+    taken: Taken,
+    letters: Mutex<Letters>,
+    members: Mutex<Members>,
+    /// One refresh of the members at a time; others wait for it.
+    refreshing: tokio::sync::Mutex<()>,
+    status: watch::Sender<Status>,
+    connection: Mutex<Option<Connection>>,
+    calls: Mutex<HashMap<u64, Waiter>>,
+    asks: Mutex<HashMap<u64, oneshot::Sender<Result<Told, String>>>>,
+    next_id: AtomicU64,
+    /// Woken when a letter is put in the outbox.
+    outbox_changed: Notify,
+    /// The task that keeps the connection.
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+struct Letters {
+    file: LettersFile,
+    /// The number the next letter gets.
+    next: u64,
+}
+
+struct Members {
+    file: MembersFile,
+    table: Table,
+    presence: Vec<Presence>,
+}
+
+/// The current connection: where to put frames to send on it.
+#[derive(Clone)]
+pub(crate) struct Connection {
+    generation: u64,
+    up: mpsc::UnboundedSender<Up>,
+}
+
+/// A call waiting for its answer.
+pub(crate) struct Waiter {
+    to: MachineName,
+    n: u64,
+    events: mpsc::UnboundedSender<CallEvent>,
+}
+
+pub(crate) enum CallEvent {
+    Status(CallStatus),
+    Answer(RemoteResult),
+    /// An answer came that does not check out, or could not be fetched.
+    Broken(String),
+    /// The connection the call went out on ended.
+    Disconnected(String),
+}
+
+impl Link {
+    /// Starts the link of the machine `membership` describes. The node's
+    /// device key signs everything it says.
+    pub fn start(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
+        dir.prepare()?;
+        let counter = Counter::open(dir.counter())?;
+        let taken = Taken::open(dir.calls())?;
+        let letters_file = match state::read::<LettersFile>(&dir.letters()) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let file = LettersFile { epoch: u64::from_le_bytes(crate::sign::random::<8>()?), held: 0, taken: None };
+                state::write(&dir.letters(), &file)?;
+                file
+            }
+            Err(error) => return Err(error),
+        };
+        let highest = letters::Outbox::new(&dir).numbers()?.last().copied().unwrap_or(0);
+        let next = letters_file.held.max(highest) + 1;
+        let members_file: MembersFile = state::read_or(&dir.members(), MembersFile::default())?;
+        let (table, _) = trust::check(
+            &membership.world,
+            &membership.founder,
+            &members_file.records,
+            &members_file.revocations,
+            &members_file.known,
+        );
+        let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
+        let inner = Arc::new(Inner {
+            dir,
+            membership,
+            key,
+            node,
+            counter,
+            taken,
+            letters: Mutex::new(Letters { file: letters_file, next }),
+            members: Mutex::new(Members { file: members_file, table, presence: Vec::new() }),
+            refreshing: tokio::sync::Mutex::new(()),
+            status,
+            connection: Mutex::new(None),
+            calls: Mutex::new(HashMap::new()),
+            asks: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(0),
+            outbox_changed: Notify::new(),
+            task: Mutex::new(None),
+        });
+        let task = tokio::spawn(session::run(inner.clone()));
+        *inner.task.lock().expect("never poisoned") = Some(task);
+        Ok(Self { inner })
+    }
+
+    /// Closes the connection and stops connecting.
+    pub fn stop(&self) {
+        if let Some(task) = self.inner.task.lock().expect("never poisoned").take() {
+            task.abort();
+        }
+        *self.inner.connection.lock().expect("never poisoned") = None;
+        self.inner.status.send_replace(Status::Stopped { reason: "the link was stopped".to_string() });
+    }
+
+    pub fn membership(&self) -> &Membership {
+        &self.inner.membership
+    }
+
+    pub fn status(&self) -> Status {
+        self.inner.status.borrow().clone()
+    }
+
+    /// The members this machine trusts and whether each is connected, as
+    /// last heard from the hub.
+    pub fn members(&self) -> (Table, Vec<Presence>) {
+        let members = self.inner.members();
+        (members.table.clone(), members.presence.clone())
+    }
+
+    /// Asks the hub who the members are now.
+    pub async fn refresh(&self) -> Result<(), String> {
+        self.inner.refresh().await
+    }
+
+    /// Calls `to` and waits for its answer.
+    pub async fn call(&self, to: &MachineName, call: RemoteCall) -> Result<RemoteResult, CallFailure> {
+        self.inner.call(to, call).await
+    }
+
+    /// Sends a letter to `to`. It is on this machine's disk when this
+    /// returns, and goes to the hub whenever the link is up.
+    pub fn send_letter(&self, to: &MachineName, id: LetterId, letter: Letter) -> io::Result<()> {
+        self.inner.send_letter(to, id, letter)
+    }
+
+    /// An invitation for one more machine, valid until `expires`; `name` is
+    /// the name it must take, if given.
+    pub async fn invite(&self, name: Option<MachineName>, expires: Timestamp) -> Result<Code, String> {
+        let invite = SecretKey::generate().map_err(|error| error.to_string())?;
+        let membership = &self.inner.membership;
+        let endorsement = Endorsement {
+            world: membership.world.clone(),
+            inviter: membership.name.clone(),
+            invite: invite.public(),
+            expires,
+            name,
+        };
+        let endorsement = Signed::new(&self.inner.key, Domain::Endorsement, &endorsement);
+        self.inner.ask(Question::Invite { endorsement: endorsement.clone() }).await?;
+        Ok(Code::Invitation {
+            hub: membership.hub.clone(),
+            cert: membership.cert,
+            world: membership.world.clone(),
+            founder: membership.founder,
+            endorsement,
+            seed: crate::sign::Secret(invite.seed()),
+        })
+    }
+
+    /// Revokes the member `name`'s key; this machine's own, to leave.
+    pub async fn revoke(&self, name: &MachineName, reason: &str) -> Result<(), String> {
+        self.refresh().await?;
+        let key = match self.inner.members().table.get(name) {
+            Some(member) => member.key,
+            None => return Err(format!("{name} is not a member this machine trusts")),
+        };
+        let membership = &self.inner.membership;
+        let revocation = Revocation {
+            world: membership.world.clone(),
+            name: name.clone(),
+            key,
+            by: membership.name.clone(),
+            at: Timestamp::now(),
+            reason: reason.to_string(),
+        };
+        let revocation = Signed::new(&self.inner.key, Domain::Revocation, &revocation);
+        self.inner.ask(Question::Revoke { revocation }).await?;
+        Ok(())
+    }
+}
+
+impl Inner {
+    fn members(&self) -> MutexGuard<'_, Members> {
+        self.members.lock().expect("never poisoned")
+    }
+
+    fn connection(&self) -> Option<Connection> {
+        self.connection.lock().expect("never poisoned").clone()
+    }
+
+    /// The current connection; while the link's first attempt to connect is
+    /// still under way, as just after the node started, the outcome of that
+    /// attempt.
+    async fn connected(&self) -> Option<Connection> {
+        let mut status = self.status.subscribe();
+        loop {
+            if let Some(connection) = self.connection() {
+                return Some(connection);
+            }
+            if !matches!(*status.borrow_and_update(), Status::Connecting { last_error: None, .. }) {
+                return self.connection();
+            }
+            if status.changed().await.is_err() {
+                return None;
+            }
+        }
+    }
+
+    fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn not_connected(&self) -> String {
+        match &*self.status.borrow() {
+            Status::Connecting { last_error: Some(error), .. } => error.clone(),
+            Status::Connecting { last_error: None, .. } => "it is connecting".to_string(),
+            Status::Online { .. } => "the connection just ended".to_string(),
+            Status::Stopped { reason } => reason.clone(),
+        }
+    }
+
+    /// The key of the member `name`, asking the hub again when it is not
+    /// known here yet.
+    async fn key_of(&self, name: &MachineName) -> Option<PublicKey> {
+        if let Some(member) = self.members().table.get(name) {
+            return Some(member.key);
+        }
+        if self.refresh().await.is_err() {
+            return None;
+        }
+        self.members().table.get(name).map(|member| member.key)
+    }
+
+    async fn refresh(&self) -> Result<(), String> {
+        let _one = self.refreshing.lock().await;
+        let Told::Members { records, revocations, presence } = self.ask(Question::Members).await? else {
+            return Err("the hub answered something else".to_string());
+        };
+        let mut members = self.members();
+        let (table, known) =
+            trust::check(&self.membership.world, &self.membership.founder, &records, &revocations, &members.file.known);
+        let changed =
+            known != members.file.known || records != members.file.records || revocations != members.file.revocations;
+        if changed {
+            let refused: Vec<String> = table.refused.iter().map(|(what, why)| format!("{what}: {why}")).collect();
+            if !refused.is_empty() {
+                self.node.log(format!("refused from the hub's list of members: {}", refused.join("; ")));
+            }
+            members.file = MembersFile { known, records, revocations };
+            state::write(&self.dir.members(), &members.file)
+                .map_err(|error| format!("keeping the members: {error}"))?;
+        }
+        members.table = table;
+        members.presence = presence;
+        Ok(())
+    }
+
+    async fn ask(&self, question: Question) -> Result<Told, String> {
+        let connection =
+            self.connected().await.ok_or_else(|| format!("not connected to the hub: {}", self.not_connected()))?;
+        let id = self.next_id();
+        let (answer, answered) = oneshot::channel();
+        self.asks.lock().expect("never poisoned").insert(id, answer);
+        if connection.up.send(Up::Ask { id, question }).is_err() {
+            self.asks.lock().expect("never poisoned").remove(&id);
+            return Err("the connection to the hub ended".to_string());
+        }
+        // The answer, or the end of the connection, which drops the sender.
+        answered.await.unwrap_or_else(|_| Err("the connection to the hub ended before it answered".to_string()))
+    }
+
+    async fn call(self: &Arc<Self>, to: &MachineName, call: RemoteCall) -> Result<RemoteResult, CallFailure> {
+        if *to == self.membership.name {
+            return Err(CallFailure::Unreachable { name: to.clone(), reason: "it is this machine".to_string() });
+        }
+        let Some(connection) = self.connected().await else {
+            return Err(CallFailure::NotConnected { reason: self.not_connected() });
+        };
+        if self.key_of(to).await.is_none() {
+            return Err(CallFailure::NotMember(to.clone()));
+        }
+        let n = self.counter.next().map_err(|error| CallFailure::Unreachable {
+            name: to.clone(),
+            reason: format!("numbering the call: {error}"),
+        })?;
+        let message = Message {
+            world: self.membership.world.clone(),
+            from: self.membership.name.clone(),
+            to: to.clone(),
+            n,
+            body: Body::Call { call },
+        };
+        let message = Signed::new(&self.key, Domain::Message, &message);
+        let id = self.next_id();
+        let (events, mut received) = mpsc::unbounded_channel();
+        self.calls.lock().expect("never poisoned").insert(id, Waiter { to: to.clone(), n, events });
+        let mut waiting = Waiting { inner: self.clone(), id, connection: connection.clone(), answered: false };
+        if connection.up.send(Up::Call { id, message }).is_err() {
+            return Err(CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() });
+        }
+        let mut delivered = false;
+        let lost = |delivered: bool, reason: String| {
+            if delivered {
+                CallFailure::Unknown { name: to.clone(), reason }
+            } else {
+                CallFailure::Unreachable { name: to.clone(), reason }
+            }
+        };
+        while let Some(event) = received.recv().await {
+            match event {
+                CallEvent::Status(CallStatus::Delivered) => delivered = true,
+                CallEvent::Status(CallStatus::Offline { last_seen }) => {
+                    waiting.answered = true;
+                    return Err(CallFailure::Offline { name: to.clone(), last_seen });
+                }
+                CallEvent::Status(CallStatus::NotMember) => {
+                    waiting.answered = true;
+                    return Err(CallFailure::NotMember(to.clone()));
+                }
+                CallEvent::Status(CallStatus::Lost) => {
+                    waiting.answered = true;
+                    return Err(lost(delivered, "its connection to the hub ended".to_string()));
+                }
+                CallEvent::Answer(result) => {
+                    waiting.answered = true;
+                    return Ok(result);
+                }
+                CallEvent::Broken(reason) => {
+                    waiting.answered = true;
+                    return Err(CallFailure::Unknown { name: to.clone(), reason });
+                }
+                CallEvent::Disconnected(reason) => {
+                    waiting.answered = true;
+                    return Err(lost(delivered, reason));
+                }
+            }
+        }
+        Err(lost(delivered, "the link stopped".to_string()))
+    }
+
+    fn send_letter(&self, to: &MachineName, id: LetterId, letter: Letter) -> io::Result<()> {
+        let n = self.counter.next()?;
+        let message = Message {
+            world: self.membership.world.clone(),
+            from: self.membership.name.clone(),
+            to: to.clone(),
+            n,
+            body: Body::Letter { id, letter },
+        };
+        let message = Signed::new(&self.key, Domain::Message, &message);
+        let frame = crate::wire::encode(&Up::Send { seq: u64::MAX, message: message.clone() });
+        if frame.len() > crate::wire::MAX_CONTROL_FRAME {
+            return Err(io::Error::other(format!(
+                "a letter of {} bytes is more than a control message holds ({} bytes)",
+                frame.len(),
+                crate::wire::MAX_CONTROL_FRAME
+            )));
+        }
+        {
+            let mut letters = self.letters.lock().expect("never poisoned");
+            letters::Outbox::new(&self.dir).put(letters.next, &message)?;
+            letters.next += 1;
+        }
+        self.outbox_changed.notify_one();
+        Ok(())
+    }
+}
+
+/// Removes a call's waiter when the call is over, and tells the hub the
+/// caller gave up when it ends without an answer.
+struct Waiting {
+    inner: Arc<Inner>,
+    id: u64,
+    connection: Connection,
+    answered: bool,
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.inner.calls.lock().expect("never poisoned").remove(&self.id);
+        if !self.answered {
+            let _ = self.connection.up.send(Up::Cancel { id: self.id });
+        }
+    }
+}

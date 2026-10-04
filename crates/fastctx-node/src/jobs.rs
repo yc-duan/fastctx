@@ -4,12 +4,13 @@
 use std::path::{Path, PathBuf};
 
 use fastctx_hands::run::{self, Launch, WAIT, record, window};
+use fastctx_net::link::Link;
 use fastctx_platform::{FileLock, is_alive, user_home, world_process_environment};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::Action;
 use fastctx_types::run::{Ended, EndedHow, JobRecord, RunReply, RunRequest, RunState};
-use fastctx_types::{JobId, MachineName, ResidentId, TownName};
+use fastctx_types::{Address, JobId, MachineName, TownName};
 use jiff::Timestamp;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
@@ -31,32 +32,35 @@ impl Jobs {
     pub async fn changed(
         &self,
         world: &WorldDir,
+        here: &MachineName,
         job: JobId,
-        resident: ResidentId,
+        owner: Address,
         town: Option<TownName>,
+        link: Option<std::sync::Arc<Link>>,
     ) -> Result<(), Failure> {
         // With nobody waiting there is nobody to wake.
         let _ = self.changes.send(job.clone());
-        let world = world.clone();
+        let (world, here) = (world.clone(), here.clone());
         tokio::task::spawn_blocking(move || {
-            let path = world.resident(town.as_ref(), &resident).job_record(&job);
-            crate::inbox::tell_if_ended(&world, &record::read(&path)?)
+            let path = world.owner(&here, town.as_ref(), &owner).job_record(&job);
+            crate::inbox::tell_if_ended(&world, &here, &record::read(&path)?, link.as_deref())
         })
         .await
         .map_err(|error| Failure::new(format!("telling the job's end: {error}")))?
         .map_err(|error| failure("telling the job's end", error))
     }
 
-    /// Starts `request` for `resident` and waits until the job settles or
-    /// the wait is over.
+    /// Starts `request` for `owner` and waits until the job settles or the
+    /// wait is over. Returns the answer and the job's record as it stood.
     pub async fn run(
         &self,
         world: &WorldDir,
         machine: &MachineName,
-        resident: ResidentId,
+        owner: Address,
         town: Option<TownName>,
         request: RunRequest,
-    ) -> Result<RunReply, Failure> {
+        link: Option<std::sync::Arc<Link>>,
+    ) -> Result<(RunReply, JobRecord), Failure> {
         let deadline = Instant::now() + WAIT;
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
@@ -70,7 +74,7 @@ impl Jobs {
                 run::launch(&Launch {
                     world: &world,
                     machine: &machine,
-                    resident: &resident,
+                    owner: &owner,
                     town: town.as_ref(),
                     request: &request,
                     home: &home,
@@ -109,28 +113,26 @@ impl Jobs {
         if record.end.is_none() {
             // The job goes on past this answer: its end is owed to the
             // resident who started it.
-            let (world, job, path) = (world.clone(), launched.job.clone(), launched.record.clone());
-            tokio::task::spawn_blocking(move || crate::inbox::owe(&world, &job, &path))
+            let (world, here, job, path) =
+                (world.clone(), machine.clone(), launched.job.clone(), launched.record.clone());
+            tokio::task::spawn_blocking(move || crate::inbox::owe(&world, &here, &job, &path, link.as_deref()))
                 .await
                 .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
                 .map_err(|error| failure("noting that the job's end is owed", error))?;
         }
         let reply = RunReply { machine: machine.clone(), job: launched.job, state: state(&record), output };
-        let action = Action {
-            at: record.started_at,
-            machine: machine.clone(),
-            hand: "run".to_string(),
-            what: first_line(&record.script),
-            result: outcome(&reply),
-        };
-        let world = world.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::residents::record_action(&world, &record.resident, record.town.as_ref(), &action)
-        })
-        .await
-        .map_err(|error| Failure::new(format!("recording the action: {error}")))?
-        .map_err(|error| failure("recording the action", error))?;
-        Ok(reply)
+        Ok((reply, record))
+    }
+}
+
+/// The action a `run` was, as its resident's `actions` record it.
+pub fn action(reply: &RunReply, script: &str, at: jiff::Timestamp) -> Action {
+    Action {
+        at,
+        machine: reply.machine.clone(),
+        hand: "run".to_string(),
+        what: first_line(script),
+        result: outcome(reply),
     }
 }
 

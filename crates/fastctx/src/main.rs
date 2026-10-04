@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 
 mod view;
 mod w;
+mod world;
 
 #[derive(Parser)]
 #[command(name = "fastctx", version, about = "One world, many machines.")]
@@ -26,6 +27,20 @@ enum Command {
     View(view::ViewArgs),
     /// See who is here and what each is doing.
     W(w::WArgs),
+    /// See the World's machines: which are online and what each is like.
+    Nodes,
+    /// Join a World with a code.
+    Join(world::JoinArgs),
+    /// Make a code that lets one more machine join this World.
+    Invite(world::InviteArgs),
+    /// Stop every machine of the World trusting a machine's key, as when it
+    /// is lost.
+    Revoke(world::RevokeArgs),
+    /// Leave the World; this machine becomes a World of one again.
+    Leave,
+    /// The hub every machine of a World connects to.
+    #[command(subcommand)]
+    Hub(world::HubCommand),
     /// Supervise one job; started by the node, not by people.
     #[command(hide = true)]
     Supervise { world: PathBuf, record: PathBuf },
@@ -38,6 +53,12 @@ fn main() -> ExitCode {
         Command::Serve => serve(),
         Command::View(args) => view::run(args),
         Command::W(args) => w::run(args),
+        Command::Nodes => world::nodes(),
+        Command::Join(args) => world::join(args),
+        Command::Invite(args) => world::invite(args),
+        Command::Revoke(args) => world::revoke(args),
+        Command::Leave => world::leave(),
+        Command::Hub(command) => world::hub(command),
         Command::Supervise { world, record } => supervise(&world, &record),
     };
     match result {
