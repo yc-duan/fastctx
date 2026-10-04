@@ -862,7 +862,9 @@ impl Words {
         Some(match field {
             FieldName::Machine => self.pick("只列在线的机器", "only machines online"),
             FieldName::Project => self.pick("只列横跨那台机器的项目", "only projects that span that machine"),
-            FieldName::FirstWords => self.pick("Alt+Enter 换行", "Alt+Enter for a new line"),
+            FieldName::FirstWords => {
+                self.pick("Ctrl+J 换行，或在行尾打 \\ 再按 Enter", "Ctrl+J for a new line, or \\ then Enter")
+            }
             FieldName::Slug => {
                 self.pick("小写字母、数字与连字符，比如 mark50", "lowercase letters, digits and hyphens, like mark50")
             }

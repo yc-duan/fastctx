@@ -187,7 +187,8 @@ impl App {
                 self.pasting = Some(count);
                 Vec::new()
             }
-            Input::Resize => Vec::new(),
+            // A sequence no page reads, such as a terminal's answer nobody asked for.
+            Input::Resize | Input::Sequence(_) => Vec::new(),
             Input::Failed(_) => {
                 self.quit = true;
                 Vec::new()

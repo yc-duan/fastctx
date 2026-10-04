@@ -57,9 +57,13 @@ impl Drop for Screen {
 
 /// Gives the terminal back as it was; safe to call more than once.
 fn restore() {
-    crate::input::restore();
+    let input = crate::input::restore();
     let _ = execute!(stdout(), DisableBracketedPaste, LeaveAlternateScreen, crossterm::cursor::Show);
     let _ = disable_raw_mode();
+    // Said once the screen the user had is back, where it can be read.
+    if let Err(error) = input {
+        eprintln!("fastctx: giving the terminal's input back: {error}");
+    }
 }
 
 /// Checks both streams before raw mode, alternate screen, or an input

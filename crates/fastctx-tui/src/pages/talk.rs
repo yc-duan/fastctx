@@ -449,7 +449,7 @@ impl TalkPage {
 
         // The keys.
         let mut keys =
-            vec![("Enter", words.key_send()), ("Alt+Enter", words.key_newline()), ("PgUp PgDn", words.key_scroll())];
+            vec![("Enter", words.key_send()), ("Ctrl+J", words.key_newline()), ("PgUp PgDn", words.key_scroll())];
         if matches!(self.watching, Watching::Ended(_)) {
             keys.push(("Ctrl+R", words.key_watch_again()));
         }

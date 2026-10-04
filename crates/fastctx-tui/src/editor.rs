@@ -83,6 +83,13 @@ impl Editor {
                 self.insert("\n");
                 Edit::Changed
             }
+            // A backslash right before the caret asks for a new line instead,
+            // as in Claude Code: Windows Terminal takes Alt+Enter for itself,
+            // and many terminals send Shift+Enter as a plain Enter.
+            KeyCode::Enter if self.multiline && self.text[..self.caret].ends_with('\\') => {
+                self.text.replace_range(self.caret - 1..self.caret, "\n");
+                Edit::Changed
+            }
             KeyCode::Enter => Edit::Enter,
             KeyCode::Char('u') if control => {
                 let start = self.line_start();
