@@ -142,8 +142,12 @@ impl TalkPage {
             }
             Data::Event(event) => {
                 self.follow_state(&event.happened, event.at);
-                if let Happened::TurnEnded { .. } = event.happened {
-                    self.stopping = false;
+                // The turn's end says how the stop came out; the note
+                // that it was asked for has done its work.
+                if let Happened::TurnEnded { .. } = event.happened
+                    && std::mem::take(&mut self.stopping)
+                {
+                    self.note = None;
                 }
                 self.transcript.event(event);
             }
