@@ -9,7 +9,7 @@ use fastctx_hands::told::{duration, turn_end};
 use fastctx_types::residents::{Action, Activity, Host, MessageKind, Now, Origin};
 use fastctx_types::run::{EndedHow, ExitStatus, JobRecord};
 use fastctx_types::town::{Looked, LookedUp, ResidentDetail, ResidentNow, RunningJob};
-use fastctx_types::{Address, JobId, ResidentId, TownName};
+use fastctx_types::{Address, JobId, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
 /// See who is here and what each is doing.
@@ -20,14 +20,17 @@ pub struct WArgs {
     #[arg(short = 'a', long = "all")]
     all: bool,
     /// A town to look at instead of your own; or residents or jobs to see in
-    /// detail, by id, such as codex-7f3a or j-k3x9a2.
+    /// detail, by id, such as codex-7f3a or j-k3x9a2, or codex-7f3a@laptop for
+    /// the one on that machine.
     names: Vec<String>,
 }
 
 pub fn run(args: WArgs) -> anyhow::Result<()> {
     let you = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse::<Address>().ok());
     let now = Timestamp::now();
-    let is_id = |name: &str| ResidentId::try_from(name).is_ok() || JobId::try_from(name).is_ok();
+    let is_id = |name: &str| {
+        name.parse::<Address>().is_ok() || ResidentId::try_from(name).is_ok() || JobId::try_from(name).is_ok()
+    };
     let world = World::here()?;
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let text = match args.names.as_slice() {
@@ -43,7 +46,21 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
             if let Some(name) = ids.iter().find(|name| !is_id(name)) {
                 anyhow::bail!("{name} is not a resident's or a job's id; a town is looked at on its own");
             }
-            let looked = runtime.block_on(world.look(ids.to_vec()))?;
+            // An id at a machine is asked for everywhere, as any id is, and
+            // only that machine's answer is kept.
+            let at: Vec<Option<MachineName>> =
+                ids.iter().map(|name| name.parse::<Address>().ok().map(|address| address.machine)).collect();
+            let bare = ids.iter().map(|name| name.split_once('@').map_or(name.as_str(), |(id, _)| id).to_string());
+            let mut looked = runtime.block_on(world.look(bare.collect()))?;
+            for (one, machine) in looked.iter_mut().zip(&at) {
+                if let Some(machine) = machine {
+                    one.found.retain(|found| match found {
+                        Looked::Resident(detail) => &detail.resident.about.machine == machine,
+                        Looked::Job { record } => &record.machine == machine,
+                    });
+                    one.unasked.retain(|unasked| unasked == machine.as_str());
+                }
+            }
             looked.iter().map(|one| detail(one, now)).collect::<String>()
         }
     };
