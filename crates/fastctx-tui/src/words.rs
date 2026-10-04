@@ -751,6 +751,18 @@ impl Words {
         if shown { self.pick("收起工具", "fold tools") } else { self.pick("展开工具", "unfold tools") }
     }
 
+    /// How much of its context a session holds: a share of its window
+    /// when the host says how large that is, else a count of tokens.
+    pub fn context_used(&self, used: u64, window: Option<u64>) -> String {
+        let count = if used >= 1000 { format!("{:.1}k", used as f64 / 1000.0) } else { used.to_string() };
+        match (self.lang, window) {
+            (Lang::Zh, Some(window)) if window > 0 => format!("上下文 {}%", used * 100 / window),
+            (Lang::En, Some(window)) if window > 0 => format!("context {}%", used * 100 / window),
+            (Lang::Zh, _) => format!("上下文 {count} token"),
+            (Lang::En, _) => format!("context {count} tokens"),
+        }
+    }
+
     pub fn thinking(&self) -> &'static str {
         self.pick("思考", "Thinking")
     }

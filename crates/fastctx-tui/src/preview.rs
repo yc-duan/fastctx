@@ -513,6 +513,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
         item: item("m1", What::Message { text: "The step test fails at 41 s: the integral still saturates with Q8.24 because the clamp sits after the accumulator. Moving the clamp before it and running the whole workspace.".into() }),
     }));
     events.push(event(138, Happened::Steps { turn: turn.clone(), steps: steps(2), note: None }));
+    events.push(event(137, Happened::Context { used: 48_200, window: Some(272_000) }));
     events.push(event(
         130,
         Happened::Health {

@@ -401,7 +401,7 @@ impl TalkPage {
         crumbs.extend(self.project.clone());
         crumbs.push(who::name(ctx, &self.agent, &self.address.machine));
         // A turn at work shows above the place to type, where the eye is.
-        let state = match self.state {
+        let mut state = match self.state {
             Some((Activity::Busy, _)) => Line::default(),
             Some((Activity::Idle, since)) => Line::from(vec![
                 Span::styled("○ ", look.text(Role::Muted)),
@@ -412,6 +412,13 @@ impl TalkPage {
             }
             None => Line::default(),
         };
+        // How full its context is, beside how it stands.
+        if let Some((used, window)) = self.transcript.context() {
+            if !state.spans.is_empty() {
+                state.spans.push(Span::styled("  ·  ", look.text(Role::Faint)));
+            }
+            state.spans.push(Span::styled(words.context_used(used, window), look.text(Role::Muted)));
+        }
         let at = |offset: u16| Rect { y: column.y + offset, height: 1, ..column };
         paint::header(buffer, at(1), look, &crumbs, &state);
         let mut about = Vec::new();
@@ -421,6 +428,9 @@ impl TalkPage {
             }
             Some(Origin::User) => about.push(words.opened_by_you().to_string()),
             None => {}
+        }
+        if let Some(title) = self.transcript.title() {
+            about.push(words.quoted(title));
         }
         about.extend(self.model.clone());
         about.push(self.address.resident.to_string());
