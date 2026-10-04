@@ -62,6 +62,7 @@ import {
   type WorldNow,
 } from "./world/bridge";
 import { en, zh } from "./words";
+import { connectDesktop, desktopAvailable } from "./world/desktop";
 
 const params = new URLSearchParams(location.search);
 const language: "zh" | "en" = (() => {
@@ -447,3 +448,22 @@ applyTheme(() => {
 });
 show(specimenPlace() ?? placeOf(location.hash));
 if (!live && params.get("s") === "new") newTalk.open();
+
+if (desktopAvailable()) {
+  void connectDesktop({
+    async onActivation({ route, action }) {
+      if (route) location.hash = route;
+      if (action === "open" || action === null) return;
+      const target = route ? placeOf(route) : null;
+      if (action === "stop" && target?.kind === "talk") {
+        await stop(target.address);
+        return;
+      }
+      throw new Error(`Unsupported notification action: ${action}`);
+    },
+    onError(error, notificationId) {
+      console.error("World desktop", notificationId, error);
+      window.dispatchEvent(new CustomEvent("world-desktop-error", { detail: { error, notificationId } }));
+    },
+  }).catch((error: unknown) => console.error("Connecting World's desktop", error));
+}

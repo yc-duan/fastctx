@@ -21,6 +21,9 @@ use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
 
+#[cfg(windows)]
+mod desktop_presence;
+
 struct Shell {
     world: World,
     watches: Mutex<HashMap<u64, JoinHandle<()>>>,
@@ -224,7 +227,11 @@ async fn project_new(shell: tauri::State<'_, Shell>, name: String, fields: Recor
 
 /// Writes the next version of a project's record; what is not given stays.
 #[tauri::command]
-async fn project_edit(shell: tauri::State<'_, Shell>, name: String, fields: RecordFields) -> Result<TownRecord, String> {
+async fn project_edit(
+    shell: tauri::State<'_, Shell>,
+    name: String,
+    fields: RecordFields,
+) -> Result<TownRecord, String> {
     let made = shell.world.edit_town(Some(town(name)?), fields).await.map_err(|error| error.to_string())?;
     Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })
 }
@@ -279,13 +286,17 @@ async fn leave(shell: tauri::State<'_, Shell>) -> Result<(), String> {
 }
 
 pub fn run() {
+    #[cfg(windows)]
+    let Some(desktop) = desktop_presence::enter().expect("starting World's desktop presence") else {
+        return;
+    };
     let root = fastctx_platform::fastctx_root().expect("finding this user's fastctx directory");
     // When no node runs, it is started from the stable copy fastctx keeps
     // for the hosts, never from this program.
     let program = root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
     let world =
         World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None }).starting_node_from(program);
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(Shell { world, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
         .invoke_handler(tauri::generate_handler![
             world_now,
@@ -304,7 +315,8 @@ pub fn run() {
             invite,
             revoke,
             leave
-        ])
-        .run(tauri::generate_context!())
-        .expect("running the World's window");
+        ]);
+    #[cfg(windows)]
+    let builder = builder.plugin(desktop_presence::plugin(desktop));
+    builder.run(tauri::generate_context!()).expect("running the World's window");
 }
