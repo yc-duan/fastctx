@@ -996,6 +996,8 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
     let env: serde_json::Map<String, Value> =
         env.iter().map(|(name, value)| (name.clone(), Value::String(value.clone()))).collect();
     let limit = output_limit(budget);
+    let limits: serde_json::Map<String, Value> =
+        tools.iter().map(|name| (name.to_string(), json!({ "output_token_limit": limit }))).collect();
     json!({
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {
@@ -1009,7 +1011,7 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "omit_tools_from": [],
             "startup_timeout_sec": STARTUP_TIMEOUT.as_secs(),
             "tool_timeout_sec": TOOL_TIMEOUT.as_secs(),
-            "tools": { "run": { "output_token_limit": limit } },
+            "tools": limits,
         }},
     })
 }

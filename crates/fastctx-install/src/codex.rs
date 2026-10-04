@@ -265,10 +265,25 @@ fn validate_plan(plan: &CodexPlan) -> Result<(), Error> {
 fn server_body(plan: &CodexPlan, inline: bool, nl: &str) -> Vec<u8> {
     let command = toml_edit::Value::from(plan.command.to_str().expect("validated path")).to_string();
     let args = toml_edit::Array::from_iter(plan.args.iter().cloned()).to_string();
+    let tools = ["run", "apply_patch", "ask_colleague", "message_colleague"];
     if inline {
-        format!("fastctx = {{ command = {command}, args = {args}, startup_timeout_sec = {}, tool_timeout_sec = {}, tools = {{ run = {{ output_token_limit = {} }} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec, plan.output_token_limit).into_bytes()
+        let limits = tools
+            .iter()
+            .map(|name| format!("{name} = {{ output_token_limit = {} }}", plan.output_token_limit))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("fastctx = {{ command = {command}, args = {args}, startup_timeout_sec = {}, tool_timeout_sec = {}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     } else {
-        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}{nl}[mcp_servers.fastctx.tools.run]{nl}output_token_limit = {}{nl}", plan.startup_timeout_sec, plan.tool_timeout_sec, plan.output_token_limit).into_bytes()
+        let limits = tools
+            .iter()
+            .map(|name| {
+                format!(
+                    "{nl}[mcp_servers.fastctx.tools.{name}]{nl}output_token_limit = {}{nl}",
+                    plan.output_token_limit
+                )
+            })
+            .collect::<String>();
+        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     }
 }
 

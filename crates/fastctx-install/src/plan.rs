@@ -16,7 +16,7 @@ pub struct CodexPlan {
     pub args: Vec<String>,
     pub startup_timeout_sec: u64,
     pub tool_timeout_sec: u64,
-    /// For `run` alone, and for every tool through the shared root
+    /// For each World tool, and for every tool through the shared root
     /// `tool_output_token_limit`: the MCP/history limit for displayed text of
     /// at most `BUDGET` characters, including the World's notes and script prints.
     /// Code Mode exec/wait prints have a separate per-execution output budget.

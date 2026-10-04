@@ -233,6 +233,17 @@ impl Residents {
         }
     }
 
+    /// A tool reply was written. Concurrent replies must not move the
+    /// cursor backwards or acknowledge news from a town the resident left.
+    pub fn acknowledge_heard(&self, id: &ResidentId, heard: Heard) {
+        if let Some(live) = self.lock().live.get_mut(id)
+            && live.town == heard.town
+            && live.heard.as_ref().is_none_or(|prior| prior.town != heard.town || prior.ledger <= heard.ledger)
+        {
+            live.heard = Some(heard);
+        }
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().expect("never poisoned")
     }

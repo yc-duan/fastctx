@@ -14,9 +14,9 @@ use crate::Node;
 use crate::residents::Heard;
 
 /// The lines for the head of the resident `id`'s next answer.
-pub fn notes(node: &Node, id: &ResidentId) -> io::Result<Vec<String>> {
+pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<Heard>)> {
     let here = node.machine();
-    let Some(town) = node.residents.town_of(id) else { return Ok(Vec::new()) };
+    let Some(town) = node.residents.town_of(id) else { return Ok((Vec::new(), None)) };
     let ledger = match &town {
         Some(town) => crate::ledger::seq(&node.world, town)?,
         None => 0,
@@ -26,7 +26,7 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<Vec<String>> {
         None => vec![introduction(id, &here, town.as_ref())],
         // It moved: entering gave it the new town's map.
         Some(heard) if heard.town != town => Vec::new(),
-        Some(heard) if heard.ledger >= ledger => return Ok(Vec::new()),
+        Some(heard) if heard.ledger >= ledger => return Ok((Vec::new(), None)),
         Some(heard) => {
             let me = Address { machine: here.clone(), resident: id.clone() };
             match &town {
@@ -35,8 +35,7 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<Vec<String>> {
             }
         }
     };
-    node.residents.set_heard(id, now);
-    Ok(notes)
+    Ok((notes, Some(now)))
 }
 
 fn introduction(id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> String {
