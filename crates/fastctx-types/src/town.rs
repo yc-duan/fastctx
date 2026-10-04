@@ -4,7 +4,8 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::residents::{About, Action, MessageLine, Now};
+use crate::project::{Record, TownSummary};
+use crate::residents::{About, Action, MessageLine, Moved, Now};
 use crate::run::JobRecord;
 use crate::{Address, JobId, MachineName, TownName};
 
@@ -27,6 +28,9 @@ pub struct ResidentNow {
     /// What its host reports it doing, when its host tells the World.
     pub now: Option<Now>,
     pub last_action: Option<Action>,
+    /// It lived in `town` and moved away: what it did there stays there.
+    #[serde(default)]
+    pub moved: Option<Moved>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,12 +47,25 @@ pub struct RunningJob {
     pub output: String,
 }
 
-/// `fastctx w` across the World: each machine's answer, or why there is none.
+/// `fastctx w` in a town or across the World: each machine's answer, or why
+/// there is none.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldWho {
     /// The machine that asked.
     pub machine: MachineName,
+    pub scope: WhoScope,
     pub machines: Vec<MachineWho>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum WhoScope {
+    /// One town: the machines its record names were asked, or every machine
+    /// when this one keeps no record of it.
+    Town { town: TownName, record: Option<Box<Record>> },
+    /// The World as a whole: every machine was asked; `towns` are those this
+    /// machine keeps a ledger for.
+    World { towns: Vec<TownSummary> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

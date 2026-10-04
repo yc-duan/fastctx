@@ -16,6 +16,7 @@ mod copy;
 mod desk;
 mod inbox;
 mod jobs;
+mod ledger;
 mod log;
 mod look;
 mod machine;
@@ -23,6 +24,7 @@ mod residents;
 mod server;
 mod speech;
 mod talk;
+mod town;
 mod turns;
 mod watch;
 mod who;
@@ -61,6 +63,11 @@ pub(crate) struct Node {
     log: Arc<log::Log>,
     /// Present while the machine is a member of a World with others.
     link: RwLock<Option<Arc<Link>>>,
+    /// Held while the towns' ledgers are taken or written, one at a time.
+    syncing: tokio::sync::Mutex<()>,
+    /// Held while a town's record or journals are written from here, from
+    /// reading what is there to writing what comes next.
+    writing: tokio::sync::Mutex<()>,
 }
 
 impl Node {
@@ -141,12 +148,17 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         watchers: watch::Watchers::default(),
         log,
         link: RwLock::new(None),
+        syncing: tokio::sync::Mutex::new(()),
+        writing: tokio::sync::Mutex::new(()),
     });
+    for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
+        node.log.line(format_args!("could not finish a ledger entry: {problem}"));
+    }
     if let Some((membership, key)) = membership {
         node.log.line(format_args!("a member of the World {} as {}", membership.world, membership.name));
         world::start(&node, membership, key).context("starting the link to the hub")?;
     }
-    codex::adopt(&node);
+    codex::adopt(&node).await;
     codex::listen(node.clone(), codex_events);
     claude::start(&node).context("writing the World's Claude Code plugin")?;
 

@@ -29,12 +29,29 @@ pub struct Hello {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Peer {
     /// A command such as `fastctx w`, typed by a person or run by a
-    /// resident; `resident` is set when a resident's `run` started it.
-    Command { resident: Option<Address> },
+    /// resident; `resident` is set when a resident's `run` started it, and
+    /// `session` when an agent's own shell did.
+    Command {
+        resident: Option<Address>,
+        #[serde(default)]
+        session: Option<SessionHint>,
+    },
     /// The supervisor of one job, reporting on it.
     Supervisor { job: JobId },
     /// The MCP adapter of one agent session.
     Session { host: Host },
+}
+
+/// The agent session whose own shell ran a command, from what its host puts
+/// in the environment of every command it runs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SessionHint {
+    /// `CODEX_THREAD_ID`.
+    Codex { thread: String },
+    /// The address in `CLAUDE_CODE_MESSAGING_SOCKET`; the token beside it is
+    /// never read.
+    Claude { inbox: String },
 }
 
 /// The node's answer to `Hello`.

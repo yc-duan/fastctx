@@ -9,7 +9,7 @@ use std::path::Path;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::layout::{ResidentDir, WorldDir};
-use fastctx_types::residents::{About, Action, MessageLine, Now, Seen};
+use fastctx_types::residents::{About, Action, MessageLine, Moved, Now, Seen};
 use fastctx_types::{Address, MachineName, ResidentId, TownName};
 
 /// Writes a new resident's `about`; fails if it has one.
@@ -39,6 +39,67 @@ pub fn read_now(directory: &ResidentDir) -> io::Result<Option<Now>> {
 
 pub fn write_now(directory: &ResidentDir, now: &Now) -> io::Result<()> {
     publish(&directory.now(), &json(now)?, Permissions::Private)
+}
+
+/// Where the resident went from this directory, if it moved.
+pub fn read_moved(directory: &ResidentDir) -> io::Result<Option<Moved>> {
+    match read_json(&directory.moved()) {
+        Ok(moved) => Ok(Some(moved)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Moves a resident from the town `from` to `to`: its old directory is
+/// marked as left first, then its directory in `to` is made, or marked as
+/// its home again, with its `about` and `now`. What it saw comes along, as
+/// writing checks it; what waits to be told to it moves. Every step can be
+/// taken again, so a move cut short is finished by moving again.
+pub fn move_to(
+    world: &WorldDir,
+    id: &ResidentId,
+    from: Option<&TownName>,
+    to: Option<&TownName>,
+    about: &About,
+    now: Option<&Now>,
+) -> io::Result<()> {
+    let old = world.resident(from, id);
+    let moved = Moved { to: to.cloned(), at: jiff::Timestamp::now() };
+    publish(&old.moved(), &json(&moved)?, Permissions::Private)?;
+    arrive_in(world, id, to, about)?;
+    let new = world.resident(to, id);
+    if let Some(now) = now {
+        write_now(&new, now)?;
+    }
+    match std::fs::read(old.seen()) {
+        Ok(seen) => append_bytes(&new.seen(), &seen)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    match std::fs::read_dir(old.inbox()) {
+        Ok(waiting) => {
+            ensure_private_dir(&new.inbox())?;
+            for file in waiting {
+                let file = file?;
+                std::fs::rename(file.path(), new.inbox().join(file.file_name()))?;
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
+/// Makes the resident's directory in `town` its home: written with its
+/// `about`, and no longer marked as left if it lived there before.
+pub fn arrive_in(world: &WorldDir, id: &ResidentId, town: Option<&TownName>, about: &About) -> io::Result<()> {
+    let directory = world.resident(town, id);
+    ensure_private_dir(directory.path())?;
+    write_about(&directory, about)?;
+    match std::fs::remove_file(directory.moved()) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }
 
 pub fn append_message(directory: &ResidentDir, message: &MessageLine) -> io::Result<()> {
@@ -106,8 +167,12 @@ fn append_lines<T: serde::Serialize>(path: &Path, lines: &[T]) -> io::Result<()>
         serde_json::to_writer(&mut bytes, line).map_err(io::Error::other)?;
         bytes.push(b'\n');
     }
+    append_bytes(path, &bytes)
+}
+
+fn append_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(&bytes)
+    file.write_all(bytes)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {

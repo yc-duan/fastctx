@@ -232,6 +232,15 @@ pub struct Action {
     pub result: String,
 }
 
+/// Left in the directory a resident had in a town when it moved to another
+/// (`world-town.md`): what it did there stays there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Moved {
+    /// The town it went to; `None` for outside every town.
+    pub to: Option<TownName>,
+    pub at: Timestamp,
+}
+
 /// Where a resident is.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Whereabouts {

@@ -14,6 +14,7 @@ pub mod ipc;
 pub mod layout;
 pub mod names;
 pub mod process;
+pub mod project;
 pub mod remote;
 pub mod residents;
 pub mod run;
@@ -22,6 +23,8 @@ pub mod town;
 pub mod world;
 pub mod write;
 
-pub use calls::{Call, Reply};
-pub use names::{Address, AgentName, EntryId, JobId, MachineName, NameError, NoticeId, ResidentId, TownName};
+pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};
+pub use names::{
+    Address, AgentName, EntryId, JobId, JournalName, MachineName, NameError, NoticeId, ResidentId, TownName,
+};
 pub use process::ProcessIdentity;

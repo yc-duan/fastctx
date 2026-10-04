@@ -163,6 +163,10 @@ async fn connect(inner: &Arc<Inner>) -> Ended {
             if let Err(error) = inner.refresh().await {
                 inner.node.log(format!("asking the hub for the members: {error}"));
             }
+            // Whatever the towns' ledgers gained while this machine was away
+            // is taken now; the entries checked against the members just
+            // asked for.
+            inner.node.ledger_changed(None);
         }));
     }
 
@@ -223,6 +227,7 @@ async fn connect(inner: &Arc<Inner>) -> Ended {
                     }
                 });
             }
+            Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
             Down::Refused { reason } => break refused(reason),
             Down::Welcome { .. } | Down::Joined { .. } | Down::Paired => {
                 break Ended::Retry("the hub sent a frame that belongs to another kind of connection".to_string());

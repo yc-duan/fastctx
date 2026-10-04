@@ -19,16 +19,24 @@ use crate::Node;
 
 /// Makes the World's own Codex threads known to the host again. Those idle
 /// whose asker is gone are asleep: the node that kept them is gone too.
-pub fn adopt(node: &Node) {
+pub async fn adopt(node: &Arc<Node>) {
     let here = node.machine();
     for resident in node.residents.everyone() {
         let about = &resident.about;
-        if !about.world_started || about.host.agent.as_str() != "codex" {
+        if !about.world_started {
+            continue;
+        }
+        // What it was told of its town when it was started, it still has.
+        match crate::colleagues::heard_now(node, resident.town.as_ref()) {
+            Ok(heard) => node.residents.set_heard(&about.id, heard),
+            Err(error) => node.log.line(format_args!("reading {}'s town: {error}", about.id)),
+        }
+        if about.host.agent.as_str() != "codex" {
             continue;
         }
         let Some(thread) = &about.session else { continue };
-        match crate::colleagues::thread_spec(node, &about.id, &about.origin, resident.town.as_ref()) {
-            Ok(spec) => node.codex.adopt(thread, spec),
+        match crate::colleagues::thread_spec(node, &about.id, &about.origin, resident.town.as_ref()).await {
+            Ok((spec, _)) => node.codex.adopt(thread, spec),
             Err(failure) => {
                 node.log.line(format_args!("{} cannot be resumed: {failure}", about.id));
                 continue;
@@ -83,6 +91,20 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
             }
         }
     });
+}
+
+/// A resident whose thread the World holds moved to another town: when its
+/// thread is next resumed, it is told it lives there.
+pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
+    let Some((about, town)) = node.residents.about(id) else { return };
+    if !about.world_started || about.host.agent.as_str() != "codex" {
+        return;
+    }
+    let Some(thread) = &about.session else { return };
+    match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref()).await {
+        Ok((spec, _)) => node.codex.adopt(thread, spec),
+        Err(failure) => node.log.line(format_args!("{id} moved, and its thread cannot be told: {failure}")),
+    }
 }
 
 /// The resident `id` is the thread `thread` now: what was reported of the

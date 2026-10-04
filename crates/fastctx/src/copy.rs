@@ -3,11 +3,8 @@
 use std::process::ExitCode;
 
 use clap::Args;
-use fastctx_client::Client;
 use fastctx_types::copy::{CopyReport, Place};
-use fastctx_types::ipc::Peer;
-use fastctx_types::layout::WorldDir;
-use fastctx_types::{Address, Call, MachineName, Reply};
+use fastctx_types::{Call, MachineName, Reply};
 
 /// Copy a file or a directory from one machine of the World to another.
 ///
@@ -27,12 +24,7 @@ pub struct CopyArgs {
 
 pub fn run(args: CopyArgs) -> anyhow::Result<ExitCode> {
     let (from, to) = (place(&args.from)?, place(&args.to)?);
-    let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let you = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse::<Address>().ok());
-    let reply = tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
-        let mut client = Client::connect_or_start(&world, Peer::Command { resident: you }).await?;
-        anyhow::Ok(client.call(Call::Copy { from, to }).await?)
-    })?;
+    let (reply, _) = crate::ask::call(Call::Copy { from, to })?;
     match reply {
         Reply::Copied(report) => {
             print!("{}", render(&report));

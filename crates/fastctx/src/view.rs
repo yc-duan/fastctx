@@ -89,7 +89,7 @@ fn record(world: &WorldDir, seen: Vec<fastctx_types::residents::Seen>) -> anyhow
     let town = std::env::var("FASTCTX_TOWN").ok().map(TownName::try_from).transpose()?;
     let call = Call::Saw { owner: resident.clone(), town, seen };
     let recorded = tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
-        let mut client = Client::connect(world, Peer::Command { resident: Some(resident) }).await?;
+        let mut client = Client::connect(world, Peer::Command { resident: Some(resident), session: None }).await?;
         client.call(call).await?;
         anyhow::Ok(())
     });

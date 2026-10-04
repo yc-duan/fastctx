@@ -40,6 +40,8 @@ pub enum Domain {
     /// A machine handing over what happens in a session it holds, to a
     /// machine watching it.
     Event,
+    /// An entry of a town's shared ledger.
+    Ledger,
 }
 
 impl Domain {
@@ -53,6 +55,7 @@ impl Domain {
             Domain::Revocation => "revocation",
             Domain::Ticket => "ticket",
             Domain::Event => "event",
+            Domain::Ledger => "ledger",
         }
     }
 }

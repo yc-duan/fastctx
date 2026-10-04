@@ -11,22 +11,25 @@
 //!
 //! What a session owes is kept in memory and written through to its `now`
 //! on every change, so a node that restarts knows whom to tell.
+//!
+//! A resident has a directory in each town it lived in; all but the one it
+//! lives in now are marked as left (`records::move_to`).
 
 mod records;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::residents::{About, Activity, Hints, Host, Now, Origin, Trouble, Whereabouts};
+use fastctx_types::residents::{About, Activity, Hints, Host, Moved, Now, Origin, Trouble, Whereabouts};
 use fastctx_types::session::HealthKind;
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
-pub use records::{append_message, last_action, record_action, record_seen};
+pub use records::{append_message, last_action, read_about, record_action, record_seen};
 
 pub struct Residents {
     state: Mutex<State>,
@@ -41,6 +44,29 @@ struct State {
     /// since left, as their machines wrote. They come back by asking or
     /// speaking again.
     departed: HashSet<Address>,
+    /// Where residents lived before they moved.
+    former: Vec<Former>,
+}
+
+/// The directories a resident has, one in each town it lived in, and for
+/// each where it moved from there.
+type Homes = Vec<(Option<TownName>, Option<Moved>)>;
+
+/// A town a resident lived in and moved away from.
+#[derive(Clone)]
+pub struct Former {
+    pub id: ResidentId,
+    pub town: Option<TownName>,
+    pub to: Option<TownName>,
+    pub at: Timestamp,
+}
+
+/// What a resident has been told of the town it lives in: the town, and
+/// how far into its ledger.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Heard {
+    pub town: Option<TownName>,
+    pub ledger: u64,
 }
 
 struct Live {
@@ -60,6 +86,8 @@ struct Live {
     /// known and owed, and while a turn's end is taken: so a turn's end goes
     /// to exactly those whose words went into it.
     speaking: Arc<tokio::sync::Mutex<()>>,
+    /// `None` until it is told who and where it is.
+    heard: Option<Heard>,
 }
 
 impl Live {
@@ -73,6 +101,7 @@ impl Live {
             owed: HashMap::new(),
             told: BTreeSet::new(),
             speaking: Arc::new(tokio::sync::Mutex::new(())),
+            heard: None,
         }
     }
 }
@@ -92,6 +121,8 @@ impl Residents {
     pub fn load(world: &WorldDir) -> io::Result<(Self, Vec<(PathBuf, io::Error)>)> {
         let mut state = State::default();
         let mut problems = Vec::new();
+        // Each resident's directories, one in each town it lived in.
+        let mut homes: BTreeMap<ResidentId, Homes> = BTreeMap::new();
         for parent in world.resident_parents()? {
             let town = town_of(world, &parent);
             let entries = match std::fs::read_dir(&parent) {
@@ -107,40 +138,102 @@ impl Residents {
                     continue;
                 };
                 let directory = world.resident(town.as_ref(), &id);
-                let about = match records::read_about(&directory) {
-                    Ok(about) => about,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                    Err(error) => {
-                        problems.push((directory.about(), error));
-                        continue;
-                    }
-                };
-                let now = records::read_now(&directory).unwrap_or_else(|error| {
-                    problems.push((directory.now(), error));
-                    None
-                });
-                if let Some(session) = &about.session {
-                    state.threads.insert(session.clone(), about.id.clone());
+                if !directory.about().exists() {
+                    continue;
                 }
-                // Whoever sat at the desk sat there for a turn the node that
-                // stopped kept; the desk is the new node's to see afresh.
-                let now = now.map(|mut now| {
-                    now.desk = false;
-                    now
-                });
-                let mut live = Live::new(about, town.clone(), now);
-                // Who was owed a turn the node stopped under: it is told how
-                // that turn ended once the node is up (`unfinished`).
-                if let Some(now) = &live.now
-                    && now.activity == Activity::Busy
-                {
-                    let turn = now.turn.clone().unwrap_or_default();
-                    live.owed.insert(turn, now.owed.iter().cloned().collect());
+                match records::read_moved(&directory) {
+                    Ok(moved) => homes.entry(id).or_default().push((town.clone(), moved)),
+                    Err(error) => problems.push((directory.moved(), error)),
                 }
-                state.live.insert(live.about.id.clone(), live);
             }
         }
+        for (id, homes) in homes {
+            let town = match live_town(world, &id, &homes) {
+                Ok(town) => town,
+                Err(error) => {
+                    problems.push((world.resident(None, &id).path().to_path_buf(), error));
+                    continue;
+                }
+            };
+            for (left, moved) in &homes {
+                if let Some(moved) = moved
+                    && *left != town
+                {
+                    state.former.push(Former {
+                        id: id.clone(),
+                        town: left.clone(),
+                        to: moved.to.clone(),
+                        at: moved.at,
+                    });
+                }
+            }
+            let directory = world.resident(town.as_ref(), &id);
+            let about = match records::read_about(&directory) {
+                Ok(about) => about,
+                Err(error) => {
+                    problems.push((directory.about(), error));
+                    continue;
+                }
+            };
+            let now = records::read_now(&directory).unwrap_or_else(|error| {
+                problems.push((directory.now(), error));
+                None
+            });
+            if let Some(session) = &about.session {
+                state.threads.insert(session.clone(), about.id.clone());
+            }
+            // Whoever sat at the desk sat there for a turn the node that
+            // stopped kept; the desk is the new node's to see afresh.
+            let now = now.map(|mut now| {
+                now.desk = false;
+                now
+            });
+            let mut live = Live::new(about, town.clone(), now);
+            // Who was owed a turn the node stopped under: it is told how
+            // that turn ended once the node is up (`unfinished`).
+            if let Some(now) = &live.now
+                && now.activity == Activity::Busy
+            {
+                let turn = now.turn.clone().unwrap_or_default();
+                live.owed.insert(turn, now.owed.iter().cloned().collect());
+            }
+            state.live.insert(live.about.id.clone(), live);
+        }
         Ok((Self { state: Mutex::new(state) }, problems))
+    }
+
+    /// The resident `id` lives in `town` from now on. Returns whether it
+    /// moved: it may live there already.
+    pub fn enter(&self, world: &WorldDir, id: &ResidentId, town: &TownName) -> io::Result<bool> {
+        let mut state = self.lock();
+        let Some(live) = state.live.get_mut(id) else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, format!("no resident {id} lives here")));
+        };
+        if live.town.as_ref() == Some(town) {
+            return Ok(false);
+        }
+        let from = live.town.clone();
+        records::move_to(world, id, from.as_ref(), Some(town), &live.about, live.now.as_ref())?;
+        live.town = Some(town.clone());
+        state.former.retain(|former| !(former.id == *id && former.town.as_ref() == Some(town)));
+        state.former.push(Former { id: id.clone(), town: from, to: Some(town.clone()), at: Timestamp::now() });
+        Ok(true)
+    }
+
+    /// Where residents lived before they moved.
+    pub fn former(&self) -> Vec<Former> {
+        self.lock().former.clone()
+    }
+
+    /// What the resident has been told of where it lives.
+    pub fn heard(&self, id: &ResidentId) -> Option<Heard> {
+        self.lock().live.get(id).and_then(|live| live.heard.clone())
+    }
+
+    pub fn set_heard(&self, id: &ResidentId, heard: Heard) {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            live.heard = Some(heard);
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -511,6 +604,35 @@ fn new_id(agent: &AgentName, state: &State) -> Result<ResidentId, Failure> {
         if !state.live.contains_key(&id) {
             return Ok(id);
         }
+    }
+}
+
+/// The town a resident lives in: the one of its directories not marked as
+/// left. A move cut short after it marked the old directory left none such;
+/// it is finished now, to the town of the latest move.
+fn live_town(world: &WorldDir, id: &ResidentId, homes: &Homes) -> io::Result<Option<TownName>> {
+    let unmarked: Vec<&Option<TownName>> =
+        homes.iter().filter(|(_, moved)| moved.is_none()).map(|(town, _)| town).collect();
+    match unmarked.as_slice() {
+        [town] => Ok((*town).clone()),
+        [] => {
+            let (from, moved) = homes
+                .iter()
+                .filter_map(|(town, moved)| Some((town, moved.as_ref()?)))
+                .max_by_key(|(_, moved)| moved.at)
+                .ok_or_else(|| io::Error::other(format!("{id} has no directory")))?;
+            let about = records::read_about(&world.resident(from.as_ref(), id))?;
+            records::move_to(world, id, from.as_ref(), moved.to.as_ref(), &about, None)?;
+            Ok(moved.to.clone())
+        }
+        several => Err(io::Error::other(format!(
+            "{id} has a home in more than one town ({}); each but one should say where it moved",
+            several
+                .iter()
+                .map(|town| town.as_ref().map_or("outside", |town| town.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
     }
 }
 

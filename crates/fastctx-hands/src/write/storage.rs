@@ -184,28 +184,33 @@ fn error(path: &Path, e: io::Error) -> String {
     format!("{}: {e}", path.display())
 }
 
+const LEDGER: &str = "A town's ledger files are read-only copies; journals are written through fastctx journal, the town's record through fastctx project edit";
+
 fn check_policy(path: &Path, writer: &Writer) -> Result<(), String> {
     let towns = writer.world.join("towns");
     if relative_parts(path, &writer.world.join("write.lock")).is_some_and(|parts| parts.is_empty()) {
         // Replacing the lock inode would split cooperating writers into two groups.
         return Err("The World's active write lock cannot be replaced".into());
     }
-    // Check the lexical ledger path even when journals has not been created yet,
-    // and resolved ledger roots when a town or ledger is a directory link.
+    // A town's ledger, and the signed entries it is made of, change only by
+    // taking entries. Check the lexical path even before a town has them,
+    // and the resolved ones when a town or its ledger is a directory link.
+    let shared = ["ledger", "signed"].map(std::ffi::OsStr::new);
     if let Some(parts) = relative_parts(path, &towns)
-        && parts.len() >= 3
-        && component_eq(parts[1], std::ffi::OsStr::new("ledger"))
-        && component_eq(parts[2], std::ffi::OsStr::new("journals"))
+        && parts.len() >= 2
+        && shared.iter().any(|name| component_eq(parts[1], name))
     {
-        return Err("Journal files are read-only copies; write through fastctx journal".into());
+        return Err(LEDGER.into());
     }
     match fs::read_dir(&towns) {
         Ok(entries) => {
             for entry in entries {
                 let entry = entry.map_err(|e| error(&towns, e))?;
-                let journal = canonical_path(&entry.path().join("ledger/journals")).map_err(|e| error(path, e))?;
-                if relative_parts(path, &journal).is_some() {
-                    return Err("Journal files are read-only copies; write through fastctx journal".into());
+                for name in shared {
+                    let root = canonical_path(&entry.path().join(name)).map_err(|e| error(path, e))?;
+                    if relative_parts(path, &root).is_some() {
+                        return Err(LEDGER.into());
+                    }
                 }
             }
         }

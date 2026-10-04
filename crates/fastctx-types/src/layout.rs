@@ -72,6 +72,32 @@ impl WorldDir {
         Ok(parents)
     }
 
+    /// One town's directory on this machine.
+    pub fn town(&self, town: &TownName) -> TownDir {
+        TownDir { path: self.root.join("towns").join(town.as_str()) }
+    }
+
+    /// Every town this machine keeps a ledger for.
+    pub fn towns(&self) -> std::io::Result<Vec<TownName>> {
+        let mut towns = Vec::new();
+        match std::fs::read_dir(self.root.join("towns")) {
+            Ok(entries) => {
+                for entry in entries {
+                    let path = entry?.path();
+                    if let Some(town) = path.file_name().and_then(|name| TownName::try_from(name.to_str()?).ok())
+                        && self.town(&town).signed().is_dir()
+                    {
+                        towns.push(town);
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        towns.sort();
+        Ok(towns)
+    }
+
     /// The directory of a resident that lives on this machine: in its town,
     /// or outside every town.
     pub fn resident(&self, town: Option<&TownName>, resident: &ResidentId) -> ResidentDir {
@@ -99,6 +125,36 @@ impl WorldDir {
     }
 }
 
+/// One town's directory on one machine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TownDir {
+    path: PathBuf,
+}
+
+impl TownDir {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The town's shared ledger as files: the versions of its record, its
+    /// journals.
+    pub fn ledger(&self) -> PathBuf {
+        self.path.join("ledger")
+    }
+
+    /// Each entry of the ledger as its author signed it, named by its
+    /// number.
+    pub fn signed(&self) -> PathBuf {
+        self.path.join("signed")
+    }
+
+    /// Attachments too large for a ledger entry, kept on the machine whose
+    /// entry names them: one directory per entry.
+    pub fn attachments(&self) -> PathBuf {
+        self.path.join("attachments")
+    }
+}
+
 /// One resident's directory on one machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResidentDir {
@@ -118,6 +174,11 @@ impl ResidentDir {
     /// What it is doing now, replaced whole when that changes.
     pub fn now(&self) -> PathBuf {
         self.path.join("now")
+    }
+
+    /// Present once the resident moved to another town (`Moved`).
+    pub fn moved(&self) -> PathBuf {
+        self.path.join("moved")
     }
 
     /// What the World saw the resident do, one JSON line each.

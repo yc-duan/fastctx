@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::copy::{CopyReport, Place};
 use crate::ipc::Failure;
+use crate::project::CanonHead;
 use crate::residents::{Landed, Notice};
 use crate::run::{RunReply, RunRequest};
 use crate::town::{Looked, WhoReply};
@@ -20,8 +21,11 @@ pub enum RemoteCall {
     Run { resident: ResidentId, town: Option<TownName>, request: RunRequest },
     /// Write files there for a resident of the calling machine.
     Write { resident: ResidentId, town: Option<TownName>, op: WriteOp },
-    /// Who is on that machine and what each is doing, for `fastctx w`.
-    Who { all: bool },
+    /// Who is on that machine and what each is doing, for `fastctx w`: in
+    /// `town`, or in every town and none.
+    Who { all: bool, town: Option<TownName> },
+    /// The documents of a canon there, for a town's map.
+    Canon { path: String },
     /// Start a colleague there for a resident of the calling machine.
     Ask { asker: ResidentId, town: Option<TownName>, label: String, prompt: String },
     /// Whether a resident with this id lives there.
@@ -75,6 +79,9 @@ pub enum RemoteReply {
     Watched,
     Facts(MachineFacts),
     Copied(CopyReport),
+    Canon {
+        heads: Vec<CanonHead>,
+    },
 }
 
 /// The answer to a call, as the called machine gave it.

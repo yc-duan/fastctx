@@ -18,7 +18,7 @@ use fastctx_types::remote::{Letter, RemoteCall, RemoteReply, RemoteResult};
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::session::Speaker;
 use fastctx_types::world::{LinkState, MachineFacts};
-use fastctx_types::{Address, MachineName};
+use fastctx_types::{Address, MachineName, TownName};
 use jiff::Timestamp;
 
 use crate::Node;
@@ -56,17 +56,10 @@ pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Re
     let code = Code::parse(code).map_err(Failure::new)?;
     let name = name.unwrap_or_else(|| node.machine());
     let world = node.world.clone();
-    let key = tokio::task::spawn_blocking(move || match SecretKey::load(&world.device_key()) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let key = SecretKey::generate()?;
-            key.create(&world.device_key())?;
-            Ok(key)
-        }
-        other => other,
-    })
-    .await
-    .map_err(|error| Failure::new(format!("making this machine's key: {error}")))?
-    .map_err(|error| Failure::new(format!("making this machine's key: {error}")))?;
+    let key = tokio::task::spawn_blocking(move || crate::ledger::own_key(&world))
+        .await
+        .map_err(|error| Failure::new(format!("making this machine's key: {error}")))?
+        .map_err(|error| Failure::new(format!("making this machine's key: {error}")))?;
     let membership = fastctx_net::join::join(&code, name.clone(), &key).await.map_err(Failure::new)?;
     let net = NetDir::new(node.world.net());
     let recorded = net
@@ -128,7 +121,7 @@ pub fn facts(machine: &MachineName) -> MachineFacts {
 /// A path as the World writes it: in full, with no trailing slash, and on
 /// Windows with forward slashes. Windows hands out some paths, such as the
 /// temporary directory, in their short 8.3 form, which resolving undoes.
-fn native(path: &std::path::Path) -> String {
+pub(crate) fn native(path: &std::path::Path) -> String {
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut text = resolved.to_string_lossy().into_owned();
     if cfg!(windows) {
@@ -201,7 +194,14 @@ impl fastctx_net::link::Node for Handler {
                     .map_err(|error| Failure::new(format!("writing: {error}")))?;
                     Ok(RemoteReply::Written { outcome })
                 }
-                RemoteCall::Who { all } => crate::server::who_here(&node, all).await.map(RemoteReply::Who),
+                RemoteCall::Who { all, town } => crate::server::who_here(&node, all, town).await.map(RemoteReply::Who),
+                RemoteCall::Canon { path } => {
+                    tokio::task::spawn_blocking(move || crate::town::map::heads(std::path::Path::new(&path)))
+                        .await
+                        .map_err(|error| Failure::new(error.to_string()))?
+                        .map(|heads| RemoteReply::Canon { heads })
+                        .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
+                }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&machine))),
                 RemoteCall::CopySend { from, to } => {
                     let to_machine = to.machine.ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
@@ -262,6 +262,15 @@ impl fastctx_net::link::Node for Handler {
                 }
             }
         })
+    }
+
+    fn ledger_changed(&self, town: Option<TownName>) {
+        let Some(node) = self.node.upgrade() else { return };
+        tokio::spawn(async move {
+            if let Err(error) = crate::ledger::sync(&node, town).await {
+                node.log.line(format_args!("taking the towns' ledgers: {error}"));
+            }
+        });
     }
 
     fn log(&self, line: String) {

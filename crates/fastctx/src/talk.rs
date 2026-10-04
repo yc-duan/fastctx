@@ -14,7 +14,6 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use fastctx_client::{Client, Watching};
 use fastctx_hands::told::turn_end;
-use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::Landed;
 use fastctx_types::session::{Happened, SessionEvent, Speaker, Watched};
@@ -122,7 +121,7 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
 }
 
 async fn client(world: &WorldDir) -> anyhow::Result<Client> {
-    Ok(Client::connect_or_start(world, Peer::Command { resident: None }).await?)
+    Ok(Client::connect_or_start(world, fastctx_client::command_peer()).await?)
 }
 
 async fn watch(world: &WorldDir, resident: &ResidentId, machine: Option<MachineName>) -> anyhow::Result<Watching> {

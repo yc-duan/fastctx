@@ -10,6 +10,7 @@ pub mod code;
 pub mod data;
 pub mod dial;
 pub mod join;
+pub mod ledger;
 pub mod link;
 pub mod message;
 pub mod proxy;

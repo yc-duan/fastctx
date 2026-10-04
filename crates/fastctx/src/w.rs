@@ -1,49 +1,48 @@
-//! `fastctx w`: who is here and what each is doing, on every machine of the
-//! World; with ids, one resident or job in detail (`world-town.md`).
+//! `fastctx w`: who is in a town and what each is doing, on every machine it
+//! spans; outside every town, the World as a whole; with ids, one resident
+//! or job in detail (`world-town.md`).
 
 use std::collections::BTreeSet;
 
 use clap::Args;
-use fastctx_client::Client;
 use fastctx_hands::told::{duration, turn_end};
-use fastctx_types::ipc::Peer;
-use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Action, Activity, Host, MessageKind, Now, Origin};
 use fastctx_types::run::{EndedHow, ExitStatus, JobRecord};
-use fastctx_types::town::{Looked, LookedUp, MachineWho, ResidentDetail, ResidentNow, RunningJob, WorldWho};
-use fastctx_types::{Address, Call, Reply};
+use fastctx_types::town::{Looked, LookedUp, MachineWho, ResidentDetail, ResidentNow, RunningJob, WhoScope, WorldWho};
+use fastctx_types::{Address, Call, JobId, Reply, ResidentId, TownName};
 use jiff::Timestamp;
 
 /// See who is here and what each is doing.
 #[derive(Args)]
 pub struct WArgs {
-    /// Also list residents who are not here: those who left, and colleagues
-    /// asleep, who can be woken again.
+    /// Also list residents who are not here: those who left or moved away,
+    /// and colleagues asleep, who can be woken again.
     #[arg(short = 'a', long = "all")]
     all: bool,
-    /// Residents or jobs to see in detail, by id, such as codex-7f3a or
-    /// j-k3x9a2.
-    ids: Vec<String>,
+    /// A town to look at instead of your own; or residents or jobs to see in
+    /// detail, by id, such as codex-7f3a or j-k3x9a2.
+    names: Vec<String>,
 }
 
 pub fn run(args: WArgs) -> anyhow::Result<()> {
-    let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     let you = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse::<Address>().ok());
     let now = Timestamp::now();
-    let text = tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
-        let mut client = Client::connect_or_start(&world, Peer::Command { resident: you.clone() }).await?;
-        if args.ids.is_empty() {
-            match client.call(Call::Who { all: args.all }).await? {
-                Reply::Who(reply) => anyhow::Ok(render(&reply, you.as_ref(), now)),
-                other => anyhow::bail!("the node answered something else: {other:?}"),
+    let is_id = |name: &str| ResidentId::try_from(name).is_ok() || JobId::try_from(name).is_ok();
+    let call = match args.names.as_slice() {
+        [] => Call::Who { all: args.all, town: crate::ask::town_from_run() },
+        [town] if !is_id(town) => Call::Who { all: args.all, town: Some(TownName::try_from(town.as_str())?) },
+        ids => {
+            if let Some(name) = ids.iter().find(|name| !is_id(name)) {
+                anyhow::bail!("{name} is not a resident's or a job's id; a town is looked at on its own");
             }
-        } else {
-            match client.call(Call::Look { ids: args.ids.clone() }).await? {
-                Reply::Looked { looked } => anyhow::Ok(looked.iter().map(|one| detail(one, now)).collect::<String>()),
-                other => anyhow::bail!("the node answered something else: {other:?}"),
-            }
+            Call::Look { ids: ids.to_vec() }
         }
-    })?;
+    };
+    let text = match crate::ask::call(call)?.0 {
+        Reply::Who(reply) => render(&reply, you.as_ref(), now),
+        Reply::Looked { looked } => looked.iter().map(|one| detail(one, now)).collect::<String>(),
+        other => anyhow::bail!("the node answered something else: {other:?}"),
+    };
     print!("{text}");
     Ok(())
 }
@@ -69,23 +68,54 @@ fn render(reply: &WorldWho, you: Option<&Address>, now: Timestamp) -> String {
     }
     // The caller first, then whoever acted most recently.
     residents.sort_by_key(|resident| (Some(&address(resident)) != you, std::cmp::Reverse(latest(resident))));
-
-    let here = residents.iter().filter(|resident| resident.here).count();
-    let busy = residents.iter().filter(|resident| activity(resident) == Some(Activity::Busy)).count();
-    let mut facts = vec![format!("{here} here")];
-    if busy > 0 {
-        facts.push(format!("{busy} busy"));
-    }
-    let mut facts = vec![facts.join(", ")];
-    if reply.machines.len() > 1 {
-        facts.push(format!("{} online", answered.iter().map(|name| name.as_str()).collect::<Vec<_>>().join(", ")));
-    }
-    facts.extend(missing);
-    let title = if reply.machines.len() > 1 { "w".to_string() } else { format!("w: {}", reply.machine) };
-    let mut text = format!("=== {title} ({}) ===\n", facts.join("; "));
-
     let present: BTreeSet<Address> =
         residents.iter().filter(|resident| resident.here).map(|resident| address(resident)).collect();
+
+    let mut machines = Vec::new();
+    if reply.machines.len() > 1 {
+        machines.push(format!("{} online", answered.iter().map(|name| name.as_str()).collect::<Vec<_>>().join(", ")));
+    }
+    machines.extend(missing);
+    let mut text = match &reply.scope {
+        WhoScope::Town { town, record } => {
+            let mut facts = vec![counts(&residents)];
+            if record.is_none() {
+                facts.push(format!("{} keeps no record of {town}, so every machine was asked", reply.machine));
+            }
+            facts.extend(machines);
+            format!("=== w: {town} ({}) ===\n", facts.join("; "))
+        }
+        WhoScope::World { towns } => {
+            // The World as a whole: each town in a line, then those who
+            // live in none.
+            let mut names: BTreeSet<TownName> = towns.iter().map(|town| town.town.clone()).collect();
+            names.extend(residents.iter().filter_map(|resident| resident.town.clone()));
+            let mut facts = vec![match names.len() {
+                1 => "1 town".to_string(),
+                count => format!("{count} towns"),
+            }];
+            facts.extend(machines);
+            let mut text = format!("=== w: the World ({}) ===\n", facts.join("; "));
+            if !names.is_empty() {
+                text.push_str("towns\n");
+                let width = names.iter().map(|name| name.len()).max().unwrap_or(0);
+                for name in &names {
+                    let living: Vec<&ResidentNow> =
+                        residents.iter().copied().filter(|resident| resident.town.as_ref() == Some(name)).collect();
+                    let title = towns
+                        .iter()
+                        .find(|town| town.town == *name)
+                        .map(|town| format!("{} · ", town.record.name))
+                        .unwrap_or_default();
+                    text.push_str(&format!("    {name:width$}  {title}{}\n", counts(&living)));
+                }
+            }
+            residents.retain(|resident| resident.town.is_none());
+            text.push_str(&format!("outside every town ({})\n", counts(&residents)));
+            text
+        }
+    };
+
     let width = residents.iter().map(|resident| resident.about.id.len()).max().unwrap_or(0);
     for resident in &residents {
         let you_mark = if Some(&address(resident)) == you { "  (you)" } else { "" };
@@ -132,10 +162,14 @@ fn who(resident: &ResidentNow, now: Timestamp) -> String {
         }
         Origin::Colleague { asked_by, label } => format!("for {asked_by} \"{label}\""),
     });
-    parts.push(match activity(resident) {
-        Some(Activity::Asleep) => "asleep".to_string(),
-        _ if resident.here => format!("here {}", ago(about.born_at, now)),
-        _ => "left".to_string(),
+    parts.push(match (&resident.moved, activity(resident)) {
+        (Some(moved), _) => match &moved.to {
+            Some(town) => format!("moved to {town} {} ago", ago(moved.at, now)),
+            None => format!("moved out {} ago", ago(moved.at, now)),
+        },
+        (None, Some(Activity::Asleep)) => "asleep".to_string(),
+        (None, _) if resident.here => format!("here {}", ago(about.born_at, now)),
+        (None, _) => "left".to_string(),
     });
     parts.join(" · ")
 }
@@ -159,6 +193,13 @@ fn doing(resident: &ResidentNow, job: Option<&RunningJob>, now: Timestamp) -> St
         parts.push(format!("{} ({} ago)", trouble.text, ago(trouble.at, now)));
     }
     parts.join(" · ")
+}
+
+/// How many are here, and how many of them busy.
+fn counts(residents: &[&ResidentNow]) -> String {
+    let here = residents.iter().filter(|resident| resident.here).count();
+    let busy = residents.iter().filter(|resident| activity(resident) == Some(Activity::Busy)).count();
+    if busy > 0 { format!("{here} here, {busy} busy") } else { format!("{here} here") }
 }
 
 fn state_of(state: &Now, now: Timestamp) -> String {

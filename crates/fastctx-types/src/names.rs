@@ -122,6 +122,15 @@ name_type!(
 );
 
 name_type!(
+    /// A journal's subject, such as `webrtc-weak-network`: lowercase English
+    /// words joined by hyphens, naming a thing, never a conclusion.
+    JournalName,
+    "journal name",
+    "lowercase words of letters and digits joined by hyphens, starting with a letter, at most 64 characters",
+    |text| is_word(text, 64) && !text.contains("--")
+);
+
+name_type!(
     /// The kind of agent a resident is, such as `codex` or `claude`; the
     /// first half of its id. The user is a resident too, as `user`.
     AgentName,

@@ -6,7 +6,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod ask;
 mod copy;
+mod journal;
+mod project;
 mod talk;
 mod view;
 mod w;
@@ -40,6 +43,14 @@ enum Command {
     Copy(copy::CopyArgs),
     /// Talk to a resident on any machine, or open a session to talk to.
     Talk(talk::TalkArgs),
+    /// The towns: list, show, map and enter them; open one or write the
+    /// next version of its record.
+    #[command(subcommand)]
+    Project(project::ProjectCommand),
+    /// A town's journals: history, not verdicts. Add an entry, describe a
+    /// journal, read or list them.
+    #[command(subcommand, after_long_help = fastctx_hands::town::JOURNALS)]
+    Journal(journal::JournalCommand),
     /// Join a World with a code.
     Join(world::JoinArgs),
     /// Make a code that lets one more machine join this World.
@@ -67,6 +78,8 @@ fn main() -> ExitCode {
         Command::Nodes => world::nodes(),
         Command::Copy(args) => return finish(copy::run(args)),
         Command::Talk(args) => talk::run(args),
+        Command::Project(command) => project::run(command),
+        Command::Journal(command) => journal::run(command),
         Command::Join(args) => world::join(args),
         Command::Invite(args) => world::invite(args),
         Command::Revoke(args) => world::revoke(args),

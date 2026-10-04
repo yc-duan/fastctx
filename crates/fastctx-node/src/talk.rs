@@ -236,9 +236,12 @@ pub async fn open_here(
             )));
         }
     }
+    if let Some(town) = &town {
+        crate::town::project::spans_here(node, town).await?;
+    }
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::User;
-    let spec = crate::colleagues::thread_spec(node, &id, &origin, town.as_ref())?;
+    let (spec, heard) = crate::colleagues::thread_spec(node, &id, &origin, town.as_ref()).await?;
     let (thread, model) = node.codex.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {
@@ -263,6 +266,7 @@ pub async fn open_here(
     node.residents
         .create(&node.world, about, town, now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
+    node.residents.set_heard(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let landed = talk_here(node, typed_on, &id, text).await?;
     Ok((id, landed))

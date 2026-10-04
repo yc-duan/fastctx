@@ -11,7 +11,7 @@
 //! the member that says it (`message.rs`), so the hub can route it and read
 //! it but not change it or make one up.
 
-use fastctx_types::MachineName;
+use fastctx_types::{MachineName, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -204,6 +204,10 @@ pub enum Down {
     },
     /// The members, or which of them are revoked, changed.
     MembersChanged,
+    /// A town this machine spans has new entries in its ledger.
+    LedgerChanged {
+        town: TownName,
+    },
 }
 
 /// Why the hub refuses or ends a connection.
@@ -249,13 +253,37 @@ pub enum Question {
     Invite { endorsement: Signed },
     /// A member revokes a key.
     Revoke { revocation: Signed },
+    /// Keep this entry in its town's ledger (`crate::ledger`).
+    LedgerWrite { entry: Signed },
+    /// The towns this machine spans, each with the number of its latest
+    /// entry.
+    LedgerTowns,
+    /// A town's entries after the one numbered `after`, as many as fit in
+    /// one frame.
+    LedgerRead { town: TownName, after: u64 },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
-    Members { records: Vec<Signed>, revocations: Vec<Signed>, presence: Vec<Presence> },
+    Members {
+        records: Vec<Signed>,
+        revocations: Vec<Signed>,
+        presence: Vec<Presence>,
+    },
     Done,
+    /// The entry is the town's entry `seq`.
+    Written {
+        seq: u64,
+    },
+    Towns {
+        towns: Vec<(TownName, u64)>,
+    },
+    /// Entries in order, each with its number; `more` when others follow.
+    Entries {
+        entries: Vec<(u64, Signed)>,
+        more: bool,
+    },
 }
 
 /// Whether a member is connected, as the hub sees it.

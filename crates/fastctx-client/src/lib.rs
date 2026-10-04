@@ -6,7 +6,7 @@
 //! Nothing outside the node writes the World's state; clients ask.
 
 use fastctx_platform::ipc::{self, Connection, Endpoint};
-use fastctx_types::ipc::{ClientFrame, Failure, Hello, NodeFrame, PROTOCOL, Peer, Welcome};
+use fastctx_types::ipc::{ClientFrame, Failure, Hello, NodeFrame, PROTOCOL, Peer, SessionHint, Welcome};
 use fastctx_types::layout::WorldDir;
 use fastctx_types::session::Watched;
 use fastctx_types::{Call, MachineName, Reply};
@@ -177,6 +177,20 @@ impl Watching {
             _ => Err(broken("the node answered another call on a watch".to_string())),
         }
     }
+}
+
+/// Who a command speaks as, from its environment: a resident, when the
+/// World's `run` started it; an agent's session, when that agent's own
+/// shell did, as its host says; otherwise whoever is at the terminal.
+pub fn command_peer() -> Peer {
+    let resident = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse().ok());
+    let set = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let session = match (set("CODEX_THREAD_ID"), set("CLAUDE_CODE_MESSAGING_SOCKET")) {
+        (Some(thread), _) => Some(SessionHint::Codex { thread }),
+        (None, Some(inbox)) => Some(SessionHint::Claude { inbox }),
+        (None, None) => None,
+    };
+    Peer::Command { resident, session }
 }
 
 /// Starts this binary's node on its own.

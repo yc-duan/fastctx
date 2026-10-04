@@ -7,12 +7,13 @@ use fastctx_platform::ipc::Connection;
 use fastctx_types::ipc::{ClientFrame, Failure, Hello, NodeFrame, PROTOCOL, Peer, Welcome};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::run::{RunReply, RunRequest};
-use fastctx_types::town::{MachineWho, WhoReply, WorldWho};
+use fastctx_types::town::{MachineWho, WhoReply, WhoScope, WorldWho};
 use fastctx_types::world::{Node as NodeView, NodesReply, Revoked};
 use fastctx_types::write::{WriteOp, WriteOutcome};
 use fastctx_types::{Address, Call, MachineName, Reply, ResidentId, TownName};
 
 use crate::Node;
+use crate::town::caller::{self, Caller};
 
 pub async fn serve(node: Arc<Node>, connection: Connection) {
     if let Err(error) = converse(&node, connection).await {
@@ -96,10 +97,12 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             }
             Ok(Reply::Arrived(whereabouts))
         }
-        Call::Run { resident, town, request, node: target } => {
+        Call::Run { resident, request, node: target } => {
+            let town = town_of(node, &resident)?;
             run(node, resident, town, request, target).await.map(Reply::Run)
         }
-        Call::Write { resident, town, op, node: target } => {
+        Call::Write { resident, op, node: target } => {
+            let town = town_of(node, &resident)?;
             write(node, resident, town, op, target).await.map(|outcome| Reply::Written { outcome })
         }
         Call::JobChanged { job, owner, town } => node.jobs.changed(node, job, owner, town).await.map(|()| Reply::Done),
@@ -111,34 +114,52 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             .await
             .map(|()| Reply::Done)
         }
-        Call::Who { all } => who(node, all).await.map(Reply::Who),
+        Call::Who { all, town } => {
+            let town = town.or_else(|| caller::of(node, peer).ok().and_then(|caller| caller.town(node)));
+            who(node, all, town).await.map(Reply::Who)
+        }
         Call::Look { ids } => Ok(Reply::Looked { looked: crate::look::look(node, ids).await }),
         Call::Talk { to, machine, text } => {
-            users_voice(peer)?;
+            users_voice(node, peer)?;
             crate::talk::talk(node, to, machine, text).await.map(|(to, landed)| Reply::Spoken { to, landed })
         }
         Call::Open { agent, town, node: target, text } => {
-            users_voice(peer)?;
+            users_voice(node, peer)?;
             crate::talk::open(node, agent, town, target, text)
                 .await
                 .map(|(resident, landed)| Reply::Opened { resident, landed })
         }
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
-        Call::Collect { resident, town } => {
-            let world = node.world.clone();
-            blocking("reading the inbox", move || crate::inbox::collect(&world, &resident, town.as_ref()))
-                .await
-                .map(|notices| Reply::Notices { notices })
+        Call::Collect { resident } => {
+            let town = town_of(node, &resident)?;
+            let (world, id) = (node.world.clone(), resident.clone());
+            let notices =
+                blocking("reading the inbox", move || crate::inbox::collect(&world, &id, town.as_ref())).await?;
+            let notes = {
+                let node = node.clone();
+                blocking("reading the town", move || crate::town::notes::notes(&node, &resident)).await?
+            };
+            Ok(Reply::Notices { notices, notes })
         }
-        Call::Ask { resident, town, label, prompt, node: target } => {
+        Call::Ask { resident, label, prompt, node: target } => {
+            let town = town_of(node, &resident)?;
             crate::colleagues::ask(node, resident, town, label, prompt, target)
                 .await
                 .map(|colleague| Reply::Asked { colleague })
         }
-        Call::Message { resident, town, to, machine, text } => {
+        Call::Message { resident, to, machine, text } => {
+            let town = town_of(node, &resident)?;
             crate::colleagues::message(node, resident, town, to, machine, text)
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed })
+        }
+        Call::Project(call) => {
+            let caller = caller::of(node, peer)?;
+            crate::town::project::call(node, &caller, call).await
+        }
+        Call::Journal(call) => {
+            let caller = caller::of(node, peer)?;
+            crate::town::journal::call(node, &caller, call).await
         }
         Call::Join { code, name } => {
             crate::world::join(node, &code, name).await.map(|(world, name)| Reply::Joined { world, name })
@@ -162,14 +183,24 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
 
 /// Only the user speaks as the user: words from a resident's session, or
 /// from a command one of them ran, are not the user's (`world.md`, 身份照实).
-fn users_voice(peer: &Peer) -> Result<(), Failure> {
-    match peer {
-        Peer::Command { resident: None } => Ok(()),
-        Peer::Command { resident: Some(resident) } => Err(Failure::new(format!(
-            "{resident} runs this; only the user speaks as the user. Residents speak to each other with message_colleague"
+fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
+    match caller::of(node, peer)? {
+        Caller::User => Ok(()),
+        Caller::Resident(address) => Err(Failure::new(format!(
+            "{} runs this; only the user speaks as the user. Residents speak to each other with message_colleague",
+            address.resident
         ))),
-        _ => Err(Failure::new("only the user speaks as the user")),
+        Caller::Session(agent) => {
+            Err(Failure::new(format!("a {agent} session's own shell runs this; only the user speaks as the user")))
+        }
     }
+}
+
+/// The town a resident of this machine lives in.
+fn town_of(node: &Node, resident: &ResidentId) -> Result<Option<TownName>, Failure> {
+    node.residents
+        .town_of(resident)
+        .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))
 }
 
 fn member(node: &Node) -> Result<Arc<fastctx_net::link::Link>, Failure> {
@@ -264,24 +295,40 @@ fn called(failure: &CallFailure) -> String {
     failure.to_string()
 }
 
-/// This machine's own answer to `fastctx w`.
-pub async fn who_here(node: &Node, all: bool) -> Result<WhoReply, Failure> {
+/// This machine's own answer to `fastctx w`: in `town`, or in every town
+/// and none.
+pub async fn who_here(node: &Node, all: bool, town: Option<TownName>) -> Result<WhoReply, Failure> {
     let everyone = node.residents.everyone();
+    let former = node.residents.former();
     let (world, machine) = (node.world.clone(), node.machine());
-    blocking("looking around", move || crate::who::who(&world, &machine, everyone, all)).await
+    blocking("looking around", move || crate::who::who(&world, &machine, everyone, former, all, town.as_ref())).await
 }
 
-/// `fastctx w` across the World: this machine, and every member that is
-/// connected, asked at once.
-async fn who(node: &Arc<Node>, all: bool) -> Result<WorldWho, Failure> {
-    let mut machines = vec![MachineWho::Answered { reply: who_here(node, all).await? }];
+/// `fastctx w` in `town`, asking each machine its record names, or across
+/// the World, asking every member; the connected ones are asked at once.
+async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<WorldWho, Failure> {
+    let here = node.machine();
+    let (scope, asked) = match &town {
+        Some(name) => {
+            let (world, town) = (node.world.clone(), name.clone());
+            let record = blocking("reading the town", move || crate::town::read::latest(&world, &town)).await?;
+            let asked = record.as_ref().map(|record| record.machines.clone());
+            (WhoScope::Town { town: name.clone(), record: record.map(Box::new) }, asked)
+        }
+        None => (WhoScope::World { towns: crate::town::project::list(node).await? }, None),
+    };
+    let asks_for = |machine: &MachineName| asked.as_ref().is_none_or(|asked| asked.contains(machine));
+    let mut machines = Vec::new();
+    if asks_for(&here) {
+        machines.push(MachineWho::Answered { reply: who_here(node, all, town.clone()).await? });
+    }
     if let Some(link) = node.link() {
         // The list of members and who is connected, as the hub has it now.
         let refreshed = link.refresh().await;
         let (table, presence) = link.members();
         let me = link.membership().name.clone();
         let mut asks = Vec::new();
-        for member in table.members().filter(|member| member.name != me) {
+        for member in table.members().filter(|member| member.name != me && asks_for(&member.name)) {
             if let Err(error) = &refreshed {
                 machines.push(MachineWho::NoAnswer {
                     machine: member.name.clone(),
@@ -292,9 +339,9 @@ async fn who(node: &Arc<Node>, all: bool) -> Result<WorldWho, Failure> {
             let seen = presence.iter().find(|presence| presence.name == member.name).cloned();
             match seen {
                 Some(presence) if presence.online => {
-                    let (link, name) = (link.clone(), member.name.clone());
+                    let (link, name, town) = (link.clone(), member.name.clone(), town.clone());
                     asks.push(tokio::spawn(async move {
-                        match link.call(&name, RemoteCall::Who { all }).await {
+                        match link.call(&name, RemoteCall::Who { all, town }).await {
                             Ok(Ok(RemoteReply::Who(reply))) => MachineWho::Answered { reply },
                             Ok(Ok(_)) => {
                                 MachineWho::NoAnswer { machine: name, reason: "it answered something else".to_string() }
@@ -320,7 +367,7 @@ async fn who(node: &Arc<Node>, all: bool) -> Result<WorldWho, Failure> {
             machines.push(ask.await.map_err(|error| Failure::new(format!("asking around: {error}")))?);
         }
     }
-    Ok(WorldWho { machine: node.machine(), machines })
+    Ok(WorldWho { machine: here, scope, machines })
 }
 
 /// `fastctx nodes`: this machine's link, and each machine of the World with

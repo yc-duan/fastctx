@@ -367,9 +367,13 @@ pub async fn open_here(
     town: Option<TownName>,
     text: String,
 ) -> Result<(ResidentId, Landed), Failure> {
+    if let Some(town) = &town {
+        crate::town::project::spans_here(node, town).await?;
+    }
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
     let Command { program, mut env, .. } = command(node)?;
+    let (words, heard) = crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User).await?;
     let born_at = Timestamp::now();
     let about = About {
         id: id.clone(),
@@ -393,15 +397,11 @@ pub async fn open_here(
     node.residents
         .create(&node.world, about, town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
+    node.residents.set_heard(&id, heard);
     let directory = node.world.resident(town.as_ref(), &id);
     let settings = directory.path().join("claude-settings.json");
     let instructions = directory.path().join("claude-instructions.md");
-    let written = std::fs::write(&settings, settings_json()).and_then(|()| {
-        std::fs::write(
-            &instructions,
-            crate::colleagues::instructions(&id, &node.machine(), town.as_ref(), &Origin::User),
-        )
-    });
+    let written = std::fs::write(&settings, settings_json()).and_then(|()| std::fs::write(&instructions, words));
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
     let address = Address { machine: node.machine(), resident: id.clone() };
     env.retain(|(name, _)| name != "FASTCTX_RESIDENT" && name != "FASTCTX_HOME");

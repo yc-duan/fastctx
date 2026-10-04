@@ -106,7 +106,6 @@ impl Session {
             let mut client = self.client().await?;
             let call = Call::Run {
                 resident: whereabouts.resident.clone(),
-                town: whereabouts.town.clone(),
                 request: RunRequest { script: command, cwd },
                 node,
             };
@@ -145,7 +144,7 @@ impl Session {
         };
         let reply = async {
             let mut client = self.client().await?;
-            let call = Call::Write { resident: whereabouts.resident.clone(), town: whereabouts.town.clone(), op, node };
+            let call = Call::Write { resident: whereabouts.resident.clone(), op, node };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
@@ -179,13 +178,7 @@ impl Session {
         };
         let reply = async {
             let mut client = self.client().await?;
-            let call = Call::Ask {
-                resident: whereabouts.resident.clone(),
-                town: whereabouts.town.clone(),
-                label,
-                prompt,
-                node,
-            };
+            let call = Call::Ask { resident: whereabouts.resident.clone(), label, prompt, node };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
@@ -225,13 +218,7 @@ impl Session {
         };
         let reply = async {
             let mut client = self.client().await?;
-            let call = Call::Message {
-                resident: whereabouts.resident.clone(),
-                town: whereabouts.town.clone(),
-                to,
-                machine,
-                text: message,
-            };
+            let call = Call::Message { resident: whereabouts.resident.clone(), to, machine, text: message };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
@@ -262,16 +249,18 @@ impl Session {
         answer
     }
 
-    /// Words waiting for the resident ride along with its answer, each in a
-    /// block of its own (`world-colleagues.md`, 话怎样送到居民眼前).
+    /// What the resident is told of where it lives, and words waiting for
+    /// it, ride along with its answer, each in a block of its own
+    /// (`world-colleagues.md`, 话怎样送到居民眼前; `world-projects.md`).
     async fn add_waiting_words(&self, whereabouts: &Whereabouts, answer: &mut Answer) {
-        let collect = Call::Collect { resident: whereabouts.resident.clone(), town: whereabouts.town.clone() };
+        let collect = Call::Collect { resident: whereabouts.resident.clone() };
         let collected = match self.client().await {
             Ok(mut client) => client.call(collect).await.map_err(|error| error.to_string()),
             Err(error) => Err(error),
         };
         match collected {
-            Ok(Reply::Notices { notices }) => {
+            Ok(Reply::Notices { notices, notes }) => {
+                answer.content.extend(notes.into_iter().map(Content::Text));
                 answer.content.extend(notices.iter().map(|delivery| Content::Text(told::told(&delivery.notice))))
             }
             Ok(other) => answer

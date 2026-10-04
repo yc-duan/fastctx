@@ -23,6 +23,7 @@ use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
 use crate::Node;
+use crate::residents::Heard;
 use crate::speech::{self, Owed};
 
 /// Asks for a colleague for `asker`, a resident of this machine, on this
@@ -78,10 +79,13 @@ pub async fn ask_here(
     prompt: String,
 ) -> Result<ResidentId, Failure> {
     node.residents.set_departed(asker.clone(), false);
+    if let Some(town) = &town {
+        crate::town::project::spans_here(node, town).await?;
+    }
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    let spec = thread_spec(node, &id, &origin, town.as_ref())?;
+    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref()).await?;
     let (thread, model) = node.codex.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {
@@ -108,6 +112,7 @@ pub async fn ask_here(
     node.residents
         .create(&node.world, about, town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
+    node.residents.set_heard(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone() } };
     if let Err(error) = crate::residents::append_message(&node.world.resident(town.as_ref(), &id), &asked) {
@@ -132,14 +137,15 @@ pub async fn ask_here(
     Ok(id)
 }
 
-/// What a colleague's thread is started and resumed with: where it is and
-/// whom it works for, and the World's tools under its own name.
-pub fn thread_spec(
-    node: &Node,
+/// What a thread the World holds is started and resumed with: where it is,
+/// with its town's map, and whom it works for, and the World's tools under
+/// its own name. Also what it is told of its town by that.
+pub async fn thread_spec(
+    node: &Arc<Node>,
     id: &ResidentId,
     origin: &Origin,
     town: Option<&TownName>,
-) -> Result<ThreadSpec, Failure> {
+) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
     let cwd = standing(node, town)?;
     let binary = std::env::current_exe().map_err(|error| Failure::new(format!("finding fastctx itself: {error}")))?;
@@ -154,7 +160,17 @@ pub fn thread_spec(
         Origin::User => tools.extend(["ask_colleague", "message_colleague"]),
     }
     let config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
-    Ok(ThreadSpec { cwd, developer_instructions: instructions(id, &here, town, origin), config })
+    let (developer_instructions, heard) = instructions(node, id, town, origin).await?;
+    Ok((ThreadSpec { cwd, developer_instructions, config }, heard))
+}
+
+/// How far into its town's ledger a resident is told of it, as of now.
+pub fn heard_now(node: &Node, town: Option<&TownName>) -> std::io::Result<Heard> {
+    let ledger = match town {
+        Some(town) => crate::ledger::seq(&node.world, town)?,
+        None => 0,
+    };
+    Ok(Heard { town: town.cloned(), ledger })
 }
 
 /// The town's bookkeeping directory, where a resident the World starts
@@ -170,12 +186,33 @@ pub(crate) fn standing(node: &Node, town: Option<&TownName>) -> Result<PathBuf, 
     Ok(directory)
 }
 
-/// What a Codex resident the World starts is told of itself, as developer
-/// instructions, which outlive compaction.
-pub(crate) fn instructions(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin: &Origin) -> String {
-    let place = match town {
-        Some(town) => format!("You live on the machine {machine}, in the town {town}."),
-        None => format!("You live on the machine {machine}, in no town yet."),
+/// What a resident the World starts is told of itself, as Codex's developer
+/// instructions or Claude's system prompt, which outlive compaction: who it
+/// is, its hands, and its town's map. Also what it is told of its town by
+/// that: how far into the ledger, read before the map so nothing written
+/// meanwhile goes unsaid.
+pub(crate) async fn instructions(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    town: Option<&TownName>,
+    origin: &Origin,
+) -> Result<(String, Heard), Failure> {
+    let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
+    let words = words(id, &node.machine(), town, origin);
+    let text = match town {
+        Some(town) => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
+        None => words,
+    };
+    Ok((text, heard))
+}
+
+fn words(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin: &Origin) -> String {
+    let place = match (town, origin) {
+        (Some(town), _) => format!("You live on the machine {machine}, in the town {town}; its map follows."),
+        (None, Origin::User) => format!(
+            "You live on the machine {machine}, in no town yet. When the user names the project to work on, enter its town with `fastctx project enter <town>` (`fastctx project list` lists them)."
+        ),
+        (None, Origin::Colleague { .. }) => format!("You live on the machine {machine}, in no town."),
     };
     let working = match origin {
         Origin::Colleague { asked_by, .. } => format!(

@@ -15,6 +15,7 @@
 mod control;
 mod data;
 mod join;
+mod ledger;
 mod log;
 mod store;
 
@@ -79,6 +80,8 @@ pub(crate) struct Hub {
     sessions: Mutex<HashMap<MachineName, Session>>,
     calls: Mutex<HashMap<u64, control::Pending>>,
     waiting: Mutex<HashMap<u64, data::Waiting>>,
+    /// Taken after `store` when both are held.
+    ledgers: Mutex<ledger::Ledgers>,
     next: AtomicU64,
     log: log::Log,
 }
@@ -146,6 +149,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
     };
     let tls = tokio_rustls::TlsAcceptor::from(certificate.server_config().map_err(anyhow::Error::msg)?);
     let log = log::Log::open(&dir.join("hub.log"))?;
+    let ledgers = ledger::Ledgers::open(dir)?;
     let listen = store.hub.listen;
     let listener =
         TcpListener::bind(listen).await.map_err(|error| anyhow::anyhow!("listening on {listen}: {error}"))?;
@@ -163,6 +167,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         sessions: Mutex::new(HashMap::new()),
         calls: Mutex::new(HashMap::new()),
         waiting: Mutex::new(HashMap::new()),
+        ledgers: Mutex::new(ledgers),
         next: AtomicU64::new(0),
         log,
     });

@@ -2,11 +2,8 @@
 //! revoking, leaving, and seeing the machines (`world-network.md`).
 
 use clap::{Args, Subcommand};
-use fastctx_client::Client;
-use fastctx_types::ipc::Peer;
-use fastctx_types::layout::WorldDir;
 use fastctx_types::world::{LinkState, NodesReply};
-use fastctx_types::{Address, Call, MachineName, Reply};
+use fastctx_types::{Call, MachineName, Reply};
 use jiff::{SignedDuration, Timestamp};
 
 #[derive(Args)]
@@ -140,12 +137,7 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
 }
 
 fn call(call: Call) -> anyhow::Result<Reply> {
-    let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let you = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse::<Address>().ok());
-    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
-        let mut client = Client::connect_or_start(&world, Peer::Command { resident: you }).await?;
-        anyhow::Ok(client.call(call).await?)
-    })
+    Ok(crate::ask::call(call)?.0)
 }
 
 fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
