@@ -152,7 +152,7 @@ fn read(input: HANDLE, stop: HANDLE, sender: &UnboundedSender<Input>) -> io::Res
         let checked = unsafe { GetNumberOfConsoleInputEvents(input, &mut waiting) };
         let error = (checked == 0).then(io::Error::last_os_error);
         if checked != 0 {
-            decoder.boundary(waiting > 0, &mut out);
+            decoder.boundary(waiting > 0 || keys.pending(), &mut out);
         }
         for event in out {
             if sender.send(event).is_err() {

@@ -1,7 +1,7 @@
-//! Decodes the character stream supplied by a Windows console in VT input mode.
+//! Decodes the VT character stream shared by Windows and Unix terminals.
 //!
 //! Paste framing has neither a size limit nor a timeout. An escape prefix is
-//! resolved when the console queue is empty after a read, without a timed wait.
+//! resolved when the terminal queue is empty after a read, without a timed wait.
 //! A terminal must enqueue the prefix and its continuation together for that
 //! boundary rule to distinguish a key from a sequence.
 
@@ -100,6 +100,7 @@ impl Decoder {
 
     /// A native key with a known identity is never protocol text. Keys arriving
     /// during a paste follow the completed paste, which is delivered atomically.
+    #[cfg(any(windows, test))]
     pub fn key(&mut self, event: KeyEvent, out: &mut Vec<Input>) {
         if let State::Paste { keys, .. } = &mut self.state {
             keys.push(event);
@@ -111,7 +112,7 @@ impl Decoder {
         }
     }
 
-    /// The console has handed over all it had ready; `waiting` says whether
+    /// The terminal has handed over all it had ready; `waiting` says whether
     /// more has come in since.
     pub fn boundary(&mut self, waiting: bool, out: &mut Vec<Input>) {
         match &mut self.state {

@@ -116,3 +116,42 @@ fn console_utf16_repeat_and_native_identity_contract() {
     record.uChar.UnicodeChar = 0xdc00;
     assert!(keys.record(&record, &mut decoder, &mut out).is_err());
 }
+
+#[test]
+fn utf8_preserves_scalars_and_alt_across_read_boundaries() {
+    use super::utf8::Utf8;
+    let text = "中文，。😀𠮷";
+    for size in 1..=text.len() {
+        let mut utf8 = Utf8::default();
+        let mut decoder = Decoder::default();
+        let mut out = Vec::new();
+        for bytes in text.as_bytes().chunks(size) {
+            utf8.push(bytes, &mut decoder, &mut out).unwrap();
+            decoder.boundary(utf8.pending(), &mut out);
+        }
+        assert!(!utf8.pending());
+        let actual: String = out
+            .iter()
+            .map(|event| match event {
+                Input::Key(key) => match key.code {
+                    KeyCode::Char(c) => c,
+                    _ => panic!("{event:?}"),
+                },
+                _ => panic!("{event:?}"),
+            })
+            .collect();
+        assert_eq!(actual, text);
+    }
+    let mut utf8 = Utf8::default();
+    let mut decoder = Decoder::default();
+    let mut out = Vec::new();
+    utf8.push(&[0x1b, 0xe4], &mut decoder, &mut out).unwrap();
+    decoder.boundary(utf8.pending(), &mut out);
+    assert!(out.is_empty());
+    utf8.push(&[0xbd, 0xa0], &mut decoder, &mut out).unwrap();
+    decoder.boundary(utf8.pending(), &mut out);
+    assert!(matches!(out.as_slice(), [Input::Key(k)] if *k == KeyEvent::new(KeyCode::Char('你'), KeyModifiers::ALT)));
+    for invalid in [vec![0xff], vec![0xc0, 0xaf], vec![0xed, 0xa0, 0x80], vec![0xf4, 0x90, 0x80, 0x80]] {
+        assert!(Utf8::default().push(&invalid, &mut Decoder::default(), &mut Vec::new()).is_err());
+    }
+}

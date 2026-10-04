@@ -15,6 +15,10 @@ pub(super) struct Keys {
 }
 
 impl Keys {
+    pub fn pending(&self) -> bool {
+        self.surrogate.is_some()
+    }
+
     pub fn record(&mut self, event: &KEY_EVENT_RECORD, decoder: &mut Decoder, out: &mut Vec<Input>) -> io::Result<()> {
         // SAFETY: KEY_EVENT_RECORD uses the Unicode member in ReadConsoleInputW.
         let unit = unsafe { event.uChar.UnicodeChar };

@@ -26,6 +26,10 @@ unicode-linebreak = "0.1.5"
 unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
+mio = { version = "1", features = ["os-poll", "os-ext"] }
+rustix = { version = "1", features = ["fs", "stdio", "termios"] }
+signal-hook = "0.3"
+signal-hook-mio = { version = "0.2", features = ["support-v1_0"] }
 terminfo = "0.9"
 
 [target.'cfg(windows)'.dependencies]
