@@ -75,6 +75,22 @@ pub fn registration(directory: &Path) -> io::Result<Option<Registration>> {
     }
 }
 
+/// Where Claude Code keeps the session's own record, as its hooks told the
+/// mod (`transcript.json`); `None` while the mod has not said.
+pub fn transcript(directory: &Path) -> io::Result<Option<PathBuf>> {
+    #[derive(Deserialize)]
+    struct Place {
+        path: PathBuf,
+    }
+    match std::fs::read(directory.join("transcript.json")) {
+        Ok(bytes) => serde_json::from_slice::<Place>(&bytes)
+            .map(|place| Some(place.path))
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("transcript.json: {error}"))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// What the mod reported, in the World's terms.
 #[derive(Debug)]
 pub enum Reported {

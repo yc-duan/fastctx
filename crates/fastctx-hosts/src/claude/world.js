@@ -11,7 +11,8 @@ import { presentation } from './presentation.js'
 // It talks to the fastctx node only through files in the session's own
 // directory, `<world>/claude/<session id>/`:
 //   session.json       written when the session starts
-//   events/<n>.json    a report or an ordered batch of stream events, and
+//   transcript.json    where Claude Code keeps the session's own record
+//   events/<n>.json   a report or an ordered batch of stream events, and
 //   events/<n>.done    written after it, once it is whole
 //   inbox/<id>.json    what the node has for the session; read, never changed
 //   receipts/<id>      written once something was handed to the model
@@ -581,6 +582,18 @@ async function endSession($, context, e, next) {
   return next(e)
 }
 
+// Where Claude Code keeps this session's own record, as its hooks are told
+// (`transcript_path`): the World reads the session's past there. Without
+// this file the node says it does not know where that record is.
+async function transcript($, context, path) {
+  if (typeof path !== 'string' || path === '' || !context.dir) return
+  try {
+    await $.fs.write(context.dir + '/transcript.json', JSON.stringify({ path }))
+  } catch (error) {
+    // A session start must not fail for the World's sake.
+  }
+}
+
 async function session($, registry, id, renew = false) {
   let context = registry.sessions.get(id)
   if (!context || (renew && context.closed)) {
@@ -646,7 +659,8 @@ export function register(on) {
     return endSession($, await route($, registry, 'session.end', e), e, next)
   })
   on('classic.SessionStart', async ($, e, next) => {
-    await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
+    const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
+    await transcript($, context, e.transcript_path)
     return next(e)
   })
 }

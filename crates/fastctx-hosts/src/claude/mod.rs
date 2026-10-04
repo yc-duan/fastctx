@@ -42,6 +42,20 @@ pub const MAX_MCP_OUTPUT_TOKENS: u64 = 200_000;
 
 const MOD: &str = include_str!("world.js");
 
+/// How words the World says on its own account begin, as the model reads
+/// them; the mod frames them the same way (`world.js`).
+const FRAME: &str = "The fastctx plugin delivers a message from the World.";
+
+/// Words the World says on its own account, as the model reads them.
+pub fn framed(text: &str) -> String {
+    format!("{FRAME}\n\n{text}")
+}
+
+/// Whether words a session heard are the World's own, framed as such.
+pub fn is_framed(text: &str) -> bool {
+    text.starts_with(FRAME)
+}
+
 /// The local marketplace: `<world>/claude-plugins`.
 pub fn marketplace(world: &Path) -> PathBuf {
     world.join("claude-plugins")
