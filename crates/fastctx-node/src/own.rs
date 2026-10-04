@@ -47,7 +47,8 @@ pub fn pin(world: &WorldDir) -> io::Result<(PathBuf, Vec<(PathBuf, io::Error)>)>
 /// --attach-from laptop /srv/run.log`). Only fastctx is started without
 /// that rewriting; every other program sees the shell as Git Bash made it.
 /// Git Bash finds this file before `fastctx.exe` beside it.
-const GIT_BASH_SHIM: &str = "#!/bin/sh\nMSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' exec \"${0%/*}/fastctx.exe\" \"$@\"\n";
+const GIT_BASH_SHIM: &str =
+    "#!/bin/sh\nMSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' exec \"${0%/*}/fastctx.exe\" \"$@\"\n";
 
 /// Removes other versions only after their jobs' complete process trees
 /// have ended. Windows executable sharing alone does not express that
