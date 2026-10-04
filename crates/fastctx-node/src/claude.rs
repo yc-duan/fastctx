@@ -4,8 +4,9 @@
 //! The node writes the plugin into the World's directory when it starts.
 //! Every session the plugin runs in has a directory under `<world>/claude`,
 //! which the node watches. A session's registration pairs it with its
-//! resident: the one the World started it as, the one this session was
-//! before, or the one whose MCP connection gave the same inbox address.
+//! resident: the one the World started under its id, the one the session
+//! it continues was, or the one whose MCP connection gave the same inbox
+//! address.
 //! What it reports is read once it is paired, in the order it was written,
 //! and goes to that resident; what waited for the resident goes to its mod.
 //! What the World has for a paired session goes into its mod's inbox, and
@@ -29,7 +30,7 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::layout::ResidentDir;
 use fastctx_types::residents::{About, Activity, Delivery, Host, Landed, Notice, Now, Origin, Pending, PendingState};
 use fastctx_types::session::{Happened, Speaker};
-use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
+use fastctx_types::{AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use tokio::sync::mpsc;
 
@@ -38,6 +39,9 @@ use crate::Node;
 #[derive(Default)]
 pub struct Claude {
     state: Mutex<State>,
+    /// Held to read while the World starts a session and learns its id;
+    /// to write, by an MCP connection that waits for those to be known.
+    pub births: tokio::sync::RwLock<()>,
 }
 
 #[derive(Default)]
@@ -515,17 +519,16 @@ async fn pair(node: &Arc<Node>, session: &str) {
             _ => return,
         }
     };
-    let here = node.machine();
-    let resident = match &registration.resident {
-        Some(tag) => {
-            tag.parse::<Address>().ok().filter(|address| address.machine == here).map(|address| address.resident)
-        }
-        // The session it was before the node restarted, or the one whose MCP
-        // connection gave the same inbox address.
-        None => node.residents.resident_of_thread(&registration.session).or_else(|| {
-            registration.inbox_address.as_deref().and_then(|inbox| node.residents.resident_of_inbox(inbox))
-        }),
-    };
+    // The session paired before the node restarted, or the one the World
+    // started, known by the start of its id (`background::started`); the
+    // conversation it continues after `/clear`; or the session whose MCP
+    // connection gave the same inbox address.
+    let resident = node
+        .residents
+        .resident_of_thread(&registration.session)
+        .or_else(|| registration.session.get(..8).and_then(|short| node.residents.resident_of_thread(short)))
+        .or_else(|| registration.previous.as_deref().and_then(|previous| node.residents.resident_of_thread(previous)))
+        .or_else(|| registration.inbox_address.as_deref().and_then(|inbox| node.residents.resident_of_inbox(inbox)));
     let Some(resident) = resident.filter(|resident| node.residents.about(resident).is_some()) else {
         return;
     };
@@ -574,6 +577,9 @@ async fn pair(node: &Arc<Node>, session: &str) {
         ) {
             node.log.line(format_args!("recording which session {resident} is: {error}"));
             return;
+        }
+        if let Some(inbox) = &registration.inbox_address {
+            node.residents.set_inbox(&resident, inbox.clone());
         }
         node.claude.state.lock().expect("never poisoned").paired.insert(resident.clone(), session.to_string());
     }
@@ -784,8 +790,15 @@ struct Command {
 }
 
 fn command(node: &Node) -> Result<Command, Failure> {
-    let env = fastctx_platform::world_process_environment()
+    let mut env = fastctx_platform::world_process_environment()
         .map_err(|error| Failure::new(format!("reading the user's environment: {error}")))?;
+    // A `claude --bg` may start Claude Code's daemon, whose environment every
+    // later background session gets, the user's own included. Nothing of the
+    // World goes into it: sessions are known by their ids, and the plugin
+    // names its World itself.
+    env.retain(|(name, _)| {
+        !["FASTCTX_RESIDENT", "FASTCTX_HOME", "FASTCTX_COLLEAGUE"].iter().any(|world| name.eq_ignore_ascii_case(world))
+    });
     // Found on the node's own search path, which for a node the World
     // started is the user's own.
     let path = std::env::var_os("PATH");
@@ -810,7 +823,7 @@ pub async fn open_here(
     }
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
-    let Command { program, mut env, .. } = command(node)?;
+    let Command { program, env, .. } = command(node)?;
     let (words, heard) = crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User).await?;
     let born_at = Timestamp::now();
     let about = About {
@@ -841,10 +854,6 @@ pub async fn open_here(
     let instructions = directory.path().join("claude-instructions.md");
     let written = std::fs::write(&settings, settings_json()).and_then(|()| std::fs::write(&instructions, words));
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
-    let address = Address { machine: node.machine(), resident: id.clone() };
-    env.retain(|(name, _)| name != "FASTCTX_RESIDENT" && name != "FASTCTX_HOME");
-    env.push(("FASTCTX_RESIDENT".into(), address.tag().into()));
-    env.push(("FASTCTX_HOME".into(), node.root.clone().into_os_string()));
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
     let plugin = claude::plugin_dir(node.world.path());
     // The first words go in as the prompt the session starts with, which it
@@ -864,6 +873,9 @@ pub async fn open_here(
     crate::inbox::keep(&directory, &first)
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
     let world = node.world.path().to_path_buf();
+    // Until the World knows which session this is, a Claude session's MCP
+    // connection it cannot place waits, rather than becoming someone new.
+    let _birth = node.claude.births.read().await;
     let started = tokio::task::spawn_blocking(move || {
         let start =
             background::Start { plugin: &plugin, settings: &settings, instructions: &instructions, first_words: &text };
@@ -882,11 +894,30 @@ pub async fn open_here(
     })
     .await
     .map_err(|error| Failure::new(format!("starting the session: {error}")))
-    .and_then(|result| result.map_err(Failure::new));
-    if let Err(error) = started {
-        let landed = failed_wake(node, &id, &directory, &first.delivery.id, error).await?;
-        return Ok((id, landed));
-    }
+    .and_then(|result| result.map_err(Failure::new))
+    .and_then(|printed| {
+        background::started(&printed).ok_or_else(|| {
+            Failure::new(format!(
+                "Claude Code started a session without saying which, so the World cannot follow it; it printed: {}",
+                printed.trim()
+            ))
+        })
+    });
+    let short = match started {
+        Ok(short) => short,
+        Err(error) => {
+            drop(_birth);
+            let landed = failed_wake(node, &id, &directory, &first.delivery.id, error).await?;
+            return Ok((id, landed));
+        }
+    };
+    // The session is known by the start of its id until its mod reports the
+    // whole of it, which may have happened already.
+    node.residents
+        .set_session(&node.world, &id, &short, None, None)
+        .map_err(|error| Failure::new(format!("recording which session {id} is: {error}")))?;
+    drop(_birth);
+    replay(node).await;
     Ok((id, Landed::Handed { id: first.delivery.id }))
 }
 

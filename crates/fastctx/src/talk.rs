@@ -163,6 +163,8 @@ struct Printer {
     streamed: HashSet<String>,
     /// Items whose text is not shown as it grows: thinking and plans.
     quiet: HashSet<String>,
+    /// Tools shown as they began; a history holds only how they finished.
+    tools: HashSet<String>,
     /// Whether the cursor is in the middle of a line.
     open_line: bool,
 }
@@ -200,6 +202,7 @@ impl Printer {
                     self.quiet.insert(item.id.clone());
                 }
                 What::Tool(tool) => {
+                    self.tools.insert(item.id.clone());
                     self.line(&format!("  · {} {}", tool.name, fastctx_client::shown::tool_detail(tool)))
                 }
                 _ => {}
@@ -220,8 +223,14 @@ impl Printer {
                     }
                 }
                 What::Plan { text } => self.line(&format!("── proposed plan\n{text}")),
-                What::Tool(tool) if matches!(tool.status, ToolStatus::Failed | ToolStatus::Declined) => {
-                    self.line(&format!("  ✗ {} {} failed", tool.name, fastctx_client::shown::tool_detail(tool)))
+                What::Tool(tool) => {
+                    let detail = fastctx_client::shown::tool_detail(tool);
+                    let failed = matches!(tool.status, ToolStatus::Failed | ToolStatus::Declined);
+                    match (self.tools.remove(&item.id), failed) {
+                        (_, true) => self.line(&format!("  ✗ {} {detail} failed", tool.name)),
+                        (false, false) => self.line(&format!("  · {} {detail}", tool.name)),
+                        (true, false) => {}
+                    }
                 }
                 What::Compaction => self.line("── context compacted"),
                 _ => {}

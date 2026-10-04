@@ -352,6 +352,15 @@ impl Residents {
         self.lock().live.values().find(|live| live.inbox.as_deref() == Some(inbox)).map(|live| live.about.id.clone())
     }
 
+    /// The resident's Claude session has the inbox address `inbox`, as its
+    /// mod reported: its MCP connection, arriving with the same address, is
+    /// known for the same resident.
+    pub fn set_inbox(&self, id: &ResidentId, inbox: String) {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            live.inbox = Some(inbox);
+        }
+    }
+
     /// The resident's session is `session` on its host: its `about` says so
     /// from now on, with the model and version the host gave.
     pub fn set_session(
