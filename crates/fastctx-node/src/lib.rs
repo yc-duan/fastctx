@@ -158,6 +158,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));
     }
+    town::guard::start(&node).context("watching the towns' ledgers")?;
     if let Some((membership, key)) = membership {
         node.log.line(format_args!("a member of the World {} as {}", membership.world, membership.name));
         world::start(&node, membership, key).context("starting the link to the hub")?;

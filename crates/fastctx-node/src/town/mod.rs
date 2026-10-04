@@ -3,6 +3,7 @@
 //! of its ledger holds them, and what the user and residents do with them.
 
 pub mod caller;
+pub mod guard;
 pub mod journal;
 pub mod map;
 pub mod notes;
