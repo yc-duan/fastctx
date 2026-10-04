@@ -670,6 +670,7 @@ dependencies = [
  "fastctx-tui",
  "fastctx-types",
  "jiff",
+ "serde",
  "serde_json",
  "tokio",
 ]

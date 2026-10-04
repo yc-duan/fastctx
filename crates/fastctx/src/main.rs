@@ -12,6 +12,7 @@ mod copy;
 mod journal;
 mod project;
 mod talk;
+mod update;
 mod view;
 mod w;
 mod world;
@@ -79,6 +80,12 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    // An old fastctx's upgrader may have started this version: it waits to
+    // hear that it is healthy before anything else happens.
+    if let Err(error) = update::finalize() {
+        eprintln!("fastctx: {error:#}");
+        return ExitCode::FAILURE;
+    }
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         // The TUI needs a terminal on both sides; anything else asked for
