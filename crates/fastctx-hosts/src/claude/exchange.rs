@@ -2,8 +2,9 @@
 //! in `<world>/claude/<session id>/` (the mod's side is `world.js`).
 //!
 //! The mod writes `session.json` when the session starts and one event file
-//! per turn, tool use, hand-over and end, each followed by a `.done` marker
-//! once it is whole, since `$.fs.write` promises nothing about being atomic.
+//! per turn, tool use, hand-over and end, batching adjacent stream observations.
+//! Each report is followed by a `.done` marker once it is whole, since
+//! `$.fs.write` promises nothing about being atomic.
 //! The node writes what it has for the session into `inbox/`, each file
 //! whole before it appears; the mod says in an event which turn took it,
 //! and writes a receipt so that it never hands it over again. The node asks
@@ -98,6 +99,9 @@ pub enum Reported {
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum ModEvent {
+    Batch {
+        events: Vec<ModEvent>,
+    },
     Session {
         at: Option<Timestamp>,
         happened: Happened,
@@ -314,6 +318,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
         |at: Option<Timestamp>, happened| Reported::Happened(SessionEvent { at: at.unwrap_or(recorded_at), happened });
     let turn_of = |turn: Option<String>| turn.unwrap_or_default();
     match event {
+        ModEvent::Batch { events } => events.into_iter().flat_map(|event| translate(event, recorded_at)).collect(),
         ModEvent::Session { at, happened: observed } => vec![happened(at, observed)],
         ModEvent::ToolStored {
             at,
