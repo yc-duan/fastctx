@@ -4,6 +4,7 @@
 // never changed; what later entries said of one is shown beneath it, so
 // the meaning that grew around it can be seen without a word of it moved.
 
+import { glyph } from "../conversation/glyphs";
 import { escape, render } from "../conversation/prose";
 import type { EntryView, JournalView, Writer } from "../world/world";
 import type { ProjectWords } from "./words";
@@ -14,6 +15,8 @@ export interface JournalOptions {
   project: { href: string; name: string };
   journal: string;
   head(title: string, actions?: string): string;
+  /** Opens the sheet for the user's own entry. */
+  write(): void;
   /** Asks for the entries before the first one shown. */
   earlier(before: string): Promise<JournalView>;
 }
@@ -30,9 +33,13 @@ export class JournalPage {
     this.element = document.createElement("div");
     this.element.className = "journal-page";
     this.element.innerHTML = `
-      ${options.head(`<a class="crumb" href="${escape(options.project.href)}">${escape(options.project.name)}</a><span class="crumb-sep">/</span><h1 class="page-title journal-name-title">${escape(options.journal)}</h1>`)}
+      ${options.head(
+        `<a class="crumb" href="${escape(options.project.href)}">${escape(options.project.name)}</a><span class="crumb-sep">/</span><h1 class="page-title journal-name-title">${escape(options.journal)}</h1>`,
+        `<button class="text-button write-entry" type="button">${glyph("edit", 16)}<span>${escape(options.words.write)}</span></button>`,
+      )}
       <div class="journal-reading scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".journal-reading")!;
+    this.element.querySelector(".write-entry")!.addEventListener("click", () => options.write());
     this.body.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".earlier");
       if (!button || !this.view || !this.shown[0]) return;

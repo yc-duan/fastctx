@@ -52,6 +52,7 @@ import { enHome, zhHome } from "./home/words";
 import { installPens } from "./pen/filters";
 import { installRules } from "./pen/rules";
 import { JournalPage } from "./project/journal";
+import { JournalForm } from "./project/journal-form";
 import { ProjectPage } from "./project/page";
 import { enProject, zhProject } from "./project/words";
 import { specimenJournal, specimenMap } from "./specimen/project";
@@ -63,6 +64,7 @@ import type { ResidentDetail } from "./world/world";
 import {
   invite,
   journal as readJournal,
+  journalAdd,
   leave as leaveWorld,
   look,
   projectEdit,
@@ -148,6 +150,16 @@ const devices = new Devices({
   leave: () => (live ? leaveWorld() : notLive()),
   when: (at) => when(at, new Date()),
   changed: () => void store.refresh(),
+});
+
+const journalForm = new JournalForm({
+  words: projectWords,
+  write: (town, journal, text, description) => (live ? journalAdd(town, journal, text, description) : notLive()),
+  written(town, journal) {
+    const there = link({ kind: "journal", town, journal });
+    if (location.hash === there) show(placeOf(there));
+    else location.hash = there;
+  },
 });
 
 const shell = new Shell({
@@ -412,6 +424,7 @@ function projectPage(town: string): Page {
     edit: shellWords.edit,
     begin: (town) => newTalk.open(town),
     revise: (town, record) => projectForm.open({ town, record }),
+    startJournal: (town) => journalForm.open(town, null),
     link: talkLink,
     journalLink: (town, journal) => link({ kind: "journal", town, journal }),
   });
@@ -456,6 +469,7 @@ function journalPage(town: string, name: string): Page {
     project: { href: link({ kind: "project", town }), name: project },
     journal: name,
     head,
+    write: () => journalForm.open(town, name),
     earlier: (before) => (live ? readJournal(town, name, before) : Promise.reject(new Error("specimen"))),
   });
   if (!live) page.show(specimenJournal());

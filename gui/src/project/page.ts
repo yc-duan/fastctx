@@ -22,6 +22,8 @@ export interface ProjectOptions {
   begin(town: string): void;
   /** Opens the form for the next version of its record. */
   revise(town: string, record: ProjectRecord): void;
+  /** Opens the sheet that starts a journal. */
+  startJournal(town: string): void;
   link(address: Address): string;
   journalLink(town: string, journal: string): string;
 }
@@ -59,6 +61,9 @@ export class ProjectPage {
     this.element.querySelector(".begin-here")!.addEventListener("click", () => options.begin(options.town));
     this.element.querySelector(".revise")!.addEventListener("click", () => {
       if (this.record) options.revise(options.town, this.record);
+    });
+    this.board.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest(".start-journal")) options.startJournal(options.town);
     });
     this.tabs.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
@@ -119,8 +124,9 @@ export class ProjectPage {
       ["decisions", words.decisions, this.canon(map)],
       ["places", words.places, record.places.length ? this.places(map) : `<p class="quiet">${escape(words.noPlaces)}</p>`],
     ];
+    const startJournal = `<button class="text-button start-journal" type="button">${glyph("plus", 16)}<span>${escape(words.newJournal)}</span></button>`;
     const section = ([tab, title, body]: [Tab, string, string]) =>
-      `<section class="home-section" data-tab="${tab}"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
+      `<section class="home-section" data-tab="${tab}"><h2 class="section-title">${escape(title)}</h2>${body}${tab === "journals" ? startJournal : ""}</section>`;
     const board = `<div class="board-column scroller">${section(sections[0])}</div><div class="board-column scroller">${sections
       .slice(1)
       .map(section)

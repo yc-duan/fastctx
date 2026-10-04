@@ -188,6 +188,10 @@
   }
 }
 
+.start-journal {
+  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
+}
+
 /* Where things are: what, then its machine and path. */
 .place-line {
   display: flex;
@@ -361,7 +365,9 @@
 }
 
 /* Entries: each under its stamp, the words as written. */
-.journal-page .entries {
+/* Above the general rule that takes lists' margins away, which would
+   otherwise pull the entries off the reading column. */
+.journal-page .journal-reading > ol.entries {
   list-style: none;
   margin: var(--space-8) auto 0;
   padding: 0 0 var(--space-12);

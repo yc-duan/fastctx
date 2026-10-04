@@ -28,6 +28,20 @@ export interface ProjectWords {
   edited(by: string, day: string): string;
   day(at: Date): string;
   clock(at: Date): string;
+  write: string;
+  newJournal: string;
+  writeTitle(journal: string): string;
+  newJournalTitle: string;
+  journalName: string;
+  journalNameHint: string;
+  description: string;
+  descriptionHint: string;
+  entry: string;
+  entryHint: string;
+  save: string;
+  saving: string;
+  close: string;
+  failed(why: string): string;
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -62,6 +76,20 @@ export const zhProject: ProjectWords = {
   edited: (by, day) => `${then(by)}改于 ${day}`,
   day: (at) => `${at.getFullYear()}年${at.getMonth() + 1}月${at.getDate()}日`,
   clock: (at) => `${pad(at.getHours())}:${pad(at.getMinutes())}`,
+  write: "写一条",
+  newJournal: "新手记",
+  writeTitle: (journal) => `在「${journal}」里写一条`,
+  newJournalTitle: "开一份新手记",
+  journalName: "主题名",
+  journalNameHint: "用连字符连起来的小写英文词，给一个东西起名，不下结论，比如 webrtc-weak-network",
+  description: "它记的是什么",
+  descriptionHint: "一两句话说它的范围，而不是它记出了什么",
+  entry: "这一条",
+  entryHint: "写下就不能再改；写错了，再补一条更正。你写的就是原话。",
+  save: "写下",
+  saving: "正在写…",
+  close: "关闭",
+  failed: (why) => `没能写下：${why}`,
 };
 
 export const enProject: ProjectWords = {
@@ -90,4 +118,18 @@ export const enProject: ProjectWords = {
   edited: (by, day) => `edited by ${by}, ${day}`,
   day: (at) => at.toLocaleDateString("en", { year: "numeric", month: "long", day: "numeric" }),
   clock: (at) => `${pad(at.getHours())}:${pad(at.getMinutes())}`,
+  write: "Write an entry",
+  newJournal: "New journal",
+  writeTitle: (journal) => `An entry in “${journal}”`,
+  newJournalTitle: "Start a journal",
+  journalName: "Subject",
+  journalNameHint: "lowercase English words joined by hyphens, naming a thing, never a conclusion, such as webrtc-weak-network",
+  description: "What it covers",
+  descriptionHint: "a sentence or two on its scope, not on what it found",
+  entry: "The entry",
+  entryHint: "Once written it cannot be changed; to correct it, add another. What you write is quoted as your own words.",
+  save: "Write it",
+  saving: "Writing…",
+  close: "Close",
+  failed: (why) => `Could not write it: ${why}`,
 };
