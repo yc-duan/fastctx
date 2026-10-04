@@ -234,17 +234,23 @@ impl MachinesPage {
                 }
                 rows.push(Row::new(Line::from(left)).right(quiet(ctx, since)).item(item));
                 let second = match (&node.revoked, &node.facts) {
-                    (Some(revoked), _) => Span::styled(
+                    (Some(revoked), _) => Some(Span::styled(
                         words.revoked(revoked.by.as_str(), &crate::words::clock(revoked.at, ctx.now), &revoked.reason),
                         look.text(Role::Wrong),
-                    ),
-                    (None, Ok(facts)) => Span::styled(
+                    )),
+                    (None, Ok(facts)) => Some(Span::styled(
                         format!("{} {}  ·  home {}  ·  fastctx {}", facts.os, facts.arch, facts.home, facts.version),
                         look.text(Role::Faint),
-                    ),
-                    (None, Err(why)) => Span::styled(words.not_asked(&text::first_line(why)), look.text(Role::Caution)),
+                    )),
+                    // The first row already says it is offline, and since when.
+                    (None, Err(_)) if node.online == Some(false) => None,
+                    (None, Err(why)) => {
+                        Some(Span::styled(words.not_asked(&text::first_line(why)), look.text(Role::Caution)))
+                    }
                 };
-                rows.push(Row::new(Line::from(vec![Span::raw("   "), second])).item(item));
+                if let Some(second) = second {
+                    rows.push(Row::new(Line::from(vec![Span::raw("   "), second])).item(item));
+                }
                 rows.push(Row::blank());
             }
         }
