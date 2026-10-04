@@ -87,9 +87,10 @@ pub fn rows(buffer: &mut Buffer, area: Rect, rows: &[Row], top: usize, selected:
         let raised = row.item.is_some() && row.item == selected;
         if raised {
             // The band reaches into the gutter, so the mark sits on it.
-            let band = Rect { x: area.x.saturating_sub(2), y, width: area.width + 3, height: 1 };
-            let band = band.intersection(buffer.area);
-            buffer.set_style(band, look.raised(Role::Text));
+            if look.color(Role::Raised).is_some() {
+                let band = Rect { x: area.x.saturating_sub(2), y, width: area.width + 3, height: 1 };
+                buffer.set_style(band.intersection(buffer.area), look.raised(Role::Text));
+            }
             let first = rows[..top + offset].last().is_none_or(|before| before.item != row.item);
             if first {
                 buffer.set_string(area.x.saturating_sub(2), y, MARK, look.raised(Role::Accent));
@@ -206,6 +207,14 @@ pub fn header(buffer: &mut Buffer, area: Rect, look: &Look, crumbs: &[String], r
 /// The keys of a page at its bottom: each key a little brighter than what
 /// it does.
 pub fn footer(buffer: &mut Buffer, area: Rect, look: &Look, keys: &[(&str, &str)]) {
+    let mut keys = keys.to_vec();
+    let width = |keys: &[(&str, &str)]| -> usize {
+        keys.iter().map(|(key, does)| text::width(key) + 1 + text::width(does)).sum::<usize>()
+            + 4 * keys.len().saturating_sub(1)
+    };
+    while keys.len() > 2 && width(&keys) > area.width as usize {
+        keys.remove(keys.len() - 2);
+    }
     let mut spans = Vec::new();
     for (index, (key, does)) in keys.iter().enumerate() {
         if index > 0 {

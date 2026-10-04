@@ -21,6 +21,7 @@ fastctx-hub = { path = "../fastctx-hub" }
 fastctx-node = { path = "../fastctx-node" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-serve = { path = "../fastctx-serve" }
+fastctx-tui = { path = "../fastctx-tui" }
 fastctx-types = { path = "../fastctx-types" }
 jiff.workspace = true
 serde_json.workspace = true

@@ -46,6 +46,38 @@ fn system_locale() -> Option<String> {
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty() && value != "C" && value != "POSIX"))
 }
 
+/// The fields of the TUI's forms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldName {
+    Agent,
+    Machine,
+    Project,
+    FirstWords,
+    Slug,
+    Name,
+    What,
+    Machines,
+    Places,
+    Canon,
+    InviteName,
+    Hours,
+    Code,
+    JoinName,
+    Reason,
+}
+
+/// What finishing a form does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Finish {
+    Open,
+    Create,
+    Save,
+    Invite,
+    Join,
+    Revoke,
+    Leave,
+}
+
 /// The words of one language.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Words {
@@ -351,7 +383,573 @@ impl Words {
     }
 
     pub fn key_all(&self) -> &'static str {
-        self.pick("连睡着的一起看", "show sleeping too")
+        self.pick("看睡着的", "show asleep")
+    }
+
+    // Punctuation that differs between the languages.
+
+    /// What comes between a thing and what is said of it: "：" or ": ".
+    pub fn colon(&self) -> &'static str {
+        self.pick("：", ": ")
+    }
+
+    /// A remark in brackets after something.
+    pub fn aside(&self, text: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("（{text}）"),
+            Lang::En => format!(" ({text})"),
+        }
+    }
+
+    /// A task label as a colleague was given it.
+    pub fn quoted(&self, text: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("「{text}」"),
+            Lang::En => format!(" “{text}”"),
+        }
+    }
+
+    // More of who is who.
+
+    pub fn here_for(&self, how_long: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("已在 {how_long}"),
+            Lang::En => format!("here {how_long}"),
+        }
+    }
+
+    pub fn nobody_here(&self) -> String {
+        self.pick("没有人在", "nobody here").to_string()
+    }
+
+    pub fn no_agents_here(&self) -> &'static str {
+        self.pick(
+            "现在没有智能体在这个项目里。按 n 请一位进来。",
+            "No agents in this project now. Press n to bring one in.",
+        )
+    }
+
+    pub fn no_ledger_here(&self, machine: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("{machine} 上没有它的账本"),
+            Lang::En => format!("{machine} keeps no ledger of it"),
+        }
+    }
+
+    pub fn heard(&self) -> &'static str {
+        self.pick("送进来的话", "Words it heard")
+    }
+
+    pub fn online_since(&self, since: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("{since} 起在线"),
+            Lang::En => format!("online since {since}"),
+        }
+    }
+
+    pub fn revoked(&self, by: &str, at: &str, reason: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("已被 {by} 于 {at} 吊销：{reason}"),
+            Lang::En => format!("revoked by {by} {at}: {reason}"),
+        }
+    }
+
+    pub fn not_asked(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("没问到：{why}"),
+            Lang::En => format!("not asked: {why}"),
+        }
+    }
+
+    pub fn this_machine_link(&self) -> &'static str {
+        self.pick("这台机器", "This machine")
+    }
+
+    pub fn link_alone(&self) -> String {
+        self.pick(
+            "独自一台：还没有和别的机器组成世界。在别的机器上按 i 邀请它，或者在这里按 j 用邀请码加入一个世界。",
+            "On its own: it is in no World with other machines yet. Invite it from another machine with i, or join a World here with j and a code.",
+        )
+        .to_string()
+    }
+
+    pub fn link_connecting(&self, since: &str, error: Option<&str>) -> String {
+        match (self.lang, error) {
+            (Lang::Zh, Some(error)) => format!("{since} 起在连中枢，还没连上：{error}"),
+            (Lang::Zh, None) => format!("{since} 起在连中枢"),
+            (Lang::En, Some(error)) => format!("connecting to the hub since {since}, not yet: {error}"),
+            (Lang::En, None) => format!("connecting to the hub since {since}"),
+        }
+    }
+
+    pub fn link_online(&self, hub: &str, route: &str, since: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("{since} 起经 {route} 连着中枢 {hub}"),
+            Lang::En => format!("connected to the hub at {hub} through {route} since {since}"),
+        }
+    }
+
+    pub fn link_stopped(&self, reason: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("中枢不再接受这台机器：{reason}"),
+            Lang::En => format!("the hub no longer takes this machine: {reason}"),
+        }
+    }
+
+    // The conversation.
+
+    pub fn say_to(&self, agent: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("对 {agent} 说…"),
+            Lang::En => format!("Say something to {agent}…"),
+        }
+    }
+
+    pub fn sending(&self) -> &'static str {
+        self.pick("送出中…", "sending…")
+    }
+
+    pub fn not_sent(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("没送出去：{why}"),
+            Lang::En => format!("not sent: {why}"),
+        }
+    }
+
+    pub fn joined_turn(&self) -> &'static str {
+        self.pick("并进了它正在跑的这一轮", "went into the turn it is running")
+    }
+
+    pub fn handed(&self) -> &'static str {
+        self.pick("已交给它的会话", "handed to its session")
+    }
+
+    pub fn sent_to(&self, machine: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("已寄往 {machine}，等那台机器收到再送进去"),
+            Lang::En => format!("sent to {machine}; it goes in once that machine has it"),
+        }
+    }
+
+    pub fn waiting_because(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("在等它来取：{why}"),
+            Lang::En => format!("waiting for it: {why}"),
+        }
+    }
+
+    pub fn waiting_for_call(&self) -> &'static str {
+        self.pick("在等它下一次用世界的工具时带走", "waiting for it to take them with its next call of a World tool")
+    }
+
+    pub fn no_turn_end_known(&self) -> &'static str {
+        self.pick("；它的宿主不告诉世界一轮何时结束", "; its host does not tell the World when its turns end")
+    }
+
+    pub fn turn_completed(&self, took: &str) -> String {
+        match (self.lang, took.is_empty()) {
+            (Lang::Zh, true) => "这一轮完成".to_string(),
+            (Lang::Zh, false) => format!("这一轮完成 · {took}"),
+            (Lang::En, true) => "turn completed".to_string(),
+            (Lang::En, false) => format!("turn completed · {took}"),
+        }
+    }
+
+    pub fn turn_failed(&self, reason: Option<&str>) -> String {
+        match (self.lang, reason) {
+            (Lang::Zh, Some(reason)) => format!("这一轮失败：{reason}"),
+            (Lang::Zh, None) => "这一轮失败".to_string(),
+            (Lang::En, Some(reason)) => format!("turn failed: {reason}"),
+            (Lang::En, None) => "turn failed".to_string(),
+        }
+    }
+
+    pub fn turn_interrupted(&self, reason: Option<&str>) -> String {
+        match (self.lang, reason) {
+            (Lang::Zh, Some(reason)) => format!("这一轮被打断：{reason}"),
+            (Lang::Zh, None) => "这一轮被打断".to_string(),
+            (Lang::En, Some(reason)) => format!("turn interrupted: {reason}"),
+            (Lang::En, None) => "turn interrupted".to_string(),
+        }
+    }
+
+    pub fn turn_ended_as(&self, how: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("这一轮结束：{how}"),
+            Lang::En => format!("turn ended: {how}"),
+        }
+    }
+
+    pub fn stopping(&self) -> &'static str {
+        self.pick("已请它停下这一轮", "asked it to stop its turn")
+    }
+
+    pub fn no_turn_running(&self) -> &'static str {
+        self.pick("它现在没有在跑的一轮", "it is running no turn now")
+    }
+
+    pub fn not_stopped(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("没能停下：{why}"),
+            Lang::En => format!("could not stop it: {why}"),
+        }
+    }
+
+    pub fn opening_session(&self) -> &'static str {
+        self.pick("正在接上这段会话…", "opening the session…")
+    }
+
+    pub fn nothing_said_yet(&self) -> &'static str {
+        self.pick("这段会话里还没有能看到的内容。", "Nothing in this session can be shown yet.")
+    }
+
+    pub fn more_below(&self) -> &'static str {
+        self.pick("下面还有 ↓", "more below ↓")
+    }
+
+    pub fn pasting(&self, count: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("正在接收粘贴的内容（{count} 字）…"),
+            Lang::En => format!("receiving a paste ({count} characters)…"),
+        }
+    }
+
+    pub fn watch_broke(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("看着它的连接断了：{why}"),
+            Lang::En => format!("the watch broke: {why}"),
+        }
+    }
+
+    pub fn watch_ended(&self) -> &'static str {
+        self.pick("看着它的连接结束了", "the watch ended")
+    }
+
+    // Journals.
+
+    pub fn described(&self, by: &str, at: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("这段描述由 {by} 于 {at} 写下"),
+            Lang::En => format!("described by {by} {at}"),
+        }
+    }
+
+    pub fn earlier_entries(&self, count: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("更早还有 {count} 条，按 [ 往前翻"),
+            Lang::En => format!("{count} earlier entries; press [ to read back"),
+        }
+    }
+
+    pub fn entries_shown(&self, first: usize, last: usize, total: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("第 {first}–{last} 条，共 {total} 条"),
+            Lang::En => format!("entries {first}–{last} of {total}"),
+        }
+    }
+
+    pub fn reading(&self) -> &'static str {
+        self.pick("正在读…", "reading…")
+    }
+
+    pub fn self_reported(&self, model: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("{model}（自报）"),
+            Lang::En => format!("{model} (self-reported)"),
+        }
+    }
+
+    pub fn answers(&self, ids: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("回应 {ids}"),
+            Lang::En => format!("answers {ids}"),
+        }
+    }
+
+    pub fn mentioned_by(&self, ids: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("后来提到它的：{ids}"),
+            Lang::En => format!("mentioned later by {ids}"),
+        }
+    }
+
+    pub fn attachments(&self, listed: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("附件：{listed}"),
+            Lang::En => format!("Attachments: {listed}"),
+        }
+    }
+
+    /// One attachment: its name, kind and size, and the machine keeping it
+    /// when it is too large for the ledger.
+    pub fn attachment(&self, name: &str, kind: &str, size: &str, kept_on: Option<&str>) -> String {
+        match (self.lang, kept_on) {
+            (Lang::Zh, Some(machine)) => format!("{name}（{kind}，{size}，留在 {machine} 上）"),
+            (Lang::Zh, None) => format!("{name}（{kind}，{size}）"),
+            (Lang::En, Some(machine)) => format!("{name} ({kind}, {size}, kept on {machine})"),
+            (Lang::En, None) => format!("{name} ({kind}, {size})"),
+        }
+    }
+
+    pub fn kind_text(&self) -> &'static str {
+        self.pick("文本", "text")
+    }
+
+    pub fn kind_image(&self) -> &'static str {
+        self.pick("图片", "image")
+    }
+
+    pub fn kind_binary(&self) -> &'static str {
+        self.pick("二进制", "binary")
+    }
+
+    // Forms.
+
+    pub fn no_project(&self) -> &'static str {
+        self.pick("不进项目", "no project")
+    }
+
+    pub fn form_open_agent(&self) -> &'static str {
+        self.pick("请一位智能体", "New agent")
+    }
+
+    pub fn form_new_project(&self) -> &'static str {
+        self.pick("开一个项目", "New project")
+    }
+
+    pub fn form_edit_project(&self, town: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("改 {town} 的立项属性"),
+            Lang::En => format!("Edit the record of {town}"),
+        }
+    }
+
+    pub fn form_invite(&self) -> &'static str {
+        self.pick("邀请一台机器", "Invite a machine")
+    }
+
+    pub fn form_join(&self) -> &'static str {
+        self.pick("加入一个世界", "Join a World")
+    }
+
+    pub fn form_revoke(&self, name: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("吊销 {name}"),
+            Lang::En => format!("Revoke {name}"),
+        }
+    }
+
+    pub fn form_leave(&self) -> &'static str {
+        self.pick("离开这个世界", "Leave this World")
+    }
+
+    pub fn revoke_warning(&self, name: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!(
+                "吊销之后，世界里的每台机器都不再认 {name} 的钥匙：它说的话不再被执行，它也连不上中枢。这用在机器丢了或者不再信任它的时候。"
+            ),
+            Lang::En => format!(
+                "Once revoked, no machine of the World trusts {name}'s key: nothing it says is carried out, and it cannot reach the hub. This is for a machine that is lost or no longer trusted."
+            ),
+        }
+    }
+
+    pub fn leave_warning(&self) -> &'static str {
+        self.pick(
+            "离开之后，这台机器又是独自一台，别的机器上的智能体、项目与手记从这里都看不到了；它自己的项目留在它身上。",
+            "Once it leaves, this machine is on its own again: the agents, projects and journals of other machines are out of sight from here; its own projects stay with it.",
+        )
+    }
+
+    pub fn enter_to_confirm(&self) -> &'static str {
+        self.pick("按 Enter 确认，Esc 取消。", "Press Enter to confirm, Esc to cancel.")
+    }
+
+    pub fn invite_how(&self) -> &'static str {
+        self.pick(
+            "在要加入的机器上运行 fastctx join <这串码>，或者在那台机器的 TUI 里按 m、再按 j。这串码只能用一次。",
+            "On the machine to invite, run fastctx join <this code>, or press m then j in its TUI. The code works once.",
+        )
+    }
+
+    pub fn invite_until(&self, until: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("有效到 {until}"),
+            Lang::En => format!("valid until {until}"),
+        }
+    }
+
+    pub fn joined(&self, world: &str, name: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("已加入世界 {world}，这台机器在里面叫 {name}。"),
+            Lang::En => format!("Joined the World {world}; this machine is {name} in it."),
+        }
+    }
+
+    pub fn working(&self) -> &'static str {
+        self.pick("正在办…", "working…")
+    }
+
+    pub fn say_something_first(&self) -> &'static str {
+        self.pick("先写下要对它说的第一句话", "write the first words to say to it")
+    }
+
+    pub fn hours_wrong(&self) -> &'static str {
+        self.pick("有效时长要写成小时数，比如 24", "write how long it stays valid in hours, such as 24")
+    }
+
+    pub fn code_needed(&self) -> &'static str {
+        self.pick("要先填邀请码", "the code is needed")
+    }
+
+    pub fn name_and_what_needed(&self) -> &'static str {
+        self.pick("名字和「它是什么」都要写", "a name and what it is are both needed")
+    }
+
+    pub fn place_wrong(&self, line: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("这一行要写成「是什么 | 机器 | 路径」：{line}"),
+            Lang::En => format!("write this line as \"what | machine | path\": {line}"),
+        }
+    }
+
+    pub fn canon_wrong(&self, canon: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("定论在哪要写成「机器 | 路径」：{canon}"),
+            Lang::En => format!("write where the decisions are as \"machine | path\": {canon}"),
+        }
+    }
+
+    pub fn field(&self, field: FieldName) -> &'static str {
+        match field {
+            FieldName::Agent => self.pick("哪一家", "Agent"),
+            FieldName::Machine => self.pick("在哪台机器", "Machine"),
+            FieldName::Project => self.pick("进哪个项目", "Project"),
+            FieldName::FirstWords => self.pick("第一句话", "First words"),
+            FieldName::Slug => self.pick("简称", "Short name"),
+            FieldName::Name => self.pick("名字", "Name"),
+            FieldName::What => self.pick("它是什么", "What it is"),
+            FieldName::Machines => self.pick("机器", "Machines"),
+            FieldName::Places => self.pick("在哪里能找到什么", "Where things are"),
+            FieldName::Canon => self.pick("定论在哪", "Decisions"),
+            FieldName::InviteName => self.pick("它叫什么", "Its name"),
+            FieldName::Hours => self.pick("有效几小时", "Valid for hours"),
+            FieldName::Code => self.pick("邀请码", "Code"),
+            FieldName::JoinName => self.pick("这台机器叫什么", "This machine's name"),
+            FieldName::Reason => self.pick("为什么", "Why"),
+        }
+    }
+
+    pub fn hint(&self, field: FieldName) -> Option<&'static str> {
+        Some(match field {
+            FieldName::Machine => self.pick("只列在线的机器", "only machines online"),
+            FieldName::Project => self.pick("只列横跨那台机器的项目", "only projects that span that machine"),
+            FieldName::FirstWords => self.pick("Alt+Enter 换行", "Alt+Enter for a new line"),
+            FieldName::Slug => self.pick(
+                "小写字母、数字与连字符，比如 mark50；命令里和目录里都用它",
+                "lowercase letters, digits and hyphens, such as mark50; commands and directories use it",
+            ),
+            FieldName::What => self.pick("一两句话：这个项目为了什么", "a sentence or two: what the project is for"),
+            FieldName::Machines => self.pick("← → 移动，Space 勾选", "← → to move, Space to tick"),
+            FieldName::Places => {
+                self.pick("一行一样东西：是什么 | 机器 | 路径", "one thing a line: what | machine | path")
+            }
+            FieldName::Canon => self.pick("机器 | 路径；没有就空着", "machine | path; empty when there are none"),
+            FieldName::InviteName => self.pick("可以空着，由它自己起", "may be empty: it names itself"),
+            FieldName::JoinName => self.pick("可以空着，用这台机器的主机名", "may be empty: the host name is used"),
+            _ => return None,
+        })
+    }
+
+    // More keys.
+
+    pub fn key_present_only(&self) -> &'static str {
+        self.pick("只看在场的", "present only")
+    }
+
+    pub fn key_read(&self) -> &'static str {
+        self.pick("阅读", "read")
+    }
+
+    pub fn key_new_agent_here(&self) -> &'static str {
+        self.pick("请一位智能体", "new agent")
+    }
+
+    pub fn key_edit_project(&self) -> &'static str {
+        self.pick("改立项属性", "edit record")
+    }
+
+    pub fn key_send(&self) -> &'static str {
+        self.pick("发送", "send")
+    }
+
+    pub fn key_newline(&self) -> &'static str {
+        self.pick("换行", "new line")
+    }
+
+    pub fn key_scroll(&self) -> &'static str {
+        self.pick("翻看", "scroll")
+    }
+
+    pub fn key_stop(&self) -> &'static str {
+        self.pick("停下这一轮", "stop the turn")
+    }
+
+    pub fn key_watch_again(&self) -> &'static str {
+        self.pick("重新接上", "watch again")
+    }
+
+    pub fn key_earlier(&self) -> &'static str {
+        self.pick("更早的", "earlier")
+    }
+
+    pub fn key_invite(&self) -> &'static str {
+        self.pick("邀请一台机器", "invite")
+    }
+
+    pub fn key_join(&self) -> &'static str {
+        self.pick("加入一个世界", "join")
+    }
+
+    pub fn key_revoke(&self) -> &'static str {
+        self.pick("吊销选中的", "revoke")
+    }
+
+    pub fn key_leave(&self) -> &'static str {
+        self.pick("离开世界", "leave")
+    }
+
+    pub fn key_confirm(&self) -> &'static str {
+        self.pick("确认", "confirm")
+    }
+
+    pub fn key_cancel(&self) -> &'static str {
+        self.pick("取消", "cancel")
+    }
+
+    pub fn key_next_field(&self) -> &'static str {
+        self.pick("下一项", "next")
+    }
+
+    pub fn key_choose(&self) -> &'static str {
+        self.pick("选择", "choose")
+    }
+
+    pub fn key_tick(&self) -> &'static str {
+        self.pick("勾选", "tick")
+    }
+
+    /// What Enter does on a form's last field.
+    pub fn key_finish(&self, finish: &Finish) -> &'static str {
+        match finish {
+            Finish::Open => self.pick("请它进来", "bring it in"),
+            Finish::Create => self.pick("开项目", "open it"),
+            Finish::Save => self.pick("写下新的一版", "write the new version"),
+            Finish::Invite => self.pick("生成邀请码", "make the code"),
+            Finish::Join => self.pick("加入", "join"),
+            Finish::Revoke => self.pick("吊销", "revoke"),
+            Finish::Leave => self.pick("离开", "leave"),
+        }
     }
 
     // Time.

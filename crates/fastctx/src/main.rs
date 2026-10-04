@@ -18,12 +18,16 @@ mod world;
 #[derive(Parser)]
 #[command(name = "fastctx", version, about = "One world, many machines.")]
 struct Cli {
+    /// Without a command, in a terminal, the TUI opens.
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Open the World in this terminal: projects, agents, machines, and a
+    /// conversation with any agent on any machine.
+    Ui,
     /// Run this machine's node in the foreground.
     Node,
     /// Serve the World's tools to an agent session over MCP's stdio.
@@ -70,7 +74,18 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let result = match cli.command {
+    let Some(command) = cli.command else {
+        // The TUI needs a terminal on both sides; anything else asked for
+        // help, as a command without arguments does.
+        use std::io::IsTerminal as _;
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            return finish(fastctx_tui::run().map(|()| ExitCode::SUCCESS));
+        }
+        let _ = <Cli as clap::CommandFactory>::command().print_help();
+        return ExitCode::from(2);
+    };
+    let result = match command {
+        Command::Ui => fastctx_tui::run(),
         Command::Node => node(),
         Command::Serve { writer } => serve(&writer),
         Command::View(args) => view::run(args),
