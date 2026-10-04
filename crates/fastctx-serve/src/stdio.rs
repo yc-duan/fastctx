@@ -51,7 +51,7 @@ pub struct Output {
 struct Line {
     text: String,
     receipt: Option<oneshot::Sender<Result<(), String>>>,
-    answer: Option<crate::session::Answer>,
+    answer: Option<crate::answer::Answer>,
 }
 
 impl Output {
@@ -88,7 +88,7 @@ impl Output {
 
     // The queue owns the collection until the write finishes. Cancelling
     // the tool task cannot release words while their response still writes.
-    pub async fn send_answer(&self, message: &serde_json::Value, answer: crate::session::Answer) -> Result<(), String> {
+    pub async fn send_answer(&self, message: &serde_json::Value, answer: crate::answer::Answer) -> Result<(), String> {
         let (written, receipt) = oneshot::channel();
         self.sender
             .send(Line { text: message.to_string(), receipt: Some(written), answer: Some(answer) })

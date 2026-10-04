@@ -6,6 +6,7 @@
 //! calls in flight fail and say that whether they took effect is unknown;
 //! the session goes on and the next call reaches the new node.
 
+mod answer;
 mod session;
 mod stdio;
 mod tools;
@@ -78,28 +79,31 @@ pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
                 let handle = calls.spawn(async move {
                     let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
                     let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-                    match name {
-                        "run" => {
-                            let answer = session.run(&arguments, params.get("_meta")).await;
-                            let response = response(&id, tools::result(&answer.content, answer.is_error));
-                            let _ = output.send_answer(&response, answer).await;
-                        }
-                        name if writer.lists(name) => {
-                            let answer = session.write(name, &arguments, params.get("_meta")).await;
-                            let response = response(&id, tools::result(&answer.content, answer.is_error));
-                            let _ = output.send_answer(&response, answer).await;
-                        }
-                        "ask_colleague" if !session.colleague => {
-                            let answer = session.ask(&arguments, params.get("_meta")).await;
-                            let response = response(&id, tools::result(&answer.content, answer.is_error));
-                            let _ = output.send_answer(&response, answer).await;
-                        }
+                    let mut answer = match name {
+                        "run" => session.run(&arguments, params.get("_meta")).await,
+                        name if writer.lists(name) => session.write(name, &arguments, params.get("_meta")).await,
+                        "ask_colleague" if !session.colleague => session.ask(&arguments, params.get("_meta")).await,
                         "message_colleague" if !session.colleague => {
-                            let answer = session.message(&arguments, params.get("_meta")).await;
+                            session.message(&arguments, params.get("_meta")).await
+                        }
+                        _ => {
+                            output.send(&error_response(&id, -32602, "unknown tool"));
+                            return id.to_string();
+                        }
+                    };
+                    match session.bound(&mut answer) {
+                        Ok(()) => {
                             let response = response(&id, tools::result(&answer.content, answer.is_error));
                             let _ = output.send_answer(&response, answer).await;
                         }
-                        _ => output.send(&error_response(&id, -32602, &format!("unknown tool: {name}"))),
+                        Err(error) => {
+                            eprintln!("fastctx serve: could not preserve the full answer: {error}");
+                            output.send(&error_response(
+                                &id,
+                                -32603,
+                                "could not preserve the full answer; see the server's diagnostics",
+                            ));
+                        }
                     }
                     id.to_string()
                 });

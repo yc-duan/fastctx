@@ -18,8 +18,8 @@ use fastctx_types::run::{LegacyLines, OutputPiece, OutputWindow};
 
 use super::terminal::{Decoding, Line, Lines, Part};
 
-/// Characters one answer may hold: 150,000, with each image counted as
-/// 5,200 (`world-view.md`).
+/// Characters the complete answer may hold, including head notes and
+/// delivered words, with each image counted as 5,200 (`world-view.md`).
 pub const BUDGET: usize = 150_000;
 pub const IMAGE_COST: usize = 5_200;
 

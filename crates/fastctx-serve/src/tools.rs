@@ -33,6 +33,11 @@ pub fn definitions(writer: Writer, colleague: bool) -> Value {
         tools.push(ask_colleague_definition());
         tools.push(message_colleague_definition());
     }
+    for tool in &mut tools {
+        // Claude Code counts UTF-16 code units here. One Unicode scalar
+        // uses at most two, including every supplementary-plane character.
+        tool["_meta"] = json!({ "anthropic/maxResultSizeChars": 2 * window::BUDGET });
+    }
     Value::Array(tools)
 }
 
@@ -67,8 +72,7 @@ fn run_definition() -> Value {
             "destructiveHint": true,
             "idempotentHint": false,
             "openWorldHint": true
-        },
-        "_meta": { "anthropic/maxResultSizeChars": window::BUDGET }
+        }
     })
 }
 
