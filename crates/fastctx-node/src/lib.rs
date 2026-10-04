@@ -9,6 +9,7 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+mod claude;
 mod codex;
 mod colleagues;
 mod copy;
@@ -52,6 +53,8 @@ pub(crate) struct Node {
     /// World started.
     codex: Arc<CodexHost>,
     unclaimed: codex::Unclaimed,
+    /// Claude sessions, as the World's plugin reports them.
+    claude: claude::Claude,
     watchers: watch::Watchers,
     log: Arc<log::Log>,
     /// Present while the machine is a member of a World with others.
@@ -131,6 +134,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         residents,
         codex,
         unclaimed: codex::Unclaimed::default(),
+        claude: claude::Claude::default(),
         watchers: watch::Watchers::default(),
         log,
         link: RwLock::new(None),
@@ -141,6 +145,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     }
     codex::adopt(&node);
     codex::listen(node.clone(), codex_events);
+    claude::start(&node).context("writing the World's Claude Code plugin")?;
 
     // What a node that stopped left owed, now that letters can be sent.
     turns::recover(&node).await;

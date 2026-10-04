@@ -30,6 +30,11 @@ pub struct Hints {
     /// the node broke and it arrives again, as after the node restarted.
     #[serde(default)]
     pub was: Option<ResidentId>,
+    /// The address of a Claude session's inbox, which its MCP servers
+    /// inherit and the World's mod reports too: what pairs the two. The
+    /// address only; the token beside it is never read.
+    #[serde(default)]
+    pub inbox: Option<String>,
 }
 
 /// A resident's `about` record: who it is and how it came to be, written
@@ -113,6 +118,9 @@ pub enum Landed {
     /// It lives on another machine: they went there as a letter, which that
     /// machine hands over when it has it.
     Sent,
+    /// Handed to the World's plugin in its session, which brings them in at
+    /// once when it is idle and at its next tool boundary when it is busy.
+    Handed,
 }
 
 /// What a resident is doing now, and what that commits the World to: its

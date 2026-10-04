@@ -1,0 +1,235 @@
+// The World's mod for Claude Code.
+//
+// It tells the World the session exists and what it does, turn by turn and
+// tool by tool, and it hands the session what the World has for it: in a
+// new turn at once when the session is idle, beside the next tool result
+// when it is busy, and at the end of the turn for whatever is still held
+// then.
+//
+// It talks to the fastctx node only through files in the session's own
+// directory, `<world>/claude/<session id>/`:
+//   session.json       written when the session starts
+//   events/<n>.json    one file per event, and
+//   events/<n>.done    written after it, once it is whole
+//   inbox/<id>.json    what the node has for the session; read, never changed
+//   receipts/<id>      written once something was handed to the model
+// It uses only on(), $.session.*, $.env.get, $.fs.read/write/list,
+// $.clock.every and $.prompt.submit. Of the session's inbox address it
+// reads the address alone, never the token beside it.
+
+const WORLD = __FASTCTX_WORLD__
+// How often the inbox is looked at: words for the session wait at most this
+// long before the mod sees them, which is short beside a tool call.
+const LOOK_MS = 2000
+
+let dir = null
+let busy = false
+let turn = null
+let sequence = 0
+// Inbox files handed over or held in this load of the mod.
+const handled = new Set()
+// Inbox files already reported as failing, so each is reported once.
+const failing = new Set()
+// What waits for the next tool boundary or the end of the turn.
+const held = []
+// Receipts not written yet; written at the next look.
+const owed = []
+
+function stamp() {
+  return new Date().toISOString()
+}
+
+// Events are written one at a time, each followed by its marker, so only the
+// newest can be half written; the node waits for an unmarked event only
+// while it is the newest. An event that cannot be written has no other way
+// to be reported; the next one tries again.
+let writing = Promise.resolve()
+
+function event($, kind, fields) {
+  if (!dir) return writing
+  sequence += 1
+  const name = String(Date.now()).padStart(15, '0') + '-' + String(sequence).padStart(6, '0')
+  const body = JSON.stringify({ kind, at: stamp(), ...fields })
+  writing = writing.then(async () => {
+    try {
+      await $.fs.write(dir + '/events/' + name + '.json', body)
+      await $.fs.write(dir + '/events/' + name + '.done', '')
+    } catch (error) {}
+  })
+  return writing
+}
+
+// A receipt tells the node the model has it. One that cannot be written is
+// written at the next look; meanwhile it is not handed over again.
+async function receipt($, delivery, how) {
+  try {
+    await $.fs.write(dir + '/receipts/' + delivery.id, JSON.stringify({ at: stamp(), how }))
+  } catch (error) {
+    owed.push([delivery, how])
+  }
+}
+
+async function settle($) {
+  for (const [delivery, how] of owed.splice(0, owed.length)) await receipt($, delivery, how)
+}
+
+// What the model reads when the World speaks on its own account. The user's
+// own words go in as they are, as the user's.
+function framed(delivery) {
+  return 'The fastctx plugin delivers a message from the World.\n\n' + delivery.text
+}
+
+// Hands everything held to the model in one new turn; on failure it stays
+// held.
+async function flush($, how) {
+  if (held.length === 0) return
+  const deliveries = held.slice()
+  try {
+    await $.prompt.submit({ text: deliveries.map(framed).join('\n\n') })
+  } catch (error) {
+    await trouble($, deliveries[0].id, 'it could not be handed over: ' + error)
+    return
+  }
+  held.splice(0, deliveries.length)
+  for (const delivery of deliveries) await receipt($, delivery, how)
+}
+
+// The names in one of the session's directories, or null when they cannot
+// be listed.
+async function listing($, sub) {
+  try {
+    return (await $.fs.list(dir + '/' + sub)).map((entry) => entry.name)
+  } catch (error) {
+    return null
+  }
+}
+
+// Tells the World, once, that an inbox file could not be handed over yet;
+// it is tried again at every look until it goes through.
+async function trouble($, name, text) {
+  if (failing.has(name)) return
+  failing.add(name)
+  await event($, 'trouble', { file: name, text })
+}
+
+async function look($) {
+  await settle($)
+  // What has a receipt was handed over already, perhaps before this mod
+  // loaded again. Without knowing which, anything handed over could repeat.
+  const receipts = await listing($, 'receipts')
+  if (receipts === null) return
+  if (!busy) await flush($, 'submitted')
+  const receipted = new Set(receipts)
+  const fresh = ((await listing($, 'inbox')) || [])
+    .filter((name) => name.endsWith('.json') && !handled.has(name) && !receipted.has(name.slice(0, -5)))
+    .sort()
+  for (const name of fresh) {
+    let delivery = null
+    try {
+      delivery = JSON.parse(await $.fs.read(dir + '/inbox/' + name))
+    } catch (error) {
+      await trouble($, name, 'it could not be read: ' + error)
+      continue
+    }
+    if (delivery.as_user !== true && busy) {
+      held.push(delivery)
+      handled.add(name)
+      continue
+    }
+    try {
+      // The user's own words, typed on one of the user's machines: only these
+      // go in as the user.
+      await $.prompt.submit(delivery.as_user === true ? { text: delivery.text, asUser: true } : { text: framed(delivery) })
+    } catch (error) {
+      await trouble($, name, 'it could not be handed over: ' + error)
+      continue
+    }
+    handled.add(name)
+    failing.delete(name)
+    await receipt($, delivery, delivery.as_user === true ? 'submitted as the user' : 'submitted')
+  }
+}
+
+// One line of what a tool was used on.
+function detail(e) {
+  const value = e.command || e.file_path || e.path || e.pattern || e.url || ''
+  const first = String(value).trim().split('\n')[0]
+  return String(value).trim().includes('\n') ? first + ' …' : first
+}
+
+export function register(on) {
+  on('session.start', async ($, e, next) => {
+    const id = await $.session.id()
+    dir = WORLD + '/claude/' + id
+    const registration = { session: id, at: stamp() }
+    const ask = async (name, get) => {
+      try {
+        registration[name] = await get()
+      } catch (error) {
+        registration[name] = null
+      }
+    }
+    await ask('resident', () => $.env.get('FASTCTX_RESIDENT'))
+    // Each session has its own inbox address, which its MCP servers inherit:
+    // it pairs this registration with the session's connection to the World.
+    await ask('inbox_address', () => $.env.get('CLAUDE_CODE_MESSAGING_SOCKET'))
+    await ask('entrypoint', () => $.env.get('CLAUDE_CODE_ENTRYPOINT'))
+    await ask('cwd', () => $.session.cwd())
+    await ask('model', () => $.session.model())
+    await ask('surfaces', () => $.session.surfaces())
+    await ask('version', () => $.session.version())
+    // The receipts directory exists from the start, so failing to list it
+    // means a failure, never "nothing handed over yet".
+    await $.fs.write(dir + '/receipts/.created', '')
+    await $.fs.write(dir + '/session.json', JSON.stringify(registration))
+    // What already waits when the session starts again is handed over, not
+    // skipped: a closed session's answers are what it should see on return.
+    $.clock.every(LOOK_MS, () => look($))
+    return next(e)
+  })
+
+  on('turn.start', async ($, e, next) => {
+    busy = true
+    turn = e.turnId || stamp()
+    await event($, 'turn_start', { turn })
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    busy = false
+    const ended = turn || e.turnId || stamp()
+    turn = null
+    await event($, 'turn_complete', {
+      turn: ended,
+      aborted: e.isAborted === true,
+      ms: e.durationMs || null,
+      answer: e.answer || null,
+    })
+    await flush($, 'submitted at the end of a turn')
+    return next(e)
+  })
+
+  on('tool.call', async ($, e, next) => {
+    await event($, 'tool_start', { turn, tool: e.tool || null, detail: detail(e) })
+    const result = await next(e)
+    await event($, 'tool_end', { turn, tool: e.tool || null, detail: detail(e), failed: !!(result && result.isError) })
+    return result
+  })
+
+  // At a tool boundary while busy: what is held goes to the model beside the
+  // tool result. The result carries additionalContext as a top-level array
+  // of strings; Claude Code skips any other shape without a word.
+  on('classic.PostToolUse', async ($, e, next) => {
+    const result = await next(e)
+    if (held.length === 0) return result
+    const deliveries = held.splice(0, held.length)
+    const prior = result && Array.isArray(result.additionalContext) ? result.additionalContext : []
+    for (const delivery of deliveries) await receipt($, delivery, 'beside a tool result')
+    return { ...(result || {}), additionalContext: [...prior, deliveries.map(framed).join('\n\n')] }
+  })
+
+  on('session.end', async ($, e, next) => {
+    await event($, 'session_end', { reason: e.reason || null })
+    return next(e)
+  })
+}

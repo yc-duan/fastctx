@@ -89,7 +89,12 @@ impl Drop for Arrived<'_> {
 async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
     match call {
         Call::Arrive { host, hints } => {
-            node.residents.arrive(&node.world, &node.machine(), host, hints).map(Reply::Arrived)
+            let claude = hints.inbox.is_some();
+            let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
+            if claude {
+                crate::claude::arrived(node, &whereabouts.resident).await;
+            }
+            Ok(Reply::Arrived(whereabouts))
         }
         Call::Run { resident, town, request, node: target } => {
             run(node, resident, town, request, target).await.map(Reply::Run)

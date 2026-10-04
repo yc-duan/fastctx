@@ -168,7 +168,9 @@ async fn follow(
         match watching.next().await? {
             Some(Watched::Live { event }) => {
                 printer.event(&event);
-                if matches!(&event.happened, Happened::TurnEnded { turn: ended, .. } if *ended == turn) {
+                // An empty turn is the next one to end.
+                if matches!(&event.happened, Happened::TurnEnded { turn: ended, .. } if turn.is_empty() || *ended == turn)
+                {
                     return Ok(());
                 }
             }
@@ -182,9 +184,12 @@ async fn follow(
     }
 }
 
+/// Which turn to follow: the one words went into, the next one to end when
+/// they were handed to a session's plugin, or none.
 fn turn_of(landed: &Landed) -> Option<String> {
     match landed {
         Landed::NewTurn { turn } | Landed::JoinedTurn { turn } => Some(turn.clone()),
+        Landed::Handed => Some(String::new()),
         Landed::Waiting { .. } | Landed::Sent => None,
     }
 }

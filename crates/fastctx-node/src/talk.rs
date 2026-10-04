@@ -227,11 +227,14 @@ pub async fn open_here(
     town: Option<TownName>,
     text: String,
 ) -> Result<(ResidentId, Landed), Failure> {
-    if agent.as_str() != "codex" {
-        return Err(Failure::new(format!(
-            "the World opens codex sessions on {}; it cannot open {agent} ones yet",
-            node.machine()
-        )));
+    match agent.as_str() {
+        "codex" => {}
+        "claude" => return crate::claude::open_here(node, town, text).await,
+        _ => {
+            return Err(Failure::new(format!(
+                "the World opens codex and claude sessions; it cannot open {agent} ones"
+            )));
+        }
     }
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::User;

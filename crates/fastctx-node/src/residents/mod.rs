@@ -46,6 +46,8 @@ struct State {
 struct Live {
     about: About,
     town: Option<TownName>,
+    /// A Claude session's inbox address, from its MCP connection.
+    inbox: Option<String>,
     /// Open connections the resident arrived on.
     connections: usize,
     now: Option<Now>,
@@ -65,6 +67,7 @@ impl Live {
         Self {
             about,
             town,
+            inbox: None,
             connections: 0,
             now,
             owed: HashMap::new(),
@@ -171,6 +174,12 @@ impl Residents {
             live.connections += 1;
             return Ok(Whereabouts { resident, town: live.town.clone() });
         }
+        if let Some(inbox) = &hints.inbox
+            && let Some(live) = state.live.values_mut().find(|live| live.inbox.as_ref() == Some(inbox))
+        {
+            live.connections += 1;
+            return Ok(Whereabouts { resident: live.about.id.clone(), town: live.town.clone() });
+        }
         let resident = new_id(&host.agent, &state)?;
         let about = About {
             id: resident.clone(),
@@ -189,6 +198,7 @@ impl Residents {
         }
         let mut live = Live::new(about, None, None);
         live.connections = 1;
+        live.inbox = hints.inbox;
         state.live.insert(resident.clone(), live);
         Ok(Whereabouts { resident, town: None })
     }
@@ -220,6 +230,50 @@ impl Residents {
         }
         state.live.insert(about.id.clone(), Live::new(about, town, Some(now)));
         Ok(())
+    }
+
+    /// The resident whose Claude session has the inbox address `inbox`.
+    pub fn resident_of_inbox(&self, inbox: &str) -> Option<ResidentId> {
+        self.lock().live.values().find(|live| live.inbox.as_deref() == Some(inbox)).map(|live| live.about.id.clone())
+    }
+
+    /// The resident's session is `session` on its host: its `about` says so
+    /// from now on, with the model and version the host gave.
+    pub fn set_session(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        session: &str,
+        model: Option<String>,
+        version: Option<String>,
+    ) -> io::Result<()> {
+        let mut state = self.lock();
+        let Some(live) = state.live.get_mut(id) else {
+            return Ok(());
+        };
+        let mut about = live.about.clone();
+        about.session = Some(session.to_string());
+        if model.is_some() {
+            about.model = model;
+        }
+        if let Some(version) = version {
+            about.host.version = version;
+        }
+        if about == live.about {
+            return Ok(());
+        }
+        records::write_about(&world.resident(live.town.as_ref(), id), &about)?;
+        live.about = about;
+        state.threads.insert(session.to_string(), id.clone());
+        Ok(())
+    }
+
+    /// Words of `readers` went in, and the turn they go into is not known
+    /// yet: they are owed the first turn that ends.
+    pub fn owe_next(&self, id: &ResidentId, readers: &[Address]) {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            live.owed.entry(String::new()).or_default().extend(readers.iter().cloned());
+        }
     }
 
     /// A new id for a resident of `agent`, unused on this machine.
@@ -363,7 +417,11 @@ impl Residents {
     ) -> io::Result<Vec<Address>> {
         let mut readers = Vec::new();
         self.with_live(world, id, |live, now| {
-            readers = live.owed.remove(turn).unwrap_or_default().into_iter().collect();
+            // Words whose turn was not known when they went in are owed the
+            // first turn that ends.
+            let mut taken = live.owed.remove(turn).unwrap_or_default();
+            taken.extend(live.owed.remove("").unwrap_or_default());
+            readers = taken.into_iter().collect();
             // Words may meanwhile have started the next turn, whose state
             // stands.
             if now.turn.as_deref() == Some(turn) || now.turn.is_none() {

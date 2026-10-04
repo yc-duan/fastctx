@@ -71,6 +71,9 @@ pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, ow
         .residents
         .about(to)
         .ok_or_else(|| Failure::new(format!("no resident {to} lives on {}", node.machine())))?;
+    if let Some(landed) = crate::claude::deliver(node, to, &about, &delivery, &owed).await {
+        return landed;
+    }
     let mut why = None;
     if about.world_started
         && about.host.agent.as_str() == "codex"
@@ -159,7 +162,7 @@ async fn into_thread(
 /// What a told answer came to, for the colleague's `messages`.
 pub fn outcome(landed: &Result<Landed, Failure>) -> Outcome {
     match landed {
-        Ok(Landed::NewTurn { .. } | Landed::JoinedTurn { .. }) => Outcome::Delivered,
+        Ok(Landed::NewTurn { .. } | Landed::JoinedTurn { .. } | Landed::Handed) => Outcome::Delivered,
         Ok(Landed::Waiting { why }) => Outcome::Waiting { why: why.clone() },
         Ok(Landed::Sent) => Outcome::Sent,
         Err(failure) => Outcome::Failed { reason: failure.message.clone() },

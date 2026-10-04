@@ -17,6 +17,7 @@ fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
 jiff.workspace = true
+notify = "8"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

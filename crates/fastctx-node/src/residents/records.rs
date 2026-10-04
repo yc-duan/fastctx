@@ -18,6 +18,12 @@ pub fn create(directory: &ResidentDir, about: &About) -> io::Result<()> {
     publish_new(&directory.about(), &json(about)?, Permissions::Private)
 }
 
+/// Replaces a resident's `about`, as when its host first tells the World
+/// which session it is.
+pub fn write_about(directory: &ResidentDir, about: &About) -> io::Result<()> {
+    publish(&directory.about(), &json(about)?, Permissions::Private)
+}
+
 pub fn read_about(directory: &ResidentDir) -> io::Result<About> {
     read_json(&directory.about())
 }

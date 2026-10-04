@@ -243,6 +243,7 @@ impl Session {
                     Landed::Waiting { why: None } => "waiting until it can be handed over".to_string(),
                     Landed::Waiting { why: Some(why) } => format!("waiting: it could not be handed over now: {why}"),
                     Landed::Sent => format!("sent to {}", to.machine),
+                    Landed::Handed => "handed to its session, which takes it at its next step".to_string(),
                 };
                 Answer {
                     content: vec![Content::Text(format!(
@@ -290,7 +291,10 @@ impl Session {
         }
         let host = self.host.get().cloned().ok_or("the session did not introduce itself with `initialize`")?;
         let was = self.were.lock().expect("never poisoned").get(&thread).cloned();
-        let hints = Hints { resident: self.resident.clone(), thread: thread.clone(), was };
+        // A Claude session's inbox address pairs this connection with what
+        // the World's mod reports of the session; its token is never read.
+        let inbox = std::env::var("CLAUDE_CODE_MESSAGING_SOCKET").ok().filter(|address| !address.is_empty());
+        let hints = Hints { resident: self.resident.clone(), thread: thread.clone(), was, inbox };
         let mut client = self.client().await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {

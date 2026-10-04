@@ -120,7 +120,7 @@ pub async fn ask_here(
             notice: Notice::Words { from: Speaker::Resident { address: asker.clone() }, text: prompt },
         };
         let why = match speech::tell_here(&node, &colleague, delivery, Owed::Speaker(asker)).await {
-            Ok(Landed::NewTurn { .. } | Landed::JoinedTurn { .. } | Landed::Sent) => return,
+            Ok(Landed::NewTurn { .. } | Landed::JoinedTurn { .. } | Landed::Sent | Landed::Handed) => return,
             Ok(Landed::Waiting { why }) => why.unwrap_or_else(|| "its session could not be reached".to_string()),
             Err(failure) => failure.message,
         };
@@ -159,7 +159,7 @@ pub fn thread_spec(
 /// The town's bookkeeping directory, where a resident the World starts
 /// stands: it means nothing to the resident, but groups a town's sessions
 /// together in the hosts' own lists (`world-town.md`).
-fn standing(node: &Node, town: Option<&TownName>) -> Result<PathBuf, Failure> {
+pub(crate) fn standing(node: &Node, town: Option<&TownName>) -> Result<PathBuf, Failure> {
     let directory = match town {
         Some(town) => node.world.path().join("towns").join(town.as_str()),
         None => node.world.path().join("outside"),
@@ -171,7 +171,7 @@ fn standing(node: &Node, town: Option<&TownName>) -> Result<PathBuf, Failure> {
 
 /// What a Codex resident the World starts is told of itself, as developer
 /// instructions, which outlive compaction.
-fn instructions(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin: &Origin) -> String {
+pub(crate) fn instructions(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin: &Origin) -> String {
     let place = match town {
         Some(town) => format!("You live on the machine {machine}, in the town {town}."),
         None => format!("You live on the machine {machine}, in no town yet."),
@@ -212,6 +212,7 @@ pub async fn message(
         Landed::JoinedTurn { .. } => "joined its turn".to_string(),
         Landed::Waiting { .. } => "waiting for it".to_string(),
         Landed::Sent => "sent".to_string(),
+        Landed::Handed => "handed to its session".to_string(),
     };
     let action = Action {
         at,
