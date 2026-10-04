@@ -29,6 +29,7 @@ pub mod plan;
 pub mod service;
 mod source;
 pub mod transaction;
+pub mod upgrade;
 
 mod disk;
 mod snapshot;

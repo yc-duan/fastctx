@@ -10,7 +10,7 @@ use xattr::FileExt;
 
 use super::Identity;
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Attributes {
     mode: u32,
     uid: u32,
@@ -25,6 +25,14 @@ impl Attributes {
 
     pub(crate) fn publication_bytes(&self) -> io::Result<Vec<u8>> {
         self.revision_bytes()
+    }
+
+    pub fn has_named_data(&self) -> bool {
+        !self.extended.is_empty()
+    }
+
+    pub fn apply_directory(&self, file: &File, path: &Path) -> io::Result<()> {
+        self.apply(file, path)
     }
 
     pub fn protect(&self, _file: &File) -> io::Result<()> {
