@@ -8,6 +8,7 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
 import type { Happening, ResidentNow, RunningJob, WorldState } from "../world/world";
+import { AskIn, type Asked } from "./ask-in";
 import { Frontispiece } from "./frontispiece";
 import type { HomeWords } from "./words";
 
@@ -19,6 +20,8 @@ export interface HomeOptions {
   lastVisit: Date | null;
   /** Where a resident's conversation opens. */
   link(address: Address): string;
+  /** Asks an agent in; where it is given, the page has a composer for it. */
+  open?: (asked: Asked) => Promise<void>;
 }
 
 const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
@@ -32,6 +35,7 @@ export class HomePage {
   private day: HTMLElement;
   private facts: HTMLElement;
   private sections: HTMLElement;
+  private askIn: AskIn | null = null;
 
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
@@ -49,6 +53,10 @@ export class HomePage {
     this.day = this.element.querySelector<HTMLElement>(".dateline-day")!;
     this.facts = this.element.querySelector<HTMLElement>(".dateline-facts")!;
     this.sections = this.element.querySelector<HTMLElement>(".home-sections")!;
+    if (options.open) {
+      this.askIn = new AskIn(options.words, options.open);
+      this.element.append(this.askIn.element);
+    }
   }
 
   /** Shows the World as it now stands; when nothing shown has changed, the
@@ -118,6 +126,7 @@ export class HomePage {
       this.sections.innerHTML = sections;
     }
     this.frontispiece.update(world, residents);
+    this.askIn?.update(world);
   }
 
   /** The World could not be asked: said where the facts would be, with

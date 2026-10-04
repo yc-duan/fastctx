@@ -360,8 +360,32 @@
 .row {
   position: relative;
   display: grid;
-  grid-template-columns: var(--rail-glyph) minmax(0, 1fr);
+  grid-template-columns: var(--rail-glyph) minmax(0, 1fr) auto;
   column-gap: var(--rail-gap);
+}
+
+.row-link {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: var(--size-small);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.row-link .glyph {
+  transform: rotate(-90deg);
+}
+
+.row-link:hover {
+  color: var(--text);
+  background: var(--hairline);
 }
 
 .row:not(:last-child)::after {
@@ -500,7 +524,7 @@
 }
 
 .row > .fold {
-  grid-column: 2;
+  grid-column: 2 / -1;
   grid-row: 2;
 }
 

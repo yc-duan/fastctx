@@ -108,6 +108,51 @@
   flex: 1;
 }
 
+/* What it started that still runs, hung just above the composer. */
+.running {
+  list-style: none;
+  max-width: var(--column);
+  margin: 0 auto var(--space-2);
+  padding: 0 var(--space-4);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.running-title {
+  color: var(--text-3);
+  margin-bottom: 2px;
+}
+
+.running-job {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.running-job .pulse {
+  flex: none;
+  width: 6px;
+  height: 6px;
+}
+
+.running-what {
+  flex: none;
+  white-space: nowrap;
+}
+
+.running-command {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
 /* The composer: a raised sheet resting on the foot of the page, the
    conversation fading out beneath it. */
 

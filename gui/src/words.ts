@@ -72,6 +72,14 @@ export interface Words {
   watchEnded(why: string | null): string;
   /** Words that could not be sent. */
   notSent(why: string): string;
+  /** The way into a colleague's own conversation. */
+  openColleague: string;
+  /** What it started that still runs. */
+  stillRunning: string;
+  /** A job running on a machine for so long. */
+  jobRunning(job: string, machine: string, lasted: string): string;
+  minutes(n: number): string;
+  hours(hours: number, minutes: number): string;
   /** Words in the World but in no turn yet: waiting for the session's next
    *  call of a World tool, gone as a letter, or handed over without knowing
    *  whether they went in. */
@@ -170,6 +178,11 @@ export const zh: Words = {
   unchangedLines: (n) => `${n} 行未改动`,
   watchEnded: (why) => (why ? `没在看着它了：${why}` : "没在看着它了"),
   notSent: (why) => `没送出去：${why}`,
+  openColleague: "看它",
+  stillRunning: "它起的、还在跑的",
+  jobRunning: (job, machine, lasted) => `${job} 在 ${machine} 上跑了 ${lasted}`,
+  minutes: (n) => (n < 1 ? "不到一分钟" : `${n} 分钟`),
+  hours: (hours, minutes) => (minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`),
   landed: (how, machine, why) =>
     how === "sent"
       ? `寄到了 ${machine}，那台机器收到时送进去`
@@ -245,6 +258,11 @@ export const en: Words = {
   unchangedLines: (n) => `${n} unchanged lines`,
   watchEnded: (why) => (why ? `No longer watching: ${why}` : "No longer watching"),
   notSent: (why) => `Not sent: ${why}`,
+  openColleague: "Open",
+  stillRunning: "Still running, started here",
+  jobRunning: (job, machine, lasted) => `${job} on ${machine}, running ${lasted}`,
+  minutes: (n) => (n < 1 ? "under a minute" : `${n} min`),
+  hours: (hours, minutes) => (minutes ? `${hours} h ${minutes} min` : `${hours} h`),
   landed: (how, machine, why) =>
     how === "sent"
       ? `Sent to ${machine}; it goes in when that machine has it`

@@ -16,7 +16,7 @@ use fastctx_types::residents::Landed;
 use fastctx_types::session::SessionEvent;
 use fastctx_types::town::WorldWho;
 use fastctx_types::world::NodesReply;
-use fastctx_types::{Address, MachineName, ResidentId};
+use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
@@ -141,6 +141,22 @@ async fn talk(
     Ok(Spoken { to: said.to, landed: said.landed })
 }
 
+/// Asks an agent into the World for the user: on a machine, in a town,
+/// with the user's words as the first it hears.
+#[tauri::command]
+async fn open(
+    shell: tauri::State<'_, Shell>,
+    agent: String,
+    town: Option<String>,
+    machine_name: Option<String>,
+    text: String,
+) -> Result<Spoken, String> {
+    let agent = AgentName::try_from(agent.as_str()).map_err(|error| error.to_string())?;
+    let town = town.map(|town| TownName::try_from(town).map_err(|error| error.to_string())).transpose()?;
+    let said = shell.world.open(agent, town, machine(machine_name)?, text).await.map_err(|error| error.to_string())?;
+    Ok(Spoken { to: said.to, landed: said.landed })
+}
+
 /// Stops the turn a resident is running; says whether one was.
 #[tauri::command]
 async fn stop(
@@ -162,7 +178,7 @@ pub fn run() {
         World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None }).starting_node_from(program);
     tauri::Builder::default()
         .manage(Shell { world, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
-        .invoke_handler(tauri::generate_handler![world_now, watch, unwatch, talk, stop])
+        .invoke_handler(tauri::generate_handler![world_now, watch, unwatch, talk, open, stop])
         .run(tauri::generate_context!())
         .expect("running the World's window");
 }

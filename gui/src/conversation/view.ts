@@ -21,6 +21,8 @@ export interface Context {
   /** The machine the resident lives on: a tool that acted there needs no
    *  word of where; one that acted elsewhere says so. */
   residentMachine: MachineName;
+  /** Where another resident's conversation opens, where it can. */
+  link?: (address: { resident: string; machine: MachineName }) => string;
 }
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
@@ -229,7 +231,13 @@ export class ConversationView {
     const fold = expandable
       ? `<div class="fold${open ? " open" : ""}"><div class="fold-inner">${open ? this.details(entry) : ""}</div></div>`
       : "";
-    return `<div class="row row-tool row-${tense}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span>${object}${stats}${this.outcome(entry)}${elsewhere}${chevron}</button>${fold}</div>`;
+    // A colleague it asked lives on in the World: its own conversation is a
+    // step away.
+    const colleague =
+      entry.tool.does.as === "colleague" && entry.tool.does.to && this.context.link
+        ? `<a class="row-link" href="${escape(this.context.link({ resident: entry.tool.does.to, machine: entry.tool.machine ?? this.context.residentMachine }))}">${escape(words.openColleague)}${glyph("chevron", 14)}</a>`
+        : "";
+    return `<div class="row row-tool row-${tense}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span>${object}${stats}${this.outcome(entry)}${elsewhere}${chevron}</button>${colleague}${fold}</div>`;
   }
 
   private thinking(entry: Extract<Entry, { kind: "prose" }>, enter: string): string {

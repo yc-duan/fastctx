@@ -21,7 +21,7 @@ import { specimens } from "./specimen/sessions";
 import { specimenWorld } from "./specimen/world";
 import { applyTheme } from "./theme";
 import type { Address } from "./world/events";
-import { inShell, stop, talk, unwatch, watch, worldNow, type Piece, type WorldNow } from "./world/bridge";
+import { inShell, open as openAgent, stop, talk, unwatch, watch, worldNow, type Piece, type WorldNow } from "./world/bridge";
 import type { WorldState } from "./world/world";
 import { en, zh } from "./words";
 
@@ -78,12 +78,23 @@ function stateOf(now: WorldNow): WorldState {
 function home(): void {
   if (!live) {
     const { world, now, lastVisit } = specimenWorld();
-    const page = new HomePage({ words: homeWords, ended: words.ended, lastVisit, link: linkTo });
+    const page = new HomePage({ words: homeWords, ended: words.ended, lastVisit, link: linkTo, open: async () => {} });
     show(page.element, homeWords.world);
     page.update(world, now);
     return;
   }
-  const page = new HomePage({ words: homeWords, ended: words.ended, lastVisit: lastSeen, link: linkTo });
+  const page = new HomePage({
+    words: homeWords,
+    ended: words.ended,
+    lastVisit: lastSeen,
+    link: linkTo,
+    // The agent asked in is opened at once: its first turn is watched from
+    // the start, as any conversation is.
+    open: async ({ agent, machine, town, text }) => {
+      const { to } = await openAgent(agent, machine, town, text);
+      location.hash = linkTo(to);
+    },
+  });
   let timer = 0;
   let left = false;
   // Asked again every two seconds while the page is in view, as the
@@ -121,6 +132,7 @@ function specimenTalk(name: string, back: boolean): void {
       town: specimen.town,
     },
     back: back ? { href: "#/", label: homeWords.world } : null,
+    link: linkTo,
     conversation,
     send(text) {
       conversation.sending(text, specimen.here);
@@ -170,6 +182,7 @@ async function liveTalk(address: Address): Promise<void> {
     here: here ?? "",
     someone,
     back: { href: "#/", label: homeWords.world },
+    link: linkTo,
     conversation,
     send(text) {
       const key = conversation.sending(text, here);
@@ -195,10 +208,30 @@ async function liveTalk(address: Address): Promise<void> {
   });
   let watchId: number | null = null;
   let left = false;
+  let timer = 0;
   show(page.element, `${someone.agent} · ${someone.machine}`, () => {
     left = true;
+    clearTimeout(timer);
     if (watchId !== null) void unwatch(watchId);
   });
+  // What it started that still runs, asked as the front page asks.
+  const jobs = async () => {
+    if (left) return;
+    if (document.visibilityState === "visible") {
+      try {
+        latest = await worldNow();
+        const running = latest.who.machines
+          .flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []))
+          .filter((job) => job.owner.resident === address.resident && job.owner.machine === address.machine);
+        if (!left) page.running(running, new Date());
+      } catch {
+        // The watch says whether the World is reachable; the list keeps
+        // what it last showed until the next answer.
+      }
+    }
+    if (!left) timer = window.setTimeout(jobs, 2000);
+  };
+  void jobs();
   // Events can come before the history does; they wait for it.
   let ready = false;
   const early: Piece[] = [];

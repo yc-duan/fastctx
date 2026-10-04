@@ -21,6 +21,8 @@ export interface PageOptions {
   someone: Someone;
   /** Where the reader came from, to go back to. */
   back: { href: string; label: string } | null;
+  /** Where another resident's conversation opens. */
+  link?: (address: { resident: string; machine: string }) => string;
   conversation: Conversation;
   /** Sends the user's words; resolves once they are on their way. */
   send(text: string): void;
@@ -53,6 +55,7 @@ export class ConversationPage {
       </header>
       <main class="conversation"></main>
       <footer class="composer-dock">
+        <ul class="running" hidden></ul>
         <form class="composer">
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
@@ -70,6 +73,7 @@ export class ConversationPage {
       words,
       here: options.here,
       residentMachine: someone.machine,
+      link: options.link,
     });
 
     const form = this.element.querySelector("form")!;
@@ -122,6 +126,22 @@ export class ConversationPage {
     this.input.style.height = `${this.input.scrollHeight}px`;
   }
 
+  /** What the resident started that still runs, hung above the composer:
+   *  when one ends, the resident is told and the conversation goes on. */
+  running(jobs: { job: string; machine: string; started_at: string; command: string }[], now: Date): void {
+    const { words } = this.options;
+    const list = this.element.querySelector<HTMLElement>(".running")!;
+    list.hidden = jobs.length === 0;
+    list.innerHTML = jobs.length
+      ? `<li class="running-title">${escape(words.stillRunning)}</li>${jobs
+          .map(
+            (job) =>
+              `<li class="running-job"><span class="pulse" aria-hidden="true"></span><span class="running-what">${escape(words.jobRunning(job.job, job.machine, lasted(now.getTime() - Date.parse(job.started_at), words)))}</span><code class="running-command">${escape(job.command)}</code></li>`,
+          )
+          .join("")}`
+      : "";
+  }
+
   /** The watch on the session is over: what is shown stays, and the bar
    *  says it is no longer live. */
   lost(why: string | null): void {
@@ -154,4 +174,10 @@ export class ConversationPage {
     this.action.classList.toggle("stop", stop);
     this.action.disabled = !typed && !stop;
   }
+}
+
+/** A span of time as the interface says it elsewhere: minutes, hours. */
+function lasted(ms: number, words: Words): string {
+  const minutes = Math.max(0, Math.round(ms / 60_000));
+  return minutes < 60 ? words.minutes(minutes) : words.hours(Math.floor(minutes / 60), minutes % 60);
 }

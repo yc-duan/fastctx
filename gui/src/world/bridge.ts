@@ -50,6 +50,16 @@ export function talk(who: Address, text: string): Promise<{ to: Address; landed:
   return invoke("talk", { residentId: who.resident, machineName: who.machine, text });
 }
 
+/** Asks an agent into the World, with the user's first words. */
+export function open(
+  agent: string,
+  machine: MachineName,
+  town: string | null,
+  text: string,
+): Promise<{ to: Address; landed: Landed }> {
+  return invoke("open", { agent, town, machineName: machine, text });
+}
+
 export function stop(who: Address): Promise<boolean> {
   return invoke("stop", { residentId: who.resident, machineName: who.machine });
 }

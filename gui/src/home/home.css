@@ -568,3 +568,52 @@
     animation: none;
   }
 }
+
+/* The front page's composer: who to ask in, where, set in the sentence. */
+.home-page .home {
+  flex: 1;
+  width: 100%;
+}
+
+.ask-in-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.35em;
+  min-width: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.pick {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0 2px 2px;
+  border: 0;
+  border-radius: 2px;
+  background: radial-gradient(circle, var(--text-3) 0.8px, transparent 1.3px) 0 100% / 5px 2px repeat-x;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.pick:hover,
+.pick:focus-visible {
+  color: var(--text);
+  background-color: var(--hairline);
+}
+
+.pick option {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.ask-in-note {
+  max-width: var(--column);
+  margin: 0 auto var(--space-2);
+  padding: 0 var(--space-4);
+  font-size: var(--size-small);
+  color: var(--wrong);
+}
