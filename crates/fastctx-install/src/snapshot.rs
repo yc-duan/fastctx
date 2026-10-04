@@ -109,7 +109,7 @@ pub(crate) fn state_of_staged(file: &File, path: &Path, bytes: Arc<[u8]>) -> io:
     })
 }
 
-fn resolve(path: &Path) -> io::Result<(PathBuf, (PathBuf, Identity))> {
+pub(crate) fn resolve(path: &Path) -> io::Result<(PathBuf, (PathBuf, Identity))> {
     let absolute = std::path::absolute(path)?;
     if absolute.components().any(|c| c == Component::ParentDir) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "file path must not contain '..'"));

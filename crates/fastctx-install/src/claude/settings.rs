@@ -195,3 +195,17 @@ fn matches_written(document: &Document<'_>, current: Option<&ObjectProp<'_>>, re
         serde_json::from_str::<String>(document.raw(&p.value)).ok().as_deref() == Some(&receipt.written)
     })
 }
+
+/// Deletes a file created by this apply only after its own entries are gone.
+/// Claude's public uninstall commands can leave empty plugin containers.
+pub(crate) fn discard_empty_created(bytes: Option<Vec<u8>>) -> Result<Option<Vec<u8>>, String> {
+    let Some(bytes) = bytes else { return Ok(None) };
+    let document = Document::parse(&bytes)?;
+    let empty = document.root.as_ref().is_none_or(|root| {
+        root.properties.iter().all(|property| {
+            matches!(property.name.as_str(), "enabledPlugins" | "extraKnownMarketplaces")
+                && property.value.as_object().is_some_and(|object| object.properties.is_empty())
+        })
+    });
+    if empty && !document.has_comments(0..document.source.len()) { Ok(None) } else { Ok(Some(bytes)) }
+}

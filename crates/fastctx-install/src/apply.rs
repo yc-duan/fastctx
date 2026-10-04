@@ -8,10 +8,11 @@
 //! Claude Code's plugin goes in through Claude Code's own `claude plugin`
 //! commands before the files are read, since those commands write Claude's
 //! settings; when the files cannot be committed afterwards, what this apply
-//! added to Claude is taken back. Each file is either as it was or as it is
-//! meant to be; a file someone changed after it was read is left as they
-//! left it and named. Run again after an interruption, an apply finishes
-//! what it started, since it starts from what is there.
+//! added to Claude is taken back. Each file publication is atomic. Revisions
+//! are compared immediately before publication, subject to the final syscall
+//! race documented by `transaction`. That transaction has no crash journal:
+//! an interruption can leave published files without their ownership record,
+//! which a later apply must not guess that it owns.
 //!
 //! An unapply takes out what the record says an apply put in, and leaves
 //! what the user changed since, saying where. It leaves fastctx's own copy,
@@ -164,7 +165,7 @@ pub enum Error {
     Claude(String),
     #[error("Claude Code's plugin: {0}")]
     Plugin(#[from] PluginFailure),
-    #[error("nothing was changed: {0}")]
+    #[error("file transaction failed: {0}")]
     Files(String),
     #[error("the claude command is not on PATH")]
     NoClaude,
@@ -184,6 +185,8 @@ struct Record {
     codex: Option<codex::Receipt>,
     claude_md: Option<guidance::Receipt>,
     settings: Option<SettingsReceipt>,
+    #[serde(default)]
+    settings_created: bool,
     /// Files and directories an apply created, which an unapply may remove
     /// when they are empty or unchanged.
     created: Created,
@@ -195,8 +198,18 @@ impl Record {
     fn read(snapshot: &Snapshot) -> Result<Self, Error> {
         match snapshot.bytes() {
             None => Ok(Self { version: RECORD_VERSION, ..Self::default() }),
-            Some(bytes) => serde_json::from_slice(bytes)
-                .map_err(|error| Error::Io(format!("reading {}: {error}", snapshot.path().display()))),
+            Some(bytes) => {
+                let record: Self = serde_json::from_slice(bytes)
+                    .map_err(|error| Error::Io(format!("reading {}: {error}", snapshot.path().display())))?;
+                if record.version != RECORD_VERSION {
+                    return Err(Error::Io(format!(
+                        "{}: unsupported apply record version {}",
+                        snapshot.path().display(),
+                        record.version
+                    )));
+                }
+                Ok(record)
+            }
         }
     }
 
@@ -226,10 +239,14 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         let config = Snapshot::read(places.codex_home.join("config.toml"))?;
         let agents = Snapshot::read(places.codex_home.join("AGENTS.md"))?;
         // The old fastctx (0.1.0 to 0.2.6) kept its record in its settings.
-        let old = match &record.codex {
-            Some(_) => None,
-            None => read_legacy(&places.root)?,
+        let old_file = record.codex.is_none().then(|| Snapshot::read(places.root.join("config.toml"))).transpose()?;
+        let mut old = match old_file.as_ref().and_then(Snapshot::bytes) {
+            Some(bytes) => legacy::Receipt::from_bytes(bytes)?,
+            None => None,
         };
+        if let Some(old) = &mut old {
+            bind_legacy(old, &config, &agents)?;
+        }
         let ownership = match (&record.codex, &old) {
             (Some(receipt), _) => Ownership::Current(receipt),
             (None, Some(receipt)) => Ownership::Legacy(receipt),
@@ -248,26 +265,15 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         change(&mut changes, agents, Some(applied.agents));
         record.codex = Some(applied.receipt);
         report.notices.extend(applied.notices);
+        if old.is_some() {
+            retire_legacy(&mut changes, old_file.expect("legacy receipt came from this snapshot"))?;
+        }
     }
 
     let mut plugin = None;
     if hosts.claude {
         let claude = places.claude.clone().ok_or(Error::NoClaude)?;
-        fastctx_hosts::claude::write_plugin(&places.world, &installed).map_err(io("writing the World's plugin"))?;
-        let plan = ClaudePlan::new(&places.world);
-        let mut host = Cli::new(claude, places.plugin_record());
-        let previous = read_plugin_record(&places.plugin_record())?;
-        let before = plugins::snapshot(&mut host).map_err(Error::Claude)?;
-        let planned = PluginApply::prepare(&plan, before, previous.as_ref()).map_err(Error::Claude)?;
-        let added = planned.execute(&mut host)?;
-        report.commands.append(&mut host.ran);
-
-        // Read only now: the plugin commands write Claude's settings.
-        let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
-        let edit = settings::apply(settings_file.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
-        change(&mut changes, settings_file, edit.bytes);
-        record.settings = edit.receipt;
-
+        let initial_settings = Snapshot::read(places.claude_home.join("settings.json"))?;
         let claude_md = Snapshot::read(places.claude_home.join("CLAUDE.md"))?;
         let path = text(claude_md.path());
         let applied = guidance::apply(
@@ -275,6 +281,35 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             &briefing::guidance(Writer::Edit),
             record.claude_md.as_ref(),
         )?;
+        let previous = read_plugin_record(&places.plugin_record(), initial_settings.path(), &record)?;
+        fastctx_hosts::claude::write_plugin(&places.world, &installed).map_err(io("writing the World's plugin"))?;
+        let plan = ClaudePlan::new(&places.world);
+        settings::apply(initial_settings.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
+        let settings_created = record.settings_created
+            || previous.as_ref().is_some_and(|r| r.settings_created)
+            || !initial_settings.exists();
+        let mut host = Cli::new(claude, places.plugin_record(), initial_settings.path().to_owned(), settings_created);
+        let before = plugins::snapshot(&mut host).map_err(Error::Claude)?;
+        let planned =
+            PluginApply::prepare(&plan, before, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
+        let added = planned.execute(&mut host)?;
+        report.commands.append(&mut host.ran);
+
+        // Read only now: the plugin commands write Claude's settings.
+        let edit = (|| {
+            let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
+            let edit =
+                settings::apply(settings_file.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
+            settings_notice(&mut report, settings_file.path(), &edit);
+            change(&mut changes, settings_file, edit.bytes.clone());
+            Ok::<_, Error>(edit)
+        })();
+        let edit = match edit {
+            Ok(edit) => edit,
+            Err(error) => return Err(rollback_plugin(error, &planned, &added, &mut host)),
+        };
+        record.settings = edit.receipt;
+        record.settings_created = settings_created;
         change(&mut changes, claude_md, Some(applied.bytes));
         record.claude_md = Some(applied.receipt);
         plugin = Some((planned, added, host));
@@ -304,15 +339,13 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             Ok(report)
         }
         Err(failure) => {
-            // The files are as they were; what this apply added to Claude
-            // goes too, so that nothing is half in.
-            let mut said = failure.to_string();
-            if let Some((planned, added, mut host)) = plugin
-                && let Err(error) = planned.rollback(&mut host, &added)
-            {
-                said.push_str(&format!("\nand what was added to Claude Code could not be taken back: {error}"));
+            // File rollback failures are already in the error. Withdraw this
+            // invocation's plugin additions even when a file could not be restored.
+            let error = Error::Files(failure.to_string());
+            if let Some((planned, added, mut host)) = plugin {
+                return Err(rollback_plugin(error, &planned, &added, &mut host));
             }
-            Err(Error::Files(said))
+            Err(error)
         }
     }
 }
@@ -327,42 +360,72 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
     let mut changes = Vec::new();
     let mut report = Report::default();
 
-    if hosts.codex
-        && let Some(receipt) = record.codex.take()
-    {
-        let config = Snapshot::read(places.codex_home.join("config.toml"))?;
-        let agents = Snapshot::read(places.codex_home.join("AGENTS.md"))?;
-        let (config_path, agents_path) = (text(config.path()), text(agents.path()));
-        let taken = codex::unapply(
-            File { path: &config_path, bytes: config.bytes() },
-            File { path: &agents_path, bytes: agents.bytes() },
-            Some(&receipt),
-        )?;
-        change(&mut changes, config, taken.config);
-        change(&mut changes, agents, taken.agents);
-        record.codex = taken.receipt;
-        report.notices.extend(taken.retained);
+    if hosts.codex {
+        let old_file = record.codex.is_none().then(|| Snapshot::read(places.root.join("config.toml"))).transpose()?;
+        let mut old = match old_file.as_ref().and_then(Snapshot::bytes) {
+            Some(bytes) => legacy::Receipt::from_bytes(bytes)?,
+            None => None,
+        };
+        if record.codex.is_some() || old.is_some() {
+            let config = Snapshot::read(places.codex_home.join("config.toml"))?;
+            let agents = Snapshot::read(places.codex_home.join("AGENTS.md"))?;
+            if let Some(old) = &mut old {
+                bind_legacy(old, &config, &agents)?;
+            }
+            let (config_path, agents_path) = (text(config.path()), text(agents.path()));
+            let config_input = File { path: &config_path, bytes: config.bytes() };
+            let agents_input = File { path: &agents_path, bytes: agents.bytes() };
+            let taken = if let Some(old) = &old {
+                codex::unapply_legacy(config_input, agents_input, old)?
+            } else {
+                codex::unapply(config_input, agents_input, record.codex.as_ref())?
+            };
+            change(&mut changes, config, taken.config);
+            change(&mut changes, agents, taken.agents);
+            record.codex = taken.receipt;
+            report.notices.extend(taken.retained);
+            if old.is_some() {
+                retire_legacy(&mut changes, old_file.expect("legacy receipt came from this snapshot"))?;
+            }
+        }
     }
 
     let mut plugin_done = false;
     if hosts.claude {
-        if let Some(previous) = read_plugin_record(&places.plugin_record())? {
+        let initial_settings = Snapshot::read(places.claude_home.join("settings.json"))?;
+        // Validate the profile and guidance before any irreversible CLI command.
+        let guidance = if let Some(receipt) = record.claude_md.as_ref() {
+            let file = Snapshot::read(places.claude_home.join("CLAUDE.md"))?;
+            let path = text(file.path());
+            let taken = guidance::unapply(File { path: &path, bytes: file.bytes() }, Some(receipt))?;
+            Some((file, taken))
+        } else {
+            None
+        };
+        let previous = read_plugin_record(&places.plugin_record(), initial_settings.path(), &record)?;
+        if let Some(previous) = previous {
             let claude = places.claude.clone().ok_or(Error::NoClaude)?;
-            let mut host = Cli::new(claude, places.plugin_record());
-            let remaining = plugins::unapply(&mut host, &previous)?;
+            record.settings_created |= previous.settings_created;
+            let mut host =
+                Cli::new(claude, places.plugin_record(), initial_settings.path().to_owned(), record.settings_created);
+            let remaining = plugins::unapply(&mut host, &previous.receipt)?;
             report.commands.append(&mut host.ran);
             plugin_done = !remaining.has_work();
         }
         let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
+        let mut settings_bytes = settings_file.bytes().map(<[u8]>::to_vec);
         if let Some(receipt) = record.settings.take() {
             let edit = settings::unapply(settings_file.bytes(), Some(&receipt)).map_err(Error::Claude)?;
-            change(&mut changes, settings_file, edit.bytes);
+            settings_notice(&mut report, settings_file.path(), &edit);
+            settings_bytes = edit.bytes;
             record.settings = edit.receipt;
         }
-        if let Some(receipt) = record.claude_md.take() {
-            let claude_md = Snapshot::read(places.claude_home.join("CLAUDE.md"))?;
-            let path = text(claude_md.path());
-            let taken = guidance::unapply(File { path: &path, bytes: claude_md.bytes() }, Some(&receipt))?;
+        if record.settings_created {
+            settings_bytes = settings::discard_empty_created(settings_bytes).map_err(Error::Claude)?;
+        }
+        change(&mut changes, settings_file, settings_bytes);
+        record.settings_created = false;
+        if let Some((claude_md, taken)) = guidance {
             change(&mut changes, claude_md, taken.bytes);
             record.claude_md = taken.receipt;
             report.notices.extend(taken.retained);
@@ -402,13 +465,15 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
 struct Cli {
     claude: PathBuf,
     record: PathBuf,
+    settings_path: PathBuf,
+    settings_created: bool,
     /// The commands that changed Claude, as run.
     ran: Vec<String>,
 }
 
 impl Cli {
-    fn new(claude: PathBuf, record: PathBuf) -> Self {
-        Self { claude, record, ran: Vec::new() }
+    fn new(claude: PathBuf, record: PathBuf, settings_path: PathBuf, settings_created: bool) -> Self {
+        Self { claude, record, settings_path, settings_created, ran: Vec::new() }
     }
 }
 
@@ -435,29 +500,87 @@ impl PluginHost for Cli {
     }
 
     fn checkpoint(&mut self, receipt: &PluginReceipt) -> Result<(), String> {
-        let bytes = serde_json::to_vec_pretty(receipt).map_err(|error| error.to_string())?;
+        let record = PluginRecord {
+            settings_path: Some(self.settings_path.clone()),
+            settings_created: self.settings_created,
+            receipt: receipt.clone(),
+        };
+        let bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
         fastctx_platform::publish(&self.record, &bytes, Permissions::Private)
             .map_err(|error| format!("keeping {}: {error}", self.record.display()))
     }
 }
 
-fn read_plugin_record(path: &Path) -> Result<Option<PluginReceipt>, Error> {
+#[derive(Serialize, Deserialize)]
+struct PluginRecord {
+    #[serde(default)]
+    settings_path: Option<PathBuf>,
+    #[serde(default)]
+    settings_created: bool,
+    #[serde(flatten)]
+    receipt: PluginReceipt,
+}
+
+fn read_plugin_record(path: &Path, settings: &Path, record: &Record) -> Result<Option<PluginRecord>, Error> {
     match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|error| Error::Io(format!("reading {}: {error}", path.display()))),
+        Ok(bytes) => {
+            let plugin: PluginRecord = serde_json::from_slice(&bytes)
+                .map_err(|error| Error::Io(format!("reading {}: {error}", path.display())))?;
+            let previous = plugin.settings_path.clone().or_else(|| {
+                record.claude_md.as_ref().map(|receipt| Path::new(&receipt.path).with_file_name("settings.json"))
+            });
+            if let Some(previous) = previous {
+                crate::check_path(&text(settings), &text(&previous))?;
+            } else if plugin.receipt.has_work() {
+                return Err(Error::Io(format!(
+                    "{}: plugin receipt has no recorded Claude profile; left unchanged",
+                    path.display()
+                )));
+            }
+            Ok(Some(plugin))
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(Error::Io(format!("reading {}: {error}", path.display()))),
     }
 }
 
-/// The old fastctx's record of what it applied, in its settings file.
-fn read_legacy(root: &Path) -> Result<Option<legacy::Receipt>, Error> {
-    let path = root.join("config.toml");
-    match std::fs::read(&path) {
-        Ok(bytes) => Ok(legacy::Receipt::from_bytes(&bytes)?),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Error::Io(format!("reading {}: {error}", path.display()))),
+fn retire_legacy(changes: &mut Vec<FileChange>, file: Snapshot) -> Result<(), Error> {
+    let path = text(file.path());
+    let retired = legacy::retire(File { path: &path, bytes: file.bytes() })?;
+    change(changes, file, Some(retired));
+    Ok(())
+}
+
+fn bind_legacy(receipt: &mut legacy::Receipt, config: &Snapshot, agents: &Snapshot) -> Result<(), Error> {
+    // Released installers stored ordinary paths; Snapshot uses canonical
+    // parents (including Windows' verbatim prefix). Resolve both before the
+    // pure planners compare their identity strings.
+    for (recorded, actual) in [(receipt.config_path(), config), (receipt.agents_path(), agents)] {
+        let (original, _) = crate::snapshot::resolve(Path::new(recorded))
+            .map_err(|error| FileError::io(Path::new(recorded), "resolve legacy path", error))?;
+        if !same_path(&original, actual.path()) {
+            return Err(crate::Error::at(text(actual.path()), format!("the receipt belongs to {recorded}")).into());
+        }
+    }
+    receipt.bind_paths(text(config.path()), text(agents.path()));
+    Ok(())
+}
+
+fn settings_notice(report: &mut Report, path: &Path, edit: &settings::SettingsEdit) {
+    if edit.outcome == settings::SettingsOutcome::UserChanged {
+        report.notices.push(Notice {
+            location: format!("{}: env.MAX_MCP_OUTPUT_TOKENS", path.display()),
+            reason: "changed since apply; left untouched".into(),
+        });
+    }
+}
+
+fn rollback_plugin(error: Error, planned: &PluginApply, added: &PluginReceipt, host: &mut Cli) -> Error {
+    match planned.rollback(host, added) {
+        Ok(_) => error,
+        Err(rollback) => {
+            Error::Io(format!("{error}\nand what was added to Claude Code could not be taken back: {rollback}"))
+        }
     }
 }
 
