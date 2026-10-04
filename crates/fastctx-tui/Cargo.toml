@@ -19,9 +19,10 @@ fastctx-client = { path = "../fastctx-client" }
 fastctx-types = { path = "../fastctx-types" }
 jiff.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }
-ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 unicode-segmentation = "1.12"
+unicode-linebreak = "0.1.5"
 unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]

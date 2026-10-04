@@ -360,14 +360,19 @@ impl TalkPage {
         let box_top = footer.y.saturating_sub(box_height);
         let border = look.text(Role::Faint);
         let rule = "─".repeat((outer as usize).saturating_sub(2));
-        buffer.set_string(left, box_top, format!("╭{rule}╮"), border);
-        buffer.set_string(left, box_top + box_height - 1, format!("╰{rule}╯"), border);
+        let layout = text::Layout::default();
+        layout.write_line(buffer, Rect::new(left, box_top, outer, 1), &Line::styled(format!("╭{rule}╮"), border));
+        layout.write_line(
+            buffer,
+            Rect::new(left, box_top + box_height - 1, outer, 1),
+            &Line::styled(format!("╰{rule}╯"), border),
+        );
         for row in 0..shown as u16 {
             let y = box_top + 1 + row;
-            buffer.set_string(left, y, "│", border);
-            buffer.set_string(left + outer - 1, y, "│", border);
+            layout.write_line(buffer, Rect::new(left, y, 1, 1), &Line::styled("│", border));
+            layout.write_line(buffer, Rect::new(left + outer - 1, y, 1, 1), &Line::styled("│", border));
         }
-        buffer.set_string(left + 2, box_top + 1, ">", look.text(Role::Muted));
+        layout.write_line(buffer, Rect::new(left + 2, box_top + 1, 1, 1), &Line::styled(">", look.text(Role::Muted)));
         for (row, line) in lines.iter().skip(first_shown).take(shown).enumerate() {
             paint::line(
                 buffer,

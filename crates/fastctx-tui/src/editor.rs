@@ -208,7 +208,7 @@ impl Editor {
         let mut caret = target_start;
         let mut used = 0;
         for (index, grapheme) in self.text[target_start..target_end].grapheme_indices(true) {
-            let cells = text::width(grapheme);
+            let cells = text::width_at(grapheme, used);
             if used + cells > column {
                 break;
             }
@@ -224,6 +224,7 @@ impl Editor {
         let width = width.max(2);
         let mut lines = vec![String::new()];
         let mut used = 0;
+        let mut source_column = 0;
         let mut caret = (0, 0);
         let mut placed = false;
         for (index, grapheme) in self.text.grapheme_indices(true) {
@@ -234,18 +235,37 @@ impl Editor {
             if grapheme == "\n" || grapheme == "\r\n" {
                 lines.push(String::new());
                 used = 0;
+                source_column = 0;
                 continue;
             }
-            let shown = if grapheme == "\t" { "    " } else { grapheme };
-            let cells = text::width(shown);
-            if used + cells > width {
+            let cells = text::width_at(grapheme, source_column);
+            source_column += cells;
+            if grapheme == "\t" {
+                // Tab stops belong to the source line, as they do when
+                // measuring the caret. Expanded spaces may span visual rows.
+                for space in 0..cells {
+                    if used >= width {
+                        lines.push(String::new());
+                        used = 0;
+                        if index == self.caret && space == 0 {
+                            caret = (lines.len() - 1, 0);
+                        }
+                    }
+                    lines.last_mut().expect("a line").push(' ');
+                    used += 1;
+                }
+                continue;
+            }
+            if used + cells > width && used > 0 {
                 lines.push(String::new());
                 used = 0;
                 if index == self.caret {
                     caret = (lines.len() - 1, 0);
                 }
             }
-            lines.last_mut().expect("a line").push_str(shown);
+            // Keep the displayed form (including a base for an isolated mark)
+            // so adding the page's input gutter cannot change its width.
+            lines.last_mut().expect("a line").push_str(&text::fit(grapheme, cells));
             used += cells;
         }
         if !placed {

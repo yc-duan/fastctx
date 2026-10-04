@@ -16,6 +16,7 @@ use ratatui::text::{Line, Span};
 use crate::app::{Act, Ctx, Data, Feed, Job};
 use crate::design::Role;
 use crate::paint::{self, Row};
+use crate::text;
 
 pub enum Page {
     World(world::WorldPage),
@@ -154,14 +155,17 @@ pub fn sheet(ctx: &Ctx, frame: &mut Frame, area: Rect, sheet: &Sheet<'_>, list: 
     let selected = any_item.then_some(list.selected);
     paint::rows(buffer, parts.body, &sheet.rows, list.top, selected, &ctx.look);
     if list.top > 0 {
-        buffer.set_string(parts.body.right().saturating_sub(1), parts.body.y, "↑", ctx.look.text(Role::Faint));
+        text::Layout::default().write_line(
+            buffer,
+            Rect::new(parts.body.right().saturating_sub(1), parts.body.y, 1, 1),
+            &Line::styled("↑", ctx.look.text(Role::Faint)),
+        );
     }
     if list.top + height < sheet.rows.len() {
-        buffer.set_string(
-            parts.body.right().saturating_sub(1),
-            parts.body.bottom().saturating_sub(1),
-            "↓",
-            ctx.look.text(Role::Faint),
+        text::Layout::default().write_line(
+            buffer,
+            Rect::new(parts.body.right().saturating_sub(1), parts.body.bottom().saturating_sub(1), 1, 1),
+            &Line::styled("↓", ctx.look.text(Role::Faint)),
         );
     }
     if let Some(note) = &sheet.note {

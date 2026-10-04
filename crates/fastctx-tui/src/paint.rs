@@ -4,11 +4,10 @@
 //! by lines; the selected item sits on a ground a shade off, with a mark in
 //! the gutter.
 
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::design::{Look, Role};
 use crate::text;
@@ -77,7 +76,7 @@ pub fn ground(buffer: &mut Buffer, area: Rect, look: &Look) {
     buffer.set_style(area, look.ground());
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
-            buffer[(x, y)].set_symbol(" ");
+            buffer[(x, y)].set_symbol(" ").set_diff_option(CellDiffOption::None);
         }
     }
 }
@@ -95,7 +94,11 @@ pub fn rows(buffer: &mut Buffer, area: Rect, rows: &[Row], top: usize, selected:
             }
             let first = rows[..top + offset].last().is_none_or(|before| before.item != row.item);
             if first {
-                buffer.set_string(area.x.saturating_sub(2), y, MARK, look.raised(Role::Accent));
+                text::Layout::default().write_line(
+                    buffer,
+                    Rect::new(area.x.saturating_sub(2), y, text::width(MARK) as u16, 1),
+                    &Line::styled(MARK, look.raised(Role::Accent)),
+                );
             }
         }
         if row.rule {
@@ -127,23 +130,41 @@ pub fn line(
     raised: bool,
     look: &Look,
 ) {
+    line_with_layout(buffer, x, y, width, left, right, raised, look, &text::Layout::default());
+}
+
+/// Paints with the same terminal measurements used to wrap the content.
+#[allow(clippy::too_many_arguments)]
+pub fn line_with_layout(
+    buffer: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    left: &Line<'_>,
+    right: &Line<'_>,
+    raised: bool,
+    look: &Look,
+    layout: &text::Layout<'_>,
+) {
     let width = width as usize;
-    let right_width = text::line_width(right);
+    let right_width = layout.line_width(right);
     let (right_width, room) =
         if right_width > 0 && right_width + 2 < width { (right_width, width - right_width - 2) } else { (0, width) };
-    let left = fit_line(left, room);
+    let mut left = layout.fit_line(left, room);
     let lift = |style: Style| if raised { on_raised(style, look) } else { style };
-    let mut at = x;
-    for span in &left.spans {
-        let (next, _) = buffer.set_stringn(at, y, &span.content, room, lift(span.style));
-        at = next;
+    left.style = lift(left.style);
+    for span in &mut left.spans {
+        span.style = lift(span.style);
     }
+    layout.write_line(buffer, Rect::new(x, y, room as u16, 1), &left);
     if right_width > 0 {
-        let mut at = x + (width - right_width) as u16;
-        for span in &right.spans {
-            let (next, _) = buffer.set_stringn(at, y, &span.content, right_width, lift(span.style));
-            at = next;
+        let mut right = layout.fit_line(right, right_width);
+        right.style = lift(right.style);
+        for span in &mut right.spans {
+            span.style = lift(span.style);
         }
+        let at = x + (width - right_width) as u16;
+        layout.write_line(buffer, Rect::new(at, y, right_width as u16, 1), &right);
     }
 }
 
@@ -157,32 +178,7 @@ fn on_raised(style: Style, look: &Look) -> Style {
 
 /// A line cut to `max` cells, ending in `…` when anything was cut.
 pub fn fit_line(line: &Line<'_>, max: usize) -> Line<'static> {
-    let mut used = 0;
-    let mut spans = Vec::new();
-    let total = text::line_width(line);
-    let room = if total > max { max.saturating_sub(1) } else { max };
-    let mut cut = false;
-    'spans: for span in &line.spans {
-        let mut content = String::new();
-        for grapheme in span.content.graphemes(true) {
-            let cells = text::width(grapheme);
-            if used + cells > room {
-                cut = true;
-                if !content.is_empty() {
-                    spans.push(Span::styled(content, span.style));
-                }
-                spans.push(Span::styled("…", span.style));
-                break 'spans;
-            }
-            content.push_str(grapheme);
-            used += cells;
-        }
-        spans.push(Span::styled(content, span.style));
-    }
-    if total > max && !cut {
-        spans.push(Span::raw("…"));
-    }
-    Line::from(spans)
+    text::Layout::default().fit_line(line, max)
 }
 
 /// Keeps the item spanning rows `first..=last` in view in `height` rows.
@@ -250,7 +246,7 @@ pub fn section(title: &str, look: &Look) -> Row {
 /// and one under it, so the title sits nearer what it names than what came
 /// before, and a section reads as one however its last item ended.
 pub fn open_section(rows: &mut Vec<Row>, title: Row) {
-    while rows.last().is_some_and(|row| row.left.width() == 0 && row.right.width() == 0) {
+    while rows.last().is_some_and(|row| text::line_width(&row.left) == 0 && text::line_width(&row.right) == 0) {
         rows.pop();
     }
     if !rows.is_empty() {

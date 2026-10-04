@@ -56,7 +56,7 @@ pub(super) fn render(
 }
 
 fn content(cell: &[Span<'_>]) -> String {
-    cell.iter().map(|span| span.content.as_ref()).collect::<String>().replace('\t', "    ")
+    text::Layout::default().expand_tabs(&cell.iter().map(|span| span.content.as_ref()).collect::<String>())
 }
 
 fn column_widths(natural: Vec<usize>, minimum: &[usize], available: usize) -> Vec<usize> {
@@ -143,7 +143,14 @@ fn records(rows: &[Row], width: usize, body: Style, faint: Style) -> Vec<Line<'s
             lines.push(Line::default());
         }
         for (header, value) in headers.iter().zip(row) {
-            if stacked {
+            let labels = if label_width > 0 { text::wrap_plain(header, faint, label_width) } else { Vec::new() };
+            let values = text::wrap(value, value_width);
+            // A glyph can fit while its punctuation-bound group cannot.
+            // Use the existing stacked layout when either column overflows.
+            if stacked
+                || labels.iter().any(|line| text::line_width(line) > label_width)
+                || values.iter().any(|line| text::line_width(line) > value_width)
+            {
                 // If even a label glyph, the gap and a value glyph cannot share the row,
                 // let the field break after its label. Neither label nor value is truncated.
                 if !header.is_empty() {
@@ -152,8 +159,6 @@ fn records(rows: &[Row], width: usize, body: Style, faint: Style) -> Vec<Line<'s
                 lines.extend(text::wrap(value, width));
                 continue;
             }
-            let labels = if label_width > 0 { text::wrap_plain(header, faint, label_width) } else { Vec::new() };
-            let values = text::wrap(value, value_width);
             for line in 0..labels.len().max(values.len()) {
                 let label = labels.get(line).cloned().unwrap_or_default();
                 let padding = label_width - text::line_width(&label) + gap;

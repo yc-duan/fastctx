@@ -1,12 +1,12 @@
 //! Markdown laid out in terminal cells, using the same line breaks as the rest of the TUI.
 
 use std::borrow::Cow;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::design::{Look, Role};
 use crate::text;
@@ -431,21 +431,11 @@ fn visible(value: &str) -> String {
 fn literal_lines(source: &str, style: Style, width: usize) -> Vec<Line<'static>> {
     let source = visible(source).replace("\r\n", "\n").replace('\r', r"\r");
     let mut lines = Vec::new();
+    // CommonMark expands tabs on the logical source line at four-cell stops.
+    let layout = text::Layout::default().with_tab_stop(NonZeroUsize::new(4).unwrap());
     for raw in source.split('\n') {
-        let mut expanded = String::new();
-        let mut column = 0;
-        for grapheme in raw.graphemes(true) {
-            if grapheme == "\t" {
-                // CommonMark indentation uses four-cell tab stops.
-                let spaces = 4 - column % 4;
-                expanded.push_str(&" ".repeat(spaces));
-                column += spaces;
-            } else {
-                expanded.push_str(grapheme);
-                column += text::width(grapheme);
-            }
-        }
-        lines.extend(text::wrap_preserving_spaces(&[Span::styled(expanded, style)], width));
+        let expanded = layout.expand_tabs(raw);
+        lines.extend(layout.wrap_preserving_spaces(&[Span::styled(expanded, style)], width));
     }
     lines
 }
