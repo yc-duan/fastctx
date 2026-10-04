@@ -341,44 +341,81 @@ impl TalkPage {
             look,
         );
 
-        // The place to type, at the bottom, on the raised ground.
+        // The place to type, at the bottom: a rounded box, `>` before the
+        // first line, the keys right under it.
         let bottom = column.height.saturating_sub(1);
         let footer = at(bottom.saturating_sub(1));
-        let note = at(bottom.saturating_sub(2));
-        let typing_width = width.saturating_sub(4);
-        let (mut lines, caret) = self.editor.layout(typing_width, look.raised(Role::Text));
+        let left = column.x.saturating_sub(2);
+        let outer = (column.width + 4).min(buffer.area.right().saturating_sub(left));
+        let typing_width = (outer as usize).saturating_sub(6);
+        let (mut lines, caret) = self.editor.layout(typing_width, look.text(Role::Text));
         let empty = self.editor.text().is_empty();
         if empty {
-            lines = vec![Line::from(Span::styled(words.say_to(&words.agent(&self.agent)), look.raised(Role::Faint)))];
+            lines = vec![Line::from(Span::styled(words.say_to(&words.agent(&self.agent)), look.text(Role::Faint)))];
         }
         let most = (column.height / EDITOR_SHARE).max(1) as usize;
         let first_shown = (caret.0 + 1).saturating_sub(most);
         let shown = lines.len().min(most);
         let box_height = shown as u16 + 2;
-        let box_top = note.y.saturating_sub(box_height + 1);
-        let band = Rect { x: column.x.saturating_sub(2), y: box_top, width: column.width + 4, height: box_height }
-            .intersection(buffer.area);
-        buffer.set_style(band, look.raised(Role::Text));
+        let box_top = footer.y.saturating_sub(box_height);
+        let border = look.text(Role::Faint);
+        let rule = "─".repeat((outer as usize).saturating_sub(2));
+        buffer.set_string(left, box_top, format!("╭{rule}╮"), border);
+        buffer.set_string(left, box_top + box_height - 1, format!("╰{rule}╯"), border);
+        for row in 0..shown as u16 {
+            let y = box_top + 1 + row;
+            buffer.set_string(left, y, "│", border);
+            buffer.set_string(left + outer - 1, y, "│", border);
+        }
+        buffer.set_string(left + 2, box_top + 1, ">", look.text(Role::Muted));
         for (row, line) in lines.iter().skip(first_shown).take(shown).enumerate() {
             paint::line(
                 buffer,
-                column.x + 2,
+                left + 4,
                 box_top + 1 + row as u16,
                 typing_width as u16,
                 line,
                 &Line::default(),
-                true,
+                false,
                 look,
             );
         }
 
-        // What it started that still runs, just above the place to type.
+        // Above the box, what is going on: a note, or the turn at work.
+        let status = at(box_top.saturating_sub(column.y + 1));
+        let status_line = if let Some(count) = pasting {
+            Some(quiet(ctx, words.pasting(count)))
+        } else if let Watching::Ended(why) = &self.watching {
+            Some(match why {
+                Some(why) => wrong(ctx, words.watch_broke(&text::first_line(why))),
+                None => quiet(ctx, words.watch_ended()),
+            })
+        } else if self.note.is_some() {
+            self.note.clone()
+        } else if let Some((Activity::Busy, since)) = self.state {
+            let mut spans = vec![
+                Span::styled("✻ ", look.faded(Role::Accent, ctx.breath)),
+                Span::styled(format!("{}…", words.busy()), look.text(Role::Accent)),
+                Span::styled(format!("  {}", words.since(since, ctx.now)), look.text(Role::Faint)),
+            ];
+            if !self.stopping {
+                spans.push(Span::styled(format!("  ·  Ctrl+X {}", words.key_stop()), look.text(Role::Faint)));
+            }
+            Some(Line::from(spans))
+        } else {
+            None
+        };
+        if let Some(line) = status_line {
+            paint::line(buffer, status.x, status.y, status.width, &line, &Line::default(), false, look);
+        }
+
+        // What it started that still runs, above that.
         let running = self.running_rows(ctx);
-        let running_top = box_top.saturating_sub(1 + running.len() as u16);
+        let running_top = status.y.saturating_sub(running.len() as u16);
         for (row, (left, right)) in running.iter().enumerate() {
             paint::line(buffer, column.x, running_top + row as u16, column.width, left, right, false, look);
         }
-        let above = if running.is_empty() { box_top } else { running_top };
+        let above = running_top;
 
         // The conversation, above that.
         let body =
@@ -405,25 +442,9 @@ impl TalkPage {
             paint::line(buffer, x, body.bottom().saturating_sub(1), body.width, &more, &Line::default(), false, look);
         }
 
-        // A note, and the keys.
-        let note_line = if let Some(count) = pasting {
-            Some(quiet(ctx, words.pasting(count)))
-        } else if let Watching::Ended(why) = &self.watching {
-            Some(match why {
-                Some(why) => wrong(ctx, words.watch_broke(&text::first_line(why))),
-                None => quiet(ctx, words.watch_ended()),
-            })
-        } else {
-            self.note.clone()
-        };
-        if let Some(line) = note_line {
-            paint::line(buffer, note.x, note.y, note.width, &line, &Line::default(), false, look);
-        }
+        // The keys.
         let mut keys =
             vec![("Enter", words.key_send()), ("Alt+Enter", words.key_newline()), ("PgUp PgDn", words.key_scroll())];
-        if matches!(self.state, Some((Activity::Busy, _))) && !self.stopping {
-            keys.push(("Ctrl+X", words.key_stop()));
-        }
         if matches!(self.watching, Watching::Ended(_)) {
             keys.push(("Ctrl+R", words.key_watch_again()));
         }
@@ -432,7 +453,7 @@ impl TalkPage {
 
         if !empty {
             let row = caret.0.saturating_sub(first_shown) as u16;
-            frame.set_cursor_position(Position::new(column.x + 2 + caret.1 as u16, box_top + 1 + row));
+            frame.set_cursor_position(Position::new(left + 4 + caret.1 as u16, box_top + 1 + row));
         }
     }
 }

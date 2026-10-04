@@ -14,6 +14,7 @@ use fastctx_types::MachineName;
 use fastctx_types::residents::Landed;
 use fastctx_types::session::{Happened, Health, SessionEvent, Speaker, TurnEnd, TurnHow};
 use jiff::Timestamp;
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use crate::app::Ctx;
@@ -33,7 +34,7 @@ enum Item {
     Heard { from: Option<Speaker>, text: String, turn: Option<String>, sending: Option<Sending> },
     Message { item: String, turn: String, text: String, writing: bool, laid: Laid },
     Tool { item: String, turn: String, tool: String, detail: String, at: Timestamp, ended: Option<(Timestamp, Use)> },
-    Ended { turn: String, end: TurnEnd, at: Timestamp },
+    Ended { turn: String, end: TurnEnd },
     Health { health: Health },
     Note { text: String, role: Role },
 }
@@ -180,7 +181,7 @@ impl Transcript {
                         _ => {}
                     }
                 }
-                self.items.push(Item::Ended { turn, end, at });
+                self.items.push(Item::Ended { turn, end });
             }
             Happened::Health { health, .. } => {
                 let repeat = matches!(self.items.last(), Some(Item::Health { health: last, .. }) if *last == health);
@@ -242,71 +243,57 @@ impl Transcript {
         })
     }
 
-    /// The conversation laid out in `width` cells. Words that went in sit
-    /// on a raised block, named only when they are not the user's own from
-    /// this machine; what the agent writes sits on the ground under no name,
-    /// since the page says whose session it is; its tools are quiet rows; a
-    /// turn closes with how it ended and when.
+    /// The conversation laid out in `width` cells, in the manner of
+    /// Claude Code: the words that went in on a band behind `>`; what the
+    /// agent writes behind `⏺`; each tool as `⏺ tool(what)` with how it went
+    /// under `⎿`; a blank line before each. A turn that completed says
+    /// nothing more; one that did not says how it ended.
     pub fn lines(&self, ctx: &Ctx, width: usize) -> Vec<Line<'static>> {
         let look = &ctx.look;
         let mut out: Vec<Line<'static>> = Vec::new();
-        let mut last_was_tool = false;
-        let tool_width = self
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Tool { tool, .. } => Some(text::width(short_tool(tool))),
-                _ => None,
-            })
-            .max()
-            .unwrap_or(0);
         for item in &self.items {
-            let is_tool = matches!(item, Item::Tool { .. });
             match item {
                 Item::Heard { from, text, sending, .. } => {
                     blank(&mut out);
                     if let Some(label) = self.speaker(ctx, from.as_ref(), sending.is_some()) {
                         out.push(Line::from(Span::styled(label, look.text(Role::Muted))));
                     }
-                    let role = if matches!(from, Some(Speaker::World)) { Role::Muted } else { Role::Text };
-                    out.extend(block(ctx, text, role, width));
+                    out.extend(said(ctx, text, width));
                     if let Some(sending) = sending {
                         out.extend(sent(ctx, &sending.state, width));
                     }
                 }
                 Item::Message { text, writing, laid, .. } => {
                     blank(&mut out);
-                    let mut lines = laid.lines(ctx, text, width);
+                    let mut lines = laid.lines(ctx, text, width.saturating_sub(MARGIN));
                     if *writing {
                         let breath = look.faded(Role::Accent, ctx.breath);
                         match lines.last_mut() {
-                            Some(line) if text::line_width(line) + 2 <= width => {
+                            Some(line) if text::line_width(line) + 2 + MARGIN <= width => {
                                 line.spans.push(Span::styled(" ▍", breath))
                             }
                             _ => lines.push(Line::from(Span::styled("▍", breath))),
                         }
                     }
-                    out.extend(lines);
+                    out.extend(behind(Span::styled(DOT, look.text(Role::Text)), lines));
                 }
                 Item::Tool { tool, detail, at, ended, .. } => {
-                    if !last_was_tool {
-                        blank(&mut out);
-                    }
-                    out.push(tool_line(ctx, tool, tool_width, detail, *at, *ended, width));
-                }
-                Item::Ended { end, at, .. } => {
                     blank(&mut out);
-                    out.push(ended(ctx, end, *at, width));
+                    out.extend(tool_lines(ctx, tool, detail, *at, *ended, width));
+                }
+                Item::Ended { end, .. } => {
+                    if let Some(line) = ended(ctx, end, width) {
+                        out.push(line);
+                    }
                 }
                 Item::Health { health, .. } => {
-                    out.push(Line::from(Span::styled(format!("▲ {}", health.text), look.text(Role::Caution))));
+                    out.push(under(ctx, Span::styled(format!("▲ {}", health.text), look.text(Role::Caution)), width));
                 }
                 Item::Note { text, role } => {
                     blank(&mut out);
                     out.extend(text::wrap_plain(text, look.text(*role), width));
                 }
             }
-            last_was_tool = is_tool;
         }
         out
     }
@@ -334,33 +321,48 @@ fn blank(out: &mut Vec<Line<'static>>) {
     }
 }
 
-/// Words on a raised block that fits them, with room inside: a row above
-/// and below, two cells at each side. Where the terminal has no colour for
-/// a raised ground, a rule in the gutter marks the words instead.
-fn block(ctx: &Ctx, words: &str, role: Role, width: usize) -> Vec<Line<'static>> {
+/// The mark before what the agent writes and before each tool it uses.
+const DOT: &str = "⏺";
+/// What follows a mark, and each line after it, starts this far in.
+const MARGIN: usize = 2;
+
+/// `lines` behind `mark`: the mark and a space before the first, as much
+/// room before the rest.
+fn behind(mark: Span<'static>, lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut line)| {
+            let lead = if index == 0 { vec![mark.clone(), Span::raw(" ")] } else { vec![Span::raw("  ")] };
+            line.spans.splice(0..0, lead);
+            line
+        })
+        .collect()
+}
+
+/// A line under the one above it: `⎿` and what it says.
+fn under(ctx: &Ctx, what: Span<'static>, width: usize) -> Line<'static> {
+    let line = Line::from(vec![Span::styled("  ⎿  ", ctx.look.text(Role::Faint)), what]);
+    paint::fit_line(&line, width)
+}
+
+/// Words that went in, behind `>` on a band across the column; without a
+/// colour for the band, behind `>` alone.
+fn said(ctx: &Ctx, words: &str, width: usize) -> Vec<Line<'static>> {
     let look = &ctx.look;
-    if look.color(Role::Bubble).is_none() {
-        let rule = Span::styled("│ ", look.text(Role::Faint));
-        return text::wrap_plain(words, look.text(role), width.saturating_sub(2))
-            .into_iter()
-            .map(|mut line| {
-                line.spans.insert(0, rule.clone());
-                line
-            })
-            .collect();
+    let banded = look.color(Role::Bubble).is_some();
+    let style = if banded { look.bubble() } else { look.text(Role::Text) };
+    let lines = text::wrap_plain(words, style, width.saturating_sub(MARGIN));
+    let mut out = behind(Span::styled(">", style), lines);
+    if banded {
+        for line in &mut out {
+            let used = text::line_width(line);
+            line.spans.push(Span::styled(" ".repeat(width.saturating_sub(used)), style));
+            for span in &mut line.spans {
+                span.style = span.style.patch(style);
+            }
+        }
     }
-    let lines = text::wrap_plain(words, look.bubble(), width.saturating_sub(4));
-    let inside = lines.iter().map(text::line_width).max().unwrap_or(0);
-    let band = (inside + 4).min(width);
-    let fill = |cells: usize| Span::styled(" ".repeat(cells), look.bubble());
-    let mut out = vec![Line::from(fill(band))];
-    for mut line in lines {
-        let used = text::line_width(&line);
-        line.spans.insert(0, fill(2));
-        line.spans.push(fill(band.saturating_sub(used + 2)));
-        out.push(line);
-    }
-    out.push(Line::from(fill(band)));
     out
 }
 
@@ -397,62 +399,54 @@ fn short_tool(tool: &str) -> &str {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn tool_line(
+fn tool_lines(
     ctx: &Ctx,
     tool: &str,
-    tool_width: usize,
     detail: &str,
     at: Timestamp,
     ended: Option<(Timestamp, Use)>,
     width: usize,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
     let look = &ctx.look;
-    let (mark, detail_role) = match ended {
-        None => (Span::styled("◌", look.faded(Role::Alive, ctx.breath)), Role::Text),
-        Some((_, Use::Done)) => (Span::styled("✓", look.text(Role::Faint)), Role::Muted),
-        Some((_, Use::Failed)) => (Span::styled("×", look.text(Role::Wrong)), Role::Muted),
-        Some((_, Use::Cut)) => (Span::styled("·", look.text(Role::Faint)), Role::Faint),
+    let words = &ctx.words;
+    let dot = match ended {
+        None => look.faded(Role::Faint, ctx.breath),
+        Some((_, Use::Done)) => look.text(Role::Alive),
+        Some((_, Use::Failed)) => look.text(Role::Wrong),
+        Some((_, Use::Cut)) => look.text(Role::Faint),
     };
+    let detail = text::first_line(detail);
+    let mut call = vec![
+        Span::styled(DOT, dot),
+        Span::raw(" "),
+        Span::styled(short_tool(tool).to_string(), look.text(Role::Text).add_modifier(Modifier::BOLD)),
+    ];
+    if !detail.is_empty() {
+        call.push(Span::styled(format!("({detail})"), look.text(Role::Text)));
+    }
     let seconds = match ended {
         Some((end, _)) => end.as_second() - at.as_second(),
         None => ctx.now.as_second() - at.as_second(),
     };
-    let took = if seconds >= 1 { ctx.words.duration(seconds as u64) } else { String::new() };
-    let left = Line::from(vec![
-        Span::raw("  "),
-        mark,
-        Span::raw("  "),
-        Span::styled(format!("{:<tool_width$}", short_tool(tool)), look.text(Role::Faint)),
-        Span::raw("  "),
-        Span::styled(text::first_line(detail), look.text(detail_role)),
-    ]);
-    let room = width.saturating_sub(text::width(&took) + 2);
-    let mut line = paint::fit_line(&left, room);
-    let used = text::line_width(&line);
-    if !took.is_empty() {
-        line.spans.push(Span::raw(" ".repeat(width.saturating_sub(used + text::width(&took)))));
-        line.spans.push(Span::styled(took, look.text(Role::Faint)));
-    }
-    line
+    let took = words.duration(seconds.max(0) as u64);
+    let (said, role) = match ended {
+        None => (words.tool_running(&took), Role::Faint),
+        Some((_, Use::Done)) => (took, Role::Faint),
+        Some((_, Use::Failed)) => (words.tool_failed(&took), Role::Wrong),
+        Some((_, Use::Cut)) => (words.tool_cut().to_string(), Role::Faint),
+    };
+    vec![paint::fit_line(&Line::from(call), width), under(ctx, Span::styled(said, look.text(role)), width)]
 }
 
-/// How a turn ended, in a quiet line, with when on the right; louder when
-/// it did not complete.
-fn ended(ctx: &Ctx, end: &TurnEnd, at: Timestamp, width: usize) -> Line<'static> {
+/// How a turn ended, under what it did last, when it did not complete.
+fn ended(ctx: &Ctx, end: &TurnEnd, width: usize) -> Option<Line<'static>> {
     let words = &ctx.words;
-    let took = end.duration_ms.map(|ms| words.duration(ms / 1000)).unwrap_or_default();
     let reason = end.reason.as_deref().map(text::first_line);
     let (said, role) = match &end.how {
-        TurnHow::Completed => (words.turn_completed(&took), Role::Faint),
+        TurnHow::Completed => return None,
         TurnHow::Failed => (words.turn_failed(reason.as_deref()), Role::Wrong),
         TurnHow::Interrupted => (words.turn_interrupted(reason.as_deref()), Role::Caution),
         TurnHow::Other(how) => (words.turn_ended_as(how), Role::Muted),
     };
-    let clock = crate::words::clock(at, ctx.now);
-    let room = width.saturating_sub(text::width(&clock) + 2);
-    let mut line = paint::fit_line(&Line::from(Span::styled(said, ctx.look.text(role))), room);
-    let used = text::line_width(&line);
-    line.spans.push(Span::raw(" ".repeat(width.saturating_sub(used + text::width(&clock)))));
-    line.spans.push(Span::styled(clock, ctx.look.text(Role::Faint)));
-    line
+    Some(under(ctx, Span::styled(said, ctx.look.text(role)), width))
 }

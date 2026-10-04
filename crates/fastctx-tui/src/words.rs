@@ -562,13 +562,22 @@ impl Words {
         self.pick("；它的宿主不告诉世界一轮何时结束", "; its host does not tell the World when its turns end")
     }
 
-    pub fn turn_completed(&self, took: &str) -> String {
-        match (self.lang, took.is_empty()) {
-            (Lang::Zh, true) => "这一轮完成".to_string(),
-            (Lang::Zh, false) => format!("这一轮完成 · {took}"),
-            (Lang::En, true) => "turn completed".to_string(),
-            (Lang::En, false) => format!("turn completed · {took}"),
+    pub fn tool_running(&self, took: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("在跑… {took}"),
+            Lang::En => format!("running… {took}"),
         }
+    }
+
+    pub fn tool_failed(&self, took: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("失败 · {took}"),
+            Lang::En => format!("failed · {took}"),
+        }
+    }
+
+    pub fn tool_cut(&self) -> &'static str {
+        self.pick("这一轮结束时还没跑完", "the turn ended before it did")
     }
 
     pub fn turn_failed(&self, reason: Option<&str>) -> String {
