@@ -154,7 +154,7 @@ impl ProjectPage {
             } else {
                 Span::styled(words.here_busy(here, 0), look.text(Role::Muted))
             };
-            rows.push(paint::section(words.agents(), look).right(count));
+            paint::open_section(&mut rows, paint::section(words.agents(), look).right(count));
             if view.residents.is_empty() {
                 rows.push(Row::new(quiet(ctx, words.no_agents_here())));
                 rows.push(Row::blank());
@@ -173,7 +173,8 @@ impl ProjectPage {
         }
 
         if let Some(map) = &self.map {
-            rows.push(
+            paint::open_section(
+                &mut rows,
                 paint::section(words.journals(), look).right(quiet(ctx, words.journal_count(map.journals.len()))),
             );
             if map.journals.is_empty() {
@@ -195,7 +196,7 @@ impl ProjectPage {
                 item += 1;
             }
 
-            rows.push(paint::section(words.decisions(), look));
+            paint::open_section(&mut rows, paint::section(words.decisions(), look));
             match (&map.record.canon, &map.canon) {
                 (None, _) => rows.push(Row::new(quiet(ctx, words.no_decisions()))),
                 (Some(location), canon) => {
@@ -221,7 +222,7 @@ impl ProjectPage {
             rows.push(Row::blank());
 
             if !map.record.places.is_empty() {
-                rows.push(paint::section(words.places(), look));
+                paint::open_section(&mut rows, paint::section(words.places(), look));
                 let what_width = map.record.places.iter().map(|place| text::width(&place.what)).max().unwrap_or(0);
                 let machine_width =
                     map.record.places.iter().map(|place| place.location.machine.as_str().len()).max().unwrap_or(0);
@@ -243,7 +244,7 @@ impl ProjectPage {
         if let Some(view) = &self.view {
             let unattended = view.unattended();
             if !unattended.is_empty() {
-                rows.push(paint::section(words.unattended(), look));
+                paint::open_section(&mut rows, paint::section(words.unattended(), look));
                 for job in unattended {
                     rows.push(
                         Row::new(Line::from(vec![
@@ -263,7 +264,7 @@ impl ProjectPage {
                 }
                 rows.push(Row::blank());
             }
-            rows.push(paint::section(words.machines(), look));
+            paint::open_section(&mut rows, paint::section(words.machines(), look));
             rows.push(Row::new(world::machines_line(ctx, &view.machines)));
         }
 

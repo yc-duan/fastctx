@@ -64,8 +64,7 @@ impl TalkPage {
         let address = fastctx_client::town::address(&resident);
         let agent = resident.about.host.agent.to_string();
         let state = resident.now.as_ref().map(|now| (now.activity, now.since));
-        let mut page = Self::bare(address, agent, project);
-        page.here = here;
+        let mut page = Self::bare(address, agent, project, here);
         page.origin = Some(resident.about.origin.clone());
         page.model = resident.about.model.clone();
         page.state = state;
@@ -81,17 +80,16 @@ impl TalkPage {
         said: fastctx_client::Said,
         here: MachineName,
     ) -> Self {
-        let mut page = Self::bare(address, agent, project);
+        let mut page = Self::bare(address, agent, project, Some(here.clone()));
         page.origin = Some(Origin::User);
-        let local = page.transcript.sending(first, Some(here.clone()), Timestamp::now());
+        let local = page.transcript.sending(first, Some(here));
         page.transcript.landed(local, said.landed, said.to.machine);
-        page.here = Some(here);
         page
     }
 
-    fn bare(address: Address, agent: String, project: Option<String>) -> Self {
+    fn bare(address: Address, agent: String, project: Option<String>, here: Option<MachineName>) -> Self {
         Self {
-            transcript: Transcript::new(agent_name(&agent)),
+            transcript: Transcript::new(here.clone()),
             address,
             agent,
             origin: None,
@@ -104,7 +102,7 @@ impl TalkPage {
             round: 0,
             stopping: false,
             note: None,
-            here: None,
+            here,
             pending: VecDeque::new(),
             last_total: 0,
             last_height: 0,
@@ -231,7 +229,7 @@ impl TalkPage {
                 self.editor.clear();
                 self.top = None;
                 self.note = None;
-                let local = self.transcript.sending(text.clone(), self.here.clone(), Timestamp::now());
+                let local = self.transcript.sending(text.clone(), self.here.clone());
                 self.pending.push_back(local);
                 Act::Do(Job::Talk { to: self.address.resident.clone(), machine: self.address.machine.clone(), text })
             }
@@ -395,9 +393,4 @@ impl TalkPage {
             frame.set_cursor_position(Position::new(column.x + 2 + caret.1 as u16, box_top + 1 + row));
         }
     }
-}
-
-/// "Codex", "Claude".
-fn agent_name(agent: &str) -> String {
-    crate::words::Words::new(crate::words::lang()).agent(agent)
 }

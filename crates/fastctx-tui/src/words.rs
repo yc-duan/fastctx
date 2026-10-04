@@ -30,14 +30,25 @@ pub fn lang() -> Lang {
     })
 }
 
+/// The first of the user's display languages. Not the locale, which sets
+/// how dates and numbers are written and is often English on a machine
+/// whose user reads Chinese.
 #[cfg(windows)]
 fn system_locale() -> Option<String> {
-    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
-    // LOCALE_NAME_MAX_LENGTH.
-    let mut name = [0u16; 85];
-    // SAFETY: the buffer is writable and its length is passed with it.
-    let length = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
-    (length > 1).then(|| String::from_utf16_lossy(&name[..length as usize - 1]))
+    use windows_sys::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+    let (mut count, mut length) = (0u32, 0u32);
+    // SAFETY: a null buffer asks only for the length the list needs.
+    if unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, std::ptr::null_mut(), &mut length) } == 0 {
+        return None;
+    }
+    let mut names = vec![0u16; length as usize];
+    // SAFETY: the buffer is writable and holds `length` characters.
+    if unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, names.as_mut_ptr(), &mut length) } == 0 {
+        return None;
+    }
+    // A list of names, each ending in a null, the list ending in another.
+    let first = names.split(|&unit| unit == 0).next()?;
+    (!first.is_empty()).then(|| String::from_utf16_lossy(first))
 }
 
 #[cfg(not(windows))]
@@ -850,10 +861,9 @@ impl Words {
             FieldName::Machine => self.pick("只列在线的机器", "only machines online"),
             FieldName::Project => self.pick("只列横跨那台机器的项目", "only projects that span that machine"),
             FieldName::FirstWords => self.pick("Alt+Enter 换行", "Alt+Enter for a new line"),
-            FieldName::Slug => self.pick(
-                "小写字母、数字与连字符，比如 mark50；命令里和目录里都用它",
-                "lowercase letters, digits and hyphens, such as mark50; commands and directories use it",
-            ),
+            FieldName::Slug => {
+                self.pick("小写字母、数字与连字符，比如 mark50", "lowercase letters, digits and hyphens, like mark50")
+            }
             FieldName::What => self.pick("一两句话：这个项目为了什么", "a sentence or two: what the project is for"),
             FieldName::Machines => self.pick("← → 移动，Space 勾选", "← → to move, Space to tick"),
             FieldName::Places => {

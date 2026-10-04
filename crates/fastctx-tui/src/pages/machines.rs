@@ -79,7 +79,7 @@ impl MachinesPage {
         let mut rows = Vec::new();
         let mut alone = false;
         if let Some(nodes) = &self.nodes {
-            rows.push(paint::section(words.this_machine_link(), look));
+            paint::open_section(&mut rows, paint::section(words.this_machine_link(), look));
             let (line, role) = match &nodes.link {
                 LinkState::Alone => {
                     alone = true;
@@ -101,7 +101,8 @@ impl MachinesPage {
                 rows.push(Row::new(line));
             }
             rows.push(Row::blank());
-            rows.push(
+            paint::open_section(
+                &mut rows,
                 paint::section(words.machines(), look).right(quiet(ctx, words.machine_count(nodes.machines.len()))),
             );
             for (item, node) in nodes.machines.iter().enumerate() {

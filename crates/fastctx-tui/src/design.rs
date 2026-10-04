@@ -1,6 +1,8 @@
 //! The World's design language as the terminal speaks it (`world-gui.md`,
-//! 审美): soft and literary, warm paper and ink rather than a cold console.
-//! The graphical interface takes the same tokens.
+//! 审美): soft and literary rather than a cold console. Graphite: greys
+//! that step clearly apart and carry almost no hue, text the warm white of
+//! paper (or, on paper, near-black ink), and one terracotta accent used
+//! sparingly. The graphical interface takes the same tokens.
 //!
 //! Colour is a role, never a value written where it is used. Each role has
 //! a value for each of the two themes, ink (dark) and paper (light), in
@@ -26,9 +28,9 @@ pub enum Depth {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Theme {
-    /// Warm ink: a dark ground.
+    /// Graphite: a dark ground.
     Ink,
-    /// Warm paper: a light ground.
+    /// Paper: a light ground.
     Paper,
 }
 
@@ -61,26 +63,26 @@ pub enum Role {
 /// interface takes too.
 pub const fn token(theme: Theme, role: Role) -> (u8, u8, u8) {
     match (theme, role) {
-        (Theme::Ink, Role::Ground) => (0x1d, 0x1b, 0x18),
-        (Theme::Ink, Role::Raised) => (0x29, 0x26, 0x21),
-        (Theme::Ink, Role::Text) => (0xec, 0xe5, 0xd8),
-        (Theme::Ink, Role::Muted) => (0xa8, 0x9f, 0x8f),
-        (Theme::Ink, Role::Faint) => (0x6e, 0x66, 0x5a),
-        (Theme::Ink, Role::Accent) => (0xe0, 0x9b, 0x6b),
-        (Theme::Ink, Role::Alive) => (0x9c, 0xc0, 0x8d),
-        (Theme::Ink, Role::Caution) => (0xdd, 0xbb, 0x72),
-        (Theme::Ink, Role::Wrong) => (0xdc, 0x83, 0x77),
-        (Theme::Ink, Role::Link) => (0x93, 0xae, 0xc9),
-        (Theme::Paper, Role::Ground) => (0xf6, 0xf1, 0xe7),
-        (Theme::Paper, Role::Raised) => (0xeb, 0xe4, 0xd6),
-        (Theme::Paper, Role::Text) => (0x2c, 0x28, 0x23),
-        (Theme::Paper, Role::Muted) => (0x6e, 0x66, 0x5a),
-        (Theme::Paper, Role::Faint) => (0xa6, 0x9d, 0x8d),
-        (Theme::Paper, Role::Accent) => (0xb5, 0x60, 0x34),
-        (Theme::Paper, Role::Alive) => (0x4f, 0x7d, 0x47),
-        (Theme::Paper, Role::Caution) => (0x9a, 0x74, 0x1f),
-        (Theme::Paper, Role::Wrong) => (0xb0, 0x45, 0x3b),
-        (Theme::Paper, Role::Link) => (0x3f, 0x63, 0x8c),
+        (Theme::Ink, Role::Ground) => (0x16, 0x16, 0x16),
+        (Theme::Ink, Role::Raised) => (0x23, 0x23, 0x22),
+        (Theme::Ink, Role::Text) => (0xeb, 0xe9, 0xe4),
+        (Theme::Ink, Role::Muted) => (0x9c, 0x9a, 0x96),
+        (Theme::Ink, Role::Faint) => (0x67, 0x65, 0x61),
+        (Theme::Ink, Role::Accent) => (0xe2, 0x93, 0x6a),
+        (Theme::Ink, Role::Alive) => (0x8f, 0xc0, 0x8a),
+        (Theme::Ink, Role::Caution) => (0xe0, 0xbd, 0x6e),
+        (Theme::Ink, Role::Wrong) => (0xe0, 0x7a, 0x6e),
+        (Theme::Ink, Role::Link) => (0x8f, 0xb2, 0xd6),
+        (Theme::Paper, Role::Ground) => (0xf7, 0xf7, 0xf5),
+        (Theme::Paper, Role::Raised) => (0xeb, 0xeb, 0xe8),
+        (Theme::Paper, Role::Text) => (0x1c, 0x1c, 0x1b),
+        (Theme::Paper, Role::Muted) => (0x5f, 0x5e, 0x5b),
+        (Theme::Paper, Role::Faint) => (0x8f, 0x8e, 0x8a),
+        (Theme::Paper, Role::Accent) => (0xc2, 0x61, 0x3d),
+        (Theme::Paper, Role::Alive) => (0x4f, 0x7a, 0x45),
+        (Theme::Paper, Role::Caution) => (0x9a, 0x6d, 0x1a),
+        (Theme::Paper, Role::Wrong) => (0xb3, 0x43, 0x2e),
+        (Theme::Paper, Role::Link) => (0x38, 0x6a, 0xa6),
     }
 }
 

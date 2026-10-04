@@ -10,11 +10,10 @@
 
 use std::cell::RefCell;
 
+use fastctx_types::MachineName;
 use fastctx_types::residents::Landed;
 use fastctx_types::session::{Happened, Health, SessionEvent, Speaker, TurnEnd, TurnHow};
-use fastctx_types::{Address, MachineName};
 use jiff::Timestamp;
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use crate::app::Ctx;
@@ -23,17 +22,18 @@ use crate::paint;
 use crate::{markdown, text, who};
 
 pub struct Transcript {
-    /// How the agent is named above what it writes: "Codex".
-    agent: String,
     items: Vec<Item>,
     next_local: u64,
+    /// The machine this TUI runs on: the user's words typed here need no
+    /// name above them.
+    here: Option<MachineName>,
 }
 
 enum Item {
-    Heard { from: Option<Speaker>, text: String, at: Timestamp, turn: Option<String>, sending: Option<Sending> },
-    Message { item: String, turn: String, text: String, at: Timestamp, writing: bool, laid: Laid },
+    Heard { from: Option<Speaker>, text: String, turn: Option<String>, sending: Option<Sending> },
+    Message { item: String, turn: String, text: String, writing: bool, laid: Laid },
     Tool { item: String, turn: String, tool: String, detail: String, at: Timestamp, ended: Option<(Timestamp, Use)> },
-    Ended { turn: String, end: TurnEnd },
+    Ended { turn: String, end: TurnEnd, at: Timestamp },
     Health { health: Health },
     Note { text: String, role: Role },
 }
@@ -79,8 +79,8 @@ enum Use {
 }
 
 impl Transcript {
-    pub fn new(agent: String) -> Self {
-        Self { agent, items: Vec::new(), next_local: 0 }
+    pub fn new(here: Option<MachineName>) -> Self {
+        Self { items: Vec::new(), next_local: 0, here }
     }
 
     /// What came before, replacing what was shown; words being sent from
@@ -130,7 +130,7 @@ impl Transcript {
                     matches!(item, Item::Heard { text: said, turn: heard, .. } if *said == text && turn.is_some() && *heard == turn)
                 });
                 if !known {
-                    self.items.push(Item::Heard { from, text, at, turn, sending: None });
+                    self.items.push(Item::Heard { from, text, turn, sending: None });
                 }
             }
             Happened::Writing { turn, item, delta } => match self.message(&item) {
@@ -138,9 +138,7 @@ impl Transcript {
                     text.push_str(&delta);
                     *laid = Laid::default();
                 }
-                _ => {
-                    self.items.push(Item::Message { item, turn, text: delta, at, writing: true, laid: Laid::default() })
-                }
+                _ => self.items.push(Item::Message { item, turn, text: delta, writing: true, laid: Laid::default() }),
             },
             Happened::Said { turn, item, text } => match self.message(&item) {
                 Some(Item::Message { text: shown, writing, laid, .. }) => {
@@ -148,7 +146,7 @@ impl Transcript {
                     *writing = false;
                     *laid = Laid::default();
                 }
-                _ => self.items.push(Item::Message { item, turn, text, at, writing: false, laid: Laid::default() }),
+                _ => self.items.push(Item::Message { item, turn, text, writing: false, laid: Laid::default() }),
             },
             Happened::ToolStarted { turn, item, tool, detail } => {
                 let known = !item.is_empty()
@@ -182,7 +180,7 @@ impl Transcript {
                         _ => {}
                     }
                 }
-                self.items.push(Item::Ended { turn, end });
+                self.items.push(Item::Ended { turn, end, at });
             }
             Happened::Health { health, .. } => {
                 let repeat = matches!(self.items.last(), Some(Item::Health { health: last, .. }) if *last == health);
@@ -199,14 +197,13 @@ impl Transcript {
 
     /// Words the user is sending; returns the number they are known by
     /// until the World answers.
-    pub fn sending(&mut self, text: String, here: Option<MachineName>, at: Timestamp) -> u64 {
+    pub fn sending(&mut self, text: String, here: Option<MachineName>) -> u64 {
         let local = self.next_local;
         self.next_local += 1;
         let from = here.map(|machine| Speaker::User { machine });
         self.items.push(Item::Heard {
             from,
             text,
-            at,
             turn: None,
             sending: Some(Sending { local, state: SendState::Going }),
         });
@@ -245,13 +242,14 @@ impl Transcript {
         })
     }
 
-    /// The conversation laid out in `width` cells.
+    /// The conversation laid out in `width` cells. Words that went in sit
+    /// on a raised block, named only when they are not the user's own from
+    /// this machine; what the agent writes sits on the ground under no name,
+    /// since the page says whose session it is; its tools are quiet rows; a
+    /// turn closes with how it ended and when.
     pub fn lines(&self, ctx: &Ctx, width: usize) -> Vec<Line<'static>> {
-        let words = &ctx.words;
         let look = &ctx.look;
         let mut out: Vec<Line<'static>> = Vec::new();
-        // The turn whose agent is already named above what follows.
-        let mut named: Option<&str> = None;
         let mut last_was_tool = false;
         let tool_width = self
             .items
@@ -263,25 +261,21 @@ impl Transcript {
             .max()
             .unwrap_or(0);
         for item in &self.items {
+            let is_tool = matches!(item, Item::Tool { .. });
             match item {
-                Item::Heard { from, text, at, sending, .. } => {
+                Item::Heard { from, text, sending, .. } => {
                     blank(&mut out);
-                    named = None;
-                    out.push(label(ctx, speaker(ctx, from.as_ref(), sending.is_some()), *at, width));
+                    if let Some(label) = self.speaker(ctx, from.as_ref(), sending.is_some()) {
+                        out.push(Line::from(Span::styled(label, look.text(Role::Muted))));
+                    }
                     let role = if matches!(from, Some(Speaker::World)) { Role::Muted } else { Role::Text };
-                    out.extend(text::wrap_plain(text, look.text(role), width));
+                    out.extend(block(ctx, text, role, width));
                     if let Some(sending) = sending {
                         out.extend(sent(ctx, &sending.state, width));
                     }
                 }
-                Item::Message { turn, text, at, writing, laid, .. } => {
-                    if named != Some(turn.as_str()) {
-                        blank(&mut out);
-                        out.push(label(ctx, self.agent.clone(), *at, width));
-                        named = Some(turn.as_str());
-                    } else if last_was_tool {
-                        blank(&mut out);
-                    }
+                Item::Message { text, writing, laid, .. } => {
+                    blank(&mut out);
                     let mut lines = laid.lines(ctx, text, width);
                     if *writing {
                         let breath = look.faded(Role::Accent, ctx.breath);
@@ -293,25 +287,16 @@ impl Transcript {
                         }
                     }
                     out.extend(lines);
-                    last_was_tool = false;
-                    continue;
                 }
-                Item::Tool { turn, tool, detail, at, ended, .. } => {
-                    if named != Some(turn.as_str()) {
-                        blank(&mut out);
-                        out.push(label(ctx, self.agent.clone(), *at, width));
-                        named = Some(turn.as_str());
-                    } else if !last_was_tool {
+                Item::Tool { tool, detail, at, ended, .. } => {
+                    if !last_was_tool {
                         blank(&mut out);
                     }
                     out.push(tool_line(ctx, tool, tool_width, detail, *at, *ended, width));
-                    last_was_tool = true;
-                    continue;
                 }
-                Item::Ended { end, .. } => {
-                    out.push(Line::default());
-                    out.push(ended(ctx, end));
-                    named = None;
+                Item::Ended { end, at, .. } => {
+                    blank(&mut out);
+                    out.push(ended(ctx, end, *at, width));
                 }
                 Item::Health { health, .. } => {
                     out.push(Line::from(Span::styled(format!("▲ {}", health.text), look.text(Role::Caution))));
@@ -321,10 +306,24 @@ impl Transcript {
                     out.extend(text::wrap_plain(text, look.text(*role), width));
                 }
             }
-            last_was_tool = false;
+            last_was_tool = is_tool;
         }
-        let _ = words;
         out
+    }
+
+    /// Who words that went in came from, when it needs saying: not for the
+    /// user's own, typed on this machine.
+    fn speaker(&self, ctx: &Ctx, from: Option<&Speaker>, sending: bool) -> Option<String> {
+        match from {
+            None if sending => None,
+            Some(Speaker::User { machine }) if self.here.as_ref() == Some(machine) => None,
+            Some(Speaker::User { machine }) => Some(format!("{} · {machine}", ctx.words.you())),
+            Some(Speaker::Resident { address }) => {
+                Some(format!("{}  {}", who::address_name(ctx, address), address.resident))
+            }
+            Some(Speaker::World) => Some(ctx.words.the_world().to_string()),
+            None => Some(ctx.words.heard().to_string()),
+        }
     }
 }
 
@@ -335,30 +334,34 @@ fn blank(out: &mut Vec<Line<'static>>) {
     }
 }
 
-/// Who said something, as a line above it, with the time on the right.
-fn label(ctx: &Ctx, who: String, at: Timestamp, width: usize) -> Line<'static> {
-    let clock = crate::words::clock(at, ctx.now);
-    let who_width = text::width(&who);
-    let gap = width.saturating_sub(who_width + text::width(&clock)).max(2);
-    Line::from(vec![
-        Span::styled(who, ctx.look.text(Role::Muted).add_modifier(Modifier::BOLD)),
-        Span::raw(" ".repeat(gap)),
-        Span::styled(clock, ctx.look.text(Role::Faint)),
-    ])
-}
-
-fn speaker(ctx: &Ctx, from: Option<&Speaker>, sending: bool) -> String {
-    match from {
-        None if sending => ctx.words.you().to_string(),
-        Some(Speaker::User { machine }) => format!("{} · {machine}", ctx.words.you()),
-        Some(Speaker::Resident { address }) => resident(ctx, address),
-        Some(Speaker::World) => ctx.words.the_world().to_string(),
-        None => ctx.words.heard().to_string(),
+/// Words on a raised block that fits them, with room inside: a row above
+/// and below, two cells at each side. Where the terminal has no colour for
+/// a raised ground, a rule in the gutter marks the words instead.
+fn block(ctx: &Ctx, words: &str, role: Role, width: usize) -> Vec<Line<'static>> {
+    let look = &ctx.look;
+    if look.color(Role::Raised).is_none() {
+        let rule = Span::styled("│ ", look.text(Role::Faint));
+        return text::wrap_plain(words, look.text(role), width.saturating_sub(2))
+            .into_iter()
+            .map(|mut line| {
+                line.spans.insert(0, rule.clone());
+                line
+            })
+            .collect();
     }
-}
-
-fn resident(ctx: &Ctx, address: &Address) -> String {
-    format!("{}  {}", who::address_name(ctx, address), address.resident)
+    let lines = text::wrap_plain(words, look.raised(role), width.saturating_sub(4));
+    let inside = lines.iter().map(text::line_width).max().unwrap_or(0);
+    let band = (inside + 4).min(width);
+    let fill = |cells: usize| Span::styled(" ".repeat(cells), look.raised(Role::Text));
+    let mut out = vec![Line::from(fill(band))];
+    for mut line in lines {
+        let used = text::line_width(&line);
+        line.spans.insert(0, fill(2));
+        line.spans.push(fill(band.saturating_sub(used + 2)));
+        out.push(line);
+    }
+    out.push(Line::from(fill(band)));
+    out
 }
 
 /// What the World said of words sent from here.
@@ -433,16 +436,23 @@ fn tool_line(
     line
 }
 
-/// How a turn ended, in a quiet line; louder when it did not complete.
-fn ended(ctx: &Ctx, end: &TurnEnd) -> Line<'static> {
+/// How a turn ended, in a quiet line, with when on the right; louder when
+/// it did not complete.
+fn ended(ctx: &Ctx, end: &TurnEnd, at: Timestamp, width: usize) -> Line<'static> {
     let words = &ctx.words;
     let took = end.duration_ms.map(|ms| words.duration(ms / 1000)).unwrap_or_default();
     let reason = end.reason.as_deref().map(text::first_line);
-    let (text, role) = match &end.how {
+    let (said, role) = match &end.how {
         TurnHow::Completed => (words.turn_completed(&took), Role::Faint),
         TurnHow::Failed => (words.turn_failed(reason.as_deref()), Role::Wrong),
         TurnHow::Interrupted => (words.turn_interrupted(reason.as_deref()), Role::Caution),
         TurnHow::Other(how) => (words.turn_ended_as(how), Role::Muted),
     };
-    Line::from(Span::styled(text, ctx.look.text(role)))
+    let clock = crate::words::clock(at, ctx.now);
+    let room = width.saturating_sub(text::width(&clock) + 2);
+    let mut line = paint::fit_line(&Line::from(Span::styled(said, ctx.look.text(role))), room);
+    let used = text::line_width(&line);
+    line.spans.push(Span::raw(" ".repeat(width.saturating_sub(used + text::width(&clock)))));
+    line.spans.push(Span::styled(clock, ctx.look.text(Role::Faint)));
+    line
 }

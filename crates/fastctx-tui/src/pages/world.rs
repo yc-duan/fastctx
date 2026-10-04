@@ -119,7 +119,7 @@ impl WorldPage {
         let mut item = 0;
         if let Some(view) = &self.view {
             if let Scope::World { towns } = &view.scope {
-                rows.push(paint::section(words.projects(), &ctx.look));
+                paint::open_section(&mut rows, paint::section(words.projects(), &ctx.look));
                 if towns.is_empty() {
                     rows.push(Row::new(quiet(ctx, words.no_projects())));
                 }
@@ -158,7 +158,7 @@ impl WorldPage {
                 }
             }
             if !view.residents.is_empty() {
-                rows.push(paint::section(words.outside(), &ctx.look));
+                paint::open_section(&mut rows, paint::section(words.outside(), &ctx.look));
                 for resident in &view.residents {
                     let (left, right) = who::first_line(ctx, resident);
                     rows.push(Row::new(left).right(right).item(item));
@@ -170,7 +170,7 @@ impl WorldPage {
             }
             let unattended = view.unattended();
             if !unattended.is_empty() {
-                rows.push(paint::section(words.unattended(), &ctx.look));
+                paint::open_section(&mut rows, paint::section(words.unattended(), &ctx.look));
                 for job in unattended {
                     let line = Line::from(vec![
                         Span::styled(format!("{}   ", job.job), ctx.look.text(Role::Faint)),
@@ -189,7 +189,7 @@ impl WorldPage {
                 }
                 rows.push(Row::blank());
             }
-            rows.push(paint::section(words.machines(), &ctx.look));
+            paint::open_section(&mut rows, paint::section(words.machines(), &ctx.look));
             rows.push(Row::new(machines_line(ctx, &view.machines)));
         }
         let note = match (&self.failed, &self.view, self.had_at) {

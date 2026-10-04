@@ -231,6 +231,19 @@ pub fn section(title: &str, look: &Look) -> Row {
     Row::new(Span::styled(title.to_string(), look.text(Role::Muted).add_modifier(Modifier::BOLD)))
 }
 
+/// Starts a section under what is there: two blank rows above its title
+/// and one under it, so the title sits nearer what it names than what came
+/// before, and a section reads as one however its last item ended.
+pub fn open_section(rows: &mut Vec<Row>, title: Row) {
+    while rows.last().is_some_and(|row| row.left.width() == 0 && row.right.width() == 0) {
+        rows.pop();
+    }
+    if !rows.is_empty() {
+        rows.extend([Row::blank(), Row::blank()]);
+    }
+    rows.extend([title, Row::blank()]);
+}
+
 /// The parts of a page: its name, its body and its keys.
 pub struct Frame {
     pub header: Rect,
@@ -239,15 +252,15 @@ pub struct Frame {
     pub footer: Rect,
 }
 
-/// Splits a screen into a page: a blank line, the name, a blank line, the
-/// body, a line for a note, the keys, and a blank line under them.
+/// Splits a screen into a page: a blank line, the name, two blank lines,
+/// the body, a line for a note, the keys, and a blank line under them.
 pub fn frame(area: Rect) -> Frame {
     let column = column(area);
     let at = |offset: u16| Rect { y: column.y + offset, height: 1, ..column };
     let bottom = column.height.saturating_sub(1);
     Frame {
         header: at(1.min(bottom)),
-        body: Rect { y: column.y + 3, height: column.height.saturating_sub(7), ..column },
+        body: Rect { y: column.y + 4, height: column.height.saturating_sub(8), ..column },
         note: at(bottom.saturating_sub(3)),
         footer: at(bottom.saturating_sub(1)),
     }
