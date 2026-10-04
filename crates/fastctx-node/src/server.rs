@@ -324,22 +324,31 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             let caller = caller::of(node, peer)?;
             crate::town::journal::call(node, &caller, call).await
         }
+        // Who belongs to the World is the user's to decide: a resident that
+        // could invite or revoke a machine could hand the World to anyone.
         Call::Join { code, name } => {
+            users_voice(node, peer)?;
             crate::world::join(node, &code, name).await.map(|(world, name)| Reply::Joined { world, name })
         }
         Call::Invite { name, expires } => {
+            users_voice(node, peer)?;
             let link = member(node)?;
             link.invite(name, expires).await.map(|code| Reply::Code { code: code.to_text() }).map_err(Failure::new)
         }
         Call::Revoke { name, reason } => {
+            users_voice(node, peer)?;
             let link = member(node)?;
             if name == link.membership().name {
                 return Err(Failure::new("a machine leaves with `fastctx leave`, not by revoking itself"));
             }
             link.revoke(&name, &reason).await.map(|()| Reply::Done).map_err(Failure::new)
         }
-        Call::Leave => crate::world::leave(node).await.map(|()| Reply::Done),
+        Call::Leave => {
+            users_voice(node, peer)?;
+            crate::world::leave(node).await.map(|()| Reply::Done)
+        }
         Call::HandOver => {
+            users_voice(node, peer)?;
             crate::handoff::hand_over(node.clone());
             Ok(Reply::Done)
         }
