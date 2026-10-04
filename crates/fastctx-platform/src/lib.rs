@@ -23,6 +23,7 @@ pub mod private;
 pub mod procfs;
 #[cfg(windows)]
 pub mod registry;
+pub mod service_channel;
 #[cfg(any(target_os = "linux", windows))]
 pub mod tree;
 #[cfg(unix)]
