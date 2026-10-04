@@ -17,6 +17,7 @@
 //! Built against the mod API as measured on Claude Code 2.1.287 and run
 //! against a stand-in host only; it has not yet run with Claude Code.
 
+pub(crate) mod history;
 mod process;
 
 use std::collections::{HashMap, HashSet};

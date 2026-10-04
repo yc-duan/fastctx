@@ -80,13 +80,14 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
 /// Whether the World keeps an event in a resident's record of its session
 /// (`crate::talk::history`). What grows an item is only for those watching
 /// live. What the agent did is kept by the World only where the host keeps
-/// no record of it the World may read: Codex does, in the thread it reads
-/// back; Claude Code does not. What the World itself saw, such as who said
-/// words and how a turn ended, is always kept.
+/// no record of it the World may read: Codex keeps it in the thread it reads
+/// back, Claude Code in its own session file (`crate::claude::history`).
+/// What the World itself saw, such as who said words and how a turn ended,
+/// is always kept.
 fn recorded(agent: &str, happened: &Happened) -> bool {
     match happened {
         happened if !happened.kept() => false,
-        Happened::Finished { .. } => agent != "codex",
+        Happened::Finished { .. } => !matches!(agent, "codex" | "claude"),
         _ => true,
     }
 }

@@ -16,6 +16,7 @@ use fastctx_net::data::Stream;
 use fastctx_net::link::Feed;
 use fastctx_net::sign::Domain;
 use fastctx_types::ipc::Failure;
+use fastctx_types::layout::ResidentDir;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{About, Activity, Delivery, Host, Landed, Notice, Now, Origin};
 use fastctx_types::session::{SessionEvent, Speaker, Watched};
@@ -154,15 +155,23 @@ pub async fn watch_here(
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
     let events = node.watchers.watch(resident);
     let directory = node.world.resident(town.as_ref(), resident);
-    let hosted = match &about.session {
+    let recorded =
+        |directory: &ResidentDir| crate::delivery::history(directory).map_err(|error| Failure::new(error.to_string()));
+    let (recorded, hosted) = match &about.session {
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
             let history = node.codex.history(thread).await.map_err(Failure::new)?;
             node.codex.flush_events(thread).await.map_err(Failure::new)?;
-            Some(history)
+            (recorded(&directory)?, Some(history))
         }
-        _ => None,
+        // Claude Code's own record of the session, placed in the turns the
+        // World saw, which the World's record says.
+        _ if about.host.agent.as_str() == "claude" => {
+            let recorded = recorded(&directory)?;
+            let hosted = crate::claude::history::hosted(node, resident, &recorded).await;
+            (recorded, Some(hosted))
+        }
+        _ => (recorded(&directory)?, None),
     };
-    let recorded = crate::delivery::history(&directory).map_err(|error| Failure::new(error.to_string()))?;
     Ok((history(recorded, hosted), events))
 }
 
