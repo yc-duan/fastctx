@@ -53,7 +53,8 @@ pub async fn ask(
             match link.call(&target, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
                 Ok(RemoteReply::Asked { colleague }) => Address { machine: target, resident: colleague },
                 Ok(_) => return Err(Failure::new(format!("{target} answered something other than a colleague"))),
-                Err(failure) => return Err(failure),
+                // What went wrong there is said of that machine, not the asker's.
+                Err(failure) => return Err(Failure::new(format!("on {target}: {}", failure.message))),
             }
         }
     };

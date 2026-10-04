@@ -336,7 +336,8 @@ pub async fn open(
             match link.call(&target, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
                 Ok(RemoteReply::Opened { resident, landed }) => Ok((Address { machine: target, resident }, landed)),
                 Ok(_) => Err(Failure::new(format!("{target} answered something other than an opened session"))),
-                Err(failure) => Err(failure),
+                // What went wrong there is said of that machine, not this one.
+                Err(failure) => Err(Failure::new(format!("on {target}: {}", failure.message))),
             }
         }
     }
