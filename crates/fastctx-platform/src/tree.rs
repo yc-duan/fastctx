@@ -242,47 +242,31 @@ mod imp {
 mod imp {
     use std::ffi::{OsStr, OsString};
     use std::io;
-    use std::mem::{offset_of, size_of, zeroed};
+    use std::mem::{offset_of, size_of};
     use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
     use std::os::windows::process::ExitStatusExt as _;
     use std::path::Path;
     use std::process::ExitStatus;
     use std::ptr;
 
-    use windows_sys::Win32::Foundation::{
-        ERROR_INVALID_PARAMETER, ERROR_MORE_DATA, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
-        STILL_ACTIVE, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
-    };
-    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
+    use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_MORE_DATA, STILL_ACTIVE, WAIT_TIMEOUT};
     use windows_sys::Win32::System::JobObjects::{
-        CreateJobObjectW, IsProcessInJob, JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOBOBJECTINFOCLASS, JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
-        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+        IsProcessInJob, JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicAccountingInformation,
+        JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation, QueryInformationJobObject, TerminateJobObject,
     };
     use windows_sys::Win32::System::Threading::{
-        CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
-        EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList,
-        LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-        PROCESS_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
-        QueryFullProcessImageNameW, STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute,
-        WaitForSingleObject,
+        GetExitCodeProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        QueryFullProcessImageNameW, WaitForSingleObject,
     };
 
-    use crate::detach::check_environment;
-    use crate::windows_process::{command_line, environment_block, wide};
+    use crate::windows_job::{Stdio, create_in_job, new_job, open_null_for_reading, query, set, wait};
 
     pub struct Tree {
         job: OwnedHandle,
         main: OwnedHandle,
         main_pid: u32,
     }
-
-    /// The flag that gives the program a console of its own with no window.
-    /// Console programs it starts share that console, so none of them opens
-    /// a window on the desktop.
-    const CONSOLE: u32 = CREATE_NO_WINDOW;
 
     impl Tree {
         pub fn spawn(
@@ -291,67 +275,16 @@ mod imp {
             cwd: &Path,
             env: &[(OsString, OsString)],
         ) -> io::Result<(Self, io::PipeReader)> {
-            if !program.is_absolute() || !cwd.is_absolute() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "program and working directory must be absolute paths",
-                ));
-            }
-            check_environment(env)?;
             let job = new_job()?;
             let (reader, writer) = io::pipe()?;
             let stdin = open_null_for_reading()?;
-            // Only these two handles are inherited, and only by this child:
-            // the handle list names them explicitly.
-            set_inheritable(writer.as_raw_handle())?;
-            let handles = [stdin.as_raw_handle(), writer.as_raw_handle()];
-            let jobs = [job.as_raw_handle()];
-            let mut attributes = Attributes::new(2)?;
-            attributes.set(PROC_THREAD_ATTRIBUTE_JOB_LIST as usize, &jobs)?;
-            attributes.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize, &handles)?;
-
-            let application = wide(program);
-            let mut line = command_line(program.as_os_str(), args)?;
-            let directory = wide(cwd);
-            let block = environment_block(env);
-            // SAFETY: zeroed is a valid empty STARTUPINFOEXW.
-            let mut startup: STARTUPINFOEXW = unsafe { zeroed() };
-            startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
-            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-            startup.StartupInfo.hStdInput = stdin.as_raw_handle();
-            startup.StartupInfo.hStdOutput = writer.as_raw_handle();
-            startup.StartupInfo.hStdError = writer.as_raw_handle();
-            startup.lpAttributeList = attributes.as_ptr();
-            // SAFETY: zeroed is valid for an out-parameter.
-            let mut info: PROCESS_INFORMATION = unsafe { zeroed() };
-            // SAFETY: every string, array and the attribute list outlive the
-            // call. The job is assigned before any code of the program runs.
-            let created = unsafe {
-                CreateProcessW(
-                    application.as_ptr(),
-                    line.as_mut_ptr(),
-                    ptr::null(),
-                    ptr::null(),
-                    1,
-                    EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CONSOLE,
-                    block.as_ptr().cast(),
-                    directory.as_ptr(),
-                    &startup.StartupInfo,
-                    &mut info,
-                )
-            };
-            if created == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: handles returned by CreateProcessW, owned from here.
-            let main = unsafe {
-                drop(OwnedHandle::from_raw_handle(info.hThread));
-                OwnedHandle::from_raw_handle(info.hProcess)
-            };
+            let stdio =
+                Stdio { input: stdin.as_raw_handle(), output: writer.as_raw_handle(), error: writer.as_raw_handle() };
+            let (main, main_pid) = create_in_job(&job, program, args, cwd, env, &stdio)?;
             // The reader sees the end of the output only once this copy of
             // the writing end is gone too.
             drop(writer);
-            Ok((Self { job, main, main_pid: info.dwProcessId }, reader))
+            Ok((Self { job, main, main_pid }, reader))
         }
 
         pub fn main_pid(&self) -> u32 {
@@ -499,59 +432,6 @@ mod imp {
         }
     }
 
-    fn new_job() -> io::Result<OwnedHandle> {
-        // SAFETY: an unnamed job with default security, owned from here.
-        let raw = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
-        if raw.is_null() {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: a new handle.
-        let job = unsafe { OwnedHandle::from_raw_handle(raw) };
-        // SAFETY: zeroed is a valid empty limit structure.
-        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        set(&job, JobObjectExtendedLimitInformation, &limits)?;
-        Ok(job)
-    }
-
-    fn set<T>(job: &OwnedHandle, class: JOBOBJECTINFOCLASS, value: &T) -> io::Result<()> {
-        // SAFETY: each caller pairs the class with its documented type.
-        let done = unsafe {
-            SetInformationJobObject(job.as_raw_handle(), class, (value as *const T).cast(), size_of::<T>() as u32)
-        };
-        if done == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-
-    fn query<T>(job: &OwnedHandle, class: JOBOBJECTINFOCLASS) -> io::Result<T> {
-        // SAFETY: each caller pairs the class with its documented type, for
-        // which zeroed memory is a valid starting value.
-        unsafe {
-            let mut value: T = zeroed();
-            if QueryInformationJobObject(
-                job.as_raw_handle(),
-                class,
-                (&raw mut value).cast(),
-                size_of::<T>() as u32,
-                ptr::null_mut(),
-            ) == 0
-            {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(value)
-        }
-    }
-
-    fn wait(process: &OwnedHandle) -> io::Result<()> {
-        // SAFETY: a valid process handle.
-        match unsafe { WaitForSingleObject(process.as_raw_handle(), INFINITE) } {
-            WAIT_OBJECT_0 => Ok(()),
-            _ => Err(io::Error::last_os_error()),
-        }
-    }
-
     fn image_name(process: &OwnedHandle) -> Option<String> {
         let mut buffer = vec![0u16; 32_768];
         let mut length = buffer.len() as u32;
@@ -564,88 +444,5 @@ mod imp {
         }
         let path = String::from_utf16_lossy(&buffer[..length as usize]);
         path.rsplit(['\\', '/']).next().map(str::to_string)
-    }
-
-    fn open_null_for_reading() -> io::Result<OwnedHandle> {
-        let name: Vec<u16> = "NUL".encode_utf16().chain([0]).collect();
-        let attributes = SECURITY_ATTRIBUTES {
-            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: ptr::null_mut(),
-            bInheritHandle: 1,
-        };
-        // SAFETY: a NUL-terminated name; the handle is owned from here.
-        let raw = unsafe {
-            CreateFileW(
-                name.as_ptr(),
-                GENERIC_READ,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                &attributes,
-                OPEN_EXISTING,
-                0,
-                ptr::null_mut(),
-            )
-        };
-        if raw == INVALID_HANDLE_VALUE {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: a new handle.
-        Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
-    }
-
-    fn set_inheritable(handle: HANDLE) -> io::Result<()> {
-        // SAFETY: a valid handle this process owns.
-        if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-
-    /// A process-creation attribute list.
-    struct Attributes(Vec<usize>);
-
-    impl Attributes {
-        fn new(count: u32) -> io::Result<Self> {
-            let mut bytes = 0;
-            // SAFETY: the first call only reports the size needed.
-            unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), count, 0, &mut bytes) };
-            let mut storage = vec![0usize; bytes.div_ceil(size_of::<usize>())];
-            // SAFETY: storage of the reported size, aligned for the list.
-            if unsafe { InitializeProcThreadAttributeList(storage.as_mut_ptr().cast(), count, 0, &mut bytes) } == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(Self(storage))
-        }
-
-        /// Sets `attribute` to `handles`, which must outlive the process
-        /// creation that uses this list.
-        fn set(&mut self, attribute: usize, handles: &[HANDLE]) -> io::Result<()> {
-            // SAFETY: an initialized list and an array the caller keeps alive.
-            let done = unsafe {
-                UpdateProcThreadAttribute(
-                    self.as_ptr(),
-                    0,
-                    attribute,
-                    handles.as_ptr().cast(),
-                    size_of_val(handles),
-                    ptr::null_mut(),
-                    ptr::null(),
-                )
-            };
-            if done == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        }
-
-        fn as_ptr(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
-            self.0.as_mut_ptr().cast()
-        }
-    }
-
-    impl Drop for Attributes {
-        fn drop(&mut self) {
-            // SAFETY: an initialized list whose storage is still alive.
-            unsafe { DeleteProcThreadAttributeList(self.as_ptr()) }
-        }
     }
 }

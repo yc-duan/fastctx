@@ -7,6 +7,8 @@
 //! platforms appear in this crate only.
 
 pub mod atomic;
+#[cfg(any(target_os = "linux", windows))]
+pub mod child;
 pub mod detach;
 pub mod environment;
 pub mod home;
@@ -25,11 +27,15 @@ pub mod tree;
 #[cfg(unix)]
 mod unix_fds;
 #[cfg(windows)]
+mod windows_job;
+#[cfg(windows)]
 mod windows_process;
 #[cfg(windows)]
 mod windows_user;
 
 pub use atomic::{Permissions, Staged, publish, publish_new};
+#[cfg(any(target_os = "linux", windows))]
+pub use child::Child;
 pub use detach::{DetachedProcess, spawn_detached};
 pub use environment::{in_job, user_environment, world_process_environment};
 pub use home::{fastctx_root, user_home};
