@@ -18,6 +18,7 @@
 //! as its own record says, is taken over or removed, and nothing else.
 
 pub mod briefing;
+pub mod claude;
 pub mod executable;
 pub mod plan;
 pub mod transaction;
