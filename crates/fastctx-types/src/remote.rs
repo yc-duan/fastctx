@@ -25,6 +25,9 @@ pub enum RemoteCall {
     /// Who is on that machine and what each is doing, for `fastctx w`: in
     /// `town`, or in every town and none.
     Who { all: bool, town: Option<TownName> },
+    /// Existing local records strictly after this timestamp. Large replies
+    /// use the telephone's existing authenticated data connection.
+    Since { since: jiff::Timestamp, town: Option<TownName> },
     /// The documents of a canon there, for a town's map.
     Canon { path: String },
     /// Start a colleague there for a resident of the calling machine.
@@ -66,6 +69,7 @@ pub enum RemoteReply {
         outcome: WriteOutcome,
     },
     Who(WhoReply),
+    Since(crate::since::SinceReply),
     Asked {
         colleague: ResidentId,
     },

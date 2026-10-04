@@ -103,6 +103,21 @@ impl World {
         }
     }
 
+    /// Facts recorded strictly after `since`, in chronological order, from
+    /// `town`'s machines or the whole World. Inspect machine outcomes, read
+    /// issues and limitations alongside the timeline. Undated facts are
+    /// returned separately and do not establish what happened since departure.
+    pub async fn since(
+        &self,
+        since: Timestamp,
+        town: Option<TownName>,
+    ) -> Result<fastctx_types::since::WorldSince, Error> {
+        match self.ask(Call::Since { since, town }).await? {
+            Reply::Since(since) => Ok(since),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Residents or jobs in detail, by id.
     pub async fn look(&self, ids: Vec<String>) -> Result<Vec<LookedUp>, Error> {
         match self.ask(Call::Look { ids }).await? {

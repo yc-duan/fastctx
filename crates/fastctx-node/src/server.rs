@@ -281,6 +281,7 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             let town = town.or_else(|| caller::of(node, peer).ok().and_then(|caller| caller.town(node)));
             who(node, all, town).await.map(Reply::Who)
         }
+        Call::Since { since, town } => crate::since::query(node, since, town).await.map(Reply::Since),
         Call::Look { ids } => Ok(Reply::Looked { looked: crate::look::look(node, ids).await }),
         Call::Talk { to, machine, text } => {
             users_voice(node, peer)?;
