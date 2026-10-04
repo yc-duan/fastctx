@@ -14,6 +14,31 @@ mod imp;
 mod imp;
 pub(crate) use imp::*;
 
+/// Establishes each parent name durably before creating its descendants.
+pub(crate) fn ensure_private_dir(path: &Path) -> io::Result<()> {
+    let path = std::path::absolute(path)?;
+    let mut missing = Vec::new();
+    let mut ancestor = path.as_path();
+    while !ancestor.try_exists()? {
+        missing.push(ancestor.to_owned());
+        ancestor = ancestor.parent().ok_or_else(|| io::Error::other("directory has no existing ancestor"))?;
+    }
+    for directory in missing.iter().rev() {
+        fs::create_dir(directory)?;
+        sync_parent(directory)?;
+    }
+    fastctx_platform::ensure_private_dir(&path)?;
+    sync_directory(&path)?;
+    // This also finishes a creation interrupted before its parent flush.
+    sync_parent(&path)
+}
+
+pub(crate) fn publish_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    fastctx_platform::publish(path, bytes, fastctx_platform::Permissions::Private)?;
+    fs::OpenOptions::new().read(true).write(true).open(path)?.sync_all()?;
+    sync_parent(path)
+}
+
 /// A filesystem object, independent of the name used to reach it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Identity {

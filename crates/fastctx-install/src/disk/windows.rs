@@ -21,7 +21,7 @@ use windows_sys::Win32::Storage::FileSystem::*;
 
 use super::Identity;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct Attributes {
     flags: u32,
     created: i64,
@@ -30,6 +30,24 @@ pub(crate) struct Attributes {
 }
 
 impl Attributes {
+    pub(crate) fn revision_bytes(&self) -> io::Result<Vec<u8>> {
+        let mut attributes = self.clone();
+        // ReplaceFile recomputes this derived marker even when every ACE and
+        // protection bit is unchanged. It is not a change to access rights.
+        let inherited = windows_sys::Win32::Security::SE_DACL_AUTO_INHERITED as u32;
+        attributes.security[0] &= !(inherited << 16);
+        serde_json::to_vec(&attributes).map_err(io::Error::other)
+    }
+
+    pub(crate) fn publication_bytes(&self) -> io::Result<Vec<u8>> {
+        let mut attributes = self.clone();
+        // ReplaceFile rebuilds inherited ACEs from the publication directory.
+        // The complete displaced descriptor is checked separately; payload
+        // identity/content must also remain recognizable after that OS change.
+        attributes.security.clear();
+        serde_json::to_vec(&attributes).map_err(io::Error::other)
+    }
+
     pub fn read(file: &File, path: &Path) -> io::Result<Self> {
         let mut basic = FILE_BASIC_INFO::default();
         // SAFETY: the handle and output buffer are valid for the call.
@@ -255,9 +273,54 @@ pub(crate) fn restore_modified(file: &File, modified: SystemTime) -> io::Result<
     file.set_modified(modified)
 }
 
-pub(crate) fn sync_parent(_path: &Path) -> io::Result<()> {
-    // Windows has no documented equivalent to fsync on a directory handle.
-    Ok(())
+pub(crate) fn sync_parent(path: &Path) -> io::Result<()> {
+    sync_directory(path.parent().expect("absolute path"))
+}
+
+pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
+    let directory = OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    let mut filesystem = [0u16; 32];
+    // MS-FSA 2.1.5.7 requires directory metadata on stable storage. Its
+    // Windows product note 80 limits that behavior to NTFS: other drivers
+    // can return success without flushing anything. Refuse that false promise.
+    // SAFETY: a live directory handle and a correctly sized name buffer.
+    check(unsafe {
+        GetVolumeInformationByHandleW(
+            directory.as_raw_handle(),
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            filesystem.as_mut_ptr(),
+            filesystem.len() as u32,
+        )
+    })?;
+    if filesystem[..5] != [b'N' as u16, b'T' as u16, b'F' as u16, b'S' as u16, 0] {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "durable directory publication requires NTFS"));
+    }
+    directory.sync_all()
+}
+
+/// Keeps the actual displaced object, including writes through old handles.
+/// ReplaceFile can partially complete on error; callers must inspect all names.
+pub(crate) fn replace_preserving(source: &Path, target: &Path, displaced: &Path) -> io::Result<()> {
+    let (source, target, displaced) = (wide(source), wide(target), wide(displaced));
+    // SAFETY: all three names are terminated, distinct paths on the same volume.
+    check(unsafe { ReplaceFileW(target.as_ptr(), source.as_ptr(), displaced.as_ptr(), 0, ptr::null(), ptr::null()) })
+}
+
+/// Moves the object opened at the source to a new name without replacing one.
+pub(crate) fn move_preserving(source: &Path, destination: &Path) -> io::Result<()> {
+    let file = OpenOptions::new()
+        .read(true)
+        .access_mode(DELETE | GENERIC_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(source)?;
+    publish(&file, source, destination, false)
 }
 
 fn wide(path: &Path) -> Vec<u16> {

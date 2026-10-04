@@ -30,7 +30,9 @@ fn claude_2_1_287_public_lists() {
     assert!(PluginApply::prepare(&plan, state.clone(), None).unwrap().commands().is_empty());
     let mut disabled = state;
     disabled.installations[0].enabled = false;
-    assert!(PluginApply::prepare(&plan, disabled, None).unwrap_err().contains("disabled"));
+    let enable = PluginApply::prepare(&plan, disabled, None).unwrap().commands();
+    assert_eq!(enable.len(), 1);
+    assert_eq!(enable[0].args, ["plugin", "enable", "fastctx-world@fastctx", "--scope", "user"]);
     for wrong in [b"{}".as_slice(), b"null", b"[{}]", b"[{\"id\":\"fastctx-world@fastctx\",\"scope\":\"user\"}]"] {
         assert!(PluginState::parse(wrong, b"[]").is_err());
     }
