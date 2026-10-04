@@ -53,9 +53,11 @@ pub fn framed(text: &str) -> String {
     format!("{FRAME}\n\n{text}")
 }
 
-/// Whether words a session heard are the World's own, framed as such.
+/// Whether words a session heard are the World's own, framed as such. The
+/// session hears them inside Claude Code's own frame for what a plugin
+/// submits, which puts a line of its own before them (2.1.289).
 pub fn is_framed(text: &str) -> bool {
-    text.starts_with(FRAME)
+    text.starts_with(FRAME) || text.contains(&format!("\n{FRAME}\n"))
 }
 
 /// The local marketplace: `<world>/claude-plugins`.

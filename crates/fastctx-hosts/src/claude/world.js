@@ -245,7 +245,7 @@ async function submit($, context, deliveries, prompt) {
     const result = await $.prompt.submit(prompt)
     context.requestInFlight = false
     if (result.drop !== undefined) throw new Error(result.drop)
-    const candidates = context.submissionTurns.filter((started) => started.text === result.text)
+    const candidates = context.submissionTurns.filter((started) => took(started.text, result.text))
     if (candidates.length === 0) {
       // The prompt entered; the turn it starts begins once the session is
       // idle, which may be only after this very hook returns (a submission at
@@ -503,11 +503,19 @@ async function startSession($, context) {
   context.stored = (uuid) => streamEvent($, context, { kind: 'stored', uuid })
 }
 
+// Whether a turn starting with `started` is the one that took the prompt
+// whose text entered as `entered`. The person's own words start their turn
+// bare; anything else a plugin submits starts it inside the host's frame,
+// "The <plugin> plugin sent a message:" before and a note after (2.1.289).
+function took(started, entered) {
+  return started === entered || (entered !== '' && started.includes(entered))
+}
+
 async function startTurn($, context, e, next) {
   context.busy = true
   context.turn = e.turnId
   if (context.requestInFlight) context.submissionTurns.push({ turnId: e.turnId, text: e.text })
-  const awaited = context.awaiting !== null && context.awaiting.text === e.text ? context.awaiting : null
+  const awaited = context.awaiting !== null && took(e.text, context.awaiting.text) ? context.awaiting : null
   if (awaited !== null) {
     context.awaiting = null
     context.submitting.splice(0, context.submitting.length)

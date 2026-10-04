@@ -287,10 +287,18 @@ pub async fn bind(
     Ok(())
 }
 
-/// Words went into `turn`: everyone watching sees them, and a colleague's
-/// records keep them.
+/// What went into `turn`: everyone watching sees who said it, and a
+/// colleague's records keep the words said to it. Words are their
+/// speaker's; a colleague's answer is that colleague's, as the resident read
+/// it; the rest is the World's telling, also as read.
 pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str) {
-    let Notice::Words { from, text } = &delivery.notice else { return };
+    let (from, text) = match &delivery.notice {
+        Notice::Words { from, text } => (from.clone(), text.clone()),
+        Notice::Answer { colleague, .. } => {
+            (Speaker::Resident { address: colleague.clone() }, told::told(&delivery.notice))
+        }
+        Notice::JobEnded { .. } | Notice::Health { .. } => (Speaker::World, told::told(&delivery.notice)),
+    };
     let event = SessionEvent {
         at: Timestamp::now(),
         happened: Happened::Heard {
@@ -313,6 +321,7 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     }
     if let Some((about, town)) = node.residents.about(id)
         && matches!(about.origin, Origin::Colleague { .. })
+        && matches!(delivery.notice, Notice::Words { .. })
     {
         let line = MessageLine {
             at: delivery.at,
