@@ -1,6 +1,7 @@
 //! What the user does at the keyboard, read on a thread of its own and
 //! handed to the screen as it comes.
 
+#[cfg(windows)]
 mod decode;
 #[cfg(windows)]
 mod windows;
@@ -22,6 +23,7 @@ pub enum Input {
 
 /// Starts reading the terminal's input into `sender`.
 pub fn start(sender: UnboundedSender<Input>) -> std::io::Result<()> {
+    crate::terminal::require_interactive()?;
     #[cfg(windows)]
     {
         windows::start(sender)

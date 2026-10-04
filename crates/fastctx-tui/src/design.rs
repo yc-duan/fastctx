@@ -13,8 +13,6 @@
 //! selected row a shade lighter with a mark in the gutter. What moves moves
 //! only because something is happening, and quietly.
 
-use std::sync::OnceLock;
-
 use ratatui::style::{Color, Modifier, Style};
 
 /// How many colours the terminal shows.
@@ -176,36 +174,22 @@ impl Look {
     }
 }
 
-/// How many colours this terminal shows, read once from its environment.
-pub fn depth() -> Depth {
-    static DEPTH: OnceLock<Depth> = OnceLock::new();
-    *DEPTH.get_or_init(|| {
-        let var = |name: &str| std::env::var(name).unwrap_or_default().to_lowercase();
-        if std::env::var_os("NO_COLOR").is_some() || var("TERM") == "dumb" {
-            return Depth::Mono;
-        }
-        let term = var("TERM");
-        let truecolor = var("COLORTERM").contains("truecolor")
-            || var("COLORTERM").contains("24bit")
-            || term.contains("truecolor")
-            || term.contains("24bit")
-            || std::env::var_os("WT_SESSION").is_some()
-            || std::env::var_os("WEZTERM_EXECUTABLE").is_some()
-            || matches!(var("TERM_PROGRAM").as_str(), "vscode" | "iterm.app" | "wezterm" | "ghostty");
-        if truecolor {
-            Depth::TrueColor
-        } else if term.contains("256color") {
-            Depth::Ansi256
-        } else if !term.is_empty() || cfg!(windows) {
-            Depth::Ansi16
-        } else {
-            Depth::Mono
-        }
-    })
+/// The colour depth advertised to this process, respecting `NO_COLOR`.
+///
+/// A pipe or file gets no colours. This is separate from permission to
+/// start a full-screen interface: call [`crate::terminal::require_interactive`]
+/// before changing terminal modes. Unknown capabilities and failed platform
+/// queries are errors, rather than guesses about a terminal's palette.
+/// Detect during startup, before other threads change console modes.
+pub fn depth() -> std::io::Result<Depth> {
+    crate::terminal::depth()
 }
 
 /// Ink or paper: `FASTCTX_THEME` when set (`ink`, `paper`, `dark` or
-/// `light`), otherwise the system's choice of light or dark, otherwise ink.
+/// `light`), otherwise the native Windows application preference. On other
+/// platforms, or if that preference is unavailable, use `COLORFGBG` as a
+/// palette hint and finally ink. A palette hint is not a system preference:
+/// terminal palettes can be customized, and SSH does not carry an OS theme.
 pub fn theme() -> Theme {
     match std::env::var("FASTCTX_THEME").unwrap_or_default().to_lowercase().as_str() {
         "paper" | "light" => return Theme::Paper,
@@ -244,7 +228,11 @@ fn system_light() -> Option<bool> {
             &mut size,
         )
     };
-    (status == 0).then_some(data != 0)
+    match (status, data) {
+        (0, 0) => Some(false),
+        (0, 1) => Some(true),
+        _ => None,
+    }
 }
 
 #[cfg(not(windows))]

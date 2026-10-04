@@ -6,5 +6,6 @@
 pub mod design;
 pub mod input;
 pub mod paint;
+pub mod terminal;
 pub mod text;
 pub mod words;
