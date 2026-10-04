@@ -286,9 +286,11 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             users_voice(node, peer)?;
             crate::talk::talk(node, to, machine, text).await.map(|(to, landed)| Reply::Spoken { to, landed })
         }
-        Call::Open { agent, town, node: target, text } => {
+        Call::Agents { machine } => crate::agents::query(node, machine).await.map(Reply::Agents),
+        Call::Open { agent, town, node: target, text, model, reasoning_effort } => {
             users_voice(node, peer)?;
-            crate::talk::open(node, agent, town, target, text)
+            let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
+            crate::talk::open(node, agent, town, target, text, options)
                 .await
                 .map(|(resident, landed)| Reply::Opened { resident, landed })
         }

@@ -118,6 +118,15 @@ impl World {
         }
     }
 
+    /// Queries one machine, or fans out to every online machine. Offline
+    /// and unanswered machines remain explicit in the result.
+    pub async fn agents(&self, machine: Option<MachineName>) -> Result<fastctx_types::agents::WorldAgents, Error> {
+        match self.ask(Call::Agents { machine }).await? {
+            Reply::Agents(agents) => Ok(agents),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// The towns this machine is part of.
     pub async fn towns(&self) -> Result<Vec<TownSummary>, Error> {
         match self.ask(Call::Project(ProjectCall::List)).await? {
@@ -190,7 +199,30 @@ impl World {
         node: Option<MachineName>,
         text: String,
     ) -> Result<Said, Error> {
-        match self.ask(Call::Open { agent, town, node, text }).await? {
+        self.open_with_options(agent, town, node, text, fastctx_types::agents::SessionOptions::default()).await
+    }
+
+    /// Opens with the user's model and reasoning effort selections. Values
+    /// are the official program's identifiers; omitted values use its defaults.
+    pub async fn open_with_options(
+        &self,
+        agent: AgentName,
+        town: Option<TownName>,
+        node: Option<MachineName>,
+        text: String,
+        options: fastctx_types::agents::SessionOptions,
+    ) -> Result<Said, Error> {
+        match self
+            .ask(Call::Open {
+                agent,
+                town,
+                node,
+                text,
+                model: options.model,
+                reasoning_effort: options.reasoning_effort,
+            })
+            .await?
+        {
             Reply::Opened { resident, landed } => Ok(Said { to: resident, landed }),
             other => Err(unexpected(other)),
         }

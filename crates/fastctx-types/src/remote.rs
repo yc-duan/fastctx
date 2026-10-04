@@ -1,6 +1,7 @@
 //! What one machine asks another to do, and what it sends a resident who
 //! lives there (`world-network.md`, 四种话).
 
+use crate::agents::AgentsReply;
 use serde::{Deserialize, Serialize};
 
 use crate::copy::{CopyReport, Place};
@@ -24,6 +25,8 @@ pub enum RemoteCall {
     /// Who is on that machine and what each is doing, for `fastctx w`: in
     /// `town`, or in every town and none.
     Who { all: bool, town: Option<TownName> },
+    /// Facts from this machine's official agent programs.
+    Agents,
     /// The documents of a canon there, for a town's map.
     Canon { path: String },
     /// Start a colleague there for a resident of the calling machine.
@@ -39,7 +42,13 @@ pub enum RemoteCall {
     /// machine that holds the session, naming `watch` and numbered from 0.
     Watch { resident: ResidentId, watch: u64 },
     /// Open a session there for the user, as `Call::Open`.
-    Open { agent: AgentName, town: Option<TownName>, text: String },
+    Open {
+        agent: AgentName,
+        town: Option<TownName>,
+        text: String,
+        model: Option<String>,
+        reasoning_effort: Option<String>,
+    },
     /// Stop the turn a resident there is running, for the user.
     Stop { resident: ResidentId },
     /// What that machine is like, for `fastctx nodes`.
@@ -61,6 +70,7 @@ pub enum RemoteReply {
         outcome: WriteOutcome,
     },
     Who(WhoReply),
+    Agents(AgentsReply),
     Asked {
         colleague: ResidentId,
     },

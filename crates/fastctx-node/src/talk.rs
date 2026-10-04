@@ -323,16 +323,23 @@ pub async fn open(
     town: Option<TownName>,
     target: Option<MachineName>,
     text: String,
+    options: fastctx_types::agents::SessionOptions,
 ) -> Result<(Address, Landed), Failure> {
     let here = node.machine();
     match target.filter(|target| *target != here) {
         None => {
-            let (id, landed) = open_here(node, &here, agent, town, text).await?;
+            let (id, landed) = open_here(node, &here, agent, town, text, options).await?;
             Ok((Address { machine: here, resident: id }, landed))
         }
         Some(target) => {
             let link = link(node)?;
-            let call = RemoteCall::Open { agent, town, text };
+            let call = RemoteCall::Open {
+                agent,
+                town,
+                text,
+                model: options.model,
+                reasoning_effort: options.reasoning_effort,
+            };
             match link.call(&target, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
                 Ok(RemoteReply::Opened { resident, landed }) => Ok((Address { machine: target, resident }, landed)),
                 Ok(_) => Err(Failure::new(format!("{target} answered something other than an opened session"))),
@@ -351,10 +358,11 @@ pub async fn open_here(
     agent: AgentName,
     town: Option<TownName>,
     text: String,
+    options: fastctx_types::agents::SessionOptions,
 ) -> Result<(ResidentId, Landed), Failure> {
     match agent.as_str() {
         "codex" => {}
-        "claude" => return crate::claude::open_here(node, typed_on, town, text).await,
+        "claude" => return crate::claude::open_here(node, typed_on, town, text, options).await,
         _ => {
             return Err(Failure::new(format!(
                 "the World opens codex and claude sessions; it cannot open {agent} ones"
@@ -366,6 +374,7 @@ pub async fn open_here(
     }
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::User;
+    crate::session_options::keep(node, &id, &options)?;
     let (spec, heard) = crate::colleagues::thread_spec(node, &id, &origin, town.as_ref()).await?;
     let (thread, model) = node.codex.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();

@@ -12,6 +12,7 @@
 //! explicitly hidden UI items do not become visible session activities.
 //! `environments: []` disables the thread's own shell and file editing.
 
+mod agents;
 #[cfg(test)]
 mod contract;
 mod history;
@@ -267,6 +268,11 @@ struct Thread {
 }
 
 impl CodexHost {
+    /// The configuration directory used by this host and its status commands.
+    pub fn config_home(&self) -> &Path {
+        &self.codex_home
+    }
+
     /// A host for the Codex configured in `codex_home`; its app-server runs
     /// in `workdir` with exactly the environment `env`, and starts at the
     /// first call that needs it.

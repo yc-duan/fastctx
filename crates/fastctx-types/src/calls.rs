@@ -1,5 +1,6 @@
 //! Everything a local client can ask the node, and the answers.
 
+use crate::agents::WorldAgents;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +42,8 @@ pub enum Call {
     /// (`fastctx w`); without a town, the caller's, or the World as a whole
     /// for a caller in none. With `all`, also the residents who have left.
     Who { all: bool, town: Option<TownName> },
+    /// Agent programs on one machine, or every online machine in the World.
+    Agents { machine: Option<MachineName> },
     /// One resident or job in detail, by its id, from every machine that
     /// has it (`fastctx w <id>`).
     Look { ids: Vec<String> },
@@ -53,7 +56,14 @@ pub enum Call {
     Watch { resident: ResidentId, machine: Option<MachineName> },
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.
-    Open { agent: AgentName, town: Option<TownName>, node: Option<MachineName>, text: String },
+    Open {
+        agent: AgentName,
+        town: Option<TownName>,
+        node: Option<MachineName>,
+        text: String,
+        model: Option<String>,
+        reasoning_effort: Option<String>,
+    },
     /// Stops the turn a resident on any machine is running, for the user.
     Stop { resident: ResidentId, machine: Option<MachineName> },
     /// How to open a resident of this machine in its host's own interface,
@@ -125,6 +135,7 @@ pub enum Reply {
         notes: Vec<String>,
     },
     Who(WorldWho),
+    Agents(WorldAgents),
     Towns {
         towns: Vec<TownSummary>,
     },

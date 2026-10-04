@@ -9,6 +9,7 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+mod agents;
 mod attach;
 mod claude;
 mod codex;
@@ -29,6 +30,7 @@ mod resident_storage;
 mod residents;
 mod server;
 mod session_live;
+mod session_options;
 mod session_record;
 mod speech;
 mod talk;

@@ -12,6 +12,7 @@
 //! Built against the mod API as measured on Claude Code 2.1.289 and run
 //! against a stand-in host only; it has not yet run inside Claude Code.
 
+pub mod agents;
 pub mod background;
 pub mod calls;
 mod content;

@@ -33,12 +33,14 @@ pub struct Start<'a> {
     pub settings: &'a Path,
     pub instructions: &'a Path,
     pub first_words: &'a str,
+    pub model: Option<&'a str>,
+    pub reasoning_effort: Option<&'a str>,
 }
 
 /// `claude --bg` chooses the session's id itself and ignores `--session-id`
 /// (it says so); `started` reads the id back from what it prints.
 pub fn start_args(start: &Start) -> Vec<OsString> {
-    vec![
+    let mut args = vec![
         "--bg".into(),
         "--plugin-dir".into(),
         start.plugin.into(),
@@ -51,8 +53,15 @@ pub fn start_args(start: &Start) -> Vec<OsString> {
         "dontAsk".into(),
         "--append-system-prompt-file".into(),
         start.instructions.into(),
-        start.first_words.into(),
-    ]
+    ];
+    if let Some(model) = start.model {
+        args.extend(["--model".into(), model.into()]);
+    }
+    if let Some(effort) = start.reasoning_effort {
+        args.extend(["--effort".into(), effort.into()]);
+    }
+    args.extend(["--".into(), start.first_words.into()]);
+    args
 }
 
 /// The short id of the session `claude --bg` started, from what it printed:
