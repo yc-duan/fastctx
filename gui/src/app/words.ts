@@ -187,6 +187,105 @@ export const enMachines: MachinesWords = {
   via: (route) => `reaches the hub ${route}`,
 };
 
+export interface DetailsWords {
+  open: string;
+  close: string;
+  model: string;
+  modelSelf: string;
+  machine: string;
+  host: string;
+  startedByWorld: string;
+  origin: string;
+  openedByYou: string;
+  askedBy(asker: string, label: string): string;
+  here: string;
+  since(ago: string): string;
+  state: string;
+  busy(lasted: string): string;
+  idle(ago: string): string;
+  asleep(ago: string): string;
+  waiting: string;
+  trouble: string;
+  task: string;
+  colleagues: string;
+  running: string;
+  actions(shown: number, total: number): string;
+  noActions: string;
+  answers: string;
+  records: string;
+  stop: string;
+  stopped: string;
+  notRunning: string;
+  cannotLook(why: string): string;
+  notFound: string;
+}
+
+export const zhDetails: DetailsWords = {
+  open: "关于它",
+  close: "收起",
+  model: "模型",
+  modelSelf: "（自报）",
+  machine: "在哪台机器",
+  host: "程序",
+  startedByWorld: "世界拉起的后台会话",
+  origin: "来历",
+  openedByYou: "你开启的",
+  askedBy: (asker, label) => `受 ${asker} 之托：${label}`,
+  here: "来了",
+  since: (ago) => `${ago}前`,
+  state: "此刻",
+  busy: (lasted) => `在干活，已 ${lasted}`,
+  idle: (ago) => `空闲，${ago}前说完`,
+  asleep: (ago) => `睡着了，${ago}前`,
+  waiting: "在等你回答",
+  trouble: "出过的状况",
+  task: "它接的活",
+  colleagues: "它请的同事",
+  running: "它起的、还在跑的",
+  actions: (shown, total) => (shown < total ? `最近的动作（${total} 个里的最后 ${shown} 个）` : "它的动作"),
+  noActions: "还没有动作。",
+  answers: "交回过的",
+  records: "记录在",
+  stop: "停下这一轮",
+  stopped: "已请它停下",
+  notRunning: "它此刻没有在跑的一轮",
+  cannotLook: (why) => `问不到它的详情：${why}`,
+  notFound: "世界里没有找到它。",
+};
+
+export const enDetails: DetailsWords = {
+  open: "About it",
+  close: "Close",
+  model: "Model",
+  modelSelf: " (self-reported)",
+  machine: "Machine",
+  host: "Program",
+  startedByWorld: "a background session the World started",
+  origin: "Came",
+  openedByYou: "opened by you",
+  askedBy: (asker, label) => `for ${asker}: ${label}`,
+  here: "Here",
+  since: (ago) => `${ago} ago`,
+  state: "Now",
+  busy: (lasted) => `working, for ${lasted}`,
+  idle: (ago) => `idle, finished ${ago} ago`,
+  asleep: (ago) => `asleep, since ${ago} ago`,
+  waiting: "waiting for your answer",
+  trouble: "Trouble",
+  task: "Its task",
+  colleagues: "Colleagues it asked",
+  running: "Still running, started by it",
+  actions: (shown, total) => (shown < total ? `Latest actions (last ${shown} of ${total})` : "Its actions"),
+  noActions: "No actions yet.",
+  answers: "What it handed back",
+  records: "Records",
+  stop: "Stop this turn",
+  stopped: "Asked to stop",
+  notRunning: "It is running no turn now",
+  cannotLook: (why) => `Its details could not be asked: ${why}`,
+  notFound: "It was not found in the World.",
+};
+
 function zhSpan(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 1) return "不到一分钟";

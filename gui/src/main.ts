@@ -25,15 +25,18 @@ import { Shell, pageHead, type Page } from "./app/shell";
 import { effect } from "./app/signals";
 import { createStore, jobsOf, residentsOf } from "./app/store";
 import {
+  enDetails,
   enMachines,
   enNewTalk,
   enSettings,
   enShell,
+  zhDetails,
   zhMachines,
   zhNewTalk,
   zhSettings,
   zhShell,
 } from "./app/words";
+import { Details } from "./conversation/details";
 import { Conversation } from "./conversation/model";
 import { ConversationPage, type Someone } from "./conversation/page";
 import { redrawDiagrams } from "./conversation/diagrams";
@@ -50,8 +53,10 @@ import { specimens } from "./specimen/sessions";
 import { specimenNow } from "./specimen/world";
 import { applyTheme } from "./theme";
 import type { Address } from "./world/events";
+import type { ResidentDetail } from "./world/world";
 import {
   journal as readJournal,
+  look,
   open as openAgent,
   project as readProject,
   stop,
@@ -136,6 +141,37 @@ function stateOf(world: WorldNow, happenings: Happening[] | null): WorldState {
   return { here: world.here, machines: world.who.machines, nodes: world.nodes.machines, towns: world.towns, happenings };
 }
 
+const detailsWords = english ? enDetails : zhDetails;
+
+/** "Claude · laptop" for a resident the World answered with; its id
+ *  where it did not. */
+function someoneAt(address: Address): string {
+  const known = residentsOf(store.world.peek()).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+  return known ? shellWords.someone(agentName(known.about.host.agent), known.about.machine) : `${address.resident} · ${address.machine}`;
+}
+
+/** The card about the agent in a conversation, and how to fill it. */
+function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>) {
+  return {
+    card: new Details({
+      words: detailsWords,
+      someone: someoneAt,
+      link: talkLink,
+      span: shellWords.span,
+      stop: () => (live ? stop(address) : Promise.resolve(false)),
+    }),
+    label: detailsWords.open,
+    look,
+    colleagues: () =>
+      residentsOf(store.world.peek()).filter(
+        (r) =>
+          r.about.origin.kind === "colleague" &&
+          r.about.origin.asked_by.resident === address.resident &&
+          r.about.origin.asked_by.machine === address.machine,
+      ),
+  };
+}
+
 function home(): Page {
   const page = new HomePage({
     words: homeWords,
@@ -163,9 +199,11 @@ function home(): Page {
   };
 }
 
-function specimenTalk(name: string): Page {
+function specimenTalk(address: Address): Page {
+  const name = address.resident;
   const sample = (specimens[name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
+  const known = residentsOf(specimen.world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
   const page = new ConversationPage({
     words,
     here: sample.here,
@@ -178,6 +216,19 @@ function specimenTalk(name: string): Page {
     head,
     link: talkLink,
     conversation,
+    details: detailsOf(address, async () =>
+      known
+        ? {
+            resident: known,
+            records: `/home/lenovo/.fastctx/world/towns/${known.town ?? "outside"}/residents/${known.about.id}`,
+            actions: known.last_action ? [known.last_action] : [],
+            actions_total: known.last_action ? 41 : 0,
+            asked: known.about.origin.kind === "colleague" ? known.about.origin.label : null,
+            answers: [],
+            jobs: [],
+          }
+        : null,
+    ),
     send(text) {
       conversation.sending(text, sample.here);
       page.update();
@@ -204,6 +255,7 @@ function specimenTalk(name: string): Page {
     title: sample.title,
     leave() {
       left = true;
+      page.leave();
     },
   };
 }
@@ -226,6 +278,13 @@ function liveTalk(address: Address): Page {
     head,
     link: talkLink,
     conversation,
+    details: detailsOf(address, async () => {
+      const [found] = await look([address.resident]);
+      const there = found?.found.find(
+        (looked) => looked.kind === "resident" && looked.resident.about.machine === address.machine,
+      );
+      return there && there.kind === "resident" ? there : null;
+    }),
     send(text) {
       const key = conversation.sending(text, here);
       page.update();
@@ -293,6 +352,7 @@ function liveTalk(address: Address): Page {
     leave() {
       left = true;
       running();
+      page.leave();
       if (watchId !== null) void unwatch(watchId);
     },
   };
@@ -373,7 +433,7 @@ function show(next: Place): void {
       page = home();
       break;
     case "talk":
-      page = live ? liveTalk(next.address) : specimenTalk(next.address.resident);
+      page = live ? liveTalk(next.address) : specimenTalk(next.address);
       break;
     case "project":
       page = projectPage(next.town);

@@ -3,6 +3,8 @@
 // the user is about to send, always at the foot.
 
 import type { Words } from "../words";
+import type { ResidentDetail, ResidentNow } from "../world/world";
+import type { Details } from "./details";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
 import { escape } from "./prose";
@@ -26,6 +28,14 @@ export interface PageOptions {
   /** Where another resident's conversation opens. */
   link?: (address: { resident: string; machine: string }) => string;
   conversation: Conversation;
+  /** What the World knows of the agent, shown in a card opened from the
+   *  head, and how to ask for it. */
+  details?: {
+    card: Details;
+    label: string;
+    look(): Promise<ResidentDetail | null>;
+    colleagues(): ResidentNow[];
+  };
   /** Sends the user's words; resolves once they are on their way. */
   send(text: string): void;
   stop(): void;
@@ -39,6 +49,8 @@ export class ConversationPage {
   private input: HTMLTextAreaElement;
   private action: HTMLButtonElement;
   private scroller: HTMLElement;
+  private name: HTMLElement;
+  private looking = 0;
   private following = true;
   private gone: string | null = null;
 
@@ -47,10 +59,15 @@ export class ConversationPage {
     this.element = document.createElement("div");
     this.element.className = "conversation-page";
     this.element.innerHTML = `
-      ${options.head(`<div class="who">
+      ${options.head(
+        `<div class="who">
         <h1 class="who-name">${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span></h1>
         <div class="who-state"></div>
-      </div>`)}
+      </div>`,
+        options.details
+          ? `<button class="icon-button details-toggle" type="button" aria-expanded="false" aria-label="${escape(options.details.label)}" title="${escape(options.details.label)}">${glyph("more", 20)}</button>`
+          : "",
+      )}
       <div class="talk-scroller scroller"><div class="conversation"></div></div>
       <footer class="composer-dock">
         <ul class="running" hidden></ul>
@@ -63,6 +80,16 @@ export class ConversationPage {
         </form>
       </footer>`;
     this.scroller = this.element.querySelector<HTMLElement>(".talk-scroller")!;
+    this.name = this.element.querySelector<HTMLElement>(".who-name")!;
+    if (options.details) {
+      const { card } = options.details;
+      this.element.append(card.element);
+      const toggle = this.element.querySelector<HTMLButtonElement>(".details-toggle")!;
+      toggle.addEventListener("click", () => this.toggleDetails(!card.open));
+      this.element.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && card.open) this.toggleDetails(false);
+      });
+    }
     const main = this.element.querySelector<HTMLElement>(".conversation")!;
     this.state = this.element.querySelector<HTMLElement>(".who-state")!;
     this.context = this.element.querySelector<HTMLElement>(".composer-context")!;
@@ -109,6 +136,36 @@ export class ConversationPage {
     if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
   }
 
+  /** Stops what the page keeps asking for. */
+  leave(): void {
+    clearTimeout(this.looking);
+    this.looking = -1;
+  }
+
+  private toggleDetails(open: boolean): void {
+    const details = this.options.details;
+    if (!details) return;
+    details.card.open = open;
+    this.element.querySelector(".details-toggle")?.setAttribute("aria-expanded", String(open));
+    clearTimeout(this.looking);
+    if (open) void this.lookAgain();
+  }
+
+  /** Asks the World about the agent while the card is open, every few
+   *  seconds, as the front page asks about everyone. */
+  private async lookAgain(): Promise<void> {
+    const details = this.options.details;
+    if (!details || !details.card.open || this.looking === -1) return;
+    try {
+      const detail = await details.look();
+      if (detail) details.card.show(detail, details.colleagues(), new Date());
+      else details.card.unknown(null);
+    } catch (error) {
+      details.card.unknown(String(error));
+    }
+    if (details.card.open && this.looking !== -1) this.looking = window.setTimeout(() => void this.lookAgain(), 3000);
+  }
+
   private submit(): void {
     const text = this.input.value.trim();
     if (!text) {
@@ -151,10 +208,20 @@ export class ConversationPage {
 
   private drawState(): void {
     const { words, someone, conversation } = this.options;
+    // The host's own title for the conversation, once it gives one, with
+    // who and where in the line under it.
+    const title = conversation.title;
+    const name = title
+      ? `${escape(title)}`
+      : `${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span>`;
+    if (this.name.innerHTML !== name) this.name.innerHTML = name;
     const working = !this.gone && conversation.moving();
-    const facts = [this.gone ?? (working ? words.working : words.idle), someone.town, someone.model].filter(
-      Boolean,
-    ) as string[];
+    const facts = [
+      this.gone ?? (working ? words.working : words.idle),
+      title ? `${someone.agent} · ${someone.machine}` : null,
+      someone.town,
+      someone.model,
+    ].filter(Boolean) as string[];
     this.state.innerHTML = `${working ? `<span class="pulse" aria-hidden="true"></span>` : ""}<span>${facts
       .map(escape)
       .join(" · ")}</span>`;

@@ -7,7 +7,8 @@
 //
 //   node scripts/shoot.mjs [--url http://localhost:5317] [--only claude] [--theme warm-black] [--width phone] [--out shots]
 //
-// `drawer` is the front page with the sidebar pulled out as a drawer.
+// `drawer` is the front page with the sidebar pulled out as a drawer;
+// `about` is a conversation with the card about its agent open.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -39,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "drawer"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "drawer", "about"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -124,11 +125,14 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" ? "home" : session;
+      const shown = session === "drawer" ? "home" : session === "about" ? "codex" : session;
       await send("Page.navigate", { url: `${base}/?s=${shown}&theme=${theme}${extra ? `&${extra}` : ""}` });
       await loaded;
       if (session === "drawer") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.menu-button')?.click()" });
+      }
+      if (session === "about") {
+        await send("Runtime.evaluate", { expression: "document.querySelector('.details-toggle')?.click()" });
       }
       // Fonts, then any diagram, then two frames for layout to settle.
       await send("Runtime.evaluate", {
