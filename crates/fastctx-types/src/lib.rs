@@ -8,6 +8,7 @@
 //! is written to disk and what travels on the wire is their serde form.
 
 pub mod calls;
+pub mod files;
 pub mod ipc;
 pub mod layout;
 pub mod names;
@@ -17,6 +18,7 @@ pub mod residents;
 pub mod run;
 pub mod town;
 pub mod world;
+pub mod write;
 
 pub use calls::{Call, Reply};
 pub use names::{Address, AgentName, EntryId, JobId, MachineName, NameError, ResidentId, TownName};

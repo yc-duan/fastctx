@@ -4,8 +4,9 @@
 //! leaves at worst a stray temporary file beside the target. The bytes are
 //! written to a temporary file in the target's directory, flushed to disk,
 //! and moved over the target in one step. On Windows the move uses POSIX
-//! semantics, so a reader that still holds the old file open keeps reading
-//! the old bytes instead of making the replacement fail.
+//! semantics, so readers that share delete access can keep reading the old
+//! bytes. Windows handles that deny delete sharing can still cause a sharing
+//! violation; that failure is returned without truncating the target.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,24 +25,48 @@ pub enum Permissions {
 
 /// Replaces `path` with `bytes`, or creates it.
 pub fn publish(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
-    imp::publish(path, bytes, permissions, true)
+    publish_checked(path, bytes, permissions, true, || Ok(())).map_err(|failure| failure.error)
 }
 
 /// Creates `path` with `bytes`, failing with `AlreadyExists` if something is
 /// there already: for records that are written once and never change.
 pub fn publish_new(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
-    imp::publish(path, bytes, permissions, false)
+    publish_checked(path, bytes, permissions, false, || Ok(())).map_err(|failure| failure.error)
+}
+
+/// A publication failure distinguishes a failed replacement from a failure to
+/// make an already-visible replacement durable. Callers must record the latter.
+#[derive(Debug)]
+pub struct PublishFailure {
+    pub error: io::Error,
+    pub published: bool,
+}
+
+/// Stages and flushes the complete new file, then verifies the expected revision
+/// immediately before publication. The caller must serialize cooperating writers;
+/// operating systems do not offer a portable content-based compare-and-rename.
+pub fn publish_checked(
+    path: &Path,
+    bytes: &[u8],
+    permissions: Permissions,
+    replace: bool,
+    verify: impl FnOnce() -> io::Result<()>,
+) -> Result<(), PublishFailure> {
+    let mut published = false;
+    imp::publish(path, bytes, permissions, replace, verify, &mut published)
+        .map_err(|error| PublishFailure { error, published })
 }
 
 /// A name beside `path` that no other writer, in this process or another,
 /// uses at the same moment; it starts with a dot so listings pass over it.
 fn temporary_beside(path: &Path) -> io::Result<PathBuf> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let name = path
-        .file_name()
+    path.file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{} names no file", path.display())))?;
     let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-    Ok(path.with_file_name(format!(".{}.{}-{sequence}.tmp", name.to_string_lossy(), std::process::id())))
+    // The target may already use the filesystem's maximum name length; adding
+    // a suffix to it would make an otherwise valid target impossible to publish.
+    Ok(path.with_file_name(format!(".fastctx-{}-{sequence}.tmp", std::process::id())))
 }
 
 #[cfg(unix)]
@@ -53,7 +78,14 @@ mod imp {
 
     use super::{Permissions, temporary_beside};
 
-    pub fn publish(path: &Path, bytes: &[u8], permissions: Permissions, replace: bool) -> io::Result<()> {
+    pub fn publish(
+        path: &Path,
+        bytes: &[u8],
+        permissions: Permissions,
+        replace: bool,
+        verify: impl FnOnce() -> io::Result<()>,
+        published: &mut bool,
+    ) -> io::Result<()> {
         let temporary = temporary_beside(path)?;
         // 0666 lets the umask decide for new user files, as any program's
         // new file would; private records never pass through a wider mode.
@@ -70,12 +102,15 @@ mod imp {
                 file.set_permissions(fs::Permissions::from_mode(existing.permissions().mode() & 0o7777))?;
             }
             file.sync_all()?;
+            verify()?;
             if replace {
                 fs::rename(&temporary, path)?;
+                *published = true;
             } else {
                 // A hard link fails if the target exists, which a rename
                 // would silently overwrite.
                 fs::hard_link(&temporary, path)?;
+                *published = true;
                 fs::remove_file(&temporary)?;
             }
             sync_directory(path)
@@ -116,7 +151,14 @@ mod imp {
     const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x1;
     const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x2;
 
-    pub fn publish(path: &Path, bytes: &[u8], _permissions: Permissions, replace: bool) -> io::Result<()> {
+    pub fn publish(
+        path: &Path,
+        bytes: &[u8],
+        _permissions: Permissions,
+        replace: bool,
+        verify: impl FnOnce() -> io::Result<()>,
+        published: &mut bool,
+    ) -> io::Result<()> {
         let temporary = temporary_beside(path)?;
         let target = std::path::absolute(path)?;
         let handle = Handle(create_temporary(&temporary)?);
@@ -126,7 +168,10 @@ mod imp {
             if unsafe { FlushFileBuffers(handle.0) } == 0 {
                 return Err(io::Error::last_os_error());
             }
-            rename_by_handle(handle.0, &target, replace)
+            verify()?;
+            rename_by_handle(handle.0, &target, replace)?;
+            *published = true;
+            Ok(())
         })();
         if result.is_err() {
             delete_on_close(handle.0);
@@ -176,6 +221,9 @@ mod imp {
             // SAFETY: the buffer outlives the call; no overlapped I/O.
             if unsafe { WriteFile(handle, bytes.as_ptr(), chunk, &mut written, ptr::null_mut()) } == 0 {
                 return Err(io::Error::last_os_error());
+            }
+            if written == 0 {
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "temporary file write made no progress"));
             }
             bytes = &bytes[written as usize..];
         }
