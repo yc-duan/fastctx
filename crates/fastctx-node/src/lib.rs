@@ -183,7 +183,7 @@ pub async fn run(fastctx_root: &Path, supervision: Option<handoff::Supervision>)
     log.line(format_args!("node {} starting as {machine}", env!("CARGO_PKG_VERSION")));
     let (fastctx, kept) = own::pin(&world).context("copying fastctx under the World")?;
     for (path, error) in &kept {
-        log.line(format_args!("could not remove an older copy of fastctx, {}: {error}", path.display()));
+        log.line(format_args!("kept an older copy of fastctx, {}: {error}", path.display()));
     }
 
     let reconciled = jobs::reconcile(&world)?;

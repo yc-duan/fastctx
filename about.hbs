@@ -1,0 +1,23 @@
+# Third-party licenses
+
+This distribution includes FastCtx under Apache-2.0. The notices below
+cover its Rust dependencies across the supported release targets,
+including build dependencies, followed by embedded syntax data and
+the Rust standard library. Dependencies keep their respective licenses.
+
+Generated with cargo-about 0.9.0 from Cargo.lock.
+
+{{#each licenses}}
+## {{{name}}}
+
+Used by:
+
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+````text
+{{{text}}}
+````
+
+{{/each}}

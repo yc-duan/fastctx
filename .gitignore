@@ -1,5 +1,7 @@
 # Rust
 /target
+/dist
+/cargo-zigbuild
 
 # Python caches
 __pycache__/

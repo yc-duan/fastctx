@@ -257,6 +257,7 @@ impl Printer {
                 }
                 What::AgentActivity { path, activity, .. } => self.line(&format!("  · {path}: {activity}")),
                 What::Compaction => self.line("── context compacted"),
+                What::Other { host_kind } => self.line(&format!("  [{host_kind}]")),
                 _ => {}
             },
             Happened::Steps { steps, .. } => {

@@ -111,7 +111,6 @@ export function presentation(reserve, currentTurn) {
       if (latestStep?.turn === turn) {
         for (const block of latestStep.blocks.values()) streamedKinds.add(block.kind)
       }
-      let storedProse = false
       for (const [index, block] of result.message.content.entries()) {
         if (block.type === 'tool_use') {
           requests.set(block.id, { block, turn, at: reserve().at })
@@ -152,7 +151,7 @@ export function presentation(reserve, currentTurn) {
             })
             await emit(reports, { event: 'began', turn: turn ?? '', item: prose })
             await emit(reports, { event: 'finished', turn: turn ?? '', item: prose })
-          } else storedProse = true
+          }
         } else if (result.message.type === 'assistant') {
           const other = item(JSON.stringify([result.uuid, index]), 'other', {
             host_kind: block.type, detail: block,
@@ -161,18 +160,9 @@ export function presentation(reserve, currentTurn) {
           await emit(reports, { event: 'finished', turn: turn ?? '', item: other })
         }
       }
-      if (storedProse) {
-        // A stored row cannot be bound to the streamed blocks. Retain its
-        // original content separately, without replacing or duplicating the
-        // streamed prose items. This also preserves a non-streamed fallback
-        // after a partially streamed attempt, and signed thinking metadata.
-        const record = item('stored:' + result.uuid, 'other', {
-          host_kind: 'claude_response_record',
-          detail: { uuid: result.uuid, message: result.message, door: e.door, origin: e.origin },
-        })
-        await emit(reports, { event: 'began', turn: turn ?? '', item: record })
-        await emit(reports, { event: 'finished', turn: turn ?? '', item: record })
-      }
+      // Prose already streamed is not reported again as it is stored: the
+      // record of what was stored is Claude Code's own session file, which
+      // the World reads for a session's history.
       return result
     },
 

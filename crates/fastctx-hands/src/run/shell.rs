@@ -27,6 +27,13 @@ pub struct Context<'a> {
     pub fastctx_home: Option<&'a OsStr>,
 }
 
+/// A shell invocation, with its complete environment already resolved.
+pub struct Prepared {
+    pub program: PathBuf,
+    pub args: Vec<OsString>,
+    pub environment: Vec<(OsString, OsString)>,
+}
+
 /// The program and arguments that run `script` (a file) in a login shell.
 pub fn command(script: &Path) -> io::Result<(PathBuf, Vec<OsString>)> {
     let bash = bash()?;
@@ -35,7 +42,12 @@ pub fn command(script: &Path) -> io::Result<(PathBuf, Vec<OsString>)> {
 
 /// The environment the shell starts with.
 pub fn environment(context: &Context<'_>) -> io::Result<Vec<(OsString, OsString)>> {
-    let mut env = user_environment()?;
+    Ok(environment_from(user_environment()?, context))
+}
+
+/// Adds the World's identity and executable directory to a supplied login
+/// environment. Resolving that environment belongs to the caller.
+pub fn environment_from(mut env: Vec<(OsString, OsString)>, context: &Context<'_>) -> Vec<(OsString, OsString)> {
     set(&mut env, "FASTCTX_MACHINE", context.machine.as_str());
     set(&mut env, "FASTCTX_RESIDENT", context.owner.tag());
     match context.town {
@@ -53,7 +65,7 @@ pub fn environment(context: &Context<'_>) -> io::Result<Vec<(OsString, OsString)
         // What Git Bash itself sets: the MinGW tools come first on the PATH.
         set(&mut env, "MSYSTEM", "MINGW64");
     }
-    Ok(env)
+    env
 }
 
 fn same_name(a: &OsStr, b: &str) -> bool {
@@ -79,8 +91,9 @@ fn prepend_path(env: &mut [(OsString, OsString)], directory: &Path) {
     }
 }
 
+/// The bash every `run` starts: `/bin/bash`.
 #[cfg(unix)]
-fn bash() -> io::Result<PathBuf> {
+pub fn bash() -> io::Result<PathBuf> {
     let bash = PathBuf::from("/bin/bash");
     if bash.is_file() { Ok(bash) } else { Err(io::Error::new(io::ErrorKind::NotFound, "/bin/bash does not exist")) }
 }
@@ -93,7 +106,7 @@ fn script_argument(script: &Path) -> io::Result<OsString> {
 /// Git for Windows' bash: where its installer recorded it, or beside a
 /// `git.exe` on the user's PATH, as a portable Git is laid out.
 #[cfg(windows)]
-fn bash() -> io::Result<PathBuf> {
+pub fn bash() -> io::Result<PathBuf> {
     use fastctx_platform::registry::{Hive, string_value};
 
     let in_root = |root: &Path| root.join("usr").join("bin").join("bash.exe");

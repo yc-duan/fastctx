@@ -196,8 +196,13 @@ pub enum What {
         path: String,
         activity: String,
     },
-    /// A host item without a common visible representation. Its original
-    /// record remains in `Item.detail`, including for conditional host panels.
+    /// An item the host deliberately excludes from the conversation. Its
+    /// original record stays in `Item.detail` for conditional host panels.
+    /// Replacing a visible item with this removes its transient placeholder.
+    Hidden {
+        host_kind: String,
+    },
+    /// A host item the World has no common name for.
     Other {
         host_kind: String,
     },

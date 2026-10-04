@@ -7,6 +7,7 @@
 
 pub mod launch;
 pub mod present;
+pub mod program;
 pub mod record;
 pub mod shell;
 pub mod supervisor;

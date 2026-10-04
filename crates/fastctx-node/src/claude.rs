@@ -672,8 +672,13 @@ pub async fn deliver(
             })();
             match claimed {
                 Ok(true) => {
-                    match wake(node, &session, if as_user { text } else { framed(&text) }, pending.delivery.id.clone())
-                        .await
+                    match wake(
+                        node,
+                        &session,
+                        if as_user { text } else { claude::framed(&text) },
+                        pending.delivery.id.clone(),
+                    )
+                    .await
                     {
                         Ok(landed) => Ok(landed),
                         Err(error) => failed_wake(node, to, directory, &pending.delivery.id, error).await,
@@ -747,12 +752,6 @@ fn words(notice: &Notice) -> (String, bool) {
         Notice::Words { from: Speaker::User { .. }, text } => (text.clone(), true),
         notice => (told::told(notice), false),
     }
-}
-
-/// What a woken session reads first when the World wakes it with words of
-/// its own: said as the World's, as the mod says them.
-fn framed(text: &str) -> String {
-    format!("The fastctx plugin delivers a message from the World.\n\n{text}")
 }
 
 /// Whether the background session has a running process.

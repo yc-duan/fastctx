@@ -67,6 +67,12 @@ enum Item {
         item: String,
         turn: String,
     },
+    /// Something the host reported that the World has no name for.
+    Other {
+        item: String,
+        turn: String,
+        kind: String,
+    },
     Ended {
         turn: String,
         end: TurnEnd,
@@ -324,17 +330,22 @@ impl Transcript {
             What::Compaction => Item::Compaction { item: id.clone(), turn: turn.clone() },
             // A completed item can remove a transient placeholder, for
             // example an image attempt that ended without an image.
-            What::Other { .. } => {
+            What::Hidden { .. } => {
                 if !id.is_empty() {
                     self.items.retain(|shown| match shown {
                         Item::Prose { item, turn: own, .. }
                         | Item::Tool { item, turn: own, .. }
-                        | Item::Compaction { item, turn: own } => item != &id || own != &turn,
+                        | Item::Compaction { item, turn: own }
+                        | Item::Other { item, turn: own, .. } => item != &id || own != &turn,
                         _ => true,
                     });
                 }
                 return;
             }
+            // A kind the World does not know is shown for what the host
+            // called it, once it is done.
+            What::Other { .. } if !finished => return,
+            What::Other { host_kind } => Item::Other { item: id.clone(), turn: turn.clone(), kind: host_kind.clone() },
         };
         if id.is_empty() {
             self.items.push(fresh);
@@ -370,7 +381,8 @@ impl Transcript {
         self.items.iter_mut().find(|item| match item {
             Item::Prose { item, turn: own, .. }
             | Item::Tool { item, turn: own, .. }
-            | Item::Compaction { item, turn: own } => item == id && own == turn,
+            | Item::Compaction { item, turn: own }
+            | Item::Other { item, turn: own, .. } => item == id && own == turn,
             _ => false,
         })
     }
@@ -456,9 +468,6 @@ impl Transcript {
                     }
                 }
                 Item::Prose { kind: Prose::Thinking, text, writing, laid, .. } => {
-                    if text.trim().is_empty() {
-                        continue;
-                    }
                     blank(&mut out);
                     out.extend(thinking(ctx, text, *writing, laid, width));
                 }
@@ -489,6 +498,11 @@ impl Transcript {
                 Item::Compaction { .. } => {
                     blank(&mut out);
                     out.push(Line::from(Span::styled(ctx.words.compacted().to_string(), look.text(Role::Faint))));
+                }
+                Item::Other { kind, .. } => {
+                    blank(&mut out);
+                    let line = Line::from(Span::styled(ctx.words.block(kind), look.text(Role::Faint)));
+                    out.push(paint::fit_line(&line, width));
                 }
                 Item::Ended { end, .. } => {
                     if let Some(line) = ended(ctx, end, width) {
@@ -556,6 +570,17 @@ fn cursor(ctx: &Ctx, lines: &mut Vec<Line<'static>>, width: usize) {
 fn thinking(ctx: &Ctx, text: &str, writing: bool, laid: &Laid, width: usize) -> Vec<Line<'static>> {
     let look = &ctx.look;
     let label = Span::styled(format!("{}  ", ctx.words.thinking()), look.text(Role::Faint));
+    // A host may keep its thinking's words to itself (Claude's are not
+    // given): it is shown to have happened, and to have no words here.
+    if text.trim().is_empty() {
+        let mut lines = vec![Line::from(label)];
+        if writing {
+            cursor(ctx, &mut lines, width);
+        } else {
+            lines[0].spans.push(Span::styled(ctx.words.thinking_withheld().to_string(), look.text(Role::Faint)));
+        }
+        return lines.iter().map(|line| paint::fit_line(line, width)).collect();
+    }
     if !writing {
         let first = text.lines().map(|line| line.trim().trim_matches('*').trim()).find(|line| !line.is_empty());
         let line = Line::from(vec![label, Span::styled(first.unwrap_or_default().to_string(), look.text(Role::Faint))]);

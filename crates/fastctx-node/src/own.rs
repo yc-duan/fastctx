@@ -34,20 +34,39 @@ pub fn pin(world: &WorldDir) -> io::Result<(PathBuf, Vec<(PathBuf, io::Error)>)>
         publish(&copy, &bytes, Permissions::Private)?;
         executable(&copy)?;
     }
-    Ok((copy, remove_others(&programs, &name)))
+    Ok((copy, remove_others(world, &programs, &name)))
 }
 
-/// Removes the copies of other versions. One still running, as a job's
-/// supervisor started by an older node, cannot be removed on Windows; it
-/// stays, and is tried again when the node next starts.
-fn remove_others(programs: &Path, keep: &str) -> Vec<(PathBuf, io::Error)> {
-    let Ok(entries) = fs::read_dir(programs) else { return Vec::new() };
+/// Removes other versions only after their jobs' complete process trees
+/// have ended. Windows executable sharing alone does not express that
+/// lifetime, and Linux permits unlinking a running program outright.
+fn remove_others(world: &WorldDir, programs: &Path, keep: &str) -> Vec<(PathBuf, io::Error)> {
+    let entries = match fs::read_dir(programs) {
+        Ok(entries) => entries,
+        Err(error) => return vec![(programs.to_path_buf(), error)],
+    };
+    let uses = fastctx_hands::run::program::uses(world);
     let mut kept = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                kept.push((programs.to_path_buf(), error));
+                continue;
+            }
+        };
         let path = entry.path();
-        if entry.file_name() != keep
-            && let Err(error) = fs::remove_dir_all(&path)
-        {
+        if entry.file_name() == keep {
+            continue;
+        }
+        let unused = match &uses {
+            Ok(uses) => uses.iter().try_for_each(|usage| match usage.reason_for(&path)? {
+                Some(reason) => Err(io::Error::new(io::ErrorKind::WouldBlock, reason)),
+                None => Ok(()),
+            }),
+            Err(error) => Err(io::Error::new(error.kind(), format!("could not establish job usage: {error}"))),
+        };
+        if let Err(error) = unused.and_then(|()| fs::remove_dir_all(&path)) {
             kept.push((path, error));
         }
     }

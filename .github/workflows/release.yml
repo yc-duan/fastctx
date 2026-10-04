@@ -1,0 +1,146 @@
+name: Build release artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  notices:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rust-docs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: cargo install --locked cargo-about --version 0.9.0
+      - run: cargo fetch --locked
+      - run: |
+          cargo run --locked --release -p fastctx-tui --example syntax_notices > syntax-notices.md
+          python scripts/notices.py --syntax-notices syntax-notices.md --output dist/THIRD_PARTY_LICENSES.md
+          python scripts/package.py roots --notices dist/THIRD_PARTY_LICENSES.md --output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-common
+          path: |
+            dist/THIRD_PARTY_LICENSES.md
+            dist/npm/
+          if-no-files-found: error
+
+  build:
+    needs: notices
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            package: win32-x64
+            binary: fastctx.exe
+            rustflags: '-C target-feature=+crt-static'
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            package: win32-arm64
+            binary: fastctx.exe
+            rustflags: '-C target-feature=+crt-static'
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            package: darwin-x64
+            binary: fastctx
+            rustflags: ''
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            package: darwin-arm64
+            binary: fastctx
+            rustflags: ''
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            package: linux-x64
+            binary: fastctx
+            rustflags: ''
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-common
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/check-launcher.cjs "$RUNNER_TEMP"
+      - if: runner.os == 'Linux'
+        run: |
+          python -m pip install ziglang==0.14.1
+          cargo install --locked cargo-zigbuild --version 0.23.0
+          cargo zigbuild --locked --release -p fastctx --bin fastctx --target x86_64-unknown-linux-gnu.2.31
+      - if: runner.os != 'Linux'
+        run: cargo build --locked --release -p fastctx --bin fastctx --target '${{ matrix.target }}'
+      - name: Verify executable lifetime across node replacement
+        if: runner.os == 'Windows' || runner.os == 'Linux'
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            export FASTCTX_TEST_BASH="$(cygpath -m /usr/bin/bash.exe)"
+            export FASTCTX_TEST_ROOT="$(cygpath -m "$RUNNER_TEMP")"
+          else
+            export FASTCTX_TEST_BASH=/bin/bash
+            export FASTCTX_TEST_ROOT="$RUNNER_TEMP"
+          fi
+          cargo test --locked --release -p fastctx-node --test own_lifetime --target '${{ matrix.target }}'
+      - name: Verify version and package the native program
+        run: |
+          binary='target/${{ matrix.target }}/release/${{ matrix.binary }}'
+          version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          test "$("$binary" --version)" = "fastctx $version"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
+          python scripts/package.py platform --target '${{ matrix.target }}' --binary "$binary" --notices dist/THIRD_PARTY_LICENSES.md --output dist
+          python scripts/package.py verify --output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/fastctx-*.zip
+            dist/fastctx-*.tar.gz
+            dist/*.json
+            dist/npm/fastctx-${{ matrix.package }}-*.tgz
+          if-no-files-found: error
+
+  assemble:
+    needs: [notices, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - run: python scripts/package.py verify --complete --output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastctx-distribution
+          path: dist
+          if-no-files-found: error

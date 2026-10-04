@@ -75,7 +75,13 @@ pub fn read(item: &Value, completed: bool) -> Read {
         },
         "agentMessage" => What::Message { text: text(item, "text").unwrap_or_default() },
         // The official app shows a reasoning item by its summary only.
-        "reasoning" => What::Thinking { text: strings(item, "summary").join("\n\n") },
+        "reasoning" => {
+            let summary = strings(item, "summary").join("\n\n");
+            if completed && summary.trim().is_empty() {
+                return unshown(item);
+            }
+            What::Thinking { text: summary }
+        }
         "plan" => What::Plan { text: text(item, "text").unwrap_or_default() },
         "contextCompaction" => What::Compaction,
         "commandExecution" => {
@@ -346,6 +352,6 @@ fn unshown(item: &Value) -> Read {
         id: text(item, "id").unwrap_or_default(),
         started_at: None,
         detail: Some(item.clone()),
-        what: What::Other { host_kind: text(item, "type").unwrap_or_default() },
+        what: What::Hidden { host_kind: text(item, "type").unwrap_or_default() },
     })
 }

@@ -28,11 +28,33 @@ use super::{record, shell};
 /// Runs the job whose first record the node wrote at `record_path`, in the
 /// World kept in `world`, until nothing of it runs any more.
 pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Result<()> {
+    supervise_with(world, record_path, |world, record| {
+        let resident = world.owner(&record.machine, record.town.as_ref(), &record.owner);
+        let (program, args) = shell::command(&resident.job_script(&record.id))?;
+        let fastctx_home = std::env::var_os("FASTCTX_HOME");
+        let environment = shell::environment(&shell::Context {
+            machine: &record.machine,
+            owner: &record.owner,
+            town: record.town.as_ref(),
+            fastctx_dir,
+            fastctx_home: fastctx_home.as_deref(),
+        })?;
+        Ok(shell::Prepared { program, args, environment })
+    })
+}
+
+/// Supervises a complete process tree with a caller-resolved shell. The
+/// lifecycle and durable record are the same as for the default login shell.
+pub fn supervise_with(
+    world: &Path,
+    record_path: &Path,
+    prepare: impl FnOnce(&WorldDir, &JobRecord) -> io::Result<shell::Prepared>,
+) -> io::Result<()> {
     let world = WorldDir::at(world);
     let _lock = FileLock::try_acquire(&record::lock_path(record_path))?
         .ok_or_else(|| io::Error::other(format!("another supervisor holds {}", record_path.display())))?;
     let mut job = Job { record: record::read(record_path)?, path: record_path.to_path_buf(), world };
-    if let Err(error) = job.run(fastctx_dir) {
+    if let Err(error) = job.run(prepare) {
         // The job could not be started, or its supervision broke down: say
         // so in the record, whatever state it had reached.
         job.record.end = Some(Ended { at: Timestamp::now(), how: EndedHow::Failed { error: error.to_string() } });
@@ -49,25 +71,17 @@ struct Job {
 }
 
 impl Job {
-    fn run(&mut self, fastctx_dir: &Path) -> io::Result<()> {
+    fn run(&mut self, prepare: impl FnOnce(&WorldDir, &JobRecord) -> io::Result<shell::Prepared>) -> io::Result<()> {
         #[cfg(unix)]
         let stop_signals = signals::block()?;
-        let resident = self.world.owner(&self.record.machine, self.record.town.as_ref(), &self.record.owner);
-        let (program, args) = shell::command(&resident.job_script(&self.record.id))?;
-        let fastctx_home = std::env::var_os("FASTCTX_HOME");
-        let env = shell::environment(&shell::Context {
-            machine: &self.record.machine,
-            owner: &self.record.owner,
-            town: self.record.town.as_ref(),
-            fastctx_dir,
-            fastctx_home: fastctx_home.as_deref(),
-        })?;
-        let args: Vec<&std::ffi::OsStr> = args.iter().map(|arg| arg.as_os_str()).collect();
+        let shell = prepare(&self.world, &self.record)?;
+        let args: Vec<&std::ffi::OsStr> = shell.args.iter().map(|arg| arg.as_os_str()).collect();
         let log = OpenOptions::new().append(true).open(&self.record.output)?;
 
         self.record.supervisor = Some(current_identity()?);
         self.record.ends_with_node = in_job()?;
-        let (tree, output) = ProcessTree::spawn(&program, &args, Path::new(&self.record.cwd), &env)?;
+        let (tree, output) =
+            ProcessTree::spawn(&shell.program, &args, Path::new(&self.record.cwd), &shell.environment)?;
         let tree = Arc::new(tree);
         self.record.pid = Some(tree.main_pid());
         self.publish()?;

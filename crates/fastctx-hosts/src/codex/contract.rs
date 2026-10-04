@@ -97,7 +97,7 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
     for kind in ["sleep", "enteredReviewMode", "exitedReviewMode", "functionCallOutput"] {
         assert!(matches!(
             items::read(&json!({"id":"hidden","type":kind}), true),
-            items::Read::Item(fastctx_types::session::Item { what: What::Other { .. }, .. })
+            items::Read::Item(fastctx_types::session::Item { what: What::Hidden { .. }, .. })
         ));
     }
     for name in ["update_running_summary", "update_up_next", "load_workspace_dependencies", "automation_update"] {
@@ -106,7 +106,7 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
                 &json!({"id":"hidden","type":"dynamicToolCall","tool":name,"namespace":"codex_app","status":"inProgress"}),
                 false
             ),
-            items::Read::Item(fastctx_types::session::Item { what: What::Other { .. }, .. })
+            items::Read::Item(fastctx_types::session::Item { what: What::Hidden { .. }, .. })
         ));
     }
     let hook = items::read(
@@ -119,9 +119,10 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
     for raw in [
         json!({"type":"imageGeneration","id":"g","status":"failed","result":"","failure":null}),
         json!({"type":"fileChange","id":"p","status":"completed","changes":[]}),
+        json!({"type":"reasoning","id":"r","summary":[],"content":["private"]}),
     ] {
         let hidden = item(raw.clone(), true);
-        assert!(matches!(hidden.what, What::Other { .. }));
+        assert!(matches!(hidden.what, What::Hidden { .. }));
         assert_eq!(hidden.detail, Some(raw));
     }
     let limit = item(

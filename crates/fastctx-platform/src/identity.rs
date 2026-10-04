@@ -23,6 +23,34 @@ pub fn is_alive(identity: &ProcessIdentity) -> io::Result<bool> {
     Ok(imp::token(identity.pid)?.as_deref() == Some(identity.token.as_str()))
 }
 
+/// Whether a recorded lifetime is known to belong to an earlier boot.
+/// False includes systems whose process identities do not identify a boot.
+pub fn is_from_earlier_boot(identity: &ProcessIdentity) -> io::Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        let boot = crate::procfs::boot_id()?;
+        let Some((recorded, ticks)) = identity.token.rsplit_once(':') else {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "process identity has no boot"));
+        };
+        let uuid = recorded.len() == 36
+            && recorded.bytes().enumerate().all(|(index, byte)| {
+                if [8, 13, 18, 23].contains(&index) { byte == b'-' } else { byte.is_ascii_hexdigit() }
+            });
+        if !uuid || ticks.parse::<u64>().is_err() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "process identity has an invalid boot or start time",
+            ));
+        }
+        Ok(!recorded.eq_ignore_ascii_case(&boot))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = identity;
+        Ok(false)
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use std::io;
