@@ -36,7 +36,7 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
         return;
     }
     if source.item(&["applied"]).is_none() && !files::plain(&snapshot) {
-        if plan.quiet(&path, root, false) && plan.unused(&path, true) {
+        if plan.quiet(&path, false) && plan.unused(&path, true) {
             plan.archive(&path, "settings", "legacy settings with named data retained unchanged");
         }
         return;
@@ -143,7 +143,7 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
     };
     if parsed.doc.as_table().iter().any(|(key, _)| !["schema_version", "applied"].contains(&key)) {
         if source.item(&["applied"]).is_none() {
-            if plan.quiet(&path, root, false) && plan.unused(&path, true) {
+            if plan.quiet(&path, false) && plan.unused(&path, true) {
                 plan.archive(&path, "settings", "legacy preferences and user edits retained unchanged");
             }
             return;
@@ -154,7 +154,7 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
         );
     }
     if source.item(&["applied"]).is_none() && !next.iter().all(u8::is_ascii_whitespace) {
-        if plan.quiet(&path, root, false) && plan.unused(&path, true) {
+        if plan.quiet(&path, false) && plan.unused(&path, true) {
             plan.archive(&path, "settings", "legacy settings with user text retained unchanged");
         }
         return;

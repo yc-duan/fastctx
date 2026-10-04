@@ -144,6 +144,60 @@ pub(super) fn exited(process: &Process) -> io::Result<bool> {
     }
 }
 
+pub(super) fn confirmed_legacy(process: &Process) -> io::Result<bool> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .access_mode(FILE_GENERIC_READ | FILE_GENERIC_EXECUTE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(&process.image_source)?;
+    // A pathname can be replaced while its old image is still running. Class 44
+    // compares this file handle with the process's actual image section (phnt's
+    // ProcessImageFileMapping), before hashing this same handle.
+    // SAFETY: the process handle is owned and the input buffer is one HANDLE.
+    unsafe {
+        let query = OpenProcess(PROCESS_QUERY_INFORMATION, 0, process.pid);
+        if query.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let query = OwnedHandle::from_raw_handle(query);
+        let mut image = file.as_raw_handle();
+        let status = NtQueryInformationProcess(
+            query.as_raw_handle(),
+            44,
+            (&raw mut image).cast(),
+            size_of::<HANDLE>() as u32,
+            ptr::null_mut(),
+        );
+        if exited(process)? {
+            return Ok(false);
+        }
+        if status < 0 {
+            return Err(io::Error::other(format!(
+                "cannot bind executable file to running image: {}",
+                io::Error::from_raw_os_error(RtlNtStatusToDosError(status) as i32)
+            )));
+        }
+    }
+    Ok(super::known_binary(&super::super::archive::hash_handle(&mut file)?))
+}
+
+#[cfg(test)]
+#[test]
+fn image_binding_distinguishes_a_copy_from_the_running_file() {
+    let image = std::env::current_exe().unwrap();
+    let mut process =
+        Process { pid: std::process::id(), image: image.clone(), image_source: image, legacy: false, handle: None };
+    assert!(!confirmed_legacy(&process).unwrap());
+    let home = tempfile::tempdir().unwrap();
+    let copy = home.path().join("other.exe");
+    std::fs::copy(&process.image_source, &copy).unwrap();
+    process.image_source = copy;
+    assert!(confirmed_legacy(&process).unwrap_err().to_string().contains("cannot bind executable file"));
+}
+
 pub(super) fn references(observation: &Process, path: &Path) -> io::Result<bool> {
     // SAFETY: ProcessCommandLineInformation returns a UNICODE_STRING within
     // the supplied allocation. Bounds are checked before reading its buffer.

@@ -47,7 +47,7 @@ pub(super) fn inspect(places: &Places, old_root: &Path, plan: &mut Plan) {
             {
                 continue;
             }
-            if !plan.quiet(&path, old_root, false) || !plan.unused(&path, true) {
+            if !plan.quiet(&path, false) || !plan.unused(&path, true) {
                 continue;
             }
             let blockers = match plan.inventory() {

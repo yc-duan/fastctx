@@ -12,6 +12,14 @@ pub(super) struct Paths {
 }
 
 impl Paths {
+    pub fn runtime_entry_count(&self) -> std::io::Result<usize> {
+        self.runtime.iter().try_fold(0usize, |count, path| {
+            count
+                .checked_add(files::entries(path)?.len())
+                .ok_or_else(|| std::io::Error::other("runtime entry count overflow"))
+        })
+    }
+
     pub fn legacy() -> Result<Self, Error> {
         let home = env::var_os("HOME")
             .or_else(|| env::var_os("USERPROFILE"))
@@ -67,7 +75,7 @@ impl Paths {
                 if writer.is_some_and(|pid| !plan.creator_ended(&path, pid)) {
                     continue;
                 }
-                if plan.quiet(&path, &self.root, false) && plan.unused(&path, true) {
+                if plan.quiet(&path, false) && plan.unused(&path, true) {
                     plan.archive(&path, "settings", "interrupted legacy settings write retained unchanged");
                 }
             }
@@ -76,7 +84,7 @@ impl Paths {
             let path = self.home.join(name);
             match std::fs::symlink_metadata(&path) {
                 Ok(_) => {
-                    if plan.quiet(&path, &self.root, false)
+                    if plan.quiet(&path, false)
                         && plan.unused(&path, true)
                         && super::leftovers::writers_ended(&path, plan)
                     {
@@ -96,9 +104,16 @@ impl Paths {
             if entries.is_empty() {
                 if directory.exists()
                     && files::entries(directory).is_ok_and(|entries| entries.is_empty())
-                    && plan.quiet(directory, &self.root, false)
+                    && plan.quiet(directory, false)
+                    && plan.unused(directory, true)
                 {
-                    plan.empty_after(directory);
+                    // A copy interrupted after retiring its children still has
+                    // this directory's identity and pending archive slot.
+                    plan.archive(
+                        directory,
+                        "runtime",
+                        "empty legacy coordination directory retained after its users ended",
+                    );
                 }
             } else {
                 self.runtime_group(directory, &entries, plan);
@@ -135,24 +150,24 @@ impl Paths {
                     }
                 }
             }
-            if !locks.is_empty() && (!plan.quiet(directory, &self.root, true) || !plan.unused(directory, true)) {
+            if !locks.is_empty() && (!plan.quiet(directory, true) || !plan.unused(directory, true)) {
                 continue;
             }
             plan.locks.extend(locks);
             for path in entries {
                 let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
                 if let Some(expected) = pdf_hash(name) {
-                    if !plan.quiet(&path, &self.root, false) || !plan.unused(&path, true) {
+                    if !plan.quiet(&path, false) || !plan.unused(&path, true) {
                         continue;
                     }
                     let Some(snapshot) = plan.read(&path) else { continue };
                     if snapshot.bytes().is_some_and(|bytes| files::hash(bytes) == expected) && files::plain(&snapshot) {
                         plan.delete(snapshot, "Pdfium bytes exactly match the artifact pinned by released 0.x builds");
-                    } else if plan.quiet(&path, &self.root, false) && plan.unused(&path, true) {
+                    } else if plan.quiet(&path, false) && plan.unused(&path, true) {
                         plan.archive(&path, "pdf", "modified Pdfium cache retained unchanged");
                     }
                 } else if (name.starts_with(".pdfium") || name.starts_with(".libpdfium"))
-                    && plan.quiet(&path, &self.root, false)
+                    && plan.quiet(&path, false)
                     && plan.unused(&path, true)
                 {
                     plan.archive(&path, "pdf", "Pdfium extraction state retained unchanged");
@@ -163,7 +178,7 @@ impl Paths {
         for path in super::entries(&self.temp, plan) {
             let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
             if name.starts_with("fastctx-command-") && name.ends_with(".sh") {
-                if plan.quiet(&path, &self.root, false) && plan.unused(&path, true) {
+                if plan.quiet(&path, false) && plan.unused(&path, true) {
                     plan.archive(&path, "temporary", "obsolete command script retained unchanged");
                 }
             } else if processes::nonce_pid(name, &["fastctx-npm-check-", "fastctx-npm-preflight-"]).is_some() {
@@ -179,7 +194,7 @@ impl Paths {
         {
             return;
         }
-        if plan.quiet(path, &self.root, false) && plan.unused(path, true) {
+        if plan.quiet(path, false) && plan.unused(path, true) {
             plan.archive(path, "temporary", "unused npm query cache retained unchanged");
         }
     }
@@ -207,29 +222,29 @@ impl Paths {
                 }
             }
         }
-        if !plan.quiet(directory, &self.root, false) || !plan.unused(directory, true) {
+        if !plan.quiet(directory, false) || !plan.unused(directory, true) {
             return;
         }
+        let directory_object = match archive::Object::read(directory) {
+            Ok(Some(object)) => object,
+            Ok(None) => return,
+            Err(error) => {
+                plan.active(directory, error.to_string());
+                return;
+            }
+        };
         let mut locks = Vec::new();
-        let mut objects = Vec::new();
+        let mut names = Vec::new();
         for path in entries {
-            let object = match archive::Object::read(path) {
-                Ok(Some(object)) => object,
-                Ok(None) => {
-                    plan.active(directory, "runtime entries changed during inspection");
-                    return;
-                }
-                Err(error) => {
-                    plan.active(path, error.to_string());
-                    return;
-                }
-            };
             if path.extension().is_some_and(|extension| extension == "lock") {
                 let regular = std::fs::symlink_metadata(path)
                     .is_ok_and(|metadata| metadata.is_file() && !crate::disk::is_link(&metadata));
                 if regular {
-                    match updates::lock_existing(path) {
-                        Ok(Some(lock)) => locks.push(lock),
+                    match updates::lock_in_directory(path) {
+                        Ok(Some(lock)) => {
+                            locks.push(lock);
+                            names.push(path);
+                        }
                         Ok(None) => {
                             plan.active(path, "legacy coordination lock is held; the group remains in place");
                             return;
@@ -241,25 +256,45 @@ impl Paths {
                     }
                 }
             }
-            objects.push(object);
         }
-        if !plan.quiet(directory, &self.root, true) || !plan.unused(directory, true) {
+        if !plan.quiet(directory, true) || !plan.unused(directory, true) {
             return;
         }
-        for object in objects {
-            if let Err(error) = object.verify() {
-                plan.active(directory, error.to_string());
-                return;
+        // Verify names against the held handles without walking the same
+        // parent chain for every file. The directory itself is checked once.
+        for (path, lock) in names.into_iter().zip(&locks) {
+            let same = (|| -> std::io::Result<bool> {
+                let current = crate::disk::open(path)?;
+                Ok(crate::disk::identity(&current)? == crate::disk::identity(lock)?)
+            })();
+            match same {
+                Ok(true) => {}
+                Ok(false) => {
+                    plan.active(path, "runtime lock changed during inspection");
+                    return;
+                }
+                Err(error) => {
+                    plan.active(path, error.to_string());
+                    return;
+                }
             }
+        }
+        if let Err(error) = directory_object.verify() {
+            plan.active(directory, error.to_string());
+            return;
         }
         // All released processes were absent in both observations, with the
         // current locks held across the second one. This also covers home keys
         // left by earlier spellings of HOME, which cannot be reversed from hashes.
-        for path in entries {
-            plan.archive(path, "runtime", "legacy coordination or discovery state retained after its users ended");
-        }
-        plan.locks.extend(locks);
-        plan.empty_after(directory);
+        // This entire directory belongs to the retired runtime. Moving it as
+        // one object preserves added contents and avoids one journal and durable
+        // rename per lock file. Publication decides when handles may be released.
+        plan.runtime_locks.insert(directory_object.path.clone(), locks);
+        plan.archive_object(
+            directory_object,
+            "runtime",
+            "legacy coordination or discovery directory retained after its users ended".into(),
+        );
     }
 }
 

@@ -10,7 +10,7 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
     if entries.is_empty() {
         if directory.exists()
             && files::entries(&directory).is_ok_and(|entries| entries.is_empty())
-            && plan.quiet(&directory, root, false)
+            && plan.quiet(&directory, false)
             && plan.unused(&directory, true)
         {
             plan.empty_after(&directory);
@@ -36,7 +36,7 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
             }
         }
     }
-    if !plan.quiet(&directory, root, false) || !plan.unused(&directory, true) {
+    if !plan.quiet(&directory, false) || !plan.unused(&directory, true) {
         return;
     }
     let lock_path = directory.join("update.lock");
@@ -52,7 +52,7 @@ pub(super) fn inspect(root: &Path, plan: &mut Plan) {
             return;
         }
     };
-    if !plan.quiet(&directory, root, true) || !plan.unused(&directory, true) {
+    if !plan.quiet(&directory, true) || !plan.unused(&directory, true) {
         return;
     }
     for path in entries {
@@ -123,7 +123,24 @@ pub(super) fn nonce_pid(name: &str) -> Option<u32> {
 
 pub(super) fn lock_existing(path: &Path) -> io::Result<Option<File>> {
     files::check_path(path)?;
-    let file = OpenOptions::new().read(true).write(true).open(path)?;
+    lock_in_directory(path)
+}
+
+/// The caller validates and retains the parent directory's identity.
+pub(super) fn lock_in_directory(path: &Path) -> io::Result<Option<File>> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path)?;
     crate::disk::ordinary(&file.metadata()?)?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),

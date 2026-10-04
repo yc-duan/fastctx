@@ -16,9 +16,11 @@ use crate::disk::{self, Identity};
 
 use super::files;
 
+mod flush;
 #[cfg(test)]
 mod health;
 mod metadata;
+mod parallel;
 mod tree;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,12 +49,45 @@ impl Object {
         }
         Ok(())
     }
+
+    fn read_child(parent: &Self, path: &Path) -> io::Result<Option<Self>> {
+        if path.parent() != Some(parent.path.as_path()) {
+            return Err(conflict("archive entry is outside its recorded parent"));
+        }
+        // Bind to the same ordinary directory before and after reading, as a
+        // transaction's Snapshot anchor does. The tree validates its root and
+        // establishes each child directory's identity before visiting children.
+        if let Err(error) = parent.verify_directory() {
+            if error.kind() == io::ErrorKind::NotFound
+                && fs::symlink_metadata(path).is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+            {
+                return Ok(None);
+            }
+            return Err(error);
+        }
+        let object = match fs::symlink_metadata(path) {
+            Ok(metadata) => Some(Self { path: path.into(), identity: identity(path, &metadata)? }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        parent.verify_directory()?;
+        Ok(object)
+    }
+
+    fn verify_directory(&self) -> io::Result<()> {
+        let file = disk::open_directory(&self.path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_dir() || disk::is_link(&metadata) || disk::identity(&file)? != self.identity {
+            return Err(conflict("archive parent directory changed; retained"));
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn transfer(
     object: &Object,
     destination: &Path,
-    locks: &[File],
+    locks: &[&File],
     copying: bool,
     previous: &[PathBuf],
     begin_copy: impl FnOnce() -> io::Result<()>,
@@ -67,7 +102,12 @@ pub(super) fn transfer(
         fastctx_platform::ensure_private_dir(parent)?;
     }
     files::check_path(parent)?;
-    if copying {
+    // The copy manifest is itself durable before any copied source is retired.
+    // It also identifies an interrupted copy before the batch result was saved.
+    if copying || parent.join("copy-manifest.json").try_exists()? {
+        if !copying {
+            begin_copy()?;
+        }
         return tree::transfer(object, destination, locks, previous);
     }
     object.verify()?;
@@ -88,22 +128,31 @@ fn conflict(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
+pub(super) fn completed_copy(object: &Object, destination: &Path) -> io::Result<bool> {
+    tree::completed(object, destination)
+}
+
 fn credential(path: &Path) -> bool {
     let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("").to_ascii_lowercase();
     name.ends_with(".key") || ["auth.json", ".credentials.json", "world.keys"].contains(&name.as_str())
 }
 
-fn source_file(object: &Object, locks: &[File]) -> io::Result<File> {
+struct LockedFile<'a> {
+    file: &'a File,
+    access: std::sync::Mutex<()>,
+}
+
+type LockedFiles<'a> = std::collections::HashMap<(u64, u128), LockedFile<'a>>;
+
+fn source_file(object: &Object, locks: &LockedFiles<'_>) -> io::Result<File> {
     if credential(&object.path) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "credential files may be moved intact but are not read or copied across filesystems; original retained",
         ));
     }
-    for file in locks {
-        if disk::identity(file)? == object.identity {
-            return file.try_clone();
-        }
+    if let Some(file) = locks.get(&(object.identity.volume, object.identity.file)) {
+        return file.file.try_clone();
     }
     disk::open(&object.path)
 }
@@ -114,7 +163,7 @@ pub(super) fn hash_file(path: &Path) -> io::Result<String> {
     hash_handle(&mut file)
 }
 
-fn hash_handle(file: &mut File) -> io::Result<String> {
+pub(super) fn hash_handle(file: &mut File) -> io::Result<String> {
     struct Hash(Sha256);
     impl Write for Hash {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -251,16 +300,6 @@ pub(super) fn rename_new(source: &Path, destination: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 pub(super) fn rename_new(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
-    let from: Vec<u16> = source.as_os_str().encode_wide().chain([0]).collect();
-    let target = fs::canonicalize(destination.parent().expect("absolute archive path"))?
-        .join(destination.file_name().expect("archive object has a name"));
-    let to: Vec<u16> = target.as_os_str().encode_wide().chain([0]).collect();
-    // SAFETY: no REPLACE_EXISTING or COPY_ALLOWED: one object moves, or neither changes.
-    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) } != 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    // Bind the rename to a source handle; the destination is never replaced.
+    disk::move_preserving(source, destination)
 }
