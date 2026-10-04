@@ -10,6 +10,7 @@ mod ask;
 mod copy;
 mod journal;
 mod project;
+mod service;
 mod talk;
 mod view;
 mod w;
@@ -29,7 +30,21 @@ enum Command {
     /// conversation with any agent on any machine.
     Ui,
     /// Run this machine's node in the foreground.
-    Node,
+    Node {
+        /// The fastctx root to serve; defaults to this user's fastctx root.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Install, uninstall or inspect a node/hub service on this machine.
+    Service(service::ServiceArgs),
+    /// The SYSTEM guardian, dispatched by the Windows service controller.
+    #[cfg(windows)]
+    #[command(hide = true)]
+    ServiceHost { name: String },
+    /// An independent check of the SYSTEM guardian.
+    #[cfg(windows)]
+    #[command(hide = true)]
+    ServiceCheck { name: String },
     /// Serve the World's tools to an agent session over MCP's stdio.
     Serve {
         /// How the session writes files: `edit` lists edit and write,
@@ -86,7 +101,12 @@ fn main() -> ExitCode {
     };
     let result = match command {
         Command::Ui => fastctx_tui::run(),
-        Command::Node => node(),
+        Command::Node { dir } => node(dir),
+        Command::Service(args) => service::run(args),
+        #[cfg(windows)]
+        Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
+        #[cfg(windows)]
+        Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
         Command::Serve { writer } => serve(&writer),
         Command::View(args) => view::run(args),
         Command::W(args) => w::run(args),
@@ -119,8 +139,11 @@ fn finish(result: anyhow::Result<ExitCode>) -> ExitCode {
     })
 }
 
-fn node() -> anyhow::Result<()> {
-    let root = fastctx_platform::fastctx_root()?;
+fn node(dir: Option<PathBuf>) -> anyhow::Result<()> {
+    let root = match dir {
+        Some(root) => root,
+        None => fastctx_platform::fastctx_root()?,
+    };
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run(&root))
 }
 

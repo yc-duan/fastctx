@@ -18,6 +18,7 @@ clap = { version = "4", features = ["derive"] }
 fastctx-client = { path = "../fastctx-client" }
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-hub = { path = "../fastctx-hub" }
+fastctx-install = { path = "../fastctx-install" }
 fastctx-node = { path = "../fastctx-node" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-serve = { path = "../fastctx-serve" }

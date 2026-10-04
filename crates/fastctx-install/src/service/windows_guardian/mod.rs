@@ -1,0 +1,249 @@
+//! A SYSTEM guardian owns only process lifetime and token selection. Nodes
+//! run under their user's token, and communicate through inherited pipes.
+
+mod account;
+mod child;
+mod config;
+mod host;
+mod owner;
+mod policy;
+mod runtime;
+mod scm;
+mod security;
+mod task;
+
+use std::fs;
+use std::path::Path;
+
+use anyhow::{Context as _, bail};
+use fastctx_platform::FileLock;
+use fastctx_platform::atomic::{Permissions, publish};
+use serde::{Deserialize, Serialize};
+use windows_service::service::{ServiceAccess, ServiceExitCode, ServiceStartType, ServiceState, UserEventCode};
+
+use super::{Service, Status, transaction};
+use config::Config;
+
+#[derive(Serialize, Deserialize)]
+struct Before {
+    registration: Option<scm::Snapshot>,
+    task: task::Snapshot,
+    config: Option<Vec<u8>>,
+    image: Option<Vec<u8>>,
+    payload: Option<Vec<u8>>,
+    batch_right: Option<bool>,
+}
+
+pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
+    let config = Config::new(service)?;
+    let _owner = owner::AdministratorOwner::enter()?;
+    let root = security::prepare(&config.name, config.target.as_ref().map(|target| target.sid.as_str()))?;
+    // Account rights are shared by all registrations. Serialize their
+    // transactions so one failed install cannot undo another's committed grant.
+    let _policy_lock = FileLock::acquire(&root.parent().context("guardian parent is absent")?.join("policy.lock"))?;
+    let _lock = FileLock::acquire(&root.join("manager.lock"))?;
+    if !service.executable.is_file() || !service.directory.is_dir() {
+        bail!("the node executable and data directory must exist");
+    }
+    let checker = task::Task::new(&config.name);
+    let image = fs::read(std::env::current_exe()?)?;
+    let payload = (config.kind == super::Kind::Hub).then(|| fs::read(&service.executable)).transpose()?;
+    let bytes = serde_json::to_vec(&config)?;
+    transaction::run(
+        &root.join("transaction.json"),
+        &config.name,
+        || capture(&config, &checker),
+        |before| {
+            if let Some(target) = &config.target {
+                policy::set_batch(&target.sid, true).context("granting batch logon to the node account")?;
+            }
+            let changed = before.image.as_deref() != Some(&image)
+                || before.config.as_deref() != Some(&bytes)
+                || before.payload != payload;
+            if changed {
+                // Disabling SCM precedes the checker so a queued check cannot
+                // revive a process while its image is being replaced.
+                scm::stop(&config.name)?;
+                checker.delete()?;
+                publish(&root.join("guardian.exe"), &image, Permissions::KeepExisting)?;
+                if let Some(payload) = &payload {
+                    publish(&root.join("payload.exe"), payload, Permissions::KeepExisting)?;
+                }
+                publish(&root.join("config.json"), &bytes, Permissions::KeepExisting)?;
+            }
+            if before.registration.is_none() {
+                scm::create(&config.name, config.target.as_ref().map(|target| target.sid.as_str()))?;
+            }
+            checker.install(&config.name, config.target.as_ref().map(|target| target.sid.as_str()))?;
+            scm::enable(&config.name)?;
+            scm::start(&config.name)?;
+            inspect(&config)
+        },
+        |before| restore(&config, &checker, before),
+    )
+}
+
+pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
+    let config = Config::new(service)?;
+    let _owner = owner::AdministratorOwner::enter()?;
+    let root = config.root()?;
+    if !root.try_exists()? {
+        if scm::capture(&config.name)?.is_some() {
+            bail!("guardian registration has lost its protected configuration");
+        }
+        return inspect(&config);
+    }
+    security::prepare(&config.name, config.target.as_ref().map(|target| target.sid.as_str()))?;
+    let _policy_lock = FileLock::acquire(&root.parent().context("guardian parent is absent")?.join("policy.lock"))?;
+    let _lock = FileLock::acquire(&root.join("manager.lock"))?;
+    let checker = task::Task::new(&config.name);
+    transaction::run(
+        &root.join("transaction.json"),
+        &config.name,
+        || capture(&config, &checker),
+        |_| {
+            scm::stop(&config.name)?;
+            checker.delete()?;
+            scm::delete(&config.name)?;
+            delete(&root.join("guardian.exe"))?;
+            delete(&root.join("payload.exe"))?;
+            delete(&root.join("config.json"))?;
+            inspect(&config)
+        },
+        |before| restore(&config, &checker, before),
+    )
+}
+
+pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
+    let config = Config::new(service)?;
+    transaction::require_complete(&config.root()?.join("transaction.json"))?;
+    inspect(&config)
+}
+
+fn inspect(config: &Config) -> anyhow::Result<Status> {
+    let service = scm::open(&config.name, ServiceAccess::QUERY_CONFIG | ServiceAccess::QUERY_STATUS)?;
+    let (installed, enabled, state, last_exit) = match service {
+        None => (false, false, "absent".into(), None),
+        Some(service) => {
+            scm::capture(&config.name)?;
+            let status = service.query_status()?;
+            let exit = match status.exit_code {
+                ServiceExitCode::Win32(code) | ServiceExitCode::ServiceSpecific(code) => i64::from(code),
+            };
+            (
+                true,
+                service.query_config()?.start_type == ServiceStartType::AutoStart,
+                format!("{:?}", status.current_state).to_ascii_lowercase(),
+                Some(exit),
+            )
+        }
+    };
+    Ok(Status {
+        name: config.name.clone(),
+        installed,
+        enabled,
+        state,
+        last_exit,
+        logs: config.root()?.join("guardian.log").display().to_string(),
+        recovery: Some(task::Task::new(&config.name).status()?),
+    })
+}
+
+fn capture(config: &Config, checker: &task::Task) -> anyhow::Result<Before> {
+    let root = config.root()?;
+    let registration = scm::capture(&config.name)?;
+    let bytes = read(&root.join("config.json"))?;
+    if bytes.is_some() {
+        Config::read(&config.name)?;
+    }
+    if registration.is_some() && bytes.is_none() {
+        bail!("guardian service exists without its owned configuration");
+    }
+    Ok(Before {
+        registration,
+        task: checker.capture()?,
+        config: bytes,
+        image: read(&root.join("guardian.exe"))?,
+        payload: read(&root.join("payload.exe"))?,
+        batch_right: config.target.as_ref().map(|target| policy::batch_granted(&target.sid)).transpose()?,
+    })
+}
+
+fn restore(config: &Config, checker: &task::Task, before: &Before) -> anyhow::Result<()> {
+    let root = config.root()?;
+    let mut errors = Vec::new();
+    let mut record = |result: anyhow::Result<()>| {
+        if let Err(error) = result {
+            errors.push(format!("{error:#}"));
+        }
+    };
+    record(scm::stop(&config.name));
+    record(checker.delete());
+    for (file, bytes) in
+        [("guardian.exe", &before.image), ("payload.exe", &before.payload), ("config.json", &before.config)]
+    {
+        record(match bytes {
+            Some(bytes) => publish(&root.join(file), bytes, Permissions::KeepExisting).map_err(Into::into),
+            None => delete(&root.join(file)).map_err(Into::into),
+        });
+    }
+    record(scm::restore(
+        &config.name,
+        before.registration.as_ref(),
+        config.target.as_ref().map(|target| target.sid.as_str()),
+    ));
+    record(checker.restore(&before.task));
+    if let (Some(target), Some(granted)) = (&config.target, before.batch_right) {
+        record(policy::set_batch(&target.sid, granted));
+    }
+    if !errors.is_empty() {
+        bail!("{}", errors.join("; "));
+    }
+    Ok(())
+}
+
+fn read(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+fn delete(path: &Path) -> std::io::Result<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+pub(super) fn run_host(name: &str) -> anyhow::Result<()> {
+    host::dispatch(name)
+}
+
+pub(super) fn check(name: &str) -> anyhow::Result<()> {
+    security::validate_name(name)?;
+    Config::read(name)?;
+    let Some(service) = scm::open(
+        name,
+        ServiceAccess::QUERY_CONFIG
+            | ServiceAccess::QUERY_STATUS
+            | ServiceAccess::START
+            | ServiceAccess::USER_DEFINED_CONTROL,
+    )?
+    else {
+        return Ok(());
+    };
+    // A disabled service is being removed or deliberately disabled. Checks
+    // cannot undo that persisted management decision.
+    if service.query_config()?.start_type == ServiceStartType::Disabled {
+        return Ok(());
+    }
+    match service.query_status()?.current_state {
+        ServiceState::Stopped => scm::start(name)?,
+        ServiceState::Running => {
+            service.notify(UserEventCode::from_raw(128).context("guardian check control")?)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
