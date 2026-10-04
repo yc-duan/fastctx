@@ -13,7 +13,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
-use fastctx_types::session::{Happened, Health, HealthKind, SessionEvent, TurnEnd, TurnHow};
+use fastctx_types::session::{
+    Content, Happened, Health, HealthKind, Item, SessionEvent, ToolStatus, TurnEnd, TurnHow, What,
+};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -113,20 +115,30 @@ enum ModEvent {
         ms: Option<u64>,
         answer: Option<String>,
     },
+    /// A tool use began: its arguments, as the tool receives them.
     ToolStart {
         turn: Option<String>,
         at: Option<Timestamp>,
         item: Option<String>,
         tool: Option<String>,
-        detail: Option<String>,
+        #[serde(default)]
+        input: Value,
     },
+    /// A tool use ended: what it gave back, as the model reads it.
     ToolEnd {
         turn: Option<String>,
         at: Option<Timestamp>,
         item: Option<String>,
         tool: Option<String>,
-        detail: Option<String>,
+        #[serde(default)]
+        input: Value,
+        #[serde(default)]
+        output: Vec<Content>,
         failed: bool,
+        #[serde(default)]
+        declined: bool,
+        #[serde(default)]
+        ms: Option<u64>,
     },
     Trouble {
         at: Option<Timestamp>,
@@ -272,8 +284,8 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             let turn = turn_of(turn);
             let mut reported = Vec::new();
             if let Some(text) = &answer {
-                let item = format!("{turn}-answer");
-                reported.push(happened(at, Happened::Said { turn: turn.clone(), item, text: text.clone() }));
+                let item = Item { id: format!("{turn}-answer"), what: What::Message { text: text.clone() } };
+                reported.push(happened(at, Happened::Finished { turn: turn.clone(), item }));
             }
             let how = match reason.as_deref() {
                 Some("answer") => TurnHow::Completed,
@@ -301,25 +313,21 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             reported.push(happened(at, Happened::TurnEnded { turn, end }));
             reported
         }
-        ModEvent::ToolStart { turn, at, item, tool, detail } => vec![happened(
-            at,
-            Happened::ToolStarted {
-                turn: turn_of(turn),
-                item: item.unwrap_or_default(),
-                tool: tool.unwrap_or_default(),
-                detail: detail.unwrap_or_default(),
-            },
-        )],
-        ModEvent::ToolEnd { turn, at, item, tool, detail, failed } => vec![happened(
-            at,
-            Happened::ToolEnded {
-                turn: turn_of(turn),
-                item: item.unwrap_or_default(),
-                tool: tool.unwrap_or_default(),
-                detail: detail.unwrap_or_default(),
-                failed,
-            },
-        )],
+        ModEvent::ToolStart { turn, at, item, tool, input } => {
+            let tool = super::tools::tool(&tool.unwrap_or_default(), input, Vec::new(), ToolStatus::Running, None);
+            let item = Item { id: item.unwrap_or_default(), what: What::Tool(Box::new(tool)) };
+            vec![happened(at, Happened::Began { turn: turn_of(turn), item })]
+        }
+        ModEvent::ToolEnd { turn, at, item, tool, input, output, failed, declined, ms } => {
+            let status = match (declined, failed) {
+                (true, _) => ToolStatus::Declined,
+                (false, true) => ToolStatus::Failed,
+                (false, false) => ToolStatus::Done,
+            };
+            let tool = super::tools::tool(&tool.unwrap_or_default(), input, output, status, ms);
+            let item = Item { id: item.unwrap_or_default(), what: What::Tool(Box::new(tool)) };
+            vec![happened(at, Happened::Finished { turn: turn_of(turn), item })]
+        }
         ModEvent::Trouble { at, file, text } => {
             let text = format!(
                 "the World's plugin could not hand over {}: {}",

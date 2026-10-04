@@ -12,7 +12,7 @@ use std::sync::Arc;
 use fastctx_hosts::codex::HostEvent;
 use fastctx_types::ResidentId;
 use fastctx_types::residents::{Activity, Origin};
-use fastctx_types::session::SessionEvent;
+use fastctx_types::session::{Happened, SessionEvent};
 use tokio::sync::mpsc;
 
 use crate::Node;
@@ -55,9 +55,15 @@ pub async fn adopt(node: &Arc<Node>) {
     }
 }
 
-/// Reports are retained before dispatch, including Desk and Gone before a
+/// Reports are queued before dispatch, including Desk and Gone before a
 /// thread is claimed. A separate worker serializes each thread; a slow
 /// submission never prevents another thread's reports reaching disk.
+///
+/// Only what the World answers for is kept on disk while it waits: how a
+/// turn starts and ends, what is wrong with a session, its desk and its
+/// app-server's end. What the agent did is in the thread's own record,
+/// and what grows an item is for those watching live; were the node to
+/// stop, its app-server stops with it and nobody watches.
 #[derive(Default)]
 pub struct Unclaimed {
     state: std::sync::Mutex<Reports>,
@@ -76,11 +82,23 @@ struct KeptReports {
     events: Vec<HostEvent>,
 }
 
+/// Whether a report is kept on disk until it is applied.
+fn durable(event: &HostEvent) -> bool {
+    match event {
+        HostEvent::Happened { event, .. } => matches!(
+            event.happened,
+            Happened::TurnStarted { .. } | Happened::TurnEnded { .. } | Happened::Health { .. }
+        ),
+        HostEvent::Desk { .. } | HostEvent::Gone { .. } => true,
+    }
+}
+
 fn save(node: &Node, thread: &str, events: &[HostEvent]) -> std::io::Result<()> {
     let directory = node.world.path().join("codex-reports");
     fastctx_platform::ensure_private_dir(&directory)?;
     let key = crate::speech::fixed_id("thread", &[thread]);
-    let kept = KeptReports { thread: thread.to_string(), events: events.to_vec() };
+    let events = events.iter().filter(|event| durable(event)).cloned().collect();
+    let kept = KeptReports { thread: thread.to_string(), events };
     fastctx_platform::publish(
         &directory.join(format!("{key}.json")),
         &serde_json::to_vec(&kept).map_err(std::io::Error::other)?,
@@ -92,8 +110,11 @@ fn enqueue(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Resul
     {
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
         let events = state.queues.entry(thread.clone()).or_default();
+        let kept = durable(&event);
         events.push(event);
-        save(node, &thread, events)?;
+        if kept {
+            save(node, &thread, events)?;
+        }
     }
     let node = node.clone();
     tokio::spawn(async move {
@@ -124,11 +145,6 @@ async fn drain(node: &Arc<Node>, thread: &str) {
         let Some(event) = event else { return };
         let Some(id) = node.residents.resident_of_thread(thread) else { return };
         let result = match event {
-            report @ HostEvent::Report { .. } => {
-                let town = node.residents.town_of(&id).flatten();
-                let directory = node.world.resident(town.as_ref(), &id);
-                crate::delivery::host_report(&directory, &report)
-            }
             HostEvent::Happened { event, .. } => crate::turns::apply(node, &id, event).await,
             HostEvent::Desk { turn, desk, .. } => {
                 let town = node.residents.town_of(&id).flatten();
@@ -171,12 +187,13 @@ async fn drain(node: &Arc<Node>, thread: &str) {
         }
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
         let events = state.queues.get_mut(thread).expect("the worker owns its queue");
-        let remaining = events[1..].to_vec();
-        if let Err(error) = save(node, thread, &remaining) {
+        if durable(&events[0])
+            && let Err(error) = save(node, thread, &events[1..])
+        {
             node.log.line(format_args!("acknowledging a report for {thread}: {error}"));
             return;
         }
-        *events = remaining;
+        events.remove(0);
     }
 }
 
@@ -224,11 +241,9 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
                         (thread.clone(), HostEvent::Gone { how: how.clone(), turns: vec![(thread, turn)] })
                     })
                     .collect(),
-                event @ (HostEvent::Happened { .. } | HostEvent::Desk { .. } | HostEvent::Report { .. }) => {
+                event @ (HostEvent::Happened { .. } | HostEvent::Desk { .. }) => {
                     let thread = match &event {
-                        HostEvent::Happened { thread, .. }
-                        | HostEvent::Desk { thread, .. }
-                        | HostEvent::Report { thread, .. } => thread.clone(),
+                        HostEvent::Happened { thread, .. } | HostEvent::Desk { thread, .. } => thread.clone(),
                         _ => unreachable!(),
                     };
                     vec![(thread, event)]

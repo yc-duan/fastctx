@@ -14,6 +14,7 @@
 
 pub mod background;
 pub mod exchange;
+mod tools;
 pub mod trust;
 
 use std::io;

@@ -269,14 +269,3 @@ pub fn terminal(directory: &ResidentDir, turn: &str) -> io::Result<Option<Finish
     let (_transaction, directory) = crate::resident_storage::current(directory)?;
     terminal_here(&directory, turn)
 }
-
-/// Retain reports even when this version does not interpret their method.
-pub fn host_report(directory: &ResidentDir, report: &impl Serialize) -> io::Result<()> {
-    let (_transaction, directory) = crate::resident_storage::current(directory)?;
-    let text = serde_json::to_string(report).map_err(io::Error::other)?;
-    let key = crate::speech::fixed_id("report", &[&text]);
-    match create(&directory.path().join("host-reports").join(format!("{key}.json")), report) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        result => result,
-    }
-}

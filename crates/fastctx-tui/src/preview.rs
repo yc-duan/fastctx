@@ -11,7 +11,10 @@ use fastctx_types::project::{
     Listing, Location, MapView, Model, Record, Stamp, TownSummary, Writer,
 };
 use fastctx_types::residents::{About, Action, Activity, Host, Now, Origin, Trouble};
-use fastctx_types::session::{Happened, Health, HealthKind, SessionEvent, Speaker, TurnEnd, TurnHow};
+use fastctx_types::session::{
+    Change, ChangeHow, Does, Happened, Health, HealthKind, Item, Part, SessionEvent, Speaker, Step, StepStatus, Tool,
+    ToolStatus, TurnEnd, TurnHow, What,
+};
 use fastctx_types::town::{MachineWho, ResidentNow, RunningJob, WhoReply, WhoScope, WorldWho};
 use fastctx_types::world::{LinkState, MachineFacts, Node, NodesReply, Route};
 use fastctx_types::{Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, TownName};
@@ -400,51 +403,102 @@ fn journal(now: Timestamp) -> JournalView {
     }
 }
 
+/// A tool use of the World's, on `machine` when it acted on another one.
+fn world_tool(name: &str, does: Does, status: ToolStatus, on: Option<&str>) -> What {
+    What::Tool(Box::new(Tool {
+        name: name.into(),
+        server: Some("fastctx".into()),
+        machine: on.map(machine),
+        does,
+        input: serde_json::Value::Null,
+        output: Vec::new(),
+        status,
+        duration_ms: None,
+    }))
+}
+
+fn command(text: &str, exit: Option<i64>, job: Option<&str>) -> Does {
+    Does::Command { command: text.into(), cwd: None, exit, job: job.map(str::to_string) }
+}
+
 /// A conversation with a colleague in the middle of a turn.
 fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     let event =
         |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
     let turn = "t-1".to_string();
-    let tool = |seconds: i64, item: &str, tool: &str, detail: &str, ended: Option<bool>| {
-        let mut events = vec![event(
-            seconds,
-            Happened::ToolStarted { turn: turn.clone(), item: item.into(), tool: tool.into(), detail: detail.into() },
-        )];
-        if let Some(failed) = ended {
-            events.push(event(
-                seconds - 2,
-                Happened::ToolEnded {
-                    turn: turn.clone(),
-                    item: item.into(),
-                    tool: tool.into(),
-                    detail: detail.into(),
-                    failed,
-                },
-            ));
+    let item = |id: &str, what: What| Item { id: id.into(), what };
+    let used = |seconds: i64, id: &str, what: What| {
+        let running = matches!(&what, What::Tool(tool) if tool.status == ToolStatus::Running);
+        let mut events = vec![event(seconds, Happened::Began { turn: turn.clone(), item: item(id, what.clone()) })];
+        if !running {
+            events.push(event(seconds - 2, Happened::Finished { turn: turn.clone(), item: item(id, what) }));
         }
         events
+    };
+    let steps = |doing: usize| {
+        ["Read the loop and the board's timing", "Move the integral to Q8.24", "Run the step tests, then the workspace"]
+            .iter()
+            .enumerate()
+            .map(|(index, text)| Step {
+                text: (*text).into(),
+                status: match index.cmp(&doing) {
+                    std::cmp::Ordering::Less => StepStatus::Done,
+                    std::cmp::Ordering::Equal => StepStatus::Doing,
+                    std::cmp::Ordering::Greater => StepStatus::Pending,
+                },
+            })
+            .collect::<Vec<_>>()
     };
     let mut events = vec![
         event(900, Happened::TurnStarted { turn: "t-0".into() }),
         event(900, Happened::Heard {
+            delivery: None,
             turn: Some("t-0".into()),
             from: Some(Speaker::Resident { address: address("claude-2b1c", "desktop") }),
             text: "Port the PID loop in D:/work/mark50/src/ctrl/pid.rs to fixed-point. The board has no FPU; keep the sampling period as it is.".into(),
         }),
-        event(860, Happened::Said { turn: "t-0".into(), item: "m0".into(), text: "I'll read the loop and the board's timing first.".into() }),
+        event(860, Happened::Finished { turn: "t-0".into(), item: Item { id: "m0".into(), what: What::Message { text: "I'll read the loop and the board's timing first.".into() } } }),
         event(600, Happened::TurnEnded { turn: "t-0".into(), end: TurnEnd { how: TurnHow::Completed, reason: None, duration_ms: Some(300_000), last_message: None } }),
         event(240, Happened::TurnStarted { turn: turn.clone() }),
-        event(240, Happened::Heard { turn: Some(turn.clone()), from: Some(Speaker::User { machine: machine("desktop") }), text: "先别动采样周期，积分项用 Q8.24 试试看，跑一下 step 那组测试。".into() }),
+        event(240, Happened::Heard { delivery: None, turn: Some(turn.clone()), from: Some(Speaker::User { machine: machine("desktop") }), text: "先别动采样周期，积分项用 Q8.24 试试看，跑一下 step 那组测试。".into() }),
+        event(238, Happened::Finished { turn: turn.clone(), item: item("r1", What::Thinking { text: "**Checking where the clamp sits**\n\nThe accumulator is clamped after it is summed, so an overflow would be cut back only after it happened.".into() }) }),
+        event(236, Happened::Steps { turn: turn.clone(), steps: steps(1), note: None }),
     ];
-    events.extend(tool(230, "c1", "fastctx.view", "D:/work/mark50/src/ctrl/pid.rs", Some(false)));
-    events.extend(tool(200, "c2", "apply_patch", "M src/ctrl/pid.rs, A src/ctrl/fixed.rs", Some(false)));
-    events.extend(tool(190, "c3", "fastctx.run", "cargo build -p ctrl", Some(false)));
-    events.extend(tool(150, "c4", "fastctx.run", "cargo test -p ctrl step_profile", Some(true)));
-    events.push(event(140, Happened::Said {
+    events.extend(used(
+        230,
+        "c1",
+        world_tool(
+            "run",
+            command("fastctx view -- D:/work/mark50/src/ctrl/pid.rs", Some(0), None),
+            ToolStatus::Done,
+            None,
+        ),
+    ));
+    let changes = vec![
+        Change { path: "D:/work/mark50/src/ctrl/pid.rs".into(), how: ChangeHow::Updated, diff: "@@\n-    integral += error * ki;\n+    let next = integral.saturating_add(error * ki);\n+    integral = next.clamp(-LIMIT, LIMIT);\n".into() },
+        Change { path: "D:/work/mark50/src/ctrl/fixed.rs".into(), how: ChangeHow::Added, diff: "+pub struct Q8_24(i32);\n+impl Q8_24 {}\n".into() },
+    ];
+    events.extend(used(200, "c2", world_tool("apply_patch", Does::Edit { changes }, ToolStatus::Done, None)));
+    events.extend(used(
+        190,
+        "c3",
+        world_tool("run", command("cargo build -p ctrl", Some(0), None), ToolStatus::Done, Some("laptop")),
+    ));
+    events.extend(used(
+        150,
+        "c4",
+        world_tool(
+            "run",
+            command("cargo test -p ctrl step_profile", Some(101), None),
+            ToolStatus::Done,
+            Some("laptop"),
+        ),
+    ));
+    events.push(event(140, Happened::Finished {
         turn: turn.clone(),
-        item: "m1".into(),
-        text: "The step test fails at 41 s: the integral still saturates with Q8.24 because the clamp sits after the accumulator. Moving the clamp before it and running the whole workspace.".into(),
+        item: item("m1", What::Message { text: "The step test fails at 41 s: the integral still saturates with Q8.24 because the clamp sits after the accumulator. Moving the clamp before it and running the whole workspace.".into() }),
     }));
+    events.push(event(138, Happened::Steps { turn: turn.clone(), steps: steps(2), note: None }));
     events.push(event(
         130,
         Happened::Health {
@@ -452,14 +506,28 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
             health: Health { kind: HealthKind::Reconnecting, text: "Reconnecting... 2/5".into() },
         },
     ));
-    events.extend(tool(120, "c5", "fastctx.run", "cargo test --workspace", None));
+    events.extend(used(
+        125,
+        "c5",
+        world_tool(
+            "run",
+            command("python train.py --epochs 400", None, Some("j-p0q1r2")),
+            ToolStatus::Done,
+            Some("laptop"),
+        ),
+    ));
+    events.extend(used(
+        120,
+        "c6",
+        world_tool("run", command("cargo test --workspace", None, None), ToolStatus::Running, Some("laptop")),
+    ));
     events.push(event(
-        5,
-        Happened::Writing {
-            turn: turn.clone(),
-            item: "m2".into(),
-            delta: "While the workspace tests run, the clamp now limits the accumulator to ±2^7, and".into(),
-        },
+        8,
+        Happened::Began { turn: turn.clone(), item: item("r2", What::Thinking { text: String::new() }) },
+    ));
+    events.push(event(
+        6,
+        Happened::Grew { turn: turn.clone(), item: "r2".into(), part: Part::Text, text: "**Waiting on the workspace tests**\n\nWhile they run, the noise_reject margin is worth a look: 0.3% is inside".into() },
     ));
     events
 }
@@ -504,36 +572,30 @@ fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
     let event =
         |seconds: i64, happened: Happened| SessionEvent { at: now - SignedDuration::from_secs(seconds), happened };
     let turn = "t-2".to_string();
+    let tested = Item {
+        id: "c1".into(),
+        what: world_tool("run", command("cargo test --workspace", Some(0), None), ToolStatus::Done, None),
+    };
     vec![
         event(400, Happened::TurnStarted { turn: turn.clone() }),
         event(
             400,
             Happened::Heard {
+                delivery: None,
                 turn: Some(turn.clone()),
                 from: Some(Speaker::User { machine: machine("desktop") }),
                 text: "限幅的问题修好了吗？把结果列一下。".into(),
             },
         ),
+        event(390, Happened::Began { turn: turn.clone(), item: tested.clone() }),
+        event(330, Happened::Finished { turn: turn.clone(), item: tested }),
         event(
-            390,
-            Happened::ToolStarted {
+            320,
+            Happened::Finished {
                 turn: turn.clone(),
-                item: "c1".into(),
-                tool: "fastctx.run".into(),
-                detail: "cargo test --workspace".into(),
+                item: Item { id: "m3".into(), what: What::Message { text: answer.into() } },
             },
         ),
-        event(
-            330,
-            Happened::ToolEnded {
-                turn: turn.clone(),
-                item: "c1".into(),
-                tool: "fastctx.run".into(),
-                detail: "cargo test --workspace".into(),
-                failed: false,
-            },
-        ),
-        event(320, Happened::Said { turn: turn.clone(), item: "m3".into(), text: answer.into() }),
         event(
             320,
             Happened::TurnEnded {

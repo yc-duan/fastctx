@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use fastctx_types::session::{Happened, Health, HealthKind, SessionEvent, TurnEnd, TurnHow};
+use fastctx_types::session::{
+    Happened, Health, HealthKind, Item, Part, SessionEvent, Step, StepStatus, TurnEnd, TurnHow, What,
+};
 use jiff::Timestamp;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc};
@@ -153,12 +155,6 @@ impl std::fmt::Display for SendError {
 /// What the host tells the node.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum HostEvent {
-    Report {
-        thread: String,
-        at: Timestamp,
-        method: String,
-        params: Value,
-    },
     Happened {
         thread: String,
         event: SessionEvent,
@@ -621,12 +617,6 @@ impl CodexHost {
         else {
             return;
         };
-        let _ = self.events.send(HostEvent::Report {
-            thread: thread.clone(),
-            at: Timestamp::now(),
-            method: method.to_string(),
-            params: params.clone(),
-        });
         let text = |pointer: &str| params.pointer(pointer).and_then(Value::as_str).map(str::to_string);
         let turn = text("/turnId").or_else(|| self.running_turn(&thread));
         match method {
@@ -654,7 +644,6 @@ impl CodexHost {
                 let (Some(item), Some(turn)) = (params.get("item"), turn) else { return };
                 let completed = method == "item/completed";
                 let at = millis(params.get(if completed { "completedAtMs" } else { "startedAtMs" }));
-                let (id, read) = items::read(item);
                 let computer = item.get("type").and_then(Value::as_str) == Some("mcpToolCall")
                     && item.get("server").and_then(Value::as_str) == Some(COMPUTER_USE);
                 if computer {
@@ -665,27 +654,62 @@ impl CodexHost {
                     };
                     let _ = self.events.send(HostEvent::Desk { thread: thread.clone(), turn: turn.clone(), desk });
                 }
-                let happened = match (read, completed) {
-                    (items::Item::Message { text }, true) => {
+                // Words that went in are told by whoever sent them, who knows
+                // who they are from.
+                let items::Read::Item(item) = items::read(item) else { return };
+                let happened = if completed {
+                    if let What::Message { text } = &item.what {
                         self.lock().threads.entry(thread.clone()).or_default().last_message =
                             Some((turn.clone(), text.clone()));
-                        Happened::Said { turn, item: id, text }
                     }
-                    (items::Item::Tool { tool, detail, .. }, false) => {
-                        Happened::ToolStarted { turn, item: id, tool, detail }
-                    }
-                    (items::Item::Tool { tool, detail, failed }, true) => {
-                        Happened::ToolEnded { turn, item: id, tool, detail, failed }
-                    }
-                    // Words that went in are told by whoever sent them, who
-                    // knows who they are from.
-                    _ => return,
+                    Happened::Finished { turn, item }
+                } else {
+                    Happened::Began { turn, item }
                 };
                 self.emit(&thread, at, happened);
             }
-            "item/agentMessage/delta" => {
+            "item/agentMessage/delta" | "item/plan/delta" | "item/reasoning/summaryTextDelta" => {
                 let (Some(turn), Some(item), Some(delta)) = (turn, text("/itemId"), text("/delta")) else { return };
-                self.emit(&thread, Timestamp::now(), Happened::Writing { turn, item, delta });
+                self.emit(&thread, Timestamp::now(), Happened::Grew { turn, item, part: Part::Text, text: delta });
+            }
+            // A new part of a reasoning summary is a new paragraph of it.
+            "item/reasoning/summaryPartAdded" => {
+                let (Some(turn), Some(item)) = (turn, text("/itemId")) else { return };
+                if params.get("summaryIndex").and_then(Value::as_u64).unwrap_or(0) > 0 {
+                    let text = "\n\n".to_string();
+                    self.emit(&thread, Timestamp::now(), Happened::Grew { turn, item, part: Part::Text, text });
+                }
+            }
+            "item/commandExecution/outputDelta" => {
+                let (Some(turn), Some(item), Some(delta)) = (turn, text("/itemId"), text("/delta")) else { return };
+                self.emit(&thread, Timestamp::now(), Happened::Grew { turn, item, part: Part::Output, text: delta });
+            }
+            "turn/plan/updated" => {
+                let Some(turn) = turn else { return };
+                let steps = params
+                    .get("plan")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|step| Step {
+                        text: step.get("step").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        status: match step.get("status").and_then(Value::as_str) {
+                            Some("completed") => StepStatus::Done,
+                            Some("inProgress") => StepStatus::Doing,
+                            _ => StepStatus::Pending,
+                        },
+                    })
+                    .collect();
+                self.emit(&thread, Timestamp::now(), Happened::Steps { turn, steps, note: text("/explanation") });
+            }
+            "thread/tokenUsage/updated" => {
+                let Some(used) = params.pointer("/tokenUsage/last/totalTokens").and_then(Value::as_u64) else { return };
+                let window = params.pointer("/tokenUsage/modelContextWindow").and_then(Value::as_u64);
+                self.emit(&thread, Timestamp::now(), Happened::Context { used, window });
+            }
+            "thread/name/updated" => {
+                let Some(title) = text("/threadName") else { return };
+                self.emit(&thread, Timestamp::now(), Happened::Titled { title });
             }
             "turn/completed" => {
                 let Some(id) = text("/turn/id") else { return };
@@ -696,8 +720,8 @@ impl CodexHost {
                 // The completion names the turn's last message itself, when
                 // it has one; it is the turn's own, whatever came before.
                 let summary = params.pointer("/turn/items").and_then(Value::as_array).and_then(|items| {
-                    items.iter().rev().find_map(|item| match items::read(item).1 {
-                        items::Item::Message { text } => Some(text),
+                    items.iter().rev().find_map(|item| match items::read(item) {
+                        items::Read::Item(Item { what: What::Message { text }, .. }) => Some(text),
                         _ => None,
                     })
                 });
@@ -902,29 +926,17 @@ fn history(answer: &Value, running: Option<&str>) -> Vec<SessionEvent> {
         push(started, Happened::TurnStarted { turn: id.to_string() });
         let mut last_message = None;
         for item in turn.get("items").and_then(Value::as_array).into_iter().flatten() {
-            let (item_id, read) = items::read(item);
             let turn = id.to_string();
-            match read {
-                items::Item::Words { text } => {
+            match items::read(item) {
+                items::Read::Words(text) => {
                     push(started, Happened::Heard { delivery: None, turn: Some(turn), from: None, text })
                 }
-                items::Item::Message { text } => {
-                    last_message = Some(text.clone());
-                    push(started, Happened::Said { turn, item: item_id, text });
+                items::Read::Item(item) => {
+                    if let What::Message { text } = &item.what {
+                        last_message = Some(text.clone());
+                    }
+                    push(started, Happened::Finished { turn, item });
                 }
-                items::Item::Tool { tool, detail, failed } => {
-                    push(
-                        started,
-                        Happened::ToolStarted {
-                            turn: turn.clone(),
-                            item: item_id.clone(),
-                            tool: tool.clone(),
-                            detail: detail.clone(),
-                        },
-                    );
-                    push(started, Happened::ToolEnded { turn, item: item_id, tool, detail, failed });
-                }
-                items::Item::Quiet => {}
             }
         }
         let status = turn.get("status").and_then(Value::as_str);

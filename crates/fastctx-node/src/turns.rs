@@ -28,7 +28,9 @@ use crate::speech::{self, Owed};
 /// Something a host reported about a resident's session.
 /// Applies a report before the source acknowledges or deletes it.
 pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> std::io::Result<()> {
-    let Some((_, town)) = node.residents.about(id) else { return Err(std::io::Error::other("unknown resident")) };
+    let Some((about, town)) = node.residents.about(id) else {
+        return Err(std::io::Error::other("unknown resident"));
+    };
     let directory = node.world.resident(town.as_ref(), id);
     match event.happened {
         Happened::TurnEnded { turn, end } => {
@@ -40,6 +42,10 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
             let speaking = node.residents.speaking(id).expect("known resident");
             let _speaking = speaking.lock().await;
             health_at(node, id, turn, report, event.at)
+        }
+        _ if !recorded(about.host.agent.as_str(), &event.happened) => {
+            node.watchers.publish(id, &event);
+            Ok(())
         }
         _ => {
             let key = match &event.happened {
@@ -57,6 +63,24 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
             }
             Ok(())
         }
+    }
+}
+
+/// Whether the World keeps an event in a resident's record of its session
+/// (`crate::talk::history`). What grows an item is only for those watching
+/// live. What the agent did is kept by the World only where the host keeps
+/// no record of it the World may read: Codex does, in the thread it reads
+/// back; Claude Code does not. What the World itself saw, such as who said
+/// words and how a turn ended, is always kept.
+fn recorded(agent: &str, happened: &Happened) -> bool {
+    match happened {
+        Happened::Grew { .. } => false,
+        Happened::Began { .. }
+        | Happened::Finished { .. }
+        | Happened::Steps { .. }
+        | Happened::Context { .. }
+        | Happened::Titled { .. } => agent != "codex",
+        _ => true,
     }
 }
 

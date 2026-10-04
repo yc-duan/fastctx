@@ -347,11 +347,11 @@ function conversation(sessionId, previous) {
     }
   }
 
-  // One line of what a tool was used on.
-  function detail(e) {
-    const value = e.command || e.file_path || e.path || e.pattern || e.url || ''
-    const first = String(value).trim().split('\n')[0]
-    return String(value).trim().includes('\n') ? first + ' …' : first
+  // A tool call's own arguments: its input without the keys the engine
+  // strips before the tool runs.
+  function argumentsOf(e) {
+    const { tool, tool_use_id, consent, agentId, ...input } = e
+    return input
   }
 
   function wire(on) {
@@ -440,10 +440,18 @@ function conversation(sessionId, previous) {
 
     on('tool.call', async ($, e, next) => {
       if (e.agentId !== undefined) return next(e)
-      const fields = { turn, item: e.tool_use_id, tool: e.tool, detail: detail(e) }
+      const fields = { turn, item: e.tool_use_id, tool: e.tool, input: argumentsOf(e) }
       await event($, 'tool_start', fields)
+      const began = Date.now()
       const result = await next(e)
-      await event($, 'tool_end', { ...fields, failed: result.isError === true || result.deny !== undefined })
+      const said = result.deny !== undefined ? result.deny : result.text
+      await event($, 'tool_end', {
+        ...fields,
+        output: typeof said === 'string' ? [{ type: 'text', text: said }] : [],
+        failed: result.isError === true,
+        declined: result.deny !== undefined,
+        ms: Date.now() - began,
+      })
       return result
     })
 

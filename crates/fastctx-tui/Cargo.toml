@@ -20,6 +20,7 @@ fastctx-client = { path = "../fastctx-client" }
 fastctx-install = { path = "../fastctx-install" }
 fastctx-types = { path = "../fastctx-types" }
 jiff.workspace = true
+serde_json.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 # Grammars for code in fenced blocks, without C dependencies; colours are
@@ -50,9 +51,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_SystemInformation",
     "Win32_UI_WindowsAndMessaging",
 ] }
-
-[dev-dependencies]
-serde_json.workspace = true
 
 [[example]]
 name = "scenes"

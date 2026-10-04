@@ -10,6 +10,7 @@
 //! it; [`Conversation`], talking to a resident and following its turns.
 
 pub mod conversation;
+pub mod shown;
 pub mod town;
 pub mod world;
 

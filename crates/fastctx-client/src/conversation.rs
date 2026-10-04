@@ -152,7 +152,9 @@ fn identity(event: &SessionEvent) -> Option<String> {
     match &event.happened {
         Happened::TurnEnded { turn, .. } => Some(format!("end:{turn}")),
         Happened::TurnStarted { turn } => Some(format!("start:{turn}")),
-        Happened::Writing { .. } => None,
+        Happened::Grew { .. } => None,
+        Happened::Began { turn, item } => Some(format!("began:{turn}:{}", item.id)),
+        Happened::Finished { turn, item } => Some(format!("finished:{turn}:{}", item.id)),
         Happened::DeliveryUncertain { delivery, .. } => Some(format!("uncertain:{delivery}")),
         _ => serde_json::to_string(event).ok(),
     }

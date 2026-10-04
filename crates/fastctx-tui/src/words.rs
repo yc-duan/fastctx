@@ -674,6 +674,42 @@ impl Words {
         }
     }
 
+    pub fn tool_declined(&self) -> &'static str {
+        self.pick("没让它用", "refused")
+    }
+
+    /// A command that exited with a code other than 0, and how long it took.
+    pub fn exited(&self, code: i64, took: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("退出码 {code} · {took}"),
+            Lang::En => format!("exit {code} · {took}"),
+        }
+    }
+
+    /// A command still running when its call returned, going on as `job`.
+    pub fn went_on_as(&self, job: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("转到后台 {job}"),
+            Lang::En => format!("in the background as {job}"),
+        }
+    }
+
+    pub fn thinking(&self) -> &'static str {
+        self.pick("思考", "Thinking")
+    }
+
+    pub fn plan(&self) -> &'static str {
+        self.pick("它提出的计划", "Its proposed plan")
+    }
+
+    pub fn steps(&self) -> &'static str {
+        self.pick("步骤", "Steps")
+    }
+
+    pub fn compacted(&self) -> &'static str {
+        self.pick("—— 上下文压缩过了 ——", "—— context compacted ——")
+    }
+
     pub fn tool_cut(&self) -> &'static str {
         self.pick("这一轮结束时还没跑完", "the turn ended before it did")
     }

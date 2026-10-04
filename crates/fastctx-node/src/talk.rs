@@ -153,42 +153,95 @@ pub async fn watch_here(
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
     let events = node.watchers.watch(resident);
-    let mut history = match &about.session {
-        Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
-            node.codex.history(thread).await.map_err(Failure::new)?
-        }
-        _ => Vec::new(),
-    };
     let directory = node.world.resident(town.as_ref(), resident);
     let recorded = crate::delivery::history(&directory).map_err(|error| Failure::new(error.to_string()))?;
-    for event in &recorded {
-        history.retain(|old| match (&old.happened, &event.happened) {
-            (
-                fastctx_types::session::Happened::TurnEnded { turn: a, .. },
-                fastctx_types::session::Happened::TurnEnded { turn: b, .. },
-            )
-            | (
-                fastctx_types::session::Happened::TurnStarted { turn: a },
-                fastctx_types::session::Happened::TurnStarted { turn: b },
-            ) => a != b,
-            _ => old != event,
-        });
+    let hosted = match &about.session {
+        Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
+            Some(node.codex.history(thread).await.map_err(Failure::new)?)
+        }
+        _ => None,
+    };
+    Ok((history(recorded, hosted), events))
+}
+
+/// A session's history: what the World kept of it, and what its host keeps
+/// that the World does not (`crate::turns::recorded`). Where both tell a
+/// turn's start or end, the World's account stands: it knows why a turn was
+/// cut short. Words the World sent are told by its own record, which knows
+/// who said them; the host's copy of them carries the World's head note.
+fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Vec<SessionEvent> {
+    use fastctx_types::session::{Happened, Item, What};
+    let mut history: Vec<SessionEvent> = Vec::new();
+    for event in hosted.into_iter().flatten() {
+        let told = match &event.happened {
+            Happened::Heard { text, .. } => fastctx_hands::told::is_told(text),
+            Happened::TurnStarted { turn } => recorded
+                .iter()
+                .any(|kept| matches!(&kept.happened, Happened::TurnStarted { turn: other } if other == turn)),
+            Happened::TurnEnded { turn, .. } => recorded
+                .iter()
+                .any(|kept| matches!(&kept.happened, Happened::TurnEnded { turn: other, .. } if other == turn)),
+            _ => false,
+        };
+        if !told {
+            history.push(event);
+        }
     }
     history.extend(recorded);
-    let finals: Vec<SessionEvent> = history.iter().filter_map(|event| {
-        if let fastctx_types::session::Happened::TurnEnded { turn, end } = &event.happened
-            && let Some(text) = &end.last_message
-            && !history.iter().any(|other| matches!(&other.happened, fastctx_types::session::Happened::Said { turn: said, text: words, .. } if said == turn && words == text))
-        {
-            Some(SessionEvent { at: event.at, happened: fastctx_types::session::Happened::Said {
-                turn: turn.clone(), item: format!("{turn}-final"), text: text.clone(),
-            } })
-        } else { None }
-    }).collect();
+    // A turn whose end is known while its last message is not, as when its
+    // end was recovered after a restart, shows that message as it ended.
+    let finals: Vec<SessionEvent> = history
+        .iter()
+        .filter_map(|event| {
+            let Happened::TurnEnded { turn, end } = &event.happened else { return None };
+            let text = end.last_message.as_ref()?;
+            let said = history.iter().any(|other| {
+                matches!(&other.happened, Happened::Finished { turn: t, item: Item { what: What::Message { text: words }, .. } } if t == turn && words == text)
+            });
+            let item = Item { id: format!("{turn}-final"), what: What::Message { text: text.clone() } };
+            (!said).then(|| SessionEvent { at: event.at, happened: Happened::Finished { turn: turn.clone(), item } })
+        })
+        .collect();
     history.extend(finals);
+    // The host's record keeps times in whole seconds, the World's to the
+    // microsecond, so time alone would put an answer before the words that
+    // asked for it. Each turn stands where it began, and within it come its
+    // start, the words it heard, what was done in the order the record holds
+    // it, and its end. What belongs to no turn stands at its own time.
+    let mut began: std::collections::HashMap<String, jiff::Timestamp> = std::collections::HashMap::new();
+    for event in &history {
+        if let Some(turn) = turn_of(&event.happened) {
+            began.entry(turn.to_string()).and_modify(|at| *at = (*at).min(event.at)).or_insert(event.at);
+        }
+    }
+    history.sort_by_key(|event| {
+        let phase = match &event.happened {
+            Happened::TurnStarted { .. } => 0,
+            Happened::Heard { .. } => 1,
+            Happened::TurnEnded { .. } => 3,
+            _ => 2,
+        };
+        match turn_of(&event.happened).and_then(|turn| began.get(turn)) {
+            Some(start) => (*start, phase, event.at),
+            None => (event.at, 2, event.at),
+        }
+    });
     history
-        .sort_by_key(|event| (event.at, matches!(event.happened, fastctx_types::session::Happened::TurnEnded { .. })));
-    Ok((history, events))
+}
+
+/// The turn an event belongs to, where it says.
+fn turn_of(happened: &fastctx_types::session::Happened) -> Option<&str> {
+    use fastctx_types::session::Happened;
+    match happened {
+        Happened::TurnStarted { turn }
+        | Happened::TurnEnded { turn, .. }
+        | Happened::Began { turn, .. }
+        | Happened::Grew { turn, .. }
+        | Happened::Finished { turn, .. }
+        | Happened::Steps { turn, .. } => Some(turn),
+        Happened::Heard { turn, .. } | Happened::Health { turn, .. } => turn.as_deref(),
+        Happened::Context { .. } | Happened::Titled { .. } | Happened::DeliveryUncertain { .. } => None,
+    }
 }
 
 /// Hands a watch of a resident of this machine to `from`, over `stream`,
