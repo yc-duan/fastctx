@@ -13,10 +13,11 @@
 //   events/<n>.done    written after it, once it is whole
 //   inbox/<id>.json    what the node has for the session; read, never changed
 //   receipts/<id>      written once something was handed to the model
+//   stop.json          the turn the node asks to be stopped; read, never changed
 // Which turn took what it handed over is an event of its own, before the
 // end of that turn: the node owes that turn's end to whoever it was from.
 // It uses only on(), $.session.*, $.env.get, $.fs.read/write/list,
-// $.clock.every and $.prompt.submit. Of the session's inbox address it
+// $.clock.every, $.prompt.submit and $.turn.abort. Of the session's inbox address it
 // reads the address alone, never the token beside it.
 
 const WORLD = __FASTCTX_WORLD__
@@ -40,6 +41,8 @@ const submitting = []
 const owed = []
 // One look at a time: a look waits on the session, and the clock does not.
 let looking = false
+// The last turn the node asked to stop, so it is asked of the session once.
+let stopped = null
 
 function stamp() {
   return new Date().toISOString()
@@ -147,8 +150,28 @@ async function look($) {
   }
 }
 
+// Stops the running turn when the node asks for it. Only the turn that is
+// running can be stopped, and only by its id; a request for a turn that has
+// ended is left as it is.
+async function stopping($) {
+  let asked = null
+  try {
+    asked = JSON.parse(await $.fs.read(dir + '/stop.json')).turn
+  } catch (error) {
+    return
+  }
+  if (!busy || asked !== turn || asked === stopped) return
+  stopped = asked
+  try {
+    await $.turn.abort({ turnId: asked })
+  } catch (error) {
+    await event($, 'stop_failed', { turn: asked, text: String(error) })
+  }
+}
+
 async function looked($) {
   await settle($)
+  await stopping($)
   // What has a receipt was handed over already, perhaps before this mod
   // loaded again. Without knowing which, anything handed over could repeat.
   const receipts = await listing($, 'receipts')

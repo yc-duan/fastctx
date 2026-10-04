@@ -6,12 +6,13 @@
 //! once it is whole, since `$.fs.write` promises nothing about being atomic.
 //! The node writes what it has for the session into `inbox/`, each file
 //! whole before it appears; the mod says in an event which turn took it,
-//! and writes a receipt so that it never hands it over again.
+//! and writes a receipt so that it never hands it over again. The node asks
+//! for a running turn to be stopped in `stop.json`.
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
+use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::session::{Happened, Health, HealthKind, SessionEvent, TurnEnd, TurnHow};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -91,6 +92,7 @@ enum ModEvent {
     ToolEnd { turn: Option<String>, at: Option<Timestamp>, tool: Option<String>, detail: Option<String>, failed: bool },
     Trouble { at: Option<Timestamp>, file: Option<String>, text: Option<String> },
     SessionEnd { reason: Option<String> },
+    StopFailed { at: Option<Timestamp>, turn: Option<String>, text: Option<String> },
     Handed { deliveries: Vec<String>, turn: Option<String> },
 }
 
@@ -185,6 +187,10 @@ fn translate(event: ModEvent) -> Vec<Reported> {
             vec![happened(at, Happened::Health { turn: None, health: Health { kind: HealthKind::Error, text } })]
         }
         ModEvent::SessionEnd { reason } => vec![Reported::Ended { reason }],
+        ModEvent::StopFailed { at, turn, text } => {
+            let text = format!("the World's plugin could not stop the turn: {}", text.unwrap_or_default());
+            vec![happened(at, Happened::Health { turn, health: Health { kind: HealthKind::Error, text } })]
+        }
         ModEvent::Handed { deliveries, turn } => vec![Reported::Handed { ids: deliveries, turn: turn_of(turn) }],
     }
 }
@@ -208,6 +214,13 @@ pub fn deliver(directory: &Path, id: &str, text: &str, as_user: bool) -> io::Res
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
         _ => Ok(()),
     }
+}
+
+/// Asks the mod to stop `turn`, if it is still the one running when the mod
+/// looks.
+pub fn stop(directory: &Path, turn: &str) -> io::Result<()> {
+    let bytes = serde_json::to_vec(&serde_json::json!({ "turn": turn })).expect("strings serialize");
+    publish(&directory.join("stop.json"), &bytes, Permissions::Private)
 }
 
 /// The ids the mod has handed over since the last call; their inbox files

@@ -242,6 +242,20 @@ async fn ended(node: &Arc<Node>, resident: &ResidentId, reason: Option<String>) 
     }
 }
 
+/// Asks a resident's Claude session to stop the turn it is running; its mod
+/// does at its next look. Returns whether a turn was running.
+pub fn stop(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
+    let session = node.claude.state.lock().expect("never poisoned").paired.get(resident).cloned().ok_or_else(|| {
+        Failure::new(format!("{resident}'s session has not been heard from the World's plugin, which is what stops it"))
+    })?;
+    let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else {
+        return Ok(false);
+    };
+    let directory = exchange::sessions(node.world.path()).join(&session);
+    exchange::stop(&directory, &turn).map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
+    Ok(true)
+}
+
 /// Whether the resident's Claude session is paired with its plugin now.
 pub fn paired(node: &Node, resident: &ResidentId) -> bool {
     node.claude.state.lock().expect("never poisoned").paired.contains_key(resident)

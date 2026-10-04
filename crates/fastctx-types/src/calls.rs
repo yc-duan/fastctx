@@ -54,6 +54,8 @@ pub enum Call {
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.
     Open { agent: AgentName, town: Option<TownName>, node: Option<MachineName>, text: String },
+    /// Stops the turn a resident on any machine is running, for the user.
+    Stop { resident: ResidentId, machine: Option<MachineName> },
     /// What waits to be handed to a resident with the answer of a World
     /// tool, oldest first, with what it is to be told of where it is. It is
     /// handed to no other answer meanwhile.
@@ -99,6 +101,12 @@ pub enum Reply {
     Opened {
         resident: Address,
         landed: Landed,
+    },
+    /// The resident was told to stop its turn, or `stopped` is false: it
+    /// was running none. Its turn ends as turns do, from its host.
+    Stopped {
+        resident: Address,
+        stopped: bool,
     },
     /// What waits for a resident, and lines for the head of its answer.
     Notices {

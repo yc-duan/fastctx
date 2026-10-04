@@ -272,6 +272,47 @@ pub async fn open_here(
     Ok((id, landed))
 }
 
+/// Stops the turn a resident on any machine is running; returns where it
+/// lives and whether a turn was running.
+pub async fn stop(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    machine: Option<MachineName>,
+) -> Result<(Address, bool), Failure> {
+    let here = node.machine();
+    let machine = match machine {
+        Some(machine) => machine,
+        None => locate(node, &resident).await?,
+    };
+    if machine == here {
+        let stopped = stop_here(node, &resident).await?;
+        return Ok((Address { machine: here, resident }, stopped));
+    }
+    let link = link(node)?;
+    let call = RemoteCall::Stop { resident: resident.clone() };
+    match link.call(&machine, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+        Ok(RemoteReply::Stopped { stopped }) => Ok((Address { machine, resident }, stopped)),
+        Ok(_) => Err(Failure::new(format!("{machine} answered something other than a stop"))),
+        Err(failure) => Err(failure),
+    }
+}
+
+/// Stops the turn a resident of this machine is running: a Codex thread of
+/// this node's app-server, through the app-server; a Claude session, any
+/// whose plugin is paired with the World, through its mod. A Codex session
+/// of the user's own belongs to the program it is open in.
+pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, Failure> {
+    let (about, _) = node
+        .residents
+        .about(resident)
+        .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
+    match (about.host.agent.as_str(), about.world_started, &about.session) {
+        ("codex", true, Some(thread)) => node.codex.interrupt(thread).await.map_err(Failure::new),
+        ("claude", _, _) => crate::claude::stop(node, resident),
+        _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),
+    }
+}
+
 /// Which machine the resident `id` lives on: this one when it lives here,
 /// otherwise whichever says it does.
 async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<MachineName, Failure> {

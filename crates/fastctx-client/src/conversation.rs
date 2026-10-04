@@ -8,13 +8,18 @@ use std::collections::VecDeque;
 use fastctx_types::residents::Landed;
 use fastctx_types::session::{Happened, SessionEvent, Speaker, Watched};
 use fastctx_types::{MachineName, ResidentId};
+use tokio::sync::mpsc;
 
-use crate::Watching;
+use crate::CallError;
 use crate::world::{Error, Said, World};
 
 /// A watched session, and the turn the latest words went into.
+///
+/// The watch is read in a task of its own, so [`Conversation::next`] can be
+/// raced against typing or a timer: a frame half read from the node is never
+/// dropped by a `select!`. Dropping the conversation ends the watch.
 pub struct Conversation {
-    watching: Watching,
+    pieces: mpsc::UnboundedReceiver<Result<Option<Watched>, CallError>>,
     following: Option<Following>,
     queued: VecDeque<SessionEvent>,
 }
@@ -50,7 +55,23 @@ impl Conversation {
             Some(Watched::Live { event }) => vec![event],
             None => Vec::new(),
         };
-        Ok((Self { watching, following: None, queued: VecDeque::new() }, history))
+        let (sender, pieces) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    // Nobody reads on: the watch ends with this task, and a
+                    // frame half read goes with it.
+                    () = sender.closed() => return,
+                    piece = watching.next() => {
+                        let ended = !matches!(piece, Ok(Some(_)));
+                        if sender.send(piece).is_err() || ended {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Ok((Self { pieces, following: None, queued: VecDeque::new() }, history))
     }
 
     /// Words were said with `text` and landed as `said` says: what they go
@@ -77,17 +98,19 @@ impl Conversation {
         events.iter().any(|event| self.take(event))
     }
 
-    /// The next thing that happens; `None` once the watch ended.
+    /// The next thing that happens; `None` once the watch ended. Safe to
+    /// cancel: nothing is lost when another branch of a `select!` wins.
     pub async fn next(&mut self) -> Result<Option<Moment>, Error> {
         loop {
             if let Some(event) = self.queued.pop_front() {
                 let answered = self.take(&event);
                 return Ok(Some(Moment { event, answered }));
             }
-            match self.watching.next().await? {
-                Some(Watched::Live { event }) => self.queued.push_back(event),
-                Some(Watched::History { events }) => self.queued.extend(events),
-                None => return Ok(None),
+            match self.pieces.recv().await {
+                Some(Ok(Some(Watched::Live { event }))) => self.queued.push_back(event),
+                Some(Ok(Some(Watched::History { events }))) => self.queued.extend(events),
+                Some(Ok(None)) | None => return Ok(None),
+                Some(Err(error)) => return Err(error.into()),
             }
         }
     }

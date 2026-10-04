@@ -40,6 +40,8 @@ pub enum RemoteCall {
     Watch { resident: ResidentId, watch: u64 },
     /// Open a session there for the user, as `Call::Open`.
     Open { agent: AgentName, town: Option<TownName>, text: String },
+    /// Stop the turn a resident there is running, for the user.
+    Stop { resident: ResidentId },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
     /// Copy `from`, a path there, to another machine.
@@ -74,6 +76,9 @@ pub enum RemoteReply {
     Opened {
         resident: ResidentId,
         landed: Landed,
+    },
+    Stopped {
+        stopped: bool,
     },
     /// A watch ended: the caller left, or the session's machine stopped it.
     Watched,

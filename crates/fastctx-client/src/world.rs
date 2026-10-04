@@ -186,6 +186,15 @@ impl World {
         }
     }
 
+    /// Stops the turn a resident on any machine is running; returns where it
+    /// lives and whether a turn was running.
+    pub async fn stop(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<(Address, bool), Error> {
+        match self.ask(Call::Stop { resident, machine }).await? {
+            Reply::Stopped { resident, stopped } => Ok((resident, stopped)),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Watches a resident on any machine: its history, then each event as
     /// it happens.
     pub async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {

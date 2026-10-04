@@ -180,6 +180,9 @@ impl fastctx_net::link::Node for Handler {
                     let (resident, landed) = crate::talk::open_here(&node, &from, agent, town, text).await?;
                     Ok(RemoteReply::Opened { resident, landed })
                 }
+                RemoteCall::Stop { resident } => {
+                    crate::talk::stop_here(&node, &resident).await.map(|stopped| RemoteReply::Stopped { stopped })
+                }
                 RemoteCall::Look { id } => Ok(RemoteReply::Looked { looked: crate::look::look_here(&node, &id).await }),
                 RemoteCall::Find { resident } => {
                     Ok(RemoteReply::Found { lives_here: node.residents.town_of(&resident).is_some() })
