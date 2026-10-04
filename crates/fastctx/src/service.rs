@@ -41,6 +41,23 @@ pub struct ServiceArgs {
     user_sid: Option<String>,
 }
 
+/// Installs the node's service for the World under `root`, run from
+/// `executable`, for this process's user.
+pub fn install_node(root: &std::path::Path, executable: &std::path::Path) -> anyhow::Result<()> {
+    installed(&Service::new(Kind::Node, executable, root))?;
+    Ok(())
+}
+
+/// Installs `service`. A node a service keeps is started by nobody else;
+/// the World says so to its clients while the service is in place.
+fn installed(service: &Service) -> anyhow::Result<fastctx_install::service::Status> {
+    let status = service.install()?;
+    if service.kind == Kind::Node {
+        std::fs::write(fastctx_types::layout::WorldDir::under(&service.directory).node_service(), b"")?;
+    }
+    Ok(status)
+}
+
 pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
     let kind = match args.role {
         Role::Node => Kind::Node,
@@ -62,17 +79,9 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
     let service = Service { user_sid: args.user_sid, ..service };
     #[cfg(target_os = "linux")]
     let service = Service { uid: args.uid.unwrap_or(service.uid), ..service };
-    // A node a service keeps is started by nobody else; the World says so
-    // to its clients while the service is in place.
     let marker = (kind == Kind::Node).then(|| fastctx_types::layout::WorldDir::under(&directory).node_service());
     let status = match args.action {
-        Action::Install => {
-            let status = service.install()?;
-            if let Some(marker) = &marker {
-                std::fs::write(marker, b"")?;
-            }
-            status
-        }
+        Action::Install => installed(&service)?,
         Action::Uninstall => {
             let status = service.uninstall()?;
             if let Some(marker) = &marker {

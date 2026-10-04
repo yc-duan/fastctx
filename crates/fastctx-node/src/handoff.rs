@@ -195,6 +195,16 @@ pub(crate) fn follow(node: Arc<Node>, supervision: Supervision) {
     });
 }
 
+/// A node no guardian keeps hands the World over: a service now keeps
+/// this World's node, and the service's node waits for the World. It goes
+/// as a kept one does, once idle, with nobody to tell.
+pub(crate) fn hand_over(node: Arc<Node>) {
+    node.log.line("a service keeps this World's node now: handing the World over once idle");
+    node.handoff.state.lock().expect("never poisoned").yielding = true;
+    node.handoff.changed();
+    tokio::spawn(async move { yield_when_idle(node, |_| {}).await });
+}
+
 /// Waits until the node yields: asked to, with no Codex turn running or
 /// starting and no call being answered. Then nothing more is taken on, the
 /// guardian is told, and the node exits; its successor takes the World.

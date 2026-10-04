@@ -240,6 +240,25 @@ impl Record {
     }
 }
 
+/// Places this fastctx where the hosts and the node's service start it
+/// from, as an apply does; returns that path, and what was changed or left.
+pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
+    crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
+    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let mut report = recovery::before(places)?;
+    let installed = places.installed();
+    let copy = Snapshot::read(&installed)?;
+    if !same_executable(&places.fastctx, &copy)? {
+        let receipt = Transaction::new([FileChange::copy_executable(copy, &places.fastctx)?])
+            .commit()
+            .map_err(|error| Error::Files(error.to_string()))?;
+        report.changed.extend(receipt.changed);
+        report.preserved.extend(receipt.preserved);
+        report.leftovers.extend(receipt.cleanup.iter().map(ToString::to_string));
+    }
+    Ok((installed, report))
+}
+
 /// Puts the World's tools into the sessions `hosts` open from now on.
 /// `approval` says whether Codex's shared output limit may be raised when
 /// the user set it lower than the World needs.

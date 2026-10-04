@@ -316,6 +316,10 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             link.revoke(&name, &reason).await.map(|()| Reply::Done).map_err(Failure::new)
         }
         Call::Leave => crate::world::leave(node).await.map(|()| Reply::Done),
+        Call::HandOver => {
+            crate::handoff::hand_over(node.clone());
+            Ok(Reply::Done)
+        }
         Call::Copy { from, to } => crate::copy::copy(node, from, to).await.map(Reply::Copied),
         Call::Nodes => nodes(node).await.map(Reply::Nodes),
     }

@@ -10,6 +10,7 @@ mod apply;
 mod ask;
 mod copy;
 mod journal;
+mod keep;
 mod project;
 mod service;
 mod talk;
