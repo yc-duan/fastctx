@@ -78,6 +78,27 @@ impl Screen {
     }
 }
 
+impl Screen {
+    /// Hands the terminal to another program for as long as `run` takes,
+    /// and takes it back: meanwhile the screen the user had shows and every
+    /// key goes to that program alone, as the input reader is stopped; it
+    /// starts again, sending to `input`, and the whole screen is drawn anew.
+    pub fn lend<T>(
+        &mut self,
+        input: &tokio::sync::mpsc::UnboundedSender<crate::input::Input>,
+        run: impl FnOnce() -> T,
+    ) -> io::Result<T> {
+        let _ = self.terminal.show_cursor();
+        restore();
+        let lent = run();
+        enable_raw_mode()?;
+        execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
+        crate::input::start(input.clone())?;
+        self.terminal.clear()?;
+        Ok(lent)
+    }
+}
+
 impl Drop for Screen {
     fn drop(&mut self) {
         let _ = self.terminal.show_cursor();

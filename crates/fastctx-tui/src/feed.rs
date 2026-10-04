@@ -178,6 +178,7 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
     Ok(match job {
         Job::Talk { to, machine, text } => Done::Said(world.talk(to, Some(machine), text).await?),
         Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine)).await?.1),
+        Job::Attach { resident } => Done::Attachable(world.attach(resident).await?),
         Job::Open { agent, town, node, text } => Done::Opened(world.open(agent, town, node, text).await?),
         Job::OpenTown { town, fields } => Done::Record(Box::new(world.open_town(town, fields).await?)),
         Job::EditTown { town, fields } => Done::Record(Box::new(world.edit_town(Some(town), fields).await?)),

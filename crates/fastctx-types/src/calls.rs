@@ -56,6 +56,9 @@ pub enum Call {
     Open { agent: AgentName, town: Option<TownName>, node: Option<MachineName>, text: String },
     /// Stops the turn a resident on any machine is running, for the user.
     Stop { resident: ResidentId, machine: Option<MachineName> },
+    /// How to open a resident of this machine in its host's own interface,
+    /// for the user (`fastctx attach`).
+    Attach { resident: ResidentId },
     /// What waits to be handed to a resident with the answer of a World
     /// tool, oldest first, with what it is to be told of where it is. It is
     /// handed to no other answer meanwhile.
@@ -113,6 +116,9 @@ pub enum Reply {
         resident: Address,
         stopped: bool,
     },
+    /// The command that opens the resident in its host's own interface,
+    /// run in the user's terminal.
+    Attachable(HostCommand),
     /// What waits for a resident, and lines for the head of its answer.
     Notices {
         notices: Vec<Delivery>,
@@ -231,4 +237,13 @@ pub enum JournalCall {
 pub struct Attach {
     pub machine: Option<MachineName>,
     pub path: String,
+}
+
+/// A command of an agent's own host, as the user runs it in a terminal:
+/// what to start, with which arguments and which variables set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostCommand {
+    pub program: std::path::PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }

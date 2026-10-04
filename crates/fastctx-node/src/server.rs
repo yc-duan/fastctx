@@ -308,6 +308,10 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
                 .await
                 .map(|(resident, stopped)| Reply::Stopped { resident, stopped })
         }
+        Call::Attach { resident } => {
+            users_voice(node, peer)?;
+            crate::attach::command(node, &resident).await.map(Reply::Attachable)
+        }
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
         Call::Ask { resident, label, prompt, node: target } => {

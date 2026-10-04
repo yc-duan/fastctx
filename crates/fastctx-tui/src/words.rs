@@ -1201,6 +1201,33 @@ impl Words {
         self.pick("重新接上", "watch again")
     }
 
+    pub fn key_attach(&self) -> &'static str {
+        self.pick("在它自己的界面里打开", "open in its own interface")
+    }
+
+    pub fn attach_elsewhere(&self, machine: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("它住在 {machine}，要在那台机器上打开"),
+            Lang::En => format!("it lives on {machine}; open it there"),
+        }
+    }
+
+    pub fn attach_failed(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("没能打开：{why}"),
+            Lang::En => format!("could not open it: {why}"),
+        }
+    }
+
+    pub fn attach_exited(&self, code: Option<i32>) -> String {
+        match (self.lang, code) {
+            (Lang::Zh, Some(code)) => format!("它自己的界面以 {code} 退出"),
+            (Lang::Zh, None) => "它自己的界面被中止了".to_string(),
+            (Lang::En, Some(code)) => format!("its own interface exited with {code}"),
+            (Lang::En, None) => "its own interface was ended".to_string(),
+        }
+    }
+
     pub fn key_colleagues(&self) -> &'static str {
         self.pick("它请的同事", "its colleagues")
     }

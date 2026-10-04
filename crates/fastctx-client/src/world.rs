@@ -195,6 +195,15 @@ impl World {
         }
     }
 
+    /// The command that opens a resident of this machine in its host's own
+    /// interface, for the user to run in a terminal.
+    pub async fn attach(&self, resident: ResidentId) -> Result<fastctx_types::calls::HostCommand, Error> {
+        match self.ask(Call::Attach { resident }).await? {
+            Reply::Attachable(command) => Ok(command),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Watches a resident on any machine: its history, then each event as
     /// it happens.
     pub async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {

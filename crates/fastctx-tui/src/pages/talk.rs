@@ -182,6 +182,11 @@ impl TalkPage {
                 self.transcript.event(event);
             }
             Data::Unwatched(why) => self.watching = Watching::Ended(why),
+            Data::Returned(Ok(Some(0))) => {}
+            Data::Returned(Ok(code)) => self.note = Some(quiet(ctx, ctx.words.attach_exited(code))),
+            Data::Returned(Err(why)) => {
+                self.note = Some(wrong(ctx, ctx.words.attach_failed(&text::first_line(&why))));
+            }
             Data::Around(around) => {
                 self.around = around;
                 // One who is gone from the list leaves the pick at the first.
@@ -208,6 +213,10 @@ impl TalkPage {
                 (Job::Stop { .. }, Err(why)) => {
                     self.stopping = false;
                     self.note = Some(wrong(ctx, ctx.words.not_stopped(&text::first_line(&why))));
+                }
+                (Job::Attach { .. }, Ok(Done::Attachable(command))) => return Act::Lend(command),
+                (Job::Attach { .. }, Err(why)) => {
+                    self.note = Some(wrong(ctx, ctx.words.attach_failed(&text::first_line(&why))));
                 }
                 _ => {}
             },
@@ -293,6 +302,14 @@ impl TalkPage {
             KeyCode::Char('o') if control => {
                 self.transcript.toggle_details();
                 return Act::Stay;
+            }
+            KeyCode::Char('t') if control => {
+                // Its host's own interface is reached on the machine it lives on.
+                if self.here.as_ref() != Some(&self.address.machine) {
+                    self.note = Some(quiet(ctx, ctx.words.attach_elsewhere(self.address.machine.as_str())));
+                    return Act::Stay;
+                }
+                return Act::Do(Job::Attach { resident: self.address.resident.clone() });
             }
             KeyCode::Char('r') if control => {
                 if matches!(self.watching, Watching::Ended(_)) {
@@ -589,6 +606,9 @@ impl TalkPage {
             }
             if matches!(self.watching, Watching::Ended(_)) {
                 keys.push(("Ctrl+R", words.key_watch_again()));
+            }
+            if self.here.as_ref() == Some(&self.address.machine) {
+                keys.push(("Ctrl+T", words.key_attach()));
             }
             keys.push(("Esc", words.key_back()));
             keys

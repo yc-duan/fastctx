@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fastctx_client::{Said, TownRecord, TownView};
+use fastctx_types::calls::HostCommand;
 use fastctx_types::project::{JournalView, MapView, RecordFields, TownSummary};
 use fastctx_types::session::SessionEvent;
 use fastctx_types::town::{ResidentNow, RunningJob};
@@ -43,6 +44,9 @@ pub enum Act {
     Back,
     Quit,
     Do(Job),
+    /// This terminal goes to an agent's own program until it exits; the
+    /// page hears how it went (`Data::Returned`).
+    Lend(HostCommand),
 }
 
 /// Something to ask of the World for a page.
@@ -56,6 +60,10 @@ pub enum Job {
     Stop {
         resident: ResidentId,
         machine: MachineName,
+    },
+    /// How to open a resident of this machine in its agent's own interface.
+    Attach {
+        resident: ResidentId,
     },
     Open {
         agent: AgentName,
@@ -103,6 +111,7 @@ pub enum Job {
 pub enum Done {
     Said(Said),
     Stopped(bool),
+    Attachable(HostCommand),
     Opened(Said),
     Record(Box<TownRecord>),
     Journal(Box<JournalView>),
@@ -182,6 +191,9 @@ pub enum Data {
         job: Job,
         result: Result<Done, String>,
     },
+    /// An agent's own program had the terminal and exited, with its exit
+    /// code when it had one, or could not be started.
+    Returned(Result<Option<i32>, String>),
 }
 
 /// What an agent has going on besides its turns, wherever it is.
@@ -198,6 +210,8 @@ pub struct App {
     pages: Vec<(u64, Page)>,
     next_id: u64,
     pub quit: bool,
+    /// A program a page asked to lend the terminal to, and that page.
+    lent: Option<(u64, HostCommand)>,
     started: Instant,
     /// A paste is arriving: this many characters so far.
     pasting: Option<usize>,
@@ -206,7 +220,15 @@ pub struct App {
 impl App {
     pub fn new(look: Look, words: Words, root: Page) -> Self {
         let ctx = Ctx { look, words, now: Timestamp::now(), breath: 0.0, frame: 0 };
-        Self { ctx, pages: vec![(0, root)], next_id: 1, quit: false, started: Instant::now(), pasting: None }
+        Self {
+            ctx,
+            pages: vec![(0, root)],
+            next_id: 1,
+            quit: false,
+            lent: None,
+            started: Instant::now(),
+            pasting: None,
+        }
     }
 
     /// Advances the clock and the breathing of busy marks.
@@ -311,7 +333,16 @@ impl App {
                 Vec::new()
             }
             Act::Do(job) => vec![(id, job)],
+            Act::Lend(command) => {
+                self.lent = Some((id, command));
+                Vec::new()
+            }
         }
+    }
+
+    /// The program to lend the terminal to, and the page that asked.
+    pub fn take_lent(&mut self) -> Option<(u64, HostCommand)> {
+        self.lent.take()
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {

@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 
 mod apply;
 mod ask;
+mod attach;
 mod copy;
 mod journal;
 mod keep;
@@ -78,6 +79,9 @@ enum Command {
     Copy(copy::CopyArgs),
     /// Talk to a resident on any machine, or open a session to talk to.
     Talk(talk::TalkArgs),
+    /// Open a resident of this machine in its agent's own interface, in
+    /// this terminal.
+    Attach(attach::AttachArgs),
     /// The towns: list, show, map and enter them; open one or write the
     /// next version of its record.
     #[command(subcommand)]
@@ -147,6 +151,7 @@ fn main() -> ExitCode {
         Command::Nodes => world::nodes(),
         Command::Copy(args) => return finish(copy::run(args)),
         Command::Talk(args) => talk::run(args),
+        Command::Attach(args) => attach::run(args),
         Command::Project(command) => project::run(command),
         Command::Journal(command) => journal::run(command),
         Command::Join(args) => world::join(args),
