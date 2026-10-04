@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use fastctx_client::{Conversation, World};
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::project::{JournalView, MapView, TownSummary};
+use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use fastctx_types::residents::Landed;
 use fastctx_types::session::SessionEvent;
-use fastctx_types::town::WorldWho;
+use fastctx_types::town::{LookedUp, WorldWho};
 use fastctx_types::world::NodesReply;
 use fastctx_types::{Address, AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
 use serde::Serialize;
@@ -197,6 +197,87 @@ async fn stop(
     Ok(stopped)
 }
 
+/// Residents or jobs in detail, by id, from every machine that has them.
+#[tauri::command]
+async fn look(shell: tauri::State<'_, Shell>, ids: Vec<String>) -> Result<Vec<LookedUp>, String> {
+    shell.world.look(ids).await.map_err(|error| error.to_string())
+}
+
+/// A version of a town's record, as the World stamped it.
+#[derive(Serialize)]
+struct TownRecord {
+    town: TownName,
+    record: Record,
+    opened: Stamp,
+}
+
+fn town(name: String) -> Result<TownName, String> {
+    TownName::try_from(name).map_err(|error| error.to_string())
+}
+
+/// Opens a project with the first version of its record.
+#[tauri::command]
+async fn project_new(shell: tauri::State<'_, Shell>, name: String, fields: RecordFields) -> Result<TownRecord, String> {
+    let made = shell.world.open_town(town(name)?, fields).await.map_err(|error| error.to_string())?;
+    Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })
+}
+
+/// Writes the next version of a project's record; what is not given stays.
+#[tauri::command]
+async fn project_edit(shell: tauri::State<'_, Shell>, name: String, fields: RecordFields) -> Result<TownRecord, String> {
+    let made = shell.world.edit_town(Some(town(name)?), fields).await.map_err(|error| error.to_string())?;
+    Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })
+}
+
+#[tauri::command]
+async fn journals(shell: tauri::State<'_, Shell>, name: String) -> Result<Vec<JournalSummary>, String> {
+    Ok(shell.world.journals(Some(town(name)?)).await.map_err(|error| error.to_string())?.1)
+}
+
+/// An entry the user writes in a journal, starting the journal when it has
+/// no description yet and one is given.
+#[tauri::command]
+async fn journal_add(
+    shell: tauri::State<'_, Shell>,
+    name: String,
+    journal: String,
+    text: String,
+    description: Option<String>,
+) -> Result<String, String> {
+    let journal = JournalName::try_from(journal).map_err(|error| error.to_string())?;
+    let reply = shell
+        .world
+        .add_entry(Some(town(name)?), journal, text, description, Vec::new(), Vec::new(), None)
+        .await
+        .map_err(|error| error.to_string())?;
+    match reply {
+        fastctx_types::Reply::EntryAdded { id, .. } => Ok(id.to_string()),
+        other => Err(format!("the node answered {other:?}")),
+    }
+}
+
+/// A one-use code that lets one more machine join, valid for `hours`.
+#[tauri::command]
+async fn invite(shell: tauri::State<'_, Shell>, name: Option<String>, hours: u32) -> Result<String, String> {
+    let expires = jiff::Timestamp::now()
+        .checked_add(jiff::SignedDuration::from_hours(i64::from(hours)))
+        .map_err(|error| error.to_string())?;
+    shell.world.invite(machine(name)?, expires).await.map_err(|error| error.to_string())
+}
+
+/// No machine trusts `name`'s key any more.
+#[tauri::command]
+async fn revoke(shell: tauri::State<'_, Shell>, name: String, reason: String) -> Result<(), String> {
+    let name = name.parse::<MachineName>().map_err(|error| error.to_string())?;
+    shell.world.revoke(name, reason).await.map_err(|error| error.to_string())
+}
+
+/// This machine leaves its World and becomes a World of one again.
+#[tauri::command]
+async fn leave(shell: tauri::State<'_, Shell>) -> Result<(), String> {
+    shell.world.leave().await.map_err(|error| error.to_string())
+}
+
 pub fn run() {
     let root = fastctx_platform::fastctx_root().expect("finding this user's fastctx directory");
     // When no node runs, it is started from the stable copy fastctx keeps
@@ -206,7 +287,24 @@ pub fn run() {
         World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None }).starting_node_from(program);
     tauri::Builder::default()
         .manage(Shell { world, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
-        .invoke_handler(tauri::generate_handler![world_now, project, journal, watch, unwatch, talk, open, stop])
+        .invoke_handler(tauri::generate_handler![
+            world_now,
+            project,
+            journal,
+            journals,
+            journal_add,
+            project_new,
+            project_edit,
+            watch,
+            unwatch,
+            talk,
+            open,
+            stop,
+            look,
+            invite,
+            revoke,
+            leave
+        ])
         .run(tauri::generate_context!())
         .expect("running the World's window");
 }

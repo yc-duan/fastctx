@@ -22,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 fastctx-client = { path = "../../crates/fastctx-client" }
 fastctx-platform = { path = "../../crates/fastctx-platform" }
 fastctx-types = { path = "../../crates/fastctx-types" }
+jiff = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }

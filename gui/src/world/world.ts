@@ -2,6 +2,7 @@
 // and `nodes` answer (`fastctx_types::town`, `::residents`, `::project`,
 // `::world`). These are serialized replies, before any presentation model.
 
+import type { Speaker, TurnEnd } from "./events";
 import type { Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, Result, Timestamp, TownName } from "./wire";
 
 export interface Host {
@@ -263,4 +264,50 @@ export interface JournalView {
   entries: EntryView[];
   total: number;
   writers: number;
+}
+
+/** A line of a colleague's messages (`fastctx_types::residents::MessageLine`). */
+export type MessageLine = { at: Timestamp } & (
+  | { kind: "asked"; from: Address; text: string }
+  | { kind: "heard"; from: Speaker; turn: string | null; text: string }
+  | { kind: "ended"; turn: string; end: TurnEnd; owed: Address[] }
+  | { kind: "told"; to: Address; turn: string | null; outcome: { kind: string; why?: string | null } }
+);
+
+/** A job's record on the machine it runs on (`fastctx_types::run::JobRecord`),
+ *  in the parts the interface shows. */
+export interface JobRecord {
+  id: JobId;
+  machine: MachineName;
+  owner: Address;
+  town: TownName | null;
+  script: string;
+  cwd: string;
+  output: string;
+  started_at: Timestamp;
+  pid: number | null;
+  exit: { status: unknown; at: Timestamp } | null;
+  output_ended_at: Timestamp | null;
+  remaining: number | null;
+  end: { at: Timestamp; how: unknown } | null;
+}
+
+/** One resident in detail, for `fastctx w <id>`. */
+export interface ResidentDetail {
+  resident: ResidentNow;
+  records: string;
+  actions: Action[];
+  actions_total: number;
+  asked: string | null;
+  answers: MessageLine[];
+  jobs: RunningJob[];
+}
+
+export type Looked = { kind: "resident" } & ResidentDetail | { kind: "job"; record: JobRecord };
+
+/** One id looked up across the World. */
+export interface LookedUp {
+  id: string;
+  found: Looked[];
+  unasked: string[];
 }
