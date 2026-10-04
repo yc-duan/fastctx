@@ -169,8 +169,8 @@ const notLive = () => Promise.reject(new Error(deviceWords.specimen));
 const devices = new Devices({
   words: deviceWords,
   // A specimen shows what a code looks like; it admits nobody.
-  invite: (name, hours) =>
-    live ? invite(name, hours) : Promise.resolve(`fxw3.${"specimen-not-a-real-invitation-".repeat(20)}${name ?? ""}${hours}`),
+  invite: (name, hours, device) =>
+    live ? invite(name, hours, device) : Promise.resolve(`fxw3.${"specimen-not-a-real-invitation-".repeat(20)}${name ?? ""}${hours}`),
   revoke: (name, reason) => (live ? revoke(name, reason) : notLive()),
   leave: () => (live ? leaveWorld() : notLive()),
   when: (at) => when(at, new Date()),

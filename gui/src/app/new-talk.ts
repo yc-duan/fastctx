@@ -204,8 +204,9 @@ export class NewTalk {
 
   private machines(world: WorldNow | null): Choice[] {
     const { words } = this.options;
+    // A phone is never where an agent lives.
     return (world?.nodes.machines ?? [])
-      .filter((node) => !node.revoked)
+      .filter((node) => !node.revoked && !node.device)
       .map((node) => ({
         value: node.name,
         label: node.name,

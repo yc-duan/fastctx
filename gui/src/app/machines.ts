@@ -153,19 +153,24 @@ export class MachinesPage implements Page {
       node.name === world.here && link.kind === "online"
         ? words.via(link.route.kind === "card" ? link.route.name : link.route.kind === "proxy" ? link.route.proxy : link.route.kind)
         : "";
-    const describe = facts
-      ? [osName(facts.os), facts.arch, `fastctx ${facts.version}`, route].filter(Boolean).map(escape).join(`<span class="sep">·</span>`)
-      : "Err" in node.facts && node.facts.Err
-        ? escape(words.factsUnknown(node.facts.Err))
-        : "";
+    // A phone is a member nothing runs on: it is named as one, not asked.
+    const describe = node.device
+      ? escape(words.device)
+      : facts
+        ? [osName(facts.os), facts.arch, `fastctx ${facts.version}`, route].filter(Boolean).map(escape).join(`<span class="sep">·</span>`)
+        : "Err" in node.facts && node.facts.Err
+          ? escape(words.factsUnknown(node.facts.Err))
+          : "";
     const kind = node.revoked ? "revoked" : node.online === true ? "online" : node.online === false ? "offline" : "unknown";
     const focus = this.options.focus === node.name ? " focused" : "";
     return `<li class="machine-entry ${kind}${focus}" data-machine="${escape(node.name)}">
-      <div class="machine-line"><span class="dot" aria-hidden="true"></span><h2 class="machine-title">${escape(node.name)}</h2>${node.name === world.here ? `<span class="tag">${escape(words.here)}</span>` : ""}<span class="machine-state">${escape(state)}</span></div>
+      <div class="machine-line"><span class="dot" aria-hidden="true"></span><h2 class="machine-title">${escape(node.name)}</h2>${node.name === world.here ? `<span class="tag">${escape(words.here)}</span>` : ""}${node.device ? `<span class="tag">${escape(words.phone)}</span>` : ""}<span class="machine-state">${escape(state)}</span></div>
       ${describe ? `<p class="machine-facts">${describe}</p>` : ""}
       ${facts ? `<p class="machine-home"><span>${escape(words.home)}</span><code>${escape(facts.home)}</code></p>` : ""}
       ${
-        residents.length
+        node.device
+          ? ""
+          : residents.length
           ? `<ul class="machine-agents">${residents
               .map(
                 (r) =>
@@ -177,7 +182,7 @@ export class MachinesPage implements Page {
             : ""
       }
       ${jobs.length ? `<p class="machine-jobs">${escape(words.jobs(jobs.length))}</p>` : ""}
-      ${node.online === true && !node.revoked ? this.hosts(node.name, node.name === world.here) : ""}
+      ${node.online === true && !node.revoked && !node.device ? this.hosts(node.name, node.name === world.here) : ""}
       ${
         node.revoked || !world.nodes.world
           ? ""

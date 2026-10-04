@@ -3964,7 +3964,8 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "device": true
           },
           {
             "name": "laptop",
@@ -4024,7 +4025,8 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "device": true
           },
           {
             "name": "laptop",
@@ -4084,7 +4086,8 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "device": true
           },
           {
             "name": "laptop",
@@ -4143,7 +4146,8 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "device": true
           },
           {
             "name": "laptop",
@@ -4206,7 +4210,8 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "device": true
           },
           {
             "name": "laptop",
@@ -4270,7 +4275,8 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "device": true
           },
           {
             "name": "laptop",
@@ -4334,7 +4340,8 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "device": true
           },
           {
             "name": "laptop",
@@ -4397,7 +4404,8 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "device": true
           },
           {
             "name": "laptop",

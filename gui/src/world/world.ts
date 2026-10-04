@@ -131,6 +131,8 @@ export interface Node {
   since: Timestamp | null;
   facts: Result<MachineFacts, string>;
   revoked: Revoked | null;
+  /** A phone or another device: nothing runs on it, and it is not asked. */
+  device?: boolean;
 }
 
 export interface Revoked {

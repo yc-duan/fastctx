@@ -80,14 +80,16 @@ export class HomePage {
     const idle = residents.filter((r) => r.here && r.now?.activity !== "busy");
     const present = new Set(residents.filter((r) => r.here).map((r) => `${r.about.id}@${r.about.machine}`));
     const unattended = jobs.filter((job) => !present.has(`${job.owner.resident}@${job.owner.machine}`));
-    const online = world.nodes.filter((node) => node.online).length;
+    // Machines are what the World works on; a phone is not counted among them.
+    const machines = world.nodes.filter((node) => !node.device);
+    const online = machines.filter((node) => node.online).length;
     const idleLine = idle.length
       ? `<p class="idle">${escape(words.idle(idle.map((r) => this.name(r)).join(words.listSeparator)))}</p>`
       : "";
 
     const facts = [
       this.options.lastVisit ? words.lastHere(words.ago(now.getTime() - this.options.lastVisit.getTime())) : words.firstTime,
-      words.machinesOnline(online, world.nodes.length),
+      words.machinesOnline(online, machines.length),
       words.agentsWorking(busy.length + waiting.length),
     ];
     // A separator keeps to the fact before it, so no line starts with one.
@@ -124,7 +126,8 @@ export class HomePage {
       this.away.innerHTML = awayHtml;
       this.away.hidden = !awayHtml;
     }
-    this.frontispiece.update(world, residents);
+    // The drawing is of the machines the World works on.
+    this.frontispiece.update({ ...world, nodes: world.nodes.filter((node) => !node.device) }, residents);
   }
 
   /** The World could not be asked: said where the facts would be, with

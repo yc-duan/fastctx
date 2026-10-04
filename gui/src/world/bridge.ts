@@ -149,8 +149,9 @@ export function journalAdd(name: string, journal: string, text: string, descript
 }
 
 /** A one-use code for one more machine, valid for `hours`. */
-export function invite(name: string | null, hours: number): Promise<string> {
-  return invoke("invite", { name, hours });
+/** An invitation for one more machine, or for a phone (`device`). */
+export function invite(name: string | null, hours: number, device = false): Promise<string> {
+  return invoke("invite", { name, hours, device });
 }
 
 export function revoke(name: MachineName, reason: string): Promise<void> {

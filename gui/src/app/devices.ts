@@ -11,7 +11,7 @@ import type { DeviceWords } from "./words";
 
 export interface DevicesOptions {
   words: DeviceWords;
-  invite(name: string | null, hours: number): Promise<string>;
+  invite(name: string | null, hours: number, device: boolean): Promise<string>;
   revoke(name: string, reason: string): Promise<void>;
   leave(): Promise<void>;
   /** A moment as the interface says it. */
@@ -76,10 +76,23 @@ export class Devices {
   private readonly invitation = new Sheet("device-sheet");
   private readonly confirm = new Sheet("device-sheet confirm-sheet");
   private hours = 24;
+  /** Whether the invitation is for a phone rather than a computer. */
+  private device = false;
 
   constructor(private readonly options: DevicesOptions) {
     this.invitation.body.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
+      const kind = target.closest<HTMLButtonElement>("[data-device]");
+      if (kind) {
+        // The sheet is drawn again: what the invitation is for changes what
+        // it says.
+        const name = this.invitation.body.querySelector<HTMLInputElement>("[name=name]")?.value ?? "";
+        this.device = kind.dataset.device === "true";
+        this.invite();
+        const input = this.invitation.body.querySelector<HTMLInputElement>("[name=name]");
+        if (input) input.value = name;
+        return;
+      }
       const hours = target.closest<HTMLButtonElement>("[data-hours]");
       if (hours) {
         this.hours = Number(hours.dataset.hours);
@@ -109,6 +122,14 @@ export class Devices {
     const { words } = this.options;
     this.invitation.body.innerHTML = `
       ${this.invitation.head(words.inviteTitle, words.close)}
+      <div class="field"><span class="field-label">${escape(words.inviteWhat)}</span>
+        <div class="choice-options" role="radiogroup">${([false, true] as const)
+          .map(
+            (device) =>
+              `<button type="button" class="choice${device === this.device ? " chosen" : ""}" role="radio" aria-checked="${device === this.device}" data-device="${device}">${escape(device ? words.aPhone : words.aComputer)}</button>`,
+          )
+          .join("")}</div>
+        <span class="field-hint">${escape(this.device ? words.phoneHint : words.computerHint)}</span></div>
       <label class="field"><span class="field-label">${escape(words.inviteName)}</span>
         <input name="name" autocomplete="off" spellcheck="false" class="mono" pattern="[a-z][a-z0-9-]{0,31}">
         <span class="field-hint">${escape(words.inviteNameHint)}</span></label>
@@ -136,7 +157,7 @@ export class Devices {
     go.disabled = true;
     go.textContent = words.making;
     try {
-      const code = await this.options.invite(name, this.hours);
+      const code = await this.options.invite(name, this.hours, this.device);
       const until = this.options.when(new Date(Date.now() + this.hours * 3_600_000));
       this.invitation.body.innerHTML = `
         ${this.invitation.head(words.inviteTitle, words.close)}
@@ -149,7 +170,7 @@ export class Devices {
             <button class="text-button copy-code" type="button">${glyph("copy", 16)}<span>${escape(words.copy)}</span></button>
           </div>
         </div>
-        <section class="how-to"><h3 class="field-label">${escape(words.howTo)}</h3><ol>${words.howToSteps.map((step) => `<li>${escape(step)}</li>`).join("")}</ol></section>
+        <section class="how-to"><h3 class="field-label">${escape(words.howTo)}</h3><ol>${(this.device ? words.phoneSteps : words.howToSteps).map((step) => `<li>${escape(step)}</li>`).join("")}</ol></section>
         <footer class="sheet-foot"><span></span><button class="text-button make-again" type="button">${escape(words.again)}</button></footer>`;
     } catch (error) {
       note.textContent = words.failed(String(error));

@@ -210,6 +210,8 @@ export interface MachinesWords {
   jobs(n: number): string;
   home: string;
   via(route: string): string;
+  phone: string;
+  device: string;
   hosts: string;
   asking: string;
   notAsked(why: string): string;
@@ -228,6 +230,8 @@ export interface MachinesWords {
 }
 
 export const zhMachines: MachinesWords = {
+  phone: "手机",
+  device: "一部带着你身份的设备，上面不跑任何东西",
   hosts: "上面的两家智能体",
   asking: "正在问它上面的智能体…",
   notAsked: (why) => `问不到它上面的智能体：${why}`,
@@ -258,6 +262,8 @@ export const zhMachines: MachinesWords = {
 };
 
 export const enMachines: MachinesWords = {
+  phone: "phone",
+  device: "A device that carries you; nothing runs on it",
   hosts: "Its agents",
   asking: "Asking about its agents…",
   notAsked: (why) => `Its agents could not be asked about: ${why}`,
@@ -473,6 +479,12 @@ export const enProjectForm: ProjectFormWords = {
 export interface DeviceWords {
   invite: string;
   inviteTitle: string;
+  inviteWhat: string;
+  aComputer: string;
+  aPhone: string;
+  computerHint: string;
+  phoneHint: string;
+  phoneSteps: string[];
   inviteName: string;
   inviteNameHint: string;
   valid: string;
@@ -505,6 +517,11 @@ export interface DeviceWords {
 export const zhDevices: DeviceWords = {
   invite: "邀请一台设备",
   inviteTitle: "邀请一台设备",
+  inviteWhat: "它是",
+  aComputer: "一台电脑",
+  aPhone: "一部手机",
+  computerHint: "智能体可以住在它上面，世界会在它上面干活。",
+  phoneHint: "它带着你的身份进来，只用来看和说话，上面不跑任何东西。",
   inviteName: "它叫什么",
   inviteNameHint: "小写字母、数字与连字符；不写就由它自己起名",
   valid: "多久内有效",
@@ -516,6 +533,11 @@ export const zhDevices: DeviceWords = {
   copied: "已复制",
   until: (at) => `${at}之前有效，只能用一次`,
   howTo: "在新设备上",
+  phoneSteps: [
+    "在手机上装好 World，打开它，扫这个码；扫不了就粘贴邀请码。",
+    "它以你的身份进来：能看、能说话、能管，但不在它上面跑任何东西。",
+    "要它在后台也连着，按它的提示在手机的设置里放行后台运行。",
+  ],
   howToSteps: [
     "装好 World，打开它，选「加入已有的世界」，扫这个码或粘贴邀请码；",
     "或者在它的终端里敲 fastctx join <邀请码>。",
@@ -541,6 +563,11 @@ export const zhDevices: DeviceWords = {
 export const enDevices: DeviceWords = {
   invite: "Invite a device",
   inviteTitle: "Invite a device",
+  inviteWhat: "It is",
+  aComputer: "A computer",
+  aPhone: "A phone",
+  computerHint: "Agents can live on it, and the World works on it.",
+  phoneHint: "It comes in as you, to look and speak; nothing runs on it.",
   inviteName: "Its name",
   inviteNameHint: "lowercase letters, digits and hyphens; left empty, it names itself",
   valid: "Valid for",
@@ -552,6 +579,11 @@ export const enDevices: DeviceWords = {
   copied: "Copied",
   until: (at) => `valid until ${at}, once`,
   howTo: "On the new device",
+  phoneSteps: [
+    "Install World on the phone, open it, and scan this code; paste the code where it cannot scan.",
+    "It comes in as you: it can look, speak and manage, and nothing runs on it.",
+    "To stay connected in the background, allow it in the phone's settings as it asks.",
+  ],
   howToSteps: [
     "Install World, open it, choose “Join a World”, and scan this code or paste it;",
     "or run fastctx join <code> in its terminal.",

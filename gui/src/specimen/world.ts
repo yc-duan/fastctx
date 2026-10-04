@@ -70,6 +70,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
       { name: "lab", online: true, since: at("00:00:00"), facts: { Ok: facts("lab", "linux", "/home/lenovo") }, revoked: null },
       { name: "hangzhou", online: true, since: at("00:00:00"), facts: { Ok: facts("hangzhou", "linux", "/root") }, revoked: null },
       { name: "studio", online: false, since: at("12:52:00"), facts: { Err: "offline" }, revoked: null },
+      { name: "pixel", online: true, since: at("13:20:00"), facts: { Err: "a device" }, revoked: null, device: true },
     ],
     machines: [
       {

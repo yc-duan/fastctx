@@ -121,7 +121,7 @@ export class ProjectForm {
   private draw(record: ProjectRecord | null = null): void {
     const { words, store } = this.options;
     const world = store.world.peek();
-    const nodes = (world?.nodes.machines ?? []).filter((node) => !node.revoked).map((node) => node.name);
+    const nodes = (world?.nodes.machines ?? []).filter((node) => !node.revoked && !node.device).map((node) => node.name);
     // A machine the record names that this one no longer knows stays a
     // choice, so writing the next version does not drop it unawares.
     const names = [...new Set([...nodes, ...this.machines])];
