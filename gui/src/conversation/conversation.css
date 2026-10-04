@@ -358,7 +358,7 @@
   background: var(--hairline);
 }
 
-.rail {
+.row > .rail {
   grid-column: 1;
   grid-row: 1;
   height: var(--row-line);

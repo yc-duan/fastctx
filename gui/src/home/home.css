@@ -1,0 +1,565 @@
+/* The front page: a drawing of the World, then the day, then what needs
+   the reader and what happened, read top to bottom like the first page of
+   a paper. No cards and no boxes; parts are set apart by space and by fine
+   rules, as in a book. */
+
+.home {
+  max-width: calc(var(--column) + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: 0 var(--gutter) var(--space-12);
+}
+
+/* The drawing breaks out of the reading column on a wide screen. */
+.frontispiece {
+  --wide: min(100vw - 2 * var(--gutter), 980px);
+  width: var(--wide);
+  margin: var(--space-4) 0 0 calc(50% - var(--wide) / 2);
+}
+
+.frontispiece svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.frontispiece .link {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 0.7;
+  opacity: 0.5;
+}
+
+.frontispiece .link.lost {
+  stroke-dasharray: 1.5 7;
+  opacity: 0.28;
+}
+
+.frontispiece .flow {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 2 16;
+  animation: flow 2.6s linear infinite;
+}
+
+@keyframes flow {
+  to {
+    stroke-dashoffset: -36;
+  }
+}
+
+.frontispiece .knot {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 0.8;
+  opacity: 0.8;
+}
+
+.frontispiece .ring {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 0.85;
+  opacity: 0.62;
+}
+
+.frontispiece .ring.lost {
+  stroke: var(--text-3);
+  stroke-dasharray: 2.5 5;
+  opacity: 0.4;
+}
+
+.frontispiece .here {
+  fill: var(--text-2);
+}
+
+.frontispiece .mark {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.frontispiece .mark.busy {
+  fill: var(--accent);
+  animation: breathe 2.8s ease-in-out infinite;
+}
+
+.frontispiece .mark.idle {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 1.1;
+}
+
+.frontispiece .mark.waiting {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 1.8;
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.82);
+    opacity: 0.6;
+  }
+}
+
+.frontispiece text {
+  font-family: var(--font-reading);
+}
+
+.frontispiece .name {
+  font-family: var(--font-emphasis);
+  font-size: 16px;
+  fill: var(--text);
+}
+
+.frontispiece .name.lost {
+  fill: var(--text-3);
+}
+
+.frontispiece .os {
+  font-size: 12.5px;
+  fill: var(--text-3);
+}
+
+
+/* The day. Its title comes into focus once, when the page opens. */
+.dateline {
+  margin-top: var(--space-6);
+}
+
+.dateline-day {
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-title);
+  line-height: var(--leading-heading);
+  letter-spacing: 0.01em;
+  color: var(--text-strong);
+  animation: focus 1.1s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes focus {
+  from {
+    filter: blur(8px);
+    opacity: 0;
+    letter-spacing: 0.08em;
+  }
+}
+
+.dateline-facts {
+  margin: var(--space-2) 0 0;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+  line-height: var(--leading-ui);
+}
+
+.sep {
+  margin: 0 0.5em;
+  color: var(--text-3);
+}
+
+.fact {
+  white-space: nowrap;
+}
+
+/* Sections: a quiet title with a rule running out from it. */
+.home-section {
+  margin-top: var(--space-10);
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  letter-spacing: 0.04em;
+}
+
+.section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.home ul,
+.home ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.quiet,
+.idle {
+  margin: 0;
+  font-size: var(--size-ui);
+  color: var(--text-3);
+}
+
+.idle {
+  margin-top: var(--space-2);
+  padding-left: calc(var(--rail-glyph) + var(--rail-gap));
+}
+
+.tag {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.detail {
+  display: block;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.detail.wrong {
+  color: var(--wrong);
+}
+
+/* People: who is at work or waiting, each a line that opens their
+   conversation. */
+.someone {
+  display: grid;
+  grid-template-columns: var(--rail-glyph) minmax(0, 1fr) auto;
+  column-gap: var(--rail-gap);
+  align-items: start;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color var(--hover) ease;
+}
+
+.someone:hover {
+  background: var(--hairline);
+}
+
+.someone .rail {
+  height: calc(var(--size-ui) * var(--leading-ui));
+  display: grid;
+  place-items: center;
+}
+
+.someone.waiting {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.someone.waiting:hover {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.ask {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.someone-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.someone-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+}
+
+.someone-name {
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.someone-since {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.someone-origin,
+.someone-doing,
+.someone-trouble {
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.someone-doing .where {
+  color: var(--text-2);
+}
+
+.someone-doing .where::after {
+  content: "·";
+  margin: 0 0.45em;
+  color: var(--text-3);
+}
+
+.someone.waiting .someone-doing {
+  color: var(--accent);
+}
+
+.someone-trouble {
+  color: var(--caution);
+}
+
+.someone-go {
+  align-self: center;
+  color: var(--text-3);
+  transform: rotate(-90deg);
+  opacity: 0;
+  transition: opacity var(--hover) ease;
+}
+
+.someone:hover .someone-go {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .someone-go {
+    opacity: 1;
+  }
+}
+
+/* What happened while the reader was away: time, a glyph on a rail, the
+   fact, and the words it left where it left any. */
+.chronicle {
+  --time: 3.4em;
+}
+
+.event {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--time) 18px minmax(0, 1fr);
+  column-gap: var(--rail-gap);
+  padding: 6px 0;
+}
+
+.event + .event::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--time) + var(--rail-gap) + 8.5px);
+  top: -9px;
+  height: 12px;
+  width: 1px;
+  background: var(--hairline);
+}
+
+.event time {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  line-height: calc(var(--size-ui) * var(--leading-ui));
+  text-align: right;
+}
+
+.event .rail {
+  height: calc(var(--size-ui) * var(--leading-ui));
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.event-body {
+  min-width: 0;
+}
+
+.event-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text);
+}
+
+.event.wrong .event-line {
+  color: var(--wrong);
+}
+
+.event.caution .event-line {
+  color: var(--caution);
+}
+
+.said {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  margin-top: 2px;
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+  color: var(--text-quote);
+}
+
+.day {
+  padding: var(--space-4) 0 var(--space-1) calc(var(--time) + var(--rail-gap) + 18px + var(--rail-gap));
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* Jobs nobody watches any more. */
+.job {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  padding: var(--space-2) 0;
+  font-size: var(--size-ui);
+}
+
+.job-id {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  color: var(--text);
+}
+
+.job-where {
+  color: var(--text-2);
+  font-size: var(--size-small);
+  align-self: center;
+}
+
+.job-command {
+  grid-column: 1 / -1;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job .detail {
+  grid-column: 1 / -1;
+}
+
+/* The index: projects and machines, ruled like a book's contents. */
+.projects li + li,
+.machines li + li {
+  border-top: 1px solid var(--divider);
+}
+
+.project {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.project-name {
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+  transition: color var(--hover) ease;
+}
+
+.project:hover .project-name {
+  color: var(--accent-bright);
+}
+
+.project-what {
+  font-size: var(--size-ui);
+  color: var(--text-2);
+  line-height: var(--leading-prose);
+}
+
+.project-facts {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.machine {
+  display: grid;
+  grid-template-columns: 10px auto minmax(0, 1fr);
+  grid-template-areas: "dot name state" ". facts facts";
+  column-gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3) 0;
+  font-size: var(--size-ui);
+}
+
+.machine .dot {
+  grid-area: dot;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.machine.offline .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.2px var(--text-3);
+}
+
+.machine-name {
+  grid-area: name;
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+}
+
+.machine.offline .machine-name {
+  color: var(--text-2);
+}
+
+.machine-state {
+  grid-area: state;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.machine.offline .machine-state {
+  color: var(--caution);
+}
+
+.machine-facts {
+  grid-area: facts;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frontispiece .flow,
+  .frontispiece .mark,
+  .ask,
+  .dateline-day {
+    animation: none;
+  }
+}

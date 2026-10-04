@@ -37,6 +37,27 @@
   min-width: 0;
 }
 
+.bar-back {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-left: -8px;
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.bar-back .glyph {
+  transform: rotate(90deg);
+}
+
+.bar-back:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
 .who-name {
   margin: 0;
   font-family: var(--font-emphasis);

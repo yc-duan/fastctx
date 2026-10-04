@@ -19,6 +19,8 @@ export interface PageOptions {
   words: Words;
   here: string;
   someone: Someone;
+  /** Where the reader came from, to go back to. */
+  back: { href: string; label: string } | null;
   conversation: Conversation;
   /** Sends the user's words; resolves once they are on their way. */
   send(text: string): void;
@@ -41,6 +43,7 @@ export class ConversationPage {
     this.element.innerHTML = `
       <header class="bar">
         <div class="bar-inner">
+          ${options.back ? `<a class="bar-back" href="${escape(options.back.href)}" aria-label="${escape(options.back.label)}">${glyph("chevron", 20)}</a>` : ""}
           <div class="who">
             <h1 class="who-name">${escape(someone.agent)}<span class="who-at"> · ${escape(someone.machine)}</span></h1>
             <div class="who-state"></div>

@@ -35,7 +35,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = ["warm-black", "ink-black", "warm-white"];
-const sessions = (only ? [only] : ["claude", "codex"]);
+const sessions = only ? [only] : ["home", "claude", "codex"];
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
 const port = 9300 + Math.floor(Math.random() * 500);
