@@ -28,6 +28,7 @@ pub mod legacy;
 pub mod plan;
 mod source;
 pub mod transaction;
+pub mod upgrade;
 
 mod disk;
 mod snapshot;

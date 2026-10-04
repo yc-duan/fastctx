@@ -10,7 +10,7 @@ use xattr::FileExt;
 
 use super::Identity;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Attributes {
     mode: u32,
     uid: u32,
@@ -19,6 +19,12 @@ pub(crate) struct Attributes {
 }
 
 impl Attributes {
+    pub fn has_named_data(&self) -> bool {
+        !self.extended.is_empty()
+    }
+    pub fn apply_directory(&self, file: &File, path: &Path) -> io::Result<()> {
+        self.apply(file, path)
+    }
     pub fn protect(&self, _file: &File) -> io::Result<()> {
         // Existing files are staged with mode 0600 until apply() restores
         // their complete ownership, ACL and mode.

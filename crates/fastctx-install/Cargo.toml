@@ -15,6 +15,7 @@ fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
 jsonc-parser = "0.33.1"
+jiff.workspace = true
 regex-lite = "0.1"
 ryu-js = "1"
 serde.workspace = true
@@ -33,6 +34,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
 ] }
 
 [dev-dependencies]
