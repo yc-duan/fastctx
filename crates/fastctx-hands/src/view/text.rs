@@ -35,7 +35,8 @@ pub fn look(
         let read = super::read_up_to(&mut file, &mut more)?;
         start.extend_from_slice(&more[..read]);
     }
-    let (encoding, bom) = match choose_encoding(&start, options) {
+    let whole = start.len() as u64 == metadata.len();
+    let (encoding, bom) = match choose_encoding(&start, whole, options) {
         Ok(chosen) => chosen,
         Err(facts) => return Ok((Section::note(path, options, &facts), None)),
     };
@@ -106,7 +107,8 @@ pub fn look(
 /// The encoding to read with, and how many bytes of byte order mark to
 /// skip; or, when the file is not text that can be read without being
 /// told its encoding, the facts to say instead.
-fn choose_encoding(start: &[u8], options: &Options) -> Result<(&'static Encoding, usize), String> {
+/// `whole` says whether `start` is the whole file.
+fn choose_encoding(start: &[u8], whole: bool, options: &Options) -> Result<(&'static Encoding, usize), String> {
     if let Some(label) = &options.encoding {
         let encoding = Encoding::for_label_no_replacement(label.trim().as_bytes())
             .ok_or_else(|| format!("not shown: {label:?} names no encoding this build knows"))?;
@@ -126,12 +128,27 @@ fn choose_encoding(start: &[u8], options: &Options) -> Result<(&'static Encoding
         return Err(format!("not shown: binary{}", kind(start).map(|kind| format!(", {kind}")).unwrap_or_default()));
     }
     if std::str::from_utf8(start).is_err_and(|error| error.error_len().is_some()) {
-        return Err(
-            "not shown: not UTF-8, and its encoding is not named; if it is text, name its encoding with --encoding, such as --encoding gbk"
-                .to_string(),
-        );
+        // The encodings its first bytes decode in are candidates, not
+        // proof: which one it is, the one who looks says.
+        return Err(match crate::encoding::detect_prefix(start, whole, None) {
+            Err(crate::encoding::EncodingError::Ambiguous { candidates, .. }) if !candidates.is_empty() => format!(
+                "not shown: not UTF-8, and its encoding is not named; its first bytes read as {}; if it is text, name its encoding with --encoding, such as --encoding {}",
+                or_list(&candidates),
+                candidates[0].to_ascii_lowercase()
+            ),
+            _ => "not shown: not UTF-8, and no encoding this build knows reads its first bytes; look at its bytes with xxd, or name its encoding with --encoding".to_string(),
+        });
     }
     Ok((UTF_8, 0))
+}
+
+/// `a`, `a or b`, `a, b or c`.
+fn or_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    }
 }
 
 /// What a file's first bytes say it is, for a binary file.
