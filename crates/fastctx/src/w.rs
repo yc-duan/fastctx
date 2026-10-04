@@ -192,7 +192,9 @@ fn counts((here, busy): (usize, usize)) -> String {
 
 fn state_of(state: &Now, now: Timestamp) -> String {
     match state.activity {
-        Activity::Busy if state.waiting_for_user => format!("waiting for you · turn running {}", ago(state.since, now)),
+        Activity::Busy if state.waiting_for_user => {
+            format!("waiting for the user's answer · turn running {}", ago(state.since, now))
+        }
         Activity::Busy => format!("busy {}", ago(state.since, now)),
         Activity::Idle => format!("idle {}", ago(state.since, now)),
         Activity::Asleep => format!("asleep {}", ago(state.since, now)),

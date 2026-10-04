@@ -38,9 +38,16 @@ pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostComm
             let short = session.get(..8).unwrap_or(&session).to_string();
             Ok(HostCommand { program, args: vec!["attach".to_string(), short], env: Vec::new() })
         }
-        "codex" => Err(Failure::new(format!(
-            "the World's Codex on {here} does not take another client yet; {resident} is followed with fastctx talk"
-        ))),
+        // The official Codex joins the World's own app-server on its socket,
+        // with the thread loaded under the World's settings first.
+        "codex" => {
+            let (program, address, codex_home) = node.codex.attachable(&session).await.map_err(Failure::new)?;
+            Ok(HostCommand {
+                program,
+                args: vec!["--remote".to_string(), address, "resume".to_string(), session],
+                env: vec![("CODEX_HOME".to_string(), codex_home.to_string_lossy().into_owned())],
+            })
+        }
         other => {
             Err(Failure::new(format!("{resident} lives in {other}, which the World cannot open in its own interface")))
         }

@@ -183,13 +183,21 @@ pub async fn thread_spec(
         ("FASTCTX_RESIDENT".to_string(), address.tag()),
     ];
     let mut tools = vec!["run", "apply_patch"];
-    match origin {
-        Origin::Colleague { .. } => env.push(("FASTCTX_COLLEAGUE".to_string(), "1".to_string())),
-        Origin::User => tools.extend(["ask_colleague", "message_colleague"]),
-    }
+    // A colleague's thread is listed under its task; a session the user
+    // opens is named by whichever client shows it first, as Codex does.
+    let name = match origin {
+        Origin::Colleague { label, .. } => {
+            env.push(("FASTCTX_COLLEAGUE".to_string(), "1".to_string()));
+            Some(label.clone()).filter(|label| !label.trim().is_empty())
+        }
+        Origin::User => {
+            tools.extend(["ask_colleague", "message_colleague"]);
+            None
+        }
+    };
     let config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
     let (developer_instructions, heard) = instructions(node, id, town, origin).await?;
-    Ok((ThreadSpec { cwd, developer_instructions, config }, heard))
+    Ok((ThreadSpec { cwd, developer_instructions, config, name }, heard))
 }
 
 /// How far into its town's ledger a resident is told of it, as of now.

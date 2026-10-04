@@ -119,6 +119,10 @@ pub struct ThreadSpec {
     /// Settings for this thread alone, laid over the user's configuration as
     /// a `-c` would be. Tables merge key by key and anything else replaces.
     pub config: Value,
+    /// What the thread is called where Codex lists threads, such as the
+    /// desktop app's sidebar; given once, when it is started. Without one,
+    /// the client that shows it first names it from its words.
+    pub name: Option<String>,
 }
 
 /// Words for a thread.
@@ -320,6 +324,13 @@ impl CodexHost {
             .ok_or("thread/start answered without a thread id")?
             .to_string();
         let model = answer.get("model").and_then(Value::as_str).map(str::to_string);
+        // Codex keeps a name given before the thread's first turn and writes
+        // it with the thread (0.160). A thread without the name still works.
+        if let Some(name) = &spec.name
+            && let Err(error) = server.request("thread/name/set", json!({ "threadId": thread, "name": name })).await
+        {
+            (self.log)(format!("naming the Codex thread {thread} {name:?} failed: {error}"));
+        }
         // What the app-server said of the thread, how its tools started
         // among it, may have come before this answer.
         let mut state = self.lock();
@@ -329,6 +340,24 @@ impl CodexHost {
         entry.loaded = current;
         entry.created_here = true;
         Ok((thread, model))
+    }
+
+    /// How the user's own Codex joins `thread` in this host's app-server:
+    /// the program the app-server runs, the address of its socket, and the
+    /// Codex directory it reads. The thread is loaded first, with the World's
+    /// settings, so the program joins it rather than loading it with its own.
+    pub async fn attachable(self: &Arc<Self>, thread: &str) -> Result<(PathBuf, String, PathBuf), String> {
+        self.prepare(thread).await?;
+        let program = self
+            .lock()
+            .server
+            .as_ref()
+            .map(|(_, launch)| launch.binary.clone())
+            .ok_or("the Codex app-server stopped before it could be joined")?;
+        let socket = std::path::absolute(&self.workdir)
+            .map_err(|error| format!("finding {}: {error}", self.workdir.display()))?
+            .join("app-server.sock");
+        Ok((program, format!("unix://{}", socket.display()), self.codex_home.clone()))
     }
 
     /// Makes a thread ready for words: loaded in the app-server, and its
