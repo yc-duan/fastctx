@@ -18,6 +18,9 @@ use super::{content, tools};
 pub struct Transcript {
     pub events: Vec<SessionEvent>,
     pub problems: Vec<String>,
+    /// Every record's UUID the file holds, shown or not: whether a record
+    /// the session is known to have kept has reached the file yet.
+    pub uuids: HashSet<String>,
 }
 
 struct Row {
@@ -81,7 +84,7 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
     let mut reader = BufReader::new(file);
     let mut rows: Vec<Row> = Vec::new();
     let mut by_uuid = HashMap::new();
-    let mut transcript = Transcript { events: Vec::new(), problems: Vec::new() };
+    let mut transcript = Transcript { events: Vec::new(), problems: Vec::new(), uuids: HashSet::new() };
     let mut line = Vec::new();
     let mut number = 0;
     loop {
@@ -154,6 +157,7 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
     {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "Claude transcript changed while it was being read"));
     }
+    transcript.uuids = by_uuid.keys().cloned().collect();
 
     let mut times = Vec::with_capacity(rows.len());
     let mut removed = HashSet::new();

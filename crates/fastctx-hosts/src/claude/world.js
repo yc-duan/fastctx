@@ -143,7 +143,7 @@ async function writePending($, context, name) {
 // A stream only appends observations in memory. The zero-delay timer starts
 // serialization outside the generator; while earlier IO runs, arriving pieces
 // share this batch. Other reports seal it so they cannot overtake any piece.
-function streamEvent($, context, happened) {
+function streamEvent($, context, entry) {
   // A stream can first expose prose after session.end already cancelled the
   // old poller. Its reports still need the same retry and receipt lifecycle.
   if (context.timer === null) context.timer = $.clock.every(LOOK_MS, () => look($, context))
@@ -165,7 +165,7 @@ function streamEvent($, context, happened) {
     // cancel the host stream, which has already received the same pieces.
     context.writing = written.catch(() => { context.failedReports.add(name) })
   }
-  batch.events.push({ kind: 'session', at: reserved(context).at, happened })
+  batch.events.push({ ...entry, at: reserved(context).at })
 }
 
 // The scanner follows $ only through this file's top-level functions. Give
@@ -174,6 +174,7 @@ function reports($, context) {
   return {
     event: (kind, fields) => event($, context, kind, fields),
     stream: context.observe,
+    stored: context.stored,
     save: (state) => {
       context.streamBatch = null
       const body = JSON.stringify({ process: context.hostProcess, ...state })
@@ -486,7 +487,10 @@ async function startSession($, context) {
   // skipped: a closed session's answers are what it should see on return.
   context.timer = $.clock.every(LOOK_MS, () => look($, context))
   // Background observations retain this conversation even after /clear.
-  context.observe = (happened) => streamEvent($, context, happened)
+  context.observe = (happened) => streamEvent($, context, { kind: 'session', happened })
+  // Claude Code keeps a record before its file has it; the node waits for
+  // the last one kept when it reads the file.
+  context.stored = (uuid) => streamEvent($, context, { kind: 'stored', uuid })
 }
 
 async function startTurn($, context, e, next) {

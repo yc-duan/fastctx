@@ -51,6 +51,9 @@ struct State {
     /// Resident to the session it is.
     paired: HashMap<ResidentId, String>,
     observed: HashSet<fastctx_types::ProcessIdentity>,
+    /// The last record each session's mod saw Claude Code keep, in this run
+    /// of the node: what its file must hold before it is read as whole.
+    stored: HashMap<String, String>,
     delivering: HashMap<ResidentId, Arc<tokio::sync::Mutex<()>>>,
 }
 
@@ -301,6 +304,9 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                         exchange::acknowledge_handover(directory, &ids, &turn)?;
                     }
                     exchange::Reported::Ended { reason } => ended(node, &resident, &session, reason).await?,
+                    exchange::Reported::Stored { uuid } => {
+                        node.claude.state.lock().expect("never poisoned").stored.insert(session.clone(), uuid);
+                    }
                 }
             }
             exchange::acknowledge(directory, &report.name)

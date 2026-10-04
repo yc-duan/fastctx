@@ -108,6 +108,11 @@ pub enum Reported {
         ids: Vec<String>,
         turn: String,
     },
+    /// Claude Code kept this record of the main conversation; its file has
+    /// it only a moment later (`crate::claude::transcript`).
+    Stored {
+        uuid: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -115,6 +120,10 @@ pub enum Reported {
 enum ModEvent {
     Batch {
         events: Vec<ModEvent>,
+    },
+    /// Claude Code kept the main conversation's record `uuid`.
+    Stored {
+        uuid: String,
     },
     Session {
         at: Option<Timestamp>,
@@ -333,6 +342,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
     let turn_of = |turn: Option<String>| turn.unwrap_or_default();
     match event {
         ModEvent::Batch { events } => events.into_iter().flat_map(|event| translate(event, recorded_at)).collect(),
+        ModEvent::Stored { uuid } => vec![Reported::Stored { uuid }],
         ModEvent::Session { at, happened: observed } => vec![happened(at, observed)],
         ModEvent::ToolStored {
             at,

@@ -5,12 +5,12 @@
 //! and how each turn ended; it keeps no copy of the conversation.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use fastctx_hosts::claude::{self, exchange, transcript};
-use fastctx_types::ResidentId;
 use fastctx_types::session::{Happened, Health, HealthKind, SessionEvent};
+use fastctx_types::{ProcessIdentity, ResidentId};
 use jiff::Timestamp;
 
 use crate::Node;
@@ -20,60 +20,116 @@ use crate::Node;
 pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> Vec<SessionEvent> {
     let root = exchange::sessions(node.world.path());
     let mut events = Vec::new();
-    for (session, began) in sessions(node, resident) {
-        let directory = root.join(&session);
-        let read = tokio::task::spawn_blocking(move || read(&directory)).await;
-        match read {
-            Ok(Ok(read)) => {
+    for Session { id, began, process, kept } in sessions(node, resident) {
+        match read_whole(root.join(&id), kept, process).await {
+            Ok(read) => {
                 events.extend(read.events);
                 if !read.problems.is_empty() {
                     let text = format!(
-                        "{} part(s) of Claude Code's record of session {session} could not be read: {}",
+                        "{} part(s) of Claude Code's record of session {id} could not be read: {}",
                         read.problems.len(),
                         read.problems.join("; ")
                     );
                     events.push(note(began, text));
                 }
             }
-            Ok(Err(why)) => events.push(note(began, format!("Claude Code's record of session {session}: {why}"))),
-            Err(error) => {
-                events.push(note(began, format!("reading Claude Code's record of session {session}: {error}")))
-            }
+            Err(why) => events.push(note(began, format!("Claude Code's record of session {id}: {why}"))),
         }
     }
     place(events, recorded)
 }
 
-/// The sessions the resident has been, as their mod registered them, the
-/// oldest first, with when each began.
-fn sessions(node: &Node, resident: &ResidentId) -> Vec<(String, Timestamp)> {
+/// A session the resident has been, as its mod registered it.
+struct Session {
+    id: String,
+    began: Timestamp,
+    process: Option<ProcessIdentity>,
+    /// The last record its mod saw Claude Code keep, in this run of the node.
+    kept: Option<String>,
+}
+
+/// The sessions the resident has been, the oldest first.
+fn sessions(node: &Node, resident: &ResidentId) -> Vec<Session> {
     let state = node.claude.state.lock().expect("never poisoned");
-    let mut sessions: Vec<(String, Timestamp)> = state
+    let mut sessions: Vec<Session> = state
         .sessions
         .iter()
         .filter(|(_, session)| session.resident.as_ref() == Some(resident))
-        .map(|(id, session)| (id.clone(), session.registration.at.unwrap_or_default()))
+        .map(|(id, session)| Session {
+            id: id.clone(),
+            began: session.registration.at.unwrap_or_default(),
+            process: session.registration.process.clone(),
+            kept: state.stored.get(id).cloned(),
+        })
         .collect();
-    sessions.sort_by_key(|(_, at)| *at);
+    sessions.sort_by_key(|session| session.began);
     sessions
 }
 
-fn read(directory: &Path) -> Result<transcript::Transcript, String> {
-    let path = exchange::transcript(directory)
+/// Reads a session's record once it holds `kept`. Claude Code writes its
+/// file a while after it keeps a record, with no bound on how long and no
+/// sign when it has (2.1.289): what was kept just before is waited for,
+/// read again at each change to the file, until it is there or the
+/// session's process has ended.
+async fn read_whole(
+    directory: PathBuf,
+    kept: Option<String>,
+    process: Option<ProcessIdentity>,
+) -> Result<transcript::Transcript, String> {
+    let path = exchange::transcript(&directory)
         .map_err(|error| format!("where it is kept could not be read: {error}"))?
         .ok_or("the World's plugin never said where Claude Code keeps it")?;
+    let Some(kept) = kept else { return read_now(path).await };
+    // Watched before it is read, so no change between the two goes unseen.
+    let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
+    let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
+        let _ = changed.send(());
+    })
+    .map_err(|error| format!("watching {}: {error}", path.display()))?;
+    let folder = path.parent().ok_or_else(|| format!("{} has no folder", path.display()))?;
+    notify::Watcher::watch(&mut watcher, folder, notify::RecursiveMode::NonRecursive)
+        .map_err(|error| format!("watching {}: {error}", folder.display()))?;
+    let mut ended: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> = match process {
+        Some(process) => Box::pin(async move {
+            let _ = tokio::task::spawn_blocking(move || fastctx_platform::host_process::wait_for_exit(&process)).await;
+        }),
+        None => Box::pin(std::future::pending()),
+    };
     loop {
-        match transcript::read(&path) {
-            Ok(read) => return Ok(read),
-            // A session at work adds to its file as it goes; a read it
-            // overtook is read again, until one sees the file whole.
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(format!("{} is gone; Claude Code removes old sessions itself", path.display()));
+        let read = read_now(path.clone()).await?;
+        if read.uuids.contains(&kept) {
+            return Ok(read);
+        }
+        tokio::select! {
+            Some(()) = changes.recv() => {}
+            () = &mut ended => {
+                let mut read = read_now(path.clone()).await?;
+                if !read.uuids.contains(&kept) {
+                    read.problems.push("its process ended before its file held the last of what it kept".to_string());
+                }
+                return Ok(read);
             }
-            Err(error) => return Err(format!("{}: {error}", path.display())),
         }
     }
+}
+
+/// The record as the file holds it now. A session at work adds to its file
+/// as it goes; a read it overtook is read again, until one sees it whole.
+async fn read_now(path: PathBuf) -> Result<transcript::Transcript, String> {
+    tokio::task::spawn_blocking(move || {
+        loop {
+            match transcript::read(&path) {
+                Ok(read) => return Ok(read),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(format!("{} is gone; Claude Code removes old sessions itself", path.display()));
+                }
+                Err(error) => return Err(format!("{}: {error}", path.display())),
+            }
+        }
+    })
+    .await
+    .map_err(|error| format!("reading it: {error}"))?
 }
 
 /// An item the host deliberately keeps out of its conversation.

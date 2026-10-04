@@ -107,6 +107,9 @@ export function presentation(reserve, currentTurn) {
       const result = await next(e)
       if (e.agentId !== undefined || result.deny !== undefined || rows.has(result.uuid)) return result
       rows.add(result.uuid)
+      // Only the conversation's own messages are certain to reach the file;
+      // the node waits for the last of them when it reads that file.
+      if (result.message.type === 'user' || result.message.type === 'assistant') reports.stored(result.uuid)
       const streamedKinds = new Set()
       if (latestStep?.turn === turn) {
         for (const block of latestStep.blocks.values()) streamedKinds.add(block.kind)
