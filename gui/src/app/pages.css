@@ -417,3 +417,64 @@
 .welcome-hosts .apply-now {
   margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
 }
+
+/* The agents on a machine, as its own programs say: one line each, its
+   name and version, then the facts, then what can be done here. */
+.machine-hosts {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0 0 0 calc(8px + 2px + var(--space-2));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.host-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.host-name {
+  color: var(--text-2);
+}
+
+.host-version {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.host-fact + .host-fact::before,
+.host-name + .host-fact::before {
+  content: "·";
+  margin-right: var(--space-2);
+  color: var(--text-3);
+}
+
+.host-fact.caution {
+  color: var(--caution);
+}
+
+.host-line.absent .host-name {
+  color: var(--text-3);
+}
+
+.host-line .text-button {
+  margin-left: auto;
+  min-height: 0;
+  height: auto;
+  padding: 0 var(--space-1);
+  font-size: var(--size-small);
+}
+
+.machine-hosts-asking,
+.machine-note {
+  margin: var(--space-2) 0 0;
+  padding-left: calc(8px + 2px + var(--space-2));
+  font-size: var(--size-small);
+  color: var(--text-3);
+}

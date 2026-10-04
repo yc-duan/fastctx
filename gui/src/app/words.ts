@@ -181,9 +181,39 @@ export interface MachinesWords {
   jobs(n: number): string;
   home: string;
   via(route: string): string;
+  hosts: string;
+  asking: string;
+  notAsked(why: string): string;
+  notInstalled: string;
+  loggedIn: string;
+  loggedOut: string;
+  loginUnknown: string;
+  toolsIn: string;
+  toolsOut: string;
+  toolsOld: string;
+  putIn: string;
+  takeOut: string;
+  renew: string;
+  applied: string;
+  notApplied(why: string): string;
 }
 
 export const zhMachines: MachinesWords = {
+  hosts: "上面的两家智能体",
+  asking: "正在问它上面的智能体…",
+  notAsked: (why) => `问不到它上面的智能体：${why}`,
+  notInstalled: "没装",
+  loggedIn: "已登录",
+  loggedOut: "没登录",
+  loginUnknown: "登没登录说不准",
+  toolsIn: "你在这里开的会话用着世界的工具",
+  toolsOut: "你在这里开的会话没接入世界的工具",
+  toolsOld: "接入的还是旧版 fastctx",
+  putIn: "接入",
+  takeOut: "拿出",
+  renew: "换成新版",
+  applied: "改好了",
+  notApplied: (why) => `没改成：${why}`,
   title: "机器",
   here: "这台",
   online: (since) => `在线，${since}起`,
@@ -199,6 +229,21 @@ export const zhMachines: MachinesWords = {
 };
 
 export const enMachines: MachinesWords = {
+  hosts: "Its agents",
+  asking: "Asking about its agents…",
+  notAsked: (why) => `Its agents could not be asked about: ${why}`,
+  notInstalled: "not installed",
+  loggedIn: "logged in",
+  loggedOut: "not logged in",
+  loginUnknown: "login not known",
+  toolsIn: "sessions you open here have the World's tools",
+  toolsOut: "sessions you open here don't have the World's tools",
+  toolsOld: "still has the old fastctx",
+  putIn: "Put in",
+  takeOut: "Take out",
+  renew: "Use the new one",
+  applied: "Done",
+  notApplied: (why) => `Not done: ${why}`,
   title: "Machines",
   here: "this one",
   online: (since) => `online since ${since}`,

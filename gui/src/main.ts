@@ -672,6 +672,17 @@ function show(next: Place): void {
         head,
         focus: next.kind === "machine" ? next.name : null,
         when,
+        agents: () =>
+          live
+            ? agents(null)
+            : Promise.resolve({
+                machine: specimen.world.here,
+                machines: specimen.world.nodes.machines
+                  .filter((node) => node.online)
+                  .flatMap((node) => specimenAgents(node.name).machines),
+              }),
+        applyHere: (agent, into) =>
+          live ? applyHosts(agent === "codex", agent === "claude", false, into) : Promise.reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")),
       });
       break;
     case "welcome":

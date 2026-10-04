@@ -1,10 +1,14 @@
 // The machines of the World: each one's system, whether it is online and
-// since when, who is on it and what runs there. A machine named in the
-// address is brought into view and marked.
+// since when, who is on it and what runs there, and the agents its own
+// programs say it has: installed or not, which version, logged in or not,
+// and whether the sessions the user opens there have the World's tools.
+// On this machine those tools can be put in or taken out here. A machine
+// named in the address is brought into view and marked.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { osName } from "../home/frontispiece";
+import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
 import type { Node } from "../world/world";
 import type { Devices } from "./devices";
@@ -24,7 +28,15 @@ export interface MachinesOptions {
   focus: string | null;
   /** When, as the front page says it: a clock time today, a day before. */
   when(at: Date, now: Date): string;
+  /** What every online machine's programs say of its agents. */
+  agents(): Promise<WorldAgents>;
+  /** Puts the World's tools into an agent's program on this machine, or
+   *  takes them out; what it could not do, said. */
+  applyHere(agent: "codex" | "claude", into: boolean): Promise<string[]>;
 }
+
+/** What is known of the agents on one machine. */
+type Asked = { state: "known"; facts: AgentFacts[] } | { state: "unknown"; why: string };
 
 const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
@@ -35,6 +47,10 @@ export class MachinesPage implements Page {
   private drawn = "";
   private focused = false;
   private stop: () => void;
+  private asked = new Map<string, Asked>();
+  private asking = false;
+  private shape = "";
+  private note: { machine: string; text: string } | null = null;
 
   constructor(private readonly options: MachinesOptions) {
     this.title = options.focus ?? options.words.title;
@@ -49,9 +65,10 @@ export class MachinesPage implements Page {
     this.list = this.element.querySelector<HTMLElement>(".machines-list")!;
     this.element.querySelector(".invite")!.addEventListener("click", () => options.devices.invite());
     this.list.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-revoke], [data-leave]");
-      if (!button) return;
-      if (button.dataset.revoke) options.devices.revoke(button.dataset.revoke);
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-revoke], [data-leave], [data-apply]");
+      if (!button || button.disabled) return;
+      if (button.dataset.apply) void this.apply(button, button.dataset.apply as "codex" | "claude", button.dataset.into === "1");
+      else if (button.dataset.revoke) options.devices.revoke(button.dataset.revoke);
       else options.devices.leave();
     });
     this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
@@ -61,8 +78,52 @@ export class MachinesPage implements Page {
     this.stop();
   }
 
+  /** Asks every online machine about its agents, again whenever which
+   *  machines are online changes. */
+  private async ask(): Promise<void> {
+    if (this.asking) return;
+    this.asking = true;
+    try {
+      const answer = await this.options.agents();
+      for (const machine of answer.machines) {
+        if (machine.kind === "answered") this.asked.set(machine.reply.machine, { state: "known", facts: machine.reply.agents });
+        else if (machine.kind === "no_answer") this.asked.set(machine.machine, { state: "unknown", why: machine.reason });
+        else this.asked.delete(machine.machine);
+      }
+    } catch (error) {
+      const world = this.options.store.world.peek();
+      for (const node of world?.nodes.machines ?? []) this.asked.set(node.name, { state: "unknown", why: String(error) });
+    }
+    this.asking = false;
+    this.redraw();
+  }
+
+  private redraw(): void {
+    this.drawn = "";
+    this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
+  }
+
+  private async apply(button: HTMLButtonElement, agent: "codex" | "claude", into: boolean): Promise<void> {
+    const machine = button.closest<HTMLElement>("[data-machine]")?.dataset.machine ?? "";
+    button.disabled = true;
+    try {
+      const left = await this.options.applyHere(agent, into);
+      this.note = { machine, text: left.length ? left.join("；") : this.options.words.applied };
+    } catch (error) {
+      this.note = { machine, text: this.options.words.notApplied(String(error)) };
+    }
+    this.asked.delete(machine);
+    this.redraw();
+    void this.ask();
+  }
+
   private draw(world: WorldNow | null, now: Date): void {
     if (!world) return;
+    const shape = world.nodes.machines.map((node) => `${node.name}:${node.online}`).join(",");
+    if (shape !== this.shape) {
+      this.shape = shape;
+      void this.ask();
+    }
     const html = `<ol class="machine-entries">${world.nodes.machines.map((node) => this.machine(node, world, now)).join("")}</ol>`;
     if (html !== this.drawn) {
       this.drawn = html;
@@ -116,6 +177,7 @@ export class MachinesPage implements Page {
             : ""
       }
       ${jobs.length ? `<p class="machine-jobs">${escape(words.jobs(jobs.length))}</p>` : ""}
+      ${node.online === true && !node.revoked ? this.hosts(node.name, node.name === world.here) : ""}
       ${
         node.revoked || !world.nodes.world
           ? ""
@@ -126,6 +188,40 @@ export class MachinesPage implements Page {
             }</div>`
       }
     </li>`;
+  }
+
+  /** The agents on a machine as its own programs say them. */
+  private hosts(machine: string, here: boolean): string {
+    const { words } = this.options;
+    const asked = this.asked.get(machine);
+    const note = this.note?.machine === machine ? `<p class="machine-note">${escape(this.note.text)}</p>` : "";
+    if (!asked) return `<p class="machine-hosts-asking">${escape(words.asking)}</p>`;
+    if (asked.state === "unknown") return `<p class="machine-hosts-asking">${escape(words.notAsked(asked.why))}</p>`;
+    const lines = (["codex", "claude"] as const).map((agent) => {
+      const all = asked.facts.filter((f) => f.agent === agent);
+      const facts = all.find((f) => f.program.kind === "known" && f.program.value?.exists) ?? all[0];
+      const name = agent === "codex" ? "Codex" : "Claude Code";
+      if (!facts || (facts.program.kind === "known" && (!facts.program.value || !facts.program.value.exists))) {
+        return `<li class="host-line absent"><span class="host-name">${escape(name)}</span><span class="host-fact">${escape(words.notInstalled)}</span></li>`;
+      }
+      const version = facts.version.kind === "known" ? /\d+(?:\.\d+)+/.exec(facts.version.value)?.[0] ?? facts.version.value : null;
+      const login =
+        facts.login.kind === "known"
+          ? facts.login.value.kind === "logged_in"
+            ? words.loggedIn
+            : words.loggedOut
+          : words.loginUnknown;
+      const integration = facts.integration.kind === "known" ? facts.integration.value : null;
+      const tools =
+        integration === "in" ? words.toolsIn : integration === "out" ? words.toolsOut : integration === "old" ? words.toolsOld : null;
+      const act =
+        here && integration && integration !== "absent"
+          ? `<button class="text-button quiet-button" type="button" data-apply="${agent}" data-into="${integration === "in" ? "0" : "1"}">${escape(integration === "in" ? words.takeOut : integration === "old" ? words.renew : words.putIn)}</button>`
+          : "";
+      const loggedOut = facts.login.kind === "known" && facts.login.value.kind === "logged_out";
+      return `<li class="host-line"><span class="host-name">${escape(name)}${version ? `<span class="host-version">${escape(version)}</span>` : ""}</span><span class="host-fact${loggedOut ? " caution" : ""}">${escape(login)}</span>${tools ? `<span class="host-fact">${escape(tools)}</span>` : ""}${act}</li>`;
+    });
+    return `<ul class="machine-hosts" aria-label="${escape(words.hosts)}">${lines.join("")}</ul>${note}`;
   }
 }
 
