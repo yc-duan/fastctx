@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod apply;
 mod ask;
 mod copy;
 mod journal;
@@ -67,6 +68,11 @@ enum Command {
     /// The hub every machine of a World connects to.
     #[command(subcommand)]
     Hub(world::HubCommand),
+    /// Give the sessions you open on this machine, in Codex and Claude Code,
+    /// the World's tools.
+    Apply(apply::ApplyArgs),
+    /// Take the World's tools out of the sessions you open on this machine.
+    Unapply(apply::UnapplyArgs),
     /// Supervise one job; started by the node, not by people.
     #[command(hide = true)]
     Supervise { world: PathBuf, record: PathBuf },
@@ -100,6 +106,8 @@ fn main() -> ExitCode {
         Command::Revoke(args) => world::revoke(args),
         Command::Leave => world::leave(),
         Command::Hub(command) => world::hub(command),
+        Command::Apply(args) => apply::apply(args),
+        Command::Unapply(args) => apply::unapply(args),
         Command::Supervise { world, record } => supervise(&world, &record),
     };
     match result {

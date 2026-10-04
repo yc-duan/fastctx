@@ -17,6 +17,7 @@
 //! fastctx (0.1.0 to 0.2.6) wrote some of the same places; what it wrote,
 //! as its own record says, is taken over or removed, and nothing else.
 
+pub mod apply;
 pub mod briefing;
 pub mod claude;
 pub mod codex;

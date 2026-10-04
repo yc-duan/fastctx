@@ -12,6 +12,7 @@ publish = false
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
 jsonc-parser = "0.33.1"
 regex-lite = "0.1"

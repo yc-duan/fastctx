@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use crate::disk::{self, Identity};
 use crate::transaction::{FileError, Snapshot};
 
-/// No environment lookup: tests and callers explicitly choose the user's home.
-pub fn installed_path(home: &Path) -> PathBuf {
-    home.join(".fastctx/bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" })
+/// The stable copy of fastctx that hosts start, under fastctx's root
+/// (`~/.fastctx`, or `FASTCTX_HOME`). The caller chooses the root.
+pub fn installed_path(root: &Path) -> PathBuf {
+    root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" })
 }
 
 const PREFIX: &str = ".fastctx-exe-retired-";
