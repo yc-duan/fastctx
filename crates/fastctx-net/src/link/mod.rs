@@ -51,20 +51,14 @@ pub trait Node: Send + Sync + 'static {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     /// Not connected; trying. `last_error` says why the last try failed.
-    Connecting {
-        since: Timestamp,
-        last_error: Option<String>,
-    },
-    Online {
-        since: Timestamp,
-        address: SocketAddr,
-    },
+    Connecting { since: Timestamp, last_error: Option<String> },
+    /// Connected to the hub at `address`; `route` says the way the
+    /// connection leaves this machine.
+    Online { since: Timestamp, address: SocketAddr, route: String },
     /// The hub refused this machine for good: it was revoked, is not a
     /// member, or speaks another protocol. Nothing more is tried until the
     /// node starts again.
-    Stopped {
-        reason: String,
-    },
+    Stopped { reason: String },
 }
 
 /// Why a call got no answer.

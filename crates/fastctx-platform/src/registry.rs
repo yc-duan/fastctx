@@ -5,7 +5,9 @@ use std::io;
 use std::os::windows::ffi::OsStringExt as _;
 
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS};
-use windows_sys::Win32::System::Registry::{HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
+use windows_sys::Win32::System::Registry::{
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Hive {
@@ -13,13 +15,43 @@ pub enum Hive {
     CurrentUser,
 }
 
+fn root(hive: Hive) -> HKEY {
+    match hive {
+        Hive::LocalMachine => HKEY_LOCAL_MACHINE,
+        Hive::CurrentUser => HKEY_CURRENT_USER,
+    }
+}
+
+/// The 32-bit value `value` of `key` in `hive`, or `None` if the key or the
+/// value does not exist.
+pub fn dword_value(hive: Hive, key: &str, value: &str) -> io::Result<Option<u32>> {
+    let key: Vec<u16> = key.encode_utf16().chain([0]).collect();
+    let value: Vec<u16> = value.encode_utf16().chain([0]).collect();
+    let mut data = 0u32;
+    let mut bytes = size_of::<u32>() as u32;
+    // SAFETY: NUL-terminated names; the value is four bytes.
+    let code = unsafe {
+        RegGetValueW(
+            root(hive),
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&raw mut data).cast(),
+            &mut bytes,
+        )
+    };
+    match code {
+        ERROR_SUCCESS => Ok(Some(data)),
+        ERROR_FILE_NOT_FOUND => Ok(None),
+        code => Err(io::Error::from_raw_os_error(code as i32)),
+    }
+}
+
 /// The string value `value` of `key` in `hive`, or `None` if the key or the
 /// value does not exist.
 pub fn string_value(hive: Hive, key: &str, value: &str) -> io::Result<Option<OsString>> {
-    let root: HKEY = match hive {
-        Hive::LocalMachine => HKEY_LOCAL_MACHINE,
-        Hive::CurrentUser => HKEY_CURRENT_USER,
-    };
+    let root = root(hive);
     let key: Vec<u16> = key.encode_utf16().chain([0]).collect();
     let value: Vec<u16> = value.encode_utf16().chain([0]).collect();
     let mut bytes = 0u32;

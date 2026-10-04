@@ -33,9 +33,12 @@ pub enum LinkState {
         since: Timestamp,
         last_error: Option<String>,
     },
+    /// Connected to the hub at `hub`; `route` says the way the connection
+    /// leaves this machine.
     Online {
         since: Timestamp,
         hub: String,
+        route: String,
     },
     /// The hub refused this machine for good.
     Stopped {

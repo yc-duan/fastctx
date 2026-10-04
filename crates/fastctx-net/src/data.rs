@@ -7,7 +7,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use crate::dial::{self, HubSocket};
 use crate::link::Membership;
 use crate::sign::{Digest, Domain, SecretKey, Signed, sha256};
-use crate::wire::{self, Carried, Down, End, Intent, PROTOCOL, SILENCE, Up};
+use crate::wire::{self, Carried, Down, End, Intent, PROTOCOL, Up};
 
 /// What the sink sends when it has every byte and they check out. The
 /// source waits for it before closing, since a close passes the hub as a
@@ -66,9 +66,7 @@ pub async fn sink(membership: &Membership, key: &SecretKey, carried: &Carried) -
 
 async fn open(membership: &Membership, key: &SecretKey, ticket: Signed, end: End) -> Result<HubSocket, String> {
     let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
-    let dialed = tokio::time::timeout(SILENCE, dial::dial(&membership.hub, membership.cert, wire::DATA_PATH, limit))
-        .await
-        .map_err(|_| format!("the hub did not answer within {} s", SILENCE.as_secs()))??;
+    let dialed = dial::dial(&membership.hub, membership.cert, wire::DATA_PATH, limit).await?;
     let mut socket = dialed.socket;
     let proof = key.sign(Domain::Session, &dialed.binding);
     let hello = Up::Hello {

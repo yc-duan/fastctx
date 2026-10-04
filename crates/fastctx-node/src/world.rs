@@ -100,7 +100,7 @@ pub fn link_state(link: Option<&Link>) -> LinkState {
     match link.map(Link::status) {
         None => LinkState::Alone,
         Some(Status::Connecting { since, last_error }) => LinkState::Connecting { since, last_error },
-        Some(Status::Online { since, address }) => LinkState::Online { since, hub: address.to_string() },
+        Some(Status::Online { since, address, route }) => LinkState::Online { since, hub: address.to_string(), route },
         Some(Status::Stopped { reason }) => LinkState::Stopped { reason },
     }
 }

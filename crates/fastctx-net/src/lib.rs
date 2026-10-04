@@ -12,6 +12,8 @@ pub mod dial;
 pub mod join;
 pub mod link;
 pub mod message;
+pub mod proxy;
+pub mod route;
 pub mod sign;
 pub mod tls;
 pub mod trust;

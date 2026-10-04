@@ -151,8 +151,8 @@ fn call(call: Call) -> anyhow::Result<Reply> {
 fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
     let link = match (&reply.world, &reply.link) {
         (_, LinkState::Alone) => "a World of one machine".to_string(),
-        (Some(world), LinkState::Online { since, hub }) => {
-            format!("in {world}; connected to the hub at {hub} since {}", clock(*since, now))
+        (Some(world), LinkState::Online { since, hub, route }) => {
+            format!("in {world}; connected to the hub at {hub}, {route}, since {}", clock(*since, now))
         }
         (Some(world), LinkState::Connecting { last_error: None, .. }) => format!("in {world}; connecting to the hub"),
         (Some(world), LinkState::Connecting { since, last_error: Some(error) }) => {

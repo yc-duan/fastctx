@@ -12,7 +12,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::trust::CertPin;
-use crate::wire::{Down, EXPORTER_LABEL, Up};
+use crate::wire::{Down, EXPORTER_LABEL, SILENCE, Up};
 
 pub type HubSocket = WebSocketStream<TlsStream<TcpStream>>;
 
@@ -23,15 +23,88 @@ pub struct Dialed {
     /// prove it is the one on it.
     pub binding: [u8; 32],
     pub address: SocketAddr,
+    /// The way the connection left this machine, in a few words.
+    pub route: String,
 }
 
-/// Connects to the first of the hub's addresses that answers.
+/// One way out of this machine (`route.rs`).
+enum Way {
+    /// Pinned to the physical network card.
+    Pinned(crate::route::Interface),
+    Proxy(crate::proxy::Proxy),
+    /// Wherever the system's routes send it.
+    System,
+}
+
+impl std::fmt::Display for Way {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Way::Pinned(interface) => write!(f, "directly through \"{}\"", interface.name),
+            Way::Proxy(proxy) => write!(f, "through {proxy}"),
+            Way::System => f.write_str("along the system's routes"),
+        }
+    }
+}
+
+/// The ways to try for `address`, in order: the physical card, then the
+/// system's proxy or, without one, its routes. Nothing captures a loopback
+/// address, so it is reached plainly.
+fn ways(address: SocketAddr) -> (Vec<Way>, Option<String>) {
+    if address.ip().is_loopback() {
+        return (vec![Way::System], None);
+    }
+    let mut ways = Vec::new();
+    let mut note = None;
+    match crate::route::interfaces() {
+        Ok(interfaces) => match crate::route::physical(&interfaces) {
+            Some(interface) => ways.push(Way::Pinned(interface.clone())),
+            None => note = Some("no physical network card is up with an address".to_string()),
+        },
+        Err(error) => note = Some(error),
+    }
+    ways.push(match crate::proxy::system(address) {
+        Some(proxy) => Way::Proxy(proxy),
+        None => Way::System,
+    });
+    (ways, note)
+}
+
+impl Way {
+    fn pinned(&self) -> bool {
+        matches!(self, Way::Pinned(_))
+    }
+}
+
+/// For each address, whether the way that last reached it was the pinned
+/// one. That way is tried first next time, so where the physical card
+/// cannot reach the hub, each new connection does not wait for it first.
+static LAST_WAY: std::sync::Mutex<std::collections::BTreeMap<SocketAddr, bool>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Connects to the first of the hub's addresses that answers, each by the
+/// first way that reaches it.
 pub async fn dial(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usize) -> Result<Dialed, String> {
     let mut failures = Vec::new();
     for address in hub {
-        match dial_one(*address, pin, path, max_message).await {
-            Ok(dialed) => return Ok(dialed),
-            Err(error) => failures.push(format!("{address}: {error}")),
+        let (mut ways, note) = ways(*address);
+        if let Some(pinned) = LAST_WAY.lock().expect("never poisoned").get(address).copied() {
+            // A stable sort keeps the rest in order.
+            ways.sort_by_key(|way| way.pinned() != pinned);
+        }
+        if let Some(note) = note {
+            failures.push(format!("{address}: {note}"));
+        }
+        for way in ways {
+            // Each way gets the time the World gives any silent peer, so a
+            // way that swallows packets does not use up the next one's.
+            match tokio::time::timeout(SILENCE, dial_one(*address, &way, pin, path, max_message)).await {
+                Ok(Ok(dialed)) => {
+                    LAST_WAY.lock().expect("never poisoned").insert(*address, way.pinned());
+                    return Ok(dialed);
+                }
+                Ok(Err(error)) => failures.push(format!("{address} {way}: {error}")),
+                Err(_) => failures.push(format!("{address} {way}: no answer within {} s", SILENCE.as_secs())),
+            }
         }
     }
     if failures.is_empty() {
@@ -40,8 +113,21 @@ pub async fn dial(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usi
     Err(failures.join("; "))
 }
 
-async fn dial_one(address: SocketAddr, pin: CertPin, path: &str, max_message: usize) -> Result<Dialed, String> {
-    let tcp = TcpStream::connect(address).await.map_err(|error| format!("connecting: {error}"))?;
+async fn dial_one(
+    address: SocketAddr,
+    way: &Way,
+    pin: CertPin,
+    path: &str,
+    max_message: usize,
+) -> Result<Dialed, String> {
+    let tcp = match way {
+        Way::Pinned(interface) => crate::route::pinned_socket(interface, address)?
+            .connect(address)
+            .await
+            .map_err(|error| format!("connecting: {error}"))?,
+        Way::Proxy(proxy) => crate::proxy::connect(proxy, address).await?,
+        Way::System => TcpStream::connect(address).await.map_err(|error| format!("connecting: {error}"))?,
+    };
     configure(&tcp);
     let tls = TlsConnector::from(crate::tls::client_config(pin))
         .connect(rustls::pki_types::ServerName::IpAddress(address.ip().into()), tcp)
@@ -56,7 +142,8 @@ async fn dial_one(address: SocketAddr, pin: CertPin, path: &str, max_message: us
     let (socket, _) = tokio_tungstenite::client_async_with_config(url, tls, Some(config(max_message)))
         .await
         .map_err(|error| format!("WebSocket: {error}"))?;
-    Ok(Dialed { socket, binding, address })
+    let route = if address.ip().is_loopback() { "on this machine".to_string() } else { way.to_string() };
+    Ok(Dialed { socket, binding, address, route })
 }
 
 pub fn config(max_message: usize) -> WebSocketConfig {

@@ -76,19 +76,11 @@ fn backoff(failures: u32) -> Duration {
 
 async fn connect(inner: &Arc<Inner>) -> Ended {
     let membership = &inner.membership;
-    let dialed = match tokio::time::timeout(
-        SILENCE,
-        dial::dial(&membership.hub, membership.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME),
-    )
-    .await
-    {
-        Ok(Ok(dialed)) => dialed,
-        Ok(Err(error)) => return Ended::Retry(error),
-        Err(_) => {
-            return Ended::Retry(format!("the hub did not answer within {} s", SILENCE.as_secs()));
-        }
+    let dialed = match dial::dial(&membership.hub, membership.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await {
+        Ok(dialed) => dialed,
+        Err(error) => return Ended::Retry(error),
     };
-    let address = dialed.address;
+    let (address, route) = (dialed.address, dialed.route.clone());
     let mut socket = dialed.socket;
     let proof = inner.key.sign(Domain::Session, &dialed.binding);
     let position = {
@@ -143,8 +135,8 @@ async fn connect(inner: &Arc<Inner>) -> Ended {
     let generation = inner.next_id();
     let (up, mut outgoing) = mpsc::unbounded_channel::<Up>();
     *inner.connection.lock().expect("never poisoned") = Some(Connection { generation, up: up.clone() });
-    inner.status.send_replace(Status::Online { since: Timestamp::now(), address });
-    inner.node.log(format!("connected to the hub at {address}"));
+    inner.status.send_replace(Status::Online { since: Timestamp::now(), address, route: route.clone() });
+    inner.node.log(format!("connected to the hub at {address}, {route}"));
 
     let (mut sink, mut stream) = socket.split();
     let (writer_done, mut writer_stopped) = oneshot::channel::<()>();

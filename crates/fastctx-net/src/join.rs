@@ -23,10 +23,7 @@ pub async fn join(code: &Code, name: MachineName, key: &SecretKey) -> Result<Mem
     };
     let record = Record { world: code.world().clone(), name: name.clone(), key: key.public(), credential };
     let record = Signed::new(key, Domain::Record, &record);
-    let dialed =
-        tokio::time::timeout(SILENCE, dial::dial(code.hub(), code.cert(), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME))
-            .await
-            .map_err(|_| format!("the hub did not answer within {} s", SILENCE.as_secs()))??;
+    let dialed = dial::dial(code.hub(), code.cert(), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
     let mut socket = dialed.socket;
     let hello = Up::Hello {
         protocol: PROTOCOL,
