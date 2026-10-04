@@ -51,6 +51,8 @@ pub enum Role {
     OnBubble,
     /// The ground of code.
     Code,
+    /// A hairline between the parts of a page.
+    Rule,
     Text,
     /// What is said about a thing rather than the thing.
     Muted,
@@ -72,7 +74,8 @@ pub enum Role {
 /// The values of each role, as `#rrggbb`: the tokens the graphical
 /// interface takes too. All but `Caution` are incipit's (`--ink-surface-*`,
 /// `--ink-text-*`, `--ink-accent*`, `--ink-bubble-*`, the diff colours for
-/// alive and wrong); incipit has no colour for something to look at.
+/// alive and wrong; the rule is `--ink-border-strong` laid over the
+/// ground); incipit has no colour for something to look at.
 pub const fn token(theme: Theme, role: Role) -> (u8, u8, u8) {
     match (theme, role) {
         (Theme::WarmBlack, Role::Ground) => (0x1f, 0x1f, 0x1e),
@@ -80,6 +83,7 @@ pub const fn token(theme: Theme, role: Role) -> (u8, u8, u8) {
         (Theme::WarmBlack, Role::Bubble) => (0x12, 0x12, 0x12),
         (Theme::WarmBlack, Role::OnBubble) => (0xf5, 0xf2, 0xe8),
         (Theme::WarmBlack, Role::Code) => (0x27, 0x27, 0x27),
+        (Theme::WarmBlack, Role::Rule) => (0x41, 0x41, 0x3f),
         (Theme::WarmBlack, Role::Text) => (0xf8, 0xf8, 0xf6),
         (Theme::WarmBlack, Role::Muted) => (0xbc, 0xbc, 0xb9),
         (Theme::WarmBlack, Role::Faint) => (0x98, 0x98, 0x98),
@@ -93,6 +97,7 @@ pub const fn token(theme: Theme, role: Role) -> (u8, u8, u8) {
         (Theme::InkBlack, Role::Bubble) => (0xfb, 0xfb, 0xfc),
         (Theme::InkBlack, Role::OnBubble) => (0x0a, 0x0b, 0x0b),
         (Theme::InkBlack, Role::Code) => (0x1a, 0x1b, 0x1c),
+        (Theme::InkBlack, Role::Rule) => (0x31, 0x32, 0x32),
         (Theme::InkBlack, Role::Text) => (0xfb, 0xfb, 0xfc),
         (Theme::InkBlack, Role::Muted) => (0xaa, 0xaa, 0xab),
         (Theme::InkBlack, Role::Faint) => (0x83, 0x84, 0x84),
@@ -106,6 +111,7 @@ pub const fn token(theme: Theme, role: Role) -> (u8, u8, u8) {
         (Theme::WarmWhite, Role::Bubble) => (0xe6, 0xe4, 0xde),
         (Theme::WarmWhite, Role::OnBubble) => (0x0d, 0x0d, 0x0d),
         (Theme::WarmWhite, Role::Code) => (0xe6, 0xe4, 0xde),
+        (Theme::WarmWhite, Role::Rule) => (0xda, 0xd9, 0xd5),
         (Theme::WarmWhite, Role::Text) => (0x0d, 0x0d, 0x0d),
         (Theme::WarmWhite, Role::Muted) => (0x79, 0x75, 0x69),
         (Theme::WarmWhite, Role::Faint) => (0x9a, 0x96, 0x8b),
@@ -138,6 +144,7 @@ impl Look {
                 // The terminal's own ground and text, whatever they are.
                 Role::Ground | Role::Raised | Role::Bubble | Role::OnBubble | Role::Code | Role::Text => None,
                 Role::Muted | Role::Faint => Some(Color::Gray),
+                Role::Rule => Some(Color::DarkGray),
                 Role::Accent => Some(Color::Yellow),
                 Role::Alive => Some(Color::Green),
                 Role::Caution => Some(Color::Yellow),
@@ -160,6 +167,7 @@ impl Look {
         match (self.depth, role) {
             // Without colour, what is said about a thing steps back.
             (Depth::Ansi16 | Depth::Mono, Role::Faint) => style.add_modifier(Modifier::DIM),
+            (Depth::Mono, Role::Rule) => style.add_modifier(Modifier::DIM),
             (Depth::Mono, Role::Muted) => style.add_modifier(Modifier::DIM),
             (Depth::Mono, Role::Accent | Role::Wrong) => style.add_modifier(Modifier::BOLD),
             _ => style,

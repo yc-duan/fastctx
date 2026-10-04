@@ -35,6 +35,8 @@ pub struct Row {
     pub left: Line<'static>,
     pub right: Line<'static>,
     pub item: Option<usize>,
+    /// A hairline runs from the left side to the right: a section's title.
+    pub rule: bool,
 }
 
 impl Row {
@@ -65,7 +67,7 @@ pub fn indented(lines: Vec<Line<'static>>, indent: usize, item: Option<usize>) -
             if indent > 0 {
                 line.spans.insert(0, Span::raw(" ".repeat(indent)));
             }
-            Row { left: line, right: Line::default(), item }
+            Row { left: line, right: Line::default(), item, rule: false }
         })
         .collect()
 }
@@ -96,7 +98,19 @@ pub fn rows(buffer: &mut Buffer, area: Rect, rows: &[Row], top: usize, selected:
                 buffer.set_string(area.x.saturating_sub(2), y, MARK, look.raised(Role::Accent));
             }
         }
-        line(buffer, area.x, y, area.width, &row.left, &row.right, raised, look);
+        if row.rule {
+            let right = text::line_width(&row.right);
+            let room = if right > 0 { (area.width as usize).saturating_sub(right + 2) } else { area.width as usize };
+            let run = room.saturating_sub(text::line_width(&row.left) + 1);
+            let mut left = row.left.clone();
+            if run > 0 {
+                left.spans.push(Span::raw(" "));
+                left.spans.push(Span::styled("─".repeat(run), look.text(Role::Rule)));
+            }
+            line(buffer, area.x, y, area.width, &left, &row.right, raised, look);
+        } else {
+            line(buffer, area.x, y, area.width, &row.left, &row.right, raised, look);
+        }
     }
 }
 
@@ -227,8 +241,9 @@ pub fn footer(buffer: &mut Buffer, area: Rect, look: &Look, keys: &[(&str, &str)
 }
 
 /// A section's name: quiet, but where the eye finds it.
+/// A section's title, with a hairline to its right.
 pub fn section(title: &str, look: &Look) -> Row {
-    Row::new(Span::styled(title.to_string(), look.text(Role::Muted).add_modifier(Modifier::BOLD)))
+    Row { rule: true, ..Row::new(Span::styled(title.to_string(), look.text(Role::Muted).add_modifier(Modifier::BOLD))) }
 }
 
 /// Starts a section under what is there: two blank rows above its title
