@@ -1,0 +1,369 @@
+//! System units run at boot under an explicit account, without a login or
+//! a lingering user manager. systemd retains exit diagnostics in its journal.
+
+use std::fs;
+use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+use std::path::PathBuf;
+use std::process::Command;
+
+use anyhow::{Context as _, bail};
+use fastctx_platform::FileLock;
+use fastctx_platform::atomic::{Permissions, publish};
+
+use super::linux_watchdog::{self, Watchdog};
+use super::{Service, Status, checked, transaction};
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize, Serialize)]
+struct Before {
+    unit: Option<Vec<u8>>,
+    executable: Option<Vec<u8>>,
+    status: Status,
+    watchdog: linux_watchdog::Before,
+}
+
+struct Registration {
+    name: String,
+    file: PathBuf,
+    marker: String,
+    executable: PathBuf,
+    watchdog: Watchdog,
+}
+
+impl Registration {
+    fn new(service: &Service) -> Self {
+        let id = service.id(&service.uid.to_le_bytes());
+        Self {
+            watchdog: Watchdog::new(&format!("{id}.service"), &format!("# fastctx service v1: {id}\n")),
+            name: format!("{id}.service"),
+            file: PathBuf::from("/etc/systemd/system").join(format!("{id}.service")),
+            marker: format!("# fastctx service v1: {id}\n"),
+            executable: PathBuf::from("/etc/systemd/system").join(format!("{id}.executable")),
+        }
+    }
+
+    fn read(&self) -> anyhow::Result<Option<Vec<u8>>> {
+        let metadata = match fs::symlink_metadata(&self.file) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.is_file() {
+            bail!("{} is not a regular fastctx unit file", self.file.display());
+        }
+        let bytes = fs::read(&self.file)?;
+        if !bytes.starts_with(self.marker.as_bytes()) {
+            bail!("{} is not owned by this fastctx service", self.file.display());
+        }
+        Ok(Some(bytes))
+    }
+
+    fn status(&self, installed: bool) -> anyhow::Result<Status> {
+        if !installed {
+            let load = systemctl(&["show", &self.name, "--property=LoadState", "--value"])?;
+            if load.trim() != "not-found" {
+                bail!("{} is loaded from another location; refusing to manage it", self.name);
+            }
+            return Ok(Status {
+                name: self.name.clone(),
+                installed: false,
+                enabled: false,
+                state: "absent".into(),
+                last_exit: None,
+                logs: format!("journalctl --unit {}", self.name),
+                recovery: Some(self.watchdog.status()?),
+            });
+        }
+        checked(Command::new("busctl").args([
+            "--system",
+            "call",
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "LoadUnit",
+            "s",
+            &self.name,
+        ]))?;
+        let active = self.property("Unit", "ActiveState")?;
+        let sub = self.property("Unit", "SubState")?;
+        let enabled = self.property("Unit", "UnitFileState")?;
+        let exit = self.property("Service", "ExecMainStatus")?;
+        Ok(Status {
+            name: self.name.clone(),
+            installed,
+            enabled: enabled.as_str().context("systemd omitted UnitFileState")? == "enabled",
+            state: format!(
+                "{}/{}",
+                active.as_str().context("systemd omitted ActiveState")?,
+                sub.as_str().context("systemd omitted SubState")?
+            ),
+            last_exit: Some(exit.as_i64().context("systemd omitted ExecMainStatus")?),
+            logs: format!("journalctl --unit {}", self.name),
+            recovery: Some(self.watchdog.status()?),
+        })
+    }
+
+    /// systemctl show requests GetAll even with --property. An ExecStart
+    /// containing non-UTF-8 argv cannot be serialized as a D-Bus string, so
+    /// GetAll fails. Get reads only the requested, representable property.
+    fn property(&self, interface: &str, property: &str) -> anyhow::Result<serde_json::Value> {
+        let path = format!(
+            "/org/freedesktop/systemd1/unit/{}",
+            self.name
+                .bytes()
+                .map(|byte| {
+                    if byte.is_ascii_alphanumeric() { (byte as char).to_string() } else { format!("_{byte:02x}") }
+                })
+                .collect::<String>()
+        );
+        let output = checked(Command::new("busctl").args([
+            "--system",
+            "--json=short",
+            "get-property",
+            "org.freedesktop.systemd1",
+            &path,
+            &format!("org.freedesktop.systemd1.{interface}"),
+            property,
+        ]))?;
+        let result: serde_json::Value = serde_json::from_str(&output)?;
+        result.get("data").cloned().context("busctl omitted property data")
+    }
+}
+
+pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
+    let reg = Registration::new(service);
+    transaction::require_complete(&reg.file.with_extension("transaction"))?;
+    reg.status(reg.read()?.is_some())
+}
+
+pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
+    require_manager_features()?;
+    let reg = Registration::new(service);
+    let _lock = FileLock::acquire(&PathBuf::from("/run/lock").join(format!("{}.lock", reg.name)))?;
+    if !service.executable.is_file() || !service.directory.is_dir() {
+        bail!("the executable and service data directory must exist before installation");
+    }
+    let content = definition(service, &reg);
+    transaction::run(
+        &reg.file.with_extension("transaction"),
+        &reg.marker,
+        || capture(&reg),
+        |before| {
+            let changed = before.unit.as_deref() != Some(content.as_bytes())
+                || before.executable.as_deref() != Some(service.executable.as_os_str().as_bytes());
+            if changed {
+                if before.unit.is_some() {
+                    systemctl(&["disable", &reg.name])?;
+                    reg.watchdog.stop()?;
+                    systemctl(&["stop", &reg.name])?;
+                }
+                publish_link(&reg.executable, &service.executable)?;
+                publish(&reg.file, content.as_bytes(), Permissions::KeepExisting)?;
+            }
+            reg.watchdog.write(&reg.name)?;
+            systemctl(&["daemon-reload"])?;
+            systemctl(&["enable", &reg.name])?;
+            systemctl(&["start", &reg.name])?;
+            reg.watchdog.start()?;
+            reg.status(true)
+        },
+        |before| restore(&reg, before),
+    )
+}
+
+fn require_manager_features() -> anyhow::Result<()> {
+    // OnSuccess, required to restore an explicit stop immediately, was added
+    // in systemd 249. Ask the running manager, not an upgraded client's version.
+    let output = checked(Command::new("busctl").args([
+        "--system",
+        "--json=short",
+        "get-property",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "Version",
+    ]))?;
+    let value: serde_json::Value = serde_json::from_str(&output)?;
+    let text = value.get("data").and_then(serde_json::Value::as_str).context("systemd omitted its Version")?;
+    let version: u32 = text
+        .trim_start_matches('v')
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .with_context(|| format!("unrecognized systemd version {text:?}"))?;
+    if version < 249 {
+        bail!("fastctx services require systemd 249 or newer for immediate recovery after stop; running {text}");
+    }
+    Ok(())
+}
+
+fn capture(reg: &Registration) -> anyhow::Result<Before> {
+    let unit = reg.read()?;
+    let executable = read_link(&reg.executable)?.map(|path| path.into_os_string().into_vec());
+    if unit.is_none() && executable.is_some() {
+        bail!("{} exists without its owned unit", reg.executable.display());
+    }
+    let status = reg.status(unit.is_some())?;
+    Ok(Before { unit, executable, status, watchdog: reg.watchdog.capture()? })
+}
+
+fn restore(reg: &Registration, before: &Before) -> anyhow::Result<()> {
+    let mut errors = Vec::new();
+    let mut record = |result: anyhow::Result<()>| {
+        if let Err(error) = result {
+            errors.push(format!("{error:#}"));
+        }
+    };
+    record((|| {
+        if reg.file.try_exists()? {
+            systemctl(&["disable", &reg.name])?;
+        }
+        reg.watchdog.stop()
+    })());
+    record((|| {
+        // is-active reads ActiveState alone: LSB 3 means inactive and 4
+        // means absent. Unlike show it never serializes argv.
+        let output = Command::new("systemctl").args(["--system", "is-active", &reg.name]).output()?;
+        let state = std::str::from_utf8(&output.stdout)?.trim();
+        if !matches!(output.status.code(), Some(0 | 3 | 4)) {
+            bail!("systemctl is-active exited {}: {}", output.status, String::from_utf8_lossy(&output.stderr));
+        }
+        if !matches!(state, "inactive" | "failed" | "unknown") {
+            systemctl(&["stop", &reg.name])?;
+        }
+        Ok(())
+    })());
+    // A missing file here was never enabled, or was already disabled by
+    // uninstall before deletion. systemctl disable rejects absent files.
+    record((|| {
+        if reg.file.try_exists()? {
+            systemctl(&["disable", &reg.name])?;
+        }
+        Ok(())
+    })());
+    record(match before.unit.as_deref() {
+        Some(bytes) => publish(&reg.file, bytes, Permissions::KeepExisting).map_err(Into::into),
+        None => match fs::remove_file(&reg.file) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        },
+    });
+    record(match before.executable.as_deref() {
+        Some(target) => publish_link(&reg.executable, std::path::Path::new(std::ffi::OsStr::from_bytes(target))),
+        None => delete_file(&reg.executable).map_err(Into::into),
+    });
+    record(systemctl(&["daemon-reload"]).map(|_| ()));
+    if before.status.enabled {
+        record(systemctl(&["enable", &reg.name]).map(|_| ()));
+    }
+    if ["active/", "activating/", "reloading/"].iter().any(|state| before.status.state.starts_with(state)) {
+        record(systemctl(&["start", &reg.name]).map(|_| ()));
+    }
+    record(reg.watchdog.restore(&before.watchdog));
+    if !errors.is_empty() {
+        bail!("{}", errors.join("; "));
+    }
+    Ok(())
+}
+
+pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
+    let reg = Registration::new(service);
+    let _lock = FileLock::acquire(&PathBuf::from("/run/lock").join(format!("{}.lock", reg.name)))?;
+    transaction::run(
+        &reg.file.with_extension("transaction"),
+        &reg.marker,
+        || capture(&reg),
+        |before| {
+            if before.unit.is_some() {
+                systemctl(&["disable", &reg.name])?;
+                reg.watchdog.stop()?;
+                systemctl(&["stop", &reg.name])?;
+                fs::remove_file(&reg.file)?;
+                delete_file(&reg.executable)?;
+            }
+            reg.watchdog.delete()?;
+            systemctl(&["daemon-reload"])?;
+            reg.status(false)
+        },
+        |before| restore(&reg, before),
+    )
+}
+
+pub(super) fn systemctl(args: &[&str]) -> anyhow::Result<String> {
+    checked(Command::new("systemctl").arg("--system").args(args))
+}
+
+fn definition(service: &Service, reg: &Registration) -> String {
+    // The node owns its ordinary children; independently supervised world
+    // jobs must survive a foreground restart or an idle identity handoff.
+    let args = std::iter::once(reg.executable.as_os_str())
+        .chain(service.arguments().iter().map(|arg| arg.as_os_str()))
+        .map(word)
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "{}[Unit]\nDescription=fastctx {}\nStartLimitIntervalSec=0\nOnSuccess={}\n\n[Service]\nType=exec\nUser={}\nExecStart=:{}\nRestart=always\nRestartSec=0\nKillMode=process\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
+        reg.marker,
+        service.role(),
+        reg.watchdog.checker,
+        service.uid,
+        args,
+    )
+}
+
+fn read_link(path: &std::path::Path) -> anyhow::Result<Option<PathBuf>> {
+    match fs::read_link(path) {
+        Ok(target) => Ok(Some(target)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("reading service executable link {}", path.display())),
+    }
+}
+
+fn delete_file(path: &std::path::Path) -> std::io::Result<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+/// systemd rejects control characters in an executable name even when they
+/// were correctly C-escaped. A stable symlink lets the kernel resolve the
+/// original native pathname while systemd still execs the service directly.
+fn publish_link(path: &std::path::Path, target: &std::path::Path) -> anyhow::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let temporary = path.with_file_name(format!(
+        ".fastctx-service-{}-{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::os::unix::fs::symlink(target, &temporary)?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let cleanup = fs::remove_file(&temporary);
+        return match cleanup {
+            Ok(()) => Err(error.into()),
+            Err(cleanup) => Err(error).context(format!("removing staged executable link also failed: {cleanup}")),
+        };
+    }
+    fs::File::open(path.parent().context("service link has no parent")?)?.sync_all()?;
+    Ok(())
+}
+
+/// systemd unquotes C escapes and then expands percent specifiers. The ':'
+/// ExecStart prefix disables dollar substitution (including in argv[0]).
+/// Byte escapes preserve non-UTF-8 names, newlines and every other filename byte.
+fn word(value: &std::ffi::OsStr) -> String {
+    use std::os::unix::ffi::OsStrExt as _;
+    let mut result = String::from("\"");
+    for byte in value.as_bytes() {
+        match byte {
+            b'%' => result.push_str("%%"),
+            b'/' | b'.' | b'-' | b'_' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' => result.push(*byte as char),
+            byte => result.push_str(&format!("\\x{byte:02x}")),
+        }
+    }
+    result.push('"');
+    result
+}

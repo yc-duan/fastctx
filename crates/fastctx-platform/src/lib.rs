@@ -7,6 +7,7 @@
 //! platforms appear in this crate only.
 
 pub mod atomic;
+pub mod awake;
 #[cfg(any(target_os = "linux", windows))]
 pub mod child;
 pub mod detach;
@@ -22,6 +23,7 @@ pub mod private;
 pub mod procfs;
 #[cfg(windows)]
 pub mod registry;
+pub mod service_channel;
 #[cfg(any(target_os = "linux", windows))]
 pub mod tree;
 #[cfg(unix)]

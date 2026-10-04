@@ -39,13 +39,19 @@ pub fn start_args(start: &Start) -> Vec<OsString> {
         start.plugin.into(),
         "--settings".into(),
         start.settings.into(),
+        // Nothing asks: the World's tools are allowed by the session's
+        // settings and anything else that would ask is refused. Unlike
+        // bypassPermissions, this needs no disclaimer the user accepted.
         "--permission-mode".into(),
-        "bypassPermissions".into(),
+        "dontAsk".into(),
         "--append-system-prompt-file".into(),
         start.instructions.into(),
         start.first_words.into(),
     ]
 }
+
+/// How Claude Code refuses to start a session in a directory not trusted.
+pub const UNTRUSTED: &str = "Workspace not trusted";
 
 /// The one way to wake a stopped session as it was.
 pub fn wake_args(session: &str, words: &str) -> Vec<OsString> {

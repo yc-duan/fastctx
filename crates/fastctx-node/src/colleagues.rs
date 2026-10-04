@@ -155,7 +155,7 @@ pub async fn thread_spec(
 ) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
     let cwd = standing(node, town)?;
-    let binary = std::env::current_exe().map_err(|error| Failure::new(format!("finding fastctx itself: {error}")))?;
+    let binary = node.fastctx.clone();
     let address = Address { machine: here.clone(), resident: id.clone() };
     let mut env = vec![
         ("FASTCTX_HOME".to_string(), node.root.to_string_lossy().into_owned()),

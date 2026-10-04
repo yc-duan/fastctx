@@ -20,6 +20,7 @@ mod ledger;
 mod log;
 mod look;
 mod machine;
+mod own;
 mod residents;
 mod server;
 mod speech;
@@ -27,6 +28,7 @@ mod talk;
 mod town;
 mod turns;
 mod watch;
+mod watchdog;
 mod who;
 mod world;
 mod write;
@@ -48,6 +50,9 @@ pub(crate) struct Node {
     /// the programs the node starts.
     root: PathBuf,
     world: WorldDir,
+    /// This program's own copy under the World, which everything the node
+    /// starts from itself runs from (`own.rs`).
+    fastctx: PathBuf,
     /// This machine's name; it changes only when the machine joins a World.
     machine: RwLock<MachineName>,
     jobs: jobs::Jobs,
@@ -101,6 +106,10 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     std::panic::set_hook(Box::new(move |info| panics.line(format_args!("panicked: {info}"))));
     let machine = machine::name(&world)?;
     log.line(format_args!("node {} starting as {machine}", env!("CARGO_PKG_VERSION")));
+    let (fastctx, kept) = own::pin(&world).context("copying fastctx under the World")?;
+    for (path, error) in &kept {
+        log.line(format_args!("could not remove an older copy of fastctx, {}: {error}", path.display()));
+    }
 
     let reconciled = jobs::reconcile(&world)?;
     for path in &reconciled.interrupted {
@@ -141,6 +150,7 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     let node = Arc::new(Node {
         root: fastctx_root.to_path_buf(),
         world,
+        fastctx,
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
         residents,
@@ -176,9 +186,24 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
         node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
     }
 
+    let watchdog = watchdog::Watchdog::start(&node.world.node_log()).context("starting the control-loop watchdog")?;
     loop {
-        match listener.accept().await {
+        let accepted = tokio::select! {
+            // A ready watchdog request precedes a flood of new clients;
+            // its scheduling must not depend on random select fairness.
+            biased;
+            () = watchdog.requested() => {
+                if node.link().is_some_and(|link| link.failed()) {
+                    node.log.line("the link task ended unexpectedly; exiting for the service to restart it");
+                    std::process::exit(1);
+                }
+                continue;
+            },
+            accepted = listener.accept() => accepted,
+        };
+        match accepted {
             Ok(connection) => {
+                watchdog.progress();
                 tokio::spawn(server::serve(node.clone(), connection));
             }
             // One client failing to connect does not stop the others.
