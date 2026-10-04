@@ -804,10 +804,22 @@ new Palette({
       { group: paletteWords.actions, label: shellWords.newProject, run: () => projectForm.open() },
       { group: paletteWords.actions, label: deviceWords.invite, run: () => devices.invite() },
       { group: paletteWords.actions, label: paletteWords.fold, note: "Ctrl B", run: () => shell.toggleSidebar() },
+      ...(place.kind === "talk"
+        ? [
+            {
+              group: paletteWords.actions,
+              label: words.find.find,
+              note: "Ctrl F",
+              run: () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true })),
+            },
+          ]
+        : []),
       ...themes.map((theme) => ({ group: paletteWords.actions, label: paletteWords.theme(themeNames[theme]), run: () => chooseTheme(theme) })),
       { group: paletteWords.places, label: shellWords.world, run: go({ kind: "home" }) },
       ...(world?.towns ?? []).map((town) => ({ group: paletteWords.places, label: town.record.name, note: town.town, run: go({ kind: "project", town: town.town }) })),
+      { group: paletteWords.places, label: shellWords.machines, run: go({ kind: "machines" }) },
       { group: paletteWords.places, label: shellWords.settings, run: go({ kind: "settings" }) },
+      { group: paletteWords.places, label: homeWords.setUp, run: go({ kind: "welcome" }) },
       ...residentsOf(world)
         .filter((r) => r.here || r.now?.waiting_for_user)
         .map((r) => ({
