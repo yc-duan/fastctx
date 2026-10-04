@@ -7,6 +7,7 @@
 //! results. Other crates refer to these types and never redefine them; what
 //! is written to disk and what travels on the wire is their serde form.
 
+pub mod agents;
 pub mod calls;
 pub mod copy;
 pub mod files;

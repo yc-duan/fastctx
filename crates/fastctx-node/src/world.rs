@@ -189,8 +189,10 @@ impl fastctx_net::link::Node for Handler {
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
                     crate::talk::serve_watch(&node, resident, watch, stream).await
                 }
-                RemoteCall::Open { agent, town, text } => {
-                    let (resident, landed) = crate::talk::open_here(&node, &from, agent, town, text).await?;
+                RemoteCall::Agents => crate::agents::here(&node).await.map(RemoteReply::Agents),
+                RemoteCall::Open { agent, town, text, model, reasoning_effort } => {
+                    let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
+                    let (resident, landed) = crate::talk::open_here(&node, &from, agent, town, text, options).await?;
                     Ok(RemoteReply::Opened { resident, landed })
                 }
                 RemoteCall::Stop { resident } => {

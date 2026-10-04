@@ -857,17 +857,7 @@ struct Command {
 }
 
 fn command(node: &Node) -> Result<Command, Failure> {
-    let mut env = fastctx_platform::world_process_environment()
-        .map_err(|error| Failure::new(format!("reading the user's environment: {error}")))?;
-    // A `claude --bg` may start Claude Code's daemon, whose environment every
-    // later background session gets, the user's own included. Nothing of the
-    // World goes into it: sessions are known by their ids, and the plugin
-    // names its World itself.
-    env.retain(|(name, _)| {
-        !["FASTCTX_RESIDENT", "FASTCTX_HOME", "FASTCTX_COLLEAGUE"].iter().any(|world| name.eq_ignore_ascii_case(world))
-    });
-    // Found on the node's own search path, which for a node the World
-    // started is the user's own.
+    let env = environment()?;
     let path = std::env::var_os("PATH");
     let program = background::find(path.as_ref()).ok_or_else(|| {
         Failure::new(format!("Claude Code is not installed on {}: no claude command", node.machine()))
@@ -877,6 +867,19 @@ fn command(node: &Node) -> Result<Command, Failure> {
     Ok(Command { program, cwd, env })
 }
 
+pub(crate) fn environment() -> Result<Vec<(OsString, OsString)>, Failure> {
+    let mut env = fastctx_platform::world_process_environment()
+        .map_err(|error| Failure::new(format!("reading the user's environment: {error}")))?;
+    // A `claude --bg` may start Claude Code's daemon, whose environment every
+    // later background session gets, the user's own included. Nothing of the
+    // World goes into it: sessions are known by their ids, and the plugin
+    // names its World itself.
+    env.retain(|(name, _)| {
+        !["FASTCTX_RESIDENT", "FASTCTX_HOME", "FASTCTX_COLLEAGUE"].iter().any(|world| name.eq_ignore_ascii_case(world))
+    });
+    Ok(env)
+}
+
 /// Opens a Claude Code background session on this machine for the user
 /// typing on `typed_on`, with their words as its first.
 pub async fn open_here(
@@ -884,6 +887,7 @@ pub async fn open_here(
     typed_on: &MachineName,
     town: Option<TownName>,
     text: String,
+    options: fastctx_types::agents::SessionOptions,
 ) -> Result<(ResidentId, Landed), Failure> {
     if let Some(town) = &town {
         crate::town::project::spans_here(node, town).await?;
@@ -945,8 +949,14 @@ pub async fn open_here(
     // connection it cannot place waits, rather than becoming someone new.
     let _birth = node.claude.births.read().await;
     let started = tokio::task::spawn_blocking(move || {
-        let start =
-            background::Start { plugin: &plugin, settings: &settings, instructions: &instructions, first_words: &text };
+        let start = background::Start {
+            plugin: &plugin,
+            settings: &settings,
+            instructions: &instructions,
+            first_words: &text,
+            model: options.model.as_deref(),
+            reasoning_effort: options.reasoning_effort.as_deref(),
+        };
         let args = background::start_args(&start);
         trust(&world)?;
         match background::claude(&program, &args, &cwd, &env) {

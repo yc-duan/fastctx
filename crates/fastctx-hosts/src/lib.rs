@@ -6,6 +6,7 @@
 //! Claude Code through its plugin and mod. Whatever a host reports comes
 //! out in the World's own terms, `fastctx_types::session`.
 
+pub mod agents;
 pub mod claude;
 pub mod codex;
 pub mod world_tools;

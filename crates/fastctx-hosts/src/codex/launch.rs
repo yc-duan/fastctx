@@ -10,6 +10,7 @@
 //! time, so the configuration is read again before every start. Without the
 //! app, a standalone `codex` on the search path speaks the same protocol.
 
+use fastctx_types::agents::ProgramSource;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -18,6 +19,7 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct Launch {
     pub binary: PathBuf,
+    pub source: ProgramSource,
     pub args: Vec<String>,
     pub config: Option<Vec<u8>>,
 }
@@ -44,10 +46,19 @@ pub fn read_config(codex_home: &Path) -> Result<Option<Vec<u8>>, String> {
 /// The Codex to start now, looking for the program on `path` (the `PATH`
 /// of the environment it will run in) when the app has recorded none.
 pub fn resolve(codex_home: &Path, path: Option<&OsString>) -> Result<Launch, String> {
+    discover(codex_home, path)?.ok_or_else(|| {
+        "Codex is not installed on this machine: neither the ChatGPT desktop app nor a codex command was found".into()
+    })
+}
+
+/// Selection is independent of executability: a stale app path must be
+/// reported and fail on use, never silently select another installation.
+pub fn discover(codex_home: &Path, path: Option<&OsString>) -> Result<Option<Launch>, String> {
     let config = read_config(codex_home)?;
     if let Some(binary) = app_binary(codex_home, config.as_deref())? {
-        return Ok(Launch {
+        return Ok(Some(Launch {
             binary,
+            source: ProgramSource::DesktopApp,
             args: vec![
                 "-c".to_string(),
                 "features.code_mode_host=true".to_string(),
@@ -59,34 +70,39 @@ pub fn resolve(codex_home: &Path, path: Option<&OsString>) -> Result<Launch, Str
                 "app-server".to_string(),
             ],
             config,
-        });
+        }));
     }
-    let name = if cfg!(windows) { "codex.exe" } else { "codex" };
-    let binary = path
-        .and_then(|path| {
-            std::env::split_paths(path).map(|directory| directory.join(name)).find(|found| found.is_file())
-        })
-        .ok_or_else(|| {
-            "Codex is not installed on this machine: neither the ChatGPT desktop app nor a codex command was found"
-                .to_string()
-        })?;
-    Ok(Launch { binary, args: vec!["app-server".to_string()], config })
+    let names: &[&str] = if cfg!(windows) { &["codex.exe", "codex.cmd"] } else { &["codex"] };
+    let binary = path.and_then(|path| {
+        std::env::split_paths(path)
+            .find_map(|directory| names.iter().map(|name| directory.join(name)).find(|found| found.is_file()))
+    });
+    Ok(binary.map(|binary| Launch {
+        binary,
+        source: ProgramSource::Path,
+        args: vec!["app-server".to_string()],
+        config,
+    }))
 }
 
-/// The `codex.exe` the desktop app recorded, when it did and it is there.
+/// The `codex.exe` the desktop app recorded, including a path removed by an upgrade.
 fn app_binary(codex_home: &Path, config: Option<&[u8]>) -> Result<Option<PathBuf>, String> {
     let Some(bytes) = config else {
         return Ok(None);
     };
     let path = codex_home.join("config.toml");
     let text = std::str::from_utf8(bytes).map_err(|error| format!("{} is not UTF-8: {error}", path.display()))?;
-    let document: toml::Table = text.parse().map_err(|error| format!("reading {}: {error}", path.display()))?;
+    let document: toml::Table =
+        text.parse().map_err(|error: toml::de::Error| format!("reading {}: {}", path.display(), error.message()))?;
     let binary = document
         .get("mcp_servers")
         .and_then(|servers| servers.get("node_repl"))
         .and_then(|server| server.get("env"))
-        .and_then(|env| env.get("CODEX_CLI_PATH"))
-        .and_then(toml::Value::as_str)
-        .map(PathBuf::from);
-    Ok(binary.filter(|binary| binary.is_file()))
+        .and_then(|env| env.get("CODEX_CLI_PATH"));
+    match binary {
+        None => Ok(None),
+        Some(value) => value.as_str().filter(|value| !value.is_empty()).map(PathBuf::from).map(Some).ok_or_else(|| {
+            format!("{}: mcp_servers.node_repl.env.CODEX_CLI_PATH must be a nonempty path", path.display())
+        }),
+    }
 }

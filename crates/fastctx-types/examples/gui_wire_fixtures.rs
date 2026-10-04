@@ -4,6 +4,8 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
+#[path = "gui_wire_fixtures/agents.rs"]
+mod agents;
 #[path = "gui_wire_fixtures/session.rs"]
 mod session;
 #[path = "gui_wire_fixtures/since.rs"]
@@ -16,10 +18,16 @@ struct Fixtures {
     session: session::Fixtures,
     world: world::Fixtures,
     since: since::Fixtures,
+    agents: agents::Fixtures,
 }
 
 fn main() {
-    let fixtures = Fixtures { session: session::fixtures(), world: world::fixtures(), since: since::fixtures() };
+    let fixtures = Fixtures {
+        session: session::fixtures(),
+        world: world::fixtures(),
+        since: since::fixtures(),
+        agents: agents::fixtures(),
+    };
     let mut out = io::stdout().lock();
     serde_json::to_writer_pretty(&mut out, &fixtures).expect("serialize GUI fixtures");
     writeln!(out).expect("write GUI fixtures");

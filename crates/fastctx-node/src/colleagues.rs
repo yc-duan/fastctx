@@ -196,7 +196,8 @@ pub async fn thread_spec(
             None
         }
     };
-    let config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
+    let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
+    crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
     let (developer_instructions, heard) = instructions(node, id, town, origin).await?;
     Ok((ThreadSpec { cwd, developer_instructions, config, name }, heard))
 }

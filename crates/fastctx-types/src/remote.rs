@@ -1,6 +1,7 @@
 //! What one machine asks another to do, and what it sends a resident who
 //! lives there (`world-network.md`, 四种话).
 
+use crate::agents::AgentsReply;
 use serde::{Deserialize, Serialize};
 
 use crate::copy::{CopyReport, Place};
@@ -28,6 +29,8 @@ pub enum RemoteCall {
     /// Existing local records strictly after this timestamp. Large replies
     /// use the telephone's existing authenticated data connection.
     Since { since: jiff::Timestamp, town: Option<TownName> },
+    /// Facts from this machine's official agent programs.
+    Agents,
     /// The documents of a canon there, for a town's map.
     Canon { path: String },
     /// Start a colleague there for a resident of the calling machine.
@@ -43,7 +46,13 @@ pub enum RemoteCall {
     /// machine that holds the session, naming `watch` and numbered from 0.
     Watch { resident: ResidentId, watch: u64 },
     /// Open a session there for the user, as `Call::Open`.
-    Open { agent: AgentName, town: Option<TownName>, text: String },
+    Open {
+        agent: AgentName,
+        town: Option<TownName>,
+        text: String,
+        model: Option<String>,
+        reasoning_effort: Option<String>,
+    },
     /// Stop the turn a resident there is running, for the user.
     Stop { resident: ResidentId },
     /// Do something to a resident's conversation there, for the user.
@@ -70,6 +79,7 @@ pub enum RemoteReply {
     },
     Who(WhoReply),
     Since(crate::since::SinceReply),
+    Agents(AgentsReply),
     Asked {
         colleague: ResidentId,
     },
