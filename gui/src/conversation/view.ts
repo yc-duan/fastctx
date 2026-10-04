@@ -37,6 +37,9 @@ export interface Context {
         settled(): void;
       }
     | undefined;
+  /** The user asked to start again from their words in `turn`, or to fork
+   *  from `turn`; offered only where the conversation takes it. */
+  turnAct?: ((act: "rewind" | "fork", turn: string, words: string | null) => void) | undefined;
 }
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
@@ -109,11 +112,11 @@ export class ConversationView {
   private memberSignature(entry: Entry): string {
     switch (entry.kind) {
       case "prose":
-        return `${entry.key}p${entry.version}${entry.writing ? "w" : ""}`;
+        return `${entry.key}p${entry.version}${entry.writing ? "w" : ""}${this.lastOfTurn(entry) ? "l" : ""}`;
       case "tool":
         return `${entry.key}t${entry.tool.status}${entry.ended?.use ?? "-"}${entry.tool.output.length}`;
       case "heard":
-        return `${entry.key}h${JSON.stringify(entry.sending ?? null)}${entry.attached?.length ?? 0}`;
+        return `${entry.key}h${JSON.stringify(entry.sending ?? null)}${entry.attached?.length ?? 0}${entry.turn ?? ""}`;
       case "steps":
         return `${entry.key}s${JSON.stringify(entry.steps)}${entry.note ?? ""}`;
       case "ask":
@@ -142,13 +145,25 @@ export class ConversationView {
     const { words } = this.context;
     switch (entry.kind) {
       case "heard":
-        return this.attached(entry.attached ?? []) + this.heard(entry.from, entry.text, entry.sending ?? null);
+        return (
+          this.attached(entry.attached ?? []) +
+          this.heard(entry.from, entry.text, entry.sending ?? null) +
+          (entry.turn && !entry.sending && (!entry.from || entry.from.kind === "user")
+            ? `<button class="turn-act turn-rewind" type="button" data-turn-act="rewind" data-turn="${escape(entry.turn)}" data-key="${entry.key}">${escape(words.rewind)}</button>`
+            : "")
+        );
       case "prose":
         if (entry.prose === "plan") {
           return `<div class="plan"><div class="plan-label">${escape(words.plan)}</div><div class="prose">${render(entry.text)}</div></div>`;
         }
         return `<div class="prose${entry.writing ? " writing" : ""}">${render(entry.text)}</div>${
-          entry.writing ? "" : `<button class="prose-copy" type="button" data-copy="${entry.key}" aria-label="${escape(words.copyMessage)}" title="${escape(words.copyMessage)}">${glyph("copy", 15)}</button>`
+          entry.writing
+            ? ""
+            : `<div class="prose-acts"><button class="prose-copy" type="button" data-copy="${entry.key}" aria-label="${escape(words.copyMessage)}" title="${escape(words.copyMessage)}">${glyph("copy", 15)}</button>${
+                this.lastOfTurn(entry)
+                  ? `<button class="turn-act turn-fork" type="button" data-turn-act="fork" data-turn="${escape(entry.turn)}">${escape(words.fork)}</button>`
+                  : ""
+              }</div>`
         }`;
       case "steps":
         return `<ol class="steps">${entry.steps
@@ -176,6 +191,13 @@ export class ConversationView {
       case "activity":
         return "";
     }
+  }
+
+  /** Whether a message is the last one its turn said, where a fork from
+   *  this turn is offered. */
+  private lastOfTurn(entry: Extract<Entry, { kind: "prose" }>): boolean {
+    const later = this.conversation.entries.slice(this.conversation.entries.indexOf(entry) + 1);
+    return !later.some((other) => other.kind === "prose" && other.prose === "message" && other.turn === entry.turn);
   }
 
   /** What the user attached to their words, above them. */
@@ -427,8 +449,13 @@ export class ConversationView {
   }
 
   private click(event: Event): void {
-    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-open], [data-fold], [data-whole], .code-copy, .ask-option, [data-ask], [data-copy]");
+    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-open], [data-fold], [data-whole], .code-copy, .ask-option, [data-ask], [data-copy], [data-turn-act]");
     if (!target) return;
+    if (target.dataset.turnAct) {
+      const entry = this.conversation.entries.find((candidate) => candidate.key === target.dataset.key);
+      this.context.turnAct?.(target.dataset.turnAct as "rewind" | "fork", target.dataset.turn!, entry?.kind === "heard" ? entry.text : null);
+      return;
+    }
     if (target.dataset.copy) {
       // A message is copied as it was written, in its Markdown.
       const entry = this.conversation.entries.find((candidate) => candidate.key === target.dataset.copy);

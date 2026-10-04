@@ -116,6 +116,7 @@ export class ConversationPage {
         <ul class="running" hidden></ul>
         <form class="composer">
           <div class="composer-menus"></div>
+          <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
@@ -168,6 +169,7 @@ export class ConversationPage {
         open: controls.open,
         settled: () => this.update(),
       },
+      turnAct: controls && ((act, turn, words) => this.turnAct(act, turn, words)),
     });
 
     const form = this.element.querySelector("form")!;
@@ -452,6 +454,47 @@ export class ConversationPage {
     }
     this.drawChip();
     this.drawState();
+    // What the conversation takes decides which of its turns' actions show.
+    const can = new Set(this.offered?.controls ?? []);
+    const transcript = this.element.querySelector(".conversation")!;
+    transcript.classList.toggle("can-rewind", can.has("rewind"));
+    transcript.classList.toggle("can-fork", can.has("fork"));
+  }
+
+  /** Starting again from the user's words, or forking from a turn: said
+   *  plainly first, done once the user agrees. */
+  private turnAct(act: "rewind" | "fork", turn: string, words: string | null): void {
+    const controls = this.options.controls;
+    if (!controls) return;
+    const said = controls.words;
+    const confirm = this.element.querySelector<HTMLElement>(".composer-confirm")!;
+    confirm.hidden = false;
+    confirm.innerHTML = `<p>${escape(act === "rewind" ? said.rewindAsk : said.forkAsk)}</p><div class="composer-confirm-acts"><button type="button" class="ask-button ask-primary" data-go>${escape(act === "rewind" ? said.rewindGo : said.forkGo)}</button><button type="button" class="ask-button" data-never>${escape(said.never)}</button></div>`;
+    const close = () => {
+      confirm.hidden = true;
+      confirm.innerHTML = "";
+    };
+    confirm.querySelector("[data-never]")!.addEventListener("click", close, { once: true });
+    confirm.querySelector("[data-go]")!.addEventListener(
+      "click",
+      () => {
+        close();
+        if (act === "rewind") {
+          void this.run({ name: "rewind", description: "", args: null, control: "rewind", source: null }, "", { do: "rewind", from: turn }).then(() => {
+            if (words !== null && !this.input.value.trim()) {
+              this.input.value = words;
+              this.fit();
+              this.drawAction();
+              this.keepDraft();
+              this.input.focus();
+            }
+          });
+        } else {
+          void this.run({ name: "fork", description: "", args: null, control: "fork", source: null }, "", { do: "fork", through: turn });
+        }
+      },
+      { once: true },
+    );
   }
 
   private drawChip(): void {

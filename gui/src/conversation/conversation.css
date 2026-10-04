@@ -1327,3 +1327,64 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Starting again from the user's words, forking from a turn: quiet
+   actions beside them, shown where the conversation takes them. */
+.turn-act {
+  display: none;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  transition: color var(--hover) ease, background-color var(--hover) ease, opacity var(--hover) ease;
+}
+
+.turn-act:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.can-rewind .turn-rewind,
+.can-fork .turn-fork {
+  display: inline-flex;
+  align-items: center;
+}
+
+.turn-rewind {
+  margin-top: var(--space-1);
+  opacity: 0;
+}
+
+.block.from-user:hover .turn-rewind,
+.turn-rewind:focus-visible {
+  opacity: 1;
+}
+
+.prose-acts {
+  display: contents;
+}
+
+.turn-fork {
+  margin-top: var(--space-1);
+  margin-left: -6px;
+  opacity: 0;
+}
+
+.block-prose:hover .turn-fork,
+.turn-fork:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none), (max-width: 900px) {
+  .prose-acts {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .turn-rewind,
+  .turn-fork {
+    opacity: 0.7;
+    margin-left: 0;
+  }
+}

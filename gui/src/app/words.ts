@@ -784,6 +784,12 @@ export interface ComposerWords {
   };
   modelChip: string;
   noModels: string;
+  /** Rewinding to the user's words: what it drops and what it does not. */
+  rewindAsk: string;
+  rewindGo: string;
+  forkAsk: string;
+  forkGo: string;
+  never: string;
   unknown(name: string): string;
   running(name: string): string;
   done(name: string): string;
@@ -866,6 +872,11 @@ export const zhComposer: ComposerWords = {
   },
   modelChip: "模型",
   noModels: "它没有报出可选的模型",
+  rewindAsk: "从这一句起重来：这一句和它之后的对话会从对话里拿掉，它改过的文件不会回到那时。这一句会放回输入框，改好再发。",
+  rewindGo: "从这里重来",
+  forkAsk: "从这一轮分出一段新的对话：它带着到这里为止的全部，在同一台机器、同一个项目里，之后各走各的。",
+  forkGo: "分出去",
+  never: "算了",
   unknown: (name) => `没有 /${name} 这个命令`,
   running: (name) => `正在执行 /${name}…`,
   done: (name) => `/${name} 做完了`,
@@ -947,6 +958,11 @@ export const enComposer: ComposerWords = {
     current: "in use",
   },
   modelChip: "Model",
+  rewindAsk: "Start again from these words: they and everything after them leave the conversation, and files it changed are not put back. The words return to the box to edit and send.",
+  rewindGo: "Start again here",
+  forkAsk: "Branch a new conversation from this turn: it carries everything up to here, on the same machine and in the same project, and goes its own way.",
+  forkGo: "Branch it",
+  never: "Never mind",
   noModels: "It lists no models to choose from",
   unknown: (name) => `There is no /${name}`,
   running: (name) => `Running /${name}…`,

@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find", "attach"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find", "attach", "rewind"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -125,7 +125,7 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" || session === "palette" ? "home" : session === "about" || session === "slash" || session === "find" || session === "attach" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
+      const shown = session === "drawer" || session === "palette" ? "home" : session === "about" || session === "slash" || session === "find" || session === "attach" || session === "rewind" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
       const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
       await send("Page.navigate", { url: `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}` });
       await loaded;
@@ -180,6 +180,9 @@ for (const session of sessions) {
           })()`,
         });
         if (made.exceptionDetails) problems.push(`attach: ${made.exceptionDetails.exception?.description ?? made.exceptionDetails.text}`);
+      }
+      if (session === "rewind") {
+        await send("Runtime.evaluate", { expression: "[...document.querySelectorAll('.turn-rewind')].pop()?.click()" });
       }
       if (session === "new-codex") {
         await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=agent][data-value=codex]')?.click())", awaitPromise: true });

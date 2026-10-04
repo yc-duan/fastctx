@@ -43,6 +43,8 @@ export interface Words {
   thoughtWithheld: string;
   plan: string;
   copyMessage: string;
+  rewind: string;
+  fork: string;
   find: FindWords;
   you(machine: string): string;
   world: string;
@@ -151,6 +153,8 @@ export const zh: Words = {
   thoughtWithheld: "想过，没有交出内容",
   plan: "提出的计划",
   copyMessage: "复制这段话",
+  rewind: "改了重发",
+  fork: "从这里分叉",
   find: {
     find: "在这段对话里找",
     placeholder: "在这段对话里找…",
@@ -241,6 +245,8 @@ export const en: Words = {
   thoughtWithheld: "Thought, without sharing it",
   plan: "Proposed plan",
   copyMessage: "Copy this message",
+  rewind: "Edit and resend",
+  fork: "Fork from here",
   find: {
     find: "Find in this conversation",
     placeholder: "Find in this conversation…",

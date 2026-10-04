@@ -263,7 +263,7 @@ const composerWords = english ? enComposer : zhComposer;
 
 /** What a specimen conversation offers, so its menus can be looked at. */
 const specimenOffers: Offers = {
-  controls: ["command", "compact", "model", "rename", "fork", "answer"],
+  controls: ["command", "compact", "model", "rename", "fork", "rewind", "answer"],
   commands: [
     { name: "review", description: "Review the changes so far", args: null, source: "Codex" },
     { name: "init", description: "Write an AGENTS.md for this place", args: null, source: "Codex" },
