@@ -12,6 +12,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::trust::CertPin;
+use fastctx_types::world::Route;
+
 use crate::wire::{Down, EXPORTER_LABEL, SILENCE, Up};
 
 pub type HubSocket = WebSocketStream<TlsStream<TcpStream>>;
@@ -23,8 +25,8 @@ pub struct Dialed {
     /// prove it is the one on it.
     pub binding: [u8; 32],
     pub address: SocketAddr,
-    /// The way the connection left this machine, in a few words.
-    pub route: String,
+    /// The way the connection left this machine.
+    pub route: Route,
 }
 
 /// One way out of this machine (`route.rs`).
@@ -36,13 +38,19 @@ enum Way {
     System,
 }
 
+impl Way {
+    fn route(&self) -> Route {
+        match self {
+            Way::Pinned(interface) => Route::Card { name: interface.name.clone() },
+            Way::Proxy(proxy) => Route::Proxy { proxy: proxy.to_string() },
+            Way::System => Route::System,
+        }
+    }
+}
+
 impl std::fmt::Display for Way {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Way::Pinned(interface) => write!(f, "directly through \"{}\"", interface.name),
-            Way::Proxy(proxy) => write!(f, "through {proxy}"),
-            Way::System => f.write_str("along the system's routes"),
-        }
+        self.route().fmt(f)
     }
 }
 
@@ -142,7 +150,7 @@ async fn dial_one(
     let (socket, _) = tokio_tungstenite::client_async_with_config(url, tls, Some(config(max_message)))
         .await
         .map_err(|error| format!("WebSocket: {error}"))?;
-    let route = if address.ip().is_loopback() { "on this machine".to_string() } else { way.to_string() };
+    let route = if address.ip().is_loopback() { Route::Local } else { way.route() };
     Ok(Dialed { socket, binding, address, route })
 }
 

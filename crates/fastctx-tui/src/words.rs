@@ -8,6 +8,7 @@
 
 use std::sync::OnceLock;
 
+use fastctx_types::world::Route;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
@@ -482,10 +483,14 @@ impl Words {
         }
     }
 
-    pub fn link_online(&self, hub: &str, route: &str, since: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("{since} 起经 {route} 连着中枢 {hub}"),
-            Lang::En => format!("connected to the hub at {hub} through {route} since {since}"),
+    pub fn link_online(&self, hub: &str, route: &Route, since: &str) -> String {
+        match (self.lang, route) {
+            (Lang::Zh, Route::Local) => format!("{since} 起连着本机上的中枢 {hub}"),
+            (Lang::Zh, Route::Card { name }) => format!("{since} 起直接经网卡「{name}」连着中枢 {hub}"),
+            (Lang::Zh, Route::Proxy { proxy }) => format!("{since} 起经代理 {proxy} 连着中枢 {hub}"),
+            (Lang::Zh, Route::System) => format!("{since} 起按系统的路由连着中枢 {hub}"),
+            (Lang::En, Route::Local) => format!("connected since {since} to the hub on this machine, {hub}"),
+            (Lang::En, route) => format!("connected since {since} to the hub at {hub}, {route}"),
         }
     }
 

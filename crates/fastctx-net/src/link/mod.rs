@@ -63,7 +63,7 @@ pub enum Status {
     Connecting { since: Timestamp, last_error: Option<String> },
     /// Connected to the hub at `address`; `route` says the way the
     /// connection leaves this machine.
-    Online { since: Timestamp, address: SocketAddr, route: String },
+    Online { since: Timestamp, address: SocketAddr, route: fastctx_types::world::Route },
     /// The hub refused this machine for good: it was revoked, is not a
     /// member, or speaks another protocol. Nothing more is tried until the
     /// node starts again.

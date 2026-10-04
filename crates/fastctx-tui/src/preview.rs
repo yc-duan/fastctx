@@ -13,7 +13,7 @@ use fastctx_types::project::{
 use fastctx_types::residents::{About, Action, Activity, Host, Now, Origin, Trouble};
 use fastctx_types::session::{Happened, Health, HealthKind, SessionEvent, Speaker, TurnEnd, TurnHow};
 use fastctx_types::town::{MachineWho, ResidentNow, RunningJob, WhoReply, WhoScope, WorldWho};
-use fastctx_types::world::{LinkState, MachineFacts, Node, NodesReply};
+use fastctx_types::world::{LinkState, MachineFacts, Node, NodesReply, Route};
 use fastctx_types::{Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, TownName};
 use jiff::{SignedDuration, Timestamp};
 
@@ -261,7 +261,11 @@ fn nodes(now: Timestamp) -> NodesReply {
     NodesReply {
         machine: machine("desktop"),
         world: Some("w-4f1c".into()),
-        link: LinkState::Online { since: ago(now, 300), hub: "121.40.82.28:7443".into(), route: "以太网 2".into() },
+        link: LinkState::Online {
+            since: ago(now, 300),
+            hub: "121.40.82.28:7443".into(),
+            route: Route::Card { name: "以太网 2".into() },
+        },
         machines: vec![
             Node {
                 name: machine("desktop"),

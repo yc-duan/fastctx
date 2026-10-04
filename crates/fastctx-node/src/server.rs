@@ -372,6 +372,7 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
     let here = node.machine();
     let (scope, asked) = match &town {
         Some(name) => {
+            crate::town::map::catch_up(node, name).await?;
             let (world, town) = (node.world.clone(), name.clone());
             let record = blocking("reading the town", move || crate::town::read::latest(&world, &town)).await?;
             let asked = record.as_ref().map(|record| record.machines.clone());

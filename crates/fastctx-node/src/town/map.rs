@@ -16,6 +16,7 @@ use crate::town::read;
 
 /// The map of `town`, from this machine's copy of its ledger.
 pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure> {
+    catch_up(node, town).await?;
     let (world, name) = (node.world.clone(), town.clone());
     let (records, journals) = tokio::task::spawn_blocking(move || {
         let records = read::records(&world, &name)?;
@@ -47,6 +48,24 @@ pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure>
 /// town's journals are kept.
 pub async fn brief(node: &Arc<Node>, town: &TownName) -> Result<String, Failure> {
     Ok(fastctx_hands::town::brief(&view(node, town).await?))
+}
+
+/// This machine's copy of a town's ledger trails the hub's by what is still
+/// on its way to it, as right after the town was opened on another machine.
+/// A town it has no record of yet is taken from the hub before anything
+/// about it is answered.
+pub async fn catch_up(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
+    let (world, name) = (node.world.clone(), town.clone());
+    let known = tokio::task::spawn_blocking(move || read::latest(&world, &name).map(|record| record.is_some()))
+        .await
+        .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?
+        .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?;
+    if known || node.link().is_none() {
+        return Ok(());
+    }
+    crate::ledger::sync(node, Some(town.clone()))
+        .await
+        .map_err(|error| Failure::new(format!("taking {town}'s ledger from the hub: {error}")))
 }
 
 /// Why there is no map of a town here.

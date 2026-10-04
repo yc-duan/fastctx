@@ -67,6 +67,7 @@ async fn add(node: &Arc<Node>, caller: &Caller, town: TownName, adding: Adding) 
     if adding.text.trim().is_empty() {
         return Err(Failure::new("the entry has no text"));
     }
+    map::catch_up(node, &town).await?;
     let world = node.world.clone();
     let (exists, missing) = {
         let (journal, cites) = (journal.clone(), adding.cites.clone());
@@ -315,6 +316,7 @@ async fn describe(
     if text.trim().is_empty() {
         return Err(Failure::new("the description is empty"));
     }
+    map::catch_up(node, &town).await?;
     let world = node.world.clone();
     let (record, descriptions, entries) = {
         let journal = journal.clone();

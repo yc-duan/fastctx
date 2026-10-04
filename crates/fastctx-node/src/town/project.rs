@@ -23,6 +23,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         ProjectCall::List => list(node).await.map(|towns| Reply::Towns { towns }),
         ProjectCall::Show { town } => {
             let town = caller.town_or(node, town)?;
+            map::catch_up(node, &town).await?;
             let records = blocking(node, &town, read::records).await?;
             let (Some(first), Some(record)) = (records.first(), records.last()) else {
                 return Err(map::no_ledger(node, &town));
@@ -41,6 +42,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
 /// Opens a town: the first version of its record.
 async fn new(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFields) -> Result<Reply, Failure> {
     let _writing = node.writing.lock().await;
+    map::catch_up(node, &town).await?;
     if blocking(node, &town, read::latest).await?.is_some() {
         return Err(Failure::new(format!("the town {town} exists already; fastctx project edit {town} changes it")));
     }
@@ -76,6 +78,7 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
     if fields == RecordFields::default() {
         return Err(Failure::new("nothing to change: give what the next version says"));
     }
+    map::catch_up(node, &town).await?;
     let records = blocking(node, &town, read::records).await?;
     let (Some(first), Some(latest)) = (records.first(), records.last()) else {
         return Err(map::no_ledger(node, &town));
@@ -176,6 +179,7 @@ async fn write(node: &Arc<Node>, town: &TownName, record: &Record) -> Result<(),
 /// machines it spans.
 pub async fn spans_here(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
     let here = node.machine();
+    map::catch_up(node, town).await?;
     let record = blocking(node, town, read::latest).await?.ok_or_else(|| map::no_ledger(node, town))?;
     if record.machines.contains(&here) {
         Ok(())
@@ -228,6 +232,7 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
             )));
         }
     };
+    map::catch_up(node, &town).await?;
     let record = blocking(node, &town, read::latest).await?.ok_or_else(|| map::no_ledger(node, &town))?;
     if !record.machines.contains(&here) {
         return Err(Failure::new(format!(

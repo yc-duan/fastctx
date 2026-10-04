@@ -33,17 +33,42 @@ pub enum LinkState {
         since: Timestamp,
         last_error: Option<String>,
     },
-    /// Connected to the hub at `hub`; `route` says the way the connection
-    /// leaves this machine.
+    /// Connected to the hub at `hub`, the connection leaving this machine
+    /// by `route`.
     Online {
         since: Timestamp,
         hub: String,
-        route: String,
+        route: Route,
     },
     /// The hub refused this machine for good.
     Stopped {
         reason: String,
     },
+}
+
+/// The way a connection to the hub leaves this machine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Route {
+    /// The hub is on this machine.
+    Local,
+    /// Pinned to a physical network card, past any VPN's routes.
+    Card { name: String },
+    /// Through the system's proxy.
+    Proxy { proxy: String },
+    /// Wherever the system's routes send it.
+    System,
+}
+
+impl std::fmt::Display for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Route::Local => f.write_str("on this machine"),
+            Route::Card { name } => write!(f, "directly through \"{name}\""),
+            Route::Proxy { proxy } => write!(f, "through {proxy}"),
+            Route::System => f.write_str("along the system's routes"),
+        }
+    }
 }
 
 /// `fastctx nodes`: this machine's link, and every machine of the World.
