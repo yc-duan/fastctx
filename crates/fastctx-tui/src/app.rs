@@ -255,7 +255,7 @@ impl App {
                 Vec::new()
             }
             // A sequence no page reads, such as a terminal's answer nobody asked for.
-            Input::Resize | Input::Sequence(_) => Vec::new(),
+            Input::Resize | Input::Sequence(_) | Input::Focus(_) => Vec::new(),
             Input::Failed(_) => {
                 self.quit = true;
                 Vec::new()
