@@ -28,6 +28,8 @@ export interface MenuCommand {
   /** The World's control it stands for, when it is one of the World's. */
   control: ControlKind | "stop" | null;
   source: string | null;
+  /** The host's own identity for it, handed back when it runs. */
+  path?: string | undefined;
 }
 
 /** The commands a conversation offers now: its host's, then the World's
@@ -39,6 +41,7 @@ export function commandsOf(offers: Offers | null, words: CommandWords): MenuComm
     args: command.args,
     control: null,
     source: command.source,
+    path: command.path,
   }));
   const taken = new Set(own.map((command) => command.name));
   const controls = new Set(offers?.controls ?? []);

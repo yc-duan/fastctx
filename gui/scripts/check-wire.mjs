@@ -29,6 +29,7 @@ import type { SessionEvent, Watched, SessionChange, Health } from "../src/world/
 import type { WorldWho, NodesReply, TownSummary, JournalSummary } from "../src/world/world";
 import type { WorldSince } from "../src/world/since";
 import type { WorldAgents } from "../src/world/agents";
+import type { Control, Controlled, Offers } from "../src/world/control";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
     events: SessionEvent[];
@@ -40,6 +41,7 @@ export const fixture = ${json.trimEnd()} satisfies {
   // telephone go through the shell and the node.
   since: { replies: ({ reply: "since" } & WorldSince)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
   agents: { replies: ({ reply: "agents" } & WorldAgents)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
+  control: { controls: Control[]; controlled: Controlled[]; offers: Offers[] };
 };
 `;
 const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);

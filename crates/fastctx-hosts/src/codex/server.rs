@@ -44,6 +44,7 @@ pub enum Inbound {
 }
 
 pub struct AppServer {
+    instance: String,
     child: Arc<Child>,
     messages: mpsc::UnboundedSender<Message>,
     ended: watch::Receiver<bool>,
@@ -119,6 +120,7 @@ impl AppServer {
             let _ = ended.send(true);
         });
         let server = Arc::new(Self {
+            instance: format!("{}:{}", transport.child.pid(), jiff::Timestamp::now()),
             child: transport.child,
             messages: transport.outgoing,
             ended: ending,
@@ -170,6 +172,15 @@ impl AppServer {
     /// Answers one of its requests with an error.
     pub fn refuse(&self, id: Value, code: i64, message: &str) -> Result<(), String> {
         self.send(&json!({ "id": id, "error": { "code": code, "message": message } }))
+    }
+
+    /// An opaque reply address distinguishes IDs reused after a restart.
+    pub fn request_key(&self, id: &Value) -> Value {
+        json!({"server": self.instance, "id": id})
+    }
+
+    pub fn answer(&self, id: &Value, answer: &Value) -> Result<(), String> {
+        self.send(&json!({"id": id, "result": answer}))
     }
 
     /// Ends it and everything it started; its exit is reported as usual.

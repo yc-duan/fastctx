@@ -13,7 +13,7 @@ use crate::{Address, JobId, MachineName};
 
 /// Raised whenever a change would make an older client or node misread a
 /// frame. A node refuses a client speaking another protocol.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

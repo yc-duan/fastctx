@@ -1955,6 +1955,42 @@
         "event": "changed",
         "turn": "turn-1",
         "change": {
+          "kind": "history_changed"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "forked",
+          "source": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          },
+          "thread": "source-thread",
+          "through": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "forked",
+          "source": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          },
+          "thread": "source-thread",
+          "through": "source-turn"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
           "kind": "diff",
           "diff": "-before\n+after\n"
         }
@@ -1962,7 +1998,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "terminal",
           "item": "tool-1",
@@ -1973,7 +2009,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "usage",
           "usage": {
@@ -1984,7 +2020,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "status",
           "status": "idle"
@@ -1993,7 +2029,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "status",
           "status": {
@@ -2005,7 +2041,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "status",
           "status": null,
@@ -2015,7 +2051,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "metadata",
           "metadata": [
@@ -2029,7 +2065,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "lifecycle",
           "state": "loaded"
@@ -2038,7 +2074,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "goal",
           "goal": null
@@ -2047,7 +2083,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "hook",
           "run": {
@@ -2058,7 +2094,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "approval_review",
           "review": {
@@ -2070,7 +2106,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "approval_review",
           "review": null,
@@ -2080,7 +2116,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "strict_review",
           "notice": "review"
@@ -2089,7 +2125,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "safety",
           "buffering": {
@@ -2100,7 +2136,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "safety",
           "buffering": {
@@ -2111,7 +2147,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "safety",
           "buffering": {
@@ -2122,7 +2158,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "safety",
           "buffering": null
@@ -2131,7 +2167,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "rerouted",
           "from": "model-a",
@@ -2142,7 +2178,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "verification",
           "verifications": [
@@ -2156,7 +2192,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "error",
           "error": {
@@ -2168,7 +2204,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "error",
           "error": {
@@ -2180,7 +2216,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "error",
           "error": {
@@ -2192,7 +2228,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "error",
           "error": null,
@@ -2202,7 +2238,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "warning",
           "text": "warning"
@@ -2211,7 +2247,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "settings",
           "settings": {
@@ -2222,7 +2258,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "environment",
           "environment": {
@@ -2234,7 +2270,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "environment",
           "environment": null,
@@ -2244,7 +2280,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "queue"
         }
@@ -2252,7 +2288,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "tool_server",
           "server": "tools",
@@ -2266,7 +2302,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "tool_server",
           "server": "tools",
@@ -2280,7 +2316,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "tool_server",
           "server": "tools",
@@ -2292,7 +2328,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "tool_server",
           "server": "tools",
@@ -2304,7 +2340,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "attachment",
           "attachment": {
@@ -2315,13 +2351,30 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "request",
           "id": 42,
           "request": "approve",
           "params": {
             "command": "pwd"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "request",
+          "id": {
+            "id": 0,
+            "server": "123:2026-10-04T12:00:00Z"
+          },
+          "request": "item/fileChange/requestApproval",
+          "params": {
+            "itemId": "item",
+            "threadId": "thread"
           }
         }
       },
@@ -2602,6 +2655,36 @@
       }
     ],
     "health_cases": [
+      {
+        "change": {
+          "kind": "history_changed"
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "forked",
+          "source": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          },
+          "thread": "source-thread",
+          "through": null
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "forked",
+          "source": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          },
+          "thread": "source-thread",
+          "through": "source-turn"
+        },
+        "health": null
+      },
       {
         "change": {
           "kind": "diff",
@@ -2929,6 +3012,21 @@
           "request": "approve",
           "params": {
             "command": "pwd"
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "request",
+          "id": {
+            "id": 0,
+            "server": "123:2026-10-04T12:00:00Z"
+          },
+          "request": "item/fileChange/requestApproval",
+          "params": {
+            "itemId": "item",
+            "threadId": "thread"
           }
         },
         "health": null
@@ -7055,6 +7153,146 @@
             "timings": []
           }
         ]
+      }
+    ]
+  },
+  "control": {
+    "controls": [
+      {
+        "do": "command",
+        "name": "review",
+        "args": "Check this change"
+      },
+      {
+        "do": "command",
+        "name": "skill",
+        "args": "Use it",
+        "path": "C:/skills/example/SKILL.md"
+      },
+      {
+        "do": "compact"
+      },
+      {
+        "do": "model",
+        "model": "example-model",
+        "effort": "custom-effort"
+      },
+      {
+        "do": "model",
+        "model": null,
+        "effort": null
+      },
+      {
+        "do": "rename",
+        "name": "对话"
+      },
+      {
+        "do": "fork",
+        "through": null
+      },
+      {
+        "do": "fork",
+        "through": "turn-1"
+      },
+      {
+        "do": "rewind",
+        "from": "turn-2"
+      },
+      {
+        "do": "answer",
+        "request": {
+          "id": 0,
+          "server": "123:2026-10-04T12:00:00Z"
+        },
+        "answer": {
+          "decision": "accept"
+        }
+      }
+    ],
+    "controlled": [
+      {
+        "kind": "done",
+        "said": null
+      },
+      {
+        "kind": "done",
+        "said": "Conversation rewound. Files have not been restored."
+      },
+      {
+        "kind": "forked",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        }
+      }
+    ],
+    "offers": [
+      {
+        "controls": [],
+        "commands": [],
+        "models": [],
+        "model": null,
+        "effort": null,
+        "usage": null
+      },
+      {
+        "controls": [
+          "command",
+          "compact",
+          "model",
+          "rename",
+          "fork",
+          "rewind",
+          "answer"
+        ],
+        "commands": [
+          {
+            "name": "compact",
+            "description": "Compact",
+            "args": null,
+            "source": "codex"
+          },
+          {
+            "name": "skill",
+            "description": "A skill",
+            "args": "[instructions]",
+            "source": "skill",
+            "path": "C:/skills/example/SKILL.md"
+          }
+        ],
+        "models": [
+          {
+            "id": "model",
+            "name": "Model",
+            "description": null,
+            "efforts": [
+              "custom-effort"
+            ],
+            "default_effort": "custom-effort",
+            "default": true
+          }
+        ],
+        "model": "model",
+        "effort": "custom-effort",
+        "usage": {
+          "context": {
+            "used": 42,
+            "window": 1000
+          },
+          "limits": [
+            {
+              "name": "codex primary 300m",
+              "used_percent": 12,
+              "resets_at": "2026-10-05T00:00:00Z"
+            }
+          ],
+          "cost_usd": null,
+          "raw": {
+            "accountRateLimits": {
+              "error": "usage unavailable"
+            }
+          }
+        }
       }
     ]
   }

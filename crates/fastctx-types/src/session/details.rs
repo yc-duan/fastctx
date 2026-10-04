@@ -54,6 +54,15 @@ impl SessionChange {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionChange {
+    /// Re-read host history: a stable host operation removed or replaced
+    /// turns. This says nothing about restoring files on disk.
+    HistoryChanged,
+    /// The World created this resident from another thread's history.
+    Forked {
+        source: crate::Address,
+        thread: String,
+        through: Option<String>,
+    },
     Diff {
         diff: String,
     },
@@ -128,6 +137,8 @@ pub enum SessionChange {
         attachment: Value,
     },
     Request {
+        /// Opaque reply address, passed unchanged to Control::Answer.
+        /// Codex wraps its host ID with the app-server instance identity.
         id: Value,
         request: String,
         params: Value,

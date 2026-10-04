@@ -13,12 +13,15 @@
 //! `environments: []` disables the thread's own shell and file editing.
 
 mod agents;
+mod answers;
 #[cfg(test)]
 mod contract;
+mod controls;
 mod history;
 mod items;
 pub mod launch;
 mod notifications;
+mod offers;
 mod presentation;
 mod server;
 mod transport;
@@ -131,6 +134,8 @@ pub struct ThreadSpec {
 pub enum Input {
     /// What the model reads as the next message to it.
     Text(String),
+    /// Explicitly invokes the skill selected from this thread's catalog.
+    Skill { name: String, path: String, text: String },
     /// A fact shaped as a tool's output, such as a job's end.
     ToolOutput { name: String, namespace: Option<String>, output: String },
 }
@@ -236,6 +241,12 @@ struct State {
 
 #[derive(Default)]
 struct Thread {
+    selection: controls::Selection,
+    model: Option<String>,
+    effort: Option<String>,
+    usage: Option<Value>,
+    metadata: Value,
+    requests: HashMap<String, answers::Request>,
     created_here: bool,
     completed_item: bool,
     spec: Option<ThreadSpec>,
@@ -261,6 +272,7 @@ struct Thread {
     /// The app-server said how the thread's World tools started since it was
     /// last started or resumed.
     tools_settled: bool,
+    tools_revision: u64,
     /// Why the World's tools are not there in the thread's current load.
     tools_missing: Option<String>,
     items: HashMap<(String, String), Value>,
@@ -345,6 +357,9 @@ impl CodexHost {
         entry.spec = Some(spec);
         entry.loaded = current;
         entry.created_here = true;
+        entry.model = model.clone();
+        entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
+        entry.metadata = answer["thread"].clone();
         Ok((thread, model))
     }
 
@@ -412,6 +427,12 @@ impl CodexHost {
         });
         match input {
             Input::Text(text) => params["input"] = json!([{ "type": "text", "text": text }]),
+            Input::Skill { name, path, text } => {
+                params["input"] = json!([
+                    {"type": "text", "text": text},
+                    {"type": "skill", "name": name, "path": path}
+                ]);
+            }
             Input::ToolOutput { name, namespace, output } => {
                 params["toolOutput"] = json!({ "name": name, "namespace": namespace, "output": output })
             }
@@ -424,6 +445,11 @@ impl CodexHost {
                 return Err(SendError::NotSent("the app-server changed before submission".to_string()));
             }
             let entry = state.threads.entry(thread.to_string()).or_default();
+            // Turn settings also affect a steered turn in 0.160. A pending
+            // choice belongs only to the next turn the World starts.
+            if entry.turn.is_none() {
+                entry.selection.apply(&mut params);
+            }
             entry.submitted = true;
             entry.observed_submission = None;
             entry.turn.clone()
@@ -565,7 +591,8 @@ impl CodexHost {
             entry.tools_missing = None;
             entry.spec.clone().ok_or_else(|| format!("how the Codex thread {thread} was started is not known"))?
         };
-        server
+        let selection = controls::Selection::read(&self.workdir, thread)?;
+        let answer = server
             .request(
                 "thread/resume",
                 json!({
@@ -587,6 +614,10 @@ impl CodexHost {
         // Another client may have started a turn while resume's reply was
         // in flight. Preserve any turn already reported by a notification.
         entry.loaded = true;
+        entry.selection = selection;
+        entry.model = answer.get("model").and_then(Value::as_str).map(str::to_string);
+        entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
+        entry.metadata = answer["thread"].clone();
         Ok(())
     }
 
@@ -607,6 +638,10 @@ impl CodexHost {
                     (self.log)("the user's Codex configuration changed; restarting the app-server".to_string());
                     server.kill();
                     let replaced = server.clone();
+                    self.resolve_requests(
+                        &mut state,
+                        "the app-server was replaced; its requests are no longer answerable",
+                    );
                     state.server = None;
                     Some(replaced)
                 }
@@ -627,6 +662,8 @@ impl CodexHost {
             for thread in state.threads.values_mut() {
                 thread.loaded = false;
                 thread.turn = None;
+                thread.requests.clear();
+                thread.usage = None;
             }
             state.server = Some((server.clone(), launch.clone()));
         }
@@ -717,6 +754,7 @@ impl CodexHost {
 
     /// Reads one notification about a thread.
     fn notified(&self, method: &str, params: &Value, at: Timestamp) {
+        self.observe_controls(method, params);
         let revision = {
             let mut state = self.lock();
             state.notification_sequence += 1;
@@ -730,6 +768,9 @@ impl CodexHost {
         let text = |pointer: &str| params.pointer(pointer).and_then(Value::as_str).map(str::to_string);
         let turn = text("/turnId").or_else(|| self.running_turn(&thread));
         if let Some(mut happened) = notifications::read(method, params) {
+            if let Happened::Changed { change: SessionChange::Resolved { id, .. }, .. } = &mut happened {
+                *id = self.request_address(id);
+            }
             if method == "thread/realtime/item/completed" {
                 self.lock().threads.entry(thread.clone()).or_default().completed_item = true;
             }
@@ -977,6 +1018,7 @@ impl CodexHost {
                     {
                         let mut state = self.lock();
                         let entry = state.threads.entry(thread.clone()).or_default();
+                        entry.tools_revision += 1;
                         entry.tools_settled = matches!(status.as_str(), "ready" | "failed" | "cancelled");
                         entry.tools_missing = missing;
                     }
@@ -1054,10 +1096,12 @@ impl CodexHost {
                 (self.log)(format!("a replaced Codex app-server stopped ({how})"));
                 return;
             }
+            self.resolve_requests(&mut state, "the app-server stopped; its requests are no longer answerable");
             state.server = None;
             let mut turns = Vec::new();
             for (thread, entry) in &mut state.threads {
                 entry.loaded = false;
+                entry.requests.clear();
                 if let Some(turn) = entry.turn.take() {
                     entry.started.remove(&turn);
                     entry.finished.insert(turn.clone());
@@ -1106,13 +1150,26 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                     if let Some(thread) =
                         params.get("threadId").or_else(|| params.get("conversationId")).and_then(Value::as_str)
                     {
+                        let key = server.request_key(&id);
+                        let at = Timestamp::now();
+                        {
+                            let _generation = host.generation.lock().expect("never poisoned");
+                            let mut state = host.lock();
+                            if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server)) {
+                                continue;
+                            }
+                            state.threads.entry(thread.into()).or_default().requests.insert(
+                                key.to_string(),
+                                answers::Request { at, id: id.clone(), method: method.clone(), params: params.clone() },
+                            );
+                        }
                         host.emit(
                             thread,
-                            Timestamp::now(),
+                            at,
                             Happened::Changed {
                                 turn: params.get("turnId").and_then(Value::as_str).map(str::to_string),
                                 change: SessionChange::Request {
-                                    id: id.clone(),
+                                    id: key,
                                     request: method.clone(),
                                     params: params.clone(),
                                 },

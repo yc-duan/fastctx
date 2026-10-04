@@ -4,7 +4,8 @@
 import type { Address, JsonValue } from "./wire";
 
 export type Control =
-  | { do: "command"; name: string; args: string }
+  /** `path` names one skill among skills of the same name, as offered. */
+  | { do: "command"; name: string; args: string; path?: string }
   | { do: "compact" }
   | { do: "model"; model: string | null; effort: string | null }
   | { do: "rename"; name: string }
@@ -21,6 +22,8 @@ export interface CommandOffer {
   description: string;
   args: string | null;
   source: string | null;
+  /** Passed back unchanged with the command, where the host has one. */
+  path?: string;
 }
 
 export interface ModelOffer {

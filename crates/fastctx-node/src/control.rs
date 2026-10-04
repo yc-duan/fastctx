@@ -54,14 +54,18 @@ pub async fn offers(
 /// the World does not hold (the user's own Codex in an app) take nothing.
 pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     let host = host_of(node, resident)?;
-    let _ = control;
-    Err(Failure::new(format!("{host} sessions take nothing but words yet")))
+    match host {
+        "Codex" => crate::codex::control::control(node, resident, control).await,
+        _ => Err(Failure::new(format!("{host} sessions take nothing but words yet"))),
+    }
 }
 
 /// What a resident of this machine offers now, as its host says.
 pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
-    host_of(node, resident)?;
-    Ok(Offers::default())
+    match host_of(node, resident)? {
+        "Codex" => crate::codex::control::offers(node, resident).await,
+        _ => Ok(Offers::default()),
+    }
 }
 
 /// The host a resident of this machine is held through, by name.

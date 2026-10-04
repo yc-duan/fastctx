@@ -503,7 +503,7 @@ export class ConversationPage {
             ? { do: "rename", name: args }
             : command.control === "fork"
               ? { do: "fork", through: null }
-              : { do: "command", name: command.name, args });
+              : { do: "command", name: command.name, args, ...(command.path ? { path: command.path } : {}) });
     this.say(words.running(command.name));
     try {
       const done = await controls.control(what);

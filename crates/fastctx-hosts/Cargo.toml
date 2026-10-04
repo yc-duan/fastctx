@@ -14,6 +14,7 @@ fastctx-types = { path = "../fastctx-types" }
 filetime = "0.2"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 jiff.workspace = true
+jsonschema = { version = "0.33", default-features = false }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

@@ -7,6 +7,7 @@ pub fn read(method: &str, params: &Value) -> Option<Happened> {
     let value = |key: &str| params.get(key).cloned().unwrap_or(Value::Null);
     let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
     let change = match method {
+        "thread/reverted" => SessionChange::HistoryChanged,
         "thread/started" => SessionChange::Metadata { metadata: value("thread") },
         "thread/status/changed" => {
             let status = value("status");
