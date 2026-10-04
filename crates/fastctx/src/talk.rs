@@ -7,7 +7,7 @@
 //! ends. With `--open`, it first opens a session for the user. It is the
 //! user's own voice, so it does not work in a command a resident runs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead as _, Write as _};
 
 use anyhow::{Context as _, bail};
@@ -160,11 +160,11 @@ fn gone(said: &Said) -> String {
 #[derive(Default)]
 struct Printer {
     /// Messages whose text has been shown piece by piece as it was written.
-    streamed: HashSet<String>,
+    streamed: HashMap<(String, String), String>,
     /// Items whose text is not shown as it grows: thinking and plans.
-    quiet: HashSet<String>,
+    quiet: HashSet<(String, String)>,
     /// Tools shown as they began; a history holds only how they finished.
-    tools: HashSet<String>,
+    tools: HashSet<(String, String)>,
     /// Whether the cursor is in the middle of a line.
     open_line: bool,
 }
@@ -197,26 +197,49 @@ impl Printer {
                 };
                 self.line(&format!("> {from}: {text}"));
             }
-            Happened::Began { item, .. } => match &item.what {
+            Happened::Began { turn, item } => match &item.what {
                 What::Thinking { .. } | What::Plan { .. } => {
-                    self.quiet.insert(item.id.clone());
+                    self.quiet.insert((turn.clone(), item.id.clone()));
                 }
+                What::Message { text } if !text.is_empty() => self.chunk((turn.clone(), item.id.clone()), text),
                 What::Tool(tool) => {
-                    self.tools.insert(item.id.clone());
+                    self.tools.insert((turn.clone(), item.id.clone()));
                     self.line(&format!("  · {} {}", tool.name, fastctx_client::shown::tool_detail(tool)))
                 }
                 _ => {}
             },
-            Happened::Grew { item, part: Part::Text, text, .. } if !self.quiet.contains(item) => {
-                self.streamed.insert(item.clone());
-                print!("{text}");
-                self.open_line = !text.ends_with('\n');
-                let _ = std::io::stdout().flush();
+            Happened::Grew { turn, item, part: Part::Text, text, .. }
+                if !self.quiet.contains(&(turn.clone(), item.clone())) =>
+            {
+                self.chunk((turn.clone(), item.clone()), text);
             }
-            Happened::Grew { .. } => {}
-            Happened::Finished { item, .. } => match &item.what {
+            Happened::Grew { .. } | Happened::Updated { .. } => {}
+            Happened::Changed { change, .. } => {
+                use fastctx_types::session::SessionChange;
+                match change {
+                    SessionChange::Diff { diff } => self.line(diff),
+                    SessionChange::Terminal { input, .. } => self.line(input),
+                    SessionChange::Warning { text } => self.line(text),
+                    SessionChange::Error { error, .. } => {
+                        self.line(error.get("message").and_then(serde_json::Value::as_str).unwrap_or_default())
+                    }
+                    SessionChange::Rerouted { from, to, reason } => self.line(&format!("  {from} → {to}: {reason}")),
+                    _ => {}
+                }
+            }
+            Happened::Realtime { item, complete: true } => {
+                if let Some(text) = item.get("text").and_then(serde_json::Value::as_str) {
+                    self.line(text);
+                }
+            }
+            Happened::Realtime { .. } | Happened::RealtimeGrew { .. } => {}
+            Happened::Finished { turn, item } => match &item.what {
                 What::Message { text } => {
-                    if self.streamed.remove(&item.id) {
+                    if let Some(written) = self.streamed.remove(&(turn.clone(), item.id.clone()))
+                        && let Some(rest) = text.strip_prefix(&written)
+                    {
+                        print!("{rest}");
+                        self.open_line = !text.ends_with('\n');
                         self.end_line();
                     } else {
                         self.line(text);
@@ -226,12 +249,13 @@ impl Printer {
                 What::Tool(tool) => {
                     let detail = fastctx_client::shown::tool_detail(tool);
                     let failed = matches!(tool.status, ToolStatus::Failed | ToolStatus::Declined);
-                    match (self.tools.remove(&item.id), failed) {
+                    match (self.tools.remove(&(turn.clone(), item.id.clone())), failed) {
                         (_, true) => self.line(&format!("  ✗ {} {detail} failed", tool.name)),
                         (false, false) => self.line(&format!("  · {} {detail}", tool.name)),
                         (true, false) => {}
                     }
                 }
+                What::AgentActivity { path, activity, .. } => self.line(&format!("  · {path}: {activity}")),
                 What::Compaction => self.line("── context compacted"),
                 What::Other { host_kind } => self.line(&format!("  [{host_kind}]")),
                 _ => {}
@@ -247,9 +271,21 @@ impl Printer {
                 }
             }
             Happened::Context { .. } | Happened::Titled { .. } => {}
-            Happened::TurnEnded { end, .. } => self.line(&format!("── {}", turn_end(end))),
+            Happened::TurnEnded { turn, end } => {
+                self.streamed.retain(|(t, _), _| t != turn);
+                self.quiet.retain(|(t, _)| t != turn);
+                self.tools.retain(|(t, _)| t != turn);
+                self.line(&format!("── {}", turn_end(end)));
+            }
             Happened::Health { health, .. } => self.line(&format!("  ! {}", health.text)),
         }
+    }
+
+    fn chunk(&mut self, key: (String, String), text: &str) {
+        self.streamed.entry(key).or_default().push_str(text);
+        print!("{text}");
+        self.open_line = !text.ends_with('\n');
+        let _ = std::io::stdout().flush();
     }
 
     fn note(&mut self, text: &str) {

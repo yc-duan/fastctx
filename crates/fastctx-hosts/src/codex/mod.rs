@@ -7,16 +7,18 @@
 //! out as session events (`fastctx_types::session`); what Codex's
 //! notifications mean is known here and nowhere else.
 //!
-//! Codex writes no compatibility promise for this protocol. Only fields it
-//! does not mark experimental are read, and a notification, item or status
-//! not known here is passed on as it is or left alone, never guessed at.
-//! One experimental field is used, `environments: []`, which takes away a
-//! thread's own shell and file editing; it must be sent with every turn, as
-//! the thread does not keep it. If Codex changes it, starting a turn fails
-//! loudly.
+//! Presentation follows the official 0.160 app-server contract, including
+//! experimental state needed by the desktop clients. Raw reasoning and
+//! explicitly hidden UI items do not become visible session activities.
+//! `environments: []` disables the thread's own shell and file editing.
 
+#[cfg(test)]
+mod contract;
+mod history;
 mod items;
 pub mod launch;
+mod notifications;
+mod presentation;
 mod server;
 
 use std::collections::{HashMap, HashSet};
@@ -26,16 +28,17 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use fastctx_types::session::{
-    Happened, Health, HealthKind, Item, Part, SessionEvent, Step, StepStatus, TurnEnd, TurnHow, What,
+    Happened, Item, Part, SessionChange, SessionEvent, Step, StepStatus, TurnEnd, TurnHow, What,
 };
 use jiff::Timestamp;
 use serde_json::{Value, json};
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, mpsc, oneshot};
 
 use launch::Launch;
 use server::{AppServer, Inbound, Unanswered};
 
 pub type Log = Arc<dyn Fn(String) + Send + Sync>;
+pub type EventBarrier = Arc<Mutex<Option<oneshot::Sender<Result<(), String>>>>>;
 
 /// How long Codex waits for a thread's tool server to start; the World
 /// gives Codex this, and waits as long for word of how it went.
@@ -155,6 +158,12 @@ impl std::fmt::Display for SendError {
 /// What the host tells the node.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum HostEvent {
+    /// A read barrier for the consumer's durable event queue. Never persisted.
+    #[serde(skip)]
+    Synchronized {
+        thread: String,
+        done: EventBarrier,
+    },
     Happened {
         thread: String,
         event: SessionEvent,
@@ -214,12 +223,15 @@ pub struct CodexHost {
 
 #[derive(Default)]
 struct State {
+    notification_sequence: u64,
     server: Option<(Arc<AppServer>, Launch)>,
     threads: HashMap<String, Thread>,
 }
 
 #[derive(Default)]
 struct Thread {
+    created_here: bool,
+    completed_item: bool,
     spec: Option<ThreadSpec>,
     loaded: bool,
     /// The turn running now: reported started, or named in the answer to
@@ -245,6 +257,8 @@ struct Thread {
     tools_settled: bool,
     /// Why the World's tools are not there in the thread's current load.
     tools_missing: Option<String>,
+    items: HashMap<(String, String), Value>,
+    item_starts: HashMap<(String, String), Timestamp>,
 }
 
 impl CodexHost {
@@ -294,6 +308,7 @@ impl CodexHost {
                     "developerInstructions": spec.developer_instructions,
                     "config": spec.config,
                     "ephemeral": false,
+                    "historyMode": "paginated",
                     "environments": [],
                 }),
             )
@@ -311,6 +326,7 @@ impl CodexHost {
         let entry = state.threads.entry(thread.clone()).or_default();
         entry.spec = Some(spec);
         entry.loaded = current;
+        entry.created_here = true;
         Ok((thread, model))
     }
 
@@ -386,6 +402,7 @@ impl CodexHost {
         let answer = match response {
             Ok(answer) => answer,
             Err(Unanswered::Refused(why)) => return Err(SendError::NotSent(why)),
+            Err(Unanswered::Rpc { message, .. }) => return Err(SendError::NotSent(message)),
             Err(Unanswered::Stopped(why)) => {
                 if let Some(turn) = observed {
                     return Ok(Sent { joined: before.as_deref() == Some(turn.as_str()), turn });
@@ -434,9 +451,22 @@ impl CodexHost {
     /// is not ended in it, whatever the record says.
     pub async fn history(self: &Arc<Self>, thread: &str) -> Result<Vec<SessionEvent>, String> {
         let server = self.server().await?;
-        let answer = server.request("thread/read", json!({ "threadId": thread, "includeTurns": true })).await?;
+        // A newly created thread can have an empty, buffered rollout while
+        // its MCP servers start. There is no durable item to read yet.
+        if self.lock().threads.get(thread).is_some_and(|t| t.created_here && !t.completed_item) {
+            return Ok(Vec::new());
+        }
         let running = self.running_turn(thread);
-        Ok(history(&answer, running.as_deref()))
+        history::read(&server, thread, running.as_deref()).await
+    }
+
+    /// Wait until the node has applied every event sent before this barrier.
+    pub async fn flush_events(&self, thread: &str) -> Result<(), String> {
+        let (done, applied) = oneshot::channel();
+        self.events
+            .send(HostEvent::Synchronized { thread: thread.into(), done: Arc::new(Mutex::new(Some(done))) })
+            .map_err(|_| "the Codex event consumer stopped".to_string())?;
+        applied.await.map_err(|_| "the Codex event consumer stopped before applying its queue".to_string())?
     }
 
     /// Whether a turn runs in any thread this host holds.
@@ -601,7 +631,7 @@ impl CodexHost {
         duration_ms: Option<u64>,
         at: Timestamp,
     ) {
-        self.end_with(thread, turn, how, reason, duration_ms, at, None);
+        self.end_with(thread, turn, how, reason, duration_ms, at, None, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -614,6 +644,7 @@ impl CodexHost {
         duration_ms: Option<u64>,
         at: Timestamp,
         summary: Option<String>,
+        error: Option<Value>,
     ) {
         let last_message = {
             let mut state = self.lock();
@@ -624,6 +655,8 @@ impl CodexHost {
             }
             entry.unsettled.insert(turn.to_string());
             entry.started.remove(turn);
+            entry.items.retain(|(item_turn, _), _| item_turn != turn);
+            entry.item_starts.retain(|(item_turn, _), _| item_turn != turn);
             if entry.turn.as_deref() == Some(turn) {
                 entry.turn = None;
             }
@@ -633,7 +666,7 @@ impl CodexHost {
             };
             summary.or(said)
         };
-        let end = TurnEnd { how, reason, duration_ms, last_message };
+        let end = TurnEnd { error, how, reason, duration_ms, last_message };
         self.emit(thread, at, Happened::TurnEnded { turn: turn.to_string(), end });
     }
 
@@ -642,12 +675,13 @@ impl CodexHost {
         let _ = self.events.send(HostEvent::Happened { thread: thread.to_string(), event });
     }
 
-    fn health(&self, thread: &str, turn: Option<String>, kind: HealthKind, text: String) {
-        self.emit(thread, Timestamp::now(), Happened::Health { turn, health: Health { kind, text } });
-    }
-
     /// Reads one notification about a thread.
-    fn notified(&self, method: &str, params: &Value) {
+    fn notified(&self, method: &str, params: &Value, at: Timestamp) {
+        let revision = {
+            let mut state = self.lock();
+            state.notification_sequence += 1;
+            Some(state.notification_sequence)
+        };
         let Some(thread) =
             params.get("threadId").or_else(|| params.pointer("/thread/id")).and_then(Value::as_str).map(str::to_string)
         else {
@@ -655,6 +689,27 @@ impl CodexHost {
         };
         let text = |pointer: &str| params.pointer(pointer).and_then(Value::as_str).map(str::to_string);
         let turn = text("/turnId").or_else(|| self.running_turn(&thread));
+        if let Some(mut happened) = notifications::read(method, params) {
+            if method == "thread/realtime/item/completed" {
+                self.lock().threads.entry(thread.clone()).or_default().completed_item = true;
+            }
+            if method == "thread/started"
+                && let Some(title) =
+                    params.pointer("/thread/name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
+            {
+                self.emit(&thread, at, Happened::Titled { title: title.into() });
+            }
+            if method == "guardianWarning" {
+                if turn.is_none() {
+                    return;
+                }
+                if let Happened::Changed { turn: warning_turn, .. } = &mut happened {
+                    *warning_turn = turn.clone();
+                }
+            }
+            self.emit(&thread, at, happened);
+            return;
+        }
         match method {
             "turn/started" => {
                 let Some(turn) = text("/turn/id") else { return };
@@ -692,7 +747,46 @@ impl CodexHost {
                 }
                 // Words that went in are told by whoever sent them, who knows
                 // who they are from.
-                let items::Read::Item(item) = items::read(item) else { return };
+                {
+                    let mut state = self.lock();
+                    let entry = state.threads.entry(thread.clone()).or_default();
+                    entry.completed_item |= completed;
+                    let key = (turn.clone(), item.get("id").and_then(Value::as_str).unwrap_or_default().to_string());
+                    if completed {
+                        entry.items.remove(&key);
+                    } else {
+                        entry.items.insert(key, item.clone());
+                    }
+                }
+                let mut item = match items::read(item, completed) {
+                    items::Read::Words { text, message } => {
+                        if completed {
+                            self.emit(
+                                &thread,
+                                at,
+                                Happened::Heard {
+                                    delivery: None,
+                                    turn: Some(turn),
+                                    from: None,
+                                    text,
+                                    message: Some(Box::new(message)),
+                                },
+                            );
+                        }
+                        return;
+                    }
+                    items::Read::Item(item) => item,
+                };
+                let mut state = self.lock();
+                let entry = state.threads.entry(thread.clone()).or_default();
+                let key = (turn.clone(), item.id.clone());
+                if completed {
+                    item.started_at = entry.item_starts.remove(&key);
+                } else {
+                    item.started_at = Some(at);
+                    entry.item_starts.insert(key, at);
+                }
+                drop(state);
                 let happened = if completed {
                     if let What::Message { text } = &item.what {
                         self.lock().threads.entry(thread.clone()).or_default().last_message =
@@ -704,21 +798,51 @@ impl CodexHost {
                 };
                 self.emit(&thread, at, happened);
             }
-            "item/agentMessage/delta" | "item/plan/delta" | "item/reasoning/summaryTextDelta" => {
+            "item/agentMessage/delta" | "item/plan/delta" => {
                 let (Some(turn), Some(item), Some(delta)) = (turn, text("/itemId"), text("/delta")) else { return };
-                self.emit(&thread, Timestamp::now(), Happened::Grew { turn, item, part: Part::Text, text: delta });
+                self.emit(&thread, at, Happened::Grew { revision, turn, item, part: Part::Text, text: delta });
             }
-            // A new part of a reasoning summary is a new paragraph of it.
-            "item/reasoning/summaryPartAdded" => {
-                let (Some(turn), Some(item)) = (turn, text("/itemId")) else { return };
-                if params.get("summaryIndex").and_then(Value::as_u64).unwrap_or(0) > 0 {
-                    let text = "\n\n".to_string();
-                    self.emit(&thread, Timestamp::now(), Happened::Grew { turn, item, part: Part::Text, text });
+            "item/reasoning/summaryTextDelta" | "item/fileChange/patchUpdated" => {
+                let (Some(turn), Some(id)) = (turn, text("/itemId")) else { return };
+                let snapshot = {
+                    let mut state = self.lock();
+                    let entry = state.threads.entry(thread.clone()).or_default();
+                    let item = entry.items.entry((turn.clone(), id.clone())).or_insert_with(|| {
+                        if method == "item/fileChange/patchUpdated" {
+                            json!({"id": id, "type": "fileChange", "status": "inProgress", "changes": []})
+                        } else {
+                            json!({"id": id, "type": "reasoning", "summary": []})
+                        }
+                    });
+                    if method == "item/fileChange/patchUpdated" {
+                        item["changes"] = params["changes"].clone();
+                    } else {
+                        let Some(index) =
+                            params.get("summaryIndex").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok())
+                        else {
+                            return;
+                        };
+                        let Some(delta) = text("/delta") else { return };
+
+                        let summary = item["summary"].as_array_mut().expect("reasoning summary array");
+                        summary.resize(summary.len().max(index + 1), json!(""));
+                        let part = summary[index].as_str().unwrap_or_default().to_string() + &delta;
+                        summary[index] = json!(part);
+                    }
+                    item.clone()
+                };
+                if let items::Read::Item(mut item) = items::read(&snapshot, false) {
+                    item.started_at = self
+                        .lock()
+                        .threads
+                        .get(&thread)
+                        .and_then(|entry| entry.item_starts.get(&(turn.clone(), item.id.clone())).copied());
+                    self.emit(&thread, at, Happened::Updated { turn, item });
                 }
             }
             "item/commandExecution/outputDelta" => {
                 let (Some(turn), Some(item), Some(delta)) = (turn, text("/itemId"), text("/delta")) else { return };
-                self.emit(&thread, Timestamp::now(), Happened::Grew { turn, item, part: Part::Output, text: delta });
+                self.emit(&thread, at, Happened::Grew { revision, turn, item, part: Part::Output, text: delta });
             }
             "turn/plan/updated" => {
                 let Some(turn) = turn else { return };
@@ -730,7 +854,7 @@ impl CodexHost {
                     .map(|step| Step {
                         id: None,
                         active_form: None,
-                        detail: None,
+                        detail: Some(step.clone()),
                         text: step.get("step").and_then(Value::as_str).unwrap_or_default().to_string(),
                         status: match step.get("status").and_then(Value::as_str) {
                             Some("completed") => StepStatus::Done,
@@ -739,16 +863,25 @@ impl CodexHost {
                         },
                     })
                     .collect();
-                self.emit(&thread, Timestamp::now(), Happened::Steps { turn, steps, note: text("/explanation") });
+                self.emit(&thread, at, Happened::Steps { turn, steps, note: text("/explanation") });
             }
             "thread/tokenUsage/updated" => {
                 let Some(used) = params.pointer("/tokenUsage/last/totalTokens").and_then(Value::as_u64) else { return };
                 let window = params.pointer("/tokenUsage/modelContextWindow").and_then(Value::as_u64);
-                self.emit(&thread, Timestamp::now(), Happened::Context { used, window });
+                self.emit(&thread, at, Happened::Context { used, window });
+                self.emit(
+                    &thread,
+                    at,
+                    Happened::Changed { turn, change: SessionChange::Usage { usage: params["tokenUsage"].clone() } },
+                );
             }
             "thread/name/updated" => {
                 let Some(title) = text("/threadName") else { return };
-                self.emit(&thread, Timestamp::now(), Happened::Titled { title });
+                let title = title.trim().to_string();
+                if title.is_empty() {
+                    return;
+                }
+                self.emit(&thread, at, Happened::Titled { title });
             }
             "turn/completed" => {
                 let Some(id) = text("/turn/id") else { return };
@@ -759,65 +892,35 @@ impl CodexHost {
                 // The completion names the turn's last message itself, when
                 // it has one; it is the turn's own, whatever came before.
                 let summary = params.pointer("/turn/items").and_then(Value::as_array).and_then(|items| {
-                    items.iter().rev().find_map(|item| match items::read(item) {
+                    items.iter().rev().find_map(|item| match items::read(item, true) {
                         items::Read::Item(Item { what: What::Message { text }, .. }) => Some(text),
                         _ => None,
                     })
                 });
-                self.end_with(&thread, &id, how, reason, duration, at, summary);
-            }
-            "thread/status/changed" => {
-                let flags: Vec<&str> = params
-                    .pointer("/status/activeFlags")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                    .collect();
-                let report = match text("/status/type").as_deref() {
-                    Some("systemError") => {
-                        Some((HealthKind::Error, "Codex reports a system error in this thread".to_string()))
-                    }
-                    Some("active") if flags.contains(&"waitingOnUserInput") => Some((
-                        HealthKind::Warning,
-                        "Codex is waiting for input from the user in this thread".to_string(),
-                    )),
-                    Some("active") if flags.contains(&"waitingOnApproval") => {
-                        Some((HealthKind::Warning, "Codex is waiting for an approval in this thread".to_string()))
-                    }
-                    _ => None,
-                };
-                if let Some((kind, text)) = report {
-                    self.health(&thread, turn, kind, text);
-                }
-            }
-            "error" => self.error(&thread, params),
-            "model/safetyBuffering/updated" => {
-                let list = |key: &str| {
-                    let words: Vec<&str> = params
-                        .get(key)
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_str)
-                        .collect();
-                    if words.is_empty() { "not given".to_string() } else { words.join(", ") }
-                };
-                let text = format!(
-                    "OpenAI is holding this turn's output for extra safety processing (use: {}; reason: {})",
-                    list("useCases"),
-                    list("reasons")
+                self.end_with(
+                    &thread,
+                    &id,
+                    how,
+                    reason,
+                    duration,
+                    at,
+                    summary,
+                    params.pointer("/turn/error").filter(|e| !e.is_null()).cloned(),
                 );
-                self.health(&thread, turn, HealthKind::Safety, text);
             }
-            "model/rerouted" => {
-                let text = format!(
-                    "OpenAI moved this turn from {} to {} ({})",
-                    text("/fromModel").unwrap_or_default(),
-                    text("/toModel").unwrap_or_default(),
-                    text("/reason").unwrap_or_default()
+            "error" => {
+                self.emit(
+                    &thread,
+                    at,
+                    Happened::Changed {
+                        turn,
+                        change: SessionChange::Error {
+                            error: params["error"].clone(),
+                            will_retry: params.get("willRetry").and_then(Value::as_bool).unwrap_or(false),
+                        },
+                    },
                 );
-                self.health(&thread, turn, HealthKind::Rerouted, text);
+                self.error(&thread, params, at);
             }
             "mcpServer/startupStatus/updated" => {
                 let (name, status) = (text("/name").unwrap_or_default(), text("/status").unwrap_or_default());
@@ -833,24 +936,27 @@ impl CodexHost {
                     };
                     {
                         let mut state = self.lock();
-                        let entry = state.threads.entry(thread).or_default();
+                        let entry = state.threads.entry(thread.clone()).or_default();
                         entry.tools_settled = matches!(status.as_str(), "ready" | "failed" | "cancelled");
                         entry.tools_missing = missing;
                     }
                     self.tools_changed.notify_waiters();
-                } else if status == "failed" {
-                    self.health(
-                        &thread,
-                        turn,
-                        HealthKind::ToolServer,
-                        format!("its {name} tools did not start: {why}"),
-                    );
                 }
+                self.emit(
+                    &thread,
+                    at,
+                    Happened::Changed {
+                        turn,
+                        change: SessionChange::ToolServer {
+                            server: name,
+                            status,
+                            error: params["error"].clone(),
+                            failure_reason: params["failureReason"].clone(),
+                        },
+                    },
+                );
             }
-            "warning" => {
-                let text = format!("Codex warns: {}", text("/message").unwrap_or_default());
-                self.health(&thread, turn, HealthKind::Warning, text);
-            }
+
             "thread/closed" => {
                 // Unloaded: the next words resume it.
                 if let Some(entry) = self.lock().threads.get_mut(&thread) {
@@ -866,12 +972,10 @@ impl CodexHost {
     /// turn's end, which carries it; for a turn that was taken but never
     /// started it is that turn's only end, and may come before the answer to
     /// `turn/start` that names the turn.
-    fn error(&self, thread: &str, params: &Value) {
+    fn error(&self, thread: &str, params: &Value, at: Timestamp) {
         let message = params.pointer("/error/message").and_then(Value::as_str).unwrap_or_default().to_string();
         let turn = params.get("turnId").and_then(Value::as_str).unwrap_or_default().to_string();
         if params.get("willRetry").and_then(Value::as_bool) == Some(true) {
-            let text = format!("Codex is reconnecting to the model: {message}");
-            self.health(thread, Some(turn).filter(|turn| !turn.is_empty()), HealthKind::Reconnecting, text);
             return;
         }
         let (awaited, started) = {
@@ -883,7 +987,7 @@ impl CodexHost {
                 if entry.submitted {
                     entry.observed_submission = Some(turn.clone());
                     drop(state);
-                    self.end(thread, &turn, TurnHow::Failed, Some(message), None, Timestamp::now());
+                    self.end(thread, &turn, TurnHow::Failed, Some(message), None, at);
                 } else {
                     entry.failed_early.insert(turn, message);
                 }
@@ -892,9 +996,9 @@ impl CodexHost {
             (awaited, started)
         };
         match (awaited, started) {
-            (true, false) => self.end(thread, &turn, TurnHow::Failed, Some(message), None, Timestamp::now()),
+            (true, false) => self.end(thread, &turn, TurnHow::Failed, Some(message), None, at),
             (true, true) => {}
-            (false, _) => self.health(thread, None, HealthKind::Error, format!("Codex reported an error: {message}")),
+            (false, _) => {}
         }
     }
 
@@ -934,14 +1038,43 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
     while let Some(message) = inbound.recv().await {
         let Some(host) = host.upgrade() else { return };
         match message {
-            Inbound::Notification { method, params } => {
+            Inbound::Response { waiter, answer } => {
+                let _ = waiter.send(answer);
+            }
+            Inbound::Notification { method, params, emitted_at_ms } => {
                 let _generation = host.generation.lock().expect("never poisoned");
                 let current = matches!(&host.lock().server, Some((current, _)) if Arc::ptr_eq(current, &server));
                 if current {
-                    host.notified(&method, &params);
+                    host.notified(
+                        &method,
+                        &params,
+                        emitted_at_ms.and_then(|n| Timestamp::from_millisecond(n).ok()).unwrap_or_else(Timestamp::now),
+                    );
                 }
             }
-            Inbound::Request { id, method, .. } => {
+            Inbound::Request { id, method, params } => {
+                if matches!(
+                    method.as_str(),
+                    "item/commandExecution/requestApproval"
+                        | "item/fileChange/requestApproval"
+                        | "item/tool/requestUserInput"
+                        | "mcpServer/elicitation/request"
+                        | "item/permissions/requestApproval"
+                ) && let Some(thread) = params.get("threadId").and_then(Value::as_str)
+                {
+                    host.emit(
+                        thread,
+                        Timestamp::now(),
+                        Happened::Changed {
+                            turn: params.get("turnId").and_then(Value::as_str).map(str::to_string),
+                            change: SessionChange::Request {
+                                id: id.clone(),
+                                request: method.clone(),
+                                params: params.clone(),
+                            },
+                        },
+                    );
+                }
                 // The World answers nothing the app-server asks: it gives no
                 // approvals, and its threads ask for none.
                 (host.log)(format!("declined the app-server's {method} request"));
@@ -954,46 +1087,6 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
             }
         }
     }
-}
-
-/// A thread's history from `thread/read`, as session events.
-fn history(answer: &Value, running: Option<&str>) -> Vec<SessionEvent> {
-    let mut events = Vec::new();
-    for turn in answer.pointer("/thread/turns").and_then(Value::as_array).into_iter().flatten() {
-        let Some(id) = turn.get("id").and_then(Value::as_str) else { continue };
-        let started = seconds(turn.get("startedAt"));
-        let mut push = |at, happened| events.push(SessionEvent { at, happened });
-        push(started, Happened::TurnStarted { turn: id.to_string() });
-        let mut last_message = None;
-        for item in turn.get("items").and_then(Value::as_array).into_iter().flatten() {
-            let turn = id.to_string();
-            match items::read(item) {
-                items::Read::Words(text) => {
-                    push(started, Happened::Heard { delivery: None, turn: Some(turn), from: None, text })
-                }
-                items::Read::Item(item) => {
-                    if let What::Message { text } = &item.what {
-                        last_message = Some(text.clone());
-                    }
-                    push(started, Happened::Finished { turn, item });
-                }
-            }
-        }
-        let status = turn.get("status").and_then(Value::as_str);
-        // The record says a turn that is still running was interrupted
-        // until it has been written to the end.
-        if status == Some("inProgress") || running == Some(id) {
-            continue;
-        }
-        let end = TurnEnd {
-            how: turn_how(status),
-            reason: turn.pointer("/error/message").and_then(Value::as_str).map(str::to_string),
-            duration_ms: turn.get("durationMs").and_then(Value::as_u64),
-            last_message,
-        };
-        push(seconds(turn.get("completedAt")), Happened::TurnEnded { turn: id.to_string(), end });
-    }
-    events
 }
 
 fn turn_how(status: Option<&str>) -> TurnHow {
@@ -1034,6 +1127,8 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
     let limits: serde_json::Map<String, Value> =
         tools.iter().map(|name| (name.to_string(), json!({ "output_token_limit": limit }))).collect();
     json!({
+        // Media is part of the watched session, including while it streams.
+        "features": { "omit_app_server_notification_media": false },
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {
             "command": binary,

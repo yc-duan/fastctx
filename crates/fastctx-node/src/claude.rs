@@ -460,6 +460,7 @@ async fn ended_for_process(
             None => "its Claude Code conversation ended".to_string(),
         };
         let end = fastctx_types::session::TurnEnd {
+            error: None,
             how: fastctx_types::session::TurnHow::Interrupted,
             reason: Some(why),
             duration_ms: None,

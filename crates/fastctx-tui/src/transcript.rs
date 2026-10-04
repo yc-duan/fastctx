@@ -65,10 +65,12 @@ enum Item {
     },
     Compaction {
         item: String,
+        turn: String,
     },
     /// Something the host reported that the World has no name for.
     Other {
         item: String,
+        turn: String,
         kind: String,
     },
     Ended {
@@ -146,6 +148,7 @@ enum Use {
     Declined,
     /// Its turn ended before it did.
     Cut,
+    Unknown,
 }
 
 impl Transcript {
@@ -206,7 +209,10 @@ impl Transcript {
     pub fn event(&mut self, event: SessionEvent) {
         let at = event.at;
         match event.happened {
-            Happened::TurnStarted { .. } => {}
+            Happened::TurnStarted { .. }
+            | Happened::Changed { .. }
+            | Happened::Realtime { .. }
+            | Happened::RealtimeGrew { .. } => {}
             Happened::Heard { turn, from, text, .. } => {
                 // Words sent from here are now heard: they keep their place.
                 if matches!(from, Some(Speaker::User { .. }))
@@ -227,9 +233,9 @@ impl Transcript {
                     self.items.push(Item::Heard { from, text, turn, sending: None });
                 }
             }
-            Happened::Began { turn, item } => self.item(turn, item.id, item.what, at, false),
-            Happened::Finished { turn, item } => self.item(turn, item.id, item.what, at, true),
-            Happened::Grew { turn, item, part, text: more } => match (self.find(&item), part) {
+            Happened::Began { turn, item } | Happened::Updated { turn, item } => self.item(turn, item, at, false),
+            Happened::Finished { turn, item } => self.item(turn, item, at, true),
+            Happened::Grew { turn, item, part, text: more, .. } => match (self.find(&turn, &item), part) {
                 (Some(Item::Prose { text, laid, .. }), Part::Text) => {
                     text.push_str(&more);
                     laid.changed();
@@ -285,7 +291,10 @@ impl Transcript {
 
     /// An item began or finished: shown where it first appeared, as it now
     /// stands.
-    fn item(&mut self, turn: String, id: String, what: What, at: Timestamp, finished: bool) {
+    fn item(&mut self, turn: String, native: fastctx_types::session::Item, at: Timestamp, finished: bool) {
+        let started_at = native.started_at.unwrap_or(at);
+        let id = native.id;
+        let what = native.what;
         let prose = |kind, text: String| Item::Prose {
             item: id.clone(),
             turn: turn.clone(),
@@ -298,9 +307,11 @@ impl Transcript {
             What::Message { text } => prose(Prose::Message, text),
             What::Thinking { text } => prose(Prose::Thinking, text),
             What::Plan { text } => prose(Prose::Plan, text),
+            What::AgentActivity { path, activity, .. } => prose(Prose::Message, format!("{path}: {activity}")),
             What::Tool(tool) => {
                 let ended = match tool.status {
                     ToolStatus::Running => None,
+                    ToolStatus::Unknown => Some((at, Use::Unknown)),
                     ToolStatus::Done => Some((at, Use::Done)),
                     ToolStatus::Failed => Some((at, Use::Failed)),
                     ToolStatus::Declined => Some((at, Use::Declined)),
@@ -310,23 +321,37 @@ impl Transcript {
                     item: id.clone(),
                     turn: turn.clone(),
                     tool,
-                    at,
+                    at: started_at,
                     ended: if finished { ended } else { None },
                 }
             }
             // Shown once it is done: the context it leaves is what counts.
             What::Compaction if !finished => return,
-            What::Compaction => Item::Compaction { item: id.clone() },
+            What::Compaction => Item::Compaction { item: id.clone(), turn: turn.clone() },
+            // A completed item can remove a transient placeholder, for
+            // example an image attempt that ended without an image.
+            What::Hidden { .. } => {
+                if !id.is_empty() {
+                    self.items.retain(|shown| match shown {
+                        Item::Prose { item, turn: own, .. }
+                        | Item::Tool { item, turn: own, .. }
+                        | Item::Compaction { item, turn: own }
+                        | Item::Other { item, turn: own, .. } => item != &id || own != &turn,
+                        _ => true,
+                    });
+                }
+                return;
+            }
             // A kind the World does not know is shown for what the host
             // called it, once it is done.
             What::Other { .. } if !finished => return,
-            What::Other { host_kind } => Item::Other { item: id.clone(), kind: host_kind.clone() },
+            What::Other { host_kind } => Item::Other { item: id.clone(), turn: turn.clone(), kind: host_kind.clone() },
         };
         if id.is_empty() {
             self.items.push(fresh);
             return;
         }
-        match self.find(&id) {
+        match self.find(&turn, &id) {
             Some(shown) => {
                 let began = match shown {
                     Item::Tool { at, .. } => Some(*at),
@@ -352,12 +377,12 @@ impl Transcript {
         }
     }
 
-    fn find(&mut self, id: &str) -> Option<&mut Item> {
+    fn find(&mut self, turn: &str, id: &str) -> Option<&mut Item> {
         self.items.iter_mut().find(|item| match item {
-            Item::Prose { item, .. }
-            | Item::Tool { item, .. }
-            | Item::Compaction { item }
-            | Item::Other { item, .. } => item == id,
+            Item::Prose { item, turn: own, .. }
+            | Item::Tool { item, turn: own, .. }
+            | Item::Compaction { item, turn: own }
+            | Item::Other { item, turn: own, .. } => item == id && own == turn,
             _ => false,
         })
     }
@@ -717,6 +742,7 @@ fn tool_row(
             Role::Muted,
             Span::styled(words.tool_declined().to_string(), look.text(Role::Wrong)),
         ),
+        Some((_, Use::Unknown)) => (look.text(Role::Rule), Role::Muted, Span::styled("?", look.text(Role::Faint))),
         Some((_, Use::Cut)) => {
             (look.text(Role::Rule), Role::Faint, Span::styled(words.tool_cut().to_string(), look.text(Role::Faint)))
         }
@@ -813,6 +839,9 @@ fn tool_details(ctx: &Ctx, tool: &Tool, width: usize) -> Vec<Line<'static>> {
         match piece {
             fastctx_types::session::Content::Text { text } => output.extend(text.lines().map(str::to_string)),
             fastctx_types::session::Content::Image { mime, .. } => output.push(words.image(mime)),
+            fastctx_types::session::Content::ImageUrl { url } | fastctx_types::session::Content::AudioUrl { url } => {
+                output.push(url.clone())
+            }
             // A block of a kind the World does not read, by its type.
             fastctx_types::session::Content::Other { block } => {
                 output.push(words.block(block.get("type").and_then(serde_json::Value::as_str).unwrap_or("?")))

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use fastctx_hosts::codex::HostEvent;
 use fastctx_types::ResidentId;
 use fastctx_types::residents::{Activity, Origin};
-use fastctx_types::session::{Happened, SessionEvent};
+use fastctx_types::session::SessionEvent;
 use tokio::sync::mpsc;
 
 use crate::Node;
@@ -85,10 +85,8 @@ struct KeptReports {
 /// Whether a report is kept on disk until it is applied.
 fn durable(event: &HostEvent) -> bool {
     match event {
-        HostEvent::Happened { event, .. } => matches!(
-            event.happened,
-            Happened::TurnStarted { .. } | Happened::TurnEnded { .. } | Happened::Health { .. }
-        ),
+        HostEvent::Synchronized { .. } => false,
+        HostEvent::Happened { event, .. } => event.happened.kept(),
         HostEvent::Desk { .. } | HostEvent::Gone { .. } => true,
     }
 }
@@ -152,6 +150,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
         let Some(event) = event else { return };
         let Some(id) = node.residents.resident_of_thread(thread) else { return };
         let result = match event {
+            HostEvent::Synchronized { .. } => unreachable!("barriers do not enter the durable queue"),
             HostEvent::Happened { event, .. } => crate::turns::apply(node, &id, event).await,
             HostEvent::Desk { turn, desk, .. } => {
                 let town = node.residents.town_of(&id).flatten();
@@ -173,6 +172,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
                         happened: fastctx_types::session::Happened::TurnEnded {
                             turn,
                             end: fastctx_types::session::TurnEnd {
+                                error: None,
                                 how: fastctx_types::session::TurnHow::Interrupted,
                                 reason: Some(format!("its app-server stopped ({how})")),
                                 duration_ms: None,
@@ -244,6 +244,26 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
     tokio::spawn(async move {
         while let Some(event) = events.recv().await {
             let reports = match event {
+                HostEvent::Synchronized { thread, done } => {
+                    drain(&node, &thread).await;
+                    let applied = if node
+                        .unclaimed
+                        .state
+                        .lock()
+                        .expect("never poisoned")
+                        .queues
+                        .get(&thread)
+                        .is_none_or(Vec::is_empty)
+                    {
+                        Ok(())
+                    } else {
+                        Err("some Codex events could not be applied; see the node log".to_string())
+                    };
+                    if let Some(done) = done.lock().expect("never poisoned").take() {
+                        let _ = done.send(applied);
+                    }
+                    continue;
+                }
                 HostEvent::Gone { how, turns } => turns
                     .into_iter()
                     .map(|(thread, turn)| {

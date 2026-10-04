@@ -6,25 +6,82 @@
 //! change with its diff. An item of a type not known here is passed on by
 //! its type, with nothing said of it (`world.md`, 接入宿主只靠它们写明的接口).
 
-use fastctx_types::session::{Change, ChangeHow, Content, Does, Item, Tool, ToolStatus, What};
+use fastctx_types::session::{Change, ChangeHow, Content, Does, Item, Tool, ToolStatus, UserMessage, What};
 use serde_json::Value;
 
 use crate::world_tools;
 
 pub enum Read {
     /// Words that went into the thread, their text parts joined.
-    Words(String),
+    Words {
+        text: String,
+        message: UserMessage,
+    },
     Item(Item),
 }
 
-pub fn read(item: &Value) -> Read {
+pub fn read(item: &Value, completed: bool) -> Read {
     let id = text(item, "id").unwrap_or_default();
     let kind = text(item, "type").unwrap_or_default();
-    let what = match kind.as_str() {
-        "userMessage" => return Read::Words(user_text(item)),
+    let mut what = match kind.as_str() {
+        "userMessage" => {
+            let Some((text, presentation)) = super::presentation::user_message(item) else { return unshown(item) };
+            return Read::Words {
+                text,
+                message: UserMessage {
+                    id,
+                    client_id: item.get("clientId").and_then(Value::as_str).map(str::to_string),
+                    content: array(item, "content"),
+                    hook_fragments: Vec::new(),
+                    presentation,
+                    detail: item.clone(),
+                },
+            };
+        }
+        "hookPrompt" => {
+            let fragments = array(item, "fragments");
+            let text = fragments.iter().filter_map(|f| f.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join(
+                "
+",
+            );
+            if text.trim().is_empty() {
+                return unshown(item);
+            }
+            return Read::Words {
+                text,
+                message: UserMessage {
+                    id,
+                    client_id: None,
+                    content: Vec::new(),
+                    hook_fragments: fragments,
+                    presentation: Value::Null,
+                    detail: item.clone(),
+                },
+            };
+        }
+        "functionCallOutput" => {
+            let Some(message) = super::presentation::function_message(item) else { return unshown(item) };
+            let mut projected = read(&message, completed);
+            if let Read::Words { message, .. } = &mut projected {
+                message.detail = item.clone();
+            }
+            return projected;
+        }
+        "sleep" | "enteredReviewMode" | "exitedReviewMode" => return unshown(item),
+        "subAgentActivity" => What::AgentActivity {
+            agent: text(item, "agentThreadId").unwrap_or_default(),
+            path: text(item, "agentPath").unwrap_or_default(),
+            activity: text(item, "kind").unwrap_or_default(),
+        },
         "agentMessage" => What::Message { text: text(item, "text").unwrap_or_default() },
         // The official app shows a reasoning item by its summary only.
-        "reasoning" => What::Thinking { text: strings(item, "summary").join("\n\n") },
+        "reasoning" => {
+            let summary = strings(item, "summary").join("\n\n");
+            if completed && summary.trim().is_empty() {
+                return unshown(item);
+            }
+            What::Thinking { text: summary }
+        }
         "plan" => What::Plan { text: text(item, "text").unwrap_or_default() },
         "contextCompaction" => What::Compaction,
         "commandExecution" => {
@@ -47,6 +104,9 @@ pub fn read(item: &Value) -> Read {
             .done()
         }
         "fileChange" => {
+            if item.get("changes").and_then(Value::as_array).is_some_and(Vec::is_empty) {
+                return unshown(item);
+            }
             let changes = item
                 .get("changes")
                 .and_then(Value::as_array)
@@ -71,16 +131,40 @@ pub fn read(item: &Value) -> Read {
         }
         "mcpToolCall" => {
             let server = text(item, "server").unwrap_or_default();
+            if server == "codex_app" {
+                let mut dynamic = item.clone();
+                dynamic["type"] = serde_json::json!("dynamicToolCall");
+                dynamic["namespace"] = serde_json::json!("codex_app");
+                dynamic["success"] = if item["status"] == "inProgress" {
+                    Value::Null
+                } else {
+                    serde_json::json!(item["status"] == "completed" && item["error"].is_null())
+                };
+                dynamic["contentItems"] = match item.pointer("/result/content").and_then(Value::as_array) {
+                    None => Value::Null,
+                    Some(blocks) => blocks
+                        .iter()
+                        .filter(|block| block["type"] == "text")
+                        .filter_map(|block| {
+                            Some(serde_json::json!({"type":"inputText", "text":block["text"].as_str()?}))
+                        })
+                        .collect(),
+                };
+                let mut projected = read(&dynamic, completed);
+                if let Read::Item(projected) = &mut projected {
+                    // The descriptor and original result remain available for
+                    // the official non-approved review's native MCP view.
+                    projected.detail = Some(item.clone());
+                }
+                return projected;
+            }
             let name = text(item, "tool").unwrap_or_default();
             let input = arguments(item.get("arguments"));
-            let mut output = item
+            let output = item
                 .pointer("/result/content")
                 .and_then(Value::as_array)
                 .map(|blocks| world_tools::mcp_content(blocks))
                 .unwrap_or_default();
-            if let Some(message) = item.pointer("/error/message").and_then(Value::as_str) {
-                output.push(Content::Text { text: message.to_string() });
-            }
             let (does, machine) = match server.as_str() {
                 world_tools::SERVER => world_tools::read(&name, &input, &output),
                 _ => (Does::Call, None),
@@ -90,6 +174,9 @@ pub fn read(item: &Value) -> Read {
             used.done()
         }
         "dynamicToolCall" => {
+            if super::presentation::hidden_tool(item) {
+                return unshown(item);
+            }
             let output = item
                 .get("contentItems")
                 .and_then(Value::as_array)
@@ -104,6 +191,9 @@ pub fn read(item: &Value) -> Read {
             used.done()
         }
         "collabAgentToolCall" => {
+            if text(item, "tool").as_deref() == Some("wait") {
+                return unshown(item);
+            }
             let to = item.pointer("/receiverThreadIds/0").and_then(Value::as_str).map(str::to_string);
             tool(
                 item,
@@ -119,12 +209,30 @@ pub fn read(item: &Value) -> Read {
             .done(),
         "imageView" => tool(item, "view_image", None, Does::Image { path: text(item, "path") }).done(),
         "imageGeneration" => {
-            let mut output = Vec::new();
-            if let Some(prompt) = text(item, "revisedPrompt") {
-                output.push(Content::Text { text: prompt });
+            let source = ["savedPath", "result"]
+                .iter()
+                .any(|key| item.get(key).and_then(Value::as_str).is_some_and(|value| !value.trim().is_empty()));
+            let running = matches!(item.get("status").and_then(Value::as_str), Some("inProgress" | "in_progress"));
+            let limit = item.pointer("/failure/type").and_then(Value::as_str) == Some("usageLimitExceeded")
+                && item.pointer("/failure/limitId").and_then(Value::as_str) == Some("image_gen");
+            if !source && !running && !limit {
+                return unshown(item);
             }
-            if let Some(image) = text(item, "result").filter(|result| !result.is_empty()) {
-                output.push(Content::Image { mime: "image/png".to_string(), base64: image });
+            let mut output = Vec::new();
+            if let Some(result) = text(item, "result").filter(|result| !result.trim().is_empty()) {
+                let image = result.trim();
+                let lower = image.to_ascii_lowercase();
+                let uri = ["data:image/", "http://", "https://", "file://", "app://"]
+                    .iter()
+                    .any(|prefix| lower.starts_with(prefix));
+                let drive = image.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                    && image.as_bytes().get(1) == Some(&b':')
+                    && image.as_bytes().get(2).is_some_and(|byte| matches!(byte, b'/' | b'\\'));
+                output.push(if uri || image.starts_with('/') || image.starts_with(r"\\") || drive {
+                    image_content(image)
+                } else {
+                    Content::Image { mime: "image/png".into(), base64: image.into() }
+                });
             }
             let mut used =
                 tool(item, "image_generation", None, Does::Image { path: text(item, "savedPath") }).output(output);
@@ -133,12 +241,15 @@ pub fn read(item: &Value) -> Read {
             }
             used.done()
         }
-        "sleep" => tool(item, "sleep", None, Does::Call)
-            .input(serde_json::json!({ "durationMs": item.get("durationMs") }))
-            .done(),
         other => What::Other { host_kind: other.to_string() },
     };
-    Read::Item(Item { id, started_at: None, detail: None, what })
+    if let What::Tool(tool) = &mut what
+        && !completed
+        && item.get("status").is_none()
+    {
+        tool.status = ToolStatus::Running;
+    }
+    Read::Item(Item { id, what, detail: Some(item.clone()), started_at: None })
 }
 
 /// A tool item being read.
@@ -167,7 +278,8 @@ fn tool(item: &Value, name: &str, server: Option<String>, does: Does) -> Used {
         Some("inProgress" | "in_progress") => ToolStatus::Running,
         Some("failed") => ToolStatus::Failed,
         Some("declined") => ToolStatus::Declined,
-        _ => ToolStatus::Done,
+        Some("completed") | None => ToolStatus::Done,
+        _ => ToolStatus::Unknown,
     };
     Used {
         tool: Tool {
@@ -183,13 +295,9 @@ fn tool(item: &Value, name: &str, server: Option<String>, does: Does) -> Used {
     }
 }
 
-/// Arguments as the host gave them: an object, or JSON text of one.
+/// Arguments are already JSON values on the app-server wire.
 fn arguments(arguments: Option<&Value>) -> Value {
-    match arguments {
-        Some(Value::String(json)) => serde_json::from_str(json).unwrap_or_else(|_| Value::String(json.clone())),
-        Some(arguments) => arguments.clone(),
-        None => Value::Null,
-    }
+    arguments.cloned().unwrap_or(Value::Null)
 }
 
 /// A dynamic tool's output items: `inputText` and `inputImage`.
@@ -198,13 +306,18 @@ fn dynamic_content(blocks: &[Value]) -> Vec<Content> {
         .iter()
         .map(|block| match block.get("type").and_then(Value::as_str) {
             Some("inputText") => Content::Text { text: text(block, "text").unwrap_or_default() },
-            Some("inputImage") => match text(block, "imageUrl").and_then(|url| data_url(&url)) {
-                Some((mime, base64)) => Content::Image { mime, base64 },
-                None => Content::Text { text: text(block, "imageUrl").unwrap_or_default() },
-            },
-            other => Content::Text { text: format!("[{} content]", other.unwrap_or("unknown")) },
+            Some("inputImage") => image_content(&text(block, "imageUrl").unwrap_or_default()),
+            Some("inputAudio") => Content::AudioUrl { url: text(block, "audioUrl").unwrap_or_default() },
+            _ => Content::Other { block: block.clone() },
         })
         .collect()
+}
+
+fn image_content(url: &str) -> Content {
+    match data_url(url) {
+        Some((mime, base64)) => Content::Image { mime, base64 },
+        None => Content::ImageUrl { url: url.to_string() },
+    }
 }
 
 /// `data:<mime>;base64,<data>`.
@@ -212,19 +325,6 @@ fn data_url(url: &str) -> Option<(String, String)> {
     let rest = url.strip_prefix("data:")?;
     let (mime, data) = rest.split_once(";base64,")?;
     Some((mime.to_string(), data.to_string()))
-}
-
-/// The text parts of words that went in, joined.
-fn user_text(item: &Value) -> String {
-    let parts: Vec<String> = item
-        .get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|part| text(part, "text"))
-        .collect();
-    parts.join("\n")
 }
 
 fn strings(value: &Value, key: &str) -> Vec<String> {
@@ -240,4 +340,18 @@ fn strings(value: &Value, key: &str) -> Vec<String> {
 
 fn text(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+fn array(value: &Value, key: &str) -> Vec<Value> {
+    value.get(key).and_then(Value::as_array).cloned().unwrap_or_default()
+}
+
+/// Hidden items still have identities that an approval review can reference.
+fn unshown(item: &Value) -> Read {
+    Read::Item(Item {
+        id: text(item, "id").unwrap_or_default(),
+        started_at: None,
+        detail: Some(item.clone()),
+        what: What::Hidden { host_kind: text(item, "type").unwrap_or_default() },
+    })
 }

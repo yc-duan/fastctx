@@ -465,16 +465,16 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     };
     let mut events = vec![
         event(900, Happened::TurnStarted { turn: "t-0".into() }),
-        event(900, Happened::Heard {
+        event(900, Happened::Heard { message: None,
             delivery: None,
             turn: Some("t-0".into()),
             from: Some(Speaker::Resident { address: address("claude-2b1c", "desktop") }),
             text: "Port the PID loop in D:/work/mark50/src/ctrl/pid.rs to fixed-point. The board has no FPU; keep the sampling period as it is.".into(),
         }),
         event(860, Happened::Finished { turn: "t-0".into(), item: Item { id: "m0".into(), started_at: None, detail: None, what: What::Message { text: "I'll read the loop and the board's timing first.".into() } } }),
-        event(600, Happened::TurnEnded { turn: "t-0".into(), end: TurnEnd { how: TurnHow::Completed, reason: None, duration_ms: Some(300_000), last_message: None } }),
+        event(600, Happened::TurnEnded { turn: "t-0".into(), end: TurnEnd { error: None, how: TurnHow::Completed, reason: None, duration_ms: Some(300_000), last_message: None } }),
         event(240, Happened::TurnStarted { turn: turn.clone() }),
-        event(240, Happened::Heard { delivery: None, turn: Some(turn.clone()), from: Some(Speaker::User { machine: machine("desktop") }), text: "先别动采样周期，积分项用 Q8.24 试试看，跑一下 step 那组测试。".into() }),
+        event(240, Happened::Heard { message: None, delivery: None, turn: Some(turn.clone()), from: Some(Speaker::User { machine: machine("desktop") }), text: "先别动采样周期，积分项用 Q8.24 试试看，跑一下 step 那组测试。".into() }),
         event(238, Happened::Finished { turn: turn.clone(), item: item("r1", What::Thinking { text: "**Checking where the clamp sits**\n\nThe accumulator is clamped after it is summed, so an overflow would be cut back only after it happened.".into() }) }),
         event(236, Happened::Steps { turn: turn.clone(), steps: steps(1), note: None }),
     ];
@@ -545,7 +545,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     ));
     events.push(event(
         6,
-        Happened::Grew { turn: turn.clone(), item: "r2".into(), part: Part::Text, text: "**Waiting on the workspace tests**\n\nWhile they run, the noise_reject margin is worth a look: 0.3% is inside".into() },
+        Happened::Grew { revision: None, turn: turn.clone(), item: "r2".into(), part: Part::Text, text: "**Waiting on the workspace tests**\n\nWhile they run, the noise_reject margin is worth a look: 0.3% is inside".into() },
     ));
     events
 }
@@ -601,6 +601,7 @@ fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
         event(
             400,
             Happened::Heard {
+                message: None,
                 delivery: None,
                 turn: Some(turn.clone()),
                 from: Some(Speaker::User { machine: machine("desktop") }),
@@ -625,7 +626,13 @@ fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
             320,
             Happened::TurnEnded {
                 turn,
-                end: TurnEnd { how: TurnHow::Completed, reason: None, duration_ms: Some(80_000), last_message: None },
+                end: TurnEnd {
+                    error: None,
+                    how: TurnHow::Completed,
+                    reason: None,
+                    duration_ms: Some(80_000),
+                    last_message: None,
+                },
             },
         ),
     ]

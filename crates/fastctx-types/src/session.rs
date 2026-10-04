@@ -23,6 +23,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Address, MachineName, NoticeId};
 
+mod details;
+pub use details::*;
+
 /// One thing that happened in a session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEvent {
@@ -45,6 +48,8 @@ pub enum Happened {
         turn: Option<String>,
         from: Option<Speaker>,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<Box<UserMessage>>,
     },
     /// The agent began an item, as far as it was known then.
     Began {
@@ -53,6 +58,9 @@ pub enum Happened {
     },
     /// More of an item that is still going: text appended to what it has.
     Grew {
+        /// Distinguishes equal chunks emitted within the same timestamp.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        revision: Option<u64>,
         turn: String,
         item: String,
         part: Part,
@@ -62,6 +70,26 @@ pub enum Happened {
     Finished {
         turn: String,
         item: Item,
+    },
+    /// Replaces a running item's snapshot, without completing it.
+    Updated {
+        turn: String,
+        item: Item,
+    },
+    /// Presentation state rather than an additional chat message. Nested
+    /// third-party payloads retain their published JSON contracts.
+    Changed {
+        turn: Option<String>,
+        change: SessionChange,
+    },
+    /// Voice history has its own session and item identities, without a turn.
+    Realtime {
+        item: serde_json::Value,
+        complete: bool,
+    },
+    RealtimeGrew {
+        item: String,
+        text: String,
     },
     /// The steps the agent set out for its work, as they stand now: Codex's
     /// plan, Claude Code's to-do list.
@@ -97,10 +125,17 @@ pub enum Happened {
 }
 
 impl Happened {
-    /// Whether it is kept in a session's record. A finished item replaces
-    /// its live beginning and growth; snapshots of running items stay live.
+    /// Whether it is kept in a session's record: what grows an item is
+    /// only for those watching live, as the finished item holds it all.
     pub fn kept(&self) -> bool {
-        !matches!(self, Happened::Began { .. } | Happened::Grew { .. })
+        !matches!(
+            self,
+            Happened::Began { .. }
+                | Happened::Grew { .. }
+                | Happened::Updated { .. }
+                | Happened::RealtimeGrew { .. }
+                | Happened::Realtime { complete: false, .. }
+        )
     }
 }
 
@@ -125,16 +160,12 @@ pub enum Speaker {
     World,
 }
 
-/// Something the agent does in a turn. Its id is unique within the session.
+/// Something the agent does in a turn. Identity is the pair (turn, id).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
-    /// Where the item first appeared, so completed-only history preserves
-    /// the presentation order of overlapping items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<Timestamp>,
-    /// Additional host data, without interpretation or loss: for example
-    /// a compaction's summary and counts, or a tool's structured result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<serde_json::Value>,
     #[serde(flatten)]
@@ -160,7 +191,18 @@ pub enum What {
     Tool(Box<Tool>),
     /// The host compacted the session's context.
     Compaction,
-    /// An item of a kind the World does not know, by the host's name for it.
+    AgentActivity {
+        agent: String,
+        path: String,
+        activity: String,
+    },
+    /// An item the host deliberately excludes from the conversation. Its
+    /// original record stays in `Item.detail` for conditional host panels.
+    /// Replacing a visible item with this removes its transient placeholder.
+    Hidden {
+        host_kind: String,
+    },
+    /// A host item the World has no common name for.
     Other {
         host_kind: String,
     },
@@ -251,7 +293,14 @@ pub enum Content {
         mime: String,
         base64: String,
     },
-    /// A host block whose full shape the World does not normalize.
+    ImageUrl {
+        url: String,
+    },
+    AudioUrl {
+        url: String,
+    },
+    /// MCP content beyond plain text and base64 images, including resource
+    /// links, embedded resources, audio, and annotations on ordinary blocks.
     Other {
         block: serde_json::Value,
     },
@@ -267,6 +316,7 @@ pub enum ToolStatus {
     Declined,
     /// Its turn ended while it ran.
     Cut,
+    Unknown,
 }
 
 /// One step of the agent's plan.
@@ -298,6 +348,9 @@ pub struct TurnEnd {
     pub how: TurnHow,
     /// Why it did not complete, in the host's words where it gave them.
     pub reason: Option<String>,
+    /// Structured provider error, when the host supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<serde_json::Value>,
     pub duration_ms: Option<u64>,
     /// The agent's last message in the turn, verbatim: what goes back to
     /// whoever is owed the turn's end.
