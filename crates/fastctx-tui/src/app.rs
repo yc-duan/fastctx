@@ -29,6 +29,8 @@ pub struct Ctx {
     /// How far a mark of something happening has faded, 0 to 1: it
     /// breathes while something is busy.
     pub breath: f32,
+    /// Tenths of a second since the screen opened: what turns, turns by it.
+    pub frame: u64,
 }
 
 /// What a page wants after a key or an answer.
@@ -137,7 +139,7 @@ pub struct App {
 
 impl App {
     pub fn new(look: Look, words: Words, root: Page) -> Self {
-        let ctx = Ctx { look, words, now: Timestamp::now(), breath: 0.0 };
+        let ctx = Ctx { look, words, now: Timestamp::now(), breath: 0.0, frame: 0 };
         Self { ctx, pages: vec![(0, root)], next_id: 1, quit: false, started: Instant::now(), pasting: None }
     }
 
@@ -147,6 +149,7 @@ impl App {
         // One breath every 2.4 seconds: slow enough to stay quiet.
         let phase = (self.started.elapsed().as_millis() % 2400) as f32 / 2400.0;
         self.ctx.breath = 0.55 * (0.5 - 0.5 * (phase * std::f32::consts::TAU).cos());
+        self.ctx.frame = (self.started.elapsed().as_millis() / 100) as u64;
     }
 
     fn top(&mut self) -> (u64, &mut Page) {

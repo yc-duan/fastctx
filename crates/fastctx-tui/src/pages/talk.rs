@@ -398,10 +398,11 @@ impl TalkPage {
         } else if self.note.is_some() {
             self.note.clone()
         } else if let Some((Activity::Busy, since)) = self.state {
+            // Braille turns in one cell, in the terminal's own font.
+            const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let mut spans = vec![
-                Span::styled("✻ ", look.faded(Role::Accent, ctx.breath)),
-                Span::styled(format!("{}…", words.busy()), look.text(Role::Accent)),
-                Span::styled(format!("  {}", words.since(since, ctx.now)), look.text(Role::Faint)),
+                Span::styled(SPINNER[(ctx.frame % SPINNER.len() as u64) as usize], look.text(Role::Accent)),
+                Span::styled(format!("  {}", words.since(since, ctx.now)), look.text(Role::Muted)),
             ];
             if !self.stopping {
                 spans.push(Span::styled(format!("  ·  Ctrl+X {}", words.key_stop()), look.text(Role::Faint)));

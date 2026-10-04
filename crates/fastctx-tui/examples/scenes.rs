@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
     for (look_name, look) in looks {
         for (width, height) in sizes {
             // The breath half way, as a busy mark would be at some moment.
-            let ctx = Ctx { look, words: Words::new(lang), now: Timestamp::now(), breath: 0.25 };
+            let ctx = Ctx { look, words: Words::new(lang), now: Timestamp::now(), breath: 0.25, frame: 0 };
             for (name, mut page) in fastctx_tui::preview::scenes(&ctx) {
                 let mut terminal = Terminal::new(TestBackend::new(width, height))?;
                 terminal.draw(|frame| {
