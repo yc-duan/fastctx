@@ -278,6 +278,10 @@ impl TalkPage {
                     machine: self.address.machine.clone(),
                 });
             }
+            KeyCode::Char('o') if control => {
+                self.transcript.toggle_details();
+                return Act::Stay;
+            }
             KeyCode::Char('r') if control => {
                 if matches!(self.watching, Watching::Ended(_)) {
                     self.round += 1;
@@ -557,6 +561,9 @@ impl TalkPage {
                 vec![("Enter", words.key_send()), ("Ctrl+J", words.key_newline()), ("PgUp PgDn", words.key_scroll())];
             if empty && !self.colleagues().is_empty() {
                 keys.push(("Tab", words.key_colleagues()));
+            }
+            if self.transcript.has_tools() {
+                keys.push(("Ctrl+O", words.key_details(self.transcript.details())));
             }
             if matches!(self.watching, Watching::Ended(_)) {
                 keys.push(("Ctrl+R", words.key_watch_again()));

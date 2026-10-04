@@ -718,6 +718,39 @@ impl Words {
         }
     }
 
+    pub fn in_directory(&self, cwd: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("在 {cwd}"),
+            Lang::En => format!("in {cwd}"),
+        }
+    }
+
+    pub fn more_lines_before(&self, lines: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("…前面还有 {lines} 行"),
+            Lang::En => format!("… {lines} more lines before"),
+        }
+    }
+
+    pub fn more_lines_after(&self, lines: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("…还有 {lines} 行"),
+            Lang::En => format!("… {lines} more lines"),
+        }
+    }
+
+    pub fn image(&self, mime: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("[图片 {mime}]"),
+            Lang::En => format!("[image {mime}]"),
+        }
+    }
+
+    /// The key that shows or hides each tool's input and output.
+    pub fn key_details(&self, shown: bool) -> &'static str {
+        if shown { self.pick("收起工具", "fold tools") } else { self.pick("展开工具", "unfold tools") }
+    }
+
     pub fn thinking(&self) -> &'static str {
         self.pick("思考", "Thinking")
     }

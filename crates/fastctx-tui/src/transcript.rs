@@ -32,6 +32,8 @@ pub struct Transcript {
     /// How full the session's context is, as its host last said.
     context: Option<(u64, Option<u64>)>,
     title: Option<String>,
+    /// Each tool's input and output shown under its row.
+    details: bool,
 }
 
 enum Item {
@@ -143,7 +145,21 @@ enum Use {
 
 impl Transcript {
     pub fn new(here: Option<MachineName>) -> Self {
-        Self { items: Vec::new(), next_local: 0, here, context: None, title: None }
+        Self { items: Vec::new(), next_local: 0, here, context: None, title: None, details: false }
+    }
+
+    /// Shows or hides what each tool was given and gave back.
+    pub fn toggle_details(&mut self) {
+        self.details = !self.details;
+    }
+
+    pub fn details(&self) -> bool {
+        self.details
+    }
+
+    /// Whether any tool was used, so there are details to show.
+    pub fn has_tools(&self) -> bool {
+        self.items.iter().any(|item| matches!(item, Item::Tool { .. }))
     }
 
     /// How much of its context the session holds and how much it can.
@@ -439,6 +455,9 @@ impl Transcript {
                         blank(&mut out);
                     }
                     out.push(tool_row(ctx, tool, name_width, *at, *ended, self.here.as_ref(), width));
+                    if self.details {
+                        out.extend(tool_details(ctx, tool, width));
+                    }
                 }
                 Item::Steps { steps, note, .. } => {
                     blank(&mut out);
@@ -697,6 +716,98 @@ fn tool_row(
     line.spans.push(Span::raw(" ".repeat(width.saturating_sub(used + right_width))));
     line.spans.push(said);
     line
+}
+
+/// Lines of a tool's output shown under it at most, the last ones; of a
+/// change's diff, the first ones. What is left out is said.
+const OUTPUT_LINES: usize = 20;
+const DIFF_LINES: usize = 40;
+
+/// What a tool was given and gave back, under its row and its bar: the
+/// command and what it printed, the diff of each file it changed, its
+/// arguments and its answer.
+fn tool_details(ctx: &Ctx, tool: &Tool, width: usize) -> Vec<Line<'static>> {
+    let look = &ctx.look;
+    let words = &ctx.words;
+    let inner = width.saturating_sub(4);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let plain = |lines: &mut Vec<Line<'static>>, text: &str, role: Role| {
+        lines.extend(text::wrap_plain(text, look.text(role), inner));
+    };
+    match &tool.does {
+        Does::Command { command, cwd, .. } => {
+            for (index, line) in command.lines().enumerate() {
+                let lead = if index == 0 { "$ " } else { "  " };
+                plain(&mut lines, &format!("{lead}{line}"), Role::Text);
+            }
+            if let Some(cwd) = cwd {
+                plain(&mut lines, &words.in_directory(cwd), Role::Faint);
+            }
+        }
+        Does::Edit { changes } => {
+            for change in changes {
+                let path = match &change.how {
+                    fastctx_types::session::ChangeHow::Moved { to } => format!("{} → {to}", change.path),
+                    _ => change.path.clone(),
+                };
+                plain(&mut lines, &path, Role::Muted);
+                let diff: Vec<&str> = change.diff.lines().collect();
+                for line in diff.iter().take(DIFF_LINES) {
+                    let role = match line.chars().next() {
+                        Some('+') => Role::Alive,
+                        Some('-') => Role::Wrong,
+                        _ => Role::Faint,
+                    };
+                    plain(&mut lines, line, role);
+                }
+                if diff.len() > DIFF_LINES {
+                    plain(&mut lines, &words.more_lines_after(diff.len() - DIFF_LINES), Role::Faint);
+                }
+            }
+        }
+        _ => {
+            if let Some(input) = tool.input.as_object() {
+                for (key, value) in input {
+                    let value = match value {
+                        serde_json::Value::String(text) => text.clone(),
+                        other => other.to_string(),
+                    };
+                    let mut value_lines = value.lines();
+                    let first = value_lines.next().unwrap_or_default();
+                    let more = value_lines.count();
+                    let said = if more > 0 {
+                        format!("{key}: {first} {}", words.more_lines_after(more))
+                    } else {
+                        format!("{key}: {first}")
+                    };
+                    plain(&mut lines, &said, Role::Muted);
+                }
+            }
+        }
+    }
+    let mut output: Vec<String> = Vec::new();
+    for piece in &tool.output {
+        match piece {
+            fastctx_types::session::Content::Text { text } => output.extend(text.lines().map(str::to_string)),
+            fastctx_types::session::Content::Image { mime, .. } => output.push(words.image(mime)),
+        }
+    }
+    if !matches!(tool.does, Does::Edit { .. }) || tool.status != fastctx_types::session::ToolStatus::Done {
+        if output.len() > OUTPUT_LINES {
+            plain(&mut lines, &words.more_lines_before(output.len() - OUTPUT_LINES), Role::Faint);
+        }
+        for line in output.iter().skip(output.len().saturating_sub(OUTPUT_LINES)) {
+            plain(&mut lines, line, Role::Faint);
+        }
+    }
+    let bar = Span::styled(format!("{BAR}   "), look.text(Role::Rule));
+    lines
+        .into_iter()
+        .map(|mut line| {
+            line.spans.insert(0, bar.clone());
+            line
+        })
+        .collect()
 }
 
 /// How a turn ended, when it did not complete.

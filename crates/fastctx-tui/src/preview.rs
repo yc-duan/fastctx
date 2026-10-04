@@ -417,6 +417,17 @@ fn world_tool(name: &str, does: Does, status: ToolStatus, on: Option<&str>) -> W
     }))
 }
 
+/// The same tool use, having answered `text`.
+fn answered_with(what: What, text: &str) -> What {
+    match what {
+        What::Tool(mut tool) => {
+            tool.output = vec![fastctx_types::session::Content::Text { text: text.into() }];
+            What::Tool(tool)
+        }
+        other => other,
+    }
+}
+
 fn command(text: &str, exit: Option<i64>, job: Option<&str>) -> Does {
     Does::Command { command: text.into(), cwd: None, exit, job: job.map(str::to_string) }
 }
@@ -487,11 +498,14 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     events.extend(used(
         150,
         "c4",
-        world_tool(
-            "run",
-            command("cargo test -p ctrl step_profile", Some(101), None),
-            ToolStatus::Done,
-            Some("laptop"),
+        answered_with(
+            world_tool(
+                "run",
+                command("cargo test -p ctrl step_profile", Some(101), None),
+                ToolStatus::Done,
+                Some("laptop"),
+            ),
+            "=== run on laptop (exited 101) ===\n   Compiling ctrl v0.3.0 (D:/work/mark50/ctrl)\n    Finished `test` profile in 4.21s\n     Running unittests src/lib.rs\n\nrunning 3 tests\ntest ramp_hold ... ok\ntest noise_reject ... ok\ntest step_profile ... FAILED\n\nfailures:\n---- step_profile stdout ----\nthread 'step_profile' panicked at src/ctrl/pid.rs:88:9:\nintegral saturated at t=41.0s: 2147483647 > 2147483520\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored",
         ),
     ));
     events.push(event(140, Happened::Finished {
@@ -625,8 +639,11 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         .find(|resident| resident.about.id.as_str() == "codex-7f3a")
         .cloned()
         .expect("the colleague");
-    let mut talk = TalkPage::new(colleague, Some("Mark 50 研发".into()), Some(machine("desktop")));
+    let mut talk = TalkPage::new(colleague.clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     talk.data(ctx, Data::History(conversation(now)));
+    let mut detailed = TalkPage::new(colleague, Some("Mark 50 研发".into()), Some(machine("desktop")));
+    detailed.data(ctx, Data::History(conversation(now)));
+    detailed.key(ctx, KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
     let mut answer =
         TalkPage::new(town_view.residents[0].clone(), Some("Mark 50 研发".into()), Some(machine("desktop")));
     answer.data(ctx, Data::History(answered(now, ANSWER)));
@@ -691,6 +708,7 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
         ("world", Page::World(WorldPage::with(world_view, nodes(now)))),
         ("project", Page::Project(Box::new(ProjectPage::with(town("mark50"), town_view, map(now))))),
         ("talk", Page::Talk(Box::new(talk))),
+        ("talk-details", Page::Talk(Box::new(detailed))),
         ("answer", Page::Talk(Box::new(answer))),
         ("answer-table", Page::Talk(Box::new(table_answer))),
         ("colleagues", Page::Talk(Box::new(asking))),
