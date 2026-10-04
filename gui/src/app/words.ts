@@ -366,6 +366,110 @@ export const enProjectForm: ProjectFormWords = {
   failed: (why) => `Could not write it: ${why}`,
 };
 
+export interface DeviceWords {
+  invite: string;
+  inviteTitle: string;
+  inviteName: string;
+  inviteNameHint: string;
+  valid: string;
+  hours(n: number): string;
+  make: string;
+  making: string;
+  code: string;
+  copy: string;
+  copied: string;
+  until(at: string): string;
+  howTo: string;
+  howToSteps: string[];
+  again: string;
+  revoke: string;
+  revokeTitle(name: string): string;
+  revokeWhat(name: string): string;
+  reason: string;
+  reasonDefault: string;
+  revokeGo: string;
+  leave: string;
+  leaveTitle: string;
+  leaveWhat: string;
+  leaveGo: string;
+  working: string;
+  close: string;
+  failed(why: string): string;
+  specimen: string;
+}
+
+export const zhDevices: DeviceWords = {
+  invite: "邀请一台设备",
+  inviteTitle: "邀请一台设备",
+  inviteName: "它叫什么",
+  inviteNameHint: "小写字母、数字与连字符；不写就由它自己起名",
+  valid: "多久内有效",
+  hours: (n) => (n < 24 ? `${n} 小时` : `${n / 24} 天`),
+  make: "生成邀请码",
+  making: "正在生成…",
+  code: "邀请码",
+  copy: "复制",
+  copied: "已复制",
+  until: (at) => `${at}之前有效，只能用一次`,
+  howTo: "在新设备上",
+  howToSteps: [
+    "装好 World，打开它，选「加入已有的世界」，扫这个码或粘贴邀请码；",
+    "或者在它的终端里敲 fastctx join <邀请码>。",
+    "加入时会请一次管理员确认，装上开机自启的服务，之后它就一直连着。",
+  ],
+  again: "再生成一个",
+  revoke: "吊销",
+  revokeTitle: (name) => `吊销 ${name}`,
+  revokeWhat: (name) => `从此每台机器都不再认 ${name} 的钥匙：它不能再说话、收信，也不能再回来，除非重新邀请。它身上的东西不会被删掉。丢了的设备就这样处理。`,
+  reason: "原因",
+  reasonDefault: "revoked",
+  revokeGo: "吊销它",
+  leave: "离开世界",
+  leaveTitle: "让这台离开世界",
+  leaveWhat: "这台机器吊销自己的钥匙，回到独自一台。它身上的居民与记录都留着；别的机器从此不再认它。要回来，得重新被邀请。",
+  leaveGo: "离开",
+  working: "正在办…",
+  close: "关闭",
+  failed: (why) => `没办成：${why}`,
+  specimen: "这是样例，没有连着世界",
+};
+
+export const enDevices: DeviceWords = {
+  invite: "Invite a device",
+  inviteTitle: "Invite a device",
+  inviteName: "Its name",
+  inviteNameHint: "lowercase letters, digits and hyphens; left empty, it names itself",
+  valid: "Valid for",
+  hours: (n) => (n < 24 ? `${n} hour${n === 1 ? "" : "s"}` : `${n / 24} day${n === 24 ? "" : "s"}`),
+  make: "Make the code",
+  making: "Making it…",
+  code: "Invitation code",
+  copy: "Copy",
+  copied: "Copied",
+  until: (at) => `valid until ${at}, once`,
+  howTo: "On the new device",
+  howToSteps: [
+    "Install World, open it, choose “Join a World”, and scan this code or paste it;",
+    "or run fastctx join <code> in its terminal.",
+    "Joining asks for an administrator once to install the service that keeps it connected.",
+  ],
+  again: "Make another",
+  revoke: "Revoke",
+  revokeTitle: (name) => `Revoke ${name}`,
+  revokeWhat: (name) => `No machine will trust ${name}'s key again: it can no longer speak, receive letters or come back unless invited anew. Nothing on it is deleted. This is what to do with a lost device.`,
+  reason: "Reason",
+  reasonDefault: "revoked",
+  revokeGo: "Revoke it",
+  leave: "Leave the World",
+  leaveTitle: "Have this machine leave the World",
+  leaveWhat: "This machine revokes its own key and becomes a World of one. Its residents and records stay; the other machines stop trusting it. To come back it must be invited again.",
+  leaveGo: "Leave",
+  working: "Working…",
+  close: "Close",
+  failed: (why) => `It did not go through: ${why}`,
+  specimen: "This is a specimen, not connected to the World",
+};
+
 function zhSpan(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 1) return "不到一分钟";

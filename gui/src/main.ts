@@ -17,6 +17,7 @@ import "./app.css";
 import "./home/home.css";
 import "./project/project.css";
 
+import { Devices } from "./app/devices";
 import { MachinesPage } from "./app/machines";
 import { NewTalk } from "./app/new-talk";
 import { ProjectForm } from "./app/project-form";
@@ -27,12 +28,14 @@ import { effect } from "./app/signals";
 import { createStore, jobsOf, residentsOf } from "./app/store";
 import {
   enDetails,
+  enDevices,
   enMachines,
   enNewTalk,
   enProjectForm,
   enSettings,
   enShell,
   zhDetails,
+  zhDevices,
   zhMachines,
   zhNewTalk,
   zhProjectForm,
@@ -58,12 +61,15 @@ import { applyTheme } from "./theme";
 import type { Address } from "./world/events";
 import type { ResidentDetail } from "./world/world";
 import {
+  invite,
   journal as readJournal,
+  leave as leaveWorld,
   look,
   projectEdit,
   projectNew,
   open as openAgent,
   project as readProject,
+  revoke,
   stop,
   talk,
   unwatch,
@@ -129,6 +135,19 @@ const projectForm = new ProjectForm({
     if (location.hash === there) show(placeOf(there));
     else location.hash = there;
   },
+});
+
+const deviceWords = english ? enDevices : zhDevices;
+const notLive = () => Promise.reject(new Error(deviceWords.specimen));
+const devices = new Devices({
+  words: deviceWords,
+  // A specimen shows what a code looks like; it admits nobody.
+  invite: (name, hours) =>
+    live ? invite(name, hours) : Promise.resolve(`fxw3.${"specimen-not-a-real-invitation-".repeat(20)}${name ?? ""}${hours}`),
+  revoke: (name, reason) => (live ? revoke(name, reason) : notLive()),
+  leave: () => (live ? leaveWorld() : notLive()),
+  when: (at) => when(at, new Date()),
+  changed: () => void store.refresh(),
 });
 
 const shell = new Shell({
@@ -473,6 +492,8 @@ function show(next: Place): void {
       page = new MachinesPage({
         store,
         words: english ? enMachines : zhMachines,
+        devices,
+        deviceWords,
         head,
         focus: next.kind === "machine" ? next.name : null,
         when,
@@ -518,6 +539,8 @@ function specimenPlace(): Place | null {
       return { kind: "journal", town: "mark50", journal: "q16-fixed-point" };
     case "machines":
       return { kind: "machine", name: "laptop" };
+    case "invite":
+      return { kind: "machines" };
     case "settings":
       return { kind: "settings" };
     case "codex":
@@ -536,3 +559,4 @@ applyTheme(() => {
 show(specimenPlace() ?? placeOf(location.hash));
 if (!live && params.get("s") === "new") newTalk.open();
 if (!live && params.get("s") === "new-project") projectForm.open();
+if (!live && params.get("s") === "invite") devices.invite();

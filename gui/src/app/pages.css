@@ -191,3 +191,27 @@
   color: var(--text);
   box-shadow: inset 0 0 0 1px var(--rule);
 }
+
+.machine-acts {
+  margin: var(--space-2) 0 0;
+  padding-left: calc(8px + 2px + var(--space-2) - var(--space-3));
+  opacity: 0;
+  transition: opacity var(--hover) ease;
+}
+
+.machine-entry:hover .machine-acts,
+.machine-acts:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .machine-acts {
+    opacity: 1;
+  }
+}
+
+.quiet-button {
+  height: 28px;
+  color: var(--text-3);
+  font-size: var(--size-small);
+}

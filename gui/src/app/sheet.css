@@ -361,3 +361,90 @@
     grid-row: 2;
   }
 }
+
+/* An invitation: its QR code beside the code itself, then how to use it. */
+.device-sheet .sheet-body {
+  width: min(600px, 100vw - 32px);
+}
+
+.invitation {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.qr-frame {
+  padding: 10px;
+  border-radius: var(--radius-m);
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+.qr {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.invitation-text .field-label {
+  margin: 0;
+}
+
+.invite-code {
+  max-height: 9.5em;
+  margin: var(--space-1) 0 var(--space-2);
+  overflow-y: auto;
+  font-size: var(--size-small);
+  line-height: 1.5;
+  color: var(--text-2);
+  word-break: break-all;
+  user-select: all;
+}
+
+.invitation-text .copy-code {
+  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
+}
+
+.how-to {
+  margin-top: var(--space-5);
+}
+
+.how-to h3 {
+  margin: 0 0 var(--space-1);
+  font-weight: 400;
+}
+
+.how-to ol {
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+  color: var(--text);
+}
+
+.confirm-what {
+  margin: 0;
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+  color: var(--text);
+}
+
+.sheet-go.danger {
+  background: var(--wrong);
+}
+
+.sheet-go.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--wrong) 85%, var(--text));
+}
+
+@media (max-width: 760px) {
+  .invitation {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .qr-frame {
+    width: min(240px, 70vw);
+    justify-self: center;
+  }
+}

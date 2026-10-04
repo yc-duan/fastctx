@@ -2,19 +2,23 @@
 // since when, who is on it and what runs there. A machine named in the
 // address is brought into view and marked.
 
+import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { osName } from "../home/frontispiece";
 import type { WorldNow } from "../world/bridge";
 import type { Node } from "../world/world";
+import type { Devices } from "./devices";
 import { talkLink } from "./places";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { jobsOf, residentsOf, type Store } from "./store";
-import type { MachinesWords } from "./words";
+import type { DeviceWords, MachinesWords } from "./words";
 
 export interface MachinesOptions {
   store: Store;
   words: MachinesWords;
+  devices: Devices;
+  deviceWords: DeviceWords;
   head(title: string, actions?: string): string;
   /** The machine to bring into view, when one was named. */
   focus: string | null;
@@ -37,9 +41,19 @@ export class MachinesPage implements Page {
     this.element = document.createElement("div");
     this.element.className = "machines-page";
     this.element.innerHTML = `
-      ${options.head(`<h1 class="page-title">${escape(options.words.title)}</h1>`)}
+      ${options.head(
+        `<h1 class="page-title">${escape(options.words.title)}</h1>`,
+        `<button class="text-button invite" type="button">${glyph("plus", 16)}<span>${escape(options.deviceWords.invite)}</span></button>`,
+      )}
       <div class="machines-list scroller"></div>`;
     this.list = this.element.querySelector<HTMLElement>(".machines-list")!;
+    this.element.querySelector(".invite")!.addEventListener("click", () => options.devices.invite());
+    this.list.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-revoke], [data-leave]");
+      if (!button) return;
+      if (button.dataset.revoke) options.devices.revoke(button.dataset.revoke);
+      else options.devices.leave();
+    });
     this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
   }
 
@@ -102,6 +116,15 @@ export class MachinesPage implements Page {
             : ""
       }
       ${jobs.length ? `<p class="machine-jobs">${escape(words.jobs(jobs.length))}</p>` : ""}
+      ${
+        node.revoked || !world.nodes.world
+          ? ""
+          : `<div class="machine-acts">${
+              node.name === world.here
+                ? `<button class="text-button quiet-button" type="button" data-leave="1">${escape(this.options.deviceWords.leave)}</button>`
+                : `<button class="text-button quiet-button" type="button" data-revoke="${escape(node.name)}">${escape(this.options.deviceWords.revoke)}</button>`
+            }</div>`
+      }
     </li>`;
   }
 }
