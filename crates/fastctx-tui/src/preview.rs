@@ -678,6 +678,13 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     machines.data(Data::Sessions(Ok(crate::sessions::Status {
         codex: crate::sessions::Standing::In,
         claude: crate::sessions::Standing::Out,
+        legacy: Some(fastctx_install::upgrade::Summary {
+            record: "C:/Users/me/.fastctx/upgrade-clean.json".into(),
+            archives: vec!["C:/Users/me/.fastctx/legacy-archive-2026-10-04".into()],
+            archived: 14,
+            tidied: 6,
+            waiting: 1,
+        }),
     })));
 
     vec![

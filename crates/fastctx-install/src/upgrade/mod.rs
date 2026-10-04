@@ -138,6 +138,40 @@ impl Plan {
     }
 }
 
+/// What the cleanup has done so far, as its record says: for telling the
+/// user where the old things went (`world-upgrade.md`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Summary {
+    /// The record of every step, `upgrade-clean.json`.
+    pub record: PathBuf,
+    /// The `legacy-archive-<day>` directories things were put in.
+    pub archives: Vec<PathBuf>,
+    pub archived: usize,
+    /// Files removed or rewritten because they were exactly as an old
+    /// version wrote them.
+    pub tidied: usize,
+    /// Left in place until nothing uses them any more.
+    pub waiting: usize,
+}
+
+/// The cleanup record under `places.root`; none when nothing old was found.
+pub fn summary(places: &Places) -> Result<Option<Summary>, Error> {
+    record::summary(&places.root.join("upgrade-clean.json"), &places.root)
+}
+
+/// Whether a World rooted at `root` is where the old versions lived: they
+/// always wrote under the user's own `.fastctx`, whatever `FASTCTX_HOME`
+/// said, so a World kept elsewhere has no old installation of its own to
+/// clean up.
+pub fn is_legacy_root(root: &Path) -> std::io::Result<bool> {
+    let legacy = fastctx_platform::user_home()?.join(".fastctx");
+    match (std::fs::canonicalize(root), std::fs::canonicalize(&legacy)) {
+        (Ok(root), Ok(legacy)) => Ok(root == legacy),
+        (Err(error), _) | (_, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+    }
+}
+
 /// Deletes provably unchanged artifacts and archives uncertain contents under
 /// `legacy-archive-YYYY-MM-DD`. Never signals a process or visits the stable `bin` copy.
 ///

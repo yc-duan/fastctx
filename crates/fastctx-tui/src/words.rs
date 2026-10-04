@@ -548,6 +548,30 @@ impl Words {
         }
     }
 
+    /// What was done with what an old fastctx left on this machine.
+    pub fn legacy_cleaned(&self, tidied: usize, archived: usize, place: &str, waiting: usize) -> String {
+        match self.lang {
+            Lang::Zh => {
+                let mut said = format!(
+                    "旧版 fastctx 留下的：{tidied} 处原样未动的已收拾，{archived} 样归档在 {place}，删不删由你"
+                );
+                if waiting > 0 {
+                    said.push_str(&format!("；还有 {waiting} 样在用，等不用了再收"));
+                }
+                said
+            }
+            Lang::En => {
+                let mut said = format!(
+                    "Left by an old fastctx: {tidied} untouched files tidied, {archived} archived in {place}, yours to delete"
+                );
+                if waiting > 0 {
+                    said.push_str(&format!("; {waiting} still in use, put away once they are not"));
+                }
+                said
+            }
+        }
+    }
+
     pub fn left_alone(&self, location: &str, reason: &str) -> String {
         match self.lang {
             Lang::Zh => format!("留着没动：{location}（{reason}）"),

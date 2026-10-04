@@ -144,6 +144,18 @@ impl MachinesPage {
             }
         };
         rows.push(Row::new(Span::styled(words.own_sessions(), look.text(Role::Muted))).right(standing));
+        // What an old fastctx left here, and where it went: the user decides
+        // whether to delete it (`world-upgrade.md`).
+        if let Some(Ok(status)) = &self.sessions
+            && let Some(legacy) = &status.legacy
+            && (legacy.archived > 0 || legacy.tidied > 0 || legacy.waiting > 0)
+        {
+            let place = legacy.archives.last().unwrap_or(&legacy.record);
+            let said = words.legacy_cleaned(legacy.tidied, legacy.archived, &shown_path(place), legacy.waiting);
+            for line in text::wrap_plain(&said, look.text(Role::Faint), width) {
+                rows.push(Row::new(line));
+            }
+        }
         let (said, role) = match &self.outcome {
             None => return rows,
             Some(Outcome::Applying) => (words.applying().to_string(), Role::Faint),
@@ -289,4 +301,11 @@ impl MachinesPage {
         };
         sheet(ctx, frame, area, &page, &mut self.list);
     }
+}
+
+/// A path as the TUI writes paths: with forward slashes on every system.
+fn shown_path(path: &std::path::Path) -> String {
+    let text = path.display().to_string();
+    let text = text.strip_prefix(r"\\?\").unwrap_or(&text).to_string();
+    if cfg!(windows) { text.replace('\\', "/") } else { text }
 }

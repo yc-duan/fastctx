@@ -889,6 +889,7 @@ dependencies = [
  "anyhow",
  "fastctx-hands",
  "fastctx-hosts",
+ "fastctx-install",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-types",

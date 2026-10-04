@@ -129,10 +129,12 @@ pub enum Standing {
 }
 
 /// How each host stands, as the record says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub codex: Standing,
     pub claude: Standing,
+    /// What has been done with what an old fastctx left here.
+    pub legacy: Option<crate::upgrade::Summary>,
 }
 
 /// How each host stands now; reads the record and nothing of the hosts'.
@@ -156,6 +158,7 @@ pub fn status(places: &Places) -> Result<Status, Error> {
     Ok(Status {
         codex: if old { Standing::Old } else { standing(present.codex, record.codex.is_some()) },
         claude: standing(present.claude, record.claude_md.is_some() || record.settings.is_some() || plugin),
+        legacy: crate::upgrade::summary(places)?,
     })
 }
 

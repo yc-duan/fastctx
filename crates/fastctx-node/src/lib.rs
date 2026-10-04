@@ -110,6 +110,43 @@ impl Node {
 
 /// Runs the node of the World kept under `fastctx_root` until the process
 /// is ended.
+/// Puts away what an old fastctx left on this machine, when this World
+/// lives where the old versions did, and logs every step; the record of it
+/// is `upgrade-clean.json` beside the World.
+fn legacy(node: &Node) {
+    match fastctx_install::upgrade::is_legacy_root(&node.root) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(error) => {
+            node.log.line(format_args!("could not tell whether an old fastctx lived here: {error}"));
+            return;
+        }
+    }
+    let mut places = match fastctx_install::apply::Places::here() {
+        Ok(places) => places,
+        Err(error) => {
+            node.log.line(format_args!("cleaning up after an old fastctx: {error}"));
+            return;
+        }
+    };
+    places.root = node.root.clone();
+    places.world = node.world.path().to_path_buf();
+    match fastctx_install::upgrade::clean(&places) {
+        Ok(report) => {
+            for path in &report.changed {
+                node.log.line(format_args!("put away what an old fastctx left: {}", path.display()));
+            }
+            for notice in &report.notices {
+                node.log.line(format_args!("left what an old fastctx left, {}: {}", notice.location, notice.reason));
+            }
+            for leftover in &report.leftovers {
+                node.log.line(format_args!("an old fastctx's leftover: {leftover}"));
+            }
+        }
+        Err(error) => node.log.line(format_args!("cleaning up after an old fastctx: {error}")),
+    }
+}
+
 pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
     let world = WorldDir::under(fastctx_root);
     ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
@@ -220,6 +257,11 @@ pub async fn run(fastctx_root: &Path) -> anyhow::Result<()> {
             Err(error) => jobs_node.log.line(format_args!("recovering job notifications: {error}")),
         }
     });
+
+    // What an old fastctx left here is put away in the background; nothing
+    // still in use is touched (`world-upgrade.md`).
+    let cleaning = node.clone();
+    tokio::task::spawn_blocking(move || legacy(&cleaning));
 
     let watchdog = watchdog::Watchdog::start(&node.world.node_log()).context("starting the control-loop watchdog")?;
     loop {
