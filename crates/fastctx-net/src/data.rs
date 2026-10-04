@@ -108,6 +108,14 @@ impl Stream {
         }
     }
 
+    /// Waits until the other end closes or breaks the connection. For an
+    /// end that only sends, so it notices the other end has gone while it
+    /// has nothing to send; anything the other end says meanwhile is
+    /// dropped. Dropping the wait halfway loses nothing else.
+    pub async fn closed(&mut self) {
+        while let Ok(Some(_)) = self.next().await {}
+    }
+
     /// As the source: waits for the sink's word that it has everything, and
     /// closes.
     pub async fn finish(mut self) -> Result<(), String> {

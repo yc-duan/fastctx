@@ -1,38 +1,35 @@
-//! What waits to be told to a resident.
+//! What waits to be told to a resident, and the end of a job owed to the
+//! resident who started it.
 //!
 //! When a `run` call answers before its job has ended, the resident is owed
 //! word of the end: a marker beside the job's record says so. When the job
-//! ends, the word goes to the resident: into its inbox when it lives on
-//! this machine, as a letter to its machine when it lives on another. A
-//! word in the inbox is a file named for the machine and the job, so
-//! telling it twice writes nothing new, and a letter sent twice is taken
-//! once; only then does the marker go. A node that stopped in between
-//! finds the marker when it starts and finishes the telling. Whatever
-//! carries words to the resident takes them from the inbox; each is handed
-//! over once.
+//! ends, the word goes to the resident (`crate::speech::tell`), and only
+//! then does the marker go; a node that stopped in between finds the marker
+//! when it starts and finishes the telling.
+//!
+//! A resident whose host gives the World no way in finds what waits for it
+//! in its inbox, one file per notice, named by the notice's id: telling the
+//! same job's end twice writes nothing new. The World's tools hand the
+//! inbox over with their next answer, each notice once.
 
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use fastctx_hands::run::record;
-use fastctx_net::link::Link;
-use fastctx_net::message::LetterId;
 use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
 use fastctx_types::layout::WorldDir;
-use fastctx_types::remote::Letter;
-use fastctx_types::residents::Notice;
+use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::run::JobRecord;
-use fastctx_types::{JobId, MachineName, ResidentId, TownName};
+use fastctx_types::{JobId, MachineName, NoticeId, ResidentId, TownName};
 
-/// Marks that the resident who started `job` is owed word of its end, and
-/// tells at once if it has already ended.
-pub fn owe(
-    world: &WorldDir,
-    here: &MachineName,
-    job: &JobId,
-    record_path: &Path,
-    link: Option<&Link>,
-) -> io::Result<()> {
+use crate::Node;
+use crate::speech::{Owed, tell};
+
+/// Marks that the resident who started `job` is owed word of its end.
+/// Returns the job's record as it stands after the marker is there: if it
+/// has ended by then, nobody else will tell, and the caller does.
+pub fn owe(world: &WorldDir, here: &MachineName, job: &JobId, record_path: &Path) -> io::Result<JobRecord> {
     let job_record = record::read(record_path)?;
     let directory = world.owner(here, job_record.town.as_ref(), &job_record.owner);
     match publish_new(&directory.job_owed(job), b"", Permissions::Private) {
@@ -40,18 +37,16 @@ pub fn owe(
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
     }
-    // It may have ended between the answer and the marker; nobody else
-    // would tell then.
-    tell_if_ended(world, here, &record::read(record_path)?, link)
+    record::read(record_path)
 }
 
 /// Tells the resident that started the job of `record` that it ended, if it
 /// has and the resident is owed that word.
-pub fn tell_if_ended(world: &WorldDir, here: &MachineName, record: &JobRecord, link: Option<&Link>) -> io::Result<()> {
+pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<()> {
     let Some(end) = &record.end else {
         return Ok(());
     };
-    let owed = world.owner(here, record.town.as_ref(), &record.owner).job_owed(&record.id);
+    let owed = node.world.owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(&record.id);
     if !owed.exists() {
         return Ok(());
     }
@@ -63,18 +58,8 @@ pub fn tell_if_ended(world: &WorldDir, here: &MachineName, record: &JobRecord, l
         at: end.at,
         output: record.output.clone(),
     };
-    if record.owner.machine == *here {
-        put(world, record.town.as_ref(), &record.owner.resident, &notice)?;
-    } else {
-        let link = link.ok_or_else(|| {
-            io::Error::other(format!(
-                "{} lives on {}, and this machine is in no World with it any more",
-                record.owner.resident, record.owner.machine
-            ))
-        })?;
-        let id = LetterId::try_from(format!("job-{}", record.id)).expect("a job id makes a letter id");
-        link.send_letter(&record.owner.machine, id, Letter::Notice { to: record.owner.resident.clone(), notice })?;
-    }
+    let id = NoticeId::try_from(format!("{}-{}", record.machine, record.id)).expect("a machine and a job make an id");
+    tell(node, &record.owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;
     match std::fs::remove_file(&owed) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
@@ -82,65 +67,61 @@ pub fn tell_if_ended(world: &WorldDir, here: &MachineName, record: &JobRecord, l
 }
 
 /// Finishes telling what a node that stopped left owed.
-pub fn settle(
-    world: &WorldDir,
-    here: &MachineName,
-    link: Option<&Link>,
-) -> io::Result<Vec<(std::path::PathBuf, io::Error)>> {
+pub async fn settle(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf, io::Error)>> {
     let mut problems = Vec::new();
-    for parent in world.resident_parents()? {
+    let mut owed = Vec::new();
+    for parent in node.world.resident_parents()? {
         for resident in entries(&parent)? {
             for path in entries(&resident.join("jobs"))? {
-                if path.extension().is_none_or(|extension| extension != "owed") {
-                    continue;
-                }
-                let told =
-                    record::read(&path.with_extension("json")).and_then(|job| tell_if_ended(world, here, &job, link));
-                if let Err(error) = told {
-                    problems.push((path, error));
+                if path.extension().is_some_and(|extension| extension == "owed") {
+                    owed.push(path);
                 }
             }
+        }
+    }
+    for path in owed {
+        let told = match record::read(&path.with_extension("json")) {
+            Ok(job) => tell_if_ended(node, &job).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = told {
+            problems.push((path, error));
         }
     }
     Ok(problems)
 }
 
 /// Puts a notice in the inbox of a resident living on this machine.
-pub fn put(world: &WorldDir, town: Option<&TownName>, resident: &ResidentId, notice: &Notice) -> io::Result<()> {
+pub fn put(world: &WorldDir, town: Option<&TownName>, resident: &ResidentId, delivery: &Delivery) -> io::Result<()> {
     let inbox = world.resident(town, resident).inbox();
     ensure_private_dir(&inbox)?;
-    let name = match notice {
-        Notice::JobEnded { job, machine, .. } => format!("{machine}-{job}.json"),
-    };
-    let mut bytes = serde_json::to_vec_pretty(notice).map_err(io::Error::other)?;
+    let mut bytes = serde_json::to_vec_pretty(delivery).map_err(io::Error::other)?;
     bytes.push(b'\n');
-    match publish_new(&inbox.join(name), &bytes, Permissions::Private) {
+    match publish_new(&inbox.join(format!("{}.json", delivery.id)), &bytes, Permissions::Private) {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
         _ => Ok(()),
     }
 }
 
 /// Takes everything in a resident's inbox, oldest first.
-pub fn collect(world: &WorldDir, resident: &ResidentId, town: Option<&TownName>) -> io::Result<Vec<Notice>> {
+pub fn collect(world: &WorldDir, resident: &ResidentId, town: Option<&TownName>) -> io::Result<Vec<Delivery>> {
     let inbox = world.resident(town, resident).inbox();
-    let mut notices = Vec::new();
+    let mut deliveries = Vec::new();
     for path in entries(&inbox)? {
-        // A word being written sits under a hidden temporary name until it
-        // is whole.
+        // A notice being written sits under a hidden temporary name until
+        // it is whole.
         let hidden = path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'));
         if hidden || path.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
         let bytes = std::fs::read(&path)?;
-        let notice: Notice = serde_json::from_slice(&bytes)
+        let delivery: Delivery = serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
         std::fs::remove_file(&path)?;
-        notices.push(notice);
+        deliveries.push(delivery);
     }
-    notices.sort_by_key(|notice| match notice {
-        Notice::JobEnded { at, .. } => *at,
-    });
-    Ok(notices)
+    deliveries.sort_by_key(|delivery| delivery.at);
+    Ok(deliveries)
 }
 
 fn entries(directory: &Path) -> io::Result<Vec<std::path::PathBuf>> {

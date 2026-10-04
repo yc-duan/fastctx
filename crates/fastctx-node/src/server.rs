@@ -43,6 +43,26 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     let mut arrived = Arrived { node, residents: Vec::new() };
     while let Some(frame) = reader.recv().await? {
         let ClientFrame::Call { id, call } = parse(&frame)?;
+        if let Call::Watch { resident, machine } = call {
+            // A watch keeps the connection until one end leaves.
+            let ended = match crate::talk::watch(node, resident, machine).await {
+                Err(failure) => Err(failure),
+                Ok(mut watched) => loop {
+                    tokio::select! {
+                        piece = watched.recv() => match piece {
+                            Some(Ok(piece)) => writer.send(&json(&NodeFrame::Watched { id, watched: piece })).await?,
+                            Some(Err(reason)) => break Err(Failure::new(reason)),
+                            None => break Ok(Reply::Done),
+                        },
+                        // The client says nothing more on a watch; whatever
+                        // comes, or the end, is it leaving.
+                        _ = reader.recv() => return Ok(()),
+                    }
+                },
+            };
+            writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
+            continue;
+        }
         let arriving = matches!(call, Call::Arrive { .. });
         let reply = handle(node, &hello.peer, call).await;
         if arriving && let Ok(Reply::Arrived(whereabouts)) = &reply {
@@ -54,17 +74,19 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
 }
 
 struct Arrived<'a> {
-    node: &'a Node,
+    node: &'a Arc<Node>,
     residents: Vec<ResidentId>,
 }
 
 impl Drop for Arrived<'_> {
     fn drop(&mut self) {
-        self.node.residents.left(&self.residents);
+        for resident in self.node.residents.left(&self.residents) {
+            crate::colleagues::left(self.node, resident);
+        }
     }
 }
 
-async fn handle(node: &Arc<Node>, _peer: &Peer, call: Call) -> Result<Reply, Failure> {
+async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
     match call {
         Call::Arrive { host, hints } => {
             node.residents.arrive(&node.world, &node.machine(), host, hints).map(Reply::Arrived)
@@ -75,9 +97,7 @@ async fn handle(node: &Arc<Node>, _peer: &Peer, call: Call) -> Result<Reply, Fai
         Call::Write { resident, town, op, node: target } => {
             write(node, resident, town, op, target).await.map(|outcome| Reply::Written { outcome })
         }
-        Call::JobChanged { job, owner, town } => {
-            node.jobs.changed(&node.world, &node.machine(), job, owner, town, node.link()).await.map(|()| Reply::Done)
-        }
+        Call::JobChanged { job, owner, town } => node.jobs.changed(node, job, owner, town).await.map(|()| Reply::Done),
         Call::Saw { owner, town, seen } => {
             let (world, here) = (node.world.clone(), node.machine());
             blocking("recording what was seen", move || {
@@ -87,11 +107,33 @@ async fn handle(node: &Arc<Node>, _peer: &Peer, call: Call) -> Result<Reply, Fai
             .map(|()| Reply::Done)
         }
         Call::Who { all } => who(node, all).await.map(Reply::Who),
+        Call::Look { ids } => Ok(Reply::Looked { looked: crate::look::look(node, ids).await }),
+        Call::Talk { to, machine, text } => {
+            users_voice(peer)?;
+            crate::talk::talk(node, to, machine, text).await.map(|(to, landed)| Reply::Spoken { to, landed })
+        }
+        Call::Open { agent, town, node: target, text } => {
+            users_voice(peer)?;
+            crate::talk::open(node, agent, town, target, text)
+                .await
+                .map(|(resident, landed)| Reply::Opened { resident, landed })
+        }
+        Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
         Call::Collect { resident, town } => {
             let world = node.world.clone();
             blocking("reading the inbox", move || crate::inbox::collect(&world, &resident, town.as_ref()))
                 .await
                 .map(|notices| Reply::Notices { notices })
+        }
+        Call::Ask { resident, town, label, prompt, node: target } => {
+            crate::colleagues::ask(node, resident, town, label, prompt, target)
+                .await
+                .map(|colleague| Reply::Asked { colleague })
+        }
+        Call::Message { resident, town, to, machine, text } => {
+            crate::colleagues::message(node, resident, town, to, machine, text)
+                .await
+                .map(|(to, landed)| Reply::Spoken { to, landed })
         }
         Call::Join { code, name } => {
             crate::world::join(node, &code, name).await.map(|(world, name)| Reply::Joined { world, name })
@@ -110,6 +152,18 @@ async fn handle(node: &Arc<Node>, _peer: &Peer, call: Call) -> Result<Reply, Fai
         Call::Leave => crate::world::leave(node).await.map(|()| Reply::Done),
         Call::Copy { from, to } => crate::copy::copy(node, from, to).await.map(Reply::Copied),
         Call::Nodes => nodes(node).await.map(Reply::Nodes),
+    }
+}
+
+/// Only the user speaks as the user: words from a resident's session, or
+/// from a command one of them ran, are not the user's (`world.md`, 身份照实).
+fn users_voice(peer: &Peer) -> Result<(), Failure> {
+    match peer {
+        Peer::Command { resident: None } => Ok(()),
+        Peer::Command { resident: Some(resident) } => Err(Failure::new(format!(
+            "{resident} runs this; only the user speaks as the user. Residents speak to each other with message_colleague"
+        ))),
+        _ => Err(Failure::new("only the user speaks as the user")),
     }
 }
 
@@ -134,7 +188,7 @@ async fn run(
     let reply = match target.filter(|target| *target != here) {
         None => {
             let owner = Address { machine: here.clone(), resident: resident.clone() };
-            node.jobs.run(&node.world, &here, owner, town.clone(), request, node.link()).await?.0
+            node.jobs.run(node, owner, town.clone(), request).await?.0
         }
         Some(target) => {
             let link = node.link().ok_or_else(|| {

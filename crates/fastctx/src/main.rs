@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 mod copy;
+mod talk;
 mod view;
 mod w;
 mod world;
@@ -37,6 +38,8 @@ enum Command {
     Nodes,
     /// Copy a file or a directory from one machine to another.
     Copy(copy::CopyArgs),
+    /// Talk to a resident on any machine, or open a session to talk to.
+    Talk(talk::TalkArgs),
     /// Join a World with a code.
     Join(world::JoinArgs),
     /// Make a code that lets one more machine join this World.
@@ -63,6 +66,7 @@ fn main() -> ExitCode {
         Command::W(args) => w::run(args),
         Command::Nodes => world::nodes(),
         Command::Copy(args) => return finish(copy::run(args)),
+        Command::Talk(args) => talk::run(args),
         Command::Join(args) => world::join(args),
         Command::Invite(args) => world::invite(args),
         Command::Revoke(args) => world::revoke(args),

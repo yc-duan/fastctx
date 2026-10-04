@@ -5,31 +5,27 @@ use std::io;
 use std::path::Path;
 
 use fastctx_hands::run::record;
+use fastctx_types::MachineName;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::residents::About;
 use fastctx_types::town::{ResidentNow, RunningJob, WhoReply};
-use fastctx_types::{MachineName, ResidentId, TownName};
 
 use crate::jobs::first_line;
-use crate::residents::last_action;
+use crate::residents::{OnRecord, last_action};
 
-pub fn who(
-    world: &WorldDir,
-    machine: &MachineName,
-    everyone: Vec<(ResidentId, Option<TownName>, bool)>,
-    all: bool,
-) -> io::Result<WhoReply> {
+pub fn who(world: &WorldDir, machine: &MachineName, everyone: Vec<OnRecord>, all: bool) -> io::Result<WhoReply> {
     let mut residents = Vec::new();
-    for (id, town, here) in everyone {
-        if !here && !all {
+    for resident in everyone {
+        if !resident.here && !all {
             continue;
         }
-        let directory = world.resident(town.as_ref(), &id);
-        let about: About = serde_json::from_slice(&std::fs::read(directory.about())?).map_err(|error| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", directory.about().display()))
-        })?;
-        let last_action = last_action(world, &id, town.as_ref())?;
-        residents.push(ResidentNow { about, town, here, last_action });
+        let last_action = last_action(world, &resident.id, resident.town.as_ref())?;
+        residents.push(ResidentNow {
+            about: resident.about,
+            town: resident.town,
+            here: resident.here,
+            now: resident.now,
+            last_action,
+        });
     }
     let mut jobs = Vec::new();
     for parent in world.resident_parents()? {
@@ -42,7 +38,7 @@ pub fn who(
 }
 
 /// The jobs in one resident's `jobs` directory that have not ended.
-fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Result<()> {
+pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Result<()> {
     for path in read_dir(jobs)? {
         if path.extension().is_none_or(|extension| extension != "json") {
             continue;

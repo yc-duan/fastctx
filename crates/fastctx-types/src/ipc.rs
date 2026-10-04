@@ -58,6 +58,9 @@ pub enum ClientFrame {
 pub enum NodeFrame {
     /// The one answer to a call; nothing more comes for its id.
     Reply { id: u64, reply: Result<crate::Reply, Failure> },
+    /// Part of what a `Watch` call hands over, which goes on until the
+    /// client closes the connection or a `Reply` ends it.
+    Watched { id: u64, watched: crate::session::Watched },
 }
 
 /// Why a call did not do what it asked, in words for whoever reads the

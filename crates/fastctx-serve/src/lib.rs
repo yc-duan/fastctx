@@ -71,7 +71,7 @@ pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
             }
             (Some("ping"), Some(id)) => output.send(&response(&id, json!({}))),
             (Some("tools/list"), Some(id)) => {
-                output.send(&response(&id, json!({ "tools": tools::definitions(writer) })))
+                output.send(&response(&id, json!({ "tools": tools::definitions(writer, session.colleague) })))
             }
             (Some("tools/call"), Some(id)) => {
                 let (session, output, key) = (session.clone(), output.clone(), id.to_string());
@@ -85,6 +85,14 @@ pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
                         }
                         name if writer.lists(name) => {
                             let answer = session.write(name, &arguments, params.get("_meta")).await;
+                            output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
+                        }
+                        "ask_colleague" if !session.colleague => {
+                            let answer = session.ask(&arguments, params.get("_meta")).await;
+                            output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
+                        }
+                        "message_colleague" if !session.colleague => {
+                            let answer = session.message(&arguments, params.get("_meta")).await;
                             output.send(&response(&id, tools::result(&answer.content, answer.is_error)));
                         }
                         _ => output.send(&error_response(&id, -32602, &format!("unknown tool: {name}"))),

@@ -22,12 +22,18 @@ impl Writer {
     }
 }
 
-/// The tools this session lists.
-pub fn definitions(writer: Writer) -> Value {
-    match writer {
-        Writer::Edit => json!([run_definition(), edit_definition(), write_definition()]),
-        Writer::ApplyPatch => json!([run_definition(), apply_patch_definition()]),
+/// The tools this session lists. A colleague has no colleague tools of its
+/// own: the World is one level deep (`world-colleagues.md`).
+pub fn definitions(writer: Writer, colleague: bool) -> Value {
+    let mut tools = match writer {
+        Writer::Edit => vec![run_definition(), edit_definition(), write_definition()],
+        Writer::ApplyPatch => vec![run_definition(), apply_patch_definition()],
+    };
+    if !colleague {
+        tools.push(ask_colleague_definition());
+        tools.push(message_colleague_definition());
     }
+    Value::Array(tools)
 }
 
 const NODE: &str = "The name of the machine whose files to change. Without it, this machine.";
@@ -158,6 +164,86 @@ Edit files on a machine of the World with a patch.
 Each file's section starts with `*** Add File:`, `*** Delete File:` or `*** Update File:`, which may be followed by `*** Move to:` and a new path. In an update, each hunk starts with `@@`, optionally followed by a line that locates it, such as the function it is in; its lines start with a space for context, `-` for a line removed and `+` for a line added. Give about three lines of context around each change. Every new file's lines start with `+`.
 
 Every path is absolute, written the way the machine `node` names writes paths; a relative path is refused. Files keep their encoding and line endings. The answer lists what changed: A added, M modified, D deleted.";
+
+fn ask_colleague_definition() -> Value {
+    json!({
+        "name": "ask_colleague",
+        "description": ASK_COLLEAGUE_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "What you need from the colleague, in your own words. It is delivered word for word as its first message."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "A label for the task in three to eight words, shown beside the colleague in fastctx w."
+                },
+                "node": {
+                    "type": "string",
+                    "description": "The name of the machine the colleague works on. Without it, this machine."
+                }
+            },
+            "required": ["prompt", "description"],
+            "additionalProperties": false
+        },
+        "annotations": {
+            "title": "Ask a colleague",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+        }
+    })
+}
+
+const ASK_COLLEAGUE_DESCRIPTION: &str = "\
+Ask a colleague to take on a part of the work: a GPT resident of the World, started through Codex, which works on its own while you go on.
+
+Unlike a subagent of your own, which lives inside this conversation, a colleague lives in the World: it works on whichever machine `node` names, it keeps working if you stop, and everyone in the town can see it with `fastctx w`. The call returns at once with the colleague's id. Each time the colleague ends a turn, its last message is delivered to you, under a line saying how the turn ended; that message is its answer, or its question to you. Reply, or give it more, with message_colleague. See what it is doing at any time with `fastctx w <id>`.
+
+Working with a colleague:
+- GPT is strong on a part and weak on the whole. Within one part it reads all of the material before acting, works a hard point for hours, changes its approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not yet taken shape, or to build a whole thing from nothing, it returns pieces that are careful one by one and have no idea holding them together. Keep the whole yourself, and give it parts.
+- The parts worth giving are the ones that come up as you work: something that must be airtight, a behaviour nobody understands yet, a detail that must be exactly right, a counterexample to a claim, an experiment or a measurement that answers a definite question.
+- Say what this part needs and why, and where things stand. Point at the material rather than summarizing it. Do not fence it in with which files it may touch or which checks it must pass, and do not tell it how to work: that is where it is strongest. Tell it the rules it must keep: what must not be broken, and the limits of anything shared it will touch, such as a server's memory.
+- To learn a fact, ask a question that facts answer, not for its opinion of a plan.
+- When it reports, check the claims you will build on. If it answers a different question than the one you asked, ask again: does it hold, yes or no, and what is the evidence.
+- One part, one colleague; several can work at once. Colleagues that might touch the same files each work on their own copy, such as their own git worktree, and you merge.";
+
+fn message_colleague_definition() -> Value {
+    json!({
+        "name": "message_colleague",
+        "description": MESSAGE_COLLEAGUE_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "The colleague's id as ask_colleague or fastctx w gave it, such as codex-7f3a. Write codex-7f3a@laptop to name the machine it lives on."
+                },
+                "message": {
+                    "type": "string",
+                    "description": "What to tell it, delivered word for word."
+                }
+            },
+            "required": ["to", "message"],
+            "additionalProperties": false
+        },
+        "annotations": {
+            "title": "Message a colleague",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true
+        }
+    })
+}
+
+const MESSAGE_COLLEAGUE_DESCRIPTION: &str = "\
+Send words to a colleague: one you asked for, or any other in the town, including one that has gone to sleep.
+
+If it is working, the words join its current turn at its next tool call; if it is idle or asleep, they start a new turn. Either way, the last message of the turn they go into is delivered to you. A colleague on another machine gets them as soon as its machine is reachable.";
 
 fn write_annotations(title: &str) -> Value {
     json!({

@@ -220,6 +220,22 @@ impl Link {
         self.inner.refresh().await
     }
 
+    /// Signs `statement` as this machine, in `domain`.
+    pub fn seal(&self, domain: Domain, statement: &impl serde::Serialize) -> Signed {
+        Signed::new(&self.inner.key, domain, statement)
+    }
+
+    /// What `signed` says, if the member `from` signed it in `domain`.
+    pub async fn unseal<T: serde::de::DeserializeOwned>(
+        &self,
+        from: &MachineName,
+        domain: Domain,
+        signed: &Signed,
+    ) -> Result<T, String> {
+        let key = self.inner.key_of(from).await.ok_or_else(|| format!("{from} is not a member this machine trusts"))?;
+        signed.open(&key, domain).map_err(|error| format!("what came from {from}: {error}"))
+    }
+
     /// Calls `to` and waits for its answer.
     pub async fn call(&self, to: &MachineName, call: RemoteCall) -> Result<RemoteResult, CallFailure> {
         self.inner.call(to, call, None).await

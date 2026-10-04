@@ -8,6 +8,7 @@
 use fastctx_platform::ipc::{self, Connection, Endpoint};
 use fastctx_types::ipc::{ClientFrame, Failure, Hello, NodeFrame, PROTOCOL, Peer, Welcome};
 use fastctx_types::layout::WorldDir;
+use fastctx_types::session::Watched;
 use fastctx_types::{Call, MachineName, Reply};
 
 /// Why there is no connection to the node.
@@ -140,6 +141,40 @@ impl Client {
             NodeFrame::Reply { id: answered, .. } => {
                 Err(broken(format!("the node answered call {answered}, not {id}")))
             }
+            NodeFrame::Watched { .. } => Err(broken("the node answered a call as a watch".to_string())),
+        }
+    }
+
+    /// Sends a `Watch` call; the connection carries the watch from then on.
+    pub async fn watch(mut self, call: Call) -> Result<Watching, CallError> {
+        self.next += 1;
+        let id = self.next;
+        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        Ok(Watching { client: self, id })
+    }
+}
+
+/// A watch the node hands over as it goes; dropping it ends the watch.
+pub struct Watching {
+    client: Client,
+    id: u64,
+}
+
+impl Watching {
+    /// The next piece; `None` once the watch ended as it should.
+    pub async fn next(&mut self) -> Result<Option<Watched>, CallError> {
+        let frame = self
+            .client
+            .connection
+            .recv()
+            .await
+            .map_err(CallError::Broken)?
+            .ok_or_else(|| CallError::Broken(std::io::ErrorKind::UnexpectedEof.into()))?;
+        let broken = |what: String| CallError::Broken(std::io::Error::other(what));
+        match serde_json::from_slice::<NodeFrame>(&frame).map_err(|error| broken(error.to_string()))? {
+            NodeFrame::Watched { id, watched } if id == self.id => Ok(Some(watched)),
+            NodeFrame::Reply { id, reply } if id == self.id => reply.map(|_| None).map_err(CallError::Failed),
+            _ => Err(broken("the node answered another call on a watch".to_string())),
         }
     }
 }

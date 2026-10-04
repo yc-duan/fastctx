@@ -115,9 +115,20 @@ impl ResidentDir {
         self.path.join("about")
     }
 
+    /// What it is doing now, replaced whole when that changes.
+    pub fn now(&self) -> PathBuf {
+        self.path.join("now")
+    }
+
     /// What the World saw the resident do, one JSON line each.
     pub fn actions(&self) -> PathBuf {
         self.path.join("actions")
+    }
+
+    /// A colleague's request, what it was told and how it answered, one
+    /// JSON line each.
+    pub fn messages(&self) -> PathBuf {
+        self.path.join("messages")
     }
 
     /// What the resident saw of files, one JSON line each.

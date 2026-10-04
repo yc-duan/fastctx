@@ -16,7 +16,7 @@ pub mod window;
 use std::time::Duration;
 
 pub use launch::{Launch, Launched, launch};
-pub use present::{Content, present, present_notice};
+pub use present::{Content, present};
 
 /// How long a `run` call waits before its job goes on in the background
 /// (`world-run.md`, 一次调用等 15 秒).

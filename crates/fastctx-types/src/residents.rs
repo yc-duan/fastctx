@@ -5,7 +5,8 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::run::{EndedHow, ExitStatus};
-use crate::{AgentName, JobId, MachineName, ResidentId, TownName};
+use crate::session::{Health, Speaker, TurnEnd};
+use crate::{Address, AgentName, JobId, MachineName, NoticeId, ResidentId, TownName};
 
 /// The program a session runs in, as the session itself reported it in the
 /// MCP handshake.
@@ -25,6 +26,10 @@ pub struct Hints {
     /// The thread a Codex call belongs to; one thread is one resident,
     /// whichever connections it uses.
     pub thread: Option<String>,
+    /// The resident this session arrived as before, when its connection to
+    /// the node broke and it arrives again, as after the node restarted.
+    #[serde(default)]
+    pub was: Option<ResidentId>,
 }
 
 /// A resident's `about` record: who it is and how it came to be, written
@@ -38,6 +43,15 @@ pub struct About {
     pub origin: Origin,
     /// The session or thread id on the host's side, when there is one.
     pub session: Option<String>,
+    /// The World started the session and reaches it itself: a thread of
+    /// this machine's Codex app-server, or a Claude Code background session.
+    /// Any other session is the user's own, which the World only hears
+    /// through its calls of the World's tools.
+    #[serde(default)]
+    pub world_started: bool,
+    /// The model, as the host told the World; `None` when it did not.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,11 +60,20 @@ pub enum Origin {
     /// The user opened the session.
     User,
     /// Another resident asked for it, with this label for the task.
-    Colleague { asked_by: ResidentId, label: String },
+    Colleague { asked_by: Address, label: String },
 }
 
-/// Something the World tells a resident, waiting in its inbox until the
-/// resident's host carries it to the model.
+/// Something the World tells a resident: handed to its host when the host
+/// gives the World a way in, otherwise waiting in its inbox until its next
+/// call of a World tool. The id names it on the resident's machine and in
+/// the letter that carries it from another.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Delivery {
+    pub id: NoticeId,
+    pub at: Timestamp,
+    pub notice: Notice,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Notice {
@@ -64,6 +87,107 @@ pub enum Notice {
         at: Timestamp,
         /// The log holding all of its output, on that machine.
         output: String,
+    },
+    /// A turn of a colleague ended, which the resident's words went into or
+    /// which it asked for: its last message, verbatim.
+    Answer { colleague: Address, label: String, turn: String, end: TurnEnd },
+    /// A colleague's host reported something in a turn owed to the resident
+    /// that it must hear at once.
+    Health { colleague: Address, label: String, health: Health },
+    /// Words someone said to the resident.
+    Words { from: Speaker, text: String },
+}
+
+/// How words for a resident landed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Landed {
+    /// It was idle: a new turn started with them.
+    NewTurn { turn: String },
+    /// It was working: they join its running turn at its next tool boundary.
+    JoinedTurn { turn: String },
+    /// Its host gives the World no way in now: they wait for its next call
+    /// of a World tool, or for it to come back. `why` is set when the World
+    /// has a way in and it failed.
+    Waiting { why: Option<String> },
+    /// It lives on another machine: they went there as a letter, which that
+    /// machine hands over when it has it.
+    Sent,
+}
+
+/// What a resident is doing now, and what that commits the World to: its
+/// `now`, rewritten whenever it changes. Kept for residents whose host
+/// tells the World when they work: Codex threads the World holds, and
+/// Claude sessions through the World's mod.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Now {
+    pub activity: Activity,
+    pub since: Timestamp,
+    /// The turn running now, as its host named it.
+    pub turn: Option<String>,
+    /// Whose words went into the running turn: each is owed its end.
+    pub owed: Vec<Address>,
+    /// Who the latest turn that anyone was owed was for. A turn the World
+    /// starts with a fact of the resident's own work, such as a job's end,
+    /// is owed to them: they are who it is working for.
+    pub answering: Vec<Address>,
+    /// The latest thing that went wrong: what its host reported about the
+    /// session, or how its last turn ended when it did not complete.
+    pub trouble: Option<Trouble>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Activity {
+    Busy,
+    Idle,
+    /// Not here: a colleague whose requester left, or a session that ended.
+    /// Words wake it.
+    Asleep,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Trouble {
+    pub at: Timestamp,
+    pub text: String,
+}
+
+/// One line of a colleague's `messages`: what it was asked, what it was
+/// told, how each turn ended and how its answers reached their readers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageLine {
+    pub at: Timestamp,
+    #[serde(flatten)]
+    pub what: MessageKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum MessageKind {
+    /// The request it was born with.
+    Asked { from: Address, text: String },
+    /// Words that went into one of its turns.
+    Heard { from: Speaker, turn: Option<String>, text: String },
+    /// A turn ended, owed to `owed`.
+    Ended { turn: String, end: TurnEnd, owed: Vec<Address> },
+    /// How word of a turn reached one who was owed it.
+    Told { to: Address, turn: Option<String>, outcome: Outcome },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Outcome {
+    /// Handed to its host now.
+    Delivered,
+    /// Waiting on its machine until it can be handed over; `why` is set
+    /// when handing it over now failed.
+    Waiting {
+        why: Option<String>,
+    },
+    /// Sent as a letter to its machine.
+    Sent,
+    Failed {
+        reason: String,
     },
 }
 

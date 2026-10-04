@@ -37,6 +37,9 @@ pub enum Domain {
     Revocation,
     /// The source of a data transfer naming its two ends.
     Ticket,
+    /// A machine handing over what happens in a session it holds, to a
+    /// machine watching it.
+    Event,
 }
 
 impl Domain {
@@ -49,6 +52,7 @@ impl Domain {
             Domain::Admission => "admission",
             Domain::Revocation => "revocation",
             Domain::Ticket => "ticket",
+            Domain::Event => "event",
         }
     }
 }

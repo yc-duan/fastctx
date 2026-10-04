@@ -17,10 +17,11 @@ pub mod process;
 pub mod remote;
 pub mod residents;
 pub mod run;
+pub mod session;
 pub mod town;
 pub mod world;
 pub mod write;
 
 pub use calls::{Call, Reply};
-pub use names::{Address, AgentName, EntryId, JobId, MachineName, NameError, ResidentId, TownName};
+pub use names::{Address, AgentName, EntryId, JobId, MachineName, NameError, NoticeId, ResidentId, TownName};
 pub use process::ProcessIdentity;

@@ -4,7 +4,8 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::residents::{About, Action};
+use crate::residents::{About, Action, MessageLine, Now};
+use crate::run::JobRecord;
 use crate::{Address, JobId, MachineName, TownName};
 
 /// One machine's answer to `fastctx w`: the residents that live on it, and
@@ -20,8 +21,11 @@ pub struct WhoReply {
 pub struct ResidentNow {
     pub about: About,
     pub town: Option<TownName>,
-    /// Whether a session of the resident is connected now.
+    /// Whether it is here: a session of it is connected, or, for a
+    /// session the World holds, it is not asleep.
     pub here: bool,
+    /// What its host reports it doing, when its host tells the World.
+    pub now: Option<Now>,
     pub last_action: Option<Action>,
 }
 
@@ -63,4 +67,36 @@ pub enum MachineWho {
         machine: MachineName,
         reason: String,
     },
+}
+
+/// What a machine knows of one resident or job, for `fastctx w <id>`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Looked {
+    Resident(Box<ResidentDetail>),
+    Job { record: Box<JobRecord> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResidentDetail {
+    pub resident: ResidentNow,
+    /// Where its records are, on its machine.
+    pub records: String,
+    /// Its latest actions, oldest first, and how many it has in all.
+    pub actions: Vec<Action>,
+    pub actions_total: usize,
+    /// For a colleague: what it was asked, and the ends of its latest turns.
+    pub asked: Option<String>,
+    pub answers: Vec<MessageLine>,
+    /// What it started that still runs on its machine.
+    pub jobs: Vec<RunningJob>,
+}
+
+/// One id looked up across the World: what each machine that has it said,
+/// and the machines that could not be asked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LookedUp {
+    pub id: String,
+    pub found: Vec<Looked>,
+    pub unasked: Vec<String>,
 }

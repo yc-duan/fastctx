@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::copy::{CopyReport, Place};
 use crate::ipc::Failure;
-use crate::residents::Notice;
+use crate::residents::{Landed, Notice};
 use crate::run::{RunReply, RunRequest};
-use crate::town::WhoReply;
+use crate::town::{Looked, WhoReply};
 use crate::world::MachineFacts;
 use crate::write::{WriteOp, WriteOutcome};
-use crate::{ResidentId, TownName};
+use crate::{AgentName, ResidentId, TownName};
 
 /// A call: asked of a machine that is online, answered at once.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +22,20 @@ pub enum RemoteCall {
     Write { resident: ResidentId, town: Option<TownName>, op: WriteOp },
     /// Who is on that machine and what each is doing, for `fastctx w`.
     Who { all: bool },
+    /// Start a colleague there for a resident of the calling machine.
+    Ask { asker: ResidentId, town: Option<TownName>, label: String, prompt: String },
+    /// Whether a resident with this id lives there.
+    Find { resident: ResidentId },
+    /// A resident or job of that machine in detail, for `fastctx w <id>`.
+    Look { id: String },
+    /// The user's words, typed on the calling machine, to a resident there.
+    Talk { to: ResidentId, text: String },
+    /// Watch a resident there: what it hands over goes over the call's data
+    /// connection until the caller closes it, each piece signed by the
+    /// machine that holds the session, naming `watch` and numbered from 0.
+    Watch { resident: ResidentId, watch: u64 },
+    /// Open a session there for the user, as `Call::Open`.
+    Open { agent: AgentName, town: Option<TownName>, text: String },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
     /// Copy `from`, a path there, to another machine.
@@ -37,8 +51,28 @@ pub enum RemoteCall {
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
     Run(RunReply),
-    Written { outcome: WriteOutcome },
+    Written {
+        outcome: WriteOutcome,
+    },
     Who(WhoReply),
+    Asked {
+        colleague: ResidentId,
+    },
+    Found {
+        lives_here: bool,
+    },
+    Looked {
+        looked: Option<Looked>,
+    },
+    Said {
+        landed: Landed,
+    },
+    Opened {
+        resident: ResidentId,
+        landed: Landed,
+    },
+    /// A watch ended: the caller left, or the session's machine stopped it.
+    Watched,
     Facts(MachineFacts),
     Copied(CopyReport),
 }
@@ -53,4 +87,11 @@ pub type RemoteResult = Result<RemoteReply, Failure>;
 pub enum Letter {
     /// Something the World tells the resident `to`.
     Notice { to: ResidentId, notice: Notice },
+    /// Words from the resident `from` of the sending machine to the resident
+    /// `to`, who is owed nothing; `from` is owed the end of the turn they go
+    /// into.
+    Speak { to: ResidentId, from: ResidentId, text: String },
+    /// The resident `resident` of the sending machine left: colleagues that
+    /// work for it go to sleep once their turn ends.
+    Left { resident: ResidentId },
 }

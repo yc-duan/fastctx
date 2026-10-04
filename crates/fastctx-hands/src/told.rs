@@ -1,0 +1,85 @@
+//! What the World tells a resident, as the resident reads it: the end of a
+//! job it started, a colleague's answer, words someone said to it.
+//!
+//! Each is one block of its own whose first line is a head note saying who
+//! or what it is about and where (`world-colleagues.md`, 两个工具). A
+//! colleague's answer is its last message verbatim, between a head note
+//! saying how the turn ended and a last line pointing at what it did.
+
+use fastctx_types::residents::Notice;
+use fastctx_types::run::EndedHow;
+use fastctx_types::session::{Speaker, TurnEnd, TurnHow};
+
+use crate::run::present::{display_path, status_text};
+
+/// A notice as one block of text.
+pub fn told(notice: &Notice) -> String {
+    match notice {
+        Notice::JobEnded { job, machine, how, status, at, output } => {
+            let how = match (how, status) {
+                (EndedHow::Finished, Some(status)) => status_text(*status),
+                (EndedHow::Finished, None) => "finished".to_string(),
+                (EndedHow::Stopped, _) => "stopped".to_string(),
+                (EndedHow::Interrupted { reason }, _) => format!("interrupted: {reason}"),
+                (EndedHow::Failed { error }, _) => format!("could not run: {error}"),
+            };
+            let at = at.strftime("%Y-%m-%d %H:%M:%S UTC");
+            format!("=== {job} on {machine} ended ({how}) at {at}; its output is in {} ===", display_path(output))
+        }
+        Notice::Answer { colleague, end, .. } => {
+            let how = turn_end(end);
+            let message = end.last_message.as_deref().unwrap_or("(it ended the turn without a message)");
+            format!(
+                "=== colleague {} on {} ({how}) ===\n{message}\n=== what it did: fastctx w {} ===",
+                colleague.resident, colleague.machine, colleague.resident
+            )
+        }
+        Notice::Health { colleague, health, .. } => format!(
+            "=== colleague {} on {} (in its turn) ===\n{}\n=== what it is doing: fastctx w {} ===",
+            colleague.resident, colleague.machine, health.text, colleague.resident
+        ),
+        Notice::Words { from, text } => words(from, text),
+    }
+}
+
+/// Words for a session, under a head note saying who they are from, so the
+/// reader knows who is speaking (`world-colleagues.md`, 两个工具).
+pub fn words(from: &Speaker, text: &str) -> String {
+    let from = match from {
+        Speaker::User { machine } => format!("the user, on {machine}"),
+        Speaker::Resident { address } => format!("{} on {}", address.resident, address.machine),
+        Speaker::World => "the World".to_string(),
+    };
+    format!("=== from {from} ===\n{text}")
+}
+
+/// How a turn ended and how long it ran, for a head note:
+/// `turn completed, 14m`, `turn failed: <reason>`.
+pub fn turn_end(end: &TurnEnd) -> String {
+    let mut how = match (&end.how, &end.reason) {
+        (TurnHow::Completed, _) => "turn completed".to_string(),
+        (how, Some(reason)) => format!("turn {how}: {reason}"),
+        (how, None) => format!("turn {how}"),
+    };
+    if let Some(ms) = end.duration_ms {
+        how.push_str(", ");
+        how.push_str(&duration(ms / 1000));
+    }
+    how
+}
+
+/// A span of seconds as people say it: `35s`, `14m`, `2h10m`, `3d4h`.
+pub fn duration(seconds: u64) -> String {
+    match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m", seconds / 60),
+        3600..86_400 => match (seconds / 3600, seconds % 3600 / 60) {
+            (hours, 0) => format!("{hours}h"),
+            (hours, minutes) => format!("{hours}h{minutes}m"),
+        },
+        _ => match (seconds / 86_400, seconds % 86_400 / 3600) {
+            (days, 0) => format!("{days}d"),
+            (days, hours) => format!("{days}d{hours}h"),
+        },
+    }
+}

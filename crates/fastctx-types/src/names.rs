@@ -170,6 +170,18 @@ name_type!(
     }
 );
 
+name_type!(
+    /// Something told to a resident: its file name in the inbox and the id
+    /// of the letter that carries it, such as `desktop-j-k3x9a2`. Lowercase
+    /// letters, digits and hyphens.
+    NoticeId,
+    "notice id",
+    "lowercase letters, digits and hyphens, at most 64 characters",
+    |text| !text.is_empty()
+        && text.len() <= 64
+        && text.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+);
+
 fn is_entry_time(time: &str) -> bool {
     let bytes = time.as_bytes();
     bytes.len() == 16

@@ -2,18 +2,20 @@
 //! call, and noticing jobs whose supervisor is gone.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fastctx_hands::run::{self, Launch, WAIT, record, window};
-use fastctx_net::link::Link;
 use fastctx_platform::{FileLock, is_alive, user_home, world_process_environment};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::Action;
 use fastctx_types::run::{Ended, EndedHow, JobRecord, RunReply, RunRequest, RunState};
-use fastctx_types::{Address, JobId, MachineName, TownName};
+use fastctx_types::{Address, JobId, TownName};
 use jiff::Timestamp;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
+
+use crate::Node;
 
 pub struct Jobs {
     changes: broadcast::Sender<JobId>,
@@ -31,36 +33,28 @@ impl Jobs {
     /// it, and tell its resident if it ended and that is owed.
     pub async fn changed(
         &self,
-        world: &WorldDir,
-        here: &MachineName,
+        node: &Arc<Node>,
         job: JobId,
         owner: Address,
         town: Option<TownName>,
-        link: Option<std::sync::Arc<Link>>,
     ) -> Result<(), Failure> {
         // With nobody waiting there is nobody to wake.
         let _ = self.changes.send(job.clone());
-        let (world, here) = (world.clone(), here.clone());
-        tokio::task::spawn_blocking(move || {
-            let path = world.owner(&here, town.as_ref(), &owner).job_record(&job);
-            crate::inbox::tell_if_ended(&world, &here, &record::read(&path)?, link.as_deref())
-        })
-        .await
-        .map_err(|error| Failure::new(format!("telling the job's end: {error}")))?
-        .map_err(|error| failure("telling the job's end", error))
+        let path = node.world.owner(&node.machine(), town.as_ref(), &owner).job_record(&job);
+        let record = read(&path).await?;
+        crate::inbox::tell_if_ended(node, &record).await.map_err(|error| failure("telling the job's end", error))
     }
 
     /// Starts `request` for `owner` and waits until the job settles or the
     /// wait is over. Returns the answer and the job's record as it stood.
     pub async fn run(
         &self,
-        world: &WorldDir,
-        machine: &MachineName,
+        node: &Arc<Node>,
         owner: Address,
         town: Option<TownName>,
         request: RunRequest,
-        link: Option<std::sync::Arc<Link>>,
     ) -> Result<(RunReply, JobRecord), Failure> {
+        let (world, machine) = (&node.world, &node.machine());
         let deadline = Instant::now() + WAIT;
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
@@ -112,13 +106,15 @@ impl Jobs {
         };
         if record.end.is_none() {
             // The job goes on past this answer: its end is owed to the
-            // resident who started it.
+            // resident who started it. It may have ended between the answer
+            // and the marker, and then nobody else would tell.
             let (world, here, job, path) =
                 (world.clone(), machine.clone(), launched.job.clone(), launched.record.clone());
-            tokio::task::spawn_blocking(move || crate::inbox::owe(&world, &here, &job, &path, link.as_deref()))
+            let now = tokio::task::spawn_blocking(move || crate::inbox::owe(&world, &here, &job, &path))
                 .await
                 .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
                 .map_err(|error| failure("noting that the job's end is owed", error))?;
+            crate::inbox::tell_if_ended(node, &now).await.map_err(|error| failure("telling the job's end", error))?;
         }
         let reply = RunReply { machine: machine.clone(), job: launched.job, state: state(&record), output };
         Ok((reply, record))

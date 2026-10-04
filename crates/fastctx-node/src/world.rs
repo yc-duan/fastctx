@@ -15,10 +15,14 @@ use fastctx_net::sign::SecretKey;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::remote::{Letter, RemoteCall, RemoteReply, RemoteResult};
+use fastctx_types::residents::{Delivery, Notice};
+use fastctx_types::session::Speaker;
 use fastctx_types::world::{LinkState, MachineFacts};
 use fastctx_types::{Address, MachineName};
+use jiff::Timestamp;
 
 use crate::Node;
+use crate::speech::Owed;
 
 /// The membership and key this machine joined with, if it has joined.
 pub fn load(world: &WorldDir) -> io::Result<Option<(Membership, SecretKey)>> {
@@ -162,8 +166,29 @@ impl fastctx_net::link::Node for Handler {
             match call {
                 RemoteCall::Run { resident, town, request } => {
                     let owner = Address { machine: from, resident };
-                    let (reply, _) = node.jobs.run(&node.world, &machine, owner, town, request, node.link()).await?;
+                    let (reply, _) = node.jobs.run(&node, owner, town, request).await?;
                     Ok(RemoteReply::Run(reply))
+                }
+                RemoteCall::Ask { asker, town, label, prompt } => {
+                    let asker = Address { machine: from, resident: asker };
+                    let colleague = crate::colleagues::ask_here(&node, asker, town, label, prompt).await?;
+                    Ok(RemoteReply::Asked { colleague })
+                }
+                RemoteCall::Talk { to, text } => {
+                    crate::talk::talk_here(&node, &from, &to, text).await.map(|landed| RemoteReply::Said { landed })
+                }
+                RemoteCall::Watch { resident, watch } => {
+                    let stream = stream
+                        .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
+                    crate::talk::serve_watch(&node, resident, watch, stream).await
+                }
+                RemoteCall::Open { agent, town, text } => {
+                    let (resident, landed) = crate::talk::open_here(&node, &from, agent, town, text).await?;
+                    Ok(RemoteReply::Opened { resident, landed })
+                }
+                RemoteCall::Look { id } => Ok(RemoteReply::Looked { looked: crate::look::look_here(&node, &id).await }),
+                RemoteCall::Find { resident } => {
+                    Ok(RemoteReply::Found { lives_here: node.residents.town_of(&resident).is_some() })
                 }
                 RemoteCall::Write { resident, town, op } => {
                     let owner = Address { machine: from, resident };
@@ -201,16 +226,38 @@ impl fastctx_net::link::Node for Handler {
             };
             match letter {
                 Letter::Notice { to, notice } => {
-                    let Some(town) = node.residents.town_of(&to) else {
+                    if node.residents.town_of(&to).is_none() {
                         return Ok(Err(format!(
                             "{from} wrote to {to}, and no resident {to} lives on {}",
                             node.machine()
                         )));
-                    };
-                    let world = node.world.clone();
-                    tokio::task::spawn_blocking(move || crate::inbox::put(&world, town.as_ref(), &to, &notice))
-                        .await
-                        .map_err(io::Error::other)??;
+                    }
+                    // Named here, never from the letter, which only names a
+                    // place in this machine's records by what is in them.
+                    let delivery = Delivery { id: crate::speech::new_id("letter"), at: Timestamp::now(), notice };
+                    match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {
+                        Ok(_) => Ok(Ok(())),
+                        Err(failure) => Err(io::Error::other(failure.message)),
+                    }
+                }
+                Letter::Speak { to, from: speaker, text } => {
+                    if node.residents.town_of(&to).is_none() {
+                        return Ok(Err(format!(
+                            "{from} wrote to {to}, and no resident {to} lives on {}",
+                            node.machine()
+                        )));
+                    }
+                    let address = Address { machine: from, resident: speaker };
+                    node.residents.set_departed(address.clone(), false);
+                    let notice = Notice::Words { from: Speaker::Resident { address: address.clone() }, text };
+                    let delivery = Delivery { id: crate::speech::new_id("letter"), at: Timestamp::now(), notice };
+                    match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
+                        Ok(_) => Ok(Ok(())),
+                        Err(failure) => Err(io::Error::other(failure.message)),
+                    }
+                }
+                Letter::Left { resident } => {
+                    crate::colleagues::departed(&node, Address { machine: from, resident });
                     Ok(Ok(()))
                 }
             }
