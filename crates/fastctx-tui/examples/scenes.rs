@@ -21,11 +21,12 @@ fn main() -> anyhow::Result<()> {
     };
     std::fs::create_dir_all(&dir)?;
     let looks = [
-        ("ink", Look { depth: Depth::TrueColor, theme: Theme::Ink }),
-        ("paper", Look { depth: Depth::TrueColor, theme: Theme::Paper }),
-        ("ink256", Look { depth: Depth::Ansi256, theme: Theme::Ink }),
-        ("ansi16", Look { depth: Depth::Ansi16, theme: Theme::Ink }),
-        ("mono", Look { depth: Depth::Mono, theme: Theme::Ink }),
+        ("warm-black", Look { depth: Depth::TrueColor, theme: Theme::WarmBlack }),
+        ("ink-black", Look { depth: Depth::TrueColor, theme: Theme::InkBlack }),
+        ("warm-white", Look { depth: Depth::TrueColor, theme: Theme::WarmWhite }),
+        ("256", Look { depth: Depth::Ansi256, theme: Theme::WarmBlack }),
+        ("ansi16", Look { depth: Depth::Ansi16, theme: Theme::WarmBlack }),
+        ("mono", Look { depth: Depth::Mono, theme: Theme::WarmBlack }),
     ];
     let sizes = [(120u16, 36u16), (84, 28)];
     for (look_name, look) in looks {

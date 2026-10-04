@@ -339,7 +339,7 @@ fn blank(out: &mut Vec<Line<'static>>) {
 /// a raised ground, a rule in the gutter marks the words instead.
 fn block(ctx: &Ctx, words: &str, role: Role, width: usize) -> Vec<Line<'static>> {
     let look = &ctx.look;
-    if look.color(Role::Raised).is_none() {
+    if look.color(Role::Bubble).is_none() {
         let rule = Span::styled("│ ", look.text(Role::Faint));
         return text::wrap_plain(words, look.text(role), width.saturating_sub(2))
             .into_iter()
@@ -349,10 +349,10 @@ fn block(ctx: &Ctx, words: &str, role: Role, width: usize) -> Vec<Line<'static>>
             })
             .collect();
     }
-    let lines = text::wrap_plain(words, look.raised(role), width.saturating_sub(4));
+    let lines = text::wrap_plain(words, look.bubble(), width.saturating_sub(4));
     let inside = lines.iter().map(text::line_width).max().unwrap_or(0);
     let band = (inside + 4).min(width);
-    let fill = |cells: usize| Span::styled(" ".repeat(cells), look.raised(Role::Text));
+    let fill = |cells: usize| Span::styled(" ".repeat(cells), look.bubble());
     let mut out = vec![Line::from(fill(band))];
     for mut line in lines {
         let used = text::line_width(&line);

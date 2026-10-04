@@ -327,7 +327,7 @@ impl Renderer<'_> {
             }
         }
         let role = if quoted { Role::Muted } else { Role::Text };
-        let base = self.look.raised(Role::Text);
+        let base = self.look.code(Role::Text);
         let style =
             Style { fg: self.style(role, quoted).fg, ..base }.add_modifier(self.style(role, quoted).add_modifier);
         let faint = Style { fg: self.style(Role::Faint, quoted).fg, ..base }

@@ -1,8 +1,10 @@
 //! The World's design language as the terminal speaks it (`world-gui.md`,
-//! 审美): soft and literary rather than a cold console. Graphite: greys
-//! that step clearly apart and carry almost no hue, text the warm white of
-//! paper (or, on paper, near-black ink), and one terracotta accent used
-//! sparingly. The graphical interface takes the same tokens.
+//! 审美): literary rather than a cold console. Its three themes are the
+//! user's own, from incipit, value for value: warm black, a warm near-black
+//! ground with greys in steps of brightness and a terracotta accent shown
+//! sparingly; ink black, its colourless sibling, whose accent is a grey and
+//! whose user's words sit on an inverted, near-white ground; and warm
+//! white, the light one. The graphical interface takes the same tokens.
 //!
 //! Colour is a role, never a value written where it is used. Each role has
 //! a value for each of the two themes, ink (dark) and paper (light), in
@@ -28,10 +30,12 @@ pub enum Depth {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Theme {
-    /// Graphite: a dark ground.
-    Ink,
-    /// Paper: a light ground.
-    Paper,
+    /// 暖黑: the dark theme by default.
+    WarmBlack,
+    /// 墨黑: the dark theme without hue.
+    InkBlack,
+    /// 暖白: the light theme.
+    WarmWhite,
 }
 
 /// A role a colour plays.
@@ -41,6 +45,12 @@ pub enum Role {
     Ground,
     /// A shade off the ground: the selected row, the place words are typed.
     Raised,
+    /// The ground of the words that went in to an agent.
+    Bubble,
+    /// Text on that ground.
+    OnBubble,
+    /// The ground of code.
+    Code,
     Text,
     /// What is said about a thing rather than the thing.
     Muted,
@@ -60,29 +70,50 @@ pub enum Role {
 }
 
 /// The values of each role, as `#rrggbb`: the tokens the graphical
-/// interface takes too.
+/// interface takes too. All but `Caution` are incipit's (`--ink-surface-*`,
+/// `--ink-text-*`, `--ink-accent*`, `--ink-bubble-*`, the diff colours for
+/// alive and wrong); incipit has no colour for something to look at.
 pub const fn token(theme: Theme, role: Role) -> (u8, u8, u8) {
     match (theme, role) {
-        (Theme::Ink, Role::Ground) => (0x16, 0x16, 0x16),
-        (Theme::Ink, Role::Raised) => (0x23, 0x23, 0x22),
-        (Theme::Ink, Role::Text) => (0xeb, 0xe9, 0xe4),
-        (Theme::Ink, Role::Muted) => (0x9c, 0x9a, 0x96),
-        (Theme::Ink, Role::Faint) => (0x67, 0x65, 0x61),
-        (Theme::Ink, Role::Accent) => (0xe2, 0x93, 0x6a),
-        (Theme::Ink, Role::Alive) => (0x8f, 0xc0, 0x8a),
-        (Theme::Ink, Role::Caution) => (0xe0, 0xbd, 0x6e),
-        (Theme::Ink, Role::Wrong) => (0xe0, 0x7a, 0x6e),
-        (Theme::Ink, Role::Link) => (0x8f, 0xb2, 0xd6),
-        (Theme::Paper, Role::Ground) => (0xf7, 0xf7, 0xf5),
-        (Theme::Paper, Role::Raised) => (0xeb, 0xeb, 0xe8),
-        (Theme::Paper, Role::Text) => (0x1c, 0x1c, 0x1b),
-        (Theme::Paper, Role::Muted) => (0x5f, 0x5e, 0x5b),
-        (Theme::Paper, Role::Faint) => (0x8f, 0x8e, 0x8a),
-        (Theme::Paper, Role::Accent) => (0xc2, 0x61, 0x3d),
-        (Theme::Paper, Role::Alive) => (0x4f, 0x7a, 0x45),
-        (Theme::Paper, Role::Caution) => (0x9a, 0x6d, 0x1a),
-        (Theme::Paper, Role::Wrong) => (0xb3, 0x43, 0x2e),
-        (Theme::Paper, Role::Link) => (0x38, 0x6a, 0xa6),
+        (Theme::WarmBlack, Role::Ground) => (0x1f, 0x1f, 0x1e),
+        (Theme::WarmBlack, Role::Raised) => (0x2c, 0x2c, 0x2a),
+        (Theme::WarmBlack, Role::Bubble) => (0x12, 0x12, 0x12),
+        (Theme::WarmBlack, Role::OnBubble) => (0xf5, 0xf2, 0xe8),
+        (Theme::WarmBlack, Role::Code) => (0x27, 0x27, 0x27),
+        (Theme::WarmBlack, Role::Text) => (0xf8, 0xf8, 0xf6),
+        (Theme::WarmBlack, Role::Muted) => (0xbc, 0xbc, 0xb9),
+        (Theme::WarmBlack, Role::Faint) => (0x98, 0x98, 0x98),
+        (Theme::WarmBlack, Role::Accent) => (0xd9, 0x77, 0x57),
+        (Theme::WarmBlack, Role::Alive) => (0x7c, 0xb2, 0x7c),
+        (Theme::WarmBlack, Role::Caution) => (0xd4, 0xa8, 0x5a),
+        (Theme::WarmBlack, Role::Wrong) => (0xc9, 0x6a, 0x6a),
+        (Theme::WarmBlack, Role::Link) => (0xe0, 0xa1, 0x8b),
+        (Theme::InkBlack, Role::Ground) => (0x0a, 0x0b, 0x0b),
+        (Theme::InkBlack, Role::Raised) => (0x21, 0x21, 0x21),
+        (Theme::InkBlack, Role::Bubble) => (0xfb, 0xfb, 0xfc),
+        (Theme::InkBlack, Role::OnBubble) => (0x0a, 0x0b, 0x0b),
+        (Theme::InkBlack, Role::Code) => (0x1a, 0x1b, 0x1c),
+        (Theme::InkBlack, Role::Text) => (0xfb, 0xfb, 0xfc),
+        (Theme::InkBlack, Role::Muted) => (0xaa, 0xaa, 0xab),
+        (Theme::InkBlack, Role::Faint) => (0x83, 0x84, 0x84),
+        (Theme::InkBlack, Role::Accent) => (0xc2, 0xc4, 0xc7),
+        (Theme::InkBlack, Role::Alive) => (0x7c, 0xb2, 0x7c),
+        (Theme::InkBlack, Role::Caution) => (0xd4, 0xa8, 0x5a),
+        (Theme::InkBlack, Role::Wrong) => (0xc9, 0x6a, 0x6a),
+        (Theme::InkBlack, Role::Link) => (0xda, 0xdc, 0xe0),
+        (Theme::WarmWhite, Role::Ground) => (0xf8, 0xf8, 0xf6),
+        (Theme::WarmWhite, Role::Raised) => (0xed, 0xeb, 0xe5),
+        (Theme::WarmWhite, Role::Bubble) => (0xe6, 0xe4, 0xde),
+        (Theme::WarmWhite, Role::OnBubble) => (0x0d, 0x0d, 0x0d),
+        (Theme::WarmWhite, Role::Code) => (0xe6, 0xe4, 0xde),
+        (Theme::WarmWhite, Role::Text) => (0x0d, 0x0d, 0x0d),
+        (Theme::WarmWhite, Role::Muted) => (0x79, 0x75, 0x69),
+        (Theme::WarmWhite, Role::Faint) => (0x9a, 0x96, 0x8b),
+        (Theme::WarmWhite, Role::Accent) => (0xbf, 0x5d, 0x3a),
+        (Theme::WarmWhite, Role::Alive) => (0x1c, 0x9c, 0x1c),
+        (Theme::WarmWhite, Role::Caution) => (0x9a, 0x6d, 0x1a),
+        (Theme::WarmWhite, Role::Wrong) => (0xc9, 0x26, 0x26),
+        (Theme::WarmWhite, Role::Link) => (0x8f, 0x45, 0x2b),
     }
 }
 
@@ -105,7 +136,7 @@ impl Look {
             Depth::Ansi256 => Some(Color::Indexed(nearest_256(token(self.theme, role)))),
             Depth::Ansi16 => match role {
                 // The terminal's own ground and text, whatever they are.
-                Role::Ground | Role::Raised | Role::Text => None,
+                Role::Ground | Role::Raised | Role::Bubble | Role::OnBubble | Role::Code | Role::Text => None,
                 Role::Muted | Role::Faint => Some(Color::Gray),
                 Role::Accent => Some(Color::Yellow),
                 Role::Alive => Some(Color::Green),
@@ -167,6 +198,24 @@ impl Look {
         }
     }
 
+    /// The words that went in to an agent, on their own ground.
+    pub fn bubble(&self) -> Style {
+        let style = Style::default();
+        match (self.color(Role::Bubble), self.color(Role::OnBubble)) {
+            (Some(ground), Some(text)) => style.bg(ground).fg(text),
+            _ => self.text(Role::Text),
+        }
+    }
+
+    /// Code in a role, on the ground of code.
+    pub fn code(&self, role: Role) -> Style {
+        let style = self.text(role);
+        match self.color(Role::Code) {
+            Some(code) => style.bg(code),
+            None => style,
+        }
+    }
+
     /// The ground, for clearing a screen.
     pub fn ground(&self) -> Style {
         match self.color(Role::Ground) {
@@ -187,24 +236,26 @@ pub fn depth() -> std::io::Result<Depth> {
     crate::terminal::depth()
 }
 
-/// Ink or paper: `FASTCTX_THEME` when set (`ink`, `paper`, `dark` or
-/// `light`), otherwise the native Windows application preference. On other
-/// platforms, or if that preference is unavailable, use `COLORFGBG` as a
-/// palette hint and finally ink. A palette hint is not a system preference:
-/// terminal palettes can be customized, and SSH does not carry an OS theme.
+/// `FASTCTX_THEME` when set: `warm-black` (or `dark`), `ink-black`, or
+/// `warm-white` (or `light`). Otherwise the native Windows application
+/// preference picks warm white or warm black. On other platforms, or if that
+/// preference is unavailable, `COLORFGBG` is taken as a palette hint, and
+/// finally warm black. A palette hint is not a system preference: terminal
+/// palettes can be customized, and SSH does not carry an OS theme.
 pub fn theme() -> Theme {
     match std::env::var("FASTCTX_THEME").unwrap_or_default().to_lowercase().as_str() {
-        "paper" | "light" => return Theme::Paper,
-        "ink" | "dark" => return Theme::Ink,
+        "warm-black" | "dark" => return Theme::WarmBlack,
+        "ink-black" => return Theme::InkBlack,
+        "warm-white" | "light" => return Theme::WarmWhite,
         _ => {}
     }
     if let Some(light) = system_light() {
-        return if light { Theme::Paper } else { Theme::Ink };
+        return if light { Theme::WarmWhite } else { Theme::WarmBlack };
     }
     // `COLORFGBG` is `fg;bg` in the 16 colours; a light ground is 7 or 15.
     match std::env::var("COLORFGBG").ok().and_then(|value| value.rsplit(';').next().map(str::to_string)).as_deref() {
-        Some("7" | "15") => Theme::Paper,
-        _ => Theme::Ink,
+        Some("7" | "15") => Theme::WarmWhite,
+        _ => Theme::WarmBlack,
     }
 }
 
