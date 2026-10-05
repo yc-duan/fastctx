@@ -649,6 +649,52 @@ a.details-job {
   text-underline-offset: 3px;
 }
 
+/* A PDF scrolls in its own viewer, under a quiet line that says which page
+   and changes the size; the page itself does not scroll. */
+.reader-body.reader-pdf {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.reader-pdf > .world-pdf-view {
+  flex: 1;
+  /* The reading column, which fitting the width fits the page to; the
+     viewer's own stylesheet arrives later and would take the full width. */
+  width: var(--board);
+  min-height: 0;
+  outline: none;
+  --world-pdf-page-gap: var(--space-5);
+}
+
+/* Each page a sheet of paper on the desk: its own white, a soft edge. */
+.reader-pdf .world-pdf-page {
+  border-radius: var(--radius-s);
+  box-shadow: 0 0 0 1px var(--hairline), 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.reader-pdf .world-pdf-pages {
+  padding-bottom: var(--space-12);
+}
+
+.reader-pdf-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 0 var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-pdf-zoom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .reader-image {
   margin: 0 auto var(--space-12);
   text-align: center;

@@ -8,11 +8,12 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
 /** The frame's own glyphs: the sidebar, new conversations, settings, and
  *  what can be done to an agent (sleep, wake, move to a project, remove,
  *  which archives it), a page and its versions. */
-type Frame = "menu" | "plus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move" | "archive" | "reread" | "scan" | "grip" | "page" | "versions";
+type Frame = "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move" | "archive" | "reread" | "scan" | "grip" | "page" | "versions";
 
 const paths: Record<Named, string> = {
   menu: '<path d="M4 7h12M4 13h8"/>',
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+  minus: '<path d="M4.5 10h11"/>',
   settings: '<circle cx="10" cy="10" r="2.4"/><path d="M10 3.5v1.6M10 14.9v1.6M16.5 10h-1.6M5.1 10H3.5M14.6 5.4l-1.1 1.1M6.5 13.5l-1.1 1.1M14.6 14.6l-1.1-1.1M6.5 6.5L5.4 5.4"/>',
   sidebar: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="1.5"/><path d="M8.25 4.75v10.5"/>',
   machine: '<rect x="3.75" y="4.25" width="12.5" height="8.75" rx="1.25"/><path d="M7.5 15.75h5M10 13v2.75"/>',
