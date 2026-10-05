@@ -4,6 +4,8 @@
 //! watched conversation streams the session's events to the page as they
 //! come. The page speaks as the person at this machine, never as a session.
 
+#[cfg(target_os = "android")]
+mod android;
 mod connection;
 
 #[cfg(desktop)]
@@ -19,7 +21,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use fastctx_client::{Conversation, World};
+#[cfg(not(target_os = "android"))]
+use fastctx_client::Conversation;
+use fastctx_client::World;
 use fastctx_types::device::DeviceJoined;
 use fastctx_types::file_search::{FileSearchReply, FileSearchRequest};
 use fastctx_types::management::{Managed, Management};
@@ -88,7 +92,13 @@ async fn join_device(
     if world.device().is_none() {
         return Err("select the device connection before joining with a device invitation".into());
     }
-    let (world, name) = world.join(code, machine(name)?).await.map_err(|error| error.to_string())?;
+    let name = machine(name)?;
+    #[cfg(target_os = "android")]
+    android::joining(true)?;
+    let joined = world.join(code, name).await.map_err(|error| error.to_string());
+    #[cfg(target_os = "android")]
+    android::joining(false)?;
+    let (world, name) = joined?;
     Ok(DeviceJoined { world, name })
 }
 
@@ -124,6 +134,14 @@ struct WorldNow {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum Piece {
+    #[cfg(target_os = "android")]
+    Reset {
+        history: Vec<SessionEvent>,
+    },
+    #[cfg(target_os = "android")]
+    Interrupted {
+        error: Option<String>,
+    },
     Event {
         event: SessionEvent,
     },
@@ -176,12 +194,20 @@ async fn watch(
     machine_name: Option<String>,
     pieces: Channel<Piece>,
 ) -> Result<Watch, String> {
-    let (mut conversation, history) =
-        Conversation::watch(&shell.world(), resident(resident_id)?, machine(machine_name)?)
-            .await
-            .map_err(|error| error.to_string())?;
+    let world = shell.world();
+    let resident = resident(resident_id)?;
+    let machine = machine(machine_name)?;
+    #[cfg(not(target_os = "android"))]
+    let (conversation, history) =
+        Conversation::watch(&world, resident.clone(), machine.clone()).await.map_err(|error| error.to_string())?;
+    #[cfg(target_os = "android")]
+    let (conversation, history) = android::watching::open(&world, resident.clone(), machine.clone()).await?;
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
+    #[cfg(target_os = "android")]
+    let task = tauri::async_runtime::spawn(android::watching::stream(world, resident, machine, conversation, pieces));
+    #[cfg(not(target_os = "android"))]
     let task = tauri::async_runtime::spawn(async move {
+        let mut conversation = conversation;
         loop {
             match conversation.next().await {
                 Ok(Some(moment)) => {
@@ -238,7 +264,10 @@ async fn upload_path(
     path: String,
     sent: Channel<u64>,
 ) -> Result<fastctx_types::attachments::Attachment, String> {
-    uploading::from_path(&shell.world(), target, machine(machine_name)?, std::path::Path::new(&path), sent).await
+    let world = shell.world();
+    #[cfg(target_os = "android")]
+    android::readiness::wait(&world).await?;
+    uploading::from_path(&world, target, machine(machine_name)?, std::path::Path::new(&path), sent).await
 }
 
 /// Carries bytes the page holds to a machine. The bytes are the body; whom
@@ -253,13 +282,21 @@ async fn upload_bytes(
         let raw = request.headers().get(name).ok_or(format!("the upload names no {name}"))?;
         decoded(raw.to_str().map_err(|error| error.to_string())?)
     };
+    #[cfg(target_os = "android")]
+    let bytes = android::uploading::bytes(request.body())?;
+    #[cfg(not(target_os = "android"))]
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("the attachment's bytes did not come as bytes".into());
     };
     let target: fastctx_types::attachments::UploadTarget =
         serde_json::from_str(&header("target")?).map_err(|error| format!("the upload's target: {error}"))?;
     let machine = machine(Some(header("machine")?).filter(|name| !name.is_empty()))?;
-    uploading::from_bytes(&shell.world(), target, machine, header("name")?, header("type")?, bytes.clone()).await
+    #[cfg(not(target_os = "android"))]
+    let bytes = bytes.clone();
+    let world = shell.world();
+    #[cfg(target_os = "android")]
+    android::readiness::wait(&world).await?;
+    uploading::from_bytes(&world, target, machine, header("name")?, header("type")?, bytes).await
 }
 
 /// Undoes `encodeURIComponent`.
@@ -732,6 +769,8 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build());
     #[cfg(windows)]
     let builder = builder.plugin(desktop_presence::plugin(desktop)).plugin(titlebar::plugin());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::plugin());
     let context = tauri::generate_context!();
     #[cfg(windows)]
     let context = titlebar::configure(context);

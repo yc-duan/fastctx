@@ -32,7 +32,10 @@ pub struct Dialed {
 /// One way out of this machine (`route.rs`).
 enum Way {
     /// Pinned to the physical network card.
+    #[cfg(not(target_os = "android"))]
     Pinned(crate::route::Interface),
+    #[cfg(target_os = "android")]
+    Network(crate::android::Network),
     Proxy(crate::proxy::Proxy),
     /// Wherever the system's routes send it.
     System,
@@ -41,7 +44,10 @@ enum Way {
 impl Way {
     fn route(&self) -> Route {
         match self {
+            #[cfg(not(target_os = "android"))]
             Way::Pinned(interface) => Route::Card { name: interface.name.clone() },
+            #[cfg(target_os = "android")]
+            Way::Network(network) => Route::Card { name: network.name.clone() },
             Way::Proxy(proxy) => Route::Proxy { proxy: proxy.to_string() },
             Way::System => Route::System,
         }
@@ -57,6 +63,7 @@ impl std::fmt::Display for Way {
 /// The ways to try for `address`, in order: the physical card, then the
 /// system's proxy and its routes. Nothing captures a loopback
 /// address, so it is reached plainly.
+#[cfg(not(target_os = "android"))]
 fn ways(address: SocketAddr) -> (Vec<Way>, Option<String>) {
     if address.ip().is_loopback() {
         return (vec![Way::System], None);
@@ -77,10 +84,42 @@ fn ways(address: SocketAddr) -> (Vec<Way>, Option<String>) {
     (ways, note)
 }
 
+#[cfg(target_os = "android")]
+fn ways(address: SocketAddr) -> (Vec<Way>, Option<String>) {
+    if address.ip().is_loopback() {
+        return (vec![Way::System], None);
+    }
+    let choices = match crate::android::choices(address) {
+        Ok(choices) => choices,
+        Err(error) => return (vec![], Some(error)),
+    };
+    let mut ways: Vec<_> = choices.networks.into_iter().map(Way::Network).collect();
+    let mut unsupported = Vec::new();
+    for proxy in choices.proxies {
+        match proxy {
+            crate::android::Proxy::Http { host, port } => ways.push(Way::Proxy(crate::proxy::Proxy {
+                host,
+                port,
+                credentials: None,
+                source: "Android ProxySelector".into(),
+            })),
+            crate::android::Proxy::Direct => ways.push(Way::System),
+            crate::android::Proxy::Unsupported { description } => unsupported.push(description),
+        }
+    }
+    if !ways.iter().any(|way| matches!(way, Way::System)) {
+        ways.push(Way::System);
+    }
+    (ways, (!unsupported.is_empty()).then(|| format!("unsupported Android proxies: {}", unsupported.join(", "))))
+}
+
 impl Way {
     fn kind(&self) -> WayKind {
         match self {
+            #[cfg(not(target_os = "android"))]
             Self::Pinned(_) => WayKind::Pinned,
+            #[cfg(target_os = "android")]
+            Self::Network(_) => WayKind::Pinned,
             Self::Proxy(_) => WayKind::Proxy,
             Self::System => WayKind::System,
         }
@@ -108,6 +147,21 @@ pub(crate) fn network_changed() {
 /// Connects to the first of the hub's addresses that answers, each by the
 /// first way that reaches it.
 pub async fn dial(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usize) -> Result<Dialed, String> {
+    #[cfg(target_os = "android")]
+    {
+        let mut changes = crate::android::changes();
+        loop {
+            tokio::select! {
+                result = dial_routes(hub, pin, path, max_message) => return result,
+                changed = changes.changed() => changed.map_err(|error| error.to_string())?,
+            }
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    dial_routes(hub, pin, path, max_message).await
+}
+
+async fn dial_routes(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usize) -> Result<Dialed, String> {
     let mut failures = Vec::new();
     for address in hub {
         let (mut ways, note) = ways(*address);
@@ -145,7 +199,13 @@ async fn dial_one(
     max_message: usize,
 ) -> Result<Dialed, String> {
     let tcp = match way {
+        #[cfg(not(target_os = "android"))]
         Way::Pinned(interface) => crate::route::pinned_socket(interface, address)?
+            .connect(address)
+            .await
+            .map_err(|error| format!("connecting: {error}"))?,
+        #[cfg(target_os = "android")]
+        Way::Network(network) => crate::android::socket(network, address)?
             .connect(address)
             .await
             .map_err(|error| format!("connecting: {error}"))?,

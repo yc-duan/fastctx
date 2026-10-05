@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 use fastctx_client::World;
+#[cfg(not(target_os = "android"))]
 use fastctx_client::device::Device;
 use fastctx_platform::{Permissions, ensure_private_dir, publish};
 pub use fastctx_types::device::{ConnectionMode as Mode, ConnectionState as State};
@@ -102,14 +103,22 @@ impl Connection {
     }
 
     fn make(directory: &std::path::Path, mode: Mode) -> Result<Selected, String> {
+        #[cfg(target_os = "android")]
+        let _ = directory;
         match mode {
             Mode::Device => {
-                let directory = directory.join("device");
-                let open = if cfg!(mobile) { Device::open_managed } else { Device::open };
-                let device = open(directory).map_err(|error| error.to_string())?;
+                #[cfg(not(target_os = "android"))]
+                let world = {
+                    let directory = directory.join("device");
+                    let open = if cfg!(mobile) { Device::open_managed } else { Device::open };
+                    let device = open(directory).map_err(|error| error.to_string())?;
+                    World::from_device(device)
+                };
+                #[cfg(target_os = "android")]
+                let world = crate::android::world()?;
                 Ok(Selected {
                     mode,
-                    world: World::from_device(device),
+                    world,
                     #[cfg(desktop)]
                     program: None,
                 })

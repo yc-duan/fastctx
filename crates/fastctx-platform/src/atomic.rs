@@ -131,11 +131,19 @@ mod imp {
                 fs::rename(&temporary, path)?;
                 *published = true;
             } else {
-                // A hard link fails if the target exists, which a rename
-                // would silently overwrite.
-                fs::hard_link(&temporary, path)?;
-                *published = true;
-                fs::remove_file(&temporary)?;
+                #[cfg(target_os = "android")]
+                {
+                    rename_new(&temporary, path)?;
+                    *published = true;
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    // A hard link fails if the target exists, which a rename
+                    // would silently overwrite.
+                    fs::hard_link(&temporary, path)?;
+                    *published = true;
+                    fs::remove_file(&temporary)?;
+                }
             }
             sync_directory(path)
         })();
@@ -143,6 +151,30 @@ mod imp {
             let _ = fs::remove_file(&temporary);
         }
         result
+    }
+
+    #[cfg(target_os = "android")]
+    fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let from = CString::new(from.as_os_str().as_bytes())
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let to = CString::new(to.as_os_str().as_bytes())
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        // Android app SELinux policy forbids hard links, including between
+        // the app's own files. The kernel's no-replace rename retains atomic
+        // publication and collision detection without requiring that permission.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                from.as_ptr(),
+                libc::AT_FDCWD,
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
     }
 
     pub struct Staged {

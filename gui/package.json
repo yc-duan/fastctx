@@ -6,6 +6,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "tauri": "tauri",
+    "android": "node scripts/android.mjs",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
