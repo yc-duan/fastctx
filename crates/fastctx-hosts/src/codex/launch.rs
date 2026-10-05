@@ -14,14 +14,22 @@ use fastctx_types::agents::ProgramSource;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// A Codex to start: the binary, its arguments, and the user's
-/// configuration as it was read, to tell later whether it changed.
+/// A Codex to start, with the desktop integration it will inherit.
 #[derive(Clone, Debug)]
 pub struct Launch {
     pub binary: PathBuf,
     pub source: ProgramSource,
     pub args: Vec<String>,
-    pub config: Option<Vec<u8>>,
+    computer_use: Option<toml::Value>,
+}
+
+impl Launch {
+    /// Only changes to the selected executable, launch arguments or desktop
+    /// tool connection require replacing the process. Codex itself writes
+    /// project trust into config.toml while starting threads (0.160).
+    pub fn same_runtime(&self, other: &Self) -> bool {
+        self.binary == other.binary && self.args == other.args && self.computer_use == other.computer_use
+    }
 }
 
 /// The user's Codex directory: `CODEX_HOME` when it is set, as Codex reads
@@ -33,14 +41,14 @@ pub fn codex_home(home: &Path, env: &[(OsString, OsString)]) -> PathBuf {
     }
 }
 
-/// The user's `config.toml` as it is now; `None` when there is none.
-pub fn read_config(codex_home: &Path) -> Result<Option<Vec<u8>>, String> {
+fn read_config(codex_home: &Path) -> Result<toml::Table, String> {
     let path = codex_home.join("config.toml");
-    match std::fs::read(&path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("reading {}: {error}", path.display())),
-    }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
+        Err(error) => return Err(format!("reading {}: {error}", path.display())),
+    };
+    text.parse().map_err(|error: toml::de::Error| format!("reading {}: {}", path.display(), error.message()))
 }
 
 /// The Codex to start now, looking for the program on `path` (the `PATH`
@@ -55,7 +63,8 @@ pub fn resolve(codex_home: &Path, path: Option<&OsString>) -> Result<Launch, Str
 /// reported and fail on use, never silently select another installation.
 pub fn discover(codex_home: &Path, path: Option<&OsString>) -> Result<Option<Launch>, String> {
     let config = read_config(codex_home)?;
-    if let Some(binary) = app_binary(codex_home, config.as_deref())? {
+    let computer_use = config.get("mcp_servers").and_then(|servers| servers.get("node_repl")).cloned();
+    if let Some(binary) = app_binary(codex_home, computer_use.as_ref())? {
         return Ok(Some(Launch {
             binary,
             source: ProgramSource::DesktopApp,
@@ -69,7 +78,7 @@ pub fn discover(codex_home: &Path, path: Option<&OsString>) -> Result<Option<Lau
                 "plugins.unified-computer-use@openai-bundled.mcp_servers.cua_repl.enabled=false".to_string(),
                 "app-server".to_string(),
             ],
-            config,
+            computer_use,
         }));
     }
     let names: &[&str] = if cfg!(windows) { &["codex.exe", "codex.cmd"] } else { &["codex"] };
@@ -81,24 +90,14 @@ pub fn discover(codex_home: &Path, path: Option<&OsString>) -> Result<Option<Lau
         binary,
         source: ProgramSource::Path,
         args: vec!["app-server".to_string()],
-        config,
+        computer_use,
     }))
 }
 
 /// The `codex.exe` the desktop app recorded, including a path removed by an upgrade.
-fn app_binary(codex_home: &Path, config: Option<&[u8]>) -> Result<Option<PathBuf>, String> {
-    let Some(bytes) = config else {
-        return Ok(None);
-    };
+fn app_binary(codex_home: &Path, computer_use: Option<&toml::Value>) -> Result<Option<PathBuf>, String> {
     let path = codex_home.join("config.toml");
-    let text = std::str::from_utf8(bytes).map_err(|error| format!("{} is not UTF-8: {error}", path.display()))?;
-    let document: toml::Table =
-        text.parse().map_err(|error: toml::de::Error| format!("reading {}: {}", path.display(), error.message()))?;
-    let binary = document
-        .get("mcp_servers")
-        .and_then(|servers| servers.get("node_repl"))
-        .and_then(|server| server.get("env"))
-        .and_then(|env| env.get("CODEX_CLI_PATH"));
+    let binary = computer_use.and_then(|server| server.get("env")).and_then(|env| env.get("CODEX_CLI_PATH"));
     match binary {
         None => Ok(None),
         Some(value) => value.as_str().filter(|value| !value.is_empty()).map(PathBuf::from).map(Some).ok_or_else(|| {
