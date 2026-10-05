@@ -9,6 +9,7 @@ import type { JsonValue } from "../world/wire";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { Menu, commandRow, commandsOf, modelRow, type MenuCommand } from "./commands";
+import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import type { Details } from "./details";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
@@ -63,6 +64,12 @@ export interface PageOptions {
      *  them so; returns how to stop listening. */
     drops?(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void;
   };
+  /** Files on the agent's machine, found as the user types `@` and a few
+   *  letters; the one chosen goes into the words as its path. */
+  files?: {
+    words: FileWords;
+    find(query: string): Promise<FoundFile[]>;
+  };
   /** Sends the user's words, and what arrived of what was attached. */
   send(text: string, attached: { refs: JsonValue[]; shown: Attached[] }): void;
   stop(): void;
@@ -85,6 +92,9 @@ export class ConversationPage {
   private commandMenu: Menu<MenuCommand> | null = null;
   private modelMenu: Menu<ModelOffer> | null = null;
   private effortMenu: Menu<string> | null = null;
+  private fileMenu: Menu<FoundFile> | null = null;
+  /** The latest `@` question; an answer to an earlier one is not shown. */
+  private mentionAsked = 0;
   private note: HTMLElement;
   private chip: HTMLButtonElement;
   private finder: Finder;
@@ -162,6 +172,7 @@ export class ConversationPage {
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus(options.controls);
+    if (options.files) this.fileMenuOf();
     this.context.addEventListener("click", () => this.toggleUsage());
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape") this.element.querySelector<HTMLElement>(".usage-pop")!.hidden = true;
@@ -194,10 +205,14 @@ export class ConversationPage {
       this.drawAction();
       this.keepDraft();
       this.slash();
+      this.mention();
     });
-    this.input.addEventListener("blur", () => this.commandMenu?.hide());
+    this.input.addEventListener("blur", () => {
+      this.commandMenu?.hide();
+      this.fileMenu?.hide();
+    });
     this.input.addEventListener("keydown", (event) => {
-      for (const menu of [this.effortMenu, this.modelMenu, this.commandMenu]) {
+      for (const menu of [this.fileMenu, this.effortMenu, this.modelMenu, this.commandMenu]) {
         if (menu?.key(event)) {
           event.preventDefault();
           return;
@@ -611,12 +626,49 @@ export class ConversationPage {
     menu.show(found, this.options.controls.words.commands.noCommands);
   }
 
+  private fileMenuOf(): void {
+    this.fileMenu = new Menu<FoundFile>("files", (file) => fileRow(file), (file) => {
+      this.fileMenu!.hide();
+      const caret = this.input.selectionStart ?? this.input.value.length;
+      const at = mentionAt(this.input.value, caret);
+      if (!at) return;
+      const put = mentioned(file);
+      this.input.value = this.input.value.slice(0, at.from) + put + this.input.value.slice(caret);
+      const end = at.from + put.length;
+      this.input.setSelectionRange(end, end);
+      this.fit();
+      this.drawAction();
+      this.keepDraft();
+    });
+    this.element.querySelector<HTMLElement>(".composer-menus")!.append(this.fileMenu.element);
+  }
+
+  /** Asks for files while a `@` mention is being typed. */
+  private mention(): void {
+    const files = this.options.files;
+    const menu = this.fileMenu;
+    if (!files || !menu) return;
+    const at = mentionAt(this.input.value, this.input.selectionStart ?? this.input.value.length);
+    if (!at) return menu.hide();
+    if (!at.query) return menu.show([], files.words.hint);
+    const asked = ++this.mentionAsked;
+    if (!menu.open) menu.show([], files.words.searching);
+    files.find(at.query).then(
+      (found) => {
+        if (asked === this.mentionAsked && menu.open) menu.show(found, files.words.none);
+      },
+      (error: unknown) => {
+        if (asked === this.mentionAsked && menu.open) menu.show([], String(error));
+      },
+    );
+  }
+
   private async setModel(model: string | null, effort: string | null): Promise<void> {
     await this.run({ name: "model", description: "", args: null, control: "model", source: null }, "", { do: "model", model, effort });
   }
 
-  /** Does a command: the World's own control, or the host's command. */
-  /** Does a command; says whether it was done. */
+  /** Does a command, the World's own control or the host's; says whether
+   *  it was done. */
   private async run(command: MenuCommand, args: string, given?: Control): Promise<boolean> {
     const controls = this.options.controls;
     if (!controls) return false;

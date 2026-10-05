@@ -2,6 +2,7 @@
 // the settings. In the user's words (`world-gui.md`, 用词).
 
 import type { AskWords } from "../conversation/asks";
+import type { FileWords } from "../conversation/mention";
 import type { PresenceWords } from "./presence";
 import { sizeOf, type AttachWords } from "../conversation/attach";
 
@@ -884,6 +885,7 @@ export const enWelcome: WelcomeWords = {
 export interface ComposerWords {
   asks: AskWords;
   attach: AttachWords;
+  files: FileWords;
   commands: {
     world: string;
     compact: string;
@@ -922,6 +924,11 @@ export interface ComposerWords {
 }
 
 export const zhComposer: ComposerWords = {
+  files: {
+    hint: "敲文件名的几个字",
+    searching: "正在找…",
+    none: "那台机器上、这个项目的地方里没有这样的文件",
+  },
   attach: {
     attach: "附上文件",
     drop: (agent) => `放下，就附给 ${agent}`,
@@ -1027,6 +1034,11 @@ export const zhComposer: ComposerWords = {
 };
 
 export const enComposer: ComposerWords = {
+  files: {
+    hint: "Type a few letters of a file's name",
+    searching: "Looking…",
+    none: "No such file in this project's places on that machine",
+  },
   attach: {
     attach: "Attach files",
     drop: (agent) => `Drop to attach for ${agent}`,

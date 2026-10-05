@@ -448,6 +448,7 @@ function specimenTalk(address: Address): Page {
       },
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
+    files: { words: composerWords.files, find: specimenFiles },
     details: detailsOf(address, async () =>
       known
         ? {
@@ -772,6 +773,29 @@ function show(next: Place): void {
       break;
   }
   shell.show(next, page);
+}
+
+/** Files a specimen's machine has in its project's places, found by the
+ *  letters typed in order, as a fuzzy finder does. */
+async function specimenFiles(query: string) {
+  const files = [
+    "D:/work/mark50/src/ctrl/pid.rs",
+    "D:/work/mark50/src/ctrl/fixed.rs",
+    "D:/work/mark50/src/ctrl/loop.rs",
+    "D:/work/mark50/src/telemetry/frame.rs",
+    "D:/work/mark50/specs/控制环.md",
+    "D:/work/mark50/specs/遥测.md",
+    "D:/work/mark50/tests/pid_saturation.rs",
+    "D:/work/mark50/Cargo.toml",
+  ];
+  const wanted = query.toLowerCase();
+  const fits = (path: string) => {
+    let at = 0;
+    for (const letter of path.toLowerCase()) if (letter === wanted[at]) at += 1;
+    return at === wanted.length;
+  };
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  return files.filter(fits).map((path) => ({ path }));
 }
 
 /** A specimen computer, upgraded from an old fastctx: it changes nothing
