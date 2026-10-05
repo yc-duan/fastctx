@@ -15,6 +15,9 @@ export interface ProjectWords {
   decisionsUnreadable(why: string): string;
   places: string;
   noPlaces: string;
+  /** Shorter names for the tabs a narrow screen shows the sections behind. */
+  hereTab: string;
+  placesTab: string;
   opened(by: string, on: string, day: string): string;
   you: string;
   entries(n: number): string;
@@ -65,6 +68,8 @@ export const zhProject: ProjectWords = {
   decisionsUnreadable: (why) => `定论此刻读不到：${why}`,
   places: "在哪里能找到什么",
   noPlaces: "地址簿还是空的。",
+  hereTab: "此刻",
+  placesTab: "地址簿",
   opened: (by, on, day) => `${then(by)}在 ${on} 上开启 · ${day}`,
   you: "你",
   entries: (n) => `${n} 条`,
@@ -109,6 +114,8 @@ export const enProject: ProjectWords = {
   decisionsUnreadable: (why) => `The decisions cannot be read now: ${why}`,
   places: "Where things are",
   noPlaces: "The address book is empty.",
+  hereTab: "Now",
+  placesTab: "Places",
   opened: (by, on, day) => `Opened by ${by} on ${on}, ${day}`,
   you: "you",
   entries: (n) => `${n} entr${n === 1 ? "y" : "ies"}`,

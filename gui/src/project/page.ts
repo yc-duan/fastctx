@@ -146,8 +146,9 @@ export class ProjectPage {
       .slice(1)
       .map(section)
       .join("")}</div>`;
+    const short: Partial<Record<Tab, string>> = { here: words.hereTab, places: words.placesTab };
     const tabs = sections
-      .map(([tab, title]) => `<button class="tab" type="button" role="tab" data-tab="${tab}">${escape(title)}</button>`)
+      .map(([tab, title]) => `<button class="tab" type="button" role="tab" data-tab="${tab}">${escape(short[tab] ?? title)}</button>`)
       .join("");
     const html = intro + tabs + board;
     if (html !== this.drawn) {
