@@ -83,6 +83,9 @@ import {
   joinWorld,
   placeFastctx,
   setupState,
+  onComputer,
+  keepHere,
+  releaseHere,
   journal as readJournal,
   journalAdd,
   leave as leaveWorld,
@@ -762,10 +765,33 @@ function show(next: Place): void {
           location.replace(url);
         },
         ago: (at, now) => homeWords.ago(now.getTime() - at.getTime()),
+        service: live
+          ? onComputer()
+            ? { kept: async () => (await setupState()).service, keep: keepHere, release: releaseHere }
+            : undefined
+          : specimenService(),
       });
       break;
   }
   shell.show(next, page);
+}
+
+/** A specimen's startup service: it changes nothing anywhere, only how
+ *  the settings show it. */
+function specimenService() {
+  let kept = false;
+  const after = <T>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), 900));
+  return {
+    kept: async () => kept,
+    keep: () => {
+      kept = true;
+      return after({ kind: "installed" as const });
+    },
+    release: () => {
+      kept = false;
+      return after({ kind: "removed" as const });
+    },
+  };
 }
 
 /** In a plain browser, `?s=` names what to look at when the address does

@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find", "attach", "rewind", "usage"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find", "attach", "rewind", "usage", "service"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -125,7 +125,7 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" || session === "palette" ? "home" : session === "slash" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
+      const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
       const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
       await send("Page.navigate", { url: `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}` });
       await loaded;
@@ -192,6 +192,13 @@ for (const session of sessions) {
       }
       if (session === "invite") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.device-sheet .sheet-go')?.click()" });
+      }
+      if (session === "service") {
+        // The startup service installed, then removal armed by one press.
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('[data-service=keep]')?.click(); return new Promise(r => setTimeout(r, 1300)); }).then(() => document.querySelector('[data-service=release]')?.click())",
+        });
       }
       if (session === "about") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.details-toggle')?.click()" });

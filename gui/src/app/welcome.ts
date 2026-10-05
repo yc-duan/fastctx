@@ -6,7 +6,7 @@
 // computer on its own opens the interface, and from the sidebar after.
 
 import { escape } from "../conversation/prose";
-import type { KeptNow, Setup } from "../world/bridge";
+import type { JoinKept, Setup } from "../world/bridge";
 import type { Page } from "./shell";
 import type { Store } from "./store";
 import type { WelcomeWords } from "./words";
@@ -17,7 +17,7 @@ export interface WelcomeOptions {
   head(title: string, actions?: string): string;
   setup(): Promise<Setup>;
   place(): Promise<string>;
-  join(code: string, name: string | null): Promise<{ world: string; name: string; kept: KeptNow }>;
+  join(code: string, name: string | null): Promise<{ world: string; name: string; kept: JoinKept }>;
   hubHere(addresses: string[]): Promise<string>;
   applyHosts(codex: boolean, claude: boolean): Promise<string[]>;
   /** Done here: on to the World. */
@@ -34,7 +34,7 @@ export class WelcomePage implements Page {
   private step: Step = "choose";
   private hub: "here" | "server" = "here";
   private setup: Setup | null = null;
-  private joined: { world: string; name: string; kept: KeptNow } | null = null;
+  private joined: { world: string; name: string; kept: JoinKept } | null = null;
   private busy = false;
 
   constructor(private readonly options: WelcomeOptions) {

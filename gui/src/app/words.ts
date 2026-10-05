@@ -150,6 +150,15 @@ export interface SettingsWords {
   connecting(error: string | null): string;
   stopped(reason: string): string;
   notInShell: string;
+  service: string;
+  serviceOn: string;
+  serviceOff: string;
+  keep: string;
+  keepAsks: string;
+  release: string;
+  releaseAgain: string;
+  kept: Record<"already" | "installed" | "declined" | "unsupported" | "removed" | "not_kept", string>;
+  command(command: string): string;
 }
 
 export const zhSettings: SettingsWords = {
@@ -184,6 +193,22 @@ export const zhSettings: SettingsWords = {
   connecting: (error) => (error ? `正在连，上一次没连上：${error}` : "正在连"),
   stopped: (reason) => `没有在连：${reason}`,
   notInShell: "在浏览器里看的是样例，没有连着世界。",
+  service: "开机服务",
+  serviceOn: "装着：这台电脑开机后，没人登录，世界也在这里",
+  serviceOff: "没装：只有你登录着时，世界才在这里",
+  keep: "装上",
+  keepAsks: "要管理员确认一次",
+  release: "拿掉",
+  releaseAgain: "再按一次，拿掉开机服务",
+  kept: {
+    already: "已经装着",
+    installed: "装上了",
+    declined: "没有拿到管理员确认，什么都没改",
+    unsupported: "这个系统上没有世界的开机服务",
+    removed: "拿掉了：之后只有你登录着、有程序把它起来时，世界才在这里",
+    not_kept: "本来就没有装",
+  },
+  command: (command) => `要用管理员身份跑这一条：${command}`,
 };
 
 export const enSettings: SettingsWords = {
@@ -218,6 +243,22 @@ export const enSettings: SettingsWords = {
   connecting: (error) => (error ? `connecting; the last try failed: ${error}` : "connecting"),
   stopped: (reason) => `not connecting: ${reason}`,
   notInShell: "In a browser this is a specimen, not connected to the World.",
+  service: "Startup service",
+  serviceOn: "Installed: the World is here from boot, before anyone signs in",
+  serviceOff: "Not installed: the World is here only while you are signed in",
+  keep: "Install",
+  keepAsks: "Asks an administrator once",
+  release: "Remove",
+  releaseAgain: "Press again to remove the startup service",
+  kept: {
+    already: "Already installed",
+    installed: "Installed",
+    declined: "No administrator approved it; nothing changed",
+    unsupported: "This system has no startup service for the World",
+    removed: "Removed: the World is here only while you are signed in and something starts it",
+    not_kept: "There was none to remove",
+  },
+  command: (command) => `Run this as root: ${command}`,
 };
 
 export interface MachinesWords {

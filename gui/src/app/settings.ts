@@ -4,7 +4,7 @@
 
 import { escape } from "../conversation/prose";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
-import type { WorldNow } from "../world/bridge";
+import type { KeptNow, WorldNow } from "../world/bridge";
 import { desktopAvailable } from "../world/desktop";
 import { chooseNotifying, notifying } from "./presence";
 import type { Page } from "./shell";
@@ -20,6 +20,13 @@ export interface SettingsOptions {
   chooseLanguage(language: "zh" | "en"): void;
   /** Says a moment as the front page does: how long ago. */
   ago(at: Date, now: Date): string;
+  /** The service that keeps this computer's node, where the shell can
+   *  install it: whether one does, and installing or removing it. */
+  service?: {
+    kept(): Promise<boolean>;
+    keep(): Promise<KeptNow>;
+    release(): Promise<KeptNow>;
+  } | undefined;
 }
 
 export class SettingsPage implements Page {
@@ -27,6 +34,11 @@ export class SettingsPage implements Page {
   readonly title: string;
   private stop: () => void;
   private device: HTMLElement;
+  private service: HTMLElement;
+  private kept: boolean | null = null;
+  private armed = false;
+  private busy = false;
+  private said = "";
 
   constructor(private readonly options: SettingsOptions) {
     const { words } = options;
@@ -37,13 +49,27 @@ export class SettingsPage implements Page {
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl></section>
+        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-service" hidden></dl></section>
         <section class="home-section"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
       </div>`;
     this.device = this.element.querySelector<HTMLElement>(".device")!;
+    this.service = this.element.querySelector<HTMLElement>(".settings-service")!;
     this.drawLook();
+    this.askService();
+    this.service.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-service]");
+      if (button && !button.disabled) this.serve(button.dataset.service as "keep" | "release");
+    });
+    // A removal waits for a second press; it is let go when the reader
+    // moves on.
+    this.service.addEventListener("focusout", () => {
+      if (this.armed) {
+        this.armed = false;
+        this.drawService();
+      }
+    });
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-choice]");
       if (!button) return;
@@ -69,6 +95,64 @@ export class SettingsPage implements Page {
 
   leave(): void {
     this.stop();
+  }
+
+  private askService(): void {
+    const service = this.options.service;
+    if (!service) return;
+    service.kept().then(
+      (kept) => {
+        this.kept = kept;
+        this.drawService();
+      },
+      (error: unknown) => {
+        this.said = String(error);
+        this.drawService();
+      },
+    );
+  }
+
+  private serve(act: "keep" | "release"): void {
+    const service = this.options.service;
+    if (!service || this.busy) return;
+    if (act === "release" && !this.armed) {
+      this.armed = true;
+      this.drawService();
+      this.service.querySelector<HTMLButtonElement>("[data-service]")?.focus();
+      return;
+    }
+    this.armed = false;
+    this.busy = true;
+    this.said = "";
+    this.drawService();
+    const { words } = this.options;
+    (act === "keep" ? service.keep() : service.release())
+      .then(
+        (done) => {
+          this.said = done.kind === "command" ? words.command(done.command) : words.kept[done.kind];
+        },
+        (error: unknown) => {
+          this.said = String(error);
+        },
+      )
+      .finally(() => {
+        this.busy = false;
+        this.askService();
+      });
+  }
+
+  private drawService(): void {
+    const { words } = this.options;
+    if (this.kept === null && !this.said) return;
+    const state = this.kept === null ? "" : this.kept ? words.serviceOn : words.serviceOff;
+    const button =
+      this.kept === null
+        ? ""
+        : this.kept
+          ? `<button class="text-button quiet-button${this.armed ? " armed" : ""}" type="button" data-service="release"${this.busy ? " disabled" : ""}>${escape(this.armed ? words.releaseAgain : words.release)}</button>`
+          : `<button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button>`;
+    this.service.hidden = false;
+    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span>${escape(state)}</span>${button}${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>`;
   }
 
   private drawLook(): void {

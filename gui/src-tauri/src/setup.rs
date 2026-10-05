@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use fastctx_client::World;
 use fastctx_install::apply::{self, Hosts, Places, Standing};
 use fastctx_install::codex::Approval;
-use fastctx_install::service::{Kept, keep_connected};
+use fastctx_install::service::{Kept, Released, keep_connected, stop_keeping};
 use fastctx_types::MachineName;
 use fastctx_types::layout::WorldDir;
 use serde::Serialize;
@@ -45,6 +45,10 @@ pub enum KeptNow {
     Command {
         command: String,
     },
+    /// The service is removed; the node runs while something here starts it.
+    Removed,
+    /// No service kept the node, so there was none to remove.
+    NotKept,
 }
 
 #[derive(Serialize)]
@@ -119,6 +123,13 @@ pub fn place() -> Result<String, String> {
 /// served until now hand the World over to it.
 pub async fn join(world: &World, code: String, name: Option<MachineName>) -> Result<Joined, String> {
     let (joined, name) = world.join(code, name).await.map_err(|error| error.to_string())?;
+    Ok(Joined { world: joined, name, kept: keep(world).await? })
+}
+
+/// Has a system service keep this machine's node, asking once for
+/// administrator rights, and the node that served until now hand the World
+/// over to it.
+pub async fn keep(world: &World) -> Result<KeptNow, String> {
     let places = places()?;
     let (kept, _) = tauri::async_runtime::spawn_blocking(move || keep_connected(&places))
         .await
@@ -127,14 +138,24 @@ pub async fn join(world: &World, code: String, name: Option<MachineName>) -> Res
     if kept == Kept::Installed {
         world.hand_over().await.map_err(|error| error.to_string())?;
     }
-    let kept = match kept {
+    Ok(match kept {
         Kept::Already => KeptNow::Already,
         Kept::Installed => KeptNow::Installed,
         Kept::Declined => KeptNow::Declined,
         Kept::Unsupported => KeptNow::Unsupported,
         Kept::Command(command) => KeptNow::Command { command },
-    };
-    Ok(Joined { world: joined, name, kept })
+    })
+}
+
+/// Removes the service that keeps this machine's node, with the same
+/// rights installing it took.
+pub fn release() -> Result<KeptNow, String> {
+    Ok(match stop_keeping(&places()?).map_err(|error| error.to_string())? {
+        Released::NotKept => KeptNow::NotKept,
+        Released::Removed => KeptNow::Removed,
+        Released::Declined => KeptNow::Declined,
+        Released::Command(command) => KeptNow::Command { command },
+    })
 }
 
 /// Founds a hub on this computer, reached at `public`, keeps it running as

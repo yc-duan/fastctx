@@ -15,6 +15,12 @@ export function inShell(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/** In the shell on a computer, where this machine can be set up; a phone
+ *  carries none of that. */
+export function onComputer(): boolean {
+  return inShell() && !/Android|iPhone|iPad/i.test(navigator.userAgent);
+}
+
 /** Opens a web link in the system's browser, outside the app. */
 export async function openOutside(url: string): Promise<void> {
   if (!/^https?:\/\//i.test(url)) throw new Error(`not a web link: ${url}`);
@@ -176,7 +182,9 @@ export type KeptNow =
   | { kind: "installed" }
   | { kind: "declined" }
   | { kind: "unsupported" }
-  | { kind: "command"; command: string };
+  | { kind: "command"; command: string }
+  | { kind: "removed" }
+  | { kind: "not_kept" };
 
 export function setupState(): Promise<Setup> {
   return invoke("setup_state");
@@ -186,8 +194,23 @@ export function placeFastctx(): Promise<string> {
   return invoke("place_fastctx");
 }
 
-export function joinWorld(code: string, name: string | null): Promise<{ world: string; name: MachineName; kept: KeptNow }> {
+/** What joining comes to: it keeps the machine connected, never removes
+ *  a service. */
+export type JoinKept = Exclude<KeptNow, { kind: "removed" | "not_kept" }>;
+
+export function joinWorld(code: string, name: string | null): Promise<{ world: string; name: MachineName; kept: JoinKept }> {
   return invoke("join_world", { code, name });
+}
+
+/** Has a system service keep this computer's node, asking once for
+ *  administrator rights. */
+export function keepHere(): Promise<KeptNow> {
+  return invoke("keep_here");
+}
+
+/** Removes the service that keeps this computer's node. */
+export function releaseHere(): Promise<KeptNow> {
+  return invoke("release_here");
 }
 
 /** Founds a hub on this computer; resolves to the code that founds its World. */

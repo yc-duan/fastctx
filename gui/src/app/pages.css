@@ -505,3 +505,34 @@
 .keys dt {
   white-space: nowrap;
 }
+
+/* The startup service under this device's facts: its state, the one thing
+   that changes it, and what came of the last change. */
+.settings-service {
+  margin-top: var(--space-2);
+}
+
+.settings-service dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+}
+
+.settings-service .text-button {
+  min-height: 0;
+  height: auto;
+  padding: 0 var(--space-1);
+  margin-left: calc(-1 * var(--space-1));
+}
+
+.settings-service .text-button.armed {
+  color: var(--caution);
+}
+
+.settings-said {
+  flex: 1 1 100%;
+  margin: var(--space-1) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}

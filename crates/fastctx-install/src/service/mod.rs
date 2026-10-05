@@ -23,7 +23,7 @@ mod linux_watchdog;
 #[cfg(any(windows, target_os = "linux"))]
 mod transaction;
 
-pub use keep::{Kept, keep_connected};
+pub use keep::{Kept, Released, keep_connected, stop_keeping};
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]
 mod windows;

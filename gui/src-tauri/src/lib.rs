@@ -389,6 +389,21 @@ async fn join_world(shell: tauri::State<'_, Shell>, code: String, name: Option<S
     setup::join(&shell.world, code.trim().to_string(), machine(name)?).await
 }
 
+/// Has a system service keep this computer's node, asking once for
+/// administrator rights.
+#[cfg(desktop)]
+#[tauri::command]
+async fn keep_here(shell: tauri::State<'_, Shell>) -> Result<setup::KeptNow, String> {
+    setup::keep(&shell.world).await
+}
+
+/// Removes the service that keeps this computer's node.
+#[cfg(desktop)]
+#[tauri::command]
+async fn release_here() -> Result<setup::KeptNow, String> {
+    tauri::async_runtime::spawn_blocking(setup::release).await.map_err(|error| error.to_string())?
+}
+
 /// Founds a hub on this computer; returns the code that founds its World.
 #[cfg(desktop)]
 #[tauri::command]
@@ -453,7 +468,11 @@ pub fn run() {
             #[cfg(desktop)]
             apply_hosts,
             #[cfg(desktop)]
-            attach_here
+            attach_here,
+            #[cfg(desktop)]
+            keep_here,
+            #[cfg(desktop)]
+            release_here
         ]);
     #[cfg(windows)]
     let builder = builder.plugin(desktop_presence::plugin(desktop));

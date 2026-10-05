@@ -44,18 +44,53 @@ pub fn keep_connected(places: &Places) -> anyhow::Result<(Kept, Report)> {
         Service::new(Kind::Node, &executable, &places.root).install()?;
         return Ok((Kept::Installed, report));
     }
-    Ok((elevated(&places.root, &executable)?, report))
+    Ok((elevated("install", &places.root, &executable)?, report))
 }
 
+/// What came of no longer keeping this machine connected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Released {
+    /// No service kept this World's node.
+    NotKept,
+    /// The service is removed, and its node stopped with it; the node runs
+    /// again when something on this machine starts it.
+    Removed,
+    /// The person at the screen declined to grant the rights.
+    Declined,
+    /// The rights are asked for with this command, run by the user.
+    Command(String),
+}
+
+/// Removes the node's service for the World under `places.root`, with the
+/// same rights installing it took.
+pub fn stop_keeping(places: &Places) -> anyhow::Result<Released> {
+    if !WorldDir::under(&places.root).node_service().exists() {
+        return Ok(Released::NotKept);
+    }
+    let executable = places.installed();
+    if fastctx_platform::elevation::is_elevated()? {
+        Service::new(Kind::Node, &executable, &places.root).uninstall()?;
+        return Ok(Released::Removed);
+    }
+    Ok(match elevated("uninstall", &places.root, &executable)? {
+        Kept::Installed => Released::Removed,
+        Kept::Declined => Released::Declined,
+        Kept::Command(command) => Released::Command(command),
+        other => anyhow::bail!("removing the node's service came to {other:?}"),
+    })
+}
+
+/// Runs `fastctx service node <action>` for this user with administrator
+/// rights; `Installed` means the action was done.
 #[cfg(windows)]
-fn elevated(root: &Path, executable: &Path) -> anyhow::Result<Kept> {
+fn elevated(action: &str, root: &Path, executable: &Path) -> anyhow::Result<Kept> {
     // Named explicitly: when another account's administrator approves, the
     // elevated process runs as that account, not as this user.
     let user = fastctx_platform::current_user_sid()?;
     let args: Vec<std::ffi::OsString> = vec![
         "service".into(),
         "node".into(),
-        "install".into(),
+        action.into(),
         "--dir".into(),
         root.into(),
         "--executable".into(),
@@ -65,21 +100,20 @@ fn elevated(root: &Path, executable: &Path) -> anyhow::Result<Kept> {
     ];
     match fastctx_platform::elevation::run_elevated(executable, &args) {
         Ok(0) => Ok(Kept::Installed),
-        Ok(code) => anyhow::bail!(
-            "installing the node's service failed (exit {code}); `fastctx service node install` run as \
-             administrator says why"
-        ),
+        Ok(code) => {
+            anyhow::bail!("`fastctx service node {action}` failed (exit {code}); run as administrator, it says why")
+        }
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(Kept::Declined),
         Err(error) => Err(error.into()),
     }
 }
 
 #[cfg(unix)]
-fn elevated(root: &Path, executable: &Path) -> anyhow::Result<Kept> {
+fn elevated(action: &str, root: &Path, executable: &Path) -> anyhow::Result<Kept> {
     use std::os::unix::fs::MetadataExt;
     let uid = std::fs::metadata(root)?.uid();
     Ok(Kept::Command(format!(
-        "sudo {} service node install --dir {} --executable {} --uid {uid}",
+        "sudo {} service node {action} --dir {} --executable {} --uid {uid}",
         executable.display(),
         root.display(),
         executable.display()
