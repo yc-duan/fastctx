@@ -1196,6 +1196,7 @@ dependencies = [
 name = "fastctx-gui"
 version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "fastctx-client",
  "fastctx-hub",
  "fastctx-install",

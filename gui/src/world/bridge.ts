@@ -9,7 +9,7 @@ import type { WorldAgents } from "./agents";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
-import type { TextRead } from "../app/reader";
+import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
@@ -120,6 +120,11 @@ export function journal(town: string, name: string, before: string | null): Prom
 /** A text file on a machine, or a piece of it, read for the user. */
 export function readText(machine: MachineName, path: string, range: FileRange): Promise<TextRead> {
   return invoke("read_text", { machineName: machine, path, range });
+}
+
+/** A file on a machine, whole, as bytes for the page to show as it is. */
+export function readBytes(machine: MachineName, path: string): Promise<BytesRead> {
+  return invoke("read_bytes", { machineName: machine, path });
 }
 
 /** Residents or jobs in detail, from every machine that has them. */

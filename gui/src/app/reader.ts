@@ -14,6 +14,24 @@ export interface TextRead {
   text: string | null;
 }
 
+export interface BytesRead {
+  info: FileReadInfo;
+  base64: string;
+}
+
+/** The images a page can show, by the name's ending. */
+const images: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+  avif: "image/avif",
+  // In an image, an SVG's scripts never run.
+  svg: "image/svg+xml",
+};
+
 export interface ReaderWords {
   reread: string;
   reading: string;
@@ -33,6 +51,7 @@ export interface ReaderOptions {
   tail: boolean;
   head(title: string, actions?: string): string;
   read(machine: string, path: string, range: FileRange): Promise<TextRead>;
+  readBytes(machine: string, path: string): Promise<BytesRead>;
   /** Says how long ago a moment was. */
   ago(at: Date): string;
 }
@@ -72,9 +91,13 @@ export class ReaderPage implements Page {
     const { words, machine, path, tail } = this.options;
     const asked = ++this.asked;
     this.facts.innerHTML = `<span class="fact">${escape(machine)}</span><span class="sep">·</span><span class="fact reader-path">${escape(path)}</span><span class="sep">·</span><span class="fact">${escape(words.reading)}</span>`;
-    let read: TextRead;
+    const ending = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
+    const image = images[ending];
+    let read: TextRead | (BytesRead & { image: string });
     try {
-      read = await this.options.read(machine, path, tail ? { kind: "tail", bytes: TAIL_BYTES } : { kind: "all" });
+      read = image
+        ? { ...(await this.options.readBytes(machine, path)), image }
+        : await this.options.read(machine, path, tail ? { kind: "tail", bytes: TAIL_BYTES } : { kind: "all" });
     } catch (error) {
       if (asked !== this.asked) return;
       this.facts.lastElementChild!.textContent = words.failed(String(error));
@@ -85,8 +108,9 @@ export class ReaderPage implements Page {
     this.draw(read);
   }
 
-  private draw({ info, text }: TextRead): void {
+  private draw(read: TextRead | (BytesRead & { image: string })): void {
     const { words } = this.options;
+    const info = read.info;
     const size = words.bytes(info.file.size);
     const facts = [
       escape(info.machine),
@@ -96,6 +120,11 @@ export class ReaderPage implements Page {
       info.offset > 0 ? escape(words.tail(words.bytes(info.length), size)) : "",
     ].filter(Boolean);
     this.facts.innerHTML = facts.map((fact) => `<span class="fact">${fact}</span>`).join(`<span class="sep">·</span>`);
+    if ("image" in read) {
+      this.body.innerHTML = `<figure class="reader-image"><img alt="${escape(info.path)}" src="data:${read.image};base64,${read.base64}"></figure>`;
+      return;
+    }
+    let text = read.text;
     if (text === null) {
       this.body.innerHTML = `<p class="quiet">${escape(words.notText(size))}</p>`;
       return;

@@ -112,9 +112,10 @@ export class JournalPage {
           .map(
             (file) =>
               `<span class="attachment">${
-                // A text kept where it was written opens there, from its end.
-                file.kept.kind === "on_machine" && file.kind === "text"
-                  ? `<a href="${escape(fileLink(file.kept.location.machine, file.kept.location.path, true))}">${escape(file.name)}</a>`
+                // A text or an image kept where it was written opens there;
+                // a text from its end.
+                file.kept.kind === "on_machine" && (file.kind === "text" || file.kind === "image")
+                  ? `<a href="${escape(fileLink(file.kept.location.machine, file.kept.location.path, file.kind === "text"))}">${escape(file.name)}</a>`
                   : escape(file.name)
               } <span class="faint">${escape(file.kind)} · ${size(file.bytes)}${file.kept.kind === "on_machine" ? ` · ${escape(words.onMachine(file.kept.location.machine))}` : ""}</span></span>`,
           )

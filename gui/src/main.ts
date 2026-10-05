@@ -85,6 +85,7 @@ import {
   setupState,
   onComputer,
   readText,
+  readBytes,
   keepHere,
   releaseHere,
   journal as readJournal,
@@ -733,6 +734,7 @@ function show(next: Place): void {
         tail: next.tail,
         head,
         read: (machine, path, range) => (live ? readText(machine, path, range) : specimenRead(machine, path, range)),
+        readBytes: (machine, path) => (live ? readBytes(machine, path) : Promise.reject(new Error(deviceWords.specimen))),
         ago: (at) => homeWords.ago(Date.now() - at.getTime()),
       });
       break;

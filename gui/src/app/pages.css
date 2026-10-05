@@ -630,3 +630,15 @@ a.details-job {
   text-decoration: underline dotted var(--text-3);
   text-underline-offset: 3px;
 }
+
+.reader-image {
+  margin: 0 auto var(--space-12);
+  text-align: center;
+}
+
+.reader-image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-m);
+  box-shadow: 0 0 0 1px var(--hairline);
+}

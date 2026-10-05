@@ -280,6 +280,16 @@ async fn read_text(
     reading::read_text(&shell.world, machine(machine_name)?, path, range).await
 }
 
+/// A file on a machine, whole, as bytes for the page to show as it is.
+#[tauri::command]
+async fn read_bytes(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    path: String,
+) -> Result<reading::BytesRead, String> {
+    reading::read_bytes(&shell.world, machine(machine_name)?, path).await
+}
+
 /// Residents or jobs in detail, by id, from every machine that has them.
 #[tauri::command]
 async fn look(shell: tauri::State<'_, Shell>, ids: Vec<String>) -> Result<Vec<LookedUp>, String> {
@@ -475,6 +485,7 @@ pub fn run() {
             stop,
             look,
             read_text,
+            read_bytes,
             control,
             offers,
             invite,
