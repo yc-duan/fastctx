@@ -20,6 +20,9 @@ export function redrawKeepingFocus(element: HTMLElement, draw: () => void): void
 function identify(root: HTMLElement, control: HTMLElement): { selector: string; index: number } {
   const parts = [control.tagName.toLowerCase()];
   for (const { name, value } of control.attributes) {
+    // The window frame's marks come a frame after a redraw; they name no
+    // control.
+    if (name.startsWith("data-world-")) continue;
     if (name.startsWith("data-") || name === "href" || name === "name") parts.push(`[${name}="${CSS.escape(value)}"]`);
   }
   // Without anything naming it, a control is known by its class.

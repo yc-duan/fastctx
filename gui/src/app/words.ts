@@ -38,6 +38,8 @@ export interface ShellWords {
   span(ms: number): string;
   /** A project's fold button: the agents in it. */
   agentsIn(project: string): string;
+  /** The window's caption buttons, where the shell draws them. */
+  frame: { minimize: string; maximize: string; restore: string; close: string };
 }
 
 export interface NewTalkWords {
@@ -1346,6 +1348,7 @@ export const zhShell: ShellWords = {
   more: (n) => `还有 ${n} 个`,
   span: zhSpan,
   agentsIn: (project) => `${project} 里的智能体`,
+  frame: { minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭" },
 };
 
 export const enShell: ShellWords = {
@@ -1376,4 +1379,5 @@ export const enShell: ShellWords = {
   more: (n) => `${n} more`,
   span: enSpan,
   agentsIn: (project) => `Agents in ${project}`,
+  frame: { minimize: "Minimize", maximize: "Maximize", restore: "Restore", close: "Close" },
 };

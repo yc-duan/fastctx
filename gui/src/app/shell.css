@@ -544,3 +544,58 @@ body {
     animation: none;
   }
 }
+
+/* The window's caption buttons on Windows, where the shell draws no
+   titlebar: the height of a page's head, in the top right corner, drawn
+   with the system's own glyphs. The page's head keeps clear of them. */
+.window-controls {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  height: 52px;
+}
+
+.window-control {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 100%;
+  border-radius: 0;
+  color: var(--text-2);
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
+  font-size: 10px;
+  transition: background-color var(--hover) ease, color var(--hover) ease;
+}
+
+.window-control:hover,
+.window-control.maximize[data-world-hovered] {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.window-control:active,
+.window-control.maximize[data-world-pressed] {
+  background: var(--rule);
+}
+
+.window-control.close:hover {
+  color: #fff;
+  background: #c42b1c;
+}
+
+.window-control.close:active {
+  color: #fff;
+  background: #b0271a;
+}
+
+.window-control:focus-visible {
+  outline-offset: -2px;
+  border-radius: 0;
+}
+
+html.framed .page-head {
+  padding-right: calc(3 * 46px + var(--space-2));
+}
+

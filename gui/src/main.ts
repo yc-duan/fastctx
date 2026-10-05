@@ -118,6 +118,7 @@ import { en, zh } from "./words";
 import { desktopAvailable } from "./world/desktop";
 import { startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
+import { installFrame } from "./app/frame";
 import { nameCodeCopy } from "./conversation/prose";
 
 const params = new URLSearchParams(location.search);
@@ -986,6 +987,8 @@ if (live) {
 installPens();
 installRules();
 installAccess();
+// A specimen shows the window's frame when asked, to be looked at.
+installFrame(shellWords.frame, !live && params.has("frame"));
 nameCodeCopy(words.copyCode);
 addEventListener("hashchange", () => show(placeOf(location.hash)));
 applyTheme(() => {
