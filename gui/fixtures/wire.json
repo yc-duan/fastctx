@@ -3970,7 +3970,8 @@
                     ],
                     "trouble": null,
                     "desk": true,
-                    "waiting_for_user": true
+                    "waiting_for_user": true,
+                    "title": "端口对拍"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4014,7 +4015,8 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": {
@@ -4058,7 +4060,8 @@
                       "text": "host disconnected"
                     },
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": {
@@ -4118,7 +4121,8 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": null,
@@ -4163,7 +4167,8 @@
                     ],
                     "trouble": null,
                     "desk": true,
-                    "waiting_for_user": true
+                    "waiting_for_user": true,
+                    "title": "端口对拍"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4294,7 +4299,8 @@
                     ],
                     "trouble": null,
                     "desk": true,
-                    "waiting_for_user": true
+                    "waiting_for_user": true,
+                    "title": "端口对拍"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4338,7 +4344,8 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": {
@@ -4382,7 +4389,8 @@
                       "text": "host disconnected"
                     },
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": {
@@ -4442,7 +4450,8 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": null,
@@ -4487,7 +4496,8 @@
                     ],
                     "trouble": null,
                     "desk": true,
-                    "waiting_for_user": true
+                    "waiting_for_user": true,
+                    "title": "端口对拍"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4597,7 +4607,8 @@
                     ],
                     "trouble": null,
                     "desk": true,
-                    "waiting_for_user": true
+                    "waiting_for_user": true,
+                    "title": "端口对拍"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4641,7 +4652,8 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": {
@@ -4685,7 +4697,8 @@
                       "text": "host disconnected"
                     },
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": {
@@ -4745,7 +4758,8 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
-                    "waiting_for_user": false
+                    "waiting_for_user": false,
+                    "title": null
                   },
                   "last_action": null,
                   "moved": null,
@@ -4790,7 +4804,8 @@
                     ],
                     "trouble": null,
                     "desk": true,
-                    "waiting_for_user": true
+                    "waiting_for_user": true,
+                    "title": "端口对拍"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",

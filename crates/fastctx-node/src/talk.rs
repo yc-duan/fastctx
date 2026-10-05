@@ -444,6 +444,7 @@ pub async fn open_here(
         trouble: None,
         desk: false,
         waiting_for_user: false,
+        title: None,
     };
     node.residents
         .create(&node.world, about, town, now)

@@ -707,6 +707,7 @@ pub fn idle(since: Timestamp) -> Now {
         trouble: None,
         desk: false,
         waiting_for_user: false,
+        title: None,
     }
 }
 

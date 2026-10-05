@@ -93,6 +93,7 @@ fn residents() -> Vec<ResidentNow> {
                 trouble: (i == 2).then(|| Trouble { at: at(), text: "host disconnected".into() }),
                 desk: i == 0,
                 waiting_for_user: i == 0,
+                title: (i == 0).then(|| "端口对拍".to_string()),
             }),
             last_action: (i == 0).then(|| Action {
                 at: at(),

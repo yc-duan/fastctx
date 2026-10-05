@@ -40,6 +40,10 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
     {
         node.residents.change_now(&node.world, id, |now| now.waiting_for_user = *waiting)?;
     }
+    // Its name, for those who list the World rather than watch it.
+    if let Happened::Titled { title } = &event.happened {
+        node.residents.change_now(&node.world, id, |now| now.title = Some(title.clone()))?;
+    }
     if let Happened::Changed { turn, change } = &event.happened
         && let Some(report) = presentation_health(change)
     {

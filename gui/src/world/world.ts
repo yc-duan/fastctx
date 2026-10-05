@@ -41,6 +41,8 @@ export interface Now {
   trouble: Trouble | null;
   desk: boolean;
   waiting_for_user: boolean;
+  /** The conversation's name, as its host last gave it. */
+  title: string | null;
 }
 
 export interface Action {

@@ -163,6 +163,9 @@ pub struct Now {
     /// The running turn cannot continue until a user answers its host.
     #[serde(default)]
     pub waiting_for_user: bool,
+    /// The conversation's name, as its host last gave it.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -94,6 +94,7 @@ fn state(now: Timestamp, activity: Activity, since: i64) -> Now {
         trouble: None,
         desk: false,
         waiting_for_user: false,
+        title: None,
     }
 }
 
