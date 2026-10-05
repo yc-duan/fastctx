@@ -33,8 +33,8 @@ export interface PageVersion {
   at: string;
 }
 
-/** Who wrote a version: anyone who writes into a ledger, or a page. */
-export type PageWriter = Writer | { kind: "page"; page: PageSource };
+/** Who wrote a version: anyone who writes into a ledger, a page too. */
+export type PageWriter = Writer;
 
 /** What the core stamps on whatever an open page did. */
 export interface PageSource {
@@ -95,7 +95,17 @@ export interface RunReply {
   machine: MachineName;
   job: string;
   state: RunState;
-  output: { log: string; bytes: number; lines: number; pieces: OutputPiece[] };
+  output: {
+    log: string;
+    bytes: number;
+    lines: number;
+    pieces: OutputPiece[];
+    /** Lines shown that were not UTF-8 but decoded in the machine's legacy
+     *  code page. */
+    legacy: { encoding: string; lines: number } | null;
+    /** Lines holding bytes no known encoding decodes. */
+    escaped_lines: number;
+  };
 }
 
 export type PageResult =
@@ -119,10 +129,6 @@ export function sameAct(a: PageAct, b: PageAct): boolean {
 export function unconsented(page: PageView): PageAct[] {
   const agreed = page.consent?.acts ?? [];
   return page.publication.acts.filter((act) => !holds(agreed, act));
-}
-
-export function pages(town: TownName): Promise<PageSummary[]> {
-  return invoke<PageSummary[]>("pages", { town });
 }
 
 export function readPage(town: TownName, page: PageName, version: number | null): Promise<PageView> {

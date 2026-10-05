@@ -172,10 +172,13 @@ impl fastctx_net::link::Node for Handler {
             let machine = node.machine();
             crate::devices::admit(&node, &from, &call)?;
             match call {
+                RemoteCall::PageAction { source, action } => crate::pages::actions::execute(&node, source, action)
+                    .await
+                    .map(|result| RemoteReply::PageAction { result }),
                 RemoteCall::Relay { made } => crate::devices::relay(&node, &from, made).await,
                 RemoteCall::Run { resident, town, request } => {
                     let owner = Address { machine: from, resident };
-                    let (reply, _) = node.jobs.run(&node, owner, town, request).await?;
+                    let (reply, _) = node.jobs.run(&node, owner.into(), town, request).await?;
                     Ok(RemoteReply::Run(reply))
                 }
                 RemoteCall::Ask { asker, town, label, prompt } => {

@@ -301,7 +301,7 @@ export class ConversationView {
     // in the interface's words.
     const world = from.kind === "world";
     const told = readTold(text);
-    let label = world ? words.world : `${from.address.resident} · ${from.address.machine}`;
+    let label = world ? words.world : from.kind === "page" ? words.aPage(from.page.page) : `${from.address.resident} · ${from.address.machine}`;
     let how = "";
     let body: string;
     switch (told.kind) {

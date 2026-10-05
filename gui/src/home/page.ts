@@ -11,7 +11,7 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
-import type { ResidentNow, RunningJob, Writer } from "../world/world";
+import { ownerResident, type JobOwner, type ResidentNow, type RunningJob, type Writer } from "../world/world";
 import { Frontispiece } from "./frontispiece";
 import type { Away, Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
@@ -81,7 +81,11 @@ export class HomePage {
     const busy = residents.filter((r) => r.now?.activity === "busy" && !r.now.waiting_for_user);
     const idle = residents.filter((r) => r.here && r.now?.activity !== "busy");
     const present = new Set(residents.filter((r) => r.here).map((r) => `${r.about.id}@${r.about.machine}`));
-    const unattended = jobs.filter((job) => !present.has(`${job.owner.resident}@${job.owner.machine}`));
+    // A job a page started has no resident to attend it.
+    const unattended = jobs.filter((job) => {
+      const owner = ownerResident(job.owner);
+      return !owner || !present.has(`${owner.resident}@${owner.machine}`);
+    });
     // Machines are what the World works on; a phone is not counted among them.
     const machines = world.nodes.filter((node) => !node.device);
     const online = machines.filter((node) => node.online).length;
@@ -224,7 +228,14 @@ export class HomePage {
         return this.nameOf(by.address);
       case "session":
         return by.agent;
+      case "page":
+        return this.options.words.aPage(by.page.page);
     }
+  }
+
+  /** Who started a job: an agent, or a page. */
+  private ownerName(owner: JobOwner): string {
+    return "page" in owner ? this.options.words.aPage(owner.page.page) : this.nameOf(owner);
   }
 
   private happening(event: Happening, at: Date): string {
@@ -249,7 +260,7 @@ export class HomePage {
       case "job_ended": {
         line = words.jobDone(event.job, event.machine);
         const failed = !/^exited 0$/.test(event.how);
-        detail = `<span class="detail${failed ? " wrong" : ""}">${escape(this.options.ended(event.how))} · ${escape(words.startedBy(this.nameOf(event.owner)))}</span>`;
+        detail = `<span class="detail${failed ? " wrong" : ""}">${escape(this.options.ended(event.how))} · ${escape(words.startedBy(this.ownerName(event.owner)))}</span>`;
         mark = "command";
         break;
       }
@@ -308,6 +319,6 @@ export class HomePage {
 
   private job(job: RunningJob): string {
     const { words } = this.options;
-    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(this.since(job.started_at))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(words.startedBy(this.nameOf(job.owner)))}</span></li>`;
+    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(this.since(job.started_at))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(words.startedBy(this.ownerName(job.owner)))}</span></li>`;
   }
 }

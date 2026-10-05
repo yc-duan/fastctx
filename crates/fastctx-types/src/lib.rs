@@ -18,6 +18,7 @@ pub mod ipc;
 pub mod layout;
 pub mod management;
 pub mod names;
+pub mod pages;
 pub mod process;
 pub mod project;
 pub mod remote;
@@ -31,6 +32,6 @@ pub mod write;
 
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};
 pub use names::{
-    Address, AgentName, EntryId, JobId, JournalName, MachineName, NameError, NoticeId, ResidentId, TownName,
+    Address, AgentName, EntryId, JobId, JournalName, MachineName, NameError, NoticeId, PageName, ResidentId, TownName,
 };
 pub use process::ProcessIdentity;

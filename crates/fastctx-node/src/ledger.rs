@@ -60,6 +60,7 @@ pub async fn write(
                 machines,
                 files,
             };
+            check_size(&entry).map_err(Failure::new)?;
             let accepted = link.ledger_write(&entry).await.map_err(Failure::new)?;
             let _syncing = node.syncing.lock().await;
             if take(node, &link, town, accepted, true).await.map_err(Failure::new)? {
@@ -119,9 +120,25 @@ fn write_alone(
         machines,
         files,
     };
+    check_size(&entry)?;
     let signed = ledger::sign(&key, &entry);
     let seq = entries.last().map(|(seq, _, _)| *seq).unwrap_or(0) + 1;
     apply(world, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))
+}
+
+/// Both standalone and connected writers measure the complete wire entry
+/// before publishing any of its files.
+fn check_size(entry: &Entry) -> Result<(), String> {
+    match ledger::fits(entry) {
+        Ok(_) => Ok(()),
+        Err(over) => {
+            let limit = fastctx_net::wire::MAX_CONTROL_FRAME;
+            Err(format!(
+                "the ledger entry is {} bytes; the limit is {limit} bytes (256 KiB), including its signature and message encoding",
+                limit + over
+            ))
+        }
+    }
 }
 
 /// Takes what the hub has that this machine does not, for `town` or for

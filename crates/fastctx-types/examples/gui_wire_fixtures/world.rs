@@ -154,7 +154,7 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                             .map(|pid| RunningJob {
                                 job: "j-abc123".parse().unwrap(),
                                 machine: machine(),
-                                owner: address(),
+                                owner: address().into(),
                                 started_at: at(),
                                 pid,
                                 command: "echo fixture".into(),

@@ -20,6 +20,9 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    /// A page action admitted by a machine's user-only page gate. Devices
+    /// use Relay(Page::Act), never this execution call.
+    PageAction { source: crate::pages::PageSource, action: crate::pages::PageInvocation },
     /// Run a script there for a resident of the calling machine.
     Run { resident: ResidentId, town: Option<TownName>, request: RunRequest },
     /// Write files there for a resident of the calling machine.
@@ -94,6 +97,9 @@ pub enum RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    PageAction {
+        result: crate::pages::PageResult,
+    },
     Uploaded(crate::attachments::Attachment),
     Run(RunReply),
     Written {

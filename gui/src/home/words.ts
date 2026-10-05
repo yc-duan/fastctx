@@ -5,6 +5,8 @@
 
 export interface HomeWords {
   world: string;
+  /** An open page, as who started or wrote something. */
+  aPage(name: string): string;
   /** The day, as a dateline: 十月四日 · 星期六. */
   dateline(at: Date): string;
   lastHere(ago: string): string;
@@ -103,6 +105,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 export const zhHome: HomeWords = {
   world: "世界",
+  aPage: (name) => `页面「${name}」`,
   dateline: (at) => `${zhNumber(at.getMonth() + 1)}月${zhNumber(at.getDate())}日 · ${zhWeek[at.getDay()]}`,
   lastHere: (ago) => `你上次来是 ${ago}`,
   firstTime: "这是你第一次打开",
@@ -166,6 +169,7 @@ const enMonths = ["January", "February", "March", "April", "May", "June", "July"
 
 export const enHome: HomeWords = {
   world: "The World",
+  aPage: (name) => `the page “${name}”`,
   dateline: (at) => `${enWeek[at.getDay()]}, ${enMonths[at.getMonth()]} ${at.getDate()}`,
   lastHere: (ago) => `You were last here ${ago}`,
   firstTime: "This is your first time here",

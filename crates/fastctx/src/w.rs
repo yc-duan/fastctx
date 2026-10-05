@@ -136,10 +136,11 @@ fn render(view: &TownView, you: Option<&Address>, now: Timestamp) -> String {
     if !unattended.is_empty() {
         text.push_str("unattended\n");
         for job in unattended {
-            let owner = if view.answered(&job.owner.machine) {
-                format!("started by {}", job.owner.resident)
-            } else {
-                format!("started by {} on {}, which did not answer", job.owner.resident, job.owner.machine)
+            let owner = match job.owner.resident() {
+                Some(owner) if !view.answered(&owner.machine) => {
+                    format!("started by {owner}, whose machine did not answer")
+                }
+                _ => format!("started by {}", job.owner),
             };
             text.push_str(&format!(
                 "    {}  {}  {}  {}   {owner}\n",

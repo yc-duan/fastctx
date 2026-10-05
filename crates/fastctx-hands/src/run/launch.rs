@@ -14,7 +14,7 @@ use fastctx_platform::{Permissions, current_identity, ensure_private_dir, publis
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::{ResidentDir, WorldDir};
 use fastctx_types::run::{JobProgram, JobRecord, RunRequest};
-use fastctx_types::{Address, JobId, MachineName, ProcessIdentity, TownName};
+use fastctx_types::{JobId, MachineName, ProcessIdentity, TownName};
 
 use super::record;
 
@@ -23,7 +23,7 @@ pub struct Launch<'a> {
     pub world: &'a WorldDir,
     pub machine: &'a MachineName,
     /// Who asks, at the machine it lives on.
-    pub owner: &'a Address,
+    pub owner: &'a fastctx_types::run::JobOwner,
     pub town: Option<&'a TownName>,
     pub request: &'a RunRequest,
     /// The machine's home, where a script without a `cwd` starts.
@@ -46,7 +46,7 @@ pub struct Launched {
 
 pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
     let cwd = starting_directory(launch)?;
-    let resident = launch.world.owner(launch.machine, launch.town, launch.owner);
+    let resident = launch.world.job_owner(launch.machine, launch.town, launch.owner);
     let (job, output) = reserve(&resident).map_err(|error| failure("could not reserve a job", &error))?;
     let record_path = resident.job_record(&job);
     let script = resident.job_script(&job);

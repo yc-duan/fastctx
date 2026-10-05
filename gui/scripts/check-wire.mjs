@@ -33,6 +33,9 @@ import type { Control, Controlled, Offers } from "../src/world/control";
 import type { FileReadPart, FileReadResult } from "../src/world/file-read";
 import type { Attachment } from "../src/world/attachments";
 import type { Managed } from "../src/world/management";
+import type { PageView, PageSummary, PageVersion, PageConsent, PageResult } from "../src/world/pages";
+import type { Speaker } from "../src/world/events";
+import type { Writer, JobOwner, MapView } from "../src/world/world";
 import type { Address } from "../src/world/wire";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
@@ -71,6 +74,25 @@ export const fixture = ${json.trimEnd()} satisfies {
   claude: { events: SessionEvent[]; answers: Control[]; unavailable: Offers; idle: Offers };
   // What the user's management of an agent answers, stage by stage.
   management: { calls: unknown; remote_calls: unknown; replies: { reply: "managed"; resident: Address; managed: Managed }[]; remote_replies: unknown };
+  // What a page's calls answer, and the page as a speaker, a writer and
+  // a job's owner.
+  pages: {
+    calls: unknown;
+    replies: (
+      | { reply: "page"; view: PageView }
+      | { reply: "pages"; town: string; pages: PageSummary[] }
+      | { reply: "page_history"; town: string; page: string; versions: PageVersion[] }
+      | { reply: "page_consent"; town: string; page: string; consent: PageConsent }
+      | { reply: "page_act"; result: PageResult }
+    )[];
+    remote_calls: unknown;
+    remote_replies: unknown;
+    speaker: Speaker;
+    writer: Writer;
+    job_owner: JobOwner;
+    peer: unknown;
+    map: MapView;
+  };
 };
 `;
 const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);

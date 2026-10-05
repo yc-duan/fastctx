@@ -3,6 +3,7 @@
 // stream; this is its shape, and nothing here interprets it.
 
 import type { Attachment } from "./attachments";
+import type { PageSource } from "./pages";
 import type { Address, JsonValue, MachineName, NoticeId, Timestamp } from "./wire";
 export type { Address, MachineName, ResidentId } from "./wire";
 
@@ -12,7 +13,9 @@ export type { Address, MachineName, ResidentId } from "./wire";
 export type Speaker =
   | { kind: "user"; machine: MachineName }
   | { kind: "resident"; address: Address }
-  | { kind: "world" };
+  | { kind: "world" }
+  /** An open page, saying what the user agreed it may (`pages.ts`). */
+  | { kind: "page"; page: PageSource };
 
 export type ToolStatus = "running" | "done" | "failed" | "declined" | "cut" | "unknown";
 

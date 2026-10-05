@@ -3,6 +3,7 @@
 // `::world`). These are serialized replies, before any presentation model.
 
 import type { Speaker, TurnEnd } from "./events";
+import type { PageSource, PageSummary } from "./pages";
 import type { Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, Result, Timestamp, TownName } from "./wire";
 
 export interface Host {
@@ -69,7 +70,7 @@ export interface Moved {
 export interface RunningJob {
   job: JobId;
   machine: MachineName;
-  owner: Address;
+  owner: JobOwner;
   started_at: Timestamp;
   pid: number | null;
   command: string;
@@ -146,7 +147,18 @@ export interface Revoked {
 export type Writer =
   | { kind: "user" }
   | { kind: "resident"; address: Address }
-  | { kind: "session"; agent: AgentName };
+  | { kind: "session"; agent: AgentName }
+  /** An open page, doing what the user agreed to (`pages.ts`). */
+  | { kind: "page"; page: PageSource };
+
+/** Who started a job: a resident, or an open page. A resident is its
+ *  address as it always was. */
+export type JobOwner = Address | { page: PageSource };
+
+/** The resident that started a job, where a resident did. */
+export function ownerResident(owner: JobOwner): Address | null {
+  return "page" in owner ? null : owner;
+}
 
 export interface Location {
   machine: MachineName;
@@ -246,6 +258,8 @@ export interface MapView {
   opened: Stamp;
   /** Most recently added to first. */
   journals: JournalSummary[];
+  /** The town's pages, each at its current version. */
+  pages: PageSummary[];
   /** The canon's documents, or why they could not be read. */
   canon: Result<CanonHead[], string> | null;
 }
@@ -283,7 +297,7 @@ export type MessageLine = { at: Timestamp } & (
 export interface JobRecord {
   id: JobId;
   machine: MachineName;
-  owner: Address;
+  owner: JobOwner;
   town: TownName | null;
   script: string;
   cwd: string;

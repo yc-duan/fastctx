@@ -53,8 +53,8 @@ pub fn who(
         }
     }
     let parents = match town {
-        Some(town) => vec![world.town(town).path().join("residents")],
-        None => world.resident_parents()?,
+        Some(town) => vec![world.town(town).path().join("residents"), world.town(town).path().join("pages")],
+        None => world.job_parents()?,
     };
     let mut jobs = Vec::new();
     for parent in parents {

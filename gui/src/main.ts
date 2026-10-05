@@ -80,10 +80,10 @@ import { PageScreen } from "./pages/view";
 import { manage as manageResident, type Management } from "./world/management";
 import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
-import { act as pageAct, consent as pageConsent, pageHistory, pages as readPages, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
-import { specimenPageTools, specimenPageWorld, specimenPages } from "./specimen/pages";
+import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
+import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address } from "./world/events";
-import type { ResidentDetail } from "./world/world";
+import { ownerResident, type ResidentDetail } from "./world/world";
 import {
   applyHosts,
   control,
@@ -667,7 +667,10 @@ function liveTalk(address: Address): Page {
   const running = effect(() => {
     const world = store.world.get();
     const now = store.clock.get();
-    const jobs = jobsOf(world).filter((job) => job.owner.resident === address.resident && job.owner.machine === address.machine);
+    const jobs = jobsOf(world).filter((job) => {
+      const owner = ownerResident(job.owner);
+      return owner?.resident === address.resident && owner.machine === address.machine;
+    });
     page.running(jobs, now);
   });
   const take = (piece: Piece) => {
@@ -746,7 +749,7 @@ function projectPage(town: string): Page {
   });
   if (!live) {
     const map = specimenMap();
-    page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now, specimenPages());
+    page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now);
     return { element: page.element, title: map.record.name };
   }
   let timer = 0;
@@ -756,12 +759,10 @@ function projectPage(town: string): Page {
     if (left) return;
     if (document.visibilityState === "visible") {
       try {
-        // Pages are read beside the map; where they cannot be, the rest of
-        // the project still shows, and why they are missing is said.
-        const [{ map, who }, pages] = await Promise.all([readProject(town), readPages(town).catch((error: unknown) => ({ error: String(error) }))]);
+        const { map, who } = await readProject(town);
         if (!left) {
           shell.retitle(map.record.name);
-          page.update(map, who, new Date(), pages);
+          page.update(map, who, new Date());
         }
       } catch (error) {
         if (!left) page.unreachable(String(error));

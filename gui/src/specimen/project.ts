@@ -2,6 +2,7 @@
 // journals, in the shapes the node answers `project map` and `journal read`.
 
 import type { EntryStamp, JournalView, MapView, ProjectRecord, Writer } from "../world/world";
+import { specimenPages } from "./pages";
 
 const at = (time: string) => `2026-10-${time}Z`;
 const claude: Writer = { kind: "resident", address: { machine: "laptop", resident: "claude-2b1c" } };
@@ -45,6 +46,7 @@ export function specimenMap(): MapView {
     ledger: "/home/lenovo/.fastctx/world/towns/mark50/ledger",
     record,
     opened: { by: { kind: "user" }, on: "desktop", at: at("01T09:12:00") },
+    pages: specimenPages(),
     journals: [
       {
         journal: "q16-fixed-point",

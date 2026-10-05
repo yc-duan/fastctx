@@ -34,6 +34,7 @@ In `run`, beside each machine's own programs:
 - `fastctx w` shows who is in your town and what each is doing.
 - `fastctx project enter <town>` moves you into a town. Use it only when the user tells you which project to work on.
 - `fastctx journal` reads and adds to your town's journals, the history of its work.
+- `fastctx page` publishes a page into your town: HTML the user opens in World's interface, live with the World's facts. `fastctx page --help` says how to write one.
 
 `fastctx --help` lists every command; each explains itself with its own `--help`.
 "

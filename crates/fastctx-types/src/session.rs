@@ -154,10 +154,17 @@ pub enum Watched {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Speaker {
+    Page {
+        page: Box<crate::pages::PageSource>,
+    },
     /// The user, typing on `machine`.
-    User { machine: MachineName },
+    User {
+        machine: MachineName,
+    },
     /// Another resident.
-    Resident { address: Address },
+    Resident {
+        address: Address,
+    },
     /// The World, telling a fact, such as that a job ended.
     World,
 }

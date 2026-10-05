@@ -53,6 +53,8 @@ export interface Words {
   find: FindWords;
   you(machine: string): string;
   world: string;
+  /** An open page, as the speaker of what it said. */
+  aPage(name: string): string;
   compacted: string;
   turn(how: string, reason: string | null): string | null;
   wentOnAs(job: string): string;
@@ -189,6 +191,7 @@ export const zh: Words = {
   },
   you: (machine) => `你 · ${machine}`,
   world: "世界",
+  aPage: (name) => `页面「${name}」`,
   compacted: "上下文已压缩",
   turn: (how, reason) => {
     if (how === "completed") return null;
@@ -299,6 +302,7 @@ export const en: Words = {
   },
   you: (machine) => `You · ${machine}`,
   world: "The World",
+  aPage: (name) => `the page “${name}”`,
   compacted: "Context compacted",
   turn: (how, reason) => {
     if (how === "completed") return null;

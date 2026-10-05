@@ -129,6 +129,27 @@ impl WorldDir {
         if owner.machine == *here { self.resident(town, &owner.resident) } else { self.visitor(town, owner) }
     }
 
+    /// Page work has its own directories; no page is registered as a resident.
+    pub fn job_owner(&self, here: &MachineName, town: Option<&TownName>, owner: &crate::run::JobOwner) -> ResidentDir {
+        match owner {
+            crate::run::JobOwner::Resident(address) => self.owner(here, town, address),
+            crate::run::JobOwner::Page { page } => {
+                ResidentDir { path: self.town(&page.town).path().join("pages").join(page.page.as_str()) }
+            }
+        }
+    }
+
+    /// Parents of all job owners, including pages as well as residents.
+    pub fn job_parents(&self) -> std::io::Result<Vec<PathBuf>> {
+        let mut parents = self.resident_parents()?;
+        let pages: Vec<_> = parents
+            .iter()
+            .map(|parent| parent.parent().expect("a resident parent belongs to a place").join("pages"))
+            .collect();
+        parents.extend(pages);
+        Ok(parents)
+    }
+
     fn residents(&self, town: Option<&TownName>) -> PathBuf {
         let base = match town {
             Some(town) => self.root.join("towns").join(town.as_str()),

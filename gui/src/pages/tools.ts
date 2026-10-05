@@ -40,6 +40,8 @@ function writer(by: Writer): string {
       return `${by.address.resident} · ${by.address.machine}`;
     case "session":
       return agentName(by.agent);
+    case "page":
+      return `page ${by.page.page}`;
   }
 }
 
@@ -121,7 +123,7 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
           entries: summary.entries,
           latest: summary.latest?.at ?? null,
         })),
-        pages: [],
+        pages: map.pages.filter((summary) => !summary.current.withdrawn).map((summary) => ({ page: summary.page, title: summary.current.title, description: summary.current.description || null })),
       };
     },
 

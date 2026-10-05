@@ -89,6 +89,7 @@ export class JournalPage {
   private writer(writer: Writer): string {
     if (writer.kind === "user") return this.options.words.you;
     if (writer.kind === "resident") return `${writer.address.resident} · ${writer.address.machine}`;
+    if (writer.kind === "page") return this.options.words.aPage(writer.page.page);
     return agentName(writer.agent);
   }
 

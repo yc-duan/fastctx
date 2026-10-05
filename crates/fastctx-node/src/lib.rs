@@ -32,6 +32,7 @@ mod look;
 mod machine;
 mod management;
 mod own;
+mod pages;
 mod resident_storage;
 mod residents;
 mod server;

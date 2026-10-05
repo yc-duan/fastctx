@@ -109,7 +109,7 @@ pub async fn look_here(node: &Arc<Node>, id: &str) -> Option<Looked> {
     let job = JobId::try_from(id).ok()?;
     let world = node.world.clone();
     let found = tokio::task::spawn_blocking(move || -> io::Result<Option<Looked>> {
-        for parent in world.resident_parents()? {
+        for parent in world.job_parents()? {
             for resident in entries(&parent)? {
                 let path = resident.join("jobs").join(format!("{job}.json"));
                 if path.exists() {

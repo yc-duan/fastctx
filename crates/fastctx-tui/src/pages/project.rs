@@ -257,7 +257,12 @@ impl ProjectPage {
                                 "{} · {} · {}",
                                 job.machine,
                                 words.since(job.started_at, ctx.now),
-                                words.started_by(&who::address_name(ctx, &job.owner))
+                                words.started_by(
+                                    &job.owner
+                                        .resident()
+                                        .map(|owner| who::address_name(ctx, owner))
+                                        .unwrap_or_else(|| job.owner.to_string())
+                                )
                             ),
                         )),
                     );
@@ -298,6 +303,7 @@ impl ProjectPage {
 /// Who wrote something into the ledger, as the user reads it.
 pub fn writer_name(ctx: &Ctx, writer: &Writer) -> String {
     match writer {
+        Writer::Page { page } => page.to_string(),
         Writer::User => ctx.words.you().to_string(),
         Writer::Resident { address } => who::address_name(ctx, address),
         Writer::Session { agent } => ctx.words.agent(agent.as_str()),

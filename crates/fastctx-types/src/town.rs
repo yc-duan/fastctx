@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::project::{Record, TownSummary};
 use crate::residents::{About, Action, MessageLine, Moved, Now};
 use crate::run::JobRecord;
-use crate::{Address, JobId, MachineName, TownName};
+use crate::{JobId, MachineName, TownName};
 
 /// One machine's answer to `fastctx w`: the residents that live on it, and
 /// every job still running on it, whoever started it.
@@ -41,7 +41,7 @@ pub struct RunningJob {
     pub job: JobId,
     /// Where it runs.
     pub machine: MachineName,
-    pub owner: Address,
+    pub owner: crate::run::JobOwner,
     pub started_at: Timestamp,
     pub pid: Option<u32>,
     /// The script's first line.

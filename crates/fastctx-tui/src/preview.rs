@@ -183,7 +183,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
         RunningJob {
             job: JobId::try_from("j-k3x9a2").expect("a job id"),
             machine: machine("laptop"),
-            owner: address("codex-7f3a", "laptop"),
+            owner: address("codex-7f3a", "laptop").into(),
             started_at: ago(now, 3),
             pid: Some(18344),
             command: "cargo test --workspace".into(),
@@ -192,7 +192,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
         RunningJob {
             job: JobId::try_from("j-p0q1r2").expect("a job id"),
             machine: machine("desktop"),
-            owner: address("codex-0d1e", "desktop"),
+            owner: address("codex-0d1e", "desktop").into(),
             started_at: ago(now, 382),
             pid: Some(9120),
             command: "python train.py --epochs 400".into(),
@@ -312,6 +312,7 @@ fn map(now: Timestamp) -> MapView {
     let claude = Writer::Resident { address: address("claude-2b1c", "desktop") };
     let codex = Writer::Resident { address: address("codex-7f3a", "laptop") };
     MapView {
+        pages: Vec::new(),
         town: town("mark50"),
         ledger: "~/.fastctx/world/towns/mark50/ledger".into(),
         record: towns(now).remove(0).record,

@@ -1,0 +1,72 @@
+A page is an HTML file you write and publish into your town, for the user to open in World's interface on their computers and their phone: the state of a training run, a table comparing results, a small panel with a few buttons. It shows live facts of the World, and it can do the few things the user agreed to. Write one when the user would otherwise keep asking how something stands, or when a table or a chart says it better than prose. A page is not where work is recorded: what you found still goes in a journal.
+
+WRITING ONE
+  Write it as an ordinary HTML file with your writing tool, wherever you like, and change it as often as you need before you publish. Everything is in that one file: inline <style> and <script> only. Nothing from outside loads: no CDN, no web fonts, no fetch, no outside images (a picture goes in as a data: URL). Do not use React or a build step.
+  World puts its runtime at the top of the page when it opens it. The theme, the faces and the elements below work without importing anything, and `window.world` is there for your own script from its first line. The interface shows the page's title above it; the page itself scrolls.
+  Write in the user's language. Leave colours and faces to the elements; in your own CSS use the theme's: var(--text), var(--text-2), var(--text-3), var(--bg), var(--bg-elevated), var(--accent), var(--wrong), var(--hairline), var(--font-reading), var(--font-code), var(--space-1) to var(--space-6), var(--radius-m).
+
+ELEMENTS
+  Layout
+    <w-grid columns="3"> ... </w-grid>               side by side; one column on a phone
+    <w-card title="Loss" note="run 7, every 50 steps"> ... </w-card>
+    <w-stat label="Val loss" value="0.412" unit="%" delta="-0.031" good="down" note="best so far"></w-stat>
+  Data
+    <w-table columns="run:Run,lr:Learning rate,acc:Accuracy"> DATA </w-table>     pressing a heading sorts
+    <w-chart x="step" y="loss,val_loss" labels="train,val" type="line" height="220"> DATA </w-chart>     type="bar" for bars
+    <w-markdown><script type="text/markdown"># Findings ...</script></w-markdown>
+    <w-code lang="python"><script type="text/plain">print("hi")</script></w-code>
+  An element gets its data in one of three ways:
+    written in:  <script type="application/json">[{"step": 0, "loss": 2.3}]</script> inside the element
+    from a tool: tool="file.read" args='{"machine":"lab","path":"/runs/7/metrics.jsonl"}' pick="text" parse="jsonl" every="30s"
+                 pick takes a dotted part of the answer; parse reads text as json, jsonl, csv (first line names the columns)
+                 or lines; every asks again after 10s, 2m, 1h.
+    from script: element.data = [...]
+  A table takes an array of objects, or {"columns": [...], "rows": [[...]]}. A chart takes an array of objects (x and y
+  name their keys; without y, every numeric key but x) or {"x": [...], "series": [{"name": ..., "values": [...]}]}.
+  A stat bound to a tool shows what pick finds as its value.
+  The World, live (each reads by itself; add every="10s" to keep it fresh)
+    <w-machine name="lab"></w-machine>                                   online or not, and who is on it
+    <w-agent resident="codex-7f3a" machine="lab"></w-agent>              what it is doing; pressing it opens its conversation
+    <w-journal journal="tuning" limit="3"></w-journal>                   the latest entries of a journal of this town
+    <w-file machine="lab" path="/runs/7/train.log" tail="4000" height="200"></w-file>    a text file, or its last bytes
+    <w-job machine="lab" job="j-k3x9a2"></w-job>                          a running job and the end of its output
+  Doing (each must be declared when you publish; see ACTS)
+    <w-run machine="lab" command="nvidia-smi --query-gpu=utilization.gpu --format=csv" label="GPU now"></w-run>
+    <w-say resident="codex-7f3a" machine="lab" text="Rerun group 9 with half the learning rate" label="Rerun 9"></w-say>
+
+YOUR OWN SCRIPT
+  world.call(tool, args) gives a promise of the answer, or rejects with why it was not done.
+  Reading needs nothing declared; it reaches what you could read yourself:
+    world.now     {}                     -> {machines: [{name, online, system, device}],
+                                             agents: [{resident, machine, agent, project, title, state, since, last}]}
+                                            state is working, waiting (for the user), idle or asleep
+    project.map   {}                     -> {project, name, what, machines, journals: [{journal, description, entries, latest}], pages}
+    journal.read  {journal, before?}     -> {entries: [{id, at, by, text}], more}, the newest first
+    file.read     {machine, path, tail?} -> {text, size, modified, offset}; text is null when the file is not text
+    job.read      {machine, job}         -> {job, command, state, exit, started, output}, for a job still running
+    open          {resident, machine}    -> {}, opening that conversation in the interface
+  Doing, only as declared and agreed:
+    run           {machine, command}     -> {exit, output}
+    say           {resident, machine, text} -> {delivered}
+    journal.add   {journal, text}        -> {id}
+  world.context is {theme, locale}; world.onContext(listener) hears it change.
+  A page written for MCP Apps with the official SDK works too: World is its host, and these are its tools.
+
+ACTS
+  A page reads freely, but does something only where its version declares it and the user agreed. Declare each when you publish:
+    --run MACHINE COMMAND    that whole command on that machine, exactly as the page runs it; a page cannot vary it
+    --say MACHINE RESIDENT   speaking to that resident; what is said is the page's to choose
+    --write JOURNAL          adding entries to that journal of this town
+  The first time the user opens a version that wants something they have not agreed to, World asks them. Whatever a page
+  does is recorded as the page's doing, not the user's and not yours: a resident it speaks to sees the words came from it.
+
+PUBLISHING
+  fastctx page publish NAME --file PATH --title TITLE --description SENTENCE [--run ...] [--say ...] [--write ...]
+  NAME is lowercase words joined by hyphens. Each publish is a new version in the town's ledger, kept on every machine of
+  the town and on the hub, so it opens on the phone and while a machine is off. The whole file must fit in one entry,
+  256 KiB; the runtime World adds is not counted.
+  To change a page, read the version you start from and publish against it:
+    fastctx page read NAME --out PATH     then edit, then publish with --base VERSION
+  If someone published in between, publishing fails and says which version is current; read it again.
+  fastctx page list shows the town's pages. The user can take a page down or bring an older version back; both are new
+  versions, and nothing is lost.

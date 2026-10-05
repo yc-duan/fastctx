@@ -2,6 +2,7 @@
 //! one online machine that asks the World on the device's behalf.
 
 use fastctx_net::link::CallFailure;
+use fastctx_types::pages::PageCall;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::town::Looked;
 use fastctx_types::{Address, Call, JournalCall, MachineName, ProjectCall, Reply, ResidentId};
@@ -55,7 +56,16 @@ impl Device {
             | Call::Agents { .. }
             | Call::Nodes
             | Call::Project(_)
-            | Call::Journal(_)) => {
+            | Call::Journal(_)
+            | Call::Page(
+                PageCall::Read { .. }
+                | PageCall::List { .. }
+                | PageCall::History { .. }
+                | PageCall::Consent { .. }
+                | PageCall::Act { .. }
+                | PageCall::Withdraw { .. }
+                | PageCall::Restore { .. },
+            )) => {
                 let (mut reply, machine) = session.relay(call).await?;
                 if let Reply::Nodes(nodes) = &mut reply {
                     // The list comes from the relay; "here" and the link
@@ -169,6 +179,7 @@ impl Session {
                 | Call::Nodes
                 | Call::Project(ProjectCall::List | ProjectCall::Show { .. } | ProjectCall::Map { .. })
                 | Call::Journal(JournalCall::List { .. } | JournalCall::Read { .. })
+                | Call::Page(PageCall::Read { .. } | PageCall::List { .. } | PageCall::History { .. })
         );
         let remote = RemoteCall::Relay { made: serde_json::to_value(&call).map_err(failed)? };
         let mut unanswered = Vec::new();
