@@ -2,6 +2,7 @@
 //! agent host, command runner or ledger replica.
 
 mod calls;
+mod connection_state;
 pub(crate) mod file_read;
 mod store;
 mod upload;

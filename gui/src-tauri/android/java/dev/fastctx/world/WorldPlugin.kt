@@ -1,0 +1,84 @@
+package dev.fastctx.world
+
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.result.ActivityResult
+import app.tauri.annotation.ActivityCallback
+import app.tauri.annotation.Command
+import app.tauri.annotation.Permission
+import app.tauri.annotation.PermissionCallback
+import app.tauri.annotation.TauriPlugin
+import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSObject
+import app.tauri.plugin.Plugin
+import com.journeyapps.barcodescanner.ScanIntentResult
+import com.journeyapps.barcodescanner.ScanOptions
+
+@TauriPlugin(permissions = [Permission(alias = "notifications", strings = [Manifest.permission.POST_NOTIFICATIONS])])
+class WorldPlugin(activity: Activity) : Plugin(activity) {
+    private fun current(): Activity = WorldRuntime.currentActivity.get()
+        ?: throw IllegalStateException("World has no foreground activity")
+    private fun answer(invoke: Invoke, work: () -> Unit) {
+        try { work() } catch (error: Exception) { invoke.reject(error.toString()) }
+    }
+
+    @Command fun status(invoke: Invoke) = answer(invoke) { invoke.resolve(JSObject(WorldRuntime.status().toString())) }
+    @Command fun configure(invoke: Invoke) = answer(invoke) {
+        val configuration = invoke.getArgs().getJSONObject("configuration").toString()
+        val error = WorldRuntime.validateConfigurationNative(configuration)
+        require(error == null) { error!! }
+        check(WorldRuntime.context.getSharedPreferences("world", Activity.MODE_PRIVATE).edit().putString("notificationPolicy", configuration).commit()) { "Could not keep notification policy" }
+        invoke.resolve()
+    }
+    @Command fun pending(invoke: Invoke) = answer(invoke) { invoke.resolve(JSObject(WorldRuntime.notices.pending().toString())) }
+    @Command fun acknowledge(invoke: Invoke) = answer(invoke) {
+        WorldRuntime.notices.acknowledge(invoke.getArgs().getString("id")); invoke.resolve()
+    }
+    @Command fun notify(invoke: Invoke) = answer(invoke) {
+        val id = WorldRuntime.notices.show(invoke.getArgs().getJSONObject("notice"))
+        invoke.resolve(JSObject().put("id", id))
+    }
+    @Command fun dismiss(invoke: Invoke) = answer(invoke) {
+        WorldRuntime.notices.dismiss(invoke.getArgs().getString("id")); invoke.resolve()
+    }
+    @Command fun requestNotifications(invoke: Invoke) = answer(invoke) {
+        if (Build.VERSION.SDK_INT >= 33) requestPermissionForAlias("notifications", invoke, "notificationPermission")
+        else status(invoke)
+    }
+    @PermissionCallback fun notificationPermission(invoke: Invoke) = status(invoke)
+
+    @Command fun settings(invoke: Invoke) = answer(invoke) {
+        val context = current()
+        val destination = invoke.getArgs().getString("destination")
+        val intent = when (destination) {
+            "application" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+            "battery" -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            "notifications" -> if (Build.VERSION.SDK_INT >= 26)
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+            else -> throw IllegalArgumentException("Unknown settings destination: $destination")
+        }
+        context.startActivity(intent)
+        invoke.resolve()
+    }
+
+    @Command fun scan(invoke: Invoke) = answer(invoke) {
+        val context = current()
+        check(context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) { "This device has no camera" }
+        val options = ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false)
+            .setBarcodeImageEnabled(false).setOrientationLocked(false)
+        startActivityForResult(invoke, options.createScanIntent(context), "scanResult")
+    }
+    @ActivityCallback fun scanResult(invoke: Invoke, result: ActivityResult) = answer(invoke) {
+        val parsed = ScanIntentResult.parseActivityResult(result.resultCode, result.data)
+        if (parsed.contents != null) invoke.resolve(JSObject().put("kind", "scanned").put("code", parsed.contents))
+        else if (result.data?.getBooleanExtra("MISSING_CAMERA_PERMISSION", false) == true)
+            invoke.reject("Android camera permission was denied")
+        else invoke.resolve(JSObject().put("kind", "cancelled"))
+    }
+}

@@ -1,0 +1,7 @@
+{
+  "identifier": "android-world",
+  "description": "The main Android page can scan invitations, configure background conversation notifications and receive their activations.",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": ["android-world:default"]
+}

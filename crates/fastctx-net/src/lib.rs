@@ -6,6 +6,8 @@
 //! members and how each machine checks it, the codes machines join with,
 //! the frames on the wire, and each machine's side of the connection.
 
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod code;
 pub mod data;
 pub mod dial;
