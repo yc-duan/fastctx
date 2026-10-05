@@ -1,12 +1,13 @@
 import { defineConfig } from "vite";
 import { pageRuntime } from "./scripts/page-runtime.mjs";
+import { pdfAssets } from "./scripts/pdf-assets.mjs";
 
 export default defineConfig({
   server: {
     port: 5317,
     strictPort: true,
   },
-  plugins: [pageRuntime()],
+  plugins: [pageRuntime(), pdfAssets()],
   // JavaScript is written down to what older system browsers read: a
   // phone's WebView can be years behind (Chromium 83 showed a blank page
   // when the build kept ES2022 syntax). Styles that such a browser does not
