@@ -1,0 +1,180 @@
+//! Published HTML and the user's consent in a town's immutable ledger.
+
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
+
+use crate::project::{Stamp, Writer};
+use crate::{Address, EntryId, JournalName, MachineName, PageName, TownName};
+
+/// One capability, compared literally across declarations and consent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PageAct {
+    Run { machine: MachineName, script: String },
+    Say { to: Address },
+    Journal { journal: JournalName },
+}
+
+/// A complete replacement publication, before the node stamps it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageDraft {
+    pub title: String,
+    pub description: String,
+    pub acts: Vec<PageAct>,
+    pub html: String,
+}
+
+/// The description file of a publication; its HTML is a separate file.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageVersion {
+    pub version: u32,
+    pub base: Option<u32>,
+    pub title: String,
+    pub description: String,
+    pub acts: Vec<PageAct>,
+    pub withdrawn: bool,
+    /// Restoring copies that publication into this new version.
+    pub restored_from: Option<u32>,
+    pub by: Writer,
+    pub on: MachineName,
+    pub at: Timestamp,
+}
+
+/// A user's complete consent set, independent of publication versions.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageConsent {
+    pub version: u32,
+    pub base: Option<u32>,
+    pub page_version: u32,
+    pub acts: Vec<PageAct>,
+    pub stamp: Stamp,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageSummary {
+    pub page: PageName,
+    pub current: PageVersion,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageView {
+    pub town: TownName,
+    pub page: PageName,
+    pub publication: PageVersion,
+    pub html: Option<String>,
+    /// Current consent, including when reading an older publication.
+    pub consent: Option<PageConsent>,
+}
+
+/// Attribution stamped by the core, never supplied by the embedded HTML.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PageSource {
+    pub town: TownName,
+    pub page: PageName,
+    pub version: u32,
+    pub by: Box<Writer>,
+    pub on: MachineName,
+    /// The user's device that relayed this action while the page was open.
+    pub opened_on: MachineName,
+}
+
+impl std::fmt::Display for PageSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "page {} of {} (version {}, written by ", self.page, self.town, self.version)?;
+        match self.by.as_ref() {
+            Writer::User => f.write_str("the user")?,
+            Writer::Resident { address } => write!(f, "{address}")?,
+            Writer::Session { agent } => write!(f, "a {agent} session")?,
+            Writer::Page { page } => write!(f, "{page}")?,
+        }
+        write!(f, " on {}; open on {})", self.on, self.opened_on)
+    }
+}
+
+/// The one action requested by an open page. Run has no variable inputs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PageInvocation {
+    Run { machine: MachineName, script: String },
+    Say { to: Address, text: String },
+    Journal { journal: JournalName, text: String },
+}
+
+impl PageInvocation {
+    pub fn act(&self) -> PageAct {
+        match self {
+            Self::Run { machine, script } => PageAct::Run { machine: machine.clone(), script: script.clone() },
+            Self::Say { to, .. } => PageAct::Say { to: to.clone() },
+            Self::Journal { journal, .. } => PageAct::Journal { journal: journal.clone() },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "do")]
+pub enum PageCall {
+    Publish {
+        town: Option<TownName>,
+        page: PageName,
+        base: Option<u32>,
+        draft: PageDraft,
+    },
+    Read {
+        town: Option<TownName>,
+        page: PageName,
+        version: Option<u32>,
+    },
+    List {
+        town: Option<TownName>,
+    },
+    History {
+        town: Option<TownName>,
+        page: PageName,
+    },
+    Withdraw {
+        town: Option<TownName>,
+        page: PageName,
+        base: u32,
+    },
+    Restore {
+        town: Option<TownName>,
+        page: PageName,
+        base: u32,
+        version: u32,
+    },
+    /// Replaces consent; an empty set revokes everything. `base` is the
+    /// consent version read by the user, while `version` is the page version.
+    Consent {
+        town: Option<TownName>,
+        page: PageName,
+        version: u32,
+        base: Option<u32>,
+        acts: Vec<PageAct>,
+    },
+    Act {
+        town: Option<TownName>,
+        page: PageName,
+        version: u32,
+        action: PageInvocation,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PageResult {
+    Run(crate::run::RunReply),
+    Said { to: Address, landed: crate::residents::Landed },
+    EntryAdded { journal: JournalName, id: EntryId },
+}
+
+pub fn version_path(page: &PageName, version: u32) -> String {
+    format!("pages/{page}/versions/v{version:06}/page.json")
+}
+
+pub fn html_path(page: &PageName, version: u32) -> String {
+    format!("pages/{page}/versions/v{version:06}/page.html")
+}
+
+pub fn consent_path(page: &PageName, version: u32) -> String {
+    format!("pages/{page}/consent/v{version:06}.json")
+}

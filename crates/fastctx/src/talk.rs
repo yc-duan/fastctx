@@ -192,6 +192,7 @@ impl Printer {
                 let from = match from {
                     Some(Speaker::User { machine }) => format!("you, on {machine}"),
                     Some(Speaker::Resident { address }) => format!("{} on {}", address.resident, address.machine),
+                    Some(Speaker::Page { page }) => page.to_string(),
                     Some(Speaker::World) => "the World".to_string(),
                     None => "words".to_string(),
                 };

@@ -119,7 +119,7 @@ pub enum SinceKind {
     /// or Failed. Shell exit has its own timestamp, preserved in `exit`.
     JobEnded {
         job: JobId,
-        owner: Address,
+        owner: crate::run::JobOwner,
         started_at: Timestamp,
         elapsed_ms: i64,
         how: EndedHow,

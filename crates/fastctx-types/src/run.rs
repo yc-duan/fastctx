@@ -152,9 +152,9 @@ impl RunHead {
 pub struct JobRecord {
     pub id: JobId,
     pub machine: MachineName,
-    /// Who started it, at the machine it lives on, which may be another.
-    pub owner: Address,
-    /// The town the resident was in, if any.
+    /// The resident or open page that started it, including its provenance.
+    pub owner: JobOwner,
+    /// The resident's town, if any, or the page's project.
     pub town: Option<TownName>,
     pub script: String,
     pub cwd: String,
@@ -187,6 +187,52 @@ pub struct JobRecord {
     /// On Windows the supervisor could not leave the node's job object, so
     /// the job ends when the node ends.
     pub ends_with_node: bool,
+}
+
+/// A resident or an open page that started a job. The resident wire shape
+/// remains an address, so previously recorded jobs keep their identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JobOwner {
+    Resident(Address),
+    Page { page: crate::pages::PageSource },
+}
+
+impl From<Address> for JobOwner {
+    fn from(address: Address) -> Self {
+        Self::Resident(address)
+    }
+}
+
+impl JobOwner {
+    pub fn resident(&self) -> Option<&Address> {
+        match self {
+            Self::Resident(address) => Some(address),
+            Self::Page { .. } => None,
+        }
+    }
+
+    pub fn tag(&self) -> String {
+        match self {
+            Self::Resident(address) => address.tag(),
+            Self::Page { page } => format!("page:{}:{}:v{}", page.town, page.page, page.version),
+        }
+    }
+}
+
+impl std::fmt::Display for JobOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Resident(address) => write!(f, "{address}"),
+            Self::Page { page } => write!(f, "{page}"),
+        }
+    }
+}
+
+impl PartialEq<Address> for JobOwner {
+    fn eq(&self, address: &Address) -> bool {
+        self.resident() == Some(address)
+    }
 }
 
 /// The executable a job and its descendants may call for their lifetime.

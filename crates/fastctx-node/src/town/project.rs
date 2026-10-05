@@ -209,6 +209,7 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
                 "only a resident enters a town: an agent's session, which runs this through the World's tools",
             ));
         }
+        Caller::Page(_) => return Err(Failure::new("a page does not enter a town")),
         Caller::Session(agent) => {
             return Err(Failure::new(format!(
                 "the World does not know this {agent} session yet; it becomes a resident at its first call of a World tool, and enters a town after that"

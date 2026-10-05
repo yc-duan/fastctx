@@ -18,10 +18,11 @@ use crate::town::read;
 pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure> {
     catch_up(node, town).await?;
     let (world, name) = (node.world.clone(), town.clone());
-    let (records, journals) = tokio::task::spawn_blocking(move || {
+    let (records, journals, pages) = tokio::task::spawn_blocking(move || {
         let records = read::records(&world, &name)?;
         let journals = read::summaries(&world, &name)?;
-        io::Result::Ok((records, journals))
+        let pages = crate::pages::read::summaries(&world, &name)?;
+        io::Result::Ok((records, journals, pages))
     })
     .await
     .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?
@@ -40,6 +41,7 @@ pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure>
         record: record.clone(),
         opened,
         journals,
+        pages,
         canon,
     })
 }

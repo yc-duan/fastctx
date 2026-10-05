@@ -564,6 +564,7 @@ impl Transcript {
             Some(Speaker::Resident { address }) => {
                 Some(format!("{}  {}", who::address_name(ctx, address), address.resident))
             }
+            Some(Speaker::Page { page }) => Some(page.to_string()),
             Some(Speaker::World) => Some(ctx.words.the_world().to_string()),
             None => Some(ctx.words.heard().to_string()),
         }

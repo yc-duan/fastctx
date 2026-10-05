@@ -57,7 +57,7 @@ pub(super) fn read(
     let started = Timestamp::now();
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
     let mut residents = BTreeMap::<ResidentId, ResidentFiles>::new();
-    for parent in world.resident_parents()? {
+    for parent in world.job_parents()? {
         let home = parent.parent().expect("a resident parent belongs to a place");
         let place = if home.file_name().is_some_and(|name| name == "outside") {
             None

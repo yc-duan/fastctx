@@ -90,6 +90,11 @@ pub fn map(view: &MapView) -> String {
         }
     }
 
+    text.push_str(&format!("\nPages ({}; read one with fastctx page read <page>):\n", view.pages.len()));
+    for page in &view.pages {
+        text.push_str(&format!("  {}\n", crate::pages::line(page)));
+    }
+
     match (&record.canon, &view.canon) {
         (None, _) => text.push_str("\nCanon: none listed.\n"),
         (Some(canon), Some(Ok(heads))) if heads.is_empty() => {
@@ -226,6 +231,7 @@ fn attachment_line(attachment: &Attachment) -> String {
 pub fn entry_writer(stamp: &EntryStamp) -> String {
     let mut parts = Vec::new();
     match &stamp.by {
+        Writer::Page { page } => parts.push(page.to_string()),
         Writer::User => parts.push(format!("the user on {}", stamp.machine)),
         Writer::Resident { address } => {
             if let Some(agent) = &stamp.agent {
@@ -255,6 +261,7 @@ pub fn entry_writer(stamp: &EntryStamp) -> String {
 /// Who wrote a version of something, for a line that says where already.
 pub fn writer(by: &Writer, on: &MachineName) -> String {
     match by {
+        Writer::Page { page } => page.to_string(),
         Writer::User => "the user".to_string(),
         Writer::Resident { address } if address.machine == *on => address.resident.to_string(),
         Writer::Resident { address } => address.tag(),

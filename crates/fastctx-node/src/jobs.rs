@@ -10,7 +10,7 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::Action;
 use fastctx_types::run::{Ended, EndedHow, JobRecord, RunReply, RunRequest, RunState};
-use fastctx_types::{Address, JobId, TownName};
+use fastctx_types::{JobId, TownName};
 use jiff::Timestamp;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
@@ -35,12 +35,12 @@ impl Jobs {
         &self,
         node: &Arc<Node>,
         job: JobId,
-        owner: Address,
+        owner: fastctx_types::run::JobOwner,
         town: Option<TownName>,
     ) -> Result<(), Failure> {
         // With nobody waiting there is nobody to wake.
         let _ = self.changes.send(job.clone());
-        let path = node.world.owner(&node.machine(), town.as_ref(), &owner).job_record(&job);
+        let path = node.world.job_owner(&node.machine(), town.as_ref(), &owner).job_record(&job);
         let record = read(&path).await?;
         crate::inbox::tell_if_ended(node, &record).await.map_err(|error| failure("telling the job's end", error))
     }
@@ -50,7 +50,7 @@ impl Jobs {
     pub async fn run(
         &self,
         node: &Arc<Node>,
-        owner: Address,
+        owner: fastctx_types::run::JobOwner,
         town: Option<TownName>,
         request: RunRequest,
     ) -> Result<(RunReply, JobRecord), Failure> {
@@ -103,7 +103,7 @@ impl Jobs {
                 .map_err(|error| Failure::new(format!("reading the output: {error}")))?
                 .map_err(|error| failure("reading the output", error))?
         };
-        if record.end.is_none() {
+        if record.end.is_none() && record.owner.resident().is_some() {
             // The job goes on past this answer: its end is owed to the
             // resident who started it. It may have ended between the answer
             // and the marker, and then nobody else would tell.
@@ -239,7 +239,7 @@ pub struct Reconciled {
 /// restarted.
 pub fn reconcile(world: &WorldDir) -> std::io::Result<Reconciled> {
     let mut found = Reconciled::default();
-    for residents in world.resident_parents()? {
+    for residents in world.job_parents()? {
         for resident in read_dir(&residents)? {
             for entry in read_dir(&resident.join("jobs"))? {
                 if entry.extension().is_none_or(|extension| extension != "json") {

@@ -31,6 +31,8 @@ pub struct Hello {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Peer {
+    /// A command within an approved page job; it never speaks as the user.
+    Page { page: Box<crate::pages::PageSource> },
     /// A command such as `fastctx w`, typed by a person or run by a
     /// resident; `resident` is set when a resident's `run` started it, and
     /// `session` when an agent's own shell did.

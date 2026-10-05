@@ -373,6 +373,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let caller = caller::of(node, peer)?;
             crate::town::journal::call(node, &caller, call).await
         }
+        Call::Page(call) => {
+            let caller = caller::of(node, peer)?;
+            crate::pages::call(node, &caller, &node.machine(), call).await
+        }
         // Who belongs to the World is the user's to decide: a resident that
         // could invite or revoke a machine could hand the World to anyone.
         Call::Join { code, name } => {
@@ -415,6 +419,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
 fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
     match caller::of(node, peer)? {
         Caller::User => Ok(()),
+        Caller::Page(page) => Err(Failure::new(format!("{page} runs this; only the user speaks as the user"))),
         Caller::Resident(address) => Err(Failure::new(format!(
             "{} runs this; only the user speaks as the user. Residents speak to each other with message_colleague",
             address.resident
@@ -454,7 +459,7 @@ async fn run(
     let reply = match target.filter(|target| *target != here) {
         None => {
             let owner = Address { machine: here.clone(), resident: resident.clone() };
-            node.jobs.run(node, owner, town.clone(), request).await?.0
+            node.jobs.run(node, owner.into(), town.clone(), request).await?.0
         }
         Some(target) => {
             let link = node.link().ok_or_else(|| {

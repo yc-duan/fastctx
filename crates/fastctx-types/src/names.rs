@@ -131,6 +131,14 @@ name_type!(
 );
 
 name_type!(
+    /// A page's name, with the same spelling rules as a journal's.
+    PageName,
+    "page name",
+    "lowercase words of letters and digits joined by hyphens, starting with a letter, at most 64 characters",
+    |text| is_word(text, 64) && !text.contains("--")
+);
+
+name_type!(
     /// The kind of agent a resident is, such as `codex` or `claude`; the
     /// first half of its id. The user is a resident too, as `user`.
     AgentName,

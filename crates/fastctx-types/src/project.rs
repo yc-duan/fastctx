@@ -20,9 +20,12 @@ use crate::residents::Host;
 use crate::{Address, AgentName, EntryId, JournalName, MachineName, TownName};
 
 /// Who wrote something into a town's ledger, as the World saw it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Writer {
+    Page {
+        page: Box<crate::pages::PageSource>,
+    },
     /// The user, at a terminal of one of their machines.
     User,
     Resident {
@@ -193,6 +196,7 @@ pub struct MapView {
     pub opened: Stamp,
     /// Most recently added to first.
     pub journals: Vec<JournalSummary>,
+    pub pages: Vec<crate::pages::PageSummary>,
     /// The canon's documents, or why they could not be read.
     pub canon: Option<Result<Vec<CanonHead>, String>>,
 }

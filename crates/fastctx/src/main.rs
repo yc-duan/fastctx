@@ -12,6 +12,7 @@ mod attach;
 mod copy;
 mod journal;
 mod keep;
+mod page;
 mod project;
 mod service;
 mod talk;
@@ -102,6 +103,9 @@ enum Command {
     /// journal, read or list them.
     #[command(subcommand, after_long_help = fastctx_hands::town::JOURNALS)]
     Journal(journal::JournalCommand),
+    /// Publish, read or list a project's HTML pages.
+    #[command(subcommand, after_long_help = page::PAGE_HELP)]
+    Page(page::PageCommand),
     /// Join a World with a code.
     Join(world::JoinArgs),
     /// Make a code that lets one more machine join this World.
@@ -172,6 +176,7 @@ fn main() -> ExitCode {
         Command::Attach(args) => attach::run(args),
         Command::Project(command) => project::run(command),
         Command::Journal(command) => journal::run(command),
+        Command::Page(command) => page::run(command),
         Command::Join(args) => world::join(args),
         Command::Invite(args) => world::invite(args),
         Command::Revoke(args) => world::revoke(args),

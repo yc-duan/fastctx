@@ -82,7 +82,7 @@ pub fn fixtures() -> Fixtures {
     ] {
         kinds.push(SinceKind::JobEnded {
             job: "j-ab12cd".parse().unwrap(),
-            owner: asker.clone(),
+            owner: asker.clone().into(),
             started_at: at,
             elapsed_ms: 0,
             how,

@@ -14,6 +14,8 @@ mod claude;
 mod control;
 #[path = "gui_wire_fixtures/file_read.rs"]
 mod file_read;
+#[path = "gui_wire_fixtures/pages.rs"]
+mod pages;
 #[path = "gui_wire_fixtures/session.rs"]
 mod session;
 #[path = "gui_wire_fixtures/since.rs"]
@@ -26,6 +28,7 @@ mod management;
 
 #[derive(Serialize)]
 struct Fixtures {
+    pages: pages::Fixtures,
     session: session::Fixtures,
     world: world::Fixtures,
     since: since::Fixtures,
@@ -39,6 +42,7 @@ struct Fixtures {
 
 fn main() {
     let fixtures = Fixtures {
+        pages: pages::fixtures(),
         session: session::fixtures(),
         world: world::fixtures(),
         since: since::fixtures(),

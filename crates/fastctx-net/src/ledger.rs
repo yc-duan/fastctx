@@ -107,7 +107,7 @@ pub fn sign(key: &crate::sign::SecretKey, entry: &Entry) -> Signed {
 pub fn handed_size(signed: &Signed) -> usize {
     crate::wire::encode(&crate::wire::Down::Told {
         id: u64::MAX,
-        answer: Ok(crate::wire::Told::Entries { entries: vec![(u64::MAX, signed.clone())], more: true }),
+        answer: Ok(crate::wire::Told::Entries { entries: vec![(u64::MAX, signed.clone())], more: false }),
     })
     .len()
 }
@@ -117,7 +117,12 @@ pub fn handed_size(signed: &Signed) -> usize {
 /// spare, or `Err` with the bytes too many.
 pub fn fits(entry: &Entry) -> Result<usize, usize> {
     let signed = sign(&crate::sign::SecretKey::from_seed(&[0; 32]), entry);
-    let size = handed_size(&signed);
+    let sent = crate::wire::encode(&crate::wire::Up::Ask {
+        id: u64::MAX,
+        question: crate::wire::Question::LedgerWrite { entry: signed.clone() },
+    })
+    .len();
+    let size = handed_size(&signed).max(sent);
     let limit = crate::wire::MAX_CONTROL_FRAME;
     if size <= limit { Ok(limit - size) } else { Err(size - limit) }
 }
