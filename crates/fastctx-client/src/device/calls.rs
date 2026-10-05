@@ -23,6 +23,12 @@ impl Device {
         }
         session.check_identity().await?;
         let (machine, remote, resident) = match call {
+            Call::FindFiles { machine, request } => {
+                let machine =
+                    machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
+                session.machine(&machine)?;
+                (machine, RemoteCall::FindFiles { request }, None)
+            }
             Call::Talk { to, machine, text, attachments } => {
                 let machine = session.locate(&to, machine).await?;
                 (machine, RemoteCall::Talk { to: to.clone(), text, attachments }, Some(to))
@@ -67,6 +73,7 @@ impl Device {
         let answer = session.link.call(&machine, remote.clone()).await.map_err(failed)?.map_err(failed)?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
+            (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::Talk { .. }, RemoteReply::Said { landed }) => {
                 Reply::Spoken { to: address.expect("talk resident"), landed }
             }

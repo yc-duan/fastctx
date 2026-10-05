@@ -306,6 +306,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|(to, landed)| Reply::Spoken { to, landed })
         }
         Call::Agents { machine } => crate::agents::query(node, machine).await.map(Reply::Agents),
+        Call::FindFiles { machine, request } => {
+            crate::file_search::call(node, machine, request).await.map(Reply::FilesFound)
+        }
         Call::Open { agent, town, node: target, text, model, reasoning_effort, attachments } => {
             users_voice(node, peer)?;
             let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };

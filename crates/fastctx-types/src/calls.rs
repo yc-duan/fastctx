@@ -30,6 +30,8 @@ pub enum Call {
     /// Reads a file's original bytes for the user, here or on `machine`.
     /// The connection carries `NodeFrame::FileRead` pieces until its reply.
     ReadFile { machine: Option<MachineName>, request: crate::file_read::ReadFileRequest },
+    /// File-name completion, with scope checked on the machine holding it.
+    FindFiles { machine: Option<MachineName>, request: crate::file_search::FileSearchRequest },
     /// Asks for a colleague for a resident of this machine
     /// (`ask_colleague`): a Codex resident started on this machine or on
     /// the machine `node` names, with `prompt` as its first words. `label`
@@ -133,6 +135,7 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    FilesFound(crate::file_search::FileSearchReply),
     Uploaded(crate::attachments::Attachment),
     Arrived(Whereabouts),
     Run(RunReply),

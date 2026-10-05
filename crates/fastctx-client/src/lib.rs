@@ -16,6 +16,7 @@ pub mod attachments;
 pub mod conversation;
 pub mod device;
 pub mod file_read;
+mod file_search;
 pub mod host;
 pub mod shown;
 pub mod town;
