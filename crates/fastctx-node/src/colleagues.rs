@@ -135,7 +135,9 @@ pub async fn ask_here(
     };
     crate::inbox::keep(&directory, &first).map_err(|error| Failure::new(format!("keeping the request: {error}")))?;
     let (node, colleague) = (node.clone(), id.clone());
+    let answering = node.handoff.call();
     tokio::spawn(async move {
+        let Some(_answering) = answering else { return };
         let why = match speech::hand_over(&node, &colleague, &about, &directory, first.clone()).await {
             Ok(
                 Landed::NewTurn { .. }
@@ -144,6 +146,7 @@ pub async fn ask_here(
                 | Landed::Handed { .. }
                 | Landed::Uncertain { .. },
             ) => return,
+            Ok(Landed::Waiting { why, .. }) if why.as_deref() == Some(crate::handoff::WAITING) => return,
             Ok(Landed::Waiting { why, .. }) => why.unwrap_or_else(|| "its session could not be reached".to_string()),
             Err(failure) => failure.message,
         };

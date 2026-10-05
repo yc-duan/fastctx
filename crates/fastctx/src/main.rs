@@ -14,6 +14,7 @@ mod journal;
 mod keep;
 mod page;
 mod project;
+mod renew;
 mod service;
 mod talk;
 mod update;
@@ -64,7 +65,11 @@ enum Command {
         supervisor_events: Option<u64>,
         #[arg(long, hide = true, value_parser = ["s4u", "interactive"])]
         service_identity: Option<String>,
+        #[arg(long, hide = true)]
+        successor: Option<String>,
     },
+    /// Replace this machine's node and guardian using a local executable.
+    Renew(renew::RenewalArgs),
     /// Install, uninstall or inspect a node/hub service on this machine.
     Service(service::ServiceArgs),
     /// The SYSTEM guardian, dispatched by the Windows service controller.
@@ -156,13 +161,14 @@ fn main() -> ExitCode {
         Command::ClaudeElicitation { world } => fastctx_node::claude_request::run(&world, true).map_err(Into::into),
         Command::ClaudeControlOwner { world } => fastctx_node::claude_request::owner(&world).map_err(Into::into),
         Command::ClaudeControlGuard => fastctx_node::claude_request::guard().map_err(Into::into),
-        Command::Node { dir, supervised, supervisor_control, supervisor_events, service_identity } => {
+        Command::Node { dir, supervised, supervisor_control, supervisor_events, service_identity, successor } => {
             let supervision = match (supervised, supervisor_control, supervisor_events) {
                 (true, Some(control), Some(events)) => Some((control, events, service_identity)),
                 _ => None,
             };
-            node(dir, supervision)
+            node(dir, supervision, successor)
         }
+        Command::Renew(args) => renew::run(args),
         Command::Service(args) => service::run(args),
         #[cfg(windows)]
         Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
@@ -204,11 +210,33 @@ fn finish(result: anyhow::Result<ExitCode>) -> ExitCode {
     })
 }
 
-fn node(dir: Option<PathBuf>, supervision: Option<(u64, u64, Option<String>)>) -> anyhow::Result<()> {
+fn node(
+    dir: Option<PathBuf>,
+    supervision: Option<(u64, u64, Option<String>)>,
+    successor: Option<String>,
+) -> anyhow::Result<()> {
     let root = match dir {
         Some(root) => root,
         None => fastctx_platform::fastctx_root()?,
     };
+    // Recovery must also start when a newly installed node fails before it
+    // can serve. A prepared successor is already watched by that worker.
+    if successor.is_none() {
+        match fastctx_install::renewal::read(&root) {
+            Ok(Some(plan))
+                if !matches!(
+                    plan.phase,
+                    fastctx_types::renewal::Phase::Complete | fastctx_types::renewal::Phase::Failed
+                ) =>
+            {
+                if let Err(error) = fastctx_install::renewal::request(&root, false) {
+                    eprintln!("fastctx: could not resume executable renewal: {error:#}");
+                }
+            }
+            Err(error) => eprintln!("fastctx: could not read executable renewal: {error}"),
+            _ => {}
+        }
+    }
     let supervision = match supervision {
         Some((control, events, identity)) => {
             let (control, events) = fastctx_platform::service_channel::inherited(control, events)?;
@@ -220,7 +248,11 @@ fn node(dir: Option<PathBuf>, supervision: Option<(u64, u64, Option<String>)>) -
         }
         None => None,
     };
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run(&root, supervision))
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run_replacing(
+        &root,
+        supervision,
+        successor.as_deref(),
+    ))
 }
 
 fn serve(writer: &str) -> anyhow::Result<()> {

@@ -63,8 +63,15 @@ pub enum SessionHint {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Welcome {
-    Accepted { machine: MachineName, version: String },
-    Refused { reason: String },
+    Accepted {
+        machine: MachineName,
+        version: String,
+    },
+    Refused {
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mismatch: Option<crate::renewal::Mismatch>,
+    },
 }
 
 /// A frame from a client after the welcome.

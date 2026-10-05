@@ -37,6 +37,7 @@ import type { PageView, PageSummary, PageVersion, PageConsent, PageResult } from
 import type { Speaker } from "../src/world/events";
 import type { Writer, JobOwner, MapView } from "../src/world/world";
 import type { Address } from "../src/world/wire";
+import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRefusal } from "../src/world/renewal";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
     events: SessionEvent[];
@@ -93,6 +94,7 @@ export const fixture = ${json.trimEnd()} satisfies {
     peer: unknown;
     map: MapView;
   };
+  renewal: { requests: MaintenanceRequest[]; responses: MaintenanceResponse[]; statuses: RenewalStatus[]; refused: VersionRefusal };
 };
 `;
 const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);

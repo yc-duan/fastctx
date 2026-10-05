@@ -147,6 +147,11 @@ async fn hand_over_locked(
     directory: &ResidentDir,
     pending: Pending,
 ) -> Result<Landed, Failure> {
+    // Background delivery can load a thread before it submits a turn. Keep
+    // that opening and its durable outcome inside the handover boundary too.
+    let Some(_answering) = node.handoff.call() else {
+        return Ok(Landed::Waiting { why: Some(crate::handoff::WAITING.into()), answered: answered(node, to, about) });
+    };
     node.ready().await;
     node.residents.active(to)?;
     if let Some(landed) = crate::claude::deliver(node, to, about, directory, &pending).await {

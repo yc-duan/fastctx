@@ -7,6 +7,8 @@
 mod connection;
 
 #[cfg(desktop)]
+mod renewal;
+#[cfg(desktop)]
 mod setup;
 #[cfg(desktop)]
 mod terminal;
@@ -555,6 +557,27 @@ async fn place_fastctx(shell: tauri::State<'_, Shell>) -> Result<String, String>
     tauri::async_runtime::spawn_blocking(setup::place).await.map_err(|error| error.to_string())?
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+async fn renewal_state(shell: tauri::State<'_, Shell>) -> Result<fastctx_types::renewal::Status, String> {
+    shell.connection.local_program()?;
+    tauri::async_runtime::spawn_blocking(renewal::state).await.map_err(|error| error.to_string())?
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn renew_here(shell: tauri::State<'_, Shell>) -> Result<(), String> {
+    shell.connection.local_program()?;
+    tauri::async_runtime::spawn_blocking(renewal::now).await.map_err(|error| error.to_string())?
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn renew_guardian_here(shell: tauri::State<'_, Shell>) -> Result<(), String> {
+    shell.connection.local_program()?;
+    tauri::async_runtime::spawn_blocking(renewal::guardian).await.map_err(|error| error.to_string())?
+}
+
 /// Joins a World with a code, under `name` or the name this machine has.
 #[cfg(desktop)]
 #[tauri::command]
@@ -673,6 +696,12 @@ pub fn run() {
             setup_state,
             #[cfg(desktop)]
             place_fastctx,
+            #[cfg(desktop)]
+            renewal_state,
+            #[cfg(desktop)]
+            renew_here,
+            #[cfg(desktop)]
+            renew_guardian_here,
             #[cfg(desktop)]
             join_world,
             #[cfg(desktop)]

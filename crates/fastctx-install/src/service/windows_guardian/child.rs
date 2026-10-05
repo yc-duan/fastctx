@@ -283,7 +283,11 @@ fn watch_messages(
                     let accepted = expected
                         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |mask| {
                             if mask & bit != 0 {
-                                Some(if event == ServiceEvent::Yielded { 0x80 } else { 0 })
+                                Some(match event {
+                                    ServiceEvent::Yielded => 0x80,
+                                    ServiceEvent::Serving => 4,
+                                    ServiceEvent::Prepared => 0,
+                                })
                             } else {
                                 None
                             }

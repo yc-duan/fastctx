@@ -33,6 +33,8 @@ mod machine;
 mod management;
 mod own;
 mod pages;
+mod renewal;
+mod renewal_legacy;
 mod resident_storage;
 mod residents;
 mod server;
@@ -98,6 +100,8 @@ pub(crate) struct Node {
     /// Whether turns may start, while a guardian may ask for the World to
     /// be handed on.
     handoff: Arc<handoff::Handoff>,
+    renewal: renewal::Startup,
+    supervised: bool,
 }
 
 impl Node {
@@ -167,7 +171,18 @@ fn legacy(node: &Node) {
 /// Runs the node for the World under `fastctx_root`; `supervision` is the
 /// guardian's channel when a guardian keeps it (`handoff`).
 pub async fn run(fastctx_root: &Path, supervision: Option<handoff::Supervision>) -> anyhow::Result<()> {
+    run_replacing(fastctx_root, supervision, None).await
+}
+
+/// Runs a prepared local successor, or the ordinary node when no digest is
+/// supplied. A successor waits for the current node to release the World.
+pub async fn run_replacing(
+    fastctx_root: &Path,
+    supervision: Option<handoff::Supervision>,
+    successor: Option<&str>,
+) -> anyhow::Result<()> {
     let world = WorldDir::under(fastctx_root);
+    let mut renewal = renewal::Startup::prepare(fastctx_root, successor).await?;
     let supervision = match supervision {
         Some(supervision) => {
             Some(tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?)
@@ -175,16 +190,22 @@ pub async fn run(fastctx_root: &Path, supervision: Option<handoff::Supervision>)
         None => None,
     };
     ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
-    let _lock = match &supervision {
+    let _lock = match supervision.is_some() || renewal.successor {
         // A successor prepares, then waits to be let in, then waits for the
         // node before it to let the World go.
-        Some(_) => {
+        true => {
             let lock = world.node_lock();
             tokio::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
         }
-        None => FileLock::try_acquire(&world.node_lock())?
+        false => FileLock::try_acquire(&world.node_lock())?
             .ok_or_else(|| anyhow!("a node is already running for the World in {}", world.path().display()))?,
     };
+    if renewal.successor
+        && fastctx_install::renewal::read(fastctx_root)?.is_some_and(|plan| plan.candidate.build != renewal.build)
+    {
+        return Ok(());
+    }
+    renewal.acquired();
     let log = Arc::new(log::Log::open(&world.node_log())?);
     // The node usually has no terminal: a panic in any of its tasks is
     // written to its log, or it would leave no trace.
@@ -254,6 +275,8 @@ pub async fn run(fastctx_root: &Path, supervision: Option<handoff::Supervision>)
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),
         handoff: Arc::new(handoff::Handoff::default()),
+        renewal,
+        supervised: supervision.is_some(),
     });
     for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));
@@ -299,6 +322,20 @@ pub async fn run(fastctx_root: &Path, supervision: Option<handoff::Supervision>)
 
     if let Some(supervision) = supervision {
         handoff::follow(node.clone(), supervision);
+    }
+
+    match fastctx_install::renewal::read(&node.root) {
+        Ok(Some(plan))
+            if plan.phase != fastctx_types::renewal::Phase::Failed
+                && (plan.phase != fastctx_types::renewal::Phase::Complete
+                    || plan.candidate.build != node.renewal.build) =>
+        {
+            if let Err(error) = fastctx_install::renewal::request(&node.root, false) {
+                node.log.line(format_args!("could not resume executable renewal: {error:#}"));
+            }
+        }
+        Err(error) => node.log.line(format_args!("could not read executable renewal: {error}")),
+        _ => {}
     }
 
     let watchdog = watchdog::Watchdog::start(&node.world.node_log()).context("starting the control-loop watchdog")?;

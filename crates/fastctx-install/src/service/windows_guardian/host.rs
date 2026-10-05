@@ -91,6 +91,7 @@ fn serve() -> anyhow::Result<()> {
     };
     report(ServiceState::StartPending, 0, ServiceControlAccept::empty())?;
     let ready = || {
+        super::renewal::record(&config)?;
         report(
             ServiceState::Running,
             0,
@@ -101,7 +102,7 @@ fn serve() -> anyhow::Result<()> {
         )
         .map_err(Into::into)
     };
-    let result = runtime::run(config, requests.clone(), events, sender, ready);
+    let result = runtime::run(config.clone(), requests.clone(), events, sender, ready);
     // A stop while still installed is recoverable, too. Uninstall disables
     // failure actions and auto-start before requesting this same stop.
     let code = if requests.shutdown.load(Ordering::SeqCst) { 0 } else { 1 };

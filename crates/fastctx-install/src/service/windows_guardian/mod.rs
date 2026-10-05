@@ -7,6 +7,7 @@ mod config;
 mod host;
 mod owner;
 mod policy;
+mod renewal;
 mod runtime;
 mod scm;
 mod security;
@@ -23,6 +24,10 @@ use windows_service::service::{ServiceAccess, ServiceExitCode, ServiceStartType,
 
 use super::{Service, Status, transaction};
 use config::Config;
+
+pub(super) use renewal::{
+    current as guardian_current, replace as renew_guardian, restart as restart_guardian, staged as guardian_staged,
+};
 
 #[derive(Serialize, Deserialize)]
 struct Before {
