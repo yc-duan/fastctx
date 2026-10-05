@@ -18,6 +18,12 @@ function usage(): SessionUsage {
   } } }
 }
 
+async function* guard(_$: any, _e: any, next: any) {
+  yield { stream: 'stdout', text: JSON.stringify({ process: { pid: 124, token: 'activation' }, parent: { pid: 123, token: 'fixture-lifetime' } }) + '\n' }
+  await new Promise<void>((resolve) => next.signal.addEventListener('abort', () => resolve(), { once: true }))
+  return { value: { code: 0, signal: null } }
+}
+
 // The official loader and engine must admit the published module. A VM-only
 // test cannot enforce the scanner's rules or the engine's stream lifetime.
 test('loads, streams without waiting for disk, and retains the old session after clear', async ($, on) => {
@@ -44,6 +50,7 @@ test('loads, streams without waiting for disk, and retains the old session after
   on('session.surfaces', () => ({ value: ['terminal', 'vscode'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.spawn', guard)
   on('fs.write', async (_, e) => {
     if (blockWrites && e.path.replaceAll('\\', '/').endsWith('.json') && JSON.parse(e.text).kind === 'batch') {
       writing()
@@ -129,6 +136,7 @@ test('proves only World calls, before they run, and distinguishes clear from res
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.spawn', guard)
   on('fs.write', (_, e) => {
     const path = e.path.replaceAll('\\', '/')
     if (failProof && path.includes('/claude-calls/')) throw new Error('disk refused')

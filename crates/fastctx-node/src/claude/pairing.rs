@@ -128,7 +128,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
     Ok(id)
 }
 
-pub(super) fn validate_session(session: &str) -> io::Result<()> {
+pub(crate) fn validate_session(session: &str) -> io::Result<()> {
     let mut components = Path::new(session).components();
     if session.is_empty()
         || session.contains(['/', '\\', ':'])

@@ -18,8 +18,10 @@
 //! Run with Claude Code 2.1.289.
 
 pub(crate) mod calls;
+pub(crate) mod control;
+mod fork;
 pub(crate) mod history;
-mod pairing;
+pub(crate) mod pairing;
 mod process;
 
 use std::collections::{HashMap, HashSet};
@@ -42,6 +44,7 @@ use crate::Node;
 #[derive(Default)]
 pub struct Claude {
     state: Mutex<State>,
+    bridge: control::Bridge,
     /// Held to read while the World starts a session and learns its id;
     /// to write, while a mod registration is assigned to a resident.
     pub births: tokio::sync::RwLock<()>,
@@ -67,6 +70,7 @@ struct Session {
 
 /// Writes the plugin and starts watching the sessions.
 pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
+    claude::control::write(&node.world.path().join("claude-controller.json"), &fastctx_platform::current_identity()?)?;
     calls::sweep(node);
     let plugin = claude::write_plugin(node.world.path(), &node.fastctx)?;
     let checking = node.clone();
@@ -170,6 +174,9 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     };
     let reading = node.claude.state.lock().expect("never poisoned").sessions[&session].reading.clone();
     let _reading = reading.lock().await;
+    if let Err(error) = control::look(node, &resident, directory).await {
+        node.log.line(format_args!("reading Claude controls for {session}: {error}"));
+    }
     let harvested = {
         let directory = directory.to_path_buf();
         tokio::task::spawn_blocking(move || exchange::harvest(&directory)).await
@@ -495,6 +502,7 @@ async fn ended_for_process(
             return Ok(());
         }
     }
+    control::ended(node, session);
     let Some((about, town)) = node.residents.about(resident) else { return Ok(()) };
     let directory = node.world.resident(town.as_ref(), resident);
     let current = about.session.as_deref() == Some(session);

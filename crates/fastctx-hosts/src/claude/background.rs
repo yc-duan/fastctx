@@ -40,6 +40,20 @@ pub struct Start<'a> {
 /// `claude --bg` chooses the session's id itself and ignores `--session-id`
 /// (it says so); `started` reads the id back from what it prints.
 pub fn start_args(start: &Start) -> Vec<OsString> {
+    let mut args = settings_args(start);
+    args.extend(["--".into(), start.first_words.into()]);
+    args
+}
+
+/// Forks the entire saved conversation into an idle background session.
+/// No synthetic prompt is attributed to the person who pressed Fork.
+pub fn fork_args(session: &str, start: &Start) -> Vec<OsString> {
+    let mut args = settings_args(start);
+    args.extend(["--resume".into(), session.into(), "--fork-session".into()]);
+    args
+}
+
+fn settings_args(start: &Start) -> Vec<OsString> {
     let mut args = vec![
         "--bg".into(),
         "--plugin-dir".into(),
@@ -60,7 +74,6 @@ pub fn start_args(start: &Start) -> Vec<OsString> {
     if let Some(effort) = start.reasoning_effort {
         args.extend(["--effort".into(), effort.into()]);
     }
-    args.extend(["--".into(), start.first_words.into()]);
     args
 }
 
