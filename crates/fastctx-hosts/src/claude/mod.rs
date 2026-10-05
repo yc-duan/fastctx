@@ -9,13 +9,13 @@
 //! plugin is the one the next session starts with. A background session the
 //! World starts or wakes goes through the `claude` command (`background`).
 //!
-//! Built against the mod API as measured on Claude Code 2.1.289 and run
-//! against a stand-in host only; it has not yet run inside Claude Code.
+//! Uses Claude Code 2.1.289's public mod and plugin hook contracts.
 
 pub mod agents;
 pub mod background;
 pub mod calls;
 mod content;
+pub mod control;
 pub mod exchange;
 mod tools;
 pub mod transcript;
@@ -103,7 +103,17 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
                 },
             }),
         ),
-        (plugin.join("hooks").join("hooks.json"), json!({ "modules": ["./world.js"] })),
+        (
+            plugin.join("hooks").join("hooks.json"),
+            json!({
+                "modules": ["./world.js"],
+                "hooks": { "Elicitation": [{ "hooks": [{
+                    "type": "command",
+                    "command": fastctx,
+                    "args": ["claude-elicitation", world],
+                }] }] },
+            }),
+        ),
     ];
     for (path, value) in files {
         let mut bytes = serde_json::to_vec_pretty(&value).expect("JSON values serialize");
@@ -115,13 +125,15 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
     // forward slashes, no `\\?\` prefix). A mod given a Windows short name
     // such as `MOTORW~1` writes nothing at all.
     let directory = trust::directory_key(world)?;
-    let module = MOD.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
+    let module = MOD.replace("__FASTCTX_CONTROLS__", include_str!("control.js"));
+    let module = module.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
     let module = module
         .replace("__FASTCTX_COMMAND__", &serde_json::to_string(&fastctx.to_string_lossy()).expect("strings serialize"));
     write(&plugin.join("hooks").join("presentation.js"), include_bytes!("presentation.js"))?;
     write(&plugin.join("hooks").join("steps.js"), include_bytes!("steps.js"))?;
     write(&plugin.join("hooks").join("world.js"), module.as_bytes())?;
     write(&plugin.join("hooks").join("world.test.ts"), include_bytes!("world.test.ts"))?;
+    write(&plugin.join("hooks").join("control.test.ts"), include_bytes!("control.test.ts"))?;
     Ok(plugin)
 }
 

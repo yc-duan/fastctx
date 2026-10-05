@@ -21,6 +21,23 @@ struct Watching {
 }
 
 impl Watchers {
+    /// Ends as soon as no current watcher remains. Newly opened watches
+    /// participate on the next check; no polling lease can keep one alive.
+    pub async fn unwatched(&self, id: &ResidentId) {
+        loop {
+            let sender = self
+                .watching
+                .lock()
+                .expect("never poisoned")
+                .get(id)
+                .and_then(|watching| watching.senders.iter().find(|sender| !sender.is_closed()).cloned());
+            match sender {
+                Some(sender) => sender.closed().await,
+                None => return,
+            }
+        }
+    }
+
     /// Everything that happens in the resident's session from now on.
     pub fn watch(&self, id: &ResidentId) -> mpsc::UnboundedReceiver<SessionEvent> {
         let (sender, receiver) = mpsc::unbounded_channel();

@@ -36,6 +36,18 @@ enum Command {
     /// Identifies the process invoking the World mod helper.
     #[command(hide = true)]
     ParentProcess,
+    /// Wait for the person answering one public Claude mod request.
+    #[command(hide = true)]
+    ClaudeRequest { directory: PathBuf },
+    /// The official plugin's MCP elicitation command hook.
+    #[command(hide = true)]
+    ClaudeElicitation { world: PathBuf },
+    /// Identifies the node lifetime that may issue queued Claude controls.
+    #[command(hide = true)]
+    ClaudeControlOwner { world: PathBuf },
+    /// A lifetime witness for a Claude mod activation.
+    #[command(hide = true)]
+    ClaudeControlGuard,
     /// Run this machine's node in the foreground.
     Node {
         /// The fastctx root to serve; defaults to this user's fastctx root.
@@ -133,6 +145,12 @@ fn main() -> ExitCode {
     let result = match command {
         Command::Ui => fastctx_tui::run(),
         Command::ParentProcess => parent_process(),
+        Command::ClaudeRequest { directory } => {
+            fastctx_node::claude_request::run(&directory, false).map_err(Into::into)
+        }
+        Command::ClaudeElicitation { world } => fastctx_node::claude_request::run(&world, true).map_err(Into::into),
+        Command::ClaudeControlOwner { world } => fastctx_node::claude_request::owner(&world).map_err(Into::into),
+        Command::ClaudeControlGuard => fastctx_node::claude_request::guard().map_err(Into::into),
         Command::Node { dir, supervised, supervisor_control, supervisor_events, service_identity } => {
             let supervision = match (supervised, supervisor_control, supervisor_events) {
                 (true, Some(control), Some(events)) => Some((control, events, service_identity)),

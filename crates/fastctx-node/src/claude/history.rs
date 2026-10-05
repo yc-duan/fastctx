@@ -39,6 +39,23 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
     place(events, recorded)
 }
 
+/// CLI forking reads the saved conversation. Wait for the last message
+/// already observed by the mod before asking the CLI to copy that file.
+pub(super) async fn wait_stored(node: &Arc<Node>, session: &str) -> Result<(), String> {
+    let (kept, process) = {
+        let state = node.claude.state.lock().expect("never poisoned");
+        (
+            state.stored.get(session).cloned(),
+            state.sessions.get(session).and_then(|entry| entry.registration.process.clone()),
+        )
+    };
+    if kept.is_none() {
+        return Ok(());
+    }
+    let read = read_whole(exchange::sessions(node.world.path()).join(session), kept, process).await?;
+    if read.problems.is_empty() { Ok(()) } else { Err(read.problems.join("; ")) }
+}
+
 /// A session the resident has been, as its mod registered it.
 struct Session {
     id: String,

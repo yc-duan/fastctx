@@ -56,6 +56,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
     let host = host_of(node, resident)?;
     match host {
         "Codex" => crate::codex::control::control(node, resident, control).await,
+        "Claude" => crate::claude::control::control(node, resident, control).await,
         _ => Err(Failure::new(format!("{host} sessions take nothing but words yet"))),
     }
 }
@@ -64,6 +65,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
 pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
     match host_of(node, resident)? {
         "Codex" => crate::codex::control::offers(node, resident).await,
+        "Claude" => crate::claude::control::offers(node, resident).await,
         _ => Ok(Offers::default()),
     }
 }

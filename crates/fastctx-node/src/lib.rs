@@ -13,6 +13,7 @@ mod agents;
 mod attach;
 mod attachments;
 mod claude;
+pub mod claude_request;
 mod codex;
 mod colleagues;
 mod control;

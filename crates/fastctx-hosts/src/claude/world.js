@@ -22,8 +22,8 @@ import { presentation } from './presentation.js'
 // that file when the call arrives, and sweeps those of ended sessions.
 // Which turn took what it handed over is an event of its own, before the
 // end of that turn: the node owes that turn's end to whoever it was from.
-// It uses only on(), $.session.*, $.env.get, $.fs.read/write/list,
-// $.clock.every/after, $.prompt.submit, $.process.run and $.turn.abort.
+// Controls add $.command.list/run and $.config.list. A public request waits
+// in $.process.spawn, released when its node, host, turn or viewers leave.
 // MCP ownership is resolved from $.mcp.connect and $.session.usage at startup.
 // The inbox address identifies native-shell commands, never MCP calls.
 
@@ -33,6 +33,8 @@ const FASTCTX = __FASTCTX_COMMAND__
 const LOOK_MS = 2000
 // Claude Code limits each fs read/write to 4 MiB of UTF-8.
 const FILE_BYTES = 4 * 1024 * 1024
+
+__FASTCTX_CONTROLS__
 
 // /clear may replace even the same session ID. Keep the old object alive for
 // its timers, queued writes and late turn/tool results; never reset it in place.
@@ -512,6 +514,7 @@ function took(started, entered) {
 }
 
 async function startTurn($, context, e, next) {
+  await startControlTurn($, e)
   context.busy = true
   context.turn = e.turnId
   if (context.requestInFlight) context.submissionTurns.push({ turnId: e.turnId, text: e.text })
@@ -528,6 +531,7 @@ async function startTurn($, context, e, next) {
 }
 
 async function completeTurn($, context, e, next) {
+  await completeControlTurn($, e)
   if (e.agentId !== undefined) return next(e)
   await context.shown.end(reports($, context), e.turnId)
   if (context.turn === e.turnId) { context.busy = false; context.turn = null }
@@ -580,6 +584,7 @@ async function boundary($, context, e, next) {
 }
 
 async function endSession($, context, e, next) {
+  await endControls($, e)
   context.closed = true
   // The node may restart while this process runs another conversation.
   // Process liveness alone would otherwise resurrect this closed one.
@@ -656,6 +661,7 @@ async function route($, registry, name, e) {
 export function register(on) {
   const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set() }
   on('session.start', async ($, e, next) => {
+    await startControls($)
     await worldTools($, registry)
     await session($, registry, await $.session.id(), true)
     return next(e)
@@ -679,8 +685,9 @@ export function register(on) {
         return { deny: 'The fastctx plugin could not identify this MCP call to the World: ' + error }
       }
     }
-    return context.shown.call(reports($, context), e, next)
+    return context.shown.call(reports($, context), e, (input) => controlCall($, input, next))
   })
+  on('classic.PermissionRequest', async ($, e, next) => controlPermission($, e, next))
   on('session.append', async ($, e, next) => {
     const context = await route($, registry, 'session.append', e)
     return context.shown.append(reports($, context), e, next)
@@ -704,6 +711,7 @@ export function register(on) {
     return endSession($, await route($, registry, 'session.end', e), e, next)
   })
   on('classic.SessionStart', async ($, e, next) => {
+    await startControls($)
     await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
     await transcript($, context, e.transcript_path)

@@ -22,6 +22,19 @@ impl Live {
                 self.items.clear();
                 self.deltas.clear();
             }
+            Happened::Changed { change: SessionChange::Request { id, .. }, .. } => {
+                self.items.retain(|snapshot| {
+                    !matches!(&snapshot.happened,
+                    Happened::Changed { change: SessionChange::Request { id: held, .. }, .. } if held == id)
+                });
+                self.items.push(event.clone());
+            }
+            Happened::Changed { change: SessionChange::Resolved { id, .. }, .. } => {
+                self.items.retain(|snapshot| {
+                    !matches!(&snapshot.happened,
+                    Happened::Changed { change: SessionChange::Request { id: held, .. }, .. } if held == id)
+                });
+            }
             Happened::Began { turn, item } => {
                 if self.items.iter().any(|event| {
                     matches!(&event.happened,
