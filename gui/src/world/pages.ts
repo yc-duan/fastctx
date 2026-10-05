@@ -143,10 +143,12 @@ export function act(town: TownName, page: PageName, version: number, action: Pag
   return invoke<PageResult>("page_act", { town, page, version, action });
 }
 
-export function withdraw(town: TownName, page: PageName, base: number): Promise<PageVersion> {
-  return invoke<PageVersion>("page_withdraw", { town, page, base });
+/** Takes the page down: a new version without HTML. */
+export function withdraw(town: TownName, page: PageName, base: number): Promise<PageView> {
+  return invoke<PageView>("page_withdraw", { town, page, base });
 }
 
-export function restore(town: TownName, page: PageName, base: number, version: number): Promise<PageVersion> {
-  return invoke<PageVersion>("page_restore", { town, page, base, version });
+/** Brings `version` back as a new version. */
+export function restore(town: TownName, page: PageName, base: number, version: number): Promise<PageView> {
+  return invoke<PageView>("page_restore", { town, page, base, version });
 }
