@@ -76,6 +76,13 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
             continue;
         };
+        if let Call::ReadFile { machine, request } = call {
+            if let Err(failure) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                return writer.drain().await;
+            }
+            return crate::file_read::serve_local(node, machine, request, id, &mut reader, &mut writer).await;
+        }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
         let reply = match call {
             Call::Collect { resident } => collect(node, resident, &mut arrived.collected, &mut arrived.notes).await,
@@ -315,6 +322,7 @@ async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Fail
             crate::attach::command(node, &resident).await.map(Reply::Attachable)
         }
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
+        Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
         Call::Ask { resident, label, prompt, node: target } => {
             let town = town_of(node, &resident)?;

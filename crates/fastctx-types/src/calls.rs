@@ -27,6 +27,9 @@ pub enum Call {
     Write { resident: ResidentId, op: WriteOp, node: Option<MachineName> },
     /// Copies files or a directory from one machine to another.
     Copy { from: Place, to: Place },
+    /// Reads a file's original bytes for the user, here or on `machine`.
+    /// The connection carries `NodeFrame::FileRead` pieces until its reply.
+    ReadFile { machine: Option<MachineName>, request: crate::file_read::ReadFileRequest },
     /// Asks for a colleague for a resident of this machine
     /// (`ask_colleague`): a Codex resident started on this machine or on
     /// the machine `node` names, with `prompt` as its first words. `label`
@@ -119,6 +122,9 @@ pub enum Reply {
         outcome: WriteOutcome,
     },
     Copied(CopyReport),
+    FileRead {
+        result: crate::file_read::FileReadResult,
+    },
     Asked {
         colleague: Address,
     },

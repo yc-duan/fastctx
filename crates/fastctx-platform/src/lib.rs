@@ -13,6 +13,7 @@ pub mod child;
 pub mod detach;
 pub mod elevation;
 pub mod environment;
+pub mod file_read;
 pub mod home;
 pub mod host_process;
 pub mod hostname;

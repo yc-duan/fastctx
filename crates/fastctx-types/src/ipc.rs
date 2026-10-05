@@ -3,8 +3,9 @@
 //! A client connects to the node's endpoint, says who it is, and is welcomed
 //! or refused. After that it sends calls, one at a time, each with an id it
 //! chose, and the node answers each call once. A client with several calls
-//! to make at once opens several connections. Every frame is one of these
-//! types in its JSON form.
+//! to make at once opens several connections. Control frames are these
+//! types in their JSON form. A file-read chunk header is followed by one
+//! binary payload frame, as described by `file_read::FileReadPart`.
 
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +79,8 @@ pub enum NodeFrame {
     /// Part of what a `Watch` call hands over, which goes on until the
     /// client closes the connection or a `Reply` ends it.
     Watched { id: u64, watched: crate::session::Watched },
+    /// A byte-read header; see `FileReadPart` for the following binary frame.
+    FileRead { id: u64, part: crate::file_read::FileReadPart },
 }
 
 /// Why a call did not do what it asked, in words for whoever reads the

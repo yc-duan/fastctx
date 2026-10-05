@@ -40,6 +40,8 @@ pub enum Domain {
     /// A machine handing over what happens in a session it holds, to a
     /// machine watching it.
     Event,
+    /// Metadata and byte-block digests belonging to one user's file read.
+    FileRead,
     /// An entry of a town's shared ledger.
     Ledger,
 }
@@ -55,6 +57,7 @@ impl Domain {
             Domain::Revocation => "revocation",
             Domain::Ticket => "ticket",
             Domain::Event => "event",
+            Domain::FileRead => "file-read",
             Domain::Ledger => "ledger",
         }
     }
