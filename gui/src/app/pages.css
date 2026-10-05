@@ -426,7 +426,7 @@
   padding: 0 0 0 calc(8px + 2px + var(--space-2));
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
 }
 
 .host-line {
@@ -461,6 +461,15 @@
 
 .host-line.absent .host-name {
   color: var(--text-3);
+}
+
+/* Whether this machine's own sessions use the World's tools, and the
+   button that changes it: a line of its own under the program. */
+.host-use {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
 }
 
 .host-line .text-button {
