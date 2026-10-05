@@ -40,7 +40,15 @@ pub enum RemoteCall {
     /// A resident or job of that machine in detail, for `fastctx w <id>`.
     Look { id: String },
     /// The user's words, typed on the calling machine, to a resident there.
-    Talk { to: ResidentId, text: String },
+    Talk {
+        to: ResidentId,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::attachments::Attachment>,
+    },
+    /// Bytes arrive through this signed call's data connection, followed by
+    /// the JSON word "uploaded". Only a user-authorized entrance emits this.
+    Upload { target: crate::attachments::UploadTarget, file: crate::attachments::UploadFile },
     /// Watch a resident there: what it hands over goes over the call's data
     /// connection until the caller closes it, each piece signed by the
     /// machine that holds the session, naming `watch` and numbered from 0.
@@ -52,6 +60,8 @@ pub enum RemoteCall {
         text: String,
         model: Option<String>,
         reasoning_effort: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::attachments::Attachment>,
     },
     /// Stop the turn a resident there is running, for the user.
     Stop { resident: ResidentId },
@@ -73,6 +83,7 @@ pub enum RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    Uploaded(crate::attachments::Attachment),
     Run(RunReply),
     Written {
         outcome: WriteOutcome,

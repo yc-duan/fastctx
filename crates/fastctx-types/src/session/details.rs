@@ -10,6 +10,8 @@ use super::{Health, HealthKind};
 /// mentions and hook provenance. `Heard.text` is the readable projection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::attachments::Attachment>,
     pub id: String,
     pub client_id: Option<String>,
     pub content: Vec<Value>,

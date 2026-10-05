@@ -377,6 +377,7 @@ impl Row {
             _ => Vec::new(),
         };
         UserMessage {
+            attachments: Vec::new(),
             id: self.value["uuid"].as_str().expect("validated uuid").to_string(),
             client_id: None,
             content,

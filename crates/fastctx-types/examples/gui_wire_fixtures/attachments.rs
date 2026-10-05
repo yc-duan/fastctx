@@ -1,0 +1,103 @@
+use fastctx_types::attachments::{Attachment, UploadFile, UploadTarget};
+use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::residents::{Delivery, Notice};
+use fastctx_types::session::{Happened, SessionEvent, Speaker, attachments::AttachedMessage};
+use fastctx_types::{Address, Call, Reply};
+use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct Fixtures {
+    calls: Vec<Call>,
+    replies: Vec<Reply>,
+    remote_calls: Vec<RemoteCall>,
+    remote_replies: Vec<RemoteReply>,
+    events: Vec<SessionEvent>,
+    host_text: String,
+}
+
+pub fn fixtures() -> Fixtures {
+    let owner = Address { resident: "codex-ab12".parse().unwrap(), machine: "laptop".parse().unwrap() };
+    let town = Some("world".parse().unwrap());
+    let file =
+        UploadFile { name: "截图.png".into(), media_type: "image/png".into(), size: 3145728, sha256: "a".repeat(64) };
+    let attachment = Attachment {
+        id: "attachment-ab12".parse().unwrap(),
+        owner: owner.clone(),
+        town: town.clone(),
+        path: "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png".into(),
+        file: file.clone(),
+    };
+    let attachments = vec![attachment.clone()];
+    let text = "看这张图。\nKeep my words verbatim.".to_string();
+    let envelope = AttachedMessage {
+        delivery: "talk-ab12".parse().unwrap(),
+        from: "phone".parse().unwrap(),
+        attachments: attachments.clone(),
+    };
+    let target = UploadTarget::Resident { resident: owner.resident.clone() };
+    Fixtures {
+        calls: vec![
+            Call::Upload { target: target.clone(), node: Some(owner.machine.clone()), file: file.clone() },
+            Call::Upload {
+                target: UploadTarget::New { agent: "codex".parse().unwrap(), town: town.clone() },
+                node: Some(owner.machine.clone()),
+                file: file.clone(),
+            },
+            Call::Upload {
+                target: UploadTarget::Draft { resident: owner.resident.clone(), town: town.clone() },
+                node: Some(owner.machine.clone()),
+                file: file.clone(),
+            },
+            Call::Talk {
+                to: owner.resident.clone(),
+                machine: Some(owner.machine.clone()),
+                text: text.clone(),
+                attachments: attachments.clone(),
+            },
+            Call::Open {
+                agent: "codex".parse().unwrap(),
+                town: town.clone(),
+                node: Some(owner.machine.clone()),
+                text: text.clone(),
+                model: None,
+                reasoning_effort: None,
+                attachments: attachments.clone(),
+            },
+        ],
+        replies: vec![
+            Reply::Uploaded(attachment.clone()),
+            Reply::Notices {
+                notices: vec![Delivery {
+                    id: envelope.delivery.clone(),
+                    at: "2026-10-04T12:00:00Z".parse().unwrap(),
+                    notice: Notice::Attached { message: envelope.clone(), text: text.clone() },
+                }],
+                notes: Vec::new(),
+            },
+        ],
+        remote_calls: vec![
+            RemoteCall::Upload { target, file },
+            RemoteCall::Talk { to: owner.resident.clone(), text: text.clone(), attachments: attachments.clone() },
+            RemoteCall::Open {
+                agent: "codex".parse().unwrap(),
+                town,
+                text: text.clone(),
+                model: None,
+                reasoning_effort: None,
+                attachments,
+            },
+        ],
+        remote_replies: vec![RemoteReply::Uploaded(attachment)],
+        events: vec![SessionEvent {
+            at: "2026-10-04T12:00:00Z".parse().unwrap(),
+            happened: Happened::Heard {
+                delivery: Some(envelope.delivery.clone()),
+                turn: Some("turn-1".into()),
+                from: Some(Speaker::User { machine: envelope.from.clone() }),
+                text: text.clone(),
+                message: Some(Box::new(envelope.message(&text))),
+            },
+        }],
+        host_text: envelope.render(&text),
+    }
+}

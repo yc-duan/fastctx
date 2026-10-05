@@ -11,6 +11,7 @@
 
 mod agents;
 mod attach;
+mod attachments;
 mod claude;
 mod codex;
 mod colleagues;

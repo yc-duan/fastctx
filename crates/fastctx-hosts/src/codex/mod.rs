@@ -131,8 +131,16 @@ pub struct ThreadSpec {
 pub enum Input {
     /// What the model reads as the next message to it.
     Text(String),
+    /// Separate text blocks retain the attachment envelopes in host history.
+    Messages(Vec<InputMessage>),
     /// A fact shaped as a tool's output, such as a job's end.
     ToolOutput { name: String, namespace: Option<String>, output: String },
+}
+
+#[derive(Clone, Debug)]
+pub struct InputMessage {
+    pub text: String,
+    pub images: Vec<String>,
 }
 
 /// Where words went: a turn that started with them, or the running turn,
@@ -412,6 +420,16 @@ impl CodexHost {
         });
         match input {
             Input::Text(text) => params["input"] = json!([{ "type": "text", "text": text }]),
+            Input::Messages(messages) => {
+                let mut input = Vec::new();
+                for message in messages {
+                    input.push(json!({ "type": "text", "text": message.text }));
+                    for path in message.images {
+                        input.push(json!({ "type": "localImage", "path": path }));
+                    }
+                }
+                params["input"] = json!(input);
+            }
             Input::ToolOutput { name, namespace, output } => {
                 params["toolOutput"] = json!({ "name": name, "namespace": namespace, "output": output })
             }

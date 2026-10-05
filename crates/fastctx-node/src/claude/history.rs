@@ -199,7 +199,7 @@ fn place(mut events: Vec<SessionEvent>, recorded: &[SessionEvent]) -> Vec<Sessio
         if let Happened::Heard { turn, text, .. } = &event.happened {
             let told = claude::is_framed(text)
                 || turn.as_deref().and_then(|turn| heard.get(turn)).is_some_and(|said| said.contains(&text.as_str()));
-            if told {
+            if told && fastctx_types::session::attachments::AttachedMessage::read(text).is_none() {
                 continue;
             }
         }

@@ -3,8 +3,9 @@
 //! A client connects to the node's endpoint, says who it is, and is welcomed
 //! or refused. After that it sends calls, one at a time, each with an id it
 //! chose, and the node answers each call once. A client with several calls
-//! to make at once opens several connections. Every frame is one of these
-//! types in its JSON form.
+//! to make at once opens several connections. Frames are these JSON types,
+//! except after Upload: that dedicated connection carries raw byte frames
+//! through an empty end frame, then the node sends its final JSON reply.
 
 use serde::{Deserialize, Serialize};
 

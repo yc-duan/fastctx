@@ -29,6 +29,7 @@ pub fn read(item: &Value, completed: bool) -> Read {
             return Read::Words {
                 text,
                 message: UserMessage {
+                    attachments: Vec::new(),
                     id,
                     client_id: item.get("clientId").and_then(Value::as_str).map(str::to_string),
                     content: array(item, "content"),
@@ -50,6 +51,7 @@ pub fn read(item: &Value, completed: bool) -> Read {
             return Read::Words {
                 text,
                 message: UserMessage {
+                    attachments: Vec::new(),
                     id,
                     client_id: None,
                     content: Vec::new(),

@@ -15,11 +15,12 @@ use std::sync::Arc;
 use fastctx_net::data::Stream;
 use fastctx_net::link::Feed;
 use fastctx_net::sign::Domain;
+use fastctx_types::attachments::Attachment;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::ResidentDir;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::residents::{About, Activity, Delivery, Host, Landed, Notice, Now, Origin};
-use fastctx_types::session::{SessionEvent, Speaker, Watched};
+use fastctx_types::residents::{About, Activity, Host, Landed, Now, Origin};
+use fastctx_types::session::{SessionEvent, Watched};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,7 @@ pub async fn talk(
     to: ResidentId,
     machine: Option<MachineName>,
     text: String,
+    attachments: Vec<Attachment>,
 ) -> Result<(Address, Landed), Failure> {
     let here = node.machine();
     let machine = match machine {
@@ -49,11 +51,11 @@ pub async fn talk(
         None => locate(node, &to).await?,
     };
     if machine == here {
-        let landed = talk_here(node, &here, &to, text).await?;
+        let landed = talk_here(node, &here, &to, text, attachments).await?;
         return Ok((Address { machine: here, resident: to }, landed));
     }
     let link = link(node)?;
-    let call = RemoteCall::Talk { to: to.clone(), text };
+    let call = RemoteCall::Talk { to: to.clone(), text, attachments };
     match link.call(&machine, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
         Ok(RemoteReply::Said { landed }) => Ok((Address { machine, resident: to }, landed)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a talk"))),
@@ -67,9 +69,10 @@ pub async fn talk_here(
     typed_on: &MachineName,
     to: &ResidentId,
     text: String,
+    attachments: Vec<Attachment>,
 ) -> Result<Landed, Failure> {
-    let notice = Notice::Words { from: Speaker::User { machine: typed_on.clone() }, text };
-    let delivery = Delivery { id: speech::new_id("talk"), at: Timestamp::now(), notice };
+    crate::attachments::resolve(node, to, &attachments).await?;
+    let delivery = crate::attachments::delivery(typed_on, text, attachments);
     speech::tell_here(node, to, delivery, Owed::Nobody).await
 }
 
@@ -185,9 +188,23 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>) -> Ve
     let Some(hosted) = hosted else {
         return recorded_history(recorded);
     };
+    let delivered: std::collections::HashSet<_> = recorded
+        .iter()
+        .filter_map(|event| match &event.happened {
+            Happened::Heard { delivery: Some(id), .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
     let mut history: Vec<SessionEvent> = hosted
         .into_iter()
-        .filter(|event| !matches!(&event.happened, Happened::Heard { text, .. } if fastctx_hands::told::is_told(text)))
+        .flat_map(fastctx_types::session::attachments::restore)
+        .filter(|event| match &event.happened {
+            Happened::Heard { delivery: Some(id), message: Some(message), .. } if !message.attachments.is_empty() => {
+                !delivered.contains(id)
+            }
+            Happened::Heard { text, .. } => !fastctx_hands::told::is_told(text),
+            _ => true,
+        })
         .collect();
     for event in recorded {
         let same = history.iter().position(|other| match (&event.happened, &other.happened) {
@@ -324,11 +341,12 @@ pub async fn open(
     target: Option<MachineName>,
     text: String,
     options: fastctx_types::agents::SessionOptions,
+    attachments: Vec<Attachment>,
 ) -> Result<(Address, Landed), Failure> {
     let here = node.machine();
     match target.filter(|target| *target != here) {
         None => {
-            let (id, landed) = open_here(node, &here, agent, town, text, options).await?;
+            let (id, landed) = open_here(node, &here, agent, town, text, options, attachments).await?;
             Ok((Address { machine: here, resident: id }, landed))
         }
         Some(target) => {
@@ -339,6 +357,7 @@ pub async fn open(
                 text,
                 model: options.model,
                 reasoning_effort: options.reasoning_effort,
+                attachments,
             };
             match link.call(&target, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
                 Ok(RemoteReply::Opened { resident, landed }) => Ok((Address { machine: target, resident }, landed)),
@@ -359,10 +378,11 @@ pub async fn open_here(
     town: Option<TownName>,
     text: String,
     options: fastctx_types::agents::SessionOptions,
+    attachments: Vec<Attachment>,
 ) -> Result<(ResidentId, Landed), Failure> {
     match agent.as_str() {
         "codex" => {}
-        "claude" => return crate::claude::open_here(node, typed_on, town, text, options).await,
+        "claude" => return crate::claude::open_here(node, typed_on, town, text, options, attachments).await,
         _ => {
             return Err(Failure::new(format!(
                 "the World opens codex and claude sessions; it cannot open {agent} ones"
@@ -372,7 +392,7 @@ pub async fn open_here(
     if let Some(town) = &town {
         crate::town::project::spans_here(node, town).await?;
     }
-    let id = node.residents.new_id(&agent)?;
+    let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
     let origin = Origin::User;
     crate::session_options::keep(node, &id, &options)?;
     let (spec, heard) = crate::colleagues::thread_spec(node, &id, &origin, town.as_ref()).await?;
@@ -403,7 +423,7 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
     node.residents.set_heard(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
-    let landed = talk_here(node, typed_on, &id, text).await?;
+    let landed = talk_here(node, typed_on, &id, text, attachments).await?;
     Ok((id, landed))
 }
 

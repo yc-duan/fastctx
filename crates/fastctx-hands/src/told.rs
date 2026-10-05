@@ -39,6 +39,7 @@ pub fn told(notice: &Notice) -> String {
             colleague.resident, colleague.machine, health.text, colleague.resident
         ),
         Notice::Words { from, text } => words(from, text),
+        Notice::Attached { message, text } => message.render(text),
     }
 }
 

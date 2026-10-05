@@ -79,7 +79,7 @@ impl World {
         &self.dir
     }
 
-    async fn connect(&self) -> Result<Client, Error> {
+    pub(crate) async fn connect(&self) -> Result<Client, Error> {
         Ok(Client::connect_or_start_with(&self.dir, self.peer.clone(), self.node_program.as_deref()).await?)
     }
 
@@ -201,7 +201,7 @@ impl World {
 
     /// The user's words to a resident on any machine.
     pub async fn talk(&self, to: ResidentId, machine: Option<MachineName>, text: String) -> Result<Said, Error> {
-        match self.ask(Call::Talk { to, machine, text }).await? {
+        match self.ask(Call::Talk { to, machine, text, attachments: Vec::new() }).await? {
             Reply::Spoken { to, landed } => Ok(Said { to, landed }),
             other => Err(unexpected(other)),
         }
@@ -236,6 +236,7 @@ impl World {
                 text,
                 model: options.model,
                 reasoning_effort: options.reasoning_effort,
+                attachments: Vec::new(),
             })
             .await?
         {

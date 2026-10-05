@@ -9,6 +9,7 @@
 //! thing asked of the World; [`TownView`], who is where in the shape to show
 //! it; [`Conversation`], talking to a resident and following its turns.
 
+pub mod attachments;
 pub mod conversation;
 pub mod host;
 pub mod shown;

@@ -6,6 +6,8 @@ use serde::Serialize;
 
 #[path = "gui_wire_fixtures/agents.rs"]
 mod agents;
+#[path = "gui_wire_fixtures/attachments.rs"]
+mod attachments;
 #[path = "gui_wire_fixtures/session.rs"]
 mod session;
 #[path = "gui_wire_fixtures/since.rs"]
@@ -19,6 +21,7 @@ struct Fixtures {
     world: world::Fixtures,
     since: since::Fixtures,
     agents: agents::Fixtures,
+    attachments: attachments::Fixtures,
 }
 
 fn main() {
@@ -27,6 +30,7 @@ fn main() {
         world: world::fixtures(),
         since: since::fixtures(),
         agents: agents::fixtures(),
+        attachments: attachments::fixtures(),
     };
     let mut out = io::stdout().lock();
     serde_json::to_writer_pretty(&mut out, &fixtures).expect("serialize GUI fixtures");

@@ -174,6 +174,7 @@ pub fn fixtures() -> Fixtures {
     {
         let message = if i == 0 {
             Some(Box::new(UserMessage {
+                attachments: Vec::new(),
                 id: "message-1".into(),
                 client_id: Some("client-1".into()),
                 content: vec![
