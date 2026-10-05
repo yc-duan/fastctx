@@ -5,7 +5,6 @@
 // words go once everything attached has; what the agent is told of each,
 // and where it was put, is the World's to say.
 
-import type { JsonValue } from "../world/wire";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
 
@@ -36,14 +35,15 @@ export interface Attached {
   source: AttachSource;
   state: "sending" | "ready" | "failed";
   /** What the World answered once it arrived, handed back with the words. */
-  ref: JsonValue | null;
+  /** What the World answered for it, handed back with the words. */
+  ref: unknown;
   why: string | null;
 }
 
 export interface AttachSeam {
   /** Carries one attachment to the agent's machine; resolves with what
    *  the World answered for it. */
-  upload(source: AttachSource, name: string, progress: (sent: number) => void): Promise<JsonValue>;
+  upload(source: AttachSource, name: string, progress: (sent: number) => void): Promise<unknown>;
 }
 
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
@@ -108,7 +108,7 @@ export class AttachTray {
   }
 
   /** What arrived, for sending with the words; the tray is emptied. */
-  take(): { refs: JsonValue[]; shown: Attached[] } {
+  take(): { refs: unknown[]; shown: Attached[] } {
     const ready = this.items.filter((item) => item.state === "ready");
     this.items = [];
     this.draw();

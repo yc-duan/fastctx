@@ -5,7 +5,6 @@
 import type { ComposerWords } from "../app/words";
 import type { Words } from "../words";
 import type { Control, Controlled, ModelOffer, Offers } from "../world/control";
-import type { JsonValue } from "../world/wire";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { Menu, commandRow, commandsOf, modelRow, type MenuCommand } from "./commands";
@@ -71,7 +70,7 @@ export interface PageOptions {
     find(query: string): Promise<FoundFile[]>;
   };
   /** Sends the user's words, and what arrived of what was attached. */
-  send(text: string, attached: { refs: JsonValue[]; shown: Attached[] }): void;
+  send(text: string, attached: { refs: unknown[]; shown: Attached[] }): void;
   stop(): void;
 }
 

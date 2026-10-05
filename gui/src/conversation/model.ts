@@ -113,7 +113,21 @@ export class Conversation {
           (entry) => entry.kind === "heard" && entry.text === event.text && event.turn !== null && entry.turn === event.turn,
         );
         if (!known) {
-          this.entries.push({ kind: "heard", key: this.key("heard"), from: event.from, text: event.text, turn: event.turn });
+          // The files that came with the words, as the World kept them.
+          const attached = (event.message?.attachments ?? []).map((file) => ({
+            name: file.name,
+            size: file.size,
+            image: file.media_type.startsWith("image/"),
+            preview: null,
+          }));
+          this.entries.push({
+            kind: "heard",
+            key: this.key("heard"),
+            from: event.from,
+            text: event.text,
+            turn: event.turn,
+            ...(attached.length ? { attached } : {}),
+          });
         }
         return;
       }

@@ -33,6 +33,7 @@ use tauri::ipc::Channel;
 #[cfg(windows)]
 mod desktop_presence;
 mod reading;
+mod uploading;
 
 struct Shell {
     world: World,
@@ -142,20 +143,72 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
     }
 }
 
-/// The user's words to a resident.
+/// The user's words to a resident, with the files uploaded for them.
 #[tauri::command]
 async fn talk(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
     text: String,
+    attachments: Option<Vec<fastctx_types::attachments::Attachment>>,
 ) -> Result<Spoken, String> {
     let said = shell
         .world
-        .talk(resident(resident_id)?, machine(machine_name)?, text)
+        .talk_with_attachments(resident(resident_id)?, machine(machine_name)?, text, attachments.unwrap_or_default())
         .await
         .map_err(|error| error.to_string())?;
     Ok(Spoken { to: said.to, landed: said.landed })
+}
+
+/// Carries a file on this computer to a resident's machine, for words to
+/// it; `sent` hears how much has gone.
+#[tauri::command]
+async fn upload_path(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: Option<String>,
+    path: String,
+    sent: Channel<u64>,
+) -> Result<fastctx_types::attachments::Attachment, String> {
+    let target = fastctx_types::attachments::UploadTarget::Resident { resident: resident(resident_id)? };
+    uploading::from_path(&shell.world, target, machine(machine_name)?, std::path::Path::new(&path), sent).await
+}
+
+/// Carries bytes the page holds to a resident's machine. The bytes are the
+/// body; whom they are for and what they are come as headers, each
+/// percent-encoded, since a name may be in any language.
+#[tauri::command]
+async fn upload_bytes(
+    shell: tauri::State<'_, Shell>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<fastctx_types::attachments::Attachment, String> {
+    let header = |name: &str| -> Result<String, String> {
+        let raw = request.headers().get(name).ok_or(format!("the upload names no {name}"))?;
+        decoded(raw.to_str().map_err(|error| error.to_string())?)
+    };
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("the attachment's bytes did not come as bytes".into());
+    };
+    let target = fastctx_types::attachments::UploadTarget::Resident { resident: resident(header("resident")?)? };
+    let machine = machine(Some(header("machine")?).filter(|name| !name.is_empty()))?;
+    uploading::from_bytes(&shell.world, target, machine, header("name")?, header("type")?, bytes.clone()).await
+}
+
+/// Undoes `encodeURIComponent`.
+fn decoded(text: &str) -> Result<String, String> {
+    let mut bytes = Vec::with_capacity(text.len());
+    let mut rest = text.as_bytes();
+    while let Some((&first, tail)) = rest.split_first() {
+        if first == b'%' && tail.len() >= 2 {
+            let pair = std::str::from_utf8(&tail[..2]).map_err(|error| error.to_string())?;
+            bytes.push(u8::from_str_radix(pair, 16).map_err(|error| format!("%{pair}: {error}"))?);
+            rest = &tail[2..];
+        } else {
+            bytes.push(first);
+            rest = tail;
+        }
+    }
+    String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
 /// A project's overview: its map, and who is in its town now.
@@ -481,6 +534,8 @@ pub fn run() {
             watch,
             unwatch,
             talk,
+            upload_path,
+            upload_bytes,
             open,
             stop,
             look,

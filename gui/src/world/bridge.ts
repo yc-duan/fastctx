@@ -9,6 +9,7 @@ import type { WorldAgents } from "./agents";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
+import type { Attachment } from "./attachments";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
@@ -74,8 +75,30 @@ export function unwatch(id: number): Promise<void> {
   return invoke("unwatch", { id });
 }
 
-export function talk(who: Address, text: string): Promise<{ to: Address; landed: Landed }> {
-  return invoke("talk", { residentId: who.resident, machineName: who.machine, text });
+export function talk(who: Address, text: string, attachments: Attachment[] = []): Promise<{ to: Address; landed: Landed }> {
+  return invoke("talk", { residentId: who.resident, machineName: who.machine, text, attachments });
+}
+
+/** Carries a file on this computer to the agent's machine for words to
+ *  it; `sent` hears how many bytes have gone. */
+export function uploadPath(who: Address, path: string, sent: (bytes: number) => void): Promise<Attachment> {
+  const pieces = new Channel<number>();
+  pieces.onmessage = sent;
+  return invoke("upload_path", { residentId: who.resident, machineName: who.machine, path, sent: pieces });
+}
+
+/** Carries bytes the page holds (a pasted picture) to the agent's machine.
+ *  They go as the call's body; who and what as headers. */
+export async function uploadBytes(who: Address, file: File): Promise<Attachment> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return invoke("upload_bytes", bytes, {
+    headers: {
+      resident: encodeURIComponent(who.resident),
+      machine: encodeURIComponent(who.machine),
+      name: encodeURIComponent(file.name),
+      type: encodeURIComponent(file.type),
+    },
+  });
 }
 
 /** Opens a conversation with an agent; the model and reasoning effort are

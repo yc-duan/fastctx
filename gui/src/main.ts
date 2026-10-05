@@ -4,6 +4,8 @@
 // `?s=home|claude|codex|project|journal|machines|settings|new`,
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import type { Attachment } from "./world/attachments";
 import "katex/dist/katex.min.css";
 import "./design/fonts.css";
 import "./design/tokens.css";
@@ -85,6 +87,8 @@ import {
   setupState,
   onComputer,
   readText,
+  uploadBytes,
+  uploadPath,
   readBytes,
   keepHere,
   releaseHere,
@@ -267,6 +271,30 @@ async function withFirstLines(happenings: Happening[]): Promise<Happening[]> {
 
 const detailsWords = english ? enDetails : zhDetails;
 const composerWords = english ? enComposer : zhComposer;
+
+/** Files dropped onto the window from the system, by path, as the shell
+ *  hands them over; returns how to stop listening. */
+function windowDrops(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void {
+  let stop: (() => void) | null = null;
+  let left = false;
+  void getCurrentWebview()
+    .onDragDropEvent(({ payload }) => {
+      if (payload.type === "enter" || payload.type === "over") on.over(true);
+      else if (payload.type === "leave") on.over(false);
+      else {
+        on.over(false);
+        on.dropped(payload.paths);
+      }
+    })
+    .then((unlisten) => {
+      if (left) unlisten();
+      else stop = unlisten;
+    });
+  return () => {
+    left = true;
+    stop?.();
+  };
+}
 
 /** A conversation as Markdown, named as its page names it. */
 function exported(conversation: Conversation, someone: Someone): () => string {
@@ -503,6 +531,18 @@ function liveTalk(address: Address): Page {
       open: openOutside,
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
+    attach: {
+      words: composerWords.attach,
+      seam: {
+        upload: async (source, _name, progress) => {
+          if (source.kind === "path") return uploadPath(address, source.path, progress);
+          const done = await uploadBytes(address, source.file);
+          progress(source.file.size);
+          return done;
+        },
+      },
+      drops: windowDrops,
+    },
     details: detailsOf(address, async () => {
       const [found] = await look([address.resident]);
       const there = found?.found.find(
@@ -510,10 +550,14 @@ function liveTalk(address: Address): Page {
       );
       return there && there.kind === "resident" ? there : null;
     }, exported(conversation, someone)),
-    send(text) {
-      const key = conversation.sending(text, here);
+    send(text, attached) {
+      const key = conversation.sending(
+        text,
+        here,
+        attached.shown.map(({ name, size, image, preview }) => ({ name, size, image, preview })),
+      );
       page.update();
-      talk(address, text)
+      talk(address, text, attached.refs as Attachment[])
         .then(({ to, landed }) => {
           // Words in a turn take their place when the session hears them;
           // words in no turn yet say where they are.
