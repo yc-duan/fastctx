@@ -304,6 +304,9 @@ async fn journal(
 
 /// Asks an agent into the World for the user: on a machine, in a town,
 /// with the user's words as the first it hears.
+// Each argument is a named field of the page's call; a struct would only
+// nest them one level deeper there.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn open(
     shell: tauri::State<'_, Shell>,

@@ -25,8 +25,10 @@ pub struct BytesRead {
 
 pub async fn read_bytes(world: &World, machine: Option<MachineName>, path: String) -> Result<BytesRead, String> {
     use base64::Engine as _;
-    let mut reading =
-        world.read_file(machine, ReadFileRequest { path, range: FileRange::All }).await.map_err(|error| error.to_string())?;
+    let mut reading = world
+        .read_file(machine, ReadFileRequest { path, range: FileRange::All })
+        .await
+        .map_err(|error| error.to_string())?;
     let mut bytes = Vec::new();
     while let Some(block) = reading.next().await.map_err(|error| error.to_string())? {
         bytes.extend_from_slice(&block);
@@ -34,8 +36,14 @@ pub async fn read_bytes(world: &World, machine: Option<MachineName>, path: Strin
     Ok(BytesRead { info: reading.info().clone(), base64: base64::engine::general_purpose::STANDARD.encode(bytes) })
 }
 
-pub async fn read_text(world: &World, machine: Option<MachineName>, path: String, range: FileRange) -> Result<TextRead, String> {
-    let mut reading = world.read_file(machine, ReadFileRequest { path, range }).await.map_err(|error| error.to_string())?;
+pub async fn read_text(
+    world: &World,
+    machine: Option<MachineName>,
+    path: String,
+    range: FileRange,
+) -> Result<TextRead, String> {
+    let mut reading =
+        world.read_file(machine, ReadFileRequest { path, range }).await.map_err(|error| error.to_string())?;
     let mut bytes = Vec::new();
     while let Some(block) = reading.next().await.map_err(|error| error.to_string())? {
         bytes.extend_from_slice(&block);

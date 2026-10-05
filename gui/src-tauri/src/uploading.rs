@@ -24,7 +24,8 @@ pub async fn from_path(
     path: &Path,
     sent: Channel<u64>,
 ) -> Result<Attachment, String> {
-    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).ok_or("an attachment has no file name")?;
+    let name =
+        path.file_name().map(|name| name.to_string_lossy().into_owned()).ok_or("an attachment has no file name")?;
     let (size, sha256) = digest(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
     let file = tokio::fs::File::open(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
     let upload = UploadFile { media_type: media_type_of(&name).to_string(), name, size, sha256 };
@@ -97,7 +98,11 @@ struct Counted<R> {
 }
 
 impl<R: AsyncRead + Unpin> AsyncRead for Counted<R> {
-    fn poll_read(mut self: Pin<&mut Self>, context: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
         let before = buffer.filled().len();
         let polled = Pin::new(&mut self.inner).poll_read(context, buffer);
         let read = buffer.filled().len() - before;

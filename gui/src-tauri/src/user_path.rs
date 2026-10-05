@@ -16,7 +16,8 @@ pub enum Added {
 /// Puts `dir` on this user's PATH.
 #[cfg(windows)]
 pub fn add(dir: &Path) -> Result<Added, String> {
-    let key = windows_registry::CURRENT_USER.create("Environment").map_err(|error| format!("HKCU\\Environment: {error}"))?;
+    let key =
+        windows_registry::CURRENT_USER.create("Environment").map_err(|error| format!("HKCU\\Environment: {error}"))?;
     let added = add_to(&key, dir)?;
     if added == Added::Added {
         announce();
@@ -90,7 +91,9 @@ fn expand(entry: &str) -> String {
 #[cfg(windows)]
 fn announce() {
     use windows::Win32::Foundation::{LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
+    };
     use windows::core::w;
     // A window that does not answer is passed over after five seconds, as
     // Microsoft's documentation of environment variables broadcasts it.
