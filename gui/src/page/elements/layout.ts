@@ -70,8 +70,17 @@ export class Stat extends PageElement {
     if (this.hasAttribute("value")) return this.getAttribute("value")!;
     if (this.loading) return "…";
     const data = this.data;
-    if (data && typeof data === "object" && "error" in data) return "—";
+    if (this.failed(data) !== null) return "—";
     return typeof data === "number" ? String(Number(data.toPrecision(6))) : typeof data === "string" ? data : "—";
+  }
+
+  /** Why a bound value is missing: the World's refusal, or an answer
+   *  that holds no number or text where `pick` pointed. */
+  private failed(data: unknown): string | null {
+    if (this.hasAttribute("value") || this.loading) return null;
+    if (data && typeof data === "object" && "error" in data) return String((data as { error: unknown }).error);
+    if (this.getAttribute("tool") && typeof data !== "number" && typeof data !== "string") return `pick: ${this.getAttribute("pick") ?? "the answer"} is not a number or text`;
+    return null;
   }
 
   static observedAttributes = ["label", "value", "unit", "delta", "good", "note", ...BOUND];
@@ -92,6 +101,7 @@ export class Stat extends PageElement {
     .better { color: var(--alive); }
     .worse { color: var(--wrong); }
     .note { margin-top: var(--space-1); font-size: var(--size-small); color: var(--text-3); }
+    .note.wrong { color: var(--wrong); }
   `);
 
   protected draw(): void {
@@ -106,6 +116,10 @@ export class Stat extends PageElement {
     this.shadow.innerHTML = `
       <div class="label">${escape(this.getAttribute("label"))}</div>
       <div class="value"><span>${escape(this.value())}</span>${this.getAttribute("unit") ? `<span class="unit">${escape(this.getAttribute("unit"))}</span>` : ""}${delta ? `<span class="delta ${tone}">${escape(delta)}</span>` : ""}</div>
-      ${this.getAttribute("note") ? `<div class="note">${escape(this.getAttribute("note"))}</div>` : ""}`;
+      ${(() => {
+        const why = this.failed(this.data);
+        if (why !== null) return `<div class="note wrong" role="status">${escape(why)}</div>`;
+        return this.getAttribute("note") ? `<div class="note">${escape(this.getAttribute("note"))}</div>` : "";
+      })()}`;
   }
 }
