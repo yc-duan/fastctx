@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 jiff.workspace = true

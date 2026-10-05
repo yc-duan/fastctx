@@ -1,0 +1,101 @@
+//! The existing signed watch stream, subscribed to directly by the device.
+
+use std::sync::Arc;
+
+use fastctx_net::link::{Feed, Link};
+use fastctx_net::sign::{Domain, Signed};
+use fastctx_types::ipc::Failure;
+use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::session::Watched;
+use fastctx_types::{MachineName, ResidentId};
+use serde::Deserialize;
+use tokio::sync::mpsc;
+
+use super::{Device, Session};
+use crate::{CallError, Error};
+
+/// The shape signed by `fastctx-node::talk::serve_watch`. It is bound to
+/// one randomly named subscription, with consecutive sequence numbers.
+#[derive(Deserialize)]
+struct Piece {
+    watch: u64,
+    n: u64,
+    watched: Watched,
+}
+
+pub(crate) struct Watching {
+    pieces: mpsc::UnboundedReceiver<Result<Watched, CallError>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Device {
+    pub(crate) async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {
+        let session = self.connected()?;
+        session.check_identity().await?;
+        let machine = session.locate(&resident, machine).await?;
+        Watching::start(session, machine, resident)
+    }
+}
+
+impl Watching {
+    fn start(session: Arc<Session>, machine: MachineName, resident: ResidentId) -> Result<Self, Error> {
+        let watch = u64::from_le_bytes(fastctx_net::sign::random::<8>()?);
+        let (sender, pieces) = mpsc::unbounded_channel();
+        let (feeding, link, from) = (sender.clone(), session.link.clone(), machine.clone());
+        let feed = feed(link, from, watch, feeding);
+        let task = tokio::spawn(async move {
+            let ended = tokio::select! {
+                () = sender.closed() => return,
+                result = session.link.call_with_stream(&machine, RemoteCall::Watch { resident, watch }, feed) => result,
+            };
+            let error = match ended {
+                Ok(Ok(RemoteReply::Watched)) => return,
+                Ok(Ok(_)) => format!("{machine} answered something other than a watch"),
+                Ok(Err(failure)) => failure.to_string(),
+                Err(failure) => failure.to_string(),
+            };
+            let _ = sender.send(Err(CallError::Failed(Failure::new(error))));
+        });
+        Ok(Self { pieces, task })
+    }
+
+    pub async fn next(&mut self) -> Result<Option<Watched>, CallError> {
+        self.pieces.recv().await.transpose()
+    }
+}
+
+impl Drop for Watching {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+fn feed(
+    link: Arc<Link>,
+    from: MachineName,
+    watch: u64,
+    sender: mpsc::UnboundedSender<Result<Watched, CallError>>,
+) -> Feed {
+    Box::new(move |mut stream| {
+        Box::pin(async move {
+            let mut n = 0;
+            loop {
+                let signed = tokio::select! {
+                    () = sender.closed() => return Ok(()),
+                    signed = stream.hear::<Signed>() => signed?,
+                };
+                let piece: Piece = link.unseal(&from, Domain::Event, &signed).await?;
+                if piece.watch != watch || piece.n != n {
+                    return Err(format!(
+                        "{from} sent a piece out of place (watch {:x}, number {}; expected {watch:x}, {n})",
+                        piece.watch, piece.n
+                    ));
+                }
+                n += 1;
+                if sender.send(Ok(piece.watched)).is_err() {
+                    return Ok(());
+                }
+            }
+        })
+    })
+}

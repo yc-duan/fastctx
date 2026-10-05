@@ -33,13 +33,13 @@ enum Ended {
     Stop(String),
 }
 
-pub(super) async fn run(inner: Arc<Inner>, mut changes: super::changes::Changes) {
+pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::Changes>) {
     let mut failures: u32 = 0;
     loop {
         let mut online_since = None;
         let ended = tokio::select! {
             ended = connect(&inner, &mut online_since) => ended,
-            changed = changes.changed() => {
+            changed = changed(&inner, &mut changes) => {
                 let reason = changed.expect("watching network and resume notifications");
                 reconnect(&inner, reason);
                 failures = 0;
@@ -68,13 +68,26 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: super::changes::Changes)
                 inner.status.send_replace(Status::Connecting { since, last_error: Some(reason) });
                 tokio::select! {
                     _ = tokio::time::sleep(backoff(failures)) => {},
-                    changed = changes.changed() => {
+                    changed = changed(&inner, &mut changes) => {
                         reconnect(&inner, changed.expect("watching network and resume notifications"));
                         failures = 0;
                     }
                 }
             }
         }
+    }
+}
+
+async fn changed(inner: &Inner, changes: &mut Option<super::changes::Changes>) -> std::io::Result<&'static str> {
+    let platform = async {
+        match changes {
+            Some(changes) => changes.changed().await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        result = platform => result,
+        () = inner.reconnect.notified() => Ok("the application reported a network change or resume"),
     }
 }
 

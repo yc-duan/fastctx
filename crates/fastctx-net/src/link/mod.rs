@@ -111,6 +111,8 @@ pub(crate) struct Inner {
     next_id: AtomicU64,
     /// Woken when a letter is put in the outbox.
     outbox_changed: Notify,
+    /// An application knows when its network changed or it returned to the foreground.
+    reconnect: Notify,
     /// The task that keeps the connection.
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -155,6 +157,23 @@ impl Link {
     /// device key signs everything it says.
     pub fn start(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
         let changes = changes::Changes::new(node.clone())?;
+        Self::start_with_changes(dir, membership, key, node, Some(changes))
+    }
+
+    /// Starts a link whose network and resume notifications are supplied by
+    /// its application through [`Link::reconnect`]. Heartbeats and automatic
+    /// retries still run here. Mobile applications own their OS callbacks.
+    pub fn start_managed(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
+        Self::start_with_changes(dir, membership, key, node, None)
+    }
+
+    fn start_with_changes(
+        dir: NetDir,
+        membership: Membership,
+        key: SecretKey,
+        node: Arc<dyn Node>,
+        changes: Option<changes::Changes>,
+    ) -> io::Result<Self> {
         dir.prepare()?;
         let counter = Counter::open(dir.counter())?;
         let taken = Taken::open(dir.calls())?;
@@ -194,11 +213,24 @@ impl Link {
             asks: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(0),
             outbox_changed: Notify::new(),
+            reconnect: Notify::new(),
             task: Mutex::new(None),
         });
         let task = tokio::spawn(session::run(inner.clone(), changes));
         *inner.task.lock().expect("never poisoned") = Some(task);
         Ok(Self { inner })
+    }
+
+    /// Invalidates the current connection or dial and skips the retry delay.
+    /// A stopped or revoked membership is never restarted by this signal.
+    pub fn reconnect(&self) {
+        self.inner.reconnect.notify_one();
+    }
+
+    /// Connection changes, including explicit revocation. The initial value
+    /// is the current state; use `changed` to wait for a later one.
+    pub fn subscribe(&self) -> watch::Receiver<Status> {
+        self.inner.status.subscribe()
     }
 
     /// Closes the connection and stops connecting.

@@ -1,6 +1,6 @@
-//! The World as this machine's node shows it: one method for each thing an
-//! interface asks of it. Each call opens its own connection, so calls from
-//! several tasks run side by side.
+//! One World API for local-node interfaces and devices without a node.
+//! Local calls use independent IPC connections; device calls share one
+//! persistent link and are addressed to their machine or a relay.
 
 use fastctx_types::copy::{CopyReport, Place};
 use fastctx_types::ipc::Peer;
@@ -21,6 +21,8 @@ use crate::{CallError, Client, ConnectError, Watching};
 /// Why something asked of the World was not done.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("keeping the device identity: {0}")]
+    Io(#[from] std::io::Error),
     #[error(transparent)]
     Connect(#[from] ConnectError),
     #[error(transparent)]
@@ -31,7 +33,7 @@ pub enum Error {
     Unexpected(String),
 }
 
-/// A World, reached through its node on this machine, speaking as `peer`.
+/// A World reached through a local node or an application's device identity.
 #[derive(Clone)]
 pub struct World {
     dir: WorldDir,
@@ -39,6 +41,7 @@ pub struct World {
     /// The program a node is started from when none runs; this process's
     /// own executable when unset.
     node_program: Option<std::path::PathBuf>,
+    device: Option<std::sync::Arc<crate::device::Device>>,
 }
 
 /// What became of words said to a resident.
@@ -59,7 +62,22 @@ pub struct TownRecord {
 
 impl World {
     pub fn new(dir: WorldDir, peer: Peer) -> Self {
-        Self { dir, peer, node_program: None }
+        Self { dir, peer, node_program: None, device: None }
+    }
+
+    /// The same interface over a device's persistent network connection.
+    /// No local node is discovered or started by this World.
+    pub fn from_device(device: std::sync::Arc<crate::device::Device>) -> Self {
+        Self {
+            dir: WorldDir::at(device.directory()),
+            peer: Peer::Command { resident: None, session: None },
+            node_program: None,
+            device: Some(device),
+        }
+    }
+
+    pub fn device(&self) -> Option<&std::sync::Arc<crate::device::Device>> {
+        self.device.as_ref()
     }
 
     /// The same World, whose node, when none runs, is started from
@@ -75,6 +93,8 @@ impl World {
         Ok(Self::new(WorldDir::under(&fastctx_platform::fastctx_root()?), crate::command_peer()))
     }
 
+    /// The local node's World directory, or the application's private
+    /// device directory. A device directory holds no local node or towns.
     pub fn dir(&self) -> &WorldDir {
         &self.dir
     }
@@ -85,6 +105,9 @@ impl World {
 
     /// Sends one call and returns its answer and the machine that answered.
     pub async fn call(&self, call: Call) -> Result<(Reply, MachineName), Error> {
+        if let Some(device) = &self.device {
+            return device.call(call).await;
+        }
         let mut client = self.connect().await?;
         let reply = client.call(call).await?;
         Ok((reply, client.machine.clone()))
@@ -287,6 +310,9 @@ impl World {
     /// Watches a resident on any machine: its history, then each event as
     /// it happens.
     pub async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {
+        if let Some(device) = &self.device {
+            return Ok(Watching::device(device.watch(resident, machine).await?));
+        }
         Ok(self.connect().await?.watch(Call::Watch { resident, machine }).await?)
     }
 
