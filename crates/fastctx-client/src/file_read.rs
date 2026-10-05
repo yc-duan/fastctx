@@ -1,5 +1,6 @@
-//! Original file bytes for interfaces. Each read owns its IPC connection;
-//! dropping it cancels the read and propagates backpressure to the source.
+//! Original file bytes for interfaces, over a local IPC connection or a
+//! device's authenticated data stream. Dropping a read cancels it; bounded
+//! queues propagate backpressure to the source.
 
 use fastctx_types::file_read::{FileReadComplete, FileReadInfo, FileReadPart, ReadFileRequest};
 use fastctx_types::ipc::{ClientFrame, NodeFrame};
@@ -8,10 +9,14 @@ use fastctx_types::{Call, MachineName, Reply};
 use crate::{CallError, Client, Error, World};
 
 impl World {
-    /// Opens a file on `machine` (this node when absent) as the user.
+    /// Opens a file on `machine` (this node when absent) as the user. A
+    /// device has no local node and must name the machine holding the file.
     /// Consume `Reading::next` through its terminal result; bytes handed
     /// out before that are provisional if the read fails or changes.
     pub async fn read_file(&self, machine: Option<MachineName>, request: ReadFileRequest) -> Result<Reading, Error> {
+        if let Some(device) = self.device() {
+            return Reading::open(Source::Device(device.read_file(machine, request).await?)).await;
+        }
         self.connect().await?.read_file(machine, request).await
     }
 }
@@ -23,19 +28,7 @@ impl Client {
         let id = self.next;
         let call = Call::ReadFile { machine, request };
         self.connection.send(&crate::to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
-        match receive(&mut self).await? {
-            NodeFrame::FileRead { id: answered, part: FileReadPart::Opened { info } } if answered == id => {
-                if info.offset > info.file.size || info.length > info.file.size - info.offset {
-                    return Err(broken("the node selected a range outside the observed file"));
-                }
-                Ok(Reading { client: self, id, info, received: 0, complete: None, ended: false })
-            }
-            NodeFrame::Reply { id: answered, reply } if answered == id => match reply.map_err(CallError::Failed)? {
-                Reply::FileRead { result: Err(error) } => Err(error.into()),
-                _ => Err(broken("the file read ended before its opening metadata")),
-            },
-            _ => Err(broken("the node answered something other than the file's opening metadata")),
-        }
+        Reading::open(Source::Local { client: self, id }).await
     }
 }
 
@@ -43,8 +36,7 @@ impl Client {
 /// buffer is retained. `next` is not cancellation-safe: cancel by dropping
 /// the entire `Reading`, rather than abandoning a partially received frame.
 pub struct Reading {
-    client: Client,
-    id: u64,
+    source: Source,
     info: FileReadInfo,
     received: u64,
     complete: Option<FileReadComplete>,
@@ -81,30 +73,33 @@ impl Reading {
         result
     }
 
+    async fn open(mut source: Source) -> Result<Self, Error> {
+        match source.next().await? {
+            fastctx_net::file_read::Part::Opened(info) => {
+                if info.offset > info.file.size || info.length > info.file.size - info.offset {
+                    return Err(broken("the node selected a range outside the observed file"));
+                }
+                Ok(Self { source, info, received: 0, complete: None, ended: false })
+            }
+            fastctx_net::file_read::Part::Finished(Err(error)) => Err(error.into()),
+            _ => Err(broken("the file read ended before its opening metadata")),
+        }
+    }
+
     async fn receive(&mut self) -> Result<Option<Vec<u8>>, Error> {
-        match receive(&mut self.client).await? {
-            NodeFrame::FileRead { id, part: FileReadPart::Chunk { offset, bytes } } if id == self.id => {
-                if offset != self.info.offset + self.received || bytes == 0 || bytes > self.info.length - self.received
+        use fastctx_net::file_read::Part;
+        match self.source.next().await? {
+            Part::Chunk { offset, bytes } => {
+                if offset != self.info.offset + self.received
+                    || bytes.is_empty()
+                    || bytes.len() as u64 > self.info.length - self.received
                 {
                     return Err(broken("the file read sent bytes outside the selected range or out of order"));
                 }
-                let data = self
-                    .client
-                    .connection
-                    .recv()
-                    .await
-                    .map_err(CallError::Broken)?
-                    .ok_or_else(|| broken("the file read ended in a binary block"))?;
-                if data.len() as u64 != bytes {
-                    return Err(broken("the binary block's length differs from its header"));
-                }
-                self.received += bytes;
-                Ok(Some(data))
+                self.received += bytes.len() as u64;
+                Ok(Some(bytes))
             }
-            NodeFrame::Reply { id, reply } if id == self.id => {
-                let Reply::FileRead { result } = reply.map_err(CallError::Failed)? else {
-                    return Err(broken("the node answered something other than a file read"));
-                };
+            Part::Finished(result) => {
                 let complete = result.map_err(|error| {
                     if error.bytes != self.received {
                         broken("the file read's failure disagrees with the received byte count")
@@ -121,6 +116,46 @@ impl Reading {
                 self.complete = Some(complete);
                 Ok(None)
             }
+            _ => Err(broken("the node sent an unexpected frame in a file read")),
+        }
+    }
+}
+
+enum Source {
+    Local { client: Client, id: u64 },
+    Device(crate::device::file_read::Reading),
+}
+
+impl Source {
+    async fn next(&mut self) -> Result<fastctx_net::file_read::Part, Error> {
+        use fastctx_net::file_read::Part;
+        let Self::Local { client, id } = self else {
+            let Self::Device(reading) = self else { unreachable!() };
+            return reading.next().await;
+        };
+        match receive(client).await? {
+            NodeFrame::FileRead { id: answered, part } if answered == *id => match part {
+                FileReadPart::Opened { info } => Ok(Part::Opened(info)),
+                FileReadPart::Chunk { offset, bytes } => {
+                    if bytes == 0 || bytes > fastctx_net::wire::MAX_DATA_MESSAGE as u64 {
+                        return Err(broken("the node declared an invalid file-read block size"));
+                    }
+                    let data = client
+                        .connection
+                        .recv()
+                        .await
+                        .map_err(CallError::Broken)?
+                        .ok_or_else(|| broken("the file read ended in a binary block"))?;
+                    if data.len() as u64 != bytes {
+                        return Err(broken("the binary block's length differs from its header"));
+                    }
+                    Ok(Part::Chunk { offset, bytes: data })
+                }
+            },
+            NodeFrame::Reply { id: answered, reply } if answered == *id => match reply.map_err(CallError::Failed)? {
+                Reply::FileRead { result } => Ok(Part::Finished(result)),
+                _ => Err(broken("the node answered something other than a file read")),
+            },
             _ => Err(broken("the node sent an unexpected frame in a file read")),
         }
     }

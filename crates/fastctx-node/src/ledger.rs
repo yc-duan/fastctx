@@ -33,9 +33,13 @@ use jiff::Timestamp;
 
 use crate::Node;
 
+pub(crate) mod query;
+pub use query::query;
+
 /// Writes an entry into `town`'s ledger: `files`, at paths relative to the
 /// ledger, and for a version of the town's record the machines it spans
-/// from then on. Returns once this machine has it, when the town spans it.
+/// from then on. Returns once this machine has the accepted entry, including
+/// when it wrote on behalf of a device into a town that does not span it.
 pub async fn write(
     node: &Arc<Node>,
     town: &TownName,
@@ -57,7 +61,7 @@ pub async fn write(
                 files,
             };
             link.ledger_write(&entry).await.map_err(Failure::new)?;
-            sync(node, Some(town.clone())).await.map_err(Failure::new)
+            query(node, Some(town)).await.map(|_| ()).map_err(Failure::new)
         }
         None => {
             let (world, here, town) = (node.world.clone(), node.machine(), town.clone());
@@ -131,7 +135,7 @@ pub async fn sync(node: &Arc<Node>, town: Option<TownName>) -> Result<(), String
         if town.as_ref().is_some_and(|town| *town != name) {
             continue;
         }
-        if let Err(error) = take(node, &link, &name, latest).await {
+        if let Err(error) = take(node, &link, &name, latest, false).await {
             problems.push(error);
         }
     }
@@ -139,13 +143,20 @@ pub async fn sync(node: &Arc<Node>, town: Option<TownName>) -> Result<(), String
 }
 
 /// Takes `town`'s entries after the ones this machine has, up to `latest`.
-async fn take(node: &Arc<Node>, link: &Link, town: &TownName, latest: u64) -> Result<(), String> {
+pub(super) async fn take(
+    node: &Arc<Node>,
+    link: &Link,
+    town: &TownName,
+    latest: u64,
+    query: bool,
+) -> Result<(), String> {
     let directory = node.world.town(town);
     let mut after = cursor(&directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
     while after < latest {
-        let (entries, more) = link.ledger_read(town, after).await?;
+        let (entries, more) =
+            if query { link.ledger_query(town, after).await? } else { link.ledger_read(town, after).await? };
         if entries.is_empty() {
-            break;
+            return Err(format!("the hub promised {latest} entries of {town}, but stopped after {after}"));
         }
         for (seq, entry, signed) in entries {
             if seq != after + 1 {
@@ -158,8 +169,8 @@ async fn take(node: &Arc<Node>, link: &Link, town: &TownName, latest: u64) -> Re
                 .map_err(|error| format!("taking entry {seq} of {town}: {error}"))?;
             after = seq;
         }
-        if !more {
-            break;
+        if !more && after < latest {
+            return Err(format!("the hub ended {town}'s ledger at {after}, before its promised {latest}"));
         }
     }
     Ok(())

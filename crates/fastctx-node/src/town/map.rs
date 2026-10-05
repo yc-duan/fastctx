@@ -68,12 +68,19 @@ pub async fn catch_up(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> 
         .map_err(|error| Failure::new(format!("taking {town}'s ledger from the hub: {error}")))
 }
 
+/// An explicit query catches up through the hub's advertised cursor even
+/// when this machine is not a replica member. The cached record alone does
+/// not establish that later versions or journal entries have arrived.
+pub async fn query(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
+    crate::ledger::query(node, Some(town))
+        .await
+        .map(|_| ())
+        .map_err(|error| Failure::new(format!("taking {town}'s ledger from the hub: {error}")))
+}
+
 /// Why there is no map of a town here.
 pub fn no_ledger(node: &Node, town: &TownName) -> Failure {
-    Failure::new(format!(
-        "{} keeps no ledger of a town {town}: there is no such town, or it does not span this machine",
-        node.machine()
-    ))
+    Failure::new(format!("{} keeps no ledger of a town {town}: no record of that town was found", node.machine()))
 }
 
 /// The documents of a canon, read where it is.

@@ -38,12 +38,14 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: JournalCall) -> Resul
         }
         JournalCall::Read { town, journal, before } => {
             let town = caller.town_or(node, town)?;
+            map::query(node, &town).await?;
             let (world, budget) = (node.world.clone(), fastctx_hands::run::window::BUDGET);
             let view = blocking(&town, move |town| read(&world, town, &journal, before.as_ref(), budget)).await?;
             Ok(Reply::Journal { view: Box::new(view) })
         }
         JournalCall::List { town } => {
             let town = caller.town_or(node, town)?;
+            map::query(node, &town).await?;
             let world = node.world.clone();
             let journals = blocking(&town, move |town| read::summaries(&world, town)).await?;
             Ok(Reply::Journals { town, journals })
@@ -67,7 +69,7 @@ async fn add(node: &Arc<Node>, caller: &Caller, town: TownName, adding: Adding) 
     if adding.text.trim().is_empty() {
         return Err(Failure::new("the entry has no text"));
     }
-    map::catch_up(node, &town).await?;
+    map::query(node, &town).await?;
     let world = node.world.clone();
     let (exists, missing) = {
         let (journal, cites) = (journal.clone(), adding.cites.clone());
@@ -316,7 +318,7 @@ async fn describe(
     if text.trim().is_empty() {
         return Err(Failure::new("the description is empty"));
     }
-    map::catch_up(node, &town).await?;
+    map::query(node, &town).await?;
     let world = node.world.clone();
     let (record, descriptions, entries) = {
         let journal = journal.clone();

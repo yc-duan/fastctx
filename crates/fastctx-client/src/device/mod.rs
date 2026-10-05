@@ -2,7 +2,9 @@
 //! agent host, command runner or ledger replica.
 
 mod calls;
+pub(crate) mod file_read;
 mod store;
+mod upload;
 pub(crate) mod watch;
 
 use std::io;

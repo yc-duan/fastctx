@@ -258,6 +258,12 @@ pub enum Question {
     /// The towns this machine spans, each with the number of its latest
     /// entry.
     LedgerTowns,
+    /// The World's towns, for a machine answering its user's queries.
+    /// This does not subscribe it to replication of those towns.
+    LedgerCatalog,
+    /// An explicitly queried town, including one this machine does not span.
+    /// Only machines may query; devices use a node's admitted Relay calls.
+    LedgerQuery { town: TownName, after: u64 },
     /// A town's entries after the one numbered `after`, as many as fit in
     /// one frame.
     LedgerRead { town: TownName, after: u64 },

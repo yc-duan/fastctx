@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use fastctx_types::ipc::Failure;
-use fastctx_types::project::{Record, RecordFields, Stamp, TownSummary, record_path};
+use fastctx_types::project::{Record, RecordFields, Stamp, record_path};
 use fastctx_types::{MachineName, ProjectCall, Reply, TownName};
 use jiff::Timestamp;
 
@@ -20,10 +20,10 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
             let town = caller.town_or(node, town)?;
             edit(node, caller, town, fields).await
         }
-        ProjectCall::List => list(node).await.map(|towns| Reply::Towns { towns }),
+        ProjectCall::List => crate::ledger::query::list(node).await.map(|towns| Reply::Towns { towns }),
         ProjectCall::Show { town } => {
             let town = caller.town_or(node, town)?;
-            map::catch_up(node, &town).await?;
+            map::query(node, &town).await?;
             let records = blocking(node, &town, read::records).await?;
             let (Some(first), Some(record)) = (records.first(), records.last()) else {
                 return Err(map::no_ledger(node, &town));
@@ -33,6 +33,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         }
         ProjectCall::Map { town } => {
             let town = caller.town_or(node, town)?;
+            map::query(node, &town).await?;
             map::view(node, &town).await.map(|map| Reply::Map { map: Box::new(map) })
         }
         ProjectCall::Enter { town } => enter(node, caller, town).await,
@@ -42,7 +43,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
 /// Opens a town: the first version of its record.
 async fn new(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFields) -> Result<Reply, Failure> {
     let _writing = node.writing.lock().await;
-    map::catch_up(node, &town).await?;
+    map::query(node, &town).await?;
     if blocking(node, &town, read::latest).await?.is_some() {
         return Err(Failure::new(format!("the town {town} exists already; fastctx project edit {town} changes it")));
     }
@@ -78,7 +79,7 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
     if fields == RecordFields::default() {
         return Err(Failure::new("nothing to change: give what the next version says"));
     }
-    map::catch_up(node, &town).await?;
+    map::query(node, &town).await?;
     let records = blocking(node, &town, read::records).await?;
     let (Some(first), Some(latest)) = (records.first(), records.last()) else {
         return Err(map::no_ledger(node, &town));
@@ -190,25 +191,6 @@ pub async fn spans_here(node: &Arc<Node>, town: &TownName) -> Result<(), Failure
             record.machines.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
         )))
     }
-}
-
-/// The towns this machine keeps a ledger for and that span it.
-pub async fn list(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
-    let (world, here) = (node.world.clone(), node.machine());
-    tokio::task::spawn_blocking(move || {
-        let mut towns = Vec::new();
-        for town in world.towns()? {
-            let Some(record) = read::latest(&world, &town)? else { continue };
-            if record.machines.contains(&here) {
-                let journals = read::journal_names(&world, &town)?.len();
-                towns.push(TownSummary { town, record, journals });
-            }
-        }
-        std::io::Result::Ok(towns)
-    })
-    .await
-    .map_err(|error| Failure::new(format!("reading the towns: {error}")))?
-    .map_err(|error| Failure::new(format!("reading the towns: {error}")))
 }
 
 /// The calling resident lives in `town` from now on, and is given its map.

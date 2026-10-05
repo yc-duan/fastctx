@@ -16,6 +16,7 @@ mod control;
 mod data;
 mod join;
 mod ledger;
+mod ledger_query;
 mod log;
 mod store;
 

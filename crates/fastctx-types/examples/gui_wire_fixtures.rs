@@ -8,12 +8,12 @@ use serde::Serialize;
 mod agents;
 #[path = "gui_wire_fixtures/attachments.rs"]
 mod attachments;
+#[path = "gui_wire_fixtures/claude.rs"]
+mod claude;
 #[path = "gui_wire_fixtures/control.rs"]
 mod control;
 #[path = "gui_wire_fixtures/file_read.rs"]
 mod file_read;
-#[path = "gui_wire_fixtures/claude.rs"]
-mod claude;
 #[path = "gui_wire_fixtures/session.rs"]
 mod session;
 #[path = "gui_wire_fixtures/since.rs"]

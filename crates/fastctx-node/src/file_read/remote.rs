@@ -1,103 +1,14 @@
-//! Each data block is authenticated before it is exposed locally. The
-//! signed terminal piece is acknowledged before the control call returns.
+//! The serving side of the shared authenticated file-read protocol.
 
-use std::sync::Arc;
-
+use super::Part;
+use crate::Node;
 use fastctx_net::data::Stream;
-use fastctx_net::link::Feed;
-use fastctx_net::sign::{Digest, Domain, Signed, sha256};
-use fastctx_types::MachineName;
+use fastctx_net::file_read::{Content, Piece};
+use fastctx_net::sign::{Digest, Domain, sha256};
 use fastctx_types::file_read::*;
 use fastctx_types::ipc::Failure;
-use fastctx_types::remote::{RemoteCall, RemoteReply};
-use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
-
-use super::{Part, Sender};
-use crate::Node;
-
-#[derive(Serialize, Deserialize)]
-struct Piece {
-    read: u64,
-    n: u64,
-    part: Content,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-enum Content {
-    Opened { info: FileReadInfo },
-    Chunk { offset: u64, bytes: u64, sha256: Digest },
-    Finished { result: FileReadResult },
-}
-
-pub(super) async fn read(
-    node: &Arc<Node>,
-    machine: MachineName,
-    request: ReadFileRequest,
-    sender: &Sender,
-) -> Result<FileReadResult, Failure> {
-    let link = node.link().ok_or_else(|| Failure::new(format!("{} is in no World with {machine}", node.machine())))?;
-    let read = u64::from_le_bytes(fastctx_net::sign::random::<8>().map_err(|e| Failure::new(e.to_string()))?);
-    let (complete, completed) = oneshot::channel();
-    let (receiving, from, sender) = (link.clone(), machine.clone(), sender.clone());
-    let feed: Feed = Box::new(move |mut stream| {
-        Box::pin(async move {
-            let mut n = 0;
-            loop {
-                let signed: Signed = stream.hear().await?;
-                let piece: Piece = receiving.unseal(&from, Domain::FileRead, &signed).await?;
-                if piece.read != read || piece.n != n {
-                    return Err(format!("{from} sent an out-of-order piece for a different file read"));
-                }
-                n += 1;
-                let part = match piece.part {
-                    Content::Opened { info } => {
-                        if info.machine != from {
-                            return Err(format!("{from} named a different machine in the file read"));
-                        }
-                        Part::Opened(info)
-                    }
-                    Content::Chunk { offset, bytes, sha256: expected } => {
-                        // The sender uses one data-message payload per block.
-                        // Reject larger declarations before allocating for them.
-                        if bytes == 0 || bytes > fastctx_net::wire::MAX_DATA_MESSAGE as u64 {
-                            return Err(format!("{from} declared an invalid file-read block size"));
-                        }
-                        let mut data = Vec::with_capacity(bytes as usize);
-                        stream
-                            .take(bytes, |piece| {
-                                data.extend_from_slice(piece);
-                                Ok(())
-                            })
-                            .await?;
-                        if Digest(sha256(&data)) != expected {
-                            return Err(format!("{from}'s file bytes do not match its signed digest"));
-                        }
-                        Part::Chunk { offset, bytes: data }
-                    }
-                    Content::Finished { result } => {
-                        let _ = complete.send(result);
-                        return stream.done().await;
-                    }
-                };
-                sender.send(Ok(part)).await.map_err(|e| e.to_string())?;
-            }
-        })
-    });
-    let reply = link
-        .call_with_stream(&machine, RemoteCall::ReadFile { request, read }, feed)
-        .await
-        .map_err(|e| Failure::new(e.to_string()))??;
-    let RemoteReply::FileRead { result } = reply else {
-        return Err(Failure::new(format!("{machine} answered something other than a file read")));
-    };
-    let terminal = completed.await.map_err(|_| Failure::new("the file read ended without its signed final piece"))?;
-    if terminal != result {
-        return Err(Failure::new("the file read's final piece disagrees with its control reply"));
-    }
-    Ok(result)
-}
+use fastctx_types::remote::RemoteReply;
+use std::sync::Arc;
 
 pub(crate) async fn serve(
     node: &Arc<Node>,

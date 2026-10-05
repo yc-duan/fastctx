@@ -117,6 +117,9 @@ impl World {
         file: UploadFile,
         source: impl AsyncRead + Unpin,
     ) -> Result<Attachment, Error> {
+        if let Some(device) = self.device() {
+            return device.upload(target, node, file, source).await;
+        }
         Ok(self.connect().await?.upload(target, node, file, source).await?)
     }
 

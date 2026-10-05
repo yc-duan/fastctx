@@ -149,6 +149,20 @@ pub(super) fn read(
     })
 }
 
+/// Reads the queried ledger without claiming to know the residents of a
+/// town whose machines were not this machine.
+pub(super) fn ledger(
+    world: &WorldDir,
+    machine: &MachineName,
+    since: Timestamp,
+    town: &TownName,
+) -> (Vec<SinceEvent>, Vec<SinceIssue>) {
+    let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
+    scan.ledger(world, town);
+    scan.events.retain(|event| event.at > since);
+    (scan.events, scan.issues)
+}
+
 #[derive(Default)]
 struct ResidentFiles {
     about: Option<About>,

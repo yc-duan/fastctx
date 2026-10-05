@@ -522,13 +522,13 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
     let here = node.machine();
     let (scope, asked) = match &town {
         Some(name) => {
-            crate::town::map::catch_up(node, name).await?;
+            crate::town::map::query(node, name).await?;
             let (world, town) = (node.world.clone(), name.clone());
             let record = blocking("reading the town", move || crate::town::read::latest(&world, &town)).await?;
             let asked = record.as_ref().map(|record| record.machines.clone());
             (WhoScope::Town { town: name.clone(), record: record.map(Box::new) }, asked)
         }
-        None => (WhoScope::World { towns: crate::town::project::list(node).await? }, None),
+        None => (WhoScope::World { towns: crate::ledger::query::list(node).await? }, None),
     };
     let asks_for = |machine: &MachineName| asked.as_ref().is_none_or(|asked| asked.contains(machine));
     let mut machines = Vec::new();

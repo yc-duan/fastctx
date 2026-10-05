@@ -14,11 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::Node;
 
-enum Part {
-    Opened(FileReadInfo),
-    Chunk { offset: u64, bytes: Vec<u8> },
-    Finished(FileReadResult),
-}
+use fastctx_net::file_read::Part;
 
 type Sender = mpsc::Sender<Result<Part, Failure>>;
 type Receiver = mpsc::Receiver<Result<Part, Failure>>;
@@ -39,7 +35,10 @@ fn start(node: Arc<Node>, machine: Option<MachineName>, request: ReadFileRequest
                             error
                         }))
                     }
-                    Some(machine) => remote::read(&node, machine, request, &sender).await,
+                    Some(machine) => match node.link() {
+                        Some(link) => fastctx_net::file_read::read(&link, machine, request, &sender).await,
+                        None => Err(Failure::new(format!("{} is in no World with {machine}", node.machine()))),
+                    },
                 }
             } => { let _ = sender.send(result.map(Part::Finished)).await; }
         }
