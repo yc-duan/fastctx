@@ -9,6 +9,7 @@ import { glyph } from "./glyphs";
 import type { Address } from "../world/events";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import type { DetailsWords } from "../app/words";
+import { fileLink } from "../app/places";
 
 export interface DetailsOptions {
   words: DetailsWords;
@@ -144,7 +145,7 @@ export class Details {
       ? `<ul class="details-jobs">${detail.jobs
           .map(
             (job) =>
-              `<li><span class="details-job">${escape(job.job)}</span><span class="details-faint">${escape(`${job.machine} · ${ago(job.started_at)}`)}</span><code>${escape(job.command)}</code></li>`,
+              `<li><a class="details-job" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="details-faint">${escape(`${job.machine} · ${ago(job.started_at)}`)}</span><code>${escape(job.command)}</code></li>`,
           )
           .join("")}</ul>`
       : "";

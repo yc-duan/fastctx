@@ -3,6 +3,8 @@
 // plain browser.
 
 import type { Setup } from "../world/bridge";
+import type { FileRange } from "../world/file-read";
+import type { TextRead } from "../app/reader";
 import type { Offers } from "../world/control";
 
 /** What a specimen conversation offers, so its menus can be looked at. */
@@ -84,4 +86,35 @@ export function specimenComputer() {
       return after({ kind: "removed" as const });
     },
   };
+}
+
+/** A specimen machine's files: a decision, read whole, and a training log,
+ *  read from its end. */
+export async function specimenRead(machine: string, path: string, range: FileRange): Promise<TextRead> {
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const modified = "2026-10-04T13:20:00Z";
+  if (range.kind === "tail") {
+    const lines = Array.from({ length: 400 }, (_, n) => `epoch ${n + 1}/400  loss ${(0.9 * Math.exp(-n / 120) + 0.04).toFixed(4)}  overshoot ${(0.31 * Math.exp(-n / 90) + 0.02).toFixed(3)}  step ${(n + 1) * 250}`);
+    const text = `${lines.join("\n")}\n`;
+    const size = 5_812_224;
+    return { info: { machine, path, file: { size, modified }, offset: size - text.length, length: text.length }, text };
+  }
+  const text = `# 控制环
+
+关节控制环的结构、定点数的取舍，以及在真机上验收的条件。
+
+## 结构
+
+每个关节一个 PID 环，1 kHz；积分用 Q16.16，进 \`narrow()\` 之前先饱和，不回绕。
+
+| 量 | 格式 | 范围 |
+|---|---|---|
+| 误差 | Q16.16 | ±32767 |
+| 积分 | Q32.32 | 饱和到 ±2³¹ |
+
+## 验收
+
+在 lab 上跑 400 轮仿真，阶跃响应的超调不超过 5%，稳态误差在 $\\pm 0.2^\\circ$ 以内。
+`;
+  return { info: { machine, path, file: { size: text.length, modified }, offset: 0, length: text.length }, text };
 }

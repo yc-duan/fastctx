@@ -24,6 +24,7 @@ import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage, legacySaid } from "./app/settings";
+import { ReaderPage } from "./app/reader";
 import { WelcomePage } from "./app/welcome";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect } from "./app/signals";
@@ -50,8 +51,7 @@ import {
   zhProjectForm,
   zhSettings,
   zhShell,
-  zhWelcome,
-} from "./app/words";
+  zhWelcome, readerWords } from "./app/words";
 import { Details } from "./conversation/details";
 import { Conversation } from "./conversation/model";
 import { ConversationPage, type Someone } from "./conversation/page";
@@ -70,7 +70,7 @@ import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenNow } from "./specimen/world";
-import { specimenComputer, specimenFiles, specimenOffers } from "./specimen/seams";
+import { specimenComputer, specimenFiles, specimenOffers, specimenRead } from "./specimen/seams";
 import { applyTheme, chooseTheme, themes } from "./theme";
 import type { Address } from "./world/events";
 import type { ResidentDetail } from "./world/world";
@@ -84,6 +84,7 @@ import {
   placeFastctx,
   setupState,
   onComputer,
+  readText,
   keepHere,
   releaseHere,
   journal as readJournal,
@@ -724,6 +725,17 @@ function show(next: Place): void {
         },
       });
       break;
+    case "file":
+      page = new ReaderPage({
+        words: readerWords[english ? "en" : "zh"],
+        machine: next.machine,
+        path: next.path,
+        tail: next.tail,
+        head,
+        read: (machine, path, range) => (live ? readText(machine, path, range) : specimenRead(machine, path, range)),
+        ago: (at) => homeWords.ago(Date.now() - at.getTime()),
+      });
+      break;
     case "settings":
       page = new SettingsPage({
         store,
@@ -775,6 +787,10 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "codex-7f3a", machine: "laptop" } };
     case "asks":
       return { kind: "talk", address: { resident: "codex-a51c", machine: "laptop" } };
+    case "decision":
+      return { kind: "file", machine: "desktop", path: "D:/work/mark50/specs/控制环.md", tail: false };
+    case "log":
+      return { kind: "file", machine: "lab", path: "/home/lenovo/.fastctx/world/towns/mark50/residents/codex-3c77/out/j-p0q1r2.log", tail: true };
     case "about":
       // On this machine, so the card offers its own interface too.
       return { kind: "talk", address: { resident: "codex-5e2a", machine: "desktop" } };

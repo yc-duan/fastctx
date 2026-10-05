@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find", "attach", "rewind", "usage", "service", "mention"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find", "attach", "rewind", "usage", "service", "mention", "decision", "log"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));

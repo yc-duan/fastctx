@@ -10,6 +10,7 @@ import type { Address } from "../world/events";
 import type { MapView, ProjectRecord, ResidentNow, RunningJob, WorldWho, Writer } from "../world/world";
 import type { HomeWords } from "../home/words";
 import type { ProjectWords } from "./words";
+import { fileLink } from "../app/places";
 
 export interface ProjectOptions {
   words: ProjectWords;
@@ -205,7 +206,7 @@ export class ProjectPage {
     const owner = residents.find((r) => r.about.id === job.owner.resident && r.about.machine === job.owner.machine);
     const name = owner ? home.someone(agentName(owner.about.host.agent), owner.about.machine) : `${job.owner.resident} · ${job.owner.machine}`;
     const by = owner?.here ? home.startedBy(name) : `${home.startedBy(name)} · ${words.ownerLeft}`;
-    return `<li class="job"><span class="job-id">${escape(job.job)}</span><span class="job-where">${escape(job.machine)} · ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
+    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
   }
 
   private canon(map: MapView): string {
@@ -215,12 +216,15 @@ export class ProjectPage {
       return `<p class="quiet caution">${escape(words.decisionsUnreadable(map.canon.Err))}</p>`;
     }
     const heads = map.canon.Ok ?? [];
-    const where = map.record.canon ? `${map.record.canon.machine} · ${map.record.canon.path}` : "";
+    const canon = map.record.canon;
+    const where = canon ? `${canon.machine} · ${canon.path}` : "";
+    const docLink = (file: string) => (canon ? fileLink(canon.machine, `${canon.path.replace(/[\\/]+$/, "")}/${file}`) : null);
     return `<ul class="canon">${heads
-      .map(
-        (head) =>
-          `<li class="canon-doc"><span class="canon-title">${escape(head.title)}</span><span class="canon-scope">${escape(head.scope)}</span></li>`,
-      )
+      .map((head) => {
+        const inner = `<span class="canon-title">${escape(head.title)}</span><span class="canon-scope">${escape(head.scope)}</span>`;
+        const href = docLink(head.file);
+        return `<li class="canon-doc">${href ? `<a class="canon-open" href="${escape(href)}">${inner}</a>` : inner}</li>`;
+      })
       .join("")}</ul>${where ? `<p class="canon-where">${escape(where)}</p>` : ""}`;
   }
 

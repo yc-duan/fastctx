@@ -4,6 +4,7 @@
 import type { AskWords } from "../conversation/asks";
 import type { FileWords } from "../conversation/mention";
 import type { PresenceWords } from "./presence";
+import type { ReaderWords } from "./reader";
 import { sizeOf, type AttachWords } from "../conversation/attach";
 
 export interface ShellWords {
@@ -367,6 +368,34 @@ export const enMachines: MachinesWords = {
   jobs: (n) => `${n} job${n === 1 ? "" : "s"} running`,
   home: "Home",
   via: (route) => `reaches the hub ${route}`,
+};
+
+export interface ReaderWordsSet {
+  zh: ReaderWords;
+  en: ReaderWords;
+}
+
+const units: Record<"zh" | "en", [string, string, string, string]> = { zh: ["字节", "KB", "MB", "GB"], en: ["bytes", "KB", "MB", "GB"] };
+
+export const readerWords: ReaderWordsSet = {
+  zh: {
+    reread: "重新读",
+    reading: "正在读…",
+    tail: (shown, size) => `只显示最后 ${shown}（共 ${size}）`,
+    notText: (size) => `它不是 UTF-8 文本（${size}），这里不猜着解码`,
+    failed: (why) => `读不到：${why}`,
+    bytes: (count) => sizeOf(count, units.zh),
+    modified: (ago) => `${ago}改过`,
+  },
+  en: {
+    reread: "Read again",
+    reading: "Reading…",
+    tail: (shown, size) => `only the last ${shown} of ${size}`,
+    notText: (size) => `It is not UTF-8 text (${size}); it is not decoded by guess here`,
+    failed: (why) => `Could not read it: ${why}`,
+    bytes: (count) => sizeOf(count, units.en),
+    modified: (ago) => `changed ${ago}`,
+  },
 };
 
 export interface DetailsWords {

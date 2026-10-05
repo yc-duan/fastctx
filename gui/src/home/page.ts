@@ -6,6 +6,7 @@
 // nothing is summarised by a model. Projects and machines are in the
 // sidebar, not here.
 
+import { fileLink } from "../app/places";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
@@ -304,6 +305,6 @@ export class HomePage {
 
   private job(job: RunningJob): string {
     const { words } = this.options;
-    return `<li class="job"><span class="job-id">${escape(job.job)}</span><span class="job-where">${escape(job.machine)} · ${escape(this.since(job.started_at))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(words.startedBy(this.nameOf(job.owner)))}</span></li>`;
+    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(this.since(job.started_at))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(words.startedBy(this.nameOf(job.owner)))}</span></li>`;
   }
 }

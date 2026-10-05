@@ -8,6 +8,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { WorldAgents } from "./agents";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
+import type { FileRange } from "./file-read";
+import type { TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
@@ -113,6 +115,11 @@ export function project(town: string): Promise<{ map: MapView; who: WorldWho }> 
 /** A journal's latest entries that fit, or those before an entry. */
 export function journal(town: string, name: string, before: string | null): Promise<JournalView> {
   return invoke("journal", { town, journal: name, before });
+}
+
+/** A text file on a machine, or a piece of it, read for the user. */
+export function readText(machine: MachineName, path: string, range: FileRange): Promise<TextRead> {
+  return invoke("read_text", { machineName: machine, path, range });
 }
 
 /** Residents or jobs in detail, from every machine that has them. */

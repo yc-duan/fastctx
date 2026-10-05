@@ -11,7 +11,9 @@ export type Place =
   | { kind: "machines" }
   | { kind: "machine"; name: string }
   | { kind: "settings" }
-  | { kind: "welcome" };
+  | { kind: "welcome" }
+  /** A file on a machine, read whole, or its end when it keeps growing. */
+  | { kind: "file"; machine: string; path: string; tail: boolean };
 
 const part = encodeURIComponent;
 
@@ -33,6 +35,8 @@ export function link(place: Place): string {
       return "#/settings";
     case "welcome":
       return "#/welcome";
+    case "file":
+      return `#/file/${part(place.machine)}/${place.tail ? "tail" : "whole"}/${part(place.path)}`;
   }
 }
 
@@ -61,8 +65,14 @@ export function placeOf(hash: string): Place {
       return { kind: "settings" };
     case "welcome":
       return { kind: "welcome" };
+    case "file":
+      if (parts[1] && parts[3]) return { kind: "file", machine: parts[1], path: parts.slice(3).join("/"), tail: parts[2] === "tail" };
+      break;
   }
   return { kind: "home" };
 }
 
 export const talkLink = (address: Address) => link({ kind: "talk", address });
+
+/** Where a file on a machine is read: whole, or its end when it grows. */
+export const fileLink = (machine: string, path: string, tail = false) => link({ kind: "file", machine, path, tail });

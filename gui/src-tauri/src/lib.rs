@@ -32,6 +32,7 @@ use tauri::ipc::Channel;
 
 #[cfg(windows)]
 mod desktop_presence;
+mod reading;
 
 struct Shell {
     world: World,
@@ -268,6 +269,17 @@ async fn offers(shell: tauri::State<'_, Shell>, resident_id: String, machine_nam
     Ok(offers)
 }
 
+/// A text file on a machine, or a piece of it, read for the user.
+#[tauri::command]
+async fn read_text(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    path: String,
+    range: fastctx_types::file_read::FileRange,
+) -> Result<reading::TextRead, String> {
+    reading::read_text(&shell.world, machine(machine_name)?, path, range).await
+}
+
 /// Residents or jobs in detail, by id, from every machine that has them.
 #[tauri::command]
 async fn look(shell: tauri::State<'_, Shell>, ids: Vec<String>) -> Result<Vec<LookedUp>, String> {
@@ -462,6 +474,7 @@ pub fn run() {
             open,
             stop,
             look,
+            read_text,
             control,
             offers,
             invite,

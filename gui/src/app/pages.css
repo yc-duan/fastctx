@@ -547,3 +547,86 @@
   font-size: var(--size-small);
   color: var(--text-3);
 }
+
+/* A file read from a machine: where it is and how large under the head,
+   then the file itself, scrolling in its own region. */
+.reader-page {
+  --board: min(100% - 2 * var(--gutter), var(--column));
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.reader-facts {
+  width: var(--board);
+  margin: var(--space-2) auto var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.reader-facts .sep {
+  margin: 0 var(--space-2);
+}
+
+/* A path is long and has no spaces: it breaks anywhere rather than run off
+   a phone's screen. */
+.reader-facts .fact {
+  white-space: normal;
+}
+
+.reader-path {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+}
+
+.reader-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.reader-body > * {
+  width: var(--board);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.reader-prose {
+  padding-bottom: var(--space-12);
+}
+
+.reader-text {
+  margin-top: 0;
+  margin-bottom: var(--space-12);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--code-bg, var(--hairline));
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A decision of a project, opened to be read. */
+.canon-open {
+  display: block;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-s);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color var(--hover) ease;
+}
+
+.canon-open:hover {
+  background: var(--hairline);
+}
+
+a.job-id,
+a.details-job {
+  color: inherit;
+  text-decoration: underline dotted var(--text-3);
+  text-underline-offset: 3px;
+}
