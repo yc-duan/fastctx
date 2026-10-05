@@ -1,0 +1,23 @@
+[package]
+name = "tauri-plugin-world-pages"
+version = "1.0.0"
+edition = "2024"
+links = "tauri-plugin-world-pages"
+publish = false
+license = "Apache-2.0"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39.1"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[features]
+probe = []

@@ -11,6 +11,9 @@ publish = false
 # and tests, and the core is reached by path.
 [workspace]
 
+[features]
+page-sandbox-probe = ["tauri-plugin-world-pages/probe"]
+
 [lib]
 name = "fastctx_gui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -30,6 +33,7 @@ sha2 = "0.10"
 tauri = { version = "2", features = [] }
 # Links leave the app for the system's browser, on a computer and a phone.
 tauri-plugin-opener = "2.7"
+tauri-plugin-world-pages = { path = "page-sandbox" }
 tokio = { version = "1", features = ["sync", "fs", "io-util"] }
 
 # Joining a World, founding a hub and putting the World's tools into the

@@ -1,0 +1,7 @@
+{
+  "identifier": "world-pages",
+  "description": "The trusted main interface mounts and communicates with native page surfaces.",
+  "platforms": ["windows", "android"],
+  "webviews": ["main"],
+  "permissions": ["world-pages:default"]
+}

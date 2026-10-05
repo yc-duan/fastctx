@@ -5,6 +5,7 @@
 // into faces of its own document. `fonts.css` is the one list of them.
 
 import declared from "../design/fonts.css?raw";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export interface Face {
   family: string;
@@ -41,6 +42,7 @@ let reading: Promise<Face[]> | null = null;
 export function faces(): Promise<Face[]> {
   reading ??= Promise.all(
     parsed(declared).map(async ({ url, ...face }) => {
+      if (isTauri()) return { ...face, data: await invoke<ArrayBuffer>("plugin:world-pages|font", { path: url }) };
       const response = await fetch(url);
       if (!response.ok) throw new Error(`reading ${url}: ${response.status}`);
       return { ...face, data: await response.arrayBuffer() };

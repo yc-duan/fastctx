@@ -110,6 +110,8 @@ export class PageScreen {
       if (!this.left) this.show(view);
     } catch (error) {
       if (this.left) return;
+      this.host?.close();
+      this.host = null;
       this.stage.replaceChildren();
       this.notice.hidden = false;
       this.notice.innerHTML = `<p class="unreachable">${escape(error instanceof Error ? error.message : String(error))}</p>`;
@@ -157,12 +159,12 @@ export class PageScreen {
       version: this.options.version_,
       context: this.options.context,
       call: this.options.tools(view),
-      left: () => {
+      left: (error) => {
         // A page that navigates its own frame away is closed, and said so.
         this.host = null;
         this.stage.replaceChildren();
         this.notice.hidden = false;
-        this.notice.innerHTML = `<p>${escape(this.options.words.wentAway)}</p><button class="text-button" type="button" data-reload>${escape(this.options.words.reload)}</button>`;
+        this.notice.innerHTML = `<p>${escape(error ?? this.options.words.wentAway)}</p><button class="text-button" type="button" data-reload>${escape(this.options.words.reload)}</button>`;
       },
     });
   }
