@@ -169,6 +169,29 @@
   margin-top: 0.7em;
 }
 
+/* What came with a notice for the model, folded away under it. */
+.told-more {
+  margin-top: var(--space-2);
+}
+
+.told-more > summary {
+  cursor: pointer;
+  width: fit-content;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  list-style-position: inside;
+}
+
+.told-more > summary:hover {
+  color: var(--text-2);
+}
+
+.told-more[open] > .told-plain {
+  margin-top: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
 /* A proposed plan: a page of its own inside the column. */
 
 .plan {
@@ -915,6 +938,26 @@
 
 .ask-message p {
   margin: 0;
+}
+
+/* Claude's plan: read in the card like the conversation's own prose, in a
+   region of its own when it is long. */
+
+.ask-plan {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  max-height: min(60vh, 32rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.ask-plan-note {
+  resize: vertical;
+  min-height: 2.6em;
+  line-height: var(--leading-ui);
 }
 
 .ask-paths {

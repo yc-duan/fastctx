@@ -4,8 +4,10 @@
 // shows a session alike.
 
 import type { Health, MachineName, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
+import type { Attachment } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
 import { askKey, forPeople, type AskState } from "./ask-state";
+import { userWords } from "./told";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
@@ -25,7 +27,18 @@ export interface ShownAttachment {
 }
 
 export type Entry =
-  | { kind: "heard"; key: string; from: Speaker | null; text: string; turn: string | null; sending?: SendState; attached?: ShownAttachment[] }
+  | {
+      kind: "heard";
+      key: string;
+      from: Speaker | null;
+      text: string;
+      turn: string | null;
+      sending?: SendState;
+      attached?: ShownAttachment[];
+      /** The attachments as the World answered for them, kept where they
+       *  arrived: words taken back to send again take these with them. */
+      kept?: Attachment[];
+    }
   | {
       kind: "prose";
       key: string;
@@ -67,6 +80,14 @@ export class Conversation {
   entries: Entry[] = [];
   context: { used: number; window: number | null } | null = null;
   title: string | null = null;
+  /** Attachments by where the World keeps them, with the names they came
+   *  with: the World stores each under a name of its own. */
+  private attachments = new Map<string, string>();
+
+  /** The name an attachment came with, by where it is kept. */
+  attachmentName(path: string): string | null {
+    return this.attachments.get(path.replaceAll("\\", "/")) ?? null;
+  }
   /** The host replaced or removed turns: what is shown must be read again. */
   stale = false;
   private serial = 0;
@@ -109,24 +130,29 @@ export class Conversation {
       case "realtime_grew":
         return;
       case "heard": {
+        // Without the World's record of who spoke, the user's words still
+        // carry the head note the World wrapped them in.
+        const user = event.from ? null : userWords(event.text);
+        const heard = user ? { ...event, from: { kind: "user" as const, machine: user.machine }, text: user.body } : event;
         // Words sent from here are now heard: they keep their place.
-        if (event.from?.kind === "user") {
+        if (heard.from?.kind === "user") {
           const sent = this.entries.find(
-            (entry) => entry.kind === "heard" && entry.sending !== undefined && entry.text === event.text,
+            (entry) => entry.kind === "heard" && entry.sending !== undefined && entry.text === heard.text,
           );
           if (sent && sent.kind === "heard") {
             delete sent.sending;
-            sent.turn = event.turn;
-            sent.from = event.from;
+            sent.turn = heard.turn;
+            sent.from = heard.from;
             return;
           }
         }
         const known = this.entries.some(
-          (entry) => entry.kind === "heard" && entry.text === event.text && event.turn !== null && entry.turn === event.turn,
+          (entry) => entry.kind === "heard" && entry.text === heard.text && heard.turn !== null && entry.turn === heard.turn,
         );
         if (!known) {
+          for (const file of heard.message?.attachments ?? []) this.attachments.set(file.path.replaceAll("\\", "/"), file.name);
           // The files that came with the words, as the World kept them.
-          const attached = (event.message?.attachments ?? []).map((file) => ({
+          const attached = (heard.message?.attachments ?? []).map((file) => ({
             name: file.name,
             size: file.size,
             image: file.media_type.startsWith("image/"),
@@ -135,10 +161,10 @@ export class Conversation {
           this.entries.push({
             kind: "heard",
             key: this.key("heard"),
-            from: event.from,
-            text: event.text,
-            turn: event.turn,
-            ...(attached.length ? { attached } : {}),
+            from: heard.from,
+            text: heard.text,
+            turn: heard.turn,
+            ...(attached.length ? { attached, kept: heard.message?.attachments ?? [] } : {}),
           });
         }
         return;

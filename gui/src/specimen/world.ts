@@ -79,17 +79,17 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
           machine: "laptop",
           residents: [
             resident("claude-2b1c", "laptop", claude(), "mark50", "claude-opus-5-5", "05:02:00", {
-              now: { owed: {}, answering: [], activity: "busy", since: at("13:36:00"), turn: "t3", trouble: null, desk: false, waiting_for_user: false },
+              now: { owed: {}, answering: [], activity: "busy", since: at("13:36:00"), turn: "t3", trouble: null, desk: false, waiting_for_user: false, title: "PID 环改定点" },
               last_action: action("13:37:10", "lab", "run", "cd /srv/mark50 && git fetch laptop colleague/q16-edge && cargo test -p ctrl overflow_repro", "running"),
             }),
             resident("codex-91c0", "laptop", codex(), "mark50", "gpt-6.1-sol", "05:20:00", {
               origin: { kind: "colleague", asked_by: address("laptop", "claude-2b1c"), label: "造出让 Q32 积分溢出的输入" },
               here: false,
-              now: { owed: {}, answering: [], activity: "asleep", since: at("13:34:00"), turn: null, trouble: null, desk: false, waiting_for_user: false },
+              now: { owed: {}, answering: [], activity: "asleep", since: at("13:34:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: null },
               last_action: action("13:33:40", "laptop", "run", "cargo test -p ctrl overflow_repro", "exit 101"),
             }),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
-              now: { owed: {}, answering: [], activity: "idle", since: at("09:31:00"), turn: null, trouble: null, desk: false, waiting_for_user: false },
+              now: { owed: {}, answering: [], activity: "idle", since: at("09:31:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: null },
               last_action: action("09:30:50", "laptop", "run", "cd /srv/ingest && cargo test 2>&1 | tail -3", "exit 0"),
             }),
           ],
@@ -102,7 +102,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
           machine: "desktop",
           residents: [
             resident("codex-5e2a", "desktop", codex(), "ingest", "gpt-6.1-sol", "12:58:00", {
-              now: { owed: {}, answering: [], activity: "busy", since: at("13:20:00"), turn: "t2", trouble: null, desk: false, waiting_for_user: true },
+              now: { owed: {}, answering: [], activity: "busy", since: at("13:20:00"), turn: "t2", trouble: null, desk: false, waiting_for_user: true, title: "批量提交" },
               last_action: action("13:21:30", "desktop", "apply_patch", "D:/work/ingest/deploy/compose.yaml", "1 file"),
             }),
           ],
@@ -116,7 +116,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
           residents: [
             resident("codex-0d1e", "lab", codex(), "mark50", "gpt-6.1-sol", "06:10:00", {
               origin: { kind: "colleague", asked_by: address("laptop", "claude-2b1c"), label: "训练关节模型 400 轮" },
-              now: { owed: {}, answering: [], activity: "busy", since: at("13:12:00"), turn: "t5", trouble: { at: at("13:30:00"), text: "Reconnecting... 2/5" }, desk: false, waiting_for_user: false },
+              now: { owed: {}, answering: [], activity: "busy", since: at("13:12:00"), turn: "t5", trouble: { at: at("13:30:00"), text: "Reconnecting... 2/5" }, desk: false, waiting_for_user: false, title: null },
               last_action: action("13:31:00", "lab", "run", "tail -n 40 /data/mark50-sim/train.log", "exit 0"),
             }),
           ],

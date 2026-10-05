@@ -9,6 +9,7 @@ import { glyph } from "../conversation/glyphs";
 import { escape, render } from "../conversation/prose";
 import type { EntryView, JournalView, Writer } from "../world/world";
 import type { ProjectWords } from "./words";
+import { agentName } from "../world/names";
 
 export interface JournalOptions {
   words: ProjectWords;
@@ -21,8 +22,6 @@ export interface JournalOptions {
   /** Asks for the entries before the first one shown. */
   earlier(before: string): Promise<JournalView>;
 }
-
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 export class JournalPage {
   readonly element: HTMLElement;

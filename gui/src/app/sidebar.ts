@@ -14,6 +14,7 @@ import { link } from "./places";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import type { ShellWords } from "./words";
+import { agentName, titleOf } from "../world/names";
 
 export interface SidebarOptions {
   store: Store;
@@ -24,8 +25,6 @@ export interface SidebarOptions {
   newProject(): void;
   fold(): void;
 }
-
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 /** An answer usually comes within a second and is asked for every two;
  *  after this many seconds without one, the sidebar says so. */
@@ -181,7 +180,9 @@ export class Sidebar {
     const name = words.someone(agentName(r.about.host.agent), r.about.machine);
     const waiting = r.now?.waiting_for_user;
     const busy = r.now?.activity === "busy";
-    const title = r.about.origin.kind === "colleague" ? r.about.origin.label : name;
+    // A conversation by its name, when it has one; who and where it is
+    // then go under it.
+    const title = titleOf(r) ?? name;
     const state = waiting
       ? words.waiting
       : busy
@@ -189,7 +190,7 @@ export class Sidebar {
         : r.now?.activity === "asleep"
           ? words.asleep
           : words.idle;
-    const meta = r.about.origin.kind === "colleague" ? `${name} · ${state}` : state;
+    const meta = title !== name ? `${name} · ${state}` : state;
     const kind = waiting ? "mark-ask" : busy ? "mark-busy" : "mark-idle";
     return `<li><a class="place agent-place ${kind}${current ? " current" : ""}" href="${link({ kind: "talk", address })}">
       <span class="mark ${kind}" aria-hidden="true"></span>

@@ -1,0 +1,11 @@
+// What the interface calls the agents and conversations of the World.
+
+import type { ResidentNow } from "./world";
+
+/** An agent's own name, as its makers write it. */
+export const agentName = (agent: string): string => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
+
+/** What a conversation is called, when it is called anything: a colleague
+ *  by the task it was asked to do, any other by the name its host gave it. */
+export const titleOf = (r: ResidentNow): string | null =>
+  (r.about.origin.kind === "colleague" ? r.about.origin.label : r.now?.title) || null;

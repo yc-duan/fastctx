@@ -12,6 +12,7 @@ import type { DetailsWords } from "../app/words";
 import { Confirm } from "../app/confirm";
 import { redrawKeepingFocus } from "../app/focus";
 import { fileLink } from "../app/places";
+import { agentName, titleOf } from "../world/names";
 
 /** What can be done to the agent beyond its conversation, as the user.
  *  Each rejects with what the World said when it was not done. */
@@ -49,8 +50,6 @@ export interface DetailsOptions {
   /** Managing it, where the World can. */
   manage?: Manage | undefined;
 }
-
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 type Managing = "sleep" | "wake" | "move";
 
@@ -223,7 +222,9 @@ export class Details {
     const r = detail.resident;
     const about = r.about;
     const ago = (at: string) => span(now.getTime() - Date.parse(at));
-    const state = r.now?.waiting_for_user
+    const state = r.removed
+      ? words.removed(ago(r.removed))
+      : r.now?.waiting_for_user
       ? words.waiting
       : r.now?.activity === "busy"
         ? words.busy(ago(r.now.since))
@@ -258,7 +259,7 @@ export class Details {
       ? `<ul class="details-people">${colleagues
           .map(
             (c) =>
-              `<li><a href="${this.options.link({ resident: c.about.id, machine: c.about.machine })}"><span class="mark ${c.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span><span>${escape(c.about.origin.kind === "colleague" ? c.about.origin.label : c.about.id)}</span><span class="details-faint">${escape(`${agentName(c.about.host.agent)} · ${c.about.machine}`)}</span></a></li>`,
+              `<li><a href="${this.options.link({ resident: c.about.id, machine: c.about.machine })}"><span class="mark ${c.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span><span>${escape(titleOf(c) ?? c.about.id)}</span><span class="details-faint">${escape(`${agentName(c.about.host.agent)} · ${c.about.machine}`)}</span></a></li>`,
           )
           .join("")}</ul>`
       : "";
@@ -303,7 +304,7 @@ export class Details {
    *  it for the user, and the projects to move it to when asked. */
   private manageBody(r: ResidentNow): string {
     const { words, manage } = this.options;
-    if (!manage) return "";
+    if (!manage || r.removed) return "";
     const doing = this.managing;
     const busy = r.now?.activity === "busy";
     const button = (act: string, icon: Parameters<typeof glyph>[0], label: string, disabled: boolean, extra = "") =>

@@ -2,6 +2,7 @@
 // the settings. In the user's words (`world-gui.md`, 用词).
 
 import type { AskWords } from "../conversation/asks";
+import type { SaidWords } from "../conversation/said";
 import type { FileWords } from "../conversation/mention";
 import type { PresenceWords } from "./presence";
 import type { ReaderWords } from "./reader";
@@ -617,6 +618,7 @@ export interface DetailsWords {
   busy(lasted: string): string;
   idle(ago: string): string;
   asleep(ago: string): string;
+  removed(ago: string): string;
   waiting: string;
   trouble: string;
   task: string;
@@ -659,6 +661,8 @@ export interface DetailsWords {
   /** A stage of an act that was not done: where, how, and the World's
    *  own account of it. */
   unfinished(stage: string, outcome: "pending" | "unsupported" | "failed", detail: string): string;
+  /** Codex keeps an idle thread loaded a while before it lets it go. */
+  sleepPending: string;
   cancel: string;
   working: string;
   failed(why: string): string;
@@ -681,6 +685,7 @@ export const zhDetails: DetailsWords = {
   busy: (lasted) => `在干活，已 ${lasted}`,
   idle: (ago) => `空闲，${ago}前说完`,
   asleep: (ago) => `睡着了，${ago}前`,
+  removed: (ago) => `${ago}前移出了世界`,
   waiting: "在等你回答",
   trouble: "出过的状况",
   task: "它接的活",
@@ -718,6 +723,7 @@ export const zhDetails: DetailsWords = {
     "它离开世界：界面里不再列出它，fastctx w 里记着它何时被移除，它再调用世界的工具会被拒绝。它的记录挪进归档，一个字都不删；它起的、还在跑的作业照跑。",
   removeGo: "移除",
   removedButNot: "已从世界移除。没办完的：",
+  sleepPending: "Codex 会在它闲下来约一分钟后卸下它，那时就睡着了，不用再做什么",
   unfinished: (stage, outcome, detail) =>
     `${{ host: "宿主", records: "世界的记录", tools: "工具", notification: "告诉它" }[stage] ?? stage}${{ pending: "还在等", unsupported: "做不到", failed: "没办成" }[outcome]}（${detail}）`,
   cancel: "关闭",
@@ -742,6 +748,7 @@ export const enDetails: DetailsWords = {
   busy: (lasted) => `working, for ${lasted}`,
   idle: (ago) => `idle, finished ${ago} ago`,
   asleep: (ago) => `asleep, since ${ago} ago`,
+  removed: (ago) => `removed from the World ${ago} ago`,
   waiting: "waiting for your answer",
   trouble: "Trouble",
   task: "Its task",
@@ -779,6 +786,7 @@ export const enDetails: DetailsWords = {
     "It leaves the World: the interface no longer lists it, fastctx w notes when it was removed, and its calls to the World's tools are refused. Its records are moved to the archive, nothing deleted; jobs it started keep running.",
   removeGo: "Remove",
   removedButNot: "Removed from the World. Not finished: ",
+  sleepPending: "Codex lets it go after about a minute of quiet; it is asleep then, nothing more to do",
   unfinished: (stage, outcome, detail) =>
     `${{ host: "the host", records: "the World's records", tools: "its tools", notification: "telling it" }[stage] ?? stage} ${{ pending: "is still pending", unsupported: "cannot be done", failed: "failed" }[outcome]} (${detail})`,
   cancel: "Close",
@@ -1271,7 +1279,10 @@ export interface ComposerWords {
     noCommands: string;
     effort: string;
     current: string;
+    /** Codex's commands the World carries out, said in the interface's words. */
+    host: Record<string, string>;
   };
+  said: SaidWords;
   modelChip: string;
   noModels: string;
   /** Rewinding to the user's words: what it drops and what it does not. */
@@ -1303,9 +1314,12 @@ export const zhComposer: ComposerWords = {
     hint: "敲文件名的几个字",
     searching: "正在找…",
     none: "那台机器上、这个项目的地方里没有这样的文件",
+    outside: "它不在任何项目里；@ 只在项目写明的地方里找文件",
+    nowhere: "这个项目还没写明在那台机器上哪里能找到什么，@ 无处可找；在项目里补上地址簿就能找",
   },
   attach: {
     attach: "附上文件",
+    photo: "拍照",
     drop: (agent) => `放下，就附给 ${agent}`,
     remove: "拿掉",
     sending: "正在送过去…",
@@ -1352,6 +1366,12 @@ export const zhComposer: ComposerWords = {
     permissions: "它在请你给它更多权限，这里还答不了",
     verification: "它在请你做一次身份验证，这里还答不了",
     tool: (name) => `想用 ${name}`,
+    plan: "它想好了一个计划，等你批准再动手",
+    planAt: (path) => `计划存在 ${path}`,
+    planGo: "照这个计划做",
+    planGoWith: (kept) => `照做 · ${kept}`,
+    planKeep: "接着计划",
+    planNote: "想让计划改哪里，写在这里，按「接着计划」带给它",
     rule: (allow, rules, where) =>
       `${allow === "allow" ? "以后都允许" : allow === "deny" ? "以后都不许" : "以后都先问我"} ${rules}（${where}）`,
     unrule: (rules, where) => `去掉 ${rules} 这条规矩（${where}）`,
@@ -1378,6 +1398,8 @@ export const zhComposer: ComposerWords = {
       refused: "你拒绝了",
       dismissed: "你没有理会",
       opened: "你打开了网址",
+      planGo: "你批准了计划，它开始照做",
+      planKeep: "你让它接着计划",
     },
   },
   commands: {
@@ -1390,6 +1412,32 @@ export const zhComposer: ComposerWords = {
     noCommands: "没有对得上的命令",
     effort: "推理强度",
     current: "现在用的",
+    host: {
+      compact: "现在压缩这段对话",
+      model: "换模型与推理强度",
+      rename: "给这段对话起名",
+      fork: "带着这段对话分出一段新的",
+      review: "让它审一遍还没提交的改动，或照你写的要求审",
+      mcp: "看这段对话连着哪些工具服务",
+      skills: "列出能用的技能",
+      status: "看模型、上下文与额度",
+      usage: "看上下文与额度用了多少",
+    },
+  },
+  said: {
+    model: (model, effort) => `从下一轮起用 ${model}${effort ? ` · ${effort}` : ""}，正在跑的这一轮不变`,
+    compact: "开始压缩了，压完会出现在对话里",
+    rewind: "已从那一句起重来；它改过的文件没有回到那时",
+    review: "开始审了，审完会出现在对话里",
+    skill: (name) => `已把 /${name} 交给它`,
+    close: "关上",
+    skills: "能用的技能",
+    noSkills: "它没有报出能用的技能",
+    mcp: "这段对话连着的工具服务",
+    noServers: "它没有连着任何工具服务",
+    server: (state) => ({ running: "在用", ready: "在用", enabled: "在用", connected: "连着", connecting: "正在连", starting: "正在起", disabled: "关着", failed: "没起来" })[state] ?? state,
+    tools: (count) => `${count} 个工具`,
+    toolsFailed: (why) => `取工具时出错：${why}`,
   },
   modelChip: "模型",
   noModels: "它没有报出可选的模型",
@@ -1428,9 +1476,12 @@ export const enComposer: ComposerWords = {
     hint: "Type a few letters of a file's name",
     searching: "Looking…",
     none: "No such file in this project's places on that machine",
+    outside: "It is in no project; @ looks only in a project's places",
+    nowhere: "This project lists no places on that machine, so @ has nowhere to look; add them to the project",
   },
   attach: {
     attach: "Attach files",
+    photo: "Take a photo",
     drop: (agent) => `Drop to attach for ${agent}`,
     remove: "Remove",
     sending: "Sending…",
@@ -1477,6 +1528,12 @@ export const enComposer: ComposerWords = {
     permissions: "It asks for more permissions, which can't be granted here",
     verification: "It asks you to verify who you are, which can't be done here",
     tool: (name) => `Wants to use ${name}`,
+    plan: "It has a plan and waits for your go-ahead",
+    planAt: (path) => `Plan saved at ${path}`,
+    planGo: "Carry out this plan",
+    planGoWith: (kept) => `Carry it out · ${kept}`,
+    planKeep: "Keep planning",
+    planNote: "What should the plan change? Write it here and choose Keep planning",
     rule: (allow, rules, where) =>
       `${allow === "allow" ? "Always allow" : allow === "deny" ? "Never allow" : "Always ask first for"} ${rules} (${where})`,
     unrule: (rules, where) => `Drop the rule ${rules} (${where})`,
@@ -1503,6 +1560,8 @@ export const enComposer: ComposerWords = {
       refused: "You refused",
       dismissed: "You left it",
       opened: "You opened the link",
+      planGo: "You approved the plan; it is carrying it out",
+      planKeep: "You had it keep planning",
     },
   },
   commands: {
@@ -1515,6 +1574,32 @@ export const enComposer: ComposerWords = {
     noCommands: "No command matches",
     effort: "effort",
     current: "in use",
+    host: {
+      compact: "Compact this conversation now",
+      model: "Change the model and effort",
+      rename: "Name this conversation",
+      fork: "Fork a new conversation with this one's history",
+      review: "Review uncommitted changes, or as you instruct",
+      mcp: "See which tool servers this conversation uses",
+      skills: "List the skills it can use",
+      status: "See the model, context and limits",
+      usage: "See how much context and limit is used",
+    },
+  },
+  said: {
+    model: (model, effort) => `${model}${effort ? ` · ${effort}` : ""} from the next turn; the running turn keeps its own`,
+    compact: "Compacting; it shows in the conversation when done",
+    rewind: "Started again from those words; files it changed were not put back",
+    review: "Reviewing; it shows in the conversation when done",
+    skill: (name) => `Handed /${name} to it`,
+    close: "Close",
+    skills: "Skills it can use",
+    noSkills: "It reported no skills",
+    mcp: "Tool servers of this conversation",
+    noServers: "It uses no tool servers",
+    server: (state) => ({ running: "on", ready: "on", enabled: "on", connected: "connected", connecting: "connecting", starting: "starting", disabled: "off", failed: "failed" })[state] ?? state,
+    tools: (count) => `${count} ${count === 1 ? "tool" : "tools"}`,
+    toolsFailed: (why) => `listing its tools failed: ${why}`,
   },
   modelChip: "Model",
   rewindAsk: "Start again from these words: they and everything after them leave the conversation, and files it changed are not put back. The words return to the box to edit and send.",

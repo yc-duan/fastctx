@@ -15,6 +15,7 @@ import { compose } from "./compose";
 import { mountFrame } from "./frame";
 import { PageHost, type HostContext } from "./host";
 import type { PageWords } from "./words";
+import { agentName } from "../world/names";
 
 export interface PageWorld {
   read(version: number | null): Promise<PageView>;
@@ -48,8 +49,6 @@ export interface PageScreenOptions {
   /** The current version changed: the project's list may differ. */
   changed(): void;
 }
-
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 export class PageScreen {
   readonly element: HTMLElement;

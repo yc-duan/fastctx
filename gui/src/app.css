@@ -172,6 +172,18 @@
   transition: box-shadow var(--hover) ease;
 }
 
+/* Removed from the World: a quiet line where the composer was. */
+.composer-gone {
+  max-width: var(--column);
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--hairline);
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+  text-align: center;
+}
+
 .composer:focus-within {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 55%, var(--rule)), 0 6px 24px rgba(0, 0, 0, 0.16);
 }
@@ -180,6 +192,7 @@
   display: block;
   width: 100%;
   max-height: 40dvh;
+  overflow-y: hidden;
   margin: 0;
   padding: 2px 0;
   border: 0;
@@ -238,24 +251,51 @@
   stroke: var(--caution);
 }
 
+/* On a narrow screen the model's name gives way first; the buttons and the
+   send button never do. */
 .composer-tools {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--space-1);
   margin-left: calc(-1 * var(--space-2));
 }
 
+.composer-tools > .icon-button {
+  flex: none;
+}
+
 .composer-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   height: 28px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
   color: var(--text-2);
   font-size: var(--size-small);
+  white-space: nowrap;
   transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.composer-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* On a phone the effort leaves the chip, kept in its menu, so the model's
+   name has the room. */
+@media (max-width: 480px) {
+  .composer-chip > .chip-effort {
+    display: none;
+  }
+}
+
+.composer-chip > .glyph {
+  flex: none;
 }
 
 .composer-chip:hover {
@@ -842,6 +882,66 @@ button.composer-context[hidden] {
   margin-bottom: var(--space-2);
   font-size: var(--size-small);
   color: var(--text-3);
+}
+
+/* What a command answered at length: a list, or the host's own words. */
+.said-pop {
+  width: min(560px, 100%);
+  padding: var(--space-2) var(--space-3) var(--space-3) var(--space-4);
+}
+
+.said-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.said-head .usage-title {
+  margin: 0;
+}
+
+.said-body {
+  max-height: min(50vh, 26rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.said-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.said-list li {
+  display: grid;
+  row-gap: 2px;
+  padding: var(--space-2) 0;
+}
+
+.said-list li + li {
+  border-top: 1px solid var(--divider);
+}
+
+.said-name {
+  font-size: var(--size-ui);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.said-what {
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.said-text {
+  margin: 0;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
 }
 
 .usage-row {

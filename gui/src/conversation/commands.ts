@@ -18,6 +18,9 @@ export interface CommandWords {
   noCommands: string;
   effort: string;
   current: string;
+  /** Codex's commands the World carries out, said in the interface's
+   *  words; the node lists them in the words of a command line. */
+  host: Record<string, string>;
 }
 
 /** A command as the menu shows it: the host's own, or one of the World's. */
@@ -37,7 +40,7 @@ export interface MenuCommand {
 export function commandsOf(offers: Offers | null, words: CommandWords): MenuCommand[] {
   const own: MenuCommand[] = (offers?.commands ?? []).map((command: CommandOffer) => ({
     name: command.name,
-    description: command.description,
+    description: (command.source === "codex" && !command.path && words.host[command.name]) || command.description,
     args: command.args,
     control: null,
     source: command.source,

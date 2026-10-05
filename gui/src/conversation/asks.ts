@@ -9,7 +9,7 @@
 import type { JsonValue } from "../world/wire";
 import { forPeople, type AskState } from "./ask-state";
 import { glyph } from "./glyphs";
-import { escape, plain } from "./prose";
+import { escape, plain, render } from "./prose";
 
 export interface AskWords {
   waiting: string;
@@ -51,6 +51,15 @@ export interface AskWords {
   verification: string;
   /** A Claude tool other than a command or a file change. */
   tool(name: string): string;
+  /** Claude's plan, waiting for leave to carry it out. */
+  plan: string;
+  planAt(path: string): string;
+  planGo: string;
+  /** Carrying it out while keeping a permission Claude proposes. */
+  planGoWith(kept: string): string;
+  planKeep: string;
+  /** The box for what the plan should change, sent with keeping it planning. */
+  planNote: string;
   /** A permission Claude proposes keeping, said with where it is kept. */
   rule(allow: "allow" | "deny" | "ask", rules: string, where: string): string;
   unrule(rules: string, where: string): string;
@@ -59,7 +68,7 @@ export interface AskWords {
   kept: { session: string; localSettings: string; projectSettings: string; userSettings: string; cliArg: string };
   answered(said: string): string;
   gone: string;
-  settledBy: { accept: string; session: string; rule: string; decline: string; cancel: string; answered: string; skipped: string; submitted: string; refused: string; dismissed: string; opened: string };
+  settledBy: { accept: string; session: string; rule: string; decline: string; cancel: string; answered: string; skipped: string; submitted: string; refused: string; dismissed: string; opened: string; planGo: string; planKeep: string };
 }
 
 /** One answer a card offers: the host's own value, how it is said, and
@@ -98,6 +107,8 @@ export type Ask =
   | { kind: "files"; item: string | null; reason: string | null; grantRoot: string | null; paths: string[]; decisions: Decision[] }
   /** A Claude tool asking leave to run, other than a command or a change. */
   | { kind: "tool"; tool: string; input: string; decisions: Decision[] }
+  /** Claude's plan, handed over for leave to leave plan mode. */
+  | { kind: "plan"; plan: string; path: string | null; decisions: Decision[] }
   /** Claude's answer carries its questions back exactly as they came. */
   | { kind: "questions"; questions: Question[]; asked: JsonValue | null }
   | { kind: "form"; server: string; message: string; fields: Field[] | null; host: Host }
@@ -231,6 +242,7 @@ function claudePermission(p: Record<string, JsonValue>, words: AskWords): Ask {
   const tool = text(p.tool_name) ?? "";
   const input = object(p.tool_input ?? null);
   const suggestions = Array.isArray(p.permission_suggestions) ? p.permission_suggestions : [];
+  if (tool === "ExitPlanMode") return claudePlan(input, suggestions, words);
   const decisions: Decision[] = [{ value: { behavior: "allow" }, label: words.accept, settled: words.settledBy.accept, tone: "yes" }];
   for (const suggestion of suggestions) {
     const label = keptAs(object(suggestion), words);
@@ -248,6 +260,25 @@ function claudePermission(p: Record<string, JsonValue>, words: AskWords): Ask {
     return { kind: "files", item: null, reason: null, grantRoot: null, paths: [path], decisions };
   }
   return { kind: "tool", tool, input: JSON.stringify(input, null, 2), decisions };
+}
+
+/** Claude's plan, asking leave to leave plan mode. Claude Code puts the
+ *  plan and the file it wrote it to into the tool's input; allowing hands
+ *  that input back unchanged, as tools that wait on the user take it, and
+ *  the modes Claude proposes for afterwards are offered as it proposes
+ *  them. Keeping it planning carries the user's note, when there is one. */
+function claudePlan(input: Record<string, JsonValue>, suggestions: JsonValue[], words: AskWords): Ask {
+  const allow = { behavior: "allow", updatedInput: input };
+  const decisions: Decision[] = [{ value: allow, label: words.planGo, settled: words.settledBy.planGo, tone: "yes" }];
+  for (const suggestion of suggestions) {
+    const kept = keptAs(object(suggestion), words);
+    if (kept) decisions.push({ value: { ...allow, updatedPermissions: [suggestion] }, label: words.planGoWith(kept), settled: words.settledBy.planGo, tone: "yes" });
+  }
+  decisions.push(
+    { value: { behavior: "deny" }, label: words.planKeep, settled: words.settledBy.planKeep, tone: "no" },
+    { value: { behavior: "deny", interrupt: true }, label: words.cancel, settled: words.settledBy.cancel, tone: "no" },
+  );
+  return { kind: "plan", plan: text(input.plan) ?? "", path: text(input.planFilePath), decisions };
 }
 
 /** A permission Claude proposes keeping, as the user reads it; null for a
@@ -431,6 +462,13 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
       body = `${head(words.tool(ask.tool))}${input}${buttons(ask.decisions)}`;
       break;
     }
+    case "plan": {
+      const plan = ask.plan ? `<div class="ask-plan prose">${render(ask.plan)}</div>` : "";
+      const where = ask.path ? `<p class="ask-where">${escape(words.planAt(ask.path))}</p>` : "";
+      const note = `<textarea class="ask-input ask-plan-note" rows="2" aria-label="${escape(words.planNote)}" placeholder="${escape(words.planNote)}"></textarea>`;
+      body = `${head(words.plan)}${plan}${where}${note}${buttons(ask.decisions)}`;
+      break;
+    }
     case "questions": {
       const questions = ask.questions
         .map((q, index) => {
@@ -499,6 +537,15 @@ export function answerOf(card: HTMLElement, ask: Ask, given: { decision?: number
       const decision = ask.decisions[given.decision ?? -1];
       if (!decision) return { missing: words.required };
       return { answer: { decision: decision.value }, said: decision.settled };
+    }
+    case "plan": {
+      const decision = ask.decisions[given.decision ?? -1];
+      if (!decision) return { missing: words.required };
+      const value = object(decision.value);
+      const note = card.querySelector<HTMLTextAreaElement>(".ask-plan-note")?.value.trim() ?? "";
+      // What the user wants changed goes back with keeping it planning.
+      const answer = value.behavior === "deny" && value.interrupt === undefined && note ? { ...value, message: note } : value;
+      return { answer: { decision: answer }, said: decision.settled };
     }
     case "questions": {
       const skip = given.submit === "skip";

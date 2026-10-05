@@ -5,6 +5,7 @@
 // keeps them.
 
 import type { Content, MachineName, Speaker, Tool } from "../world/events";
+import type { Attachment } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
@@ -14,7 +15,7 @@ import { escape, plain, render } from "./prose";
 import { numbered, parse, renderRows } from "./diff";
 import { groupHeading, headline, tenseOf } from "./tool";
 import { drawDiagrams } from "./diagrams";
-import { readTold } from "./told";
+import { readTold, worldSaid, type WorldSaid } from "./told";
 
 export interface Context {
   words: Words;
@@ -39,7 +40,7 @@ export interface Context {
     | undefined;
   /** The user asked to start again from their words in `turn`, or to fork
    *  from `turn`; offered only where the conversation takes it. */
-  turnAct?: ((act: "rewind" | "fork", turn: string, words: string | null) => void) | undefined;
+  turnAct?: ((act: "rewind" | "fork", turn: string, words: string | null, kept: Attachment[]) => void) | undefined;
 }
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
@@ -313,13 +314,34 @@ export class ConversationView {
         how = words.ended(told.how);
         body = `<div class="prose">${render(told.body)}</div>`;
         break;
-      default:
-        // The World's own words are plain text; another agent's are its
-        // Markdown.
-        body = world ? `<div class="told-plain">${plain(told.body)}</div>` : `<div class="prose">${render(told.body)}</div>`;
+      default: {
+        // The World's own words are plain text, said again where they have
+        // a form of the World's; another agent's are its Markdown.
+        const said = world ? worldSaid(told.body) : null;
+        if (said) body = this.worldSaid(said);
+        else body = world ? `<div class="told-plain">${plain(told.body)}</div>` : `<div class="prose">${render(told.body)}</div>`;
+      }
     }
     const caption = how ? `<span class="relayed-how">${escape(how)}</span>` : "";
     return `<div class="relayed${world ? " relayed-world" : ""}"><div class="relayed-from">${glyph(world ? "web" : "colleague", 16)}<span>${escape(label)}</span>${caption}</div><div class="relayed-text">${body}</div></div>`;
+  }
+
+  /** The World's own words, in the interface's: a move as one line with the
+   *  brief it handed over folded under it, the desk as who holds it. */
+  private worldSaid(said: WorldSaid): string {
+    const { words } = this.context;
+    switch (said.kind) {
+      case "moved":
+        return `<p class="told-line">${escape(said.town ? words.movedTo(said.town) : words.movedOut)}</p>${
+          said.brief ? `<details class="told-more"><summary>${escape(words.briefHanded)}</summary><div class="told-plain">${plain(said.brief)}</div></details>` : ""
+        }`;
+      case "desk_free":
+        return `<p class="told-line">${escape(words.deskFree(said.who))}</p>`;
+      case "desk_taken":
+        return `<p class="told-line">${escape(words.deskTaken(said.who))}</p>`;
+      case "desk_outside":
+        return `<p class="told-line">${escape(words.deskOutside)}</p>`;
+    }
   }
 
   private group(group: Activity): string {
@@ -342,7 +364,7 @@ export class ConversationView {
     }
     if (entry.kind !== "tool") return "";
     const { words } = this.context;
-    const line = headline(entry.tool, entry.ended, words);
+    const line = headline(entry.tool, entry.ended, words, (path) => this.conversation.attachmentName(path));
     const tense = tenseOf(entry.ended);
     const open = this.open.has(entry.key);
     const expandable = this.hasDetails(entry.tool);
@@ -458,7 +480,7 @@ export class ConversationView {
     if (!target) return;
     if (target.dataset.turnAct) {
       const entry = this.conversation.entries.find((candidate) => candidate.key === target.dataset.key);
-      this.context.turnAct?.(target.dataset.turnAct as "rewind" | "fork", target.dataset.turn!, entry?.kind === "heard" ? entry.text : null);
+      this.context.turnAct?.(target.dataset.turnAct as "rewind" | "fork", target.dataset.turn!, entry?.kind === "heard" ? entry.text : null, entry?.kind === "heard" ? (entry.kept ?? []) : []);
       return;
     }
     if (target.dataset.copy) {

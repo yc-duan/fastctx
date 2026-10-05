@@ -15,6 +15,8 @@ export type AttachSource = { kind: "path"; path: string } | { kind: "bytes"; fil
 
 export interface AttachWords {
   attach: string;
+  /** Taking a photo straight into the words, on a device with a camera. */
+  photo: string;
   drop(agent: string): string;
   remove: string;
   sending: string;
@@ -32,7 +34,8 @@ export interface Attached {
   image: boolean;
   /** A picture of it, where the page holds its bytes. */
   preview: string | null;
-  source: AttachSource;
+  /** Where its bytes come from; none for one that arrived before. */
+  source: AttachSource | null;
   /** Waiting is a deferred tray's: held here until the words go. */
   state: "waiting" | "sending" | "ready" | "failed";
   /** What the World answered for it, handed back with the words. */
@@ -97,6 +100,18 @@ export class AttachTray {
     }
   }
 
+  /** Attachments that arrived with words before, put back with those
+   *  words: they are where they arrived and go again as they are. */
+  restore(kept: { name: string; size: number; media_type: string }[]): void {
+    for (const ref of kept) {
+      serial += 1;
+      const image = ref.media_type.startsWith("image/") || IMAGE.test(ref.name);
+      this.items.push({ key: `attach-${serial}`, name: ref.name, size: ref.size, image, preview: null, source: null, state: "ready", ref, why: null });
+    }
+    this.draw();
+    this.changed();
+  }
+
   /** Whether anything is still on its way. */
   get sending(): boolean {
     return this.items.some((item) => item.state === "sending");
@@ -156,12 +171,14 @@ export class AttachTray {
   }
 
   private send(item: Attached): Promise<void> {
+    const source = item.source;
+    if (!source) return Promise.resolve();
     item.state = "sending";
     item.why = null;
     this.sent.set(item.key, 0);
     this.draw();
     return this.seam
-      .upload(item.source, item.name, (sent) => {
+      .upload(source, item.name, (sent) => {
         this.sent.set(item.key, sent);
         this.progress(item);
       })

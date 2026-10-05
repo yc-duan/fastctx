@@ -16,6 +16,7 @@ import { ownerResident, type JobOwner, type ResidentNow, type RunningJob, type W
 import { Frontispiece } from "./frontispiece";
 import type { Away, Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
+import { agentName, titleOf } from "../world/names";
 
 export interface HomeOptions {
   words: HomeWords;
@@ -30,8 +31,6 @@ export interface HomeOptions {
   /** Begins a conversation. */
   newTalk(): void;
 }
-
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 export class HomePage {
   readonly element: HTMLElement;
@@ -160,8 +159,14 @@ export class HomePage {
     return `<section class="home-section section-${kind}"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
   }
 
-  private name(r: ResidentNow): string {
+  /** Who it is and where: the agent on its machine. */
+  private who(r: ResidentNow): string {
     return this.options.words.someone(agentName(r.about.host.agent), r.about.machine);
+  }
+
+  /** What it is called: its conversation's name, or who it is. */
+  private name(r: ResidentNow): string {
+    return titleOf(r) ?? this.who(r);
   }
 
   private nameOf(address: Address): string {
@@ -175,10 +180,9 @@ export class HomePage {
 
   private someone(r: ResidentNow, waiting: boolean): string {
     const { words } = this.options;
-    const origin =
-      r.about.origin.kind === "colleague"
-        ? `<span class="someone-origin">${escape(words.colleagueOf(this.nameOf(r.about.origin.asked_by)))} · ${escape(r.about.origin.label)}</span>`
-        : "";
+    // Under a name, who it is; under a colleague's, whose colleague too.
+    const under = [r.about.origin.kind === "colleague" ? words.colleagueOf(this.nameOf(r.about.origin.asked_by)) : null, titleOf(r) ? this.who(r) : null].filter(Boolean);
+    const origin = under.length ? `<span class="someone-origin">${escape(under.join(" · "))}</span>` : "";
     const action = r.last_action;
     const doing = waiting
       ? `<span class="someone-doing">${escape(words.waitingFor)}</span>`

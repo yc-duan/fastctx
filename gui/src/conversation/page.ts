@@ -5,6 +5,7 @@
 import type { ComposerWords } from "../app/words";
 import type { Words } from "../words";
 import type { Control, Controlled, ModelOffer, Offers } from "../world/control";
+import type { Attachment } from "../world/attachments";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
@@ -14,6 +15,7 @@ import type { Details } from "./details";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
 import { escape } from "./prose";
+import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
 import { ConversationView } from "./view";
 
@@ -75,6 +77,9 @@ export interface PageOptions {
   files?: {
     words: FileWords;
     find(query: string): Promise<FoundFile[]>;
+    /** Why there is nowhere to look, when there is not: it is in no
+     *  project, or its project lists no place on its machine. */
+    nowhere?(): "outside" | "unlisted" | null;
   };
   /** Sends the user's words, and what arrived of what was attached;
    *  resolves with what came of them. */
@@ -131,14 +136,15 @@ export class ConversationPage {
       <div class="talk-scroller scroller"><div class="conversation"></div></div>
       <footer class="composer-dock">
         <ul class="running" hidden></ul>
+        <p class="composer-gone" hidden></p>
         <form class="composer">
-          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div></div>
+          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-queue"></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="composer-chip" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-context" type="button" hidden></button>
             <button class="composer-action" type="submit" aria-label="${escape(words.send)}"></button>
@@ -192,6 +198,10 @@ export class ConversationPage {
     if (options.files) this.fileMenuOf();
     this.context.addEventListener("click", () => this.toggleUsage());
     this.element.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !this.element.querySelector<HTMLElement>(".said-pop")!.hidden) {
+        this.hideSaid();
+        return;
+      }
       const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
       if (event.key !== "Escape" || pop.hidden) return;
       const inside = pop.contains(document.activeElement) || document.activeElement === this.context;
@@ -214,7 +224,7 @@ export class ConversationPage {
         open: controls.open,
         settled: () => this.update(),
       },
-      turnAct: controls && ((act, turn, words) => this.turnAct(act, turn, words)),
+      turnAct: controls && ((act, turn, words, kept) => this.turnAct(act, turn, words, kept)),
     });
 
     const form = this.element.querySelector("form")!;
@@ -355,6 +365,9 @@ export class ConversationPage {
       }
     }
     this.clear();
+    // What the last command did is behind the conversation now.
+    this.say("");
+    this.hideSaid();
     this.following = true;
     // While a turn is under way, or a queued one is on its way, words wait
     // their turn instead of cutting into it.
@@ -413,6 +426,23 @@ export class ConversationPage {
   /** A line beside the composer: what a command did, or why it did not. */
   private say(text: string): void {
     this.note.textContent = text;
+  }
+
+  /** What a command answered at length, in a panel above the composer
+   *  until it is closed or the user sends something. */
+  private showSaid(title: string, html: string): void {
+    const pop = this.element.querySelector<HTMLElement>(".said-pop")!;
+    const close = this.options.controls!.words.said.close;
+    pop.innerHTML = `<div class="said-head"><span class="usage-title">${escape(title)}</span><button class="icon-button said-close" type="button" aria-label="${escape(close)}" title="${escape(close)}">${glyph("close", 16)}</button></div><div class="said-body">${html}</div>`;
+    pop.setAttribute("aria-label", title);
+    pop.hidden = false;
+    pop.querySelector(".said-close")!.addEventListener("click", () => this.hideSaid(), { once: true });
+  }
+
+  private hideSaid(): void {
+    const pop = this.element.querySelector<HTMLElement>(".said-pop")!;
+    pop.hidden = true;
+    pop.innerHTML = "";
   }
 
   private draft(): string | null {
@@ -557,6 +587,22 @@ export class ConversationPage {
       pick.value = "";
       this.input.focus();
     });
+    // On a phone the camera is one tap away. Elsewhere an input that asks
+    // for a capture is only another file picker, so it is not offered.
+    if (matchMedia("(pointer: coarse)").matches) {
+      const photo = this.element.querySelector<HTMLButtonElement>(".composer-photo")!;
+      const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
+      photo.hidden = false;
+      photo.innerHTML = glyph("camera", 18);
+      photo.setAttribute("aria-label", attach.words.photo);
+      photo.title = attach.words.photo;
+      photo.addEventListener("click", () => shot.click());
+      shot.addEventListener("change", () => {
+        if (shot.files) tray.addFiles(shot.files);
+        shot.value = "";
+        this.input.focus();
+      });
+    }
     this.input.addEventListener("paste", (event) => {
       const files = [...(event.clipboardData?.files ?? [])];
       if (!files.length) return;
@@ -660,7 +706,7 @@ export class ConversationPage {
 
   /** Starting again from the user's words, or forking from a turn: said
    *  plainly first, done once the user agrees. */
-  private turnAct(act: "rewind" | "fork", turn: string, words: string | null): void {
+  private turnAct(act: "rewind" | "fork", turn: string, words: string | null, kept: Attachment[]): void {
     const controls = this.options.controls;
     if (!controls) return;
     const said = controls.words;
@@ -688,6 +734,8 @@ export class ConversationPage {
           void this.run({ name: "rewind", description: "", args: null, control: "rewind", source: null }, "", { do: "rewind", from: turn }).then(() => {
             if (words !== null && !this.input.value.trim()) {
               this.input.value = words;
+              // What came with the words comes back with them.
+              if (kept.length && this.tray && !this.tray.count) this.tray.restore(kept);
               this.fit();
               this.drawAction();
               this.keepDraft();
@@ -748,6 +796,8 @@ export class ConversationPage {
     if (!files || !menu) return;
     const at = mentionAt(this.input.value, this.input.selectionStart ?? this.input.value.length);
     if (!at) return menu.hide();
+    const nowhere = files.nowhere?.() ?? null;
+    if (nowhere) return menu.show([], nowhere === "outside" ? files.words.outside : files.words.nowhere);
     if (!at.query) return menu.show([], files.words.hint);
     const asked = ++this.mentionAsked;
     if (!menu.open) menu.show([], files.words.searching);
@@ -779,6 +829,19 @@ export class ConversationPage {
       this.modelMenu!.show(this.offered?.models ?? [], words.noModels);
       return false;
     }
+    // What the interface already holds is shown from here, not asked for.
+    if (command.source === "codex" && !given && !args) {
+      if (command.name === "status" || command.name === "usage") {
+        this.say("");
+        if (this.element.querySelector<HTMLElement>(".usage-pop")!.hidden) this.toggleUsage();
+        return true;
+      }
+      if (command.name === "skills") {
+        this.say("");
+        this.showSaid(`/${command.name}`, skillsHtml(this.offered, words.said));
+        return true;
+      }
+    }
     const what: Control =
       given ??
       (command.control === "compact"
@@ -798,7 +861,12 @@ export class ConversationPage {
         controls.forked(done.resident);
         return true;
       }
-      this.say(done.said ?? words.done(command.name));
+      const model = what.do === "model" ? this.offered?.models.find((m) => m.id === what.model) : undefined;
+      const shown = shownOf(command.name, what.do === "model" && model ? { ...what, model: model.name ?? model.id } : what, done.said, words.said);
+      if (shown?.kind === "panel") {
+        this.say("");
+        this.showSaid(shown.title, shown.html);
+      } else this.say(shown?.text ?? words.done(command.name));
       void this.askOffers();
       return true;
     } catch (error) {
@@ -810,6 +878,9 @@ export class ConversationPage {
   private fit(): void {
     this.input.style.height = "auto";
     this.input.style.height = `${this.input.scrollHeight}px`;
+    // A scrollbar only once the words outgrow the box's tallest; below that
+    // a rounding of the line height would show one for nothing.
+    this.input.style.overflowY = this.input.scrollHeight > this.input.clientHeight + 1 ? "auto" : "hidden";
   }
 
   /** What the resident started that still runs, hung above the composer:
@@ -826,6 +897,33 @@ export class ConversationPage {
           )
           .join("")}`
       : "";
+  }
+
+  private away: "asleep" | "removed" | null = null;
+
+  /** Whether the World holds it asleep, or the user removed it, as the
+   *  World last listed it. Removed, it is kept to read: the composer
+   *  gives way to a line saying so, since words no longer reach it. */
+  presence(away: "asleep" | "removed" | null): void {
+    if (this.away === away) return;
+    this.away = away;
+    const removed = away === "removed";
+    this.element.querySelector<HTMLElement>(".composer")!.hidden = removed;
+    const gone = this.element.querySelector<HTMLElement>(".composer-gone")!;
+    gone.hidden = !removed;
+    gone.textContent = removed ? this.options.words.removedNote : "";
+    this.drawState();
+  }
+
+  /** Who it is, as the World lists it: a conversation opened before then,
+   *  as one just started, goes by its agent's id until this; its project
+   *  and model follow it when they change. */
+  identify(who: Someone): void {
+    Object.assign(this.options.someone, who);
+    const said = this.options.words.sendPlaceholder(who.agent);
+    this.input.placeholder = said;
+    this.input.setAttribute("aria-label", said);
+    this.drawState();
   }
 
   /** The watch on the session is over: what is shown stays, and the bar
@@ -879,7 +977,17 @@ export class ConversationPage {
     const waiting = !this.gone && conversation.waiting();
     // Working for the whole of a turn, not only while something shows.
     const working = !this.gone && !waiting && conversation.busy();
-    const now = this.gone ?? (waiting ? words.waitingForYou : working ? words.working : words.idle);
+    const now =
+      this.gone ??
+      (this.away === "removed"
+        ? words.removed
+        : waiting
+          ? words.waitingForYou
+          : working
+            ? words.working
+            : this.away === "asleep"
+              ? words.asleep
+              : words.idle);
     // A screen reader hears the conversation change state, once each time:
     // its words as they stream would be too many to hear.
     if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent} · ${now}`;

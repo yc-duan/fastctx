@@ -15,6 +15,7 @@ import type { PageWords } from "../pages/words";
 import type { HomeWords } from "../home/words";
 import type { ProjectWords } from "./words";
 import { fileLink } from "../app/places";
+import { agentName, titleOf } from "../world/names";
 
 export interface ProjectOptions {
   words: ProjectWords;
@@ -36,8 +37,6 @@ export interface ProjectOptions {
 }
 
 type Tab = "here" | "pages" | "journals" | "decisions" | "places";
-
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 export class ProjectPage {
   readonly element: HTMLElement;
@@ -218,13 +217,14 @@ export class ProjectPage {
       : r.last_action
         ? `${r.last_action.machine !== r.about.machine ? `${r.last_action.machine} · ` : ""}${r.last_action.what}`
         : "";
-    const origin =
-      r.about.origin.kind === "colleague" ? `<span class="someone-origin">${escape(r.about.origin.label)}</span>` : "";
+    const who = home.someone(agentName(r.about.host.agent), r.about.machine);
+    const title = titleOf(r);
+    const origin = title ? `<span class="someone-origin">${escape(who)}</span>` : "";
     const since = r.now?.since ?? r.about.born_at;
     return `<li><a class="someone${waiting ? " waiting" : ""}" href="${escape(this.options.link({ resident: r.about.id, machine: r.about.machine }))}">
       <span class="rail">${mark}</span>
       <span class="someone-body">
-        <span class="someone-line"><span class="someone-name">${escape(home.someone(agentName(r.about.host.agent), r.about.machine))}</span><span class="someone-since">${escape(busy || waiting ? home.for(home.lasted(now.getTime() - Date.parse(since))) : home.ago(now.getTime() - Date.parse(since)))}</span></span>
+        <span class="someone-line"><span class="someone-name">${escape(title ?? who)}</span><span class="someone-since">${escape(busy || waiting ? home.for(home.lasted(now.getTime() - Date.parse(since))) : home.ago(now.getTime() - Date.parse(since)))}</span></span>
         ${origin}${doing ? `<span class="someone-doing">${escape(doing)}</span>` : ""}
       </span>
       <span class="someone-go">${glyph("chevron", 16)}</span>

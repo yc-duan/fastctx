@@ -80,6 +80,15 @@ export function residentsOf(world: WorldNow | null): ResidentNow[] {
   return (world?.who.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
 }
 
+/** One resident as its machine answered for it, removed or not. */
+export function residentAt(world: WorldNow | null, address: Address): ResidentNow | null {
+  return (
+    (world?.who.machines ?? [])
+      .flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []))
+      .find((r) => r.about.id === address.resident && r.about.machine === address.machine) ?? null
+  );
+}
+
 /** Every job still running, on every machine that answered. */
 export function jobsOf(world: WorldNow | null): RunningJob[] {
   return (world?.who.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));

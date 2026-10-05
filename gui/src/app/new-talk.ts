@@ -132,7 +132,7 @@ export class NewTalk {
         </div>
         <p class="sheet-note" role="alert" hidden></p>
         <footer class="sheet-foot">
-          <span class="sheet-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><span class="sheet-hint">${escape(words.hint)}</span></span>
+          <span class="sheet-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><span class="sheet-hint">${escape(words.hint)}</span></span>
           <button class="sheet-go" type="submit">${escape(words.start)}</button>
         </footer>
       </form>`;
@@ -225,6 +225,21 @@ export class NewTalk {
       pick.value = "";
       this.input.focus();
     });
+    // As in a conversation: the camera on a phone, nowhere else.
+    if (matchMedia("(pointer: coarse)").matches) {
+      const photo = this.dialog.querySelector<HTMLButtonElement>(".composer-photo")!;
+      const shot = this.dialog.querySelector<HTMLInputElement>(".composer-shot")!;
+      photo.hidden = false;
+      photo.innerHTML = glyph("camera", 18);
+      photo.setAttribute("aria-label", attach.words.photo);
+      photo.title = attach.words.photo;
+      photo.addEventListener("click", () => shot.click());
+      shot.addEventListener("change", () => {
+        if (shot.files) tray.addFiles(shot.files);
+        shot.value = "";
+        this.input.focus();
+      });
+    }
     this.input.addEventListener("paste", (event) => {
       const files = [...(event.clipboardData?.files ?? [])];
       if (!files.length) return;

@@ -18,6 +18,7 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import { jobsOf, residentsOf, type Store } from "./store";
 import type { DeviceWords, MachinesWords } from "./words";
+import { agentName, titleOf } from "../world/names";
 
 export interface MachinesOptions {
   store: Store;
@@ -41,8 +42,6 @@ export interface MachinesOptions {
 
 /** What is known of the agents on one machine. */
 type Asked = { state: "known"; facts: AgentFacts[] } | { state: "unknown"; why: string };
-
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 export class MachinesPage implements Page {
   readonly element: HTMLElement;
@@ -194,7 +193,7 @@ export class MachinesPage implements Page {
           ? `<ul class="machine-agents">${residents
               .map(
                 (r) =>
-                  `<li><a href="${talkLink({ resident: r.about.id, machine: r.about.machine })}"><span class="mark ${r.now?.waiting_for_user ? "mark-ask" : r.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span>${escape(r.about.origin.kind === "colleague" ? `${agentName(r.about.host.agent)} · ${r.about.origin.label}` : agentName(r.about.host.agent))}${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}</a></li>`,
+                  `<li><a href="${talkLink({ resident: r.about.id, machine: r.about.machine })}"><span class="mark ${r.now?.waiting_for_user ? "mark-ask" : r.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span>${escape([agentName(r.about.host.agent), titleOf(r)].filter(Boolean).join(" · "))}${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}</a></li>`,
               )
               .join("")}</ul>`
           : node.online === true

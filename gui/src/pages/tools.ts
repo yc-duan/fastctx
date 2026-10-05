@@ -11,6 +11,7 @@ import { journal, look, project, readText } from "../world/bridge";
 import type { Address } from "../world/events";
 import type { PageInvocation, PageResult, RunReply } from "../world/pages";
 import type { JobRecord, ResidentNow, Writer } from "../world/world";
+import { agentName, titleOf } from "../world/names";
 
 export interface ToolsOptions {
   town: string;
@@ -22,8 +23,6 @@ export interface ToolsOptions {
 }
 
 type Answer<K extends keyof Tools> = Tools[K]["answer"];
-
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
 function state(resident: ResidentNow): Answer<"world.now">["agents"][number]["state"] {
   if (resident.now?.waiting_for_user) return "waiting";
@@ -109,7 +108,7 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
             machine: address.machine,
             agent: agentName(resident.about.host.agent),
             project: resident.town,
-            title: resident.about.origin.kind === "colleague" ? resident.about.origin.label : null,
+            title: titleOf(resident),
             state: state(resident),
             since: resident.now?.since ?? null,
             last: resident.last_action?.what ?? null,

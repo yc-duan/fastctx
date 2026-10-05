@@ -31,7 +31,7 @@ import { ReaderPage } from "./app/reader";
 import { WelcomePage } from "./app/welcome";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect, signal } from "./app/signals";
-import { createStore, jobsOf, residentsOf } from "./app/store";
+import { addressOf, createStore, jobsOf, residentAt, residentsOf, sameAddress } from "./app/store";
 import {
   enComposer,
   enConsent,
@@ -90,6 +90,7 @@ import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore 
 import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address } from "./world/events";
 import { ownerResident, type ResidentDetail } from "./world/world";
+import { agentName, titleOf } from "./world/names";
 import {
   applyHosts,
   control,
@@ -268,8 +269,6 @@ const shell = new Shell({
 });
 document.getElementById("app")!.append(shell.element);
 
-const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
-
 /** When the reader last looked at the front page: kept on this device, and
  *  brought up to date while the front page is in view, so what it says
  *  happened "while you were away" is what they have not seen there. */
@@ -423,7 +422,16 @@ function liveManage(address: Address): Manage {
     void store.refresh();
     return managed.steps
       .filter((step): step is typeof step & { outcome: "pending" | "unsupported" | "failed" } => step.outcome !== "done")
-      .map((step) => detailsWords.unfinished(step.stage, step.outcome, step.detail));
+      .map((step) =>
+        // Codex unloading the thread in its own time is how sleeping goes,
+        // not something left undone.
+        action.do === "sleep" &&
+        step.stage === "host" &&
+        step.outcome === "pending" &&
+        residentsOf(store.world.peek()).some((r) => sameAddress(addressOf(r), address) && r.about.host.agent === "codex")
+          ? detailsWords.sleepPending
+          : detailsWords.unfinished(step.stage, step.outcome, step.detail),
+      );
   };
   return {
     sleep: () => act({ do: "sleep" }),
@@ -613,15 +621,23 @@ function specimenTalk(address: Address): Page {
   };
 }
 
+/** Who a resident is, as the World last listed it, removed or not; null
+ *  while it is not listed yet. */
+function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address): Someone | null {
+  const known = residentAt(world, address);
+  if (!known) return null;
+  return {
+    agent: agentName(known.about.host.agent),
+    machine: address.machine,
+    model: known.about.model ?? null,
+    project: known.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
+  };
+}
+
 function liveTalk(address: Address): Page {
   const world = store.world.peek();
-  const known = residentsOf(world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
-  const someone: Someone = {
-    agent: known ? agentName(known.about.host.agent) : address.resident,
-    machine: address.machine,
-    model: known?.about.model ?? null,
-    project: known?.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
-  };
+  const listed = someoneOf(world, address);
+  const someone: Someone = listed ?? { agent: address.resident, machine: address.machine, model: null, project: null };
   const here = world?.here ?? null;
   const conversation = new Conversation();
   // Names of files for an `@`, on the agent's machine, in its places.
@@ -647,6 +663,14 @@ function liveTalk(address: Address): Page {
     files: {
       words: composerWords.files,
       find: (query) => search.find(query).then((files) => files.map((file) => ({ path: file.path, relative: file.relative }))),
+      nowhere: () => {
+        const now = store.world.peek();
+        const known = residentsOf(now).find((r) => sameAddress(addressOf(r), address));
+        if (!known) return null;
+        if (!known.town) return "outside";
+        const record = now?.towns.find((t) => t.town === known.town)?.record;
+        return record && !record.places.some((place) => place.machine === address.machine) ? "unlisted" : null;
+      },
     },
     attach: {
       words: composerWords.attach,
@@ -771,13 +795,26 @@ function liveTalk(address: Address): Page {
   read();
   // Opened before the World first answered, as from a notification at
   // start: built again once it has, to name the agent and its project.
-  const named = world
-    ? () => {}
-    : effect(() => {
+  // Otherwise the World's listing of it is followed in place, without
+  // reading the conversation again: named once listed, as one just started;
+  // its project and model as they change; asleep or not.
+  let shown = listed;
+  const named = !world
+    ? effect(() => {
         if (!store.world.get()) return;
         queueMicrotask(() => {
           if (!left && place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine) show(place);
         });
+      })
+    : effect(() => {
+        const now = store.world.get();
+        const known = residentAt(now, address);
+        const who = someoneOf(now, address);
+        if (!known || !who || left) return;
+        page.presence(known.removed ? "removed" : known.now?.activity === "asleep" ? "asleep" : null);
+        if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model) return;
+        shown = who;
+        page.identify(who);
       });
   return {
     element: page.element,
@@ -1120,8 +1157,8 @@ new Palette({
         .filter((r) => r.here || r.now?.waiting_for_user)
         .map((r) => ({
           group: paletteWords.agents,
-          label: r.about.origin.kind === "colleague" ? r.about.origin.label : shellWords.someone(agentName(r.about.host.agent), r.about.machine),
-          note: [r.about.origin.kind === "colleague" ? shellWords.someone(agentName(r.about.host.agent), r.about.machine) : null, r.town].filter(Boolean).join(" · "),
+          label: titleOf(r) ?? shellWords.someone(agentName(r.about.host.agent), r.about.machine),
+          note: [titleOf(r) ? shellWords.someone(agentName(r.about.host.agent), r.about.machine) : null, r.town].filter(Boolean).join(" · "),
           run: go({ kind: "talk", address: { resident: r.about.id, machine: r.about.machine } }),
         })),
       ...(world?.nodes.machines ?? [])

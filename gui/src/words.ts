@@ -74,6 +74,11 @@ export interface Words {
   context(percent: number): string;
   working: string;
   idle: string;
+  /** Not here: the World holds its session asleep; words wake it. */
+  asleep: string;
+  /** The user removed it from the World: kept to read, not to speak to. */
+  removed: string;
+  removedNote: string;
   waitingForYou: string;
   on(machine: string): string;
   /** Between the names in a short list. */
@@ -101,6 +106,14 @@ export interface Words {
   landed(how: string, machine: string, why: string | null): string;
   /** A job the resident started has ended, on that machine. */
   jobEnded(job: string, machine: string): string;
+  /** The user moved it to another project through the World. */
+  movedTo(town: string): string;
+  movedOut: string;
+  /** The project's brief it was handed with the move, folded. */
+  briefHanded: string;
+  deskFree(who: string): string;
+  deskTaken(who: string): string;
+  deskOutside: string;
   /** How a job or a colleague's turn ended, from the World's own wording
    *  (`exited 0`, `turn completed, 14m`); a wording not known is kept. */
   ended(how: string): string;
@@ -217,6 +230,9 @@ export const zh: Words = {
   context: (percent) => `上下文 ${percent}%`,
   working: "正在干活",
   idle: "空闲",
+  asleep: "睡着了，说话就叫醒它",
+  removed: "已移出世界",
+  removedNote: "它已离开世界。这段对话留着给你看，话不会再送到它那里。",
   waitingForYou: "在等你回答",
   on: (machine) => `在 ${machine}`,
   listSeparator: "、",
@@ -237,6 +253,12 @@ export const zh: Words = {
         ? `话交出去了，但不知道它进没进去${why ? `：${why}` : ""}`
         : `它此刻没给世界开口，话等它下次用世界的工具时送到${why ? `（${why}）` : ""}`,
   jobEnded: (job, machine) => `后台作业 ${job} 在 ${machine} 上结束了`,
+  movedTo: (town) => `你把它换到了项目 ${town}，世界照实告诉了它`,
+  movedOut: "你让它离开了项目，世界照实告诉了它",
+  briefHanded: "它随之收到的项目说明",
+  deskFree: (who) => `${who} 这一轮结束了，这台机器的 Computer Use 空出来了`,
+  deskTaken: (who) => `${who} 正在这台机器上用 Computer Use，它那一轮结束时会告诉它`,
+  deskOutside: "这台机器的 Computer Use 被世界之外的会话占着，说不准什么时候空出来",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `退出码 ${code}`,
@@ -329,6 +351,9 @@ export const en: Words = {
   context: (percent) => `Context ${percent}%`,
   working: "Working",
   idle: "Idle",
+  asleep: "Asleep; speaking wakes it",
+  removed: "Removed from the World",
+  removedNote: "It has left the World. This conversation is kept for you to read; words no longer reach it.",
   waitingForYou: "Waiting for you",
   on: (machine) => `on ${machine}`,
   listSeparator: ", ",
@@ -349,6 +374,12 @@ export const en: Words = {
         ? `Handed over, but whether it went in is unknown${why ? `: ${why}` : ""}`
         : `It gives the World no way in now; the words wait for its next call of a World tool${why ? ` (${why})` : ""}`,
   jobEnded: (job, machine) => `Job ${job} on ${machine} ended`,
+  movedTo: (town) => `You moved it to the project ${town}; the World told it so`,
+  movedOut: "You took it out of its project; the World told it so",
+  briefHanded: "The project brief it was handed",
+  deskFree: (who) => `${who}'s turn ended; Computer Use on this machine is free`,
+  deskTaken: (who) => `${who} is using Computer Use on this machine; it will be told when that turn ends`,
+  deskOutside: "Computer Use on this machine is held by a session outside the World; when it frees up can't be known",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `exit ${code}`,

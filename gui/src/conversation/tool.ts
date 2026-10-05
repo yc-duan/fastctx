@@ -84,7 +84,11 @@ function simpleWords(command: string): string[] | null {
   return words;
 }
 
-export function headline(tool: Tool, ended: { use: Use } | null, words: Words): Headline {
+/** A file's name as a person knows it: an attachment the World keeps under
+ *  a name of its own goes by the name it came with. */
+export type Named = (path: string) => string | null;
+
+export function headline(tool: Tool, ended: { use: Use } | null, words: Words, named: Named = () => null): Headline {
   const tense = tenseOf(ended);
   const say = (act: Act) => words.act(act, tense);
   const plain = { title: null, added: null, removed: null };
@@ -95,7 +99,7 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words): 
         return {
           glyph: "read",
           action: say("read"),
-          object: viewed.map(basename).join(words.listSeparator),
+          object: viewed.map((path) => named(path) ?? basename(path)).join(words.listSeparator),
           title: tool.does.command,
           added: null,
           removed: null,
@@ -118,7 +122,7 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words): 
       return {
         glyph: "image",
         action: say("image"),
-        object: tool.does.path ? basename(tool.does.path) : null,
+        object: tool.does.path ? (named(tool.does.path) ?? basename(tool.does.path)) : null,
         ...plain,
         title: tool.does.path,
       };

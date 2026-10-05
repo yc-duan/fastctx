@@ -515,7 +515,7 @@ function codex(): Specimen {
 /** A conversation that waits on the user: an approval answered elsewhere,
  *  then one request still waiting, of the kind `?ask=` names (Codex's
  *  command, question, form, link; Claude's claude-permission,
- *  claude-question, claude-form). */
+ *  claude-question, claude-plan, claude-form). */
 function asking(): Specimen {
   const s = new Script("2026-10-04T15:10:00Z");
   const kind = new URLSearchParams(location.search).get("ask") ?? "command";
@@ -614,6 +614,30 @@ function asking(): Specimen {
                 ],
               },
             ],
+          },
+        },
+      });
+      break;
+    case "claude-plan":
+      s.say("t2", "message", "我把迁移的步骤理了一遍，写成了计划。", 2);
+      s.push({
+        event: "changed",
+        turn: "t2",
+        change: {
+          kind: "request",
+          id: claudeId("r-4"),
+          request: "classic.PermissionRequest",
+          params: {
+            session_id: "session-9c1e",
+            hook_event_name: "PermissionRequest",
+            cwd: "/srv/ingest",
+            permission_mode: "plan",
+            tool_name: "ExitPlanMode",
+            tool_input: {
+              plan: "## 把写入改成批量提交\n\n1. 在 `ingest/src/sink.rs` 里把逐条 `INSERT` 换成 `COPY`，每批 5000 行。\n2. 失败时整批回放，写清是哪一批、第几行。\n3. 重新生成 `.sqlx/` 的离线缓存。\n4. 在 lab 上跑整套集成测试，对比改前改后的吞吐。\n\n不动的：读取的那一半、表结构。",
+              planFilePath: "/home/dev/.claude/plans/batch-commit.md",
+            },
+            permission_suggestions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }],
           },
         },
       });

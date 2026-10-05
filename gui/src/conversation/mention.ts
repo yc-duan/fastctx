@@ -16,6 +16,10 @@ export interface FileWords {
   hint: string;
   searching: string;
   none: string;
+  /** It is in no project, and `@` looks only in a project's places. */
+  outside: string;
+  /** Its project lists no place on its machine. */
+  nowhere: string;
 }
 
 /** The `@` mention being typed just before the caret: what follows the
