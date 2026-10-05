@@ -1,0 +1,15 @@
+{
+  "identifier": "updater",
+  "description": "The main page on a computer may look for a new version of the app, and download and install it.",
+  "platforms": [
+    "windows",
+    "macOS",
+    "linux"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "updater:default"
+  ]
+}

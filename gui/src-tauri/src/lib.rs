@@ -800,7 +800,9 @@ pub fn run() {
             release_here
         ]);
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build());
+    let builder = builder
+        .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(windows)]
     let builder = builder.plugin(desktop_presence::plugin(desktop)).plugin(titlebar::plugin());
     #[cfg(target_os = "android")]

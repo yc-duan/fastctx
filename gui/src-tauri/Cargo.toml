@@ -44,6 +44,8 @@ fastctx-hub = { path = "../../crates/fastctx-hub" }
 fastctx-install = { path = "../../crates/fastctx-install" }
 # The window opens where and as large as it was left.
 tauri-plugin-window-state = "2.5"
+# New versions of the app come from the project's GitHub releases, signed.
+tauri-plugin-updater = "2.13"
 
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "2", features = ["tray-icon"] }

@@ -189,6 +189,17 @@ export interface SettingsWords {
   renewFailed(why: string): string;
   guardian: string;
   guardianWhy: string;
+  /** The app's own version, and a newer one from the project's releases. */
+  app: string;
+  appChecking: string;
+  appLatest: string;
+  appCheckAgain: string;
+  appUnknown(why: string): string;
+  appAvailable(version: string): string;
+  appInstall: string;
+  appDownloading(percent: number | null): string;
+  appInstalling: string;
+  appFailed(why: string): string;
   /** A phone: what it lets the World do in the background. */
   phoneNotices: string;
   phoneNoticesOn: string;
@@ -271,6 +282,16 @@ export const zhSettings: SettingsWords = {
   renewFailed: (why) => `没换成：${why}`,
   guardian: "请管理员确认",
   guardianWhy: "更新开机后保持这台电脑在线的那部分；正在做的事照常",
+  app: "应用",
+  appChecking: "正在看有没有新版…",
+  appLatest: "已是最新",
+  appCheckAgain: "再看一次",
+  appUnknown: (why) => `看不了有没有新版：${why}`,
+  appAvailable: (version) => `有新版 World ${version}`,
+  appInstall: "下载并装上",
+  appDownloading: (percent) => (percent === null ? "正在下载…" : `正在下载… ${percent}%`),
+  appInstalling: "正在装上，World 会关掉再打开…",
+  appFailed: (why) => `装不上：${why}`,
   phoneNotices: "提醒",
   phoneNoticesOn: "允许：有智能体等你回答、你开的对话说完了，手机会叫你",
   phoneNoticesOff: "没允许：手机不会叫你",
@@ -373,6 +394,16 @@ export const enSettings: SettingsWords = {
   renewFailed: (why) => `Not done: ${why}`,
   guardian: "Ask an administrator",
   guardianWhy: "Updates what keeps this computer online after it starts; current work goes on",
+  app: "App",
+  appChecking: "Looking for a new version…",
+  appLatest: "Up to date",
+  appCheckAgain: "Check again",
+  appUnknown: (why) => `Could not check for a new version: ${why}`,
+  appAvailable: (version) => `World ${version} is available`,
+  appInstall: "Download and install",
+  appDownloading: (percent) => (percent === null ? "Downloading…" : `Downloading… ${percent}%`),
+  appInstalling: "Installing; World will close and open again…",
+  appFailed: (why) => `Could not install it: ${why}`,
   phoneNotices: "Calls",
   phoneNoticesOn: "Allowed: the phone calls you when an agent waits for you or a conversation you opened finishes",
   phoneNoticesOff: "Not allowed: the phone will not call you",

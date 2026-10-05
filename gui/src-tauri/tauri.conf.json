@@ -36,5 +36,16 @@
         "installerHooks": "windows/desktop-presence.nsh"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMzQjk0NThCRkZCRjg1OEMKUldTTWhiLy9pMFc1TThHUitkUVVyWCtzT0NsOERUUHZKelZjcHJmS3lBUzBtUXBVNHdkenEzZjEK",
+      "endpoints": [
+        "https://github.com/yc-duan/fastctx/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

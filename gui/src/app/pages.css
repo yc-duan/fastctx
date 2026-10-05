@@ -541,6 +541,16 @@
   color: var(--text-3);
 }
 
+/* What a release says of itself, under the version it offers. */
+.settings-notes {
+  flex: 1 1 100%;
+  margin: var(--space-1) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-2);
+  line-height: var(--leading-prose);
+  white-space: pre-wrap;
+}
+
 /* What to set by hand on a phone, in order. */
 .settings-steps {
   flex: 1 1 100%;

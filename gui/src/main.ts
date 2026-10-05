@@ -132,6 +132,7 @@ import {
   type WorldNow,
 } from "./world/bridge";
 import { en, zh } from "./words";
+import { updating } from "./world/updater";
 import { desktopAvailable } from "./world/desktop";
 import { notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
@@ -1035,6 +1036,7 @@ function show(next: Place): void {
                   },
                   guardian: renewGuardianHere,
                 },
+                updating,
               }
             : undefined
           : specimenComputer(),
