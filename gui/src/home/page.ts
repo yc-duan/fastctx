@@ -6,6 +6,7 @@
 // nothing is summarised by a model. Projects and machines are in the
 // sidebar, not here.
 
+import type { VersionMismatch } from "../world/renewal";
 import { fileLink } from "../app/places";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -140,9 +141,14 @@ export class HomePage {
 
   /** The World could not be asked: said where the facts would be, with
    *  what was last shown left as it was. */
-  unreachable(why: string, now: Date): void {
-    this.day.textContent = this.options.words.dateline(now);
-    this.facts.innerHTML = `<span class="fact unreachable">${escape(this.options.words.unreachable(why))}</span><a class="text-button set-up" href="#/welcome">${escape(this.options.words.setUp)}</a>`;
+  /** `old` is the World's version where it is older than the interface,
+   *  which is then what is said instead of the refusal itself. */
+  unreachable(why: string, now: Date, old: VersionMismatch | null = null): void {
+    const { words } = this.options;
+    this.day.textContent = words.dateline(now);
+    this.facts.innerHTML = old
+      ? `<span class="fact unreachable">${escape(words.oldWorld(old.node_version, old.client_version))}</span><a class="text-button set-up" href="#/settings">${escape(words.renewThere)}</a>`
+      : `<span class="fact unreachable">${escape(words.unreachable(why))}</span><a class="text-button set-up" href="#/welcome">${escape(words.setUp)}</a>`;
     this.drawn = "";
   }
 

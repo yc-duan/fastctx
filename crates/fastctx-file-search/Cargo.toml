@@ -1,0 +1,18 @@
+[package]
+name = "fastctx-file-search"
+description = "Live, scoped file-name indexes for conversation completion"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+fastctx-types = { path = "../fastctx-types" }
+ignore = "0.4.28"
+notify = "8"
+nucleo-matcher = "0.3.1"
+
+[dev-dependencies]
+tempfile = "3"

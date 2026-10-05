@@ -197,6 +197,9 @@ impl fastctx_net::link::Node for Handler {
                     crate::talk::serve_watch(&node, resident, watch, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node).await.map(RemoteReply::Agents),
+                RemoteCall::FindFiles { request } => {
+                    crate::file_search::here(&node, from, request).await.map(RemoteReply::FilesFound)
+                }
                 RemoteCall::ReadFile { request, read } => {
                     let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;
                     crate::file_read::serve(&node, request, read, stream).await
@@ -276,6 +279,7 @@ impl fastctx_net::link::Node for Handler {
             let Some(node) = node else {
                 return Err(io::Error::other("the node is stopping"));
             };
+            let _answering = node.handoff.call().ok_or_else(|| io::Error::other("the node is handing over"))?;
             if crate::devices::is_device(&node, &from) {
                 return Ok(Err(format!("{from} is a device, and a device sends no letters")));
             }

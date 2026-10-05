@@ -50,6 +50,10 @@ pub fn admit(node: &Node, from: &MachineName, call: &RemoteCall) -> Result<(), F
             // agent's own place: byte streams, which no relay carries.
             | RemoteCall::ReadFile { .. }
             | RemoteCall::Upload { .. }
+            // Names of the user's files for an `@` in their words: the
+            // machine that has them limits the search to the conversation's
+            // places, and reads no contents.
+            | RemoteCall::FindFiles { .. }
             | RemoteCall::Relay { .. }
     );
     if device && !users_own {

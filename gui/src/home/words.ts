@@ -22,6 +22,10 @@ export interface HomeWords {
   listSeparator: string;
   /** The World could not be asked, and why. */
   unreachable(why: string): string;
+  /** The World here is older than the interface and refuses it. */
+  oldWorld(node: string, client: string): string;
+  /** Where the new one is put in place. */
+  renewThere: string;
   /** The way to set this computer up, beside the World it could not ask. */
   setUp: string;
   /** Begins a conversation, where nobody is at work. */
@@ -118,6 +122,8 @@ export const zhHome: HomeWords = {
   idle: (names) => `空闲：${names}`,
   listSeparator: "、",
   unreachable: (why) => `问不到这台机器上的世界：${why}`,
+  oldWorld: (node, client) => `这台电脑上的世界还是旧版 ${node}，和这个界面（${client}）说不上话`,
+  renewThere: "到设置里换成新版",
   setUp: "设置这台电脑",
   begin: "开一段新对话",
   away: "你不在时",
@@ -182,6 +188,8 @@ export const enHome: HomeWords = {
   idle: (names) => `Idle: ${names}`,
   listSeparator: ", ",
   unreachable: (why) => `The World on this machine could not be asked: ${why}`,
+  oldWorld: (node, client) => `This computer still runs the older World ${node}, which cannot talk with this interface (${client})`,
+  renewThere: "Put the new one in place in Settings",
   setUp: "Set up this computer",
   begin: "Begin a conversation",
   away: "While you were away",

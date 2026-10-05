@@ -16,9 +16,11 @@ pub mod attachments;
 pub mod conversation;
 pub mod device;
 pub mod file_read;
+mod file_search;
 pub mod host;
 mod management;
 pub mod pages;
+pub mod renewal;
 pub mod shown;
 pub mod town;
 pub mod world;
@@ -40,7 +42,7 @@ pub enum ConnectError {
     #[error("the node is not running ({endpoint})")]
     NoNode { endpoint: String },
     #[error("the node refused: {reason}")]
-    Refused { reason: String },
+    Refused { reason: String, mismatch: Option<fastctx_types::renewal::Mismatch> },
     #[error("talking to the node at {endpoint}: {error}")]
     Io { endpoint: String, error: std::io::Error },
     #[error("the node was started but exited before it was ready; its log is {log}")]
@@ -103,7 +105,10 @@ impl Client {
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
             Welcome::Accepted { machine, version } => Ok(Self { connection, next: 0, machine, node_version: version }),
-            Welcome::Refused { reason } => Err(ConnectError::Refused { reason }),
+            Welcome::Refused { reason, mismatch } => {
+                let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
+                Err(ConnectError::Refused { reason, mismatch })
+            }
         }
     }
 
@@ -116,9 +121,9 @@ impl Client {
         Self::connect_or_start_with(world, peer, None).await
     }
 
-    /// As [`Client::connect_or_start`], starting the node from `program`
-    /// rather than from this process's own executable: for a program that
-    /// is not fastctx itself, such as the graphical interface.
+    /// As [`Client::connect_or_start`], with an explicit `program` for an
+    /// interface that is not fastctx. Without one, the installed copy is
+    /// preferred, then this process when the World has no installed copy.
     pub async fn connect_or_start_with(
         world: &WorldDir,
         peer: Peer,
@@ -276,8 +281,12 @@ fn start_node(
         .parent()
         .filter(|_| world.path().file_name() == Some(std::ffi::OsStr::new("world")))
         .ok_or_else(|| std::io::Error::other("starting a node requires a World under <fastctx root>/world"))?;
+    // A long-lived tool adapter must not revive its pinned old node after
+    // an update. An uninstalled World still starts from its caller.
+    let installed = root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
     let executable = match program {
         Some(program) => program.to_path_buf(),
+        None if installed.try_exists()? => installed,
         None => std::env::current_exe()?,
     };
     let home = fastctx_platform::user_home()?;

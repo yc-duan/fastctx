@@ -89,7 +89,7 @@ fn standing(standing: Standing) -> &'static str {
 
 /// The fastctx this application carries: beside its own program, where
 /// the installer puts it.
-fn carried() -> Option<PathBuf> {
+pub(super) fn carried() -> Option<PathBuf> {
     let program = std::env::current_exe().ok()?;
     let beside = program.parent()?.join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
     beside.is_file().then_some(beside)
@@ -143,10 +143,18 @@ pub fn place() -> Result<String, String> {
     if carried().is_none() {
         return Err("this build of World carries no fastctx to put in place".into());
     }
-    let (installed, report) = apply::place_executable(&places).map_err(|error| error.to_string())?;
-    if let Some(leftover) = report.leftovers.first() {
-        return Err(format!("placed, but could not clear {leftover}"));
+    let mut command = std::process::Command::new(&places.fastctx);
+    command.arg("renew").arg("stage").arg("--dir").arg(&places.root).arg("--source").arg(&places.fastctx);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(0x08000000);
     }
+    let result = command.output().map_err(|error| error.to_string())?;
+    if !result.status.success() {
+        return Err(String::from_utf8_lossy(&result.stderr).into_owned());
+    }
+    let installed = places.installed();
     let bin = installed.parent().ok_or("the placed fastctx has no directory")?;
     crate::user_path::add(bin)
         .map_err(|error| format!("{} is in place, but putting it on the PATH failed: {error}", installed.display()))?;

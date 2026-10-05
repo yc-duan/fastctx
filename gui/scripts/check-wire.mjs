@@ -33,10 +33,12 @@ import type { Control, Controlled, Offers } from "../src/world/control";
 import type { FileReadPart, FileReadResult } from "../src/world/file-read";
 import type { Attachment } from "../src/world/attachments";
 import type { Managed } from "../src/world/management";
+import type { FileSearchReply, FileSearchRequest } from "../src/world/file-search";
 import type { PageView, PageSummary, PageVersion, PageConsent, PageResult } from "../src/world/pages";
 import type { Speaker } from "../src/world/events";
 import type { Writer, JobOwner, MapView } from "../src/world/world";
 import type { Address } from "../src/world/wire";
+import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRefusal } from "../src/world/renewal";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
     events: SessionEvent[];
@@ -92,6 +94,14 @@ export const fixture = ${json.trimEnd()} satisfies {
     job_owner: JobOwner;
     peer: unknown;
     map: MapView;
+  };
+  renewal: { requests: MaintenanceRequest[]; responses: MaintenanceResponse[]; statuses: RenewalStatus[]; refused: VersionRefusal };
+  // Finding files for an @ mention: what the interface asks and is answered.
+  file_search: {
+    calls: { call: "find_files"; machine: string | null; request: FileSearchRequest }[];
+    replies: ({ reply: "files_found" } & FileSearchReply)[];
+    remote_calls: unknown;
+    remote_results: unknown;
   };
 };
 `;

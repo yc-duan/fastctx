@@ -14,8 +14,12 @@ mod claude;
 mod control;
 #[path = "gui_wire_fixtures/file_read.rs"]
 mod file_read;
+#[path = "gui_wire_fixtures/file_search.rs"]
+mod file_search;
 #[path = "gui_wire_fixtures/pages.rs"]
 mod pages;
+#[path = "gui_wire_fixtures/renewal.rs"]
+mod renewal;
 #[path = "gui_wire_fixtures/session.rs"]
 mod session;
 #[path = "gui_wire_fixtures/since.rs"]
@@ -35,9 +39,11 @@ struct Fixtures {
     agents: agents::Fixtures,
     control: control::Fixtures,
     file_read: file_read::Fixtures,
+    file_search: file_search::Fixtures,
     attachments: attachments::Fixtures,
     claude: claude::Fixtures,
     management: management::Fixtures,
+    renewal: renewal::Fixtures,
 }
 
 fn main() {
@@ -49,9 +55,11 @@ fn main() {
         agents: agents::fixtures(),
         control: control::fixtures(),
         file_read: file_read::fixtures(),
+        file_search: file_search::fixtures(),
         attachments: attachments::fixtures(),
         claude: claude::fixtures(),
         management: management::fixtures(),
+        renewal: renewal::fixtures(),
     };
     let mut out = io::stdout().lock();
     serde_json::to_writer_pretty(&mut out, &fixtures).expect("serialize GUI fixtures");

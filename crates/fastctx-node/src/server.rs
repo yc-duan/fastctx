@@ -27,15 +27,29 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     let Some(hello) = reader.recv().await? else {
         return Ok(());
     };
+    let envelope: serde_json::Value = parse(&hello)?;
+    if envelope.get("maintenance").is_some() {
+        let Some(_answering) = node.handoff.call() else { return Ok(()) };
+        let response = crate::renewal::answer(node, parse(&hello)?)?;
+        writer.send(&json(&response)).await?;
+        return writer.drain().await;
+    }
     let hello: Hello = parse(&hello)?;
-    if hello.protocol != PROTOCOL {
+    let legacy = hello.protocol == 5 && crate::renewal_legacy::peer(&hello.peer);
+    if hello.protocol != PROTOCOL && !legacy {
         let reason = format!(
             "this node is fastctx {} and speaks protocol {PROTOCOL}; the client is fastctx {} and speaks protocol {}",
             env!("CARGO_PKG_VERSION"),
             hello.version,
             hello.protocol
         );
-        writer.send(&json(&Welcome::Refused { reason })).await?;
+        let mismatch = Some(fastctx_types::renewal::Mismatch {
+            node_version: env!("CARGO_PKG_VERSION").into(),
+            node_protocol: PROTOCOL,
+            client_version: hello.version,
+            client_protocol: hello.protocol,
+        });
+        writer.send(&json(&Welcome::Refused { reason, mismatch })).await?;
         return Ok(());
     }
     let welcome = Welcome::Accepted { machine: node.machine(), version: env!("CARGO_PKG_VERSION").to_string() };
@@ -46,6 +60,15 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     let mut arrived = Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new() };
     while let Some(frame) = reader.recv().await? {
         let ClientFrame::Call { id, call } = parse(&frame)?;
+        if legacy && !crate::renewal_legacy::call(&hello.peer, &call) {
+            writer
+                .send(&json(&NodeFrame::Reply {
+                    id,
+                    reply: Err(Failure::new("this call is outside the frozen protocol-5 tool and job contract")),
+                }))
+                .await?;
+            return writer.drain().await;
+        }
         if let Call::Watch { resident, machine } = call {
             // A watch keeps the connection until one end leaves.
             let ended = match crate::talk::watch(node, resident, machine).await {
@@ -99,13 +122,16 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
-        let reply = match call {
+        let mut reply = match call {
             Call::Collect { resident } => collect(node, resident, &mut arrived.collected, &mut arrived.notes).await,
             Call::Taken { resident, ids } => {
                 taken(node, resident, ids, &mut arrived.collected, &mut arrived.notes).await
             }
             call => handle(node, &hello.peer, call).await,
         };
+        if legacy && let Ok(reply) = &mut reply {
+            crate::renewal_legacy::reply(reply);
+        }
         if arriving && let Ok(Reply::Arrived(whereabouts)) = &reply {
             arrived.residents.push(whereabouts.resident.clone());
         }
@@ -317,6 +343,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|(to, landed)| Reply::Spoken { to, landed })
         }
         Call::Agents { machine } => crate::agents::query(node, machine).await.map(Reply::Agents),
+        Call::FindFiles { machine, request } => {
+            crate::file_search::call(node, machine, request).await.map(Reply::FilesFound)
+        }
         Call::Open { agent, town, node: target, text, model, reasoning_effort, attachments } => {
             users_voice(node, peer)?;
             let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
