@@ -6,7 +6,7 @@
 // computer on its own opens the interface, and from the sidebar after.
 
 import { escape } from "../conversation/prose";
-import type { JoinKept, Setup } from "../world/bridge";
+import type { JoinKept, Legacy, Setup } from "../world/bridge";
 import type { Page } from "./shell";
 import type { Store } from "./store";
 import type { WelcomeWords } from "./words";
@@ -20,6 +20,8 @@ export interface WelcomeOptions {
   join(code: string, name: string | null): Promise<{ world: string; name: string; kept: JoinKept }>;
   hubHere(addresses: string[]): Promise<string>;
   applyHosts(codex: boolean, claude: boolean): Promise<string[]>;
+  /** What was done with what an old fastctx left, in a sentence. */
+  legacy(legacy: Legacy | null): string;
   /** Done here: on to the World. */
   enter(): void;
 }
@@ -92,7 +94,8 @@ export class WelcomePage implements Page {
         .filter(Boolean)
         .map((fact) => `<span class="fact">${escape(fact)}</span>`)
         .join(`<span class="sep">·</span>`)}
-        ${setup && !setup.installed && setup.carried ? `<button class="text-button place-now" type="button">${escape(words.place)}</button>` : ""}</p>`;
+        ${setup && !setup.installed && setup.carried ? `<button class="text-button place-now" type="button">${escape(words.place)}</button>` : ""}</p>
+      ${setup && this.options.legacy(setup.legacy) ? `<p class="welcome-legacy">${escape(this.options.legacy(setup.legacy))}</p>` : ""}`;
   }
 
   private draw(): void {

@@ -536,3 +536,14 @@
   font-size: var(--size-small);
   color: var(--text-3);
 }
+
+.facts .settings-legacy {
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.welcome-legacy {
+  margin: var(--space-2) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}

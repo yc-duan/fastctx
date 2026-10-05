@@ -4,7 +4,7 @@
 
 import { escape } from "../conversation/prose";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
-import type { KeptNow, WorldNow } from "../world/bridge";
+import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
 import { desktopAvailable } from "../world/desktop";
 import { chooseNotifying, notifying } from "./presence";
 import type { Page } from "./shell";
@@ -20,13 +20,22 @@ export interface SettingsOptions {
   chooseLanguage(language: "zh" | "en"): void;
   /** Says a moment as the front page does: how long ago. */
   ago(at: Date, now: Date): string;
-  /** The service that keeps this computer's node, where the shell can
-   *  install it: whether one does, and installing or removing it. */
-  service?: {
-    kept(): Promise<boolean>;
+  /** This computer, where the shell can set it up: where it stands, and
+   *  installing or removing the service that keeps its node. */
+  computer?: {
+    setup(): Promise<Setup>;
     keep(): Promise<KeptNow>;
     release(): Promise<KeptNow>;
   } | undefined;
+}
+
+/** What was done with what an old fastctx left, in a sentence; nothing
+ *  when there was nothing to do. */
+export function legacySaid(legacy: Legacy | null, words: SettingsWords): string {
+  if (!legacy) return "";
+  if (legacy.kind === "unreadable") return words.legacyUnreadable(legacy.why);
+  if (!legacy.tidied && !legacy.archived && !legacy.waiting) return "";
+  return words.legacyCleaned(legacy.tidied, legacy.archived, legacy.archives.at(-1) ?? legacy.record, legacy.waiting);
 }
 
 export class SettingsPage implements Page {
@@ -35,7 +44,7 @@ export class SettingsPage implements Page {
   private stop: () => void;
   private device: HTMLElement;
   private service: HTMLElement;
-  private kept: boolean | null = null;
+  private setup: Setup | null = null;
   private armed = false;
   private busy = false;
   private said = "";
@@ -98,11 +107,11 @@ export class SettingsPage implements Page {
   }
 
   private askService(): void {
-    const service = this.options.service;
-    if (!service) return;
-    service.kept().then(
-      (kept) => {
-        this.kept = kept;
+    const computer = this.options.computer;
+    if (!computer) return;
+    computer.setup().then(
+      (setup) => {
+        this.setup = setup;
         this.drawService();
       },
       (error: unknown) => {
@@ -113,7 +122,7 @@ export class SettingsPage implements Page {
   }
 
   private serve(act: "keep" | "release"): void {
-    const service = this.options.service;
+    const service = this.options.computer;
     if (!service || this.busy) return;
     if (act === "release" && !this.armed) {
       this.armed = true;
@@ -143,16 +152,20 @@ export class SettingsPage implements Page {
 
   private drawService(): void {
     const { words } = this.options;
-    if (this.kept === null && !this.said) return;
-    const state = this.kept === null ? "" : this.kept ? words.serviceOn : words.serviceOff;
+    const kept = this.setup ? this.setup.service : null;
+    if (kept === null && !this.said) return;
+    const state = kept === null ? "" : kept ? words.serviceOn : words.serviceOff;
     const button =
-      this.kept === null
+      kept === null
         ? ""
-        : this.kept
+        : kept
           ? `<button class="text-button quiet-button${this.armed ? " armed" : ""}" type="button" data-service="release"${this.busy ? " disabled" : ""}>${escape(this.armed ? words.releaseAgain : words.release)}</button>`
           : `<button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button>`;
     this.service.hidden = false;
-    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span>${escape(state)}</span>${button}${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>`;
+    const old = legacySaid(this.setup?.legacy ?? null, words);
+    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span>${escape(state)}</span>${button}${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>${
+      old ? `<dt>${escape(words.legacy)}</dt><dd class="settings-legacy">${escape(old)}</dd>` : ""
+    }`;
   }
 
   private drawLook(): void {

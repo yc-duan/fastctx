@@ -31,6 +31,26 @@ pub struct Setup {
     pub service: bool,
     pub codex: &'static str,
     pub claude: &'static str,
+    /// What was done with what an old fastctx left here; none when nothing
+    /// old was found.
+    pub legacy: Option<Legacy>,
+}
+
+/// The cleanup of an old fastctx, as its record says.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Legacy {
+    Done {
+        /// The record of every step, `upgrade-clean.json`.
+        record: String,
+        /// The `legacy-archive-<day>` directories things were put in.
+        archives: Vec<String>,
+        archived: usize,
+        tidied: usize,
+        waiting: usize,
+    },
+    /// The record is there but could not be read.
+    Unreadable { why: String },
 }
 
 /// What came of keeping this machine connected, in words for the page.
@@ -94,6 +114,16 @@ pub fn setup() -> Result<Setup, String> {
         _ => false,
     };
     let status = apply::status(&places).map_err(|error| error.to_string())?;
+    let legacy = match fastctx_install::upgrade::summary(&places) {
+        Ok(summary) => summary.map(|summary| Legacy::Done {
+            record: summary.record.display().to_string(),
+            archives: summary.archives.iter().map(|path| path.display().to_string()).collect(),
+            archived: summary.archived,
+            tidied: summary.tidied,
+            waiting: summary.waiting,
+        }),
+        Err(error) => Some(Legacy::Unreadable { why: error.to_string() }),
+    };
     Ok(Setup {
         installed: installed.is_file().then(|| installed.display().to_string()),
         carried: carried.map(|path| path.display().to_string()),
@@ -101,6 +131,7 @@ pub fn setup() -> Result<Setup, String> {
         service: WorldDir::under(&places.root).node_service().exists(),
         codex: standing(status.codex),
         claude: standing(status.claude),
+        legacy,
     })
 }
 

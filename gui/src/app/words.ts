@@ -159,6 +159,9 @@ export interface SettingsWords {
   releaseAgain: string;
   kept: Record<"already" | "installed" | "declined" | "unsupported" | "removed" | "not_kept", string>;
   command(command: string): string;
+  legacy: string;
+  legacyCleaned(tidied: number, archived: number, place: string, waiting: number): string;
+  legacyUnreadable(why: string): string;
 }
 
 export const zhSettings: SettingsWords = {
@@ -209,6 +212,10 @@ export const zhSettings: SettingsWords = {
     not_kept: "本来就没有装",
   },
   command: (command) => `要用管理员身份跑这一条：${command}`,
+  legacy: "旧版 fastctx",
+  legacyCleaned: (tidied, archived, place, waiting) =>
+    `它留下的：${tidied} 处原样未动的已收拾，${archived} 样归档在 ${place}，删不删由你${waiting > 0 ? `；还有 ${waiting} 样在用，等不用了再收` : ""}`,
+  legacyUnreadable: (why) => `收拾它留下的东西的记录读不了：${why}`,
 };
 
 export const enSettings: SettingsWords = {
@@ -259,6 +266,10 @@ export const enSettings: SettingsWords = {
     not_kept: "There was none to remove",
   },
   command: (command) => `Run this as root: ${command}`,
+  legacy: "Old fastctx",
+  legacyCleaned: (tidied, archived, place, waiting) =>
+    `What it left: ${tidied} untouched files tidied, ${archived} archived in ${place}, yours to delete${waiting > 0 ? `; ${waiting} still in use, put away once they are not` : ""}`,
+  legacyUnreadable: (why) => `The record of tidying what it left could not be read: ${why}`,
 };
 
 export interface MachinesWords {

@@ -23,7 +23,7 @@ import { NewTalk } from "./app/new-talk";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
-import { SettingsPage } from "./app/settings";
+import { SettingsPage, legacySaid } from "./app/settings";
 import { WelcomePage } from "./app/welcome";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect } from "./app/signals";
@@ -104,6 +104,7 @@ import {
   unwatch,
   watch,
   type Piece,
+  type Setup,
   type WorldNow,
 } from "./world/bridge";
 import { en, zh } from "./words";
@@ -737,6 +738,7 @@ function show(next: Place): void {
         words: english ? enWelcome : zhWelcome,
         head,
         setup: () => (live ? setupState() : Promise.reject(new Error("specimen"))),
+        legacy: (legacy) => legacySaid(legacy, english ? enSettings : zhSettings),
         place: () => (live ? placeFastctx() : notLive()),
         join: (code, name) => (live ? joinWorld(code, name) : notLive()),
         hubHere: (addresses) => (live ? hubHere(addresses) : notLive()),
@@ -765,24 +767,35 @@ function show(next: Place): void {
           location.replace(url);
         },
         ago: (at, now) => homeWords.ago(now.getTime() - at.getTime()),
-        service: live
-          ? onComputer()
-            ? { kept: async () => (await setupState()).service, keep: keepHere, release: releaseHere }
-            : undefined
-          : specimenService(),
+        computer: live ? (onComputer() ? { setup: setupState, keep: keepHere, release: releaseHere } : undefined) : specimenComputer(),
       });
       break;
   }
   shell.show(next, page);
 }
 
-/** A specimen's startup service: it changes nothing anywhere, only how
- *  the settings show it. */
-function specimenService() {
+/** A specimen computer, upgraded from an old fastctx: it changes nothing
+ *  anywhere, only how the settings show it. */
+function specimenComputer() {
   let kept = false;
   const after = <T>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), 900));
   return {
-    kept: async () => kept,
+    setup: async (): Promise<Setup> => ({
+      installed: "C:/Users/me/.fastctx/bin/fastctx.exe",
+      carried: null,
+      same: false,
+      service: kept,
+      codex: "in",
+      claude: "out",
+      legacy: {
+        kind: "done",
+        record: "C:/Users/me/.fastctx/upgrade-clean.json",
+        archives: ["C:/Users/me/.fastctx/legacy-archive-2026-10-04"],
+        archived: 14,
+        tidied: 6,
+        waiting: 1,
+      },
+    }),
     keep: () => {
       kept = true;
       return after({ kind: "installed" as const });

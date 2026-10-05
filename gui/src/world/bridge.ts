@@ -175,7 +175,13 @@ export interface Setup {
   service: boolean;
   codex: "absent" | "out" | "in" | "old";
   claude: "absent" | "out" | "in" | "old";
+  /** What was done with what an old fastctx left here. */
+  legacy: Legacy | null;
 }
+
+export type Legacy =
+  | { kind: "done"; record: string; archives: string[]; archived: number; tidied: number; waiting: number }
+  | { kind: "unreadable"; why: string };
 
 export type KeptNow =
   | { kind: "already" }
