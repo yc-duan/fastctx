@@ -11,7 +11,8 @@
     "check": "tsc --noEmit",
     "check:wire": "node scripts/check-wire.mjs",
     "fixtures:wire": "node scripts/check-wire.mjs --write",
-    "shoot": "node scripts/shoot.mjs"
+    "shoot": "node scripts/shoot.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.1",
