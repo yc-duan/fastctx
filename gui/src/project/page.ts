@@ -7,7 +7,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
-import type { MapView, ProjectRecord, ResidentNow, WorldWho, Writer } from "../world/world";
+import type { MapView, ProjectRecord, ResidentNow, RunningJob, WorldWho, Writer } from "../world/world";
 import type { HomeWords } from "../home/words";
 import type { ProjectWords } from "./words";
 
@@ -77,6 +77,7 @@ export class ProjectPage {
     const { words } = this.options;
     const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
     const here = residents.filter((r) => r.here);
+    const jobs = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));
     const record = map.record;
     this.record = record;
     this.element.querySelector<HTMLButtonElement>(".revise")!.disabled = false;
@@ -93,9 +94,14 @@ export class ProjectPage {
       [
         "here",
         words.here,
-        here.length
+        (here.length
           ? `<ul class="people">${here.map((r) => this.someone(r, now)).join("")}</ul>`
-          : `<p class="quiet">${escape(words.nobodyHere)}</p>`,
+          : `<p class="quiet">${escape(words.nobodyHere)}</p>`) +
+          (jobs.length
+            ? `<h3 class="project-subtitle">${escape(words.running)}</h3><ul class="jobs">${jobs
+                .map((job) => this.job(job, residents, now))
+                .join("")}</ul>`
+            : ""),
       ],
       [
         "journals",
@@ -190,6 +196,16 @@ export class ProjectPage {
       </span>
       <span class="someone-go">${glyph("chevron", 16)}</span>
     </a></li>`;
+  }
+
+  /** Something still running in the town: where, for how long, what, and
+   *  who started it, said when they have gone. */
+  private job(job: RunningJob, residents: ResidentNow[], now: Date): string {
+    const { words, home } = this.options;
+    const owner = residents.find((r) => r.about.id === job.owner.resident && r.about.machine === job.owner.machine);
+    const name = owner ? home.someone(agentName(owner.about.host.agent), owner.about.machine) : `${job.owner.resident} · ${job.owner.machine}`;
+    const by = owner?.here ? home.startedBy(name) : `${home.startedBy(name)} · ${words.ownerLeft}`;
+    return `<li class="job"><span class="job-id">${escape(job.job)}</span><span class="job-where">${escape(job.machine)} · ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
   }
 
   private canon(map: MapView): string {

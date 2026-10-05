@@ -433,3 +433,13 @@
   color: var(--text);
 }
 
+
+/* Under who is here: what is still running in the town. */
+.project-subtitle {
+  margin: var(--space-5) 0 var(--space-2);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-small);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}

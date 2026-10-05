@@ -6,6 +6,8 @@ export interface ProjectWords {
   overview: string;
   here: string;
   nobodyHere: string;
+  running: string;
+  ownerLeft: string;
   journals: string;
   noJournals: string;
   decisions: string;
@@ -54,6 +56,8 @@ export const zhProject: ProjectWords = {
   overview: "概览",
   here: "此刻在这里",
   nobodyHere: "此刻没有谁在这个项目里。",
+  running: "还在跑的",
+  ownerLeft: "起它的已经离开",
   journals: "手记",
   noJournals: "还没有手记。",
   decisions: "定论",
@@ -96,6 +100,8 @@ export const enProject: ProjectWords = {
   overview: "Overview",
   here: "Here now",
   nobodyHere: "Nobody is in this project right now.",
+  running: "Still running",
+  ownerLeft: "whoever started it has left",
   journals: "Journals",
   noJournals: "No journals yet.",
   decisions: "Decisions",
