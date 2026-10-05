@@ -219,7 +219,7 @@ export class Job extends LiveElement {
     }
     const w = words();
     this.shadow.innerHTML = `
-      <div class="row"><span class="mark ${job.state === "running" ? "working" : ""}"></span><span class="name">${escape(job.job)}</span><span class="sub">${escape(w.jobState[job.state] ?? job.state)}${job.exit !== null ? ` · ${escape(w.exit(job.exit))}` : ""}</span></div>
+      <div class="row"><span class="mark ${job.state === "running" ? "working" : ""}"></span><span class="name">${escape(job.job)}</span><span class="sub">${escape(w.jobState[job.state] ?? job.state)}${job.exit !== null ? ` · ${escape(w.exit(job.exit))}` : ""}${job.signal != null ? ` · ${escape(w.signal(job.signal))}` : ""}</span></div>
       <div class="sub" style="margin:2px 0 var(--space-2)"><code>${escape(job.command)}</code></div>
       ${job.output ? `<pre>${escape(job.output)}</pre>` : ""}`;
     const pre = this.shadow.querySelector("pre");

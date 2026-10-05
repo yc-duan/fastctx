@@ -50,10 +50,20 @@ export interface Tools {
     args: { machine: string; path: string; tail?: number };
     answer: { text: string | null; size: number; modified: string; offset: number };
   };
-  /** A job: how it stands, and the end of what it wrote. */
+  /** A job, running or ended: how it stands, and the end of what it wrote.
+   *  `exit` is the shell's exit code once it has one; `signal` is set
+   *  instead when a Unix signal ended it. */
   "job.read": {
     args: { machine: string; job: string };
-    answer: { job: string; command: string; state: "running" | "exited" | "interrupted"; exit: number | null; started: string; output: string };
+    answer: {
+      job: string;
+      command: string;
+      state: "running" | "exited" | "stopped" | "interrupted" | "failed";
+      exit: number | null;
+      signal: number | null;
+      started: string;
+      output: string;
+    };
   };
   /** Opens an agent's conversation in the interface, leaving the page;
    *  nothing is done in the World. */

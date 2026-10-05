@@ -304,11 +304,21 @@ export interface JobRecord {
   output: string;
   started_at: Timestamp;
   pid: number | null;
-  exit: { status: unknown; at: Timestamp } | null;
+  exit: { status: ExitStatus; at: Timestamp } | null;
   output_ended_at: Timestamp | null;
   remaining: number | null;
-  end: { at: Timestamp; how: unknown } | null;
+  end: { at: Timestamp; how: EndedHow } | null;
 }
+
+/** How a program ended (`fastctx_types::run::ExitStatus`). */
+export type ExitStatus = { code: number } | { signal: number };
+
+/** How a job's supervisor accounted for its end (`fastctx_types::run::EndedHow`). */
+export type EndedHow =
+  | { kind: "finished" }
+  | { kind: "stopped" }
+  | { kind: "interrupted"; reason: string }
+  | { kind: "failed"; error: string };
 
 /** One resident in detail, for `fastctx w <id>`. */
 export interface ResidentDetail {

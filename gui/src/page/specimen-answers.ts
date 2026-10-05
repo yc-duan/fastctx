@@ -40,7 +40,7 @@ export const answers: Record<string, (args: Record<string, unknown>) => unknown>
         : `${"…\n"}${log}\n`;
     return { text, size: text.length, modified: new Date().toISOString(), offset: args.tail ? 1 : 0 };
   },
-  "job.read": () => ({ job: "j-k3x9a2", command: "python train.py --run 7 --steps 3000", state: "running", exit: null, started: new Date(Date.now() - 51 * 60_000).toISOString(), output: log }),
+  "job.read": () => ({ job: "j-k3x9a2", command: "python train.py --run 7 --steps 3000", state: "running", exit: null, signal: null, started: new Date(Date.now() - 51 * 60_000).toISOString(), output: log }),
   run: () => ({ exit: 0, output: "utilization.gpu [%]\n83 %\n79 %" }),
   say: () => ({ delivered: true }),
   open: () => ({}),

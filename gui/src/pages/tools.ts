@@ -6,11 +6,11 @@
 // the user's consent are checked; the interface never decides them itself.
 
 import type { Tools } from "../page/tools";
-import { residentsOf, jobsOf, type Store } from "../app/store";
-import { journal, project, readText } from "../world/bridge";
+import { residentsOf, type Store } from "../app/store";
+import { journal, look, project, readText } from "../world/bridge";
 import type { Address } from "../world/events";
 import type { PageInvocation, PageResult, RunReply } from "../world/pages";
-import type { ResidentNow, Writer } from "../world/world";
+import type { JobRecord, ResidentNow, Writer } from "../world/world";
 
 export interface ToolsOptions {
   town: string;
@@ -43,6 +43,14 @@ function writer(by: Writer): string {
     case "page":
       return `page ${by.page.page}`;
   }
+}
+
+/** How a job stands, from its record: the shell exiting is not the end
+ *  while processes it started still run. */
+function jobState(record: JobRecord): Answer<"job.read">["state"] {
+  if (!record.end) return "running";
+  const how = record.end.how.kind;
+  return how === "finished" ? "exited" : how;
 }
 
 function text(value: unknown, name: string): string {
@@ -144,10 +152,22 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
     async "job.read"(args) {
       const machine = text(args.machine, "machine");
       const id = text(args.job, "job");
-      const job = jobsOf(await now()).find((running) => running.job === id && running.machine === machine);
-      if (!job) throw new Error(`job ${id} is not running on ${machine}`);
-      const output = await readText(machine, job.output, { kind: "tail", bytes: 16 * 1024 });
-      return { job: id, command: job.command, state: "running", exit: null, started: job.started_at, output: output.text ?? "" };
+      const [looked] = await look([id]);
+      const record = looked?.found.flatMap((found) => (found.kind === "job" && found.record.machine === machine ? [found.record] : []))[0];
+      if (!record) {
+        throw new Error(looked?.unasked.includes(machine) ? `${machine} could not be asked about job ${id}` : `there is no job ${id} on ${machine}`);
+      }
+      const output = await readText(machine, record.output, { kind: "tail", bytes: 16 * 1024 });
+      const status = record.exit?.status;
+      return {
+        job: id,
+        command: record.script,
+        state: jobState(record),
+        exit: status && "code" in status ? status.code : null,
+        signal: status && "signal" in status ? status.signal : null,
+        started: record.started_at,
+        output: output.text ?? "",
+      };
     },
 
     async open(args) {
