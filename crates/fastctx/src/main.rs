@@ -103,7 +103,8 @@ enum Command {
     /// journal, read or list them.
     #[command(subcommand, after_long_help = fastctx_hands::town::JOURNALS)]
     Journal(journal::JournalCommand),
-    /// Publish, read or list a project's HTML pages.
+    /// A town's pages: HTML the user opens in World's interface, live
+    /// with the World's facts. Publish, read or list them.
     #[command(subcommand, after_long_help = page::PAGE_HELP)]
     Page(page::PageCommand),
     /// Join a World with a code.

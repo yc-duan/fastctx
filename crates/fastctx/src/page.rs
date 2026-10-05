@@ -7,8 +7,9 @@ use std::path::PathBuf;
 
 use crate::ask;
 
-/// Minimal page guidance, kept in one place for the resident-facing copy.
-pub const PAGE_HELP: &str = "Publish a UTF-8 HTML file. Read before editing; publish again with --base VERSION. Declare actions with --run MACHINE COMMAND, --say MACHINE RESIDENT, or --write JOURNAL; repeat each as needed. The user must consent before a page acts.";
+/// How to write a page, for the resident who writes one: the elements, the
+/// World's tools, what must be declared, and how it is published.
+pub const PAGE_HELP: &str = include_str!("page_guide.txt");
 
 #[derive(Subcommand)]
 pub enum PageCommand {
