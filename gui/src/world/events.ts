@@ -2,6 +2,7 @@
 // `fastctx_types::session::SessionEvent`. Every interface reads the same
 // stream; this is its shape, and nothing here interprets it.
 
+import type { Attachment } from "./attachments";
 import type { Address, JsonValue, MachineName, NoticeId, Timestamp } from "./wire";
 export type { Address, MachineName, ResidentId } from "./wire";
 
@@ -94,6 +95,8 @@ export interface Health {
 }
 
 export interface UserMessage {
+  /** The files that came with these words, when any did. */
+  attachments?: Attachment[];
   id: string;
   client_id: string | null;
   content: JsonValue[];

@@ -5,7 +5,9 @@
 //! chose, and the node answers each call once. A client with several calls
 //! to make at once opens several connections. Control frames are these
 //! types in their JSON form. A file-read chunk header is followed by one
-//! binary payload frame, as described by `file_read::FileReadPart`.
+//! binary payload frame, as described by `file_read::FileReadPart`; an
+//! Upload's dedicated connection carries raw byte frames through an empty
+//! end frame, then the node sends its final JSON reply.
 
 use serde::{Deserialize, Serialize};
 

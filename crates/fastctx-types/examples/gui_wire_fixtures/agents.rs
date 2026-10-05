@@ -90,6 +90,7 @@ pub fn fixtures() -> Fixtures {
                 text: "First words".into(),
                 model: Some("model-a".into()),
                 reasoning_effort: Some("medium".into()),
+                attachments: Vec::new(),
             },
             Call::Open {
                 agent: "claude".parse().unwrap(),
@@ -98,6 +99,7 @@ pub fn fixtures() -> Fixtures {
                 text: "Defaults".into(),
                 model: None,
                 reasoning_effort: None,
+                attachments: Vec::new(),
             },
         ],
         replies: vec![Reply::Agents(WorldAgents {
@@ -117,6 +119,7 @@ pub fn fixtures() -> Fixtures {
                 text: "First words".into(),
                 model: Some("opus".into()),
                 reasoning_effort: Some("high".into()),
+                attachments: Vec::new(),
             },
         ],
         remote_replies: vec![RemoteReply::Agents(answer)],

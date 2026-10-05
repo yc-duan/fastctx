@@ -31,6 +31,7 @@ import type { WorldSince } from "../src/world/since";
 import type { WorldAgents } from "../src/world/agents";
 import type { Control, Controlled, Offers } from "../src/world/control";
 import type { FileReadPart, FileReadResult } from "../src/world/file-read";
+import type { Attachment } from "../src/world/attachments";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
     events: SessionEvent[];
@@ -52,6 +53,17 @@ export const fixture = ${json.trimEnd()} satisfies {
     remote_replies: unknown;
     frames: ({ kind: "file_read"; id: number; part: FileReadPart } | { kind: "reply"; id: number; reply: unknown })[];
     binary_payload: unknown;
+  };
+  // An upload's answer, and words that carry what was attached.
+  attachments: {
+    calls: unknown;
+    // The upload's answer first; what a Talk with attachments answers is
+    // the shell's.
+    replies: [{ reply: "uploaded" } & Attachment, ...unknown[]];
+    remote_calls: unknown;
+    remote_replies: unknown;
+    events: SessionEvent[];
+    host_text: string;
   };
 };
 `;

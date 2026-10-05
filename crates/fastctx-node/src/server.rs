@@ -83,6 +83,15 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             return crate::file_read::serve_local(node, machine, request, id, &mut reader, &mut writer).await;
         }
+        if let Call::Upload { target, node: machine, file } = call {
+            let reply = match users_voice(node, &hello.peer) {
+                Ok(()) => crate::attachments::upload(node, target, machine, file, reader).await.map(Reply::Uploaded),
+                Err(error) => Err(error),
+            };
+            writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
+            writer.drain().await?;
+            return Ok(());
+        }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
         let reply = match call {
             Call::Collect { resident } => collect(node, resident, &mut arrived.collected, &mut arrived.notes).await,
@@ -290,15 +299,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Since { since, town } => crate::since::query(node, since, town).await.map(Reply::Since),
         Call::Look { ids } => Ok(Reply::Looked { looked: crate::look::look(node, ids).await }),
-        Call::Talk { to, machine, text } => {
+        Call::Talk { to, machine, text, attachments } => {
             users_voice(node, peer)?;
-            crate::talk::talk(node, to, machine, text).await.map(|(to, landed)| Reply::Spoken { to, landed })
+            crate::talk::talk(node, to, machine, text, attachments)
+                .await
+                .map(|(to, landed)| Reply::Spoken { to, landed })
         }
         Call::Agents { machine } => crate::agents::query(node, machine).await.map(Reply::Agents),
-        Call::Open { agent, town, node: target, text, model, reasoning_effort } => {
+        Call::Open { agent, town, node: target, text, model, reasoning_effort, attachments } => {
             users_voice(node, peer)?;
             let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
-            crate::talk::open(node, agent, town, target, text, options)
+            crate::talk::open(node, agent, town, target, text, options, attachments)
                 .await
                 .map(|(resident, landed)| Reply::Opened { resident, landed })
         }
@@ -323,6 +334,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
+        Call::Upload { .. } => Err(Failure::new("an upload requires its byte stream on a dedicated connection")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
         Call::Ask { resident, label, prompt, node: target } => {
             let town = town_of(node, &resident)?;

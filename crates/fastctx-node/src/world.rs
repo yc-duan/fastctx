@@ -183,8 +183,10 @@ impl fastctx_net::link::Node for Handler {
                     let colleague = crate::colleagues::ask_here(&node, asker, town, label, prompt).await?;
                     Ok(RemoteReply::Asked { colleague })
                 }
-                RemoteCall::Talk { to, text } => {
-                    crate::talk::talk_here(&node, &from, &to, text).await.map(|landed| RemoteReply::Said { landed })
+                RemoteCall::Talk { to, text, attachments } => {
+                    crate::talk::talk_here(&node, &from, &to, text, attachments)
+                        .await
+                        .map(|landed| RemoteReply::Said { landed })
                 }
                 RemoteCall::Watch { resident, watch } => {
                     let stream = stream
@@ -196,9 +198,11 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;
                     crate::file_read::serve(&node, request, read, stream).await
                 }
-                RemoteCall::Open { agent, town, text, model, reasoning_effort } => {
+
+                RemoteCall::Open { agent, town, text, model, reasoning_effort, attachments } => {
                     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
-                    let (resident, landed) = crate::talk::open_here(&node, &from, agent, town, text, options).await?;
+                    let (resident, landed) =
+                        crate::talk::open_here(&node, &from, agent, town, text, options, attachments).await?;
                     Ok(RemoteReply::Opened { resident, landed })
                 }
                 RemoteCall::Stop { resident } => {
@@ -247,6 +251,10 @@ impl fastctx_net::link::Node for Handler {
                     crate::copy::receive(&node, to, manifest_bytes, manifest_sha256, stream)
                         .await
                         .map(RemoteReply::Copied)
+                }
+                RemoteCall::Upload { target, file } => {
+                    let stream = stream.ok_or_else(|| Failure::new("an upload requires its data connection"))?;
+                    crate::attachments::receive(&node, target, file, stream).await.map(RemoteReply::Uploaded)
                 }
             }
         })

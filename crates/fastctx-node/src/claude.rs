@@ -31,7 +31,7 @@ use fastctx_hands::told;
 use fastctx_hosts::claude::{self, background, exchange};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::ResidentDir;
-use fastctx_types::residents::{About, Activity, Delivery, Host, Landed, Notice, Now, Origin, Pending, PendingState};
+use fastctx_types::residents::{About, Activity, Host, Landed, Notice, Now, Origin, Pending, PendingState};
 use fastctx_types::session::{Happened, Speaker};
 use fastctx_types::{AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
@@ -817,6 +817,7 @@ fn into_inbox(node: &Node, session: &str, directory: &ResidentDir, pending: &Pen
 fn words(notice: &Notice) -> (String, bool) {
     match notice {
         Notice::Words { from: Speaker::User { .. }, text } => (text.clone(), true),
+        Notice::Attached { message, text } => (message.render(text), true),
         notice => (told::told(notice), false),
     }
 }
@@ -888,12 +889,13 @@ pub async fn open_here(
     town: Option<TownName>,
     text: String,
     options: fastctx_types::agents::SessionOptions,
+    attachments: Vec<fastctx_types::attachments::Attachment>,
 ) -> Result<(ResidentId, Landed), Failure> {
     if let Some(town) = &town {
         crate::town::project::spans_here(node, town).await?;
     }
     let agent = AgentName::try_from("claude").expect("a valid agent name");
-    let id = node.residents.new_id(&agent)?;
+    let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
     let Command { program, env, .. } = command(node)?;
     let (words, heard) = crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User).await?;
     let born_at = Timestamp::now();
@@ -932,11 +934,7 @@ pub async fn open_here(
     // reads as the user's: they are. They are kept until its first turn
     // takes them, so whoever follows them knows which turn that is.
     let first = Pending {
-        delivery: Delivery {
-            id: crate::speech::new_id("words"),
-            at: born_at,
-            notice: Notice::Words { from: Speaker::User { machine: typed_on.clone() }, text: text.clone() },
-        },
+        delivery: crate::attachments::delivery(typed_on, text, attachments),
         readers: Vec::new(),
         state: PendingState::Waking,
         working: false,
@@ -944,6 +942,7 @@ pub async fn open_here(
     };
     crate::inbox::keep(&directory, &first)
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
+    let text = self::words(&first.delivery.notice).0;
     let world = node.world.path().to_path_buf();
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.

@@ -214,6 +214,23 @@ async fn into_thread(
         [only] if matches!(only.delivery.notice, Notice::JobEnded { .. }) => {
             Input::ToolOutput { name: "run".to_string(), namespace: None, output: told::told(&only.delivery.notice) }
         }
+        batch if batch.iter().any(|kept| matches!(kept.delivery.notice, Notice::Attached { .. })) => Input::Messages(
+            batch
+                .iter()
+                .map(|kept| {
+                    let images = match &kept.delivery.notice {
+                        Notice::Attached { message, .. } => message
+                            .attachments
+                            .iter()
+                            .filter(|attachment| attachment.is_image())
+                            .map(|attachment| attachment.path.clone())
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    fastctx_hosts::codex::InputMessage { text: told::told(&kept.delivery.notice), images }
+                })
+                .collect(),
+        ),
         batch => {
             Input::Text(batch.iter().map(|kept| told::told(&kept.delivery.notice)).collect::<Vec<_>>().join("\n\n"))
         }
@@ -294,6 +311,7 @@ pub async fn bind(
 pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str) {
     let (from, text) = match &delivery.notice {
         Notice::Words { from, text } => (from.clone(), text.clone()),
+        Notice::Attached { message, text } => (message.speaker(), text.clone()),
         Notice::Answer { colleague, .. } => {
             (Speaker::Resident { address: colleague.clone() }, told::told(&delivery.notice))
         }
@@ -302,7 +320,10 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
     let event = SessionEvent {
         at: Timestamp::now(),
         happened: Happened::Heard {
-            message: None,
+            message: match &delivery.notice {
+                Notice::Attached { message, text } => Some(Box::new(message.message(text))),
+                _ => None,
+            },
             delivery: Some(delivery.id.clone()),
             turn: Some(turn.to_string()),
             from: Some(from.clone()),

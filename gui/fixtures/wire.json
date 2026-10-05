@@ -7806,5 +7806,263 @@
       13,
       10
     ]
+  },
+  "attachments": {
+    "calls": [
+      {
+        "call": "upload",
+        "target": {
+          "kind": "resident",
+          "resident": "codex-ab12"
+        },
+        "node": "laptop",
+        "file": {
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "call": "upload",
+        "target": {
+          "kind": "new",
+          "agent": "codex",
+          "town": "world"
+        },
+        "node": "laptop",
+        "file": {
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "call": "upload",
+        "target": {
+          "kind": "draft",
+          "resident": "codex-ab12",
+          "town": "world"
+        },
+        "node": "laptop",
+        "file": {
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "call": "talk",
+        "to": "codex-ab12",
+        "machine": "laptop",
+        "text": "看这张图。\nKeep my words verbatim.",
+        "attachments": [
+          {
+            "id": "attachment-ab12",
+            "owner": {
+              "machine": "laptop",
+              "resident": "codex-ab12"
+            },
+            "town": "world",
+            "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+            "name": "截图.png",
+            "media_type": "image/png",
+            "size": 3145728,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      {
+        "call": "open",
+        "agent": "codex",
+        "town": "world",
+        "node": "laptop",
+        "text": "看这张图。\nKeep my words verbatim.",
+        "model": null,
+        "reasoning_effort": null,
+        "attachments": [
+          {
+            "id": "attachment-ab12",
+            "owner": {
+              "machine": "laptop",
+              "resident": "codex-ab12"
+            },
+            "town": "world",
+            "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+            "name": "截图.png",
+            "media_type": "image/png",
+            "size": 3145728,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    ],
+    "replies": [
+      {
+        "reply": "uploaded",
+        "id": "attachment-ab12",
+        "owner": {
+          "machine": "laptop",
+          "resident": "codex-ab12"
+        },
+        "town": "world",
+        "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+        "name": "截图.png",
+        "media_type": "image/png",
+        "size": 3145728,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "reply": "notices",
+        "notices": [
+          {
+            "id": "talk-ab12",
+            "at": "2026-10-04T12:00:00Z",
+            "notice": {
+              "kind": "attached",
+              "message": {
+                "delivery": "talk-ab12",
+                "from": "phone",
+                "attachments": [
+                  {
+                    "id": "attachment-ab12",
+                    "owner": {
+                      "machine": "laptop",
+                      "resident": "codex-ab12"
+                    },
+                    "town": "world",
+                    "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+                    "name": "截图.png",
+                    "media_type": "image/png",
+                    "size": 3145728,
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                ]
+              },
+              "text": "看这张图。\nKeep my words verbatim."
+            }
+          }
+        ],
+        "notes": []
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "upload",
+        "target": {
+          "kind": "resident",
+          "resident": "codex-ab12"
+        },
+        "file": {
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "call": "talk",
+        "to": "codex-ab12",
+        "text": "看这张图。\nKeep my words verbatim.",
+        "attachments": [
+          {
+            "id": "attachment-ab12",
+            "owner": {
+              "machine": "laptop",
+              "resident": "codex-ab12"
+            },
+            "town": "world",
+            "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+            "name": "截图.png",
+            "media_type": "image/png",
+            "size": 3145728,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      {
+        "call": "open",
+        "agent": "codex",
+        "town": "world",
+        "text": "看这张图。\nKeep my words verbatim.",
+        "model": null,
+        "reasoning_effort": null,
+        "attachments": [
+          {
+            "id": "attachment-ab12",
+            "owner": {
+              "machine": "laptop",
+              "resident": "codex-ab12"
+            },
+            "town": "world",
+            "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+            "name": "截图.png",
+            "media_type": "image/png",
+            "size": 3145728,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "uploaded",
+        "id": "attachment-ab12",
+        "owner": {
+          "machine": "laptop",
+          "resident": "codex-ab12"
+        },
+        "town": "world",
+        "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+        "name": "截图.png",
+        "media_type": "image/png",
+        "size": 3145728,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-04T12:00:00Z",
+        "event": "heard",
+        "delivery": "talk-ab12",
+        "turn": "turn-1",
+        "from": {
+          "kind": "user",
+          "machine": "phone"
+        },
+        "text": "看这张图。\nKeep my words verbatim.",
+        "message": {
+          "attachments": [
+            {
+              "id": "attachment-ab12",
+              "owner": {
+                "machine": "laptop",
+                "resident": "codex-ab12"
+              },
+              "town": "world",
+              "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+              "name": "截图.png",
+              "media_type": "image/png",
+              "size": 3145728,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "id": "talk-ab12",
+          "client_id": null,
+          "content": [
+            {
+              "text": "看这张图。\nKeep my words verbatim.",
+              "type": "text"
+            }
+          ],
+          "hook_fragments": [],
+          "presentation": null,
+          "detail": null
+        }
+      }
+    ],
+    "host_text": "=== from the World (user attachments, v1) ===\nThese files were attached by the user. Each path is on its named machine; sizes are in bytes. Use fastctx view there to read them; images are returned as images.\n{\"delivery\":\"talk-ab12\",\"from\":\"phone\",\"attachments\":[{\"id\":\"attachment-ab12\",\"owner\":{\"machine\":\"laptop\",\"resident\":\"codex-ab12\"},\"town\":\"world\",\"path\":\"C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png\",\"name\":\"截图.png\",\"media_type\":\"image/png\",\"size\":3145728,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}\n=== user's words (verbatim) ===\n看这张图。\nKeep my words verbatim."
   }
 }

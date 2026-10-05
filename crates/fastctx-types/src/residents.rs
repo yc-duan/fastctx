@@ -102,6 +102,8 @@ pub enum Notice {
     Health { colleague: Address, label: String, health: Health },
     /// Words someone said to the resident.
     Words { from: Speaker, text: String },
+    /// The user's words and files; the accompanying facts are the World's.
+    Attached { message: crate::session::attachments::AttachedMessage, text: String },
 }
 
 /// How words for a resident landed.

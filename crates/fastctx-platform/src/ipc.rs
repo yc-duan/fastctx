@@ -98,6 +98,12 @@ impl FrameReader {
     /// The next frame, or `None` if the other side closed the connection
     /// between frames. Closing in the middle of a frame is an error.
     pub async fn recv(&mut self) -> io::Result<Option<Vec<u8>>> {
+        self.recv_up_to(u32::MAX as usize).await
+    }
+
+    /// Receives one frame whose size is bounded by the current protocol
+    /// phase, before allocating it. This does not limit a stream's total.
+    pub async fn recv_up_to(&mut self, maximum: usize) -> io::Result<Option<Vec<u8>>> {
         let mut length = [0u8; 4];
         let mut filled = 0;
         while filled < length.len() {
@@ -107,7 +113,11 @@ impl FrameReader {
                 read => filled += read,
             }
         }
-        let mut frame = vec![0u8; u32::from_le_bytes(length) as usize];
+        let length = u32::from_le_bytes(length) as usize;
+        if length > maximum {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "frame exceeds the upload chunk size"));
+        }
+        let mut frame = vec![0u8; length];
         self.0.read_exact(&mut frame).await?;
         Ok(Some(frame))
     }

@@ -203,7 +203,7 @@ impl World {
 
     /// The user's words to a resident on any machine.
     pub async fn talk(&self, to: ResidentId, machine: Option<MachineName>, text: String) -> Result<Said, Error> {
-        match self.ask(Call::Talk { to, machine, text }).await? {
+        match self.ask(Call::Talk { to, machine, text, attachments: Vec::new() }).await? {
             Reply::Spoken { to, landed } => Ok(Said { to, landed }),
             other => Err(unexpected(other)),
         }
@@ -238,6 +238,7 @@ impl World {
                 text,
                 model: options.model,
                 reasoning_effort: options.reasoning_effort,
+                attachments: Vec::new(),
             })
             .await?
         {

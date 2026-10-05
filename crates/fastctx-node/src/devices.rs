@@ -36,9 +36,11 @@ pub fn admit(node: &Node, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::Control { .. }
             | RemoteCall::Offers { .. }
             | RemoteCall::Watch { .. }
-            // Reading the user's own files, from the machine that has them:
-            // a byte stream, which no relay carries.
+            // Reading the user's own files, from the machine that has them,
+            // and a file the user attaches to their words, kept in that
+            // agent's own place: byte streams, which no relay carries.
             | RemoteCall::ReadFile { .. }
+            | RemoteCall::Upload { .. }
             | RemoteCall::Relay { .. }
     );
     if device && !users_own {

@@ -56,7 +56,16 @@ pub enum Call {
     Look { ids: Vec<String> },
     /// The user's words to a resident on any machine (`fastctx talk`);
     /// `machine` is where it lives, when the user said.
-    Talk { to: ResidentId, machine: Option<MachineName>, text: String },
+    Talk {
+        to: ResidentId,
+        machine: Option<MachineName>,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::attachments::Attachment>,
+    },
+    /// The user's byte stream, followed by an empty frame, on its own IPC
+    /// connection. The final Uploaded reply is sent only after verification.
+    Upload { target: crate::attachments::UploadTarget, node: Option<MachineName>, file: crate::attachments::UploadFile },
     /// Watches a resident on any machine: the node answers with its history
     /// and then each event as it happens, for as long as the connection
     /// stays open.
@@ -70,6 +79,8 @@ pub enum Call {
         text: String,
         model: Option<String>,
         reasoning_effort: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::attachments::Attachment>,
     },
     /// Stops the turn a resident on any machine is running, for the user.
     Stop { resident: ResidentId, machine: Option<MachineName> },
@@ -122,6 +133,7 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    Uploaded(crate::attachments::Attachment),
     Arrived(Whereabouts),
     Run(RunReply),
     Written {
