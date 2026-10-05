@@ -4,6 +4,7 @@
 // never changed; what later entries said of one is shown beneath it, so
 // the meaning that grew around it can be seen without a word of it moved.
 
+import { fileLink } from "../app/places";
 import { glyph } from "../conversation/glyphs";
 import { escape, render } from "../conversation/prose";
 import type { EntryView, JournalView, Writer } from "../world/world";
@@ -110,7 +111,12 @@ export class JournalPage {
       ? `<p class="entry-note">${escape(words.attachments)}：${stamp.attachments
           .map(
             (file) =>
-              `<span class="attachment">${escape(file.name)} <span class="faint">${escape(file.kind)} · ${size(file.bytes)}${file.kept.kind === "on_machine" ? ` · ${escape(words.onMachine(file.kept.location.machine))}` : ""}</span></span>`,
+              `<span class="attachment">${
+                // A text kept where it was written opens there, from its end.
+                file.kept.kind === "on_machine" && file.kind === "text"
+                  ? `<a href="${escape(fileLink(file.kept.location.machine, file.kept.location.path, true))}">${escape(file.name)}</a>`
+                  : escape(file.name)
+              } <span class="faint">${escape(file.kind)} · ${size(file.bytes)}${file.kept.kind === "on_machine" ? ` · ${escape(words.onMachine(file.kept.location.machine))}` : ""}</span></span>`,
           )
           .join("、")}</p>`
       : "";
