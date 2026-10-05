@@ -5,6 +5,7 @@
 // are said to be so, never decoded by guess.
 
 import { drawDiagrams } from "../conversation/diagrams";
+import { glyph } from "../conversation/glyphs";
 import { escape, render } from "../conversation/prose";
 import type { FileRange, FileReadInfo } from "../world/file-read";
 import type { Page } from "./shell";
@@ -74,7 +75,7 @@ export class ReaderPage implements Page {
     this.element = document.createElement("div");
     this.element.className = "reader-page";
     this.element.innerHTML = `
-      ${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`, `<button class="text-button reread" type="button"><span>${escape(words.reread)}</span></button>`)}
+      ${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`, `<button class="text-button reread" type="button">${glyph("reread", 16)}<span>${escape(words.reread)}</span></button>`)}
       <p class="reader-facts"></p>
       <div class="reader-body scroller"></div>`;
     this.facts = this.element.querySelector<HTMLElement>(".reader-facts")!;

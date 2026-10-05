@@ -43,6 +43,7 @@ export interface Words {
   thoughtWithheld: string;
   plan: string;
   copyMessage: string;
+  copyCode: string;
   rewind: string;
   fork: string;
   /** Said with the source already escaped as a link. */
@@ -155,6 +156,7 @@ export const zh: Words = {
   thoughtWithheld: "想过，没有交出内容",
   plan: "提出的计划",
   copyMessage: "复制这段话",
+  copyCode: "复制代码",
   rewind: "改了重发",
   fork: "从这里分叉",
   forkedFrom: (source) => `从 ${source} 的对话分出来`,
@@ -248,6 +250,7 @@ export const en: Words = {
   thoughtWithheld: "Thought, without sharing it",
   plan: "Proposed plan",
   copyMessage: "Copy this message",
+  copyCode: "Copy code",
   rewind: "Edit and resend",
   fork: "Fork from here",
   forkedFrom: (source) => `Forked from ${source}`,

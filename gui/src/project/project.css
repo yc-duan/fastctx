@@ -55,8 +55,14 @@
 }
 
 @media (max-width: 760px) {
+  /* Only the glyph shows; the words are still the button's name. */
   .page-head-actions .text-button span {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .page-head-actions .text-button {

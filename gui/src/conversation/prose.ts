@@ -37,8 +37,16 @@ markdown.renderer.rules.fence = (tokens, index, options, env, self) => {
   }
   const label = language ? `<span class="code-language">${escape(language)}</span>` : "";
   const body = defaultFence(tokens, index, options, env, self);
-  return `<div class="code-block">${label}<button class="code-copy" type="button" aria-label="Copy code"></button>${body}</div>`;
+  return `<div class="code-block">${label}<button class="code-copy" type="button" aria-label="${escape(codeCopy)}" title="${escape(codeCopy)}"></button>${body}</div>`;
 };
+
+/** What a block of code's copy button is called, in the interface's
+ *  language; prose is drawn without words of its own. */
+let codeCopy = "Copy code";
+
+export function nameCodeCopy(label: string): void {
+  codeCopy = label;
+}
 
 /** Markdown as HTML. Safe to place in the page: raw HTML is escaped. */
 export function render(text: string): string {

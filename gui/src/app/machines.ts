@@ -7,6 +7,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { redrawKeepingFocus } from "./focus";
 import { osName } from "../home/frontispiece";
 import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
@@ -127,7 +128,9 @@ export class MachinesPage implements Page {
     const html = `<ol class="machine-entries">${world.nodes.machines.map((node) => this.machine(node, world, now)).join("")}</ol>`;
     if (html !== this.drawn) {
       this.drawn = html;
-      this.list.innerHTML = html;
+      redrawKeepingFocus(this.list, () => {
+        this.list.innerHTML = html;
+      });
     }
     if (!this.focused && this.options.focus) {
       this.focused = true;

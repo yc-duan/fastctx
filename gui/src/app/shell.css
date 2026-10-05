@@ -539,7 +539,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mark.busy,
+  .mark.mark-busy,
   .mark.mark-ask {
     animation: none;
   }

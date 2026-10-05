@@ -63,15 +63,19 @@ export class Menu<T> {
   readonly element: HTMLElement;
   private items: T[] = [];
   private chosen = 0;
+  private readonly id = `menu-${++menus}`;
 
   constructor(
     className: string,
     private readonly row: (item: T, chosen: boolean) => string,
     private readonly pick: (item: T) => void,
+    /** The field it is chosen from, told which row is chosen. */
+    private readonly field: HTMLElement | null = null,
   ) {
     this.element = document.createElement("div");
     this.element.className = `composer-menu ${className}`;
     this.element.hidden = true;
+    this.element.id = this.id;
     this.element.setAttribute("role", "listbox");
     this.element.addEventListener("mousedown", (event) => {
       // Keeps the words' focus while choosing with the pointer.
@@ -89,12 +93,17 @@ export class Menu<T> {
     this.items = items;
     this.chosen = Math.min(this.chosen, Math.max(0, items.length - 1));
     this.element.hidden = false;
+    this.field?.setAttribute("aria-controls", this.id);
     this.draw(empty);
   }
 
   hide(): void {
     this.element.hidden = true;
     this.chosen = 0;
+    if (this.field?.getAttribute("aria-controls") === this.id) {
+      this.field.removeAttribute("aria-controls");
+      this.field.removeAttribute("aria-activedescendant");
+    }
   }
 
   /** Handles a key while open; says whether it took it. */
@@ -121,11 +130,20 @@ export class Menu<T> {
 
   private draw(empty: string): void {
     this.element.innerHTML = this.items.length
-      ? this.items.map((item, index) => `<div class="menu-row${index === this.chosen ? " chosen" : ""}" role="option" data-index="${index}">${this.row(item, index === this.chosen)}</div>`).join("")
+      ? this.items
+          .map(
+            (item, index) =>
+              `<div class="menu-row${index === this.chosen ? " chosen" : ""}" role="option" id="${this.id}-${index}" aria-selected="${index === this.chosen}" data-index="${index}">${this.row(item, index === this.chosen)}</div>`,
+          )
+          .join("")
       : `<div class="menu-empty">${escape(empty)}</div>`;
     this.element.querySelector(".chosen")?.scrollIntoView({ block: "nearest" });
+    if (this.items.length) this.field?.setAttribute("aria-activedescendant", `${this.id}-${this.chosen}`);
+    else this.field?.removeAttribute("aria-activedescendant");
   }
 }
+
+let menus = 0;
 
 export function commandRow(command: MenuCommand): string {
   return `<span class="menu-name">/${escape(command.name)}${command.args ? `<span class="menu-args"> ${escape(command.args)}</span>` : ""}</span><span class="menu-what">${escape(command.description)}</span>${command.source ? `<span class="menu-source">${escape(command.source)}</span>` : ""}`;

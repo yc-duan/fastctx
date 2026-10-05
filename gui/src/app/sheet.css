@@ -145,7 +145,7 @@
 }
 
 .first-words:focus {
-  box-shadow: inset 0 0 0 1px var(--rule);
+  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
 .first-words::placeholder {
@@ -442,7 +442,7 @@
 .field input:focus,
 .field textarea:focus,
 .field select:focus {
-  box-shadow: inset 0 0 0 1px var(--rule);
+  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
 .field input:user-invalid:not(:focus) {

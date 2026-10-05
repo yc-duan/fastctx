@@ -9,6 +9,7 @@
 import { fileLink } from "../app/places";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
 import type { ResidentNow, RunningJob, Writer } from "../world/world";
 import { Frontispiece } from "./frontispiece";
@@ -122,10 +123,12 @@ export class HomePage {
     const drawn = factsHtml + presentHtml + awayHtml;
     if (drawn !== this.drawn) {
       this.drawn = drawn;
-      this.facts.innerHTML = factsHtml;
-      this.present.innerHTML = presentHtml;
-      this.away.innerHTML = awayHtml;
-      this.away.hidden = !awayHtml;
+      redrawKeepingFocus(this.element, () => {
+        this.facts.innerHTML = factsHtml;
+        this.present.innerHTML = presentHtml;
+        this.away.innerHTML = awayHtml;
+        this.away.hidden = !awayHtml;
+      });
     }
     // The drawing is of the machines the World works on.
     this.frontispiece.update({ ...world, nodes: world.nodes.filter((node) => !node.device) }, residents);

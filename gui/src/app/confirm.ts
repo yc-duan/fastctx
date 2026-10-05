@@ -73,7 +73,7 @@ export class Confirm {
       ${sheet.head(asked.title, words.close)}
       <p class="confirm-what">${escape(asked.what)}</p>
       ${asked.fields ?? ""}
-      <p class="sheet-note" hidden></p>
+      <p class="sheet-note" role="alert" hidden></p>
       <footer class="sheet-foot"><span></span><button class="sheet-go danger" type="submit">${escape(asked.go)}</button></footer>`;
     sheet.body.onsubmit = (event) => {
       event.preventDefault();

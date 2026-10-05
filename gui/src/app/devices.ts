@@ -25,7 +25,7 @@ const validity = [1, 24, 72];
 
 /** A QR code as an SVG of dark squares on light, whatever the theme:
  *  scanners read dark on light, and the code is never drawn by a pen. */
-export function qrSvg(text: string): string {
+export function qrSvg(text: string, label: string): string {
   const code = qrcode(0, "L");
   code.addData(text, "Byte");
   code.make();
@@ -38,7 +38,7 @@ export function qrSvg(text: string): string {
       if (code.isDark(row, col)) path += `M${col + quiet} ${row + quiet}h1v1h-1z`;
     }
   }
-  return `<svg class="qr" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img"><rect width="${size}" height="${size}" fill="#fff"/><path d="${path}" fill="#111"/></svg>`;
+  return `<svg class="qr" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img" aria-label="${escape(label)}"><rect width="${size}" height="${size}" fill="#fff"/><path d="${path}" fill="#111"/></svg>`;
 }
 
 export class Devices {
@@ -93,7 +93,7 @@ export class Devices {
     this.invitation.body.innerHTML = `
       ${this.invitation.head(words.inviteTitle, words.close)}
       <div class="field"><span class="field-label">${escape(words.inviteWhat)}</span>
-        <div class="choice-options" role="radiogroup">${([false, true] as const)
+        <div class="choice-options" role="radiogroup" aria-label="${escape(words.inviteWhat)}">${([false, true] as const)
           .map(
             (device) =>
               `<button type="button" class="choice${device === this.device ? " chosen" : ""}" role="radio" aria-checked="${device === this.device}" data-device="${device}">${escape(device ? words.aPhone : words.aComputer)}</button>`,
@@ -104,13 +104,13 @@ export class Devices {
         <input name="name" autocomplete="off" spellcheck="false" class="mono" pattern="[a-z][a-z0-9-]{0,31}">
         <span class="field-hint">${escape(words.inviteNameHint)}</span></label>
       <div class="field"><span class="field-label">${escape(words.valid)}</span>
-        <div class="choice-options" role="radiogroup">${validity
+        <div class="choice-options" role="radiogroup" aria-label="${escape(words.valid)}">${validity
           .map(
             (hours) =>
               `<button type="button" class="choice${hours === this.hours ? " chosen" : ""}" role="radio" aria-checked="${hours === this.hours}" data-hours="${hours}">${escape(words.hours(hours))}</button>`,
           )
           .join("")}</div></div>
-      <p class="sheet-note" hidden></p>
+      <p class="sheet-note" role="alert" hidden></p>
       <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.make)}</button></footer>`;
     this.invitation.show();
     this.invitation.body.querySelector<HTMLInputElement>("[name=name]")?.focus();
@@ -132,7 +132,7 @@ export class Devices {
       this.invitation.body.innerHTML = `
         ${this.invitation.head(words.inviteTitle, words.close)}
         <div class="invitation">
-          <div class="qr-frame">${qrSvg(code)}</div>
+          <div class="qr-frame">${qrSvg(code, words.qr)}</div>
           <div class="invitation-text">
             <p class="field-label">${escape(words.code)}</p>
             <p class="invite-code mono">${escape(code)}</p>

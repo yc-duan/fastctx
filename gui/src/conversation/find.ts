@@ -43,10 +43,13 @@ export class Finder {
       if (event.key === "Enter" && !event.isComposing) {
         event.preventDefault();
         this.step(event.shiftKey ? -1 : 1);
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        this.close();
       }
+    });
+    this.element.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.close();
     });
     this.element.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-step], .find-close");
@@ -56,11 +59,15 @@ export class Finder {
     });
   }
 
+  /** What had focus before the bar opened. */
+  private before: HTMLElement | null = null;
+
   get open(): boolean {
     return !this.element.hidden;
   }
 
   show(): void {
+    if (this.element.hidden && document.activeElement instanceof HTMLElement) this.before = document.activeElement;
     this.element.hidden = false;
     // What is selected is what is looked for, as browsers do.
     const selected = window.getSelection()?.toString().trim();
@@ -71,7 +78,10 @@ export class Finder {
   }
 
   close(): void {
+    const inside = this.element.contains(document.activeElement);
     this.element.hidden = true;
+    if (inside && this.before?.isConnected) this.before.focus({ preventScroll: true });
+    this.before = null;
     this.matches = [];
     this.current = -1;
     this.paint();

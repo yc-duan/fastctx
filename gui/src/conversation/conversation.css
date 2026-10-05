@@ -1081,7 +1081,7 @@
 }
 
 .ask-input:focus {
-  box-shadow: inset 0 0 0 1px var(--rule);
+  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
 .ask-input::placeholder {
@@ -1228,6 +1228,10 @@
 
 .find-bar[hidden] {
   display: none;
+}
+
+.find-bar:focus-within {
+  box-shadow: var(--shadow-pop), 0 0 0 1px color-mix(in srgb, var(--focus) 55%, var(--rule));
 }
 
 .find-glyph {

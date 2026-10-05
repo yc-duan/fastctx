@@ -127,12 +127,12 @@ export class ConversationPage {
           <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
-          <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
+          <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="composer-chip" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-context" type="button" hidden></button>
-            <button class="composer-action" type="submit"></button>
+            <button class="composer-action" type="submit" aria-label="${escape(words.send)}"></button>
           </div>
         </form>
       </footer>`;
@@ -148,7 +148,7 @@ export class ConversationPage {
     // The title is renamed in place, where the conversation takes a name.
     this.name.addEventListener("click", () => this.rename());
     this.name.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !this.renaming) {
+      if ((event.key === "Enter" || event.key === " ") && !this.renaming && event.target === this.name) {
         event.preventDefault();
         this.rename();
       }
@@ -164,6 +164,10 @@ export class ConversationPage {
     }
     const main = this.element.querySelector<HTMLElement>(".conversation")!;
     this.state = this.element.querySelector<HTMLElement>(".who-state")!;
+    this.spoken = document.createElement("p");
+    this.spoken.className = "spoken";
+    this.spoken.setAttribute("role", "status");
+    this.element.append(this.spoken);
     this.context = this.element.querySelector<HTMLElement>(".composer-context")!;
     this.input = this.element.querySelector("textarea")!;
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
@@ -174,7 +178,12 @@ export class ConversationPage {
     if (options.files) this.fileMenuOf();
     this.context.addEventListener("click", () => this.toggleUsage());
     this.element.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") this.element.querySelector<HTMLElement>(".usage-pop")!.hidden = true;
+      const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
+      if (event.key !== "Escape" || pop.hidden) return;
+      const inside = pop.contains(document.activeElement) || document.activeElement === this.context;
+      pop.hidden = true;
+      this.context.setAttribute("aria-expanded", "false");
+      if (inside) this.context.focus({ preventScroll: true });
     });
     if (options.attach) this.attaching(options.attach);
     const controls = options.controls;
@@ -276,10 +285,17 @@ export class ConversationPage {
   private toggleDetails(open: boolean): void {
     const details = this.options.details;
     if (!details) return;
+    const toggle = this.element.querySelector<HTMLElement>(".details-toggle");
+    const inside = details.card.element.contains(document.activeElement);
     details.card.open = open;
-    this.element.querySelector(".details-toggle")?.setAttribute("aria-expanded", String(open));
+    toggle?.setAttribute("aria-expanded", String(open));
     clearTimeout(this.looking);
-    if (open) void this.lookAgain();
+    if (open) {
+      details.card.element.focus({ preventScroll: true });
+      void this.lookAgain();
+    } else if (inside) {
+      toggle?.focus({ preventScroll: true });
+    }
   }
 
   /** Asks the World about the agent while the card is open, every few
@@ -373,7 +389,7 @@ export class ConversationPage {
         this.clear();
         void this.run(command, "");
       }
-    });
+    }, this.input);
     this.modelMenu = new Menu<ModelOffer>(
       "models",
       (model) => modelRow(model, this.offered?.model ?? null, words.commands),
@@ -384,6 +400,7 @@ export class ConversationPage {
           this.chosenModel = model.id;
         } else void this.setModel(model.id, model.default_effort);
       },
+      this.input,
     );
     this.effortMenu = new Menu<string>(
       "efforts",
@@ -392,6 +409,7 @@ export class ConversationPage {
         this.effortMenu!.hide();
         void this.setModel(this.chosenModel, effort);
       },
+      this.input,
     );
     holder.append(this.commandMenu.element, this.modelMenu.element, this.effortMenu.element);
     this.chip.addEventListener("click", () => {
@@ -444,9 +462,12 @@ export class ConversationPage {
       if (event.key === "Enter" && !event.isComposing) {
         event.preventDefault();
         finish(true);
+        this.name.focus();
       } else if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         finish(false);
+        this.name.focus();
       }
     });
     field.addEventListener("blur", () => finish(true));
@@ -545,6 +566,7 @@ export class ConversationPage {
     const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
     if (!pop.hidden) {
       pop.hidden = true;
+      this.context.setAttribute("aria-expanded", "false");
       return;
     }
     const words = this.options.controls?.words.usage;
@@ -569,6 +591,7 @@ export class ConversationPage {
     }
     pop.innerHTML = `<div class="usage-title">${escape(words.title)}</div>${rows.join("") || `<div class="menu-empty">${escape(words.none)}</div>`}`;
     pop.hidden = false;
+    this.context.setAttribute("aria-expanded", "true");
   }
 
   /** Starting again from the user's words, or forking from a turn: said
@@ -583,8 +606,16 @@ export class ConversationPage {
     const close = () => {
       confirm.hidden = true;
       confirm.innerHTML = "";
+      confirm.onkeydown = null;
     };
     confirm.querySelector("[data-never]")!.addEventListener("click", close, { once: true });
+    confirm.onkeydown = (event) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      close();
+      this.input.focus();
+    };
+    confirm.querySelector<HTMLElement>("[data-go]")!.focus();
     confirm.querySelector("[data-go]")!.addEventListener(
       "click",
       () => {
@@ -642,7 +673,7 @@ export class ConversationPage {
       this.fit();
       this.drawAction();
       this.keepDraft();
-    });
+    }, this.input);
     this.element.querySelector<HTMLElement>(".composer-menus")!.append(this.fileMenu.element);
   }
 
@@ -740,6 +771,10 @@ export class ConversationPage {
     this.drawState();
   }
 
+  /** The state last said, and where it is said to a screen reader. */
+  private said: string | null = null;
+  private spoken!: HTMLElement;
+
   private drawState(): void {
     const { words, someone, conversation } = this.options;
     // The host's own title for the conversation, once it gives one, with
@@ -760,8 +795,13 @@ export class ConversationPage {
     }
     const waiting = !this.gone && conversation.waiting();
     const working = !this.gone && !waiting && conversation.moving();
+    const now = this.gone ?? (waiting ? words.waitingForYou : working ? words.working : words.idle);
+    // A screen reader hears the conversation change state, once each time:
+    // its words as they stream would be too many to hear.
+    if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent} · ${now}`;
+    this.said = now;
     const facts = [
-      this.gone ?? (waiting ? words.waitingForYou : working ? words.working : words.idle),
+      now,
       title ? `${someone.agent} · ${someone.machine}` : null,
       someone.town,
       someone.model,
@@ -791,6 +831,7 @@ export class ConversationPage {
     } else {
       this.context.innerHTML = "";
       this.context.removeAttribute("title");
+      this.context.removeAttribute("aria-label");
       // Without a context to show, the limits still have a way in.
       this.context.hidden = !this.offered?.usage?.limits.length;
       if (!this.context.hidden) this.context.textContent = this.options.controls?.words.usage.title ?? "";

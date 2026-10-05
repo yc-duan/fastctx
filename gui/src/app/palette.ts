@@ -40,10 +40,11 @@ export class Palette {
     const { words } = options;
     this.dialog = document.createElement("dialog");
     this.dialog.className = "sheet palette";
+    this.dialog.setAttribute("aria-label", words.placeholder);
     this.dialog.innerHTML = `
       <div class="sheet-body palette-body">
-        <input class="palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="${escape(words.placeholder)}" aria-label="${escape(words.placeholder)}">
-        <ul class="palette-list" role="listbox"></ul>
+        <input class="palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="${escape(words.placeholder)}" aria-label="${escape(words.placeholder)}" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list">
+        <ul class="palette-list" id="palette-list" role="listbox"></ul>
         <p class="palette-hint">${escape(words.hint)}</p>
       </div>`;
     document.body.append(this.dialog);
@@ -91,6 +92,7 @@ export class Palette {
     this.shown = this.options.items().filter((item) => !query || matches(`${item.label} ${item.note ?? ""} ${item.group}`, query));
     if (!this.shown.length) {
       this.list.innerHTML = `<li class="palette-nothing">${escape(this.options.words.nothing)}</li>`;
+      this.input.removeAttribute("aria-activedescendant");
       return;
     }
     let group = "";
@@ -98,7 +100,7 @@ export class Palette {
       .map((item, index) => {
         const head = item.group !== group ? `<li class="palette-group" role="presentation">${escape(item.group)}</li>` : "";
         group = item.group;
-        return `${head}<li class="palette-item" role="option" data-index="${index}"><span class="palette-label">${escape(item.label)}</span>${item.note ? `<span class="palette-note">${escape(item.note)}</span>` : ""}</li>`;
+        return `${head}<li class="palette-item" role="option" id="palette-item-${index}" data-index="${index}"><span class="palette-label">${escape(item.label)}</span>${item.note ? `<span class="palette-note">${escape(item.note)}</span>` : ""}</li>`;
       })
       .join("");
     this.mark();
@@ -109,7 +111,10 @@ export class Palette {
       const chosen = Number(element.dataset.index) === this.chosen;
       element.classList.toggle("chosen", chosen);
       element.setAttribute("aria-selected", String(chosen));
-      if (chosen) element.scrollIntoView({ block: "nearest" });
+      if (chosen) {
+        element.scrollIntoView({ block: "nearest" });
+        this.input.setAttribute("aria-activedescendant", element.id);
+      }
     }
   }
 

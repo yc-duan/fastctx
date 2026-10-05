@@ -36,6 +36,8 @@ export interface ShellWords {
   joinOrFound: string;
   more(n: number): string;
   span(ms: number): string;
+  /** A project's fold button: the agents in it. */
+  agentsIn(project: string): string;
 }
 
 export interface NewTalkWords {
@@ -599,10 +601,13 @@ export interface ProjectFormWords {
   placesHint: string;
   placeWhat: string;
   placePath: string;
+  /** The machine a place is on, named for a screen reader. */
+  placeMachine: string;
   addPlace: string;
   removePlace: string;
   canon: string;
   canonHint: string;
+  canonMachine: string;
   noCanon: string;
   open: string;
   save: string;
@@ -625,10 +630,12 @@ export const zhProjectForm: ProjectFormWords = {
   placesHint: "一行一样东西：它是什么、在哪台机器、原生的绝对路径",
   placeWhat: "是什么",
   placePath: "路径",
+  placeMachine: "在哪台机器",
   addPlace: "再加一行",
   removePlace: "删掉这一行",
   canon: "定论在哪",
   canonHint: "存放定论的文件夹",
+  canonMachine: "定论在哪台机器",
   noCanon: "不写",
   open: "开这个项目",
   save: "存成新的一版",
@@ -651,10 +658,12 @@ export const enProjectForm: ProjectFormWords = {
   placesHint: "One thing a line: what it is, on which machine, its native absolute path",
   placeWhat: "What",
   placePath: "Path",
+  placeMachine: "On which machine",
   addPlace: "Add a line",
   removePlace: "Remove this line",
   canon: "Decisions",
   canonHint: "the folder holding the decisions",
+  canonMachine: "Machine the decisions are on",
   noCanon: "none",
   open: "Open the project",
   save: "Save as the next version",
@@ -675,6 +684,7 @@ export interface DeviceWords {
   inviteName: string;
   inviteNameHint: string;
   valid: string;
+  qr: string;
   hours(n: number): string;
   make: string;
   making: string;
@@ -712,6 +722,7 @@ export const zhDevices: DeviceWords = {
   inviteName: "它叫什么",
   inviteNameHint: "小写字母、数字与连字符；不写就由它自己起名",
   valid: "多久内有效",
+  qr: "邀请码的二维码，用新设备扫它",
   hours: (n) => (n < 24 ? `${n} 小时` : `${n / 24} 天`),
   make: "生成邀请码",
   making: "正在生成…",
@@ -758,6 +769,7 @@ export const enDevices: DeviceWords = {
   inviteName: "Its name",
   inviteNameHint: "lowercase letters, digits and hyphens; left empty, it names itself",
   valid: "Valid for",
+  qr: "The invitation as a QR code, for the new device to scan",
   hours: (n) => (n < 24 ? `${n} hour${n === 1 ? "" : "s"}` : `${n / 24} day${n === 24 ? "" : "s"}`),
   make: "Make the code",
   making: "Making it…",
@@ -1333,6 +1345,7 @@ export const zhShell: ShellWords = {
   joinOrFound: "加入或建一个世界",
   more: (n) => `还有 ${n} 个`,
   span: zhSpan,
+  agentsIn: (project) => `${project} 里的智能体`,
 };
 
 export const enShell: ShellWords = {
@@ -1362,4 +1375,5 @@ export const enShell: ShellWords = {
   joinOrFound: "Join or found a World",
   more: (n) => `${n} more`,
   span: enSpan,
+  agentsIn: (project) => `Agents in ${project}`,
 };

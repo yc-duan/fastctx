@@ -466,7 +466,7 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
       body = `${head(ask.what)}${ask.detail ? `<p class="ask-reason">${escape(ask.detail)}</p>` : ""}`;
       break;
   }
-  return `<div class="ask-card" role="group" data-card="${key}">${body}<p class="ask-status" aria-live="polite"></p></div>`;
+  return `<div class="ask-card" role="group" aria-label="${escape(words.waiting)}" data-card="${key}">${body}<p class="ask-status" aria-live="polite"></p></div>`;
 }
 
 function drawField(field: Field, index: number, words: AskWords): string {
@@ -480,7 +480,7 @@ function drawField(field: Field, index: number, words: AskWords): string {
       return `<label class="ask-field ask-field-check"><input class="ask-check" data-field="${index}" type="checkbox"${field.value ? " checked" : ""}>${label}</label>`;
     case "one":
     case "many":
-      return `<div class="ask-field" role="group">${label}<div class="ask-options">${field.options
+      return `<div class="ask-field" role="group" aria-label="${escape(field.title)}">${label}<div class="ask-options">${field.options
         .map((option, n) => {
           const on = field.kind === "one" ? field.value === option.value : field.value.includes(option.value);
           return `<button type="button" class="ask-option${on ? " chosen" : ""}" data-field="${index}" data-option="${n}"${field.kind === "many" ? ' data-many="1"' : ""} aria-pressed="${on}"><span class="ask-option-label">${escape(option.label)}</span></button>`;

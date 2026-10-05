@@ -173,7 +173,7 @@
 }
 
 .composer:focus-within {
-  box-shadow: 0 0 0 1px var(--rule), 0 6px 24px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 55%, var(--rule)), 0 6px 24px rgba(0, 0, 0, 0.16);
 }
 
 .composer textarea {

@@ -41,6 +41,8 @@ export class Shell {
   private readonly sidebar: Sidebar;
   private page: Page | null = null;
   private place: Place = { kind: "home" };
+  /** What had focus when the drawer opened, given it back on closing. */
+  private beforeDrawer: HTMLElement | null = null;
 
   constructor(private readonly options: ShellOptions) {
     this.element = document.createElement("div");
@@ -68,7 +70,7 @@ export class Shell {
     // narrow screen, unfolded on a wide one.
     this.main.addEventListener("click", (event) => {
       if (!(event.target as HTMLElement).closest(".menu-button")) return;
-      if (narrow.matches) this.element.classList.add("drawer-open");
+      if (narrow.matches) this.drawer(true);
       else this.fold(false);
     });
     // Following a link in the drawer closes it.
@@ -79,8 +81,7 @@ export class Shell {
       const mod = event.ctrlKey || event.metaKey;
       if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
         event.preventDefault();
-        if (narrow.matches) this.element.classList.toggle("drawer-open");
-        else this.fold(!this.element.classList.contains("folded"));
+        this.toggleSidebar();
       } else if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
         options.newTalk();
@@ -88,7 +89,11 @@ export class Shell {
         this.closeDrawer();
       }
     });
-    narrow.addEventListener("change", () => this.closeDrawer());
+    narrow.addEventListener("change", () => {
+      this.closeDrawer();
+      this.reach();
+    });
+    this.reach();
   }
 
   show(place: Place, page: Page): void {
@@ -104,7 +109,7 @@ export class Shell {
   /** Folds the sidebar away or brings it back; a drawer on a narrow
    *  screen. */
   toggleSidebar(): void {
-    if (narrow.matches) this.element.classList.toggle("drawer-open");
+    if (narrow.matches) this.drawer(!this.element.classList.contains("drawer-open"));
     else this.fold(!this.element.classList.contains("folded"));
   }
 
@@ -120,10 +125,32 @@ export class Shell {
     } catch {
       // Not kept: the sidebar opens again next time.
     }
+    this.reach();
+  }
+
+  private drawer(open: boolean): void {
+    const was = this.element.classList.contains("drawer-open");
+    if (open === was) return;
+    if (open) this.beforeDrawer = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    this.element.classList.toggle("drawer-open", open);
+    this.reach();
+    // The drawer takes focus while it is open, and gives it back.
+    if (open) this.sidebar.element.querySelector<HTMLElement>("a.current, a, button")?.focus({ preventScroll: true });
+    else this.beforeDrawer?.focus({ preventScroll: true });
   }
 
   private closeDrawer(): void {
-    this.element.classList.remove("drawer-open");
+    this.drawer(false);
+  }
+
+  /** What cannot be seen cannot be reached: a folded sidebar or a closed
+   *  drawer is left out of Tab and of a screen reader, and so is the page
+   *  under an open drawer. */
+  private reach(): void {
+    const drawerOpen = this.element.classList.contains("drawer-open");
+    const shown = narrow.matches ? drawerOpen : !this.element.classList.contains("folded");
+    this.element.querySelector<HTMLElement>(".sidebar-frame")!.inert = !shown;
+    this.main.inert = narrow.matches && drawerOpen;
   }
 }
 

@@ -16,6 +16,7 @@
 import { AttachTray, type AttachSource, type AttachWords } from "../conversation/attach";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { redrawKeepingFocus } from "./focus";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
 import type { Attachment, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
@@ -124,9 +125,9 @@ export class NewTalk {
         <div class="choices"></div>
         <div class="first-words-box">
           <div class="sheet-tray"></div>
-          <textarea class="first-words" rows="3" placeholder="${escape(words.firstWords)}"></textarea>
+          <textarea class="first-words" rows="3" placeholder="${escape(words.firstWords)}" aria-label="${escape(words.firstWords)}"></textarea>
         </div>
-        <p class="sheet-note" hidden></p>
+        <p class="sheet-note" role="alert" hidden></p>
         <footer class="sheet-foot">
           <span class="sheet-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><span class="sheet-hint">${escape(words.hint)}</span></span>
           <button class="sheet-go" type="submit">${escape(words.start)}</button>
@@ -166,7 +167,7 @@ export class NewTalk {
         default:
           this.town = value || null;
       }
-      this.draw();
+      redrawKeepingFocus(this.dialog, () => this.draw());
     });
     this.form.addEventListener("submit", (event) => {
       event.preventDefault();

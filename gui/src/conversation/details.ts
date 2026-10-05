@@ -69,6 +69,9 @@ export class Details {
     this.element = document.createElement("aside");
     this.element.className = "details";
     this.element.hidden = true;
+    // Focused as a whole when it opens, so Tab goes on into it.
+    this.element.tabIndex = -1;
+    this.element.setAttribute("aria-label", options.words.open);
     this.element.innerHTML = `<div class="details-body"></div><p class="spoken" role="status"></p>`;
     this.body = this.element.querySelector<HTMLElement>(".details-body")!;
     this.spoken = this.element.querySelector<HTMLElement>(".spoken")!;

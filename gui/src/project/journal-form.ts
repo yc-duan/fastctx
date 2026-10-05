@@ -66,7 +66,7 @@ export class JournalForm {
           <textarea name="text" rows="9" required></textarea>
           <span class="field-hint">${escape(words.entryHint)}</span></label>
       </div>
-      <p class="sheet-note" hidden></p>
+      <p class="sheet-note" role="alert" hidden></p>
       <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.save)}</button></footer>`;
     if (!this.dialog.open) this.dialog.showModal();
     this.body.querySelector<HTMLElement>(journal ? "[name=text]" : "[name=journal]")?.focus();

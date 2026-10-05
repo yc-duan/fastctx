@@ -3,6 +3,7 @@
 // this device; the language takes effect as the interface starts again.
 
 import { escape } from "../conversation/prose";
+import { redrawKeepingFocus } from "./focus";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
 import { desktopAvailable } from "../world/desktop";
@@ -97,7 +98,7 @@ export class SettingsPage implements Page {
           chooseNotifying(value === "on");
           break;
       }
-      this.drawLook();
+      redrawKeepingFocus(this.element, () => this.drawLook());
     });
     this.stop = effect(() => this.drawDevice(options.store.world.get(), options.store.clock.get()));
   }

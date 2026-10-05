@@ -6,6 +6,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { redrawKeepingFocus } from "./focus";
 import type { Address } from "../world/events";
 import type { ResidentNow } from "../world/world";
 import type { Place } from "./places";
@@ -102,7 +103,7 @@ export class Sidebar {
 
     const home = `<a class="place home${place.kind === "home" ? " current" : ""}" href="${link({ kind: "home" })}">
         <span class="place-mark">${knotMark()}</span><span class="place-name">${escape(words.world)}</span>
-        ${waiting ? `<span class="count waiting" aria-label="${escape(words.waiting)}">${waiting}</span>` : ""}
+        ${waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : ""}
       </a>
       ${store.trouble.peek() ? `<p class="sidebar-trouble">${escape(words.unreachable)}</p>` : ""}`;
 
@@ -125,7 +126,7 @@ export class Sidebar {
             <a class="place${current ? " current" : ""}" href="${link({ kind: "project", town })}"><span class="place-name">${escape(name)}</span>
               ${shut && asking ? `<span class="mark mark-ask" aria-hidden="true"></span>` : ""}
               ${shut && inside.length ? `<span class="count">${inside.length}</span>` : ""}</a>
-            ${inside.length ? `<button class="place-fold" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(name)}">${glyph("chevron", 16)}</button>` : ""}
+            ${inside.length ? `<button class="place-fold" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}">${glyph("chevron", 16)}</button>` : ""}
           </div>
           ${shut || !inside.length ? "" : `<ul class="agents">${inside.map((r) => this.agent(r, place, now)).join("")}</ul>`}
         </li>`;
@@ -162,7 +163,9 @@ export class Sidebar {
     const html = home + projects + loose + machines + alone;
     if (html === this.drawn) return;
     this.drawn = html;
-    this.list.innerHTML = html;
+    redrawKeepingFocus(this.list, () => {
+      this.list.innerHTML = html;
+    });
   }
 
   private agent(r: ResidentNow, place: Place, now: Date): string {

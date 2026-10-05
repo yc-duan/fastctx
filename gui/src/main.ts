@@ -117,6 +117,8 @@ import {
 import { en, zh } from "./words";
 import { desktopAvailable } from "./world/desktop";
 import { startPresence } from "./app/presence";
+import { installAccess } from "./app/access";
+import { nameCodeCopy } from "./conversation/prose";
 
 const params = new URLSearchParams(location.search);
 const language: "zh" | "en" = (() => {
@@ -983,6 +985,8 @@ if (live) {
 
 installPens();
 installRules();
+installAccess();
+nameCodeCopy(words.copyCode);
 addEventListener("hashchange", () => show(placeOf(location.hash)));
 applyTheme(() => {
   void redrawDiagrams(shell.element);

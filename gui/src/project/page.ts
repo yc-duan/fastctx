@@ -6,6 +6,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
 import type { MapView, ProjectRecord, ResidentNow, RunningJob, WorldWho, Writer } from "../world/world";
 import type { HomeWords } from "../home/words";
@@ -144,10 +145,12 @@ export class ProjectPage {
     const html = intro + tabs + board;
     if (html !== this.drawn) {
       this.drawn = html;
-      this.intro.innerHTML = intro;
-      this.tabs.innerHTML = tabs;
-      this.board.innerHTML = board;
-      this.choose();
+      redrawKeepingFocus(this.element, () => {
+        this.intro.innerHTML = intro;
+        this.tabs.innerHTML = tabs;
+        this.board.innerHTML = board;
+        this.choose();
+      });
     }
   }
 

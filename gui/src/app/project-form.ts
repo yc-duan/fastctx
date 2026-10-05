@@ -6,6 +6,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { redrawKeepingFocus } from "./focus";
 import type { RecordFields, TownRecord } from "../world/bridge";
 import type { ProjectRecord } from "../world/world";
 import type { Store } from "./store";
@@ -76,7 +77,7 @@ export class ProjectForm {
       if (remove) {
         this.read();
         this.places.splice(Number(remove.dataset.remove), 1);
-        this.draw();
+        redrawKeepingFocus(this.body, () => this.draw());
       }
     });
     this.body.addEventListener("input", (event) => {
@@ -154,7 +155,7 @@ export class ProjectForm {
         <label class="field"><span class="field-label">${escape(words.what)}</span>
           <textarea name="what" rows="2" required placeholder="${escape(words.whatPlaceholder)}">${escape(kept.what)}</textarea></label>
         <div class="field"><span class="field-label">${escape(words.machines)}</span>
-          <div class="choice-options" role="group">${names
+          <div class="choice-options" role="group" aria-label="${escape(words.machines)}">${names
             .map(
               (name) =>
                 `<button type="button" class="choice${this.machines.has(name) ? " chosen" : ""}" role="checkbox" aria-checked="${this.machines.has(name)}" data-machine="${escape(name)}">${escape(name)}</button>`,
@@ -165,19 +166,19 @@ export class ProjectForm {
           <div class="address-rows">${this.places
             .map(
               (place, index) => `<div class="address-row">
-                <input class="place-what-input" placeholder="${escape(words.placeWhat)}" value="${escape(place.what)}">
-                <select class="place-machine-input">${options(place.machine)}</select>
-                <input class="place-path-input mono" placeholder="${escape(words.placePath)}" spellcheck="false" value="${escape(place.path)}">
+                <input class="place-what-input" placeholder="${escape(words.placeWhat)}" aria-label="${escape(words.placeWhat)}" value="${escape(place.what)}">
+                <select class="place-machine-input" aria-label="${escape(words.placeMachine)}">${options(place.machine)}</select>
+                <input class="place-path-input mono" placeholder="${escape(words.placePath)}" aria-label="${escape(words.placePath)}" spellcheck="false" value="${escape(place.path)}">
                 <button class="icon-button" type="button" data-remove="${index}" aria-label="${escape(words.removePlace)}">${glyph("close", 16)}</button>
               </div>`,
             )
             .join("")}</div>
           <button class="text-button add-place" type="button">${glyph("plus", 16)}<span>${escape(words.addPlace)}</span></button></div>
         <div class="field"><span class="field-label">${escape(words.canon)}</span>
-          <div class="canon-row"><select name="canon-machine">${options(kept.canonMachine, words.noCanon)}</select>
-          <input name="canon-path" class="mono" spellcheck="false" placeholder="${escape(words.canonHint)}" value="${escape(kept.canonPath)}"></div></div>
+          <div class="canon-row"><select name="canon-machine" aria-label="${escape(words.canonMachine)}">${options(kept.canonMachine, words.noCanon)}</select>
+          <input name="canon-path" class="mono" spellcheck="false" placeholder="${escape(words.canonHint)}" aria-label="${escape(words.canonHint)}" value="${escape(kept.canonPath)}"></div></div>
       </div>
-      <p class="sheet-note" hidden></p>
+      <p class="sheet-note" role="alert" hidden></p>
       <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(this.editing ? words.save : words.open)}</button></footer>`;
   }
 

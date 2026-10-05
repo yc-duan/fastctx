@@ -6,6 +6,7 @@
 // computer on its own opens the interface, and from the sidebar after.
 
 import { escape } from "../conversation/prose";
+import { redrawKeepingFocus } from "./focus";
 import type { JoinKept, Legacy, Setup } from "../world/bridge";
 import type { Page } from "./shell";
 import type { Store } from "./store";
@@ -101,6 +102,14 @@ export class WelcomePage implements Page {
       ${setup && this.options.legacy(setup.legacy) ? `<p class="welcome-legacy">${escape(this.options.legacy(setup.legacy))}</p>` : ""}`;
   }
 
+  /** Moves to another step; its first field, or its first button, takes
+   *  focus, as a new page would. */
+  private go(step: Step): void {
+    this.step = step;
+    this.draw();
+    this.body.querySelector<HTMLElement>("input:not([type=hidden]), textarea, button")?.focus({ preventScroll: true });
+  }
+
   private draw(): void {
     const { words } = this.options;
     switch (this.step) {
@@ -131,7 +140,7 @@ export class WelcomePage implements Page {
             <label class="field"><span class="field-label">${escape(words.name)}</span>
               <input name="name" class="mono" autocomplete="off" spellcheck="false" pattern="[a-z][a-z0-9-]{0,31}" placeholder="${escape(this.options.store.world.peek()?.here ?? "")}">
               <span class="field-hint">${escape(words.nameHint)}</span></label>
-            <p class="sheet-note" hidden></p>
+            <p class="sheet-note" role="alert" hidden></p>
             <footer class="welcome-foot"><button class="text-button back" type="button">${escape(words.back)}</button><button class="sheet-go" type="submit">${escape(words.joinGo)}</button></footer>
           </form>`;
         this.body.querySelector<HTMLTextAreaElement>("[name=code]")?.focus();
@@ -141,7 +150,7 @@ export class WelcomePage implements Page {
           <form class="found-form welcome-form">
             <h2 class="welcome-form-title">${escape(words.found)}</h2>
             <div class="field"><span class="field-label">${escape(words.hubWhere)}</span>
-              <div class="choice-options" role="radiogroup">${(
+              <div class="choice-options" role="radiogroup" aria-label="${escape(words.hubWhere)}">${(
                 [
                   ["here", words.hubHere],
                   ["server", words.hubServer],
@@ -159,7 +168,7 @@ export class WelcomePage implements Page {
               <span class="field-hint">${escape(words.addressHint)}</span></label>`
                 : `<ol class="welcome-steps">${words.serverSteps.map((step) => `<li>${escape(step)}</li>`).join("")}</ol>`
             }
-            <p class="sheet-note" hidden></p>
+            <p class="sheet-note" role="alert" hidden></p>
             <footer class="welcome-foot"><button class="text-button back" type="button">${escape(words.back)}</button>${
               this.hub === "here"
                 ? `<button class="sheet-go" type="submit">${escape(words.hubGo)}</button>`
@@ -191,7 +200,7 @@ export class WelcomePage implements Page {
               <p class="field-hint">${escape(words.hostsWhat)}</p>
               ${host("codex", words.codex)}${host("claude", words.claude)}
               <button class="text-button apply-now" type="button">${escape(words.applyGo)}</button>
-              <p class="sheet-note" hidden></p>
+              <p class="sheet-note" role="alert" hidden></p>
             </section>`
             }
             <footer class="welcome-foot"><span></span><button class="sheet-go enter" type="button">${escape(words.enter)}</button></footer>
@@ -212,23 +221,14 @@ export class WelcomePage implements Page {
     const target = event.target as HTMLElement;
     const path = target.closest<HTMLElement>("[data-path]")?.dataset.path;
     if (path === "alone") return this.options.enter();
-    if (path === "join" || path === "found") {
-      this.step = path;
-      return this.draw();
-    }
+    if (path === "join" || path === "found") return this.go(path);
     const hub = target.closest<HTMLElement>("[data-hub]")?.dataset.hub;
     if (hub === "here" || hub === "server") {
       this.hub = hub;
-      return this.draw();
+      return redrawKeepingFocus(this.body, () => this.draw());
     }
-    if (target.closest(".back")) {
-      this.step = "choose";
-      return this.draw();
-    }
-    if (target.closest(".to-join")) {
-      this.step = "join";
-      return this.draw();
-    }
+    if (target.closest(".back")) return this.go("choose");
+    if (target.closest(".to-join")) return this.go("join");
     if (target.closest(".enter")) return this.options.enter();
     if (target.closest(".place-now")) {
       await this.options.place().catch((error: unknown) => this.note(this.options.words.failed(String(error))));
