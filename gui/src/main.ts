@@ -519,7 +519,7 @@ function specimenTalk(address: Address): Page {
       agent: sample.agent === "claude" ? "Claude" : "Codex",
       machine: sample.machine,
       model: sample.model,
-      town: sample.town,
+      project: sample.town,
     },
     head,
     link: talkLink,
@@ -564,7 +564,7 @@ function specimenTalk(address: Address): Page {
             jobs: [],
           }
         : null,
-      exported(conversation, { agent: sample.agent === "claude" ? "Claude" : "Codex", machine: sample.machine, model: sample.model, town: sample.town }),
+      exported(conversation, { agent: sample.agent === "claude" ? "Claude" : "Codex", machine: sample.machine, model: sample.model, project: sample.town }),
     ),
     send(text, attached) {
       conversation.sending(
@@ -608,7 +608,7 @@ function liveTalk(address: Address): Page {
     agent: known ? agentName(known.about.host.agent) : address.resident,
     machine: address.machine,
     model: known?.about.model ?? null,
-    town: known?.town ?? null,
+    project: known?.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
   };
   const here = world?.here ?? null;
   const conversation = new Conversation();
@@ -757,11 +757,22 @@ function liveTalk(address: Address): Page {
       });
   };
   read();
+  // Opened before the World first answered, as from a notification at
+  // start: built again once it has, to name the agent and its project.
+  const named = world
+    ? () => {}
+    : effect(() => {
+        if (!store.world.get()) return;
+        queueMicrotask(() => {
+          if (!left && place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine) show(place);
+        });
+      });
   return {
     element: page.element,
     title: `${someone.agent} · ${someone.machine}`,
     leave() {
       left = true;
+      named();
       running();
       page.leave();
       search.close();

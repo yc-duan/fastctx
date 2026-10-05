@@ -22,7 +22,8 @@ export interface Someone {
   agent: string;
   machine: string;
   model: string | null;
-  town: string | null;
+  /** The project it is in, by the name the user gave it. */
+  project: string | null;
 }
 
 /** What came of words sent: a turn this conversation will see end; taken,
@@ -886,7 +887,7 @@ export class ConversationPage {
     const facts = [
       now,
       title ? `${someone.agent} · ${someone.machine}` : null,
-      someone.town,
+      someone.project,
       someone.model,
     ].filter(Boolean) as string[];
     const mark = waiting ? `<span class="ask-mark" aria-hidden="true"></span>` : working ? `<span class="pulse" aria-hidden="true"></span>` : "";
