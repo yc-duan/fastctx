@@ -23,7 +23,7 @@ use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, Recor
 use fastctx_types::residents::Landed;
 use fastctx_types::session::SessionEvent;
 use fastctx_types::session::control::{Control, Controlled, Offers};
-use fastctx_types::town::{LookedUp, WorldWho};
+use fastctx_types::town::{LookedUp, WhoScope, WorldWho};
 use fastctx_types::world::NodesReply;
 use fastctx_types::{Address, AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
 use serde::Serialize;
@@ -151,14 +151,15 @@ fn machine(name: Option<String>) -> Result<Option<MachineName>, String> {
 #[tauri::command]
 async fn world_now(shell: tauri::State<'_, Shell>) -> Result<WorldNow, String> {
     let world = shell.world();
-    let (who, nodes, towns) = tokio::join!(world.who(None, true), world.nodes(), world.towns());
+    let (who, nodes) = tokio::join!(world.who(None, true), world.nodes());
     let nodes = nodes.map_err(|error| error.to_string())?;
-    Ok(WorldNow {
-        here: nodes.machine.clone(),
-        who: who.map_err(|error| error.to_string())?,
-        nodes,
-        towns: towns.map_err(|error| error.to_string())?,
-    })
+    let who = who.map_err(|error| error.to_string())?;
+    // Asked of the whole World, `who` lists its towns as well: the same
+    // list `towns` would read again.
+    let WhoScope::World { towns } = &who.scope else {
+        return Err("the node answered about one town when asked about the World".to_string());
+    };
+    Ok(WorldNow { here: nodes.machine.clone(), towns: towns.clone(), who, nodes })
 }
 
 /// Starts watching a resident: returns what came before, and sends each
