@@ -1052,12 +1052,12 @@ fn trust(world: &Path) -> Result<(), String> {
 /// Settings for a background session the World starts: the host's limit on
 /// a tool answer opened past the World's own (`world-view.md`, 一次给多少),
 /// and the host's own shell, file and search tools turned off, since the
-/// World's take their place.
+/// World's take their place. The session runs without approvals
+/// (`background::settings_args`), so nothing else needs allowing.
 fn settings_json() -> String {
     let settings = serde_json::json!({
         "env": { "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string() },
         "permissions": {
-            "allow": [fastctx_hosts::claude::WORLD_TOOLS],
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         },
     });
