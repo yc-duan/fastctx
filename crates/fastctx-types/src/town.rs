@@ -63,8 +63,8 @@ pub enum WhoScope {
     /// One town: the machines its record names were asked, or every machine
     /// when this one keeps no record of it.
     Town { town: TownName, record: Option<Box<Record>> },
-    /// The World as a whole: every machine was asked; `towns` are its complete
-    /// project directory, queried through the hub when connected to a World.
+    /// The World as a whole: every machine was asked. The directory comes
+    /// from the hub while connected, or from available local copies offline.
     World { towns: Vec<TownSummary> },
 }
 

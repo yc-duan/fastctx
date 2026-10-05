@@ -43,7 +43,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
 /// Opens a town: the first version of its record.
 async fn new(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFields) -> Result<Reply, Failure> {
     let _writing = node.writing.lock().await;
-    map::query(node, &town).await?;
+    crate::ledger::query(node, Some(&town)).await.map_err(Failure::new)?;
     if blocking(node, &town, read::latest).await?.is_some() {
         return Err(Failure::new(format!("the town {town} exists already; fastctx project edit {town} changes it")));
     }

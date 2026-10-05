@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use fastctx_net::ledger::Entry;
 use fastctx_net::sign::Signed;
+use fastctx_net::trust::WorldId;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::project::{Description, EntryStamp, Location, Record, version_of};
 use fastctx_types::residents::{About, Action, Activity, MessageKind, MessageLine, Moved};
@@ -51,6 +52,7 @@ pub(super) fn read(
     machine: &MachineName,
     since: Timestamp,
     town: Option<&TownName>,
+    membership: Option<&WorldId>,
 ) -> io::Result<SinceReply> {
     let started = Timestamp::now();
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
@@ -128,7 +130,7 @@ pub(super) fn read(
         None => world.towns()?,
     };
     for town in towns {
-        scan.ledger(world, &town);
+        scan.ledger(world, &town, membership);
     }
     scan.events.retain(|event| {
         event.at > since
@@ -156,9 +158,10 @@ pub(super) fn ledger(
     machine: &MachineName,
     since: Timestamp,
     town: &TownName,
+    membership: Option<&WorldId>,
 ) -> (Vec<SinceEvent>, Vec<SinceIssue>) {
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
-    scan.ledger(world, town);
+    scan.ledger(world, town, membership);
     scan.events.retain(|event| event.at > since);
     (scan.events, scan.issues)
 }
@@ -557,7 +560,7 @@ impl Scan<'_> {
         }
     }
 
-    fn ledger(&mut self, world: &WorldDir, town: &TownName) {
+    fn ledger(&mut self, world: &WorldDir, town: &TownName, membership: Option<&WorldId>) {
         for path in self.json_files(&world.town(town).signed()) {
             let Some(signed) = self.optional::<Signed>(&path) else { continue };
             let entry = match signed.claim::<Entry>() {
@@ -571,6 +574,9 @@ impl Scan<'_> {
                     continue;
                 }
             };
+            if membership.is_some_and(|current| *current != entry.world) {
+                continue;
+            }
             // These are the signed payloads checked on intake, as read by
             // ledger::entries_after. The editable projections are not evidence.
             for file in entry.files {

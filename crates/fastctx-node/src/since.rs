@@ -16,10 +16,11 @@ use crate::Node;
 
 pub async fn here(node: &Node, since: Timestamp, town: Option<TownName>) -> Result<SinceReply, Failure> {
     let (world, machine) = (node.world.clone(), node.machine());
+    let membership = node.link().map(|link| link.membership().world.clone());
     // Intake publishes the signed ledger before its readable files. Reading
     // signed records under the same lock also excludes carrying a town in.
     let _syncing = node.syncing.lock().await;
-    tokio::task::spawn_blocking(move || records::read(&world, &machine, since, town.as_ref()))
+    tokio::task::spawn_blocking(move || records::read(&world, &machine, since, town.as_ref(), membership.as_ref()))
         .await
         .map_err(|error| Failure::new(format!("reading history: {error}")))?
         .map_err(|error| Failure::new(format!("reading history: {error}")))
@@ -28,8 +29,13 @@ pub async fn here(node: &Node, since: Timestamp, town: Option<TownName>) -> Resu
 pub async fn query(node: &Arc<Node>, since: Timestamp, town: Option<TownName>) -> Result<WorldSince, Failure> {
     let machine = node.machine();
     let mut issues = Vec::new();
-    if let Err(error) = crate::ledger::query(node, town.as_ref()).await {
-        issues.push(SinceIssue { source: "World ledgers".to_string(), reason: error });
+    match &town {
+        Some(town) => crate::town::map::query(node, town).await?,
+        None => {
+            if let Err(error) = crate::ledger::query(node, None).await {
+                issues.push(SinceIssue { source: "World ledgers".to_string(), reason: error });
+            }
+        }
     }
     let asked = match &town {
         Some(town) => {
@@ -53,9 +59,10 @@ pub async fn query(node: &Arc<Node>, since: Timestamp, town: Option<TownName>) -
         // The queried ledger is available even when all of its member
         // machines are offline. Their resident records remain unavailable.
         let (world, machine, town) = (node.world.clone(), machine.clone(), town.clone());
+        let membership = node.link().map(|link| link.membership().world.clone());
         let _syncing = node.syncing.lock().await;
         let (ledger_events, ledger_issues) =
-            tokio::task::spawn_blocking(move || records::ledger(&world, &machine, since, &town))
+            tokio::task::spawn_blocking(move || records::ledger(&world, &machine, since, &town, membership.as_ref()))
                 .await
                 .map_err(|error| Failure::new(format!("reading the queried ledger: {error}")))?;
         events.extend(ledger_events);

@@ -55,27 +55,26 @@ pub async fn brief(node: &Arc<Node>, town: &TownName) -> Result<String, Failure>
 /// A town it has no record of yet is taken from the hub before anything
 /// about it is answered.
 pub async fn catch_up(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
-    let (world, name) = (node.world.clone(), town.clone());
-    let known = tokio::task::spawn_blocking(move || read::latest(&world, &name).map(|record| record.is_some()))
-        .await
-        .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?
-        .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?;
-    if known || node.link().is_none() {
+    if crate::ledger::query::available(node, Some(town)).await.map_err(Failure::new)?.contains_key(town) {
         return Ok(());
     }
     crate::ledger::sync(node, Some(town.clone()))
         .await
-        .map_err(|error| Failure::new(format!("taking {town}'s ledger from the hub: {error}")))
+        .map_err(|error| Failure::new(format!("taking {town}'s ledger from the hub: {error}")))?;
+    if crate::ledger::query::available(node, Some(town)).await.map_err(Failure::new)?.contains_key(town) {
+        Ok(())
+    } else {
+        Err(no_ledger(node, town))
+    }
 }
 
-/// An explicit query catches up through the hub's advertised cursor even
-/// when this machine is not a replica member. The cached record alone does
-/// not establish that later versions or journal entries have arrived.
+/// Reads a replicated town locally. Other towns are queried while the
+/// connection is available, or read from an existing copy while offline.
 pub async fn query(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
-    crate::ledger::query(node, Some(town))
+    let towns = crate::ledger::query(node, Some(town))
         .await
-        .map(|_| ())
-        .map_err(|error| Failure::new(format!("taking {town}'s ledger from the hub: {error}")))
+        .map_err(|error| Failure::new(format!("reading {town}'s ledger: {error}")))?;
+    if towns.contains(town) { Ok(()) } else { Err(no_ledger(node, town)) }
 }
 
 /// Why there is no map of a town here.
