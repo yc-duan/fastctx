@@ -533,7 +533,10 @@ export class ConversationPage {
     const can = new Set(this.offered?.controls ?? []);
     const transcript = this.element.querySelector(".conversation")!;
     transcript.classList.toggle("can-rewind", can.has("rewind"));
-    transcript.classList.toggle("can-fork", can.has("fork"));
+    // Forking from a turn is forking and then cutting the new history at
+    // that turn: a host that cannot rewind (Claude) forks only the whole
+    // conversation, from the command menu.
+    transcript.classList.toggle("can-fork", can.has("fork") && can.has("rewind"));
   }
 
   /** What the conversation has used, as its host says: its context, the

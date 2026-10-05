@@ -29,6 +29,8 @@ export interface AskWords {
   cancel: string;
   question: string;
   questions(count: number): string;
+  /** Beside a question whose options may be chosen together. */
+  several: string;
   otherAnswer: string;
   secret: string;
   submit: string;
@@ -40,12 +42,21 @@ export interface AskWords {
   refuse: string;
   dismiss: string;
   required: string;
+  requiredOf(name: string): string;
   formUnreadable: string;
   sending: string;
   failed(why: string): string;
   cannot(request: string): string;
   permissions: string;
   verification: string;
+  /** A Claude tool other than a command or a file change. */
+  tool(name: string): string;
+  /** A permission Claude proposes keeping, said with where it is kept. */
+  rule(allow: "allow" | "deny" | "ask", rules: string, where: string): string;
+  unrule(rules: string, where: string): string;
+  mode(mode: string, where: string): string;
+  directories(add: boolean, directories: string, where: string): string;
+  kept: { session: string; localSettings: string; projectSettings: string; userSettings: string; cliArg: string };
   answered(said: string): string;
   gone: string;
   settledBy: { accept: string; session: string; rule: string; decline: string; cancel: string; answered: string; skipped: string; submitted: string; refused: string; dismissed: string; opened: string };
@@ -66,6 +77,8 @@ export interface Question {
   question: string;
   other: boolean;
   secret: boolean;
+  /** Several options may be chosen together. */
+  multi: boolean;
   options: { label: string; description: string }[];
 }
 
@@ -76,12 +89,19 @@ export type Field =
   | { name: string; title: string; description: string; required: boolean; kind: "one"; options: { value: string; label: string }[]; value: string | null }
   | { name: string; title: string; description: string; required: boolean; kind: "many"; options: { value: string; label: string }[]; value: string[] };
 
+/** Whose shape an answer takes: Codex's app-server, or Claude Code's hooks
+ *  (`crates/fastctx-types/examples/gui_wire_fixtures/claude.rs`). */
+type Host = "codex" | "claude";
+
 export type Ask =
   | { kind: "command"; command: string | null; cwd: string | null; reason: string | null; stdin: boolean; network: { host: string; protocol: string } | null; decisions: Decision[] }
   | { kind: "files"; item: string | null; reason: string | null; grantRoot: string | null; paths: string[]; decisions: Decision[] }
-  | { kind: "questions"; questions: Question[] }
-  | { kind: "form"; server: string; message: string; fields: Field[] | null }
-  | { kind: "link"; server: string; message: string; url: string }
+  /** A Claude tool asking leave to run, other than a command or a change. */
+  | { kind: "tool"; tool: string; input: string; decisions: Decision[] }
+  /** Claude's answer carries its questions back exactly as they came. */
+  | { kind: "questions"; questions: Question[]; asked: JsonValue | null }
+  | { kind: "form"; server: string; message: string; fields: Field[] | null; host: Host }
+  | { kind: "link"; server: string; message: string; url: string; host: Host }
   | { kind: "cannot"; what: string; detail: string | null }
   /** Not for a person to answer: the node itself refuses these. */
   | { kind: "hidden" };
@@ -144,11 +164,40 @@ export function readAsk(request: string, params: JsonValue, words: AskWords): As
           question: text(q.question) ?? "",
           other: q.isOther === true,
           secret: q.isSecret === true,
+          multi: false,
           options: Array.isArray(q.options)
             ? q.options.map(object).map((o) => ({ label: text(o.label) ?? "", description: text(o.description) ?? "" }))
             : [],
         })),
+        asked: null,
       };
+    }
+    case "classic.PermissionRequest":
+      return claudePermission(p, words);
+    case "AskUserQuestion": {
+      const questions = Array.isArray(p.questions) ? p.questions.map(object) : [];
+      return {
+        kind: "questions",
+        questions: questions.map((q) => ({
+          // Claude's answers are keyed by the whole question.
+          id: text(q.question) ?? "",
+          header: text(q.header) ?? "",
+          question: text(q.question) ?? "",
+          other: true,
+          secret: false,
+          multi: q.multiSelect === true,
+          options: Array.isArray(q.options)
+            ? q.options.map(object).map((o) => ({ label: text(o.label) ?? "", description: text(o.description) ?? "" }))
+            : [],
+        })),
+        asked: p.questions ?? null,
+      };
+    }
+    case "Elicitation": {
+      const server = text(p.mcp_server_name) ?? "";
+      const message = text(p.message) ?? "";
+      if (p.mode === "url") return { kind: "link", server, message, url: text(p.url) ?? "", host: "claude" };
+      return { kind: "form", server, message, fields: fieldsOf(p.requested_schema ?? null), host: "claude" };
     }
     case "mcpServer/elicitation/request": {
       const server = text(p.serverName) ?? "";
@@ -157,9 +206,9 @@ export function readAsk(request: string, params: JsonValue, words: AskWords): As
         case "form":
         case "openai/form":
         case "openaiForm":
-          return { kind: "form", server, message, fields: fieldsOf(p.requestedSchema ?? null) };
+          return { kind: "form", server, message, fields: fieldsOf(p.requestedSchema ?? null), host: "codex" };
         case "url":
-          return { kind: "link", server, message, url: text(p.url) ?? "" };
+          return { kind: "link", server, message, url: text(p.url) ?? "", host: "codex" };
         case "openai/userVerification":
           return { kind: "cannot", what: words.verification, detail: text(p.description) ?? text(p.title) };
         default:
@@ -172,6 +221,62 @@ export function readAsk(request: string, params: JsonValue, words: AskWords): As
       return { kind: "cannot", what: words.cannot(request), detail: null };
   }
 }
+
+/** Claude asking leave for a tool: a command is shown as one, a change by
+ *  the file it touches, anything else by its tool and what it was given.
+ *  Beside allowing once, the permissions Claude itself proposes to keep are
+ *  offered, each said with where it would be kept: some are written into
+ *  Claude's settings and last beyond this conversation. */
+function claudePermission(p: Record<string, JsonValue>, words: AskWords): Ask {
+  const tool = text(p.tool_name) ?? "";
+  const input = object(p.tool_input ?? null);
+  const suggestions = Array.isArray(p.permission_suggestions) ? p.permission_suggestions : [];
+  const decisions: Decision[] = [{ value: { behavior: "allow" }, label: words.accept, settled: words.settledBy.accept, tone: "yes" }];
+  for (const suggestion of suggestions) {
+    const label = keptAs(object(suggestion), words);
+    if (label) decisions.push({ value: { behavior: "allow", updatedPermissions: [suggestion] }, label, settled: words.settledBy.rule, tone: "yes" });
+  }
+  decisions.push(
+    { value: { behavior: "deny" }, label: words.decline, settled: words.settledBy.decline, tone: "no" },
+    { value: { behavior: "deny", interrupt: true }, label: words.cancel, settled: words.settledBy.cancel, tone: "no" },
+  );
+  if (tool === "Bash") {
+    return { kind: "command", command: text(input.command), cwd: text(p.cwd), reason: text(input.description), stdin: false, network: null, decisions };
+  }
+  const path = text(input.file_path) ?? text(input.notebook_path);
+  if (path && ["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(tool)) {
+    return { kind: "files", item: null, reason: null, grantRoot: null, paths: [path], decisions };
+  }
+  return { kind: "tool", tool, input: JSON.stringify(input, null, 2), decisions };
+}
+
+/** A permission Claude proposes keeping, as the user reads it; null for a
+ *  kind this card cannot say plainly, which is then not offered. */
+function keptAs(s: Record<string, JsonValue>, words: AskWords): string | null {
+  const where = words.kept[text(s.destination) as keyof AskWords["kept"]];
+  if (!where) return null;
+  const rules = (Array.isArray(s.rules) ? s.rules.map(object) : [])
+    .map((rule) => `${text(rule.toolName) ?? ""}${text(rule.ruleContent) ? `(${text(rule.ruleContent)})` : ""}`)
+    .join(", ");
+  const directories = (Array.isArray(s.directories) ? s.directories : []).filter((d): d is string => typeof d === "string").join(", ");
+  switch (s.type) {
+    case "addRules":
+    case "replaceRules":
+      return s.behavior === "allow" || s.behavior === "deny" || s.behavior === "ask" ? words.rule(s.behavior, rules, where) : null;
+    case "removeRules":
+      return words.unrule(rules, where);
+    case "setMode":
+      return text(s.mode) ? words.mode(text(s.mode)!, where) : null;
+    case "addDirectories":
+    case "removeDirectories":
+      return directories ? words.directories(s.type === "addDirectories", directories, where) : null;
+    default:
+      return null;
+  }
+}
+
+/** Said to Claude when the user turns its question away. */
+const QUESTION_DISMISSED = "The user dismissed the question without answering.";
 
 function simple(value: "accept" | "acceptForSession" | "decline" | "cancel", words: AskWords): Decision {
   switch (value) {
@@ -321,20 +426,25 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
       body = `${head(ask.paths.length ? words.filesNamed(ask.paths.length) : words.files)}${paths}${reason(ask.reason)}${root}${buttons(ask.decisions)}`;
       break;
     }
+    case "tool": {
+      const input = ask.input !== "{}" ? `<pre class="ask-command ask-tool-input"><code>${escape(ask.input)}</code></pre>` : "";
+      body = `${head(words.tool(ask.tool))}${input}${buttons(ask.decisions)}`;
+      break;
+    }
     case "questions": {
       const questions = ask.questions
         .map((q, index) => {
           const options = q.options
             .map(
               (option, n) =>
-                `<button type="button" class="ask-option" data-question="${index}" data-option="${n}" aria-pressed="false"><span class="ask-option-label">${escape(option.label)}</span>${option.description ? `<span class="ask-option-what">${escape(option.description)}</span>` : ""}</button>`,
+                `<button type="button" class="ask-option" data-question="${index}" data-option="${n}"${q.multi ? ' data-many="1"' : ""} aria-pressed="false"><span class="ask-option-label">${escape(option.label)}</span>${option.description ? `<span class="ask-option-what">${escape(option.description)}</span>` : ""}</button>`,
             )
             .join("");
           const free =
             q.other || q.options.length === 0
-              ? `<input class="ask-input" data-question="${index}" type="${q.secret ? "password" : "text"}" autocomplete="off" placeholder="${escape(q.options.length ? words.otherAnswer : q.secret ? words.secret : "")}">`
+              ? `<input class="ask-input" data-question="${index}" type="${q.secret ? "password" : "text"}" autocomplete="off" aria-label="${escape(q.options.length ? words.otherAnswer : q.header || q.question)}" placeholder="${escape(q.options.length ? words.otherAnswer : q.secret ? words.secret : "")}">`
               : "";
-          return `<div class="ask-question" role="group" aria-label="${escape(q.header || q.question)}">${q.header ? `<div class="ask-question-head">${escape(q.header)}</div>` : ""}<div class="ask-question-text">${plain(q.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ""}${free}</div>`;
+          return `<div class="ask-question" role="group" aria-label="${escape(q.header || q.question)}">${q.header || q.multi ? `<div class="ask-question-head">${escape([q.header, q.multi ? words.several : ""].filter(Boolean).join(" · "))}</div>` : ""}<div class="ask-question-text">${plain(q.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ""}${free}</div>`;
         })
         .join("");
       body = `${head(ask.questions.length > 1 ? words.questions(ask.questions.length) : words.question)}${questions}<div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${key}" data-submit="answer">${escape(words.submit)}</button><button type="button" class="ask-button ask-no" data-ask="${key}" data-submit="skip">${escape(words.skip)}</button></div>`;
@@ -384,13 +494,15 @@ function drawField(field: Field, index: number, words: AskWords): string {
 export function answerOf(card: HTMLElement, ask: Ask, given: { decision?: number; submit?: string }, words: AskWords): { answer: JsonValue; said: string } | { missing: string } {
   switch (ask.kind) {
     case "command":
-    case "files": {
+    case "files":
+    case "tool": {
       const decision = ask.decisions[given.decision ?? -1];
       if (!decision) return { missing: words.required };
       return { answer: { decision: decision.value }, said: decision.settled };
     }
     case "questions": {
       const skip = given.submit === "skip";
+      if (ask.asked !== null) return claudeAnswers(card, ask, skip, words);
       const answers: Record<string, JsonValue> = {};
       for (const [index, q] of ask.questions.entries()) {
         if (skip) {
@@ -406,32 +518,63 @@ export function answerOf(card: HTMLElement, ask: Ask, given: { decision?: number
       return { answer: { answers }, said: skip ? words.settledBy.skipped : words.settledBy.answered };
     }
     case "form": {
-      if (given.submit !== "accept") return refusal(given.submit, words);
+      if (given.submit !== "accept") return refusal(given.submit, words, ask.host);
       if (!ask.fields) return { missing: words.required };
       const content: Record<string, JsonValue> = {};
       for (const [index, field] of ask.fields.entries()) {
         const value = fieldValue(card, field, index);
         if (value === null) {
-          if (field.required) return { missing: `${words.required}: ${field.title}` };
+          if (field.required) return { missing: words.requiredOf(field.title) };
           continue;
         }
         content[field.name] = value;
       }
-      return { answer: { action: "accept", content, _meta: null }, said: words.settledBy.submitted };
+      return {
+        answer: ask.host === "claude" ? { action: "accept", content } : { action: "accept", content, _meta: null },
+        said: words.settledBy.submitted,
+      };
     }
     case "link":
-      if (given.submit !== "open") return refusal(given.submit, words);
-      return { answer: { action: "accept", content: null, _meta: null }, said: words.settledBy.opened };
+      if (given.submit !== "open") return refusal(given.submit, words, ask.host);
+      return {
+        answer: ask.host === "claude" ? { action: "accept" } : { action: "accept", content: null, _meta: null },
+        said: words.settledBy.opened,
+      };
     case "cannot":
     case "hidden":
       return { missing: words.required };
   }
 }
 
-function refusal(submit: string | undefined, words: AskWords): { answer: JsonValue; said: string } {
-  return submit === "cancel"
-    ? { answer: { action: "cancel", content: null, _meta: null }, said: words.settledBy.dismissed }
-    : { answer: { action: "decline", content: null, _meta: null }, said: words.settledBy.refused };
+function refusal(submit: string | undefined, words: AskWords, host: Host): { answer: JsonValue; said: string } {
+  const action = submit === "cancel" ? "cancel" : "decline";
+  return {
+    answer: host === "claude" ? { action } : { action, content: null, _meta: null },
+    said: action === "cancel" ? words.settledBy.dismissed : words.settledBy.refused,
+  };
+}
+
+/** Claude's answers: each question's chosen labels (and words of the
+ *  user's own) joined as Claude joins them, keyed by the whole question,
+ *  with the questions handed back exactly as asked. */
+function claudeAnswers(
+  card: HTMLElement,
+  ask: Extract<Ask, { kind: "questions" }>,
+  skip: boolean,
+  words: AskWords,
+): { answer: JsonValue; said: string } | { missing: string } {
+  if (skip) return { answer: { deny: QUESTION_DISMISSED }, said: words.settledBy.skipped };
+  const answers: Record<string, JsonValue> = {};
+  for (const [index, q] of ask.questions.entries()) {
+    const picked = [...card.querySelectorAll<HTMLElement>(`.ask-option[data-question="${index}"][aria-pressed="true"]`)].map(
+      (button) => q.options[Number(button.dataset.option)]!.label,
+    );
+    const typed = card.querySelector<HTMLInputElement>(`.ask-input[data-question="${index}"]`)?.value.trim() ?? "";
+    const given = typed ? [...picked, typed] : picked;
+    if (!given.length) return { missing: words.requiredOf(q.header || q.question) };
+    answers[q.id] = given.join(", ");
+  }
+  return { answer: { result: { questions: ask.asked, answers } }, said: words.settledBy.answered };
 }
 
 function fieldValue(card: HTMLElement, field: Field, index: number): JsonValue | null {

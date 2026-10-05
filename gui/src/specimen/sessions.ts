@@ -512,9 +512,10 @@ function codex(): Specimen {
   };
 }
 
-/** A Codex conversation that waits on the user: an approval answered
- *  elsewhere, then one request still waiting, of the kind `?ask=` names
- *  (command, question, form, link). */
+/** A conversation that waits on the user: an approval answered elsewhere,
+ *  then one request still waiting, of the kind `?ask=` names (Codex's
+ *  command, question, form, link; Claude's claude-permission,
+ *  claude-question, claude-form). */
 function asking(): Specimen {
   const s = new Script("2026-10-04T15:10:00Z");
   const kind = new URLSearchParams(location.search).get("ask") ?? "command";
@@ -553,7 +554,97 @@ function asking(): Specimen {
 
   s.heard("t2", user, "好，接着做。");
   s.started("t2");
+  const claudeId = (key: string) => ["claude", "session-9c1e", "1791133200000", key];
   switch (kind) {
+    case "claude-permission":
+      s.say("t2", "message", "缓存要重新生成，旧的 `.sqlx/` 先清掉。", 2);
+      s.push({
+        event: "changed",
+        turn: "t2",
+        change: {
+          kind: "request",
+          id: claudeId("r-1"),
+          request: "classic.PermissionRequest",
+          params: {
+            session_id: "session-9c1e",
+            hook_event_name: "PermissionRequest",
+            cwd: "/srv/ingest",
+            permission_mode: "default",
+            tool_name: "Bash",
+            tool_input: { command: "rm -rf .sqlx && cargo sqlx prepare -- --all-targets", description: "Regenerate the offline query cache" },
+            permission_suggestions: [
+              { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "cargo sqlx prepare:*" }], behavior: "allow", destination: "localSettings" },
+              { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "cargo sqlx prepare:*" }], behavior: "allow", destination: "session" },
+            ],
+          },
+        },
+      });
+      break;
+    case "claude-question":
+      s.say("t2", "message", "提交之前有两件事想问你。", 2);
+      s.push({
+        event: "changed",
+        turn: "t2",
+        change: {
+          kind: "request",
+          id: claudeId("r-2"),
+          request: "AskUserQuestion",
+          params: {
+            tool: "AskUserQuestion",
+            tool_use_id: "toolu_01",
+            questions: [
+              {
+                question: "批量提交的大小定多少？",
+                header: "批量",
+                multiSelect: false,
+                options: [
+                  { label: "1000", description: "回放快，提交多" },
+                  { label: "5000", description: "现在的做法" },
+                  { label: "20000", description: "提交少，出错时回放多" },
+                ],
+              },
+              {
+                question: "这次改动要在哪些机器上验证？",
+                header: "机器",
+                multiSelect: true,
+                options: [
+                  { label: "laptop", description: "Windows，本地 Postgres" },
+                  { label: "lab", description: "Linux，跑整套集成测试" },
+                  { label: "hangzhou", description: "线上的副本" },
+                ],
+              },
+            ],
+          },
+        },
+      });
+      break;
+    case "claude-form":
+      s.say("t2", "message", "我把这次迁移记成一个 issue。", 2);
+      s.push({
+        event: "changed",
+        turn: "t2",
+        change: {
+          kind: "request",
+          id: claudeId("r-3"),
+          request: "Elicitation",
+          params: {
+            session_id: "session-9c1e",
+            hook_event_name: "Elicitation",
+            mcp_server_name: "linear",
+            mode: "form",
+            message: "新建 issue 之前，请确认这几样：",
+            requested_schema: {
+              type: "object",
+              required: ["title"],
+              properties: {
+                title: { type: "string", title: "标题", default: "ingest: commit in batches of 5000" },
+                priority: { type: "string", title: "优先级", enum: ["urgent", "high", "normal", "low"], enumNames: ["紧急", "高", "普通", "低"], default: "normal" },
+              },
+            },
+          },
+        },
+      });
+      break;
     case "question":
       s.say("t2", "message", "生成缓存之前要连上测试库，有两件事得问你。", 2);
       s.push({
@@ -682,12 +773,13 @@ function asking(): Specimen {
   }
   s.push({ event: "context", used: 61_400, window: 272_000 });
 
+  const claude = kind.startsWith("claude-");
   return {
     title: "ingest 迁移",
-    agent: "codex",
-    resident: "codex-a51c",
+    agent: claude ? "claude" : "codex",
+    resident: claude ? "claude-2b91" : "codex-a51c",
     machine: "laptop",
-    model: "gpt-6.1-sol",
+    model: claude ? "claude-opus-5-5" : "gpt-6.1-sol",
     town: "ingest",
     here: "desktop",
     events: s.events,

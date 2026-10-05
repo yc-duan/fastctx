@@ -65,6 +65,8 @@ export const fixture = ${json.trimEnd()} satisfies {
     events: SessionEvent[];
     host_text: string;
   };
+  // Claude's requests as they come, and the answers its hooks take.
+  claude: { events: SessionEvent[]; answers: Control[]; unavailable: Offers; idle: Offers };
 };
 `;
 const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);
@@ -107,4 +109,47 @@ assert.equal(conversation.title, "Wire contract");
 assert(conversation.entries.some((entry) => entry.kind === "tool"));
 assert(conversation.entries.some((entry) => entry.kind === "uncertain"));
 assert.equal(conversation.moving(), false);
-process.stdout.write(`Wire contract: ${fixture.session.events.length} events, ${fixture.session.health_cases.length} Rust health comparisons, ${fixture.world.who.length} who replies, ${fixture.world.nodes.length} nodes replies, ${fixture.world.towns.length} towns, ${fixture.world.journals.length} journals passed.\n`);
+
+// Claude's requests become cards, and the cards answer in the shape its
+// hooks take: allowing once, the questions chosen, a form filled in.
+const asking = new Conversation();
+asking.history(fixture.claude.events.filter((event) => event.change?.kind !== "resolved"));
+const asks = asking.entries.filter((entry) => entry.kind === "ask");
+assert.equal(asks.length, 3, "each Claude request is a card");
+const cards = await build({
+  stdin: {
+    contents: `export { readAsk, answerOf } from "./src/conversation/asks"; export { zhComposer } from "./src/app/words";`,
+    resolveDir: gui,
+    loader: "ts",
+  },
+  bundle: true,
+  write: false,
+  format: "esm",
+  // The cards draw prose, whose packages resolve as Node's do.
+  platform: "node",
+  logLevel: "silent",
+});
+const { readAsk, answerOf, zhComposer } = await import(`data:text/javascript;base64,${Buffer.from(cards.outputFiles[0].text).toString("base64")}`);
+/** A card as answerOf reads it: which options are pressed, what is typed. */
+const card = ({ pressed = [], fields = {} }) => {
+  const find = (selector) => {
+    const option = /\.ask-option\[data-question="(\d+)"\]\[aria-pressed="true"\]/.exec(selector);
+    if (option) return pressed.filter(([q]) => q === Number(option[1])).map(([, n]) => ({ dataset: { option: String(n) } }));
+    const field = /\.ask-input\[data-field="(\d+)"\]/.exec(selector);
+    return field && fields[field[1]] !== undefined ? [{ value: fields[field[1]] }] : [];
+  };
+  return { querySelectorAll: find, querySelector: (selector) => find(selector)[0] ?? null };
+};
+const given = [
+  [{}, { decision: 0 }],
+  [{ pressed: [[0, 0], [0, 1]] }, { submit: "answer" }],
+  [{ fields: { 0: "Hangzhou" } }, { submit: "accept" }],
+];
+for (const [index, ask] of asks.entries()) {
+  const expected = fixture.claude.answers[index];
+  assert.deepEqual(ask.id, expected.request, "answers follow their requests");
+  const read = readAsk(ask.request, ask.params, zhComposer.asks);
+  const answered = answerOf(card(given[index][0]), read, given[index][1], zhComposer.asks);
+  assert.deepEqual(answered.answer, expected.answer, `the answer to ${ask.request}`);
+}
+process.stdout.write(`Wire contract: ${fixture.session.events.length} events, ${fixture.session.health_cases.length} Rust health comparisons, ${fixture.world.who.length} who replies, ${fixture.world.nodes.length} nodes replies, ${fixture.world.towns.length} towns, ${fixture.world.journals.length} journals, ${asks.length} Claude answers passed.\n`);
