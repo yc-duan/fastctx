@@ -88,6 +88,8 @@ import {
   onComputer,
   connectionState,
   joinDevice,
+  canScan,
+  scanInvitation,
   readText,
   uploadBytes,
   uploadPath,
@@ -812,6 +814,9 @@ function show(next: Place): void {
           live && asDevice
             ? joinDevice(code, name).then((joined) => ({ ...joined, kept: null }))
             : (live ? joinWorld(code, name) : notLive()),
+        // A phone reads the invitation off the computer's screen; a
+        // specimen shows the button when asked as a phone.
+        scan: canScan() ? scanInvitation : !live && params.has("phone") ? async () => "fxw3.specimen" : undefined,
         hubHere: (addresses) => (live ? hubHere(addresses) : notLive()),
         applyHosts: (codex, claude) => (live ? applyHosts(codex, claude, false, true) : notLive()),
         enter() {

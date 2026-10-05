@@ -864,6 +864,11 @@ export interface WelcomeWords {
   aloneWhat: string;
   code: string;
   codeHint: string;
+  /** On a phone: read the invitation's QR code with the camera. */
+  scan: string;
+  scanFailed(why: string): string;
+  /** Above the pasted code, where scanning comes first. */
+  codeOr: string;
   name: string;
   nameHint: string;
   joinGo: string;
@@ -905,7 +910,7 @@ export const zhWelcome: WelcomeWords = {
   serviceOff: "还没有开机自启的服务",
   join: "加入已有的世界",
   joinWhat: "另一台设备在 World 里「邀请一台设备」，会给你一个邀请码。",
-  joinPhoneWhat: "在电脑上的 World 里「邀请一台设备」、选「一部手机」，把给出的邀请码粘贴到这里。",
+  joinPhoneWhat: "在电脑上的 World 里「邀请一台设备」、选「一部手机」，扫它给出的二维码，或者把邀请码粘贴到这里。",
   phoneJoined: "这部手机现在带着自己的钥匙，以你的身份看着世界、和智能体说话；上面什么都不跑。",
   found: "建一个新世界",
   foundWhat: "要有一个中枢，别的设备都连向它：可以是这台电脑，也可以是一台服务器。",
@@ -913,6 +918,9 @@ export const zhWelcome: WelcomeWords = {
   aloneWhat: "这台电脑本身就是一个世界。以后随时可以加入或建一个。",
   code: "邀请码",
   codeHint: "以 fxw3. 开头的一长串，粘贴进来",
+  scan: "扫电脑上的二维码",
+  codeOr: "或者粘贴邀请码",
+  scanFailed: (why) => `没扫成：${why}`,
   name: "这台电脑在世界里叫什么",
   nameHint: "小写字母、数字与连字符；不写就用它现在的名字",
   joinGo: "加入",
@@ -964,7 +972,7 @@ export const enWelcome: WelcomeWords = {
   serviceOff: "no service keeps it running yet",
   join: "Join a World",
   joinWhat: "Another device's World gives you an invitation code under “Invite a device”.",
-  joinPhoneWhat: "In World on a computer, invite a device, choose a phone, and paste the invitation here.",
+  joinPhoneWhat: "In World on a computer, invite a device, choose a phone, then scan its QR code or paste the invitation here.",
   phoneJoined: "This phone now carries its own key: it watches the World and speaks to agents as you, and runs nothing.",
   found: "Found a new World",
   foundWhat: "It needs a hub every device connects to: this computer, or a server.",
@@ -972,6 +980,9 @@ export const enWelcome: WelcomeWords = {
   aloneWhat: "This computer is a World by itself. You can join or found one any time.",
   code: "Invitation code",
   codeHint: "a long string starting with fxw3.; paste it here",
+  scan: "Scan the QR code on the computer",
+  codeOr: "Or paste the invitation",
+  scanFailed: (why) => `Could not scan: ${why}`,
   name: "This computer's name in the World",
   nameHint: "lowercase letters, digits and hyphens; left empty, it keeps its name",
   joinGo: "Join",

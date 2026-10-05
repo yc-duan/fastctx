@@ -5,6 +5,7 @@
 // into the agents on this computer. Shown on its own the first time a
 // computer on its own opens the interface, and from the sidebar after.
 
+import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
 import type { JoinKept, Legacy, Setup } from "../world/bridge";
@@ -22,6 +23,9 @@ export interface WelcomeOptions {
   setup(): Promise<Setup>;
   place(): Promise<string>;
   join(code: string, name: string | null): Promise<{ world: string; name: string; kept: JoinKept | null }>;
+  /** Reads an invitation's QR code with the camera, where the shell can;
+   *  null when the person turned back. */
+  scan?: (() => Promise<string | null>) | undefined;
   hubHere(addresses: string[]): Promise<string>;
   applyHosts(codex: boolean, claude: boolean): Promise<string[]>;
   /** What was done with what an old fastctx left, in a sentence. */
@@ -135,11 +139,17 @@ export class WelcomePage implements Page {
         this.body.innerHTML = `
           <form class="join-form welcome-form">
             <h2 class="welcome-form-title">${escape(words.join)}</h2>
-            <label class="field"><span class="field-label">${escape(words.code)}</span>
+            ${this.options.scan ? `<button class="scan-code" type="button">${glyph("scan", 20)}<span>${escape(words.scan)}</span></button>` : ""}
+            <label class="field"><span class="field-label">${escape(this.options.scan ? words.codeOr : words.code)}</span>
               <textarea name="code" rows="4" class="mono" required spellcheck="false" placeholder="${escape(words.codeHint)}"></textarea></label>
-            <label class="field"><span class="field-label">${escape(words.name)}</span>
+            ${
+              // A phone's name is the one its invitation gives it.
+              this.options.device
+                ? ""
+                : `<label class="field"><span class="field-label">${escape(words.name)}</span>
               <input name="name" class="mono" autocomplete="off" spellcheck="false" pattern="[a-z][a-z0-9-]{0,31}" placeholder="${escape(this.options.store.world.peek()?.here ?? "")}">
-              <span class="field-hint">${escape(words.nameHint)}</span></label>
+              <span class="field-hint">${escape(words.nameHint)}</span></label>`
+            }
             <p class="sheet-note" role="alert" hidden></p>
             <footer class="welcome-foot"><button class="text-button back" type="button">${escape(words.back)}</button><button class="sheet-go" type="submit">${escape(words.joinGo)}</button></footer>
           </form>`;
@@ -230,6 +240,19 @@ export class WelcomePage implements Page {
     if (target.closest(".back")) return this.go("choose");
     if (target.closest(".to-join")) return this.go("join");
     if (target.closest(".enter")) return this.options.enter();
+    if (target.closest(".scan-code") && this.options.scan) {
+      // What the camera read goes where a pasted code would.
+      try {
+        const code = await this.options.scan();
+        if (!code) return;
+        const field = this.body.querySelector<HTMLTextAreaElement>("[name=code]");
+        if (field) field.value = code;
+        this.body.querySelector<HTMLElement>(".join-form .sheet-go")?.focus();
+      } catch (error) {
+        this.note(this.options.words.scanFailed(error instanceof Error ? error.message : String(error)));
+      }
+      return;
+    }
     if (target.closest(".place-now")) {
       await this.options.place().catch((error: unknown) => this.note(this.options.words.failed(String(error))));
       return this.refreshSetup();

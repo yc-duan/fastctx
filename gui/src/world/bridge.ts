@@ -3,7 +3,7 @@
 // core's client. Outside the shell there is no World to reach, and
 // `inShell` says so.
 
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { WorldAgents } from "./agents";
 import type { Control, Controlled, Offers } from "./control";
@@ -290,4 +290,15 @@ export function control(who: Address, what: Control): Promise<Controlled> {
 /** What a resident's conversation offers now. */
 export function offers(who: Address): Promise<Offers> {
   return invoke("offers", { residentId: who.resident, machineName: who.machine });
+}
+
+/** Whether this interface runs in the Android shell, which reads QR codes
+ *  with the camera. */
+export const canScan = (): boolean => isTauri() && /Android/i.test(navigator.userAgent);
+
+/** Reads an invitation's QR code with the phone's camera; null when the
+ *  person turned back. */
+export async function scanInvitation(): Promise<string | null> {
+  const read = await invoke<{ kind: "scanned"; code: string } | { kind: "cancelled" }>("plugin:android-world|scan");
+  return read.kind === "scanned" ? read.code : null;
 }
