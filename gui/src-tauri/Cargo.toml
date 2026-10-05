@@ -43,9 +43,14 @@ uuid = { version = "1", features = ["v4"] }
 windows = { version = "0.62", features = [
   "Data_Xml_Dom", "Foundation", "UI_Notifications",
   "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization",
+  "Win32_Graphics_Dwm", "Win32_Graphics_Gdi",
   "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage",
   "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Registry",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Ole", "Win32_System_SystemServices",
   "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem",
-  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Controls", "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging",
 ] }
 windows-registry = "0.6"
+windows-core = "0.62"

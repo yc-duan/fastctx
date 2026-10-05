@@ -28,6 +28,9 @@ use tauri::ipc::Channel;
 #[cfg(windows)]
 mod desktop_presence;
 
+#[cfg(windows)]
+mod titlebar;
+
 struct Shell {
     world: World,
     watches: Mutex<HashMap<u64, JoinHandle<()>>>,
@@ -253,7 +256,11 @@ async fn control(
 
 /// What a resident's conversation offers now.
 #[tauri::command]
-async fn offers(shell: tauri::State<'_, Shell>, resident_id: String, machine_name: Option<String>) -> Result<Offers, String> {
+async fn offers(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: Option<String>,
+) -> Result<Offers, String> {
     let (_, offers) =
         shell.world.offers(resident(resident_id)?, machine(machine_name)?).await.map_err(|error| error.to_string())?;
     Ok(offers)
@@ -366,7 +373,11 @@ async fn place_fastctx() -> Result<String, String> {
 /// Joins a World with a code, under `name` or the name this machine has.
 #[cfg(desktop)]
 #[tauri::command]
-async fn join_world(shell: tauri::State<'_, Shell>, code: String, name: Option<String>) -> Result<setup::Joined, String> {
+async fn join_world(
+    shell: tauri::State<'_, Shell>,
+    code: String,
+    name: Option<String>,
+) -> Result<setup::Joined, String> {
     setup::join(&shell.world, code.trim().to_string(), machine(name)?).await
 }
 
@@ -435,6 +446,9 @@ pub fn run() {
             apply_hosts
         ]);
     #[cfg(windows)]
-    let builder = builder.plugin(desktop_presence::plugin(desktop));
-    builder.run(tauri::generate_context!()).expect("running the World's window");
+    let builder = builder.plugin(desktop_presence::plugin(desktop)).plugin(titlebar::plugin());
+    let context = tauri::generate_context!();
+    #[cfg(windows)]
+    let context = titlebar::configure(context);
+    builder.run(context).expect("running the World's window");
 }
