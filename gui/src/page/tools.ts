@@ -66,7 +66,7 @@ export interface Tools {
     args: { machine: string; command: string };
     answer: { exit: number | null; output: string };
   };
-  /** Says words the page declared to an agent, marked as the page's. */
+  /** Says words to an agent the page declared, marked as the page's. */
   say: {
     args: { resident: string; machine: string; text: string };
     answer: { delivered: boolean };

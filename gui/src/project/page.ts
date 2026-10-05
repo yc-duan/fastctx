@@ -1,5 +1,6 @@
-// A project's overview, on one screen: what it is, who is in it now, its
-// journals, its decisions and where its things are, as its map has them.
+// A project's overview, on one screen: what it is, who is in it now, the
+// pages its residents wrote, its journals, its decisions and where its
+// things are, as its map has them.
 // Side by side where there is room, each column scrolling on its own;
 // behind tabs on a narrow screen. Like the front page, every line is the
 // World's record, nothing summarised.
@@ -9,6 +10,8 @@ import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
 import type { MapView, ProjectRecord, ResidentNow, RunningJob, WorldWho, Writer } from "../world/world";
+import type { PageSummary, PageWriter } from "../world/pages";
+import type { PageWords } from "../pages/words";
 import type { HomeWords } from "../home/words";
 import type { ProjectWords } from "./words";
 import { fileLink } from "../app/places";
@@ -28,9 +31,11 @@ export interface ProjectOptions {
   startJournal(town: string): void;
   link(address: Address): string;
   journalLink(town: string, journal: string): string;
+  pageWords: PageWords;
+  pageLink(town: string, page: string): string;
 }
 
-type Tab = "here" | "journals" | "decisions" | "places";
+type Tab = "here" | "pages" | "journals" | "decisions" | "places";
 
 const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
@@ -75,7 +80,8 @@ export class ProjectPage {
     });
   }
 
-  update(map: MapView, who: WorldWho, now: Date): void {
+  /** `pages` says why where they could not be read. */
+  update(map: MapView, who: WorldWho, now: Date, pages: PageSummary[] | { error: string }): void {
     const { words } = this.options;
     const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
     const here = residents.filter((r) => r.here);
@@ -105,6 +111,7 @@ export class ProjectPage {
                 .join("")}</ul>`
             : ""),
       ],
+      ["pages", this.options.pageWords.pages, this.pages(map.town, pages, now)],
       [
         "journals",
         words.journals,
@@ -169,10 +176,33 @@ export class ProjectPage {
     }
   }
 
-  private writer(writer: Writer): string {
+  private writer(writer: Writer | PageWriter): string {
     if (writer.kind === "user") return this.options.words.you;
     if (writer.kind === "resident") return `${writer.address.resident} · ${writer.address.machine}`;
+    if (writer.kind === "page") return writer.page.page;
     return agentName(writer.agent);
+  }
+
+  /** The pages, the latest changed first; a page taken down stays, faint,
+   *  so it can be brought back. */
+  private pages(town: string, pages: PageSummary[] | { error: string }, now: Date): string {
+    const { pageWords: words, home } = this.options;
+    if ("error" in pages) return `<p class="quiet caution">${escape(words.unreadable(pages.error))}</p>`;
+    if (!pages.length) return `<p class="quiet">${escape(words.noPages)}</p>`;
+    const sorted = [...pages].sort((a, b) => Date.parse(b.current.at) - Date.parse(a.current.at));
+    return `<ul class="page-links">${sorted
+      .map(({ page, current }) => {
+        const facts = [words.version(current.version), words.written(this.writer(current.by), home.ago(now.getTime() - Date.parse(current.at)))];
+        return `<li><a class="page-link${current.withdrawn ? " withdrawn" : ""}" href="${escape(this.options.pageLink(town, page))}">
+          <span class="page-link-glyph">${glyph("page", 18)}</span>
+          <span class="page-link-body">
+            <span class="page-link-title">${escape(current.title || page)}${current.withdrawn ? `<span class="tag">${escape(words.withdrawnMark)}</span>` : ""}</span>
+            ${current.description ? `<span class="page-link-about">${escape(current.description)}</span>` : ""}
+            <span class="page-link-facts">${facts.map(escape).join(`<span class="sep">·</span>`)}</span>
+          </span>
+        </a></li>`;
+      })
+      .join("")}</ul>`;
   }
 
   private someone(r: ResidentNow, now: Date): string {

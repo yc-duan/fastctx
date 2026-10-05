@@ -8,6 +8,8 @@ export type Place =
   | { kind: "talk"; address: Address }
   | { kind: "project"; town: string }
   | { kind: "journal"; town: string; journal: string }
+  /** A page of a project: a version of it, or the current one. */
+  | { kind: "page"; town: string; page: string; version: number | null }
   | { kind: "machines" }
   | { kind: "machine"; name: string }
   | { kind: "settings" }
@@ -27,6 +29,8 @@ export function link(place: Place): string {
       return `#/project/${part(place.town)}`;
     case "journal":
       return `#/journal/${part(place.town)}/${part(place.journal)}`;
+    case "page":
+      return `#/page/${part(place.town)}/${part(place.page)}${place.version === null ? "" : `/${place.version}`}`;
     case "machines":
       return "#/machines";
     case "machine":
@@ -55,6 +59,12 @@ export function placeOf(hash: string): Place {
       break;
     case "journal":
       if (parts[1] && parts[2]) return { kind: "journal", town: parts[1], journal: parts[2] };
+      break;
+    case "page":
+      if (parts[1] && parts[2]) {
+        const version = parts[3] ? Number(parts[3]) : null;
+        return { kind: "page", town: parts[1], page: parts[2], version: version !== null && Number.isInteger(version) && version > 0 ? version : null };
+      }
       break;
     case "machines":
       return { kind: "machines" };

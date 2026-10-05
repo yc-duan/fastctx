@@ -1,0 +1,256 @@
+/* A page, open: its head, a line on who wrote this version, and the page
+   itself filling the rest of the screen in its own frame, which scrolls.
+   The page draws its own background in the theme it is told, so the frame
+   shows nothing of its own. */
+
+.page-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.page-screen .page-head-title {
+  min-width: 0;
+}
+
+.page-about {
+  margin: 0;
+  padding: 0 var(--gutter) var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.page-about .sep {
+  margin: 0 var(--space-2);
+}
+
+.page-description {
+  color: var(--text-2);
+}
+
+.page-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin: 0 var(--gutter) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.page-notice[hidden] {
+  display: none;
+}
+
+.page-notice p {
+  margin: 0;
+  flex: 1 1 16em;
+}
+
+.page-notice .text-button {
+  color: var(--accent);
+}
+
+.page-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  border-top: 1px solid var(--hairline);
+}
+
+.page-frame {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: var(--bg);
+  color-scheme: normal;
+}
+
+/* What a version may do: each said as the thing itself, a command shown
+   whole, ticked where the user agrees. */
+.page-act-list {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.page-act,
+.page-act label {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.page-act {
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.page-act label {
+  flex: 1;
+  cursor: pointer;
+}
+
+.page-act input {
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+.page-act-body,
+.page-act:not(:has(label)) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.act-what {
+  color: var(--text-strong);
+  font-size: var(--size-ui);
+}
+
+.act-command {
+  display: block;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.act-detail {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.page-act-heading {
+  margin: var(--space-4) 0 0;
+  font-size: var(--size-small);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+/* Versions, the latest first; the one shown is marked. */
+.page-versions-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+
+.page-version {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-m);
+}
+
+.page-version.shown {
+  background: var(--bg-sunken);
+}
+
+.page-version-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-strong);
+  font-size: var(--size-ui);
+}
+
+.page-version-by {
+  grid-column: 1;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.page-version-go {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.page-version-go .text-button,
+.page-sheet .sheet-foot .text-button {
+  color: var(--accent);
+}
+
+.page-sheet .text-button.danger {
+  color: var(--wrong);
+}
+
+/* A project's pages: each a line with what it shows and who changed it
+   last. */
+.page-links li + li {
+  border-top: 1px solid var(--hairline);
+}
+
+.page-link {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.page-link-glyph {
+  flex: none;
+  color: var(--text-3);
+  padding-top: 2px;
+  transition: color var(--hover) ease;
+}
+
+.page-link:hover .page-link-glyph,
+.page-link:hover .page-link-title {
+  color: var(--accent-bright);
+}
+
+.page-link-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.page-link-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-strong);
+  font-size: var(--size-ui);
+  transition: color var(--hover) ease;
+}
+
+.page-link-about {
+  font-size: var(--size-ui);
+  color: var(--text-2);
+  line-height: var(--leading-prose);
+}
+
+.page-link-facts {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.page-link-facts .sep {
+  margin: 0 var(--space-2);
+}
+
+.page-link.withdrawn {
+  opacity: 0.6;
+}

@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "join", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-form", "new-codex", "new-attach", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "page"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "join", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-form", "new-codex", "new-attach", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -130,10 +130,10 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "mention" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" || session === "new-attach" ? "new" : session === "manage" ? "about" : session === "join" ? "welcome" : session === "queue" ? "codex" : session;
+      const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "mention" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" || session === "new-attach" ? "new" : session === "manage" ? "about" : session === "join" ? "welcome" : session === "queue" ? "codex" : session.startsWith("page") ? "page" : session;
       const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
       // A page an agent wrote is its own document, with a stand-in host.
-      const written = session === "page";
+      const written = session === "written";
       const url = written ? `${base}/page-specimen.html?theme=${theme}${extra ? `&${extra}` : ""}` : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
       await send("Page.navigate", { url });
       await loaded;
@@ -146,6 +146,17 @@ for (const session of sessions) {
       });
       if (session === "drawer") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.menu-button')?.click()" });
+      }
+      // An open page asks first what it may do; the frame then draws.
+      if (session.startsWith("page")) {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(r, 1200)).then(() => {
+            if (${JSON.stringify(session)} !== "page-ask") document.querySelector(".page-sheet .sheet-close")?.click();
+            if (${JSON.stringify(session)} === "page-versions") document.querySelector(".page-versions")?.click();
+            return new Promise((r) => setTimeout(r, 900));
+          })`,
+        });
       }
       if (session === "palette") {
         await send("Runtime.evaluate", { expression: "dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))" });

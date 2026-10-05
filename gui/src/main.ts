@@ -18,6 +18,7 @@ import "./app/pages.css";
 import "./app.css";
 import "./home/home.css";
 import "./project/project.css";
+import "./pages/pages.css";
 
 import { Devices } from "./app/devices";
 import { MachinesPage } from "./app/machines";
@@ -73,7 +74,13 @@ import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenNow } from "./specimen/world";
 import { specimenComputer, specimenFiles, specimenOffers, specimenRead, specimenUpload } from "./specimen/seams";
-import { applyTheme, chooseTheme, themes } from "./theme";
+import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
+import { Confirm } from "./app/confirm";
+import { PageScreen } from "./pages/view";
+import { toolsFor } from "./pages/tools";
+import { enPages, zhPages } from "./pages/words";
+import { act as pageAct, consent as pageConsent, pageHistory, pages as readPages, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
+import { specimenPageTools, specimenPageWorld, specimenPages } from "./specimen/pages";
 import type { Address } from "./world/events";
 import type { ResidentDetail } from "./world/world";
 import {
@@ -137,6 +144,7 @@ const english = language === "en";
 const words = english ? en : zh;
 const homeWords = english ? enHome : zhHome;
 const projectWords = english ? enProject : zhProject;
+const pageWords = english ? enPages : zhPages;
 const shellWords = english ? enShell : zhShell;
 document.documentElement.lang = english ? "en" : "zh-CN";
 
@@ -708,10 +716,12 @@ function projectPage(town: string): Page {
     startJournal: (town) => journalForm.open(town, null),
     link: talkLink,
     journalLink: (town, journal) => link({ kind: "journal", town, journal }),
+    pageWords,
+    pageLink: (town, page) => link({ kind: "page", town, page, version: null }),
   });
   if (!live) {
     const map = specimenMap();
-    page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now);
+    page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now, specimenPages());
     return { element: page.element, title: map.record.name };
   }
   let timer = 0;
@@ -721,10 +731,12 @@ function projectPage(town: string): Page {
     if (left) return;
     if (document.visibilityState === "visible") {
       try {
-        const { map, who } = await readProject(town);
+        // Pages are read beside the map; where they cannot be, the rest of
+        // the project still shows, and why they are missing is said.
+        const [{ map, who }, pages] = await Promise.all([readProject(town), readPages(town).catch((error: unknown) => ({ error: String(error) }))]);
         if (!left) {
           shell.retitle(map.record.name);
-          page.update(map, who, new Date());
+          page.update(map, who, new Date(), pages);
         }
       } catch (error) {
         if (!left) page.unreachable(String(error));
@@ -761,6 +773,56 @@ function journalPage(town: string, name: string): Page {
   return { element: page.element, title: name };
 }
 
+/** The page open now, to hear the theme change. */
+let openPage: PageScreen | null = null;
+const pageConfirm = new Confirm({ close: pageWords.close, working: pageWords.working, failed: pageWords.failed });
+
+function pageScreen(town: string, name: string, version: number | null): Page {
+  const project = store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town;
+  const screen = new PageScreen({
+    words: pageWords,
+    page: name,
+    version,
+    project: { href: link({ kind: "project", town }), name: project },
+    head,
+    link: (version) => link({ kind: "page", town, page: name, version }),
+    ago: (at) => homeWords.ago((live ? Date.now() : specimen.now.getTime()) - at.getTime()),
+    someone: someoneAt,
+    world: live
+      ? {
+          read: (version) => readPage(town, name, version),
+          history: () => pageHistory(town, name),
+          consent: (version, base, acts) => pageConsent(town, name, version, base, acts),
+          withdraw: (base) => withdrawPage(town, name, base),
+          restore: (base, version) => restorePage(town, name, base, version),
+        }
+      : specimenPageWorld(name),
+    tools: (view) => {
+      const tools = toolsFor({
+        town,
+        store,
+        open: (address) => (location.hash = talkLink(address)),
+        act: (action) => pageAct(town, name, view.publication.version, action),
+      });
+      return live ? tools : specimenPageTools(view, tools);
+    },
+    context: () => ({ theme: currentTheme(), locale: english ? "en" : "zh-CN", platform: asDevice ? "mobile" : "desktop" }),
+    version_: "1",
+    confirm: pageConfirm,
+    retitle: (title) => shell.retitle(title),
+    changed: () => {},
+  });
+  openPage = screen;
+  return {
+    element: screen.element,
+    title: name,
+    leave() {
+      screen.leave();
+      if (openPage === screen) openPage = null;
+    },
+  };
+}
+
 function when(at: Date, now: Date): string {
   const sameDay = at.toDateString() === now.toDateString();
   return sameDay ? homeWords.clock(at) : `${homeWords.day(at)} ${homeWords.clock(at)}`;
@@ -781,6 +843,9 @@ function show(next: Place): void {
       break;
     case "journal":
       page = journalPage(next.town, next.journal);
+      break;
+    case "page":
+      page = pageScreen(next.town, next.page, next.version);
       break;
     case "machines":
     case "machine":
@@ -880,6 +945,8 @@ function specimenPlace(): Place | null {
       return { kind: "project", town: "mark50" };
     case "journal":
       return { kind: "journal", town: "mark50", journal: "q16-fixed-point" };
+    case "page":
+      return { kind: "page", town: "mark50", page: "tuning", version: null };
     case "machines":
       return { kind: "machine", name: "laptop" };
     case "invite":
@@ -1002,6 +1069,7 @@ nameCodeCopy(words.copyCode);
 addEventListener("hashchange", () => show(placeOf(location.hash)));
 applyTheme(() => {
   void redrawDiagrams(shell.element);
+  openPage?.contextChanged();
 });
 show(specimenPlace() ?? placeOf(location.hash));
 // A device that has not joined has nothing to show but the way in.

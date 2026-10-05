@@ -14,6 +14,8 @@
 import type { Bridge } from "./bridge";
 
 let bridge: Bridge | null = null;
+/** The elements on the page, to draw again when the language changes. */
+const living = new Set<PageElement>();
 
 /** The World as the page holds it; set once when the runtime starts. */
 export function world(): Bridge {
@@ -23,6 +25,11 @@ export function world(): Bridge {
 
 export function useBridge(given: Bridge): void {
   bridge = given;
+}
+
+/** Draws every element again, as when the page's language changed. */
+export function drawAll(): void {
+  for (const element of living) element.redraw();
 }
 
 const shared = sheet(`
@@ -86,13 +93,19 @@ export abstract class PageElement extends HTMLElement {
   }
 
   connectedCallback(): void {
+    living.add(this);
     this.draw();
     this.ask();
   }
 
   disconnectedCallback(): void {
+    living.delete(this);
     clearTimeout(this.timer);
     this.asking += 1;
+  }
+
+  redraw(): void {
+    this.draw();
   }
 
   attributeChangedCallback(): void {

@@ -1,19 +1,23 @@
-// What a page is given to run on: the World's design tokens and faces, the
-// elements, and the bridge, put into the page's own document. A page loads
-// it as a module; it connects to its host by MCP Apps unless a bridge was
-// handed to it first (a specimen's stand-in). The page's own script then
-// finds the World as `window.world`.
+// What a page is given to run on: the World's design tokens, the elements,
+// and the bridge, put into the page's own document. The host puts it first
+// in the page's head as a plain script, so it runs before anything the page
+// wrote: the page's own script, inline or not, finds the World as
+// `window.world` from its first line, and the elements are defined before
+// the parser meets them. Calls made before the host has answered wait for
+// it. A bridge handed in before the runtime (a specimen's stand-in) is used
+// instead of the host.
 
 import tokens from "../design/tokens.css?raw";
 import type { Bridge, PageContext } from "./bridge";
-import { useBridge } from "./element";
+import { drawAll, useBridge } from "./element";
 import { Chart } from "./elements/chart";
 import { Card, Grid, Stat } from "./elements/layout";
 import { Run, Say } from "./elements/acts";
 import { Table } from "./elements/table";
 import { Code, Markdown } from "./elements/text";
 import { Agent, FileView, Job, Journal, Machine } from "./elements/world";
-import { connect } from "./mcp";
+import { connect, type Face } from "./mcp";
+import { themed } from "./themed";
 
 declare global {
   interface Window {
@@ -61,24 +65,101 @@ const PAGE = `
   w-card > * + * { margin-top: var(--space-3); }
 `;
 
-function apply(context: PageContext): void {
-  document.documentElement.dataset.theme = context.theme;
-  document.documentElement.lang = context.locale;
+/** What the page is until the host says otherwise: what the host wrote on
+ *  the document when it put the page together, or the World's defaults. */
+function first(): PageContext {
+  const root = document.documentElement;
+  const theme = root.dataset.worldTheme;
+  return {
+    theme: theme === "ink-black" || theme === "warm-white" ? theme : "warm-black",
+    locale: root.dataset.locale || "zh-CN",
+  };
 }
 
-export async function start(): Promise<Bridge> {
-  const style = document.createElement("style");
-  style.textContent = `${tokens}\n${PAGE}`;
-  document.head.prepend(style);
-  const bridge = window.__worldBridge ?? (await connect("world-page", "1"));
+function style(id: string, css: string): void {
+  let element = document.getElementById(id);
+  if (!element) {
+    element = document.createElement("style");
+    element.id = id;
+    (document.head ?? document.documentElement).prepend(element);
+  }
+  element.textContent = css;
+}
+
+/** The World before the host has answered: calls wait for the answer, the
+ *  context is the first one until the host's arrives. */
+function waiting(connecting: Promise<Bridge>, start: PageContext): Bridge {
+  let context = start;
+  const listeners = new Set<(context: PageContext) => void>();
+  const changed = (next: PageContext) => {
+    context = next;
+    for (const listener of listeners) listener(next);
+  };
+  void connecting.then(
+    (bridge) => {
+      changed(bridge.context);
+      bridge.onContext(changed);
+    },
+    () => {},
+  );
+  return {
+    get context() {
+      return context;
+    },
+    onContext(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    async call<T>(tool: string, args?: Record<string, unknown>): Promise<T> {
+      return (await connecting).call<T>(tool, args);
+    },
+  };
+}
+
+/** The World's faces, made faces of this document. */
+function install(faces: Face[]): void {
+  for (const face of faces) {
+    const made = new FontFace(face.family, face.data, {
+      style: face.style,
+      weight: face.weight,
+      display: "swap",
+      ...(face.unicodeRange ? { unicodeRange: face.unicodeRange } : {}),
+    });
+    document.fonts.add(made);
+    void made.load().catch(() => {});
+  }
+}
+
+export function start(): Bridge {
+  style("world-page", `${themed(tokens)}\n${PAGE}`);
+  const begun = first();
+  const connecting = window.__worldBridge
+    ? Promise.resolve(window.__worldBridge)
+    : connect("world-page", "1", begun, install);
+  const bridge = waiting(connecting, begun);
+  let locale = begun.locale;
+  bridge.onContext((context) => {
+    // The interface's language is the elements', not the page's: what the
+    // resident wrote keeps the language it was written in.
+    document.documentElement.dataset.worldTheme = context.theme;
+    document.documentElement.dataset.locale = context.locale;
+    if (context.locale !== locale) {
+      locale = context.locale;
+      drawAll();
+    }
+  });
   useBridge(bridge);
-  apply(bridge.context);
-  bridge.onContext(apply);
   window.world = bridge;
   for (const [name, element] of ELEMENTS) if (!customElements.get(name)) customElements.define(name, element);
+  connecting.catch((error: unknown) => {
+    const said = document.createElement("p");
+    said.style.color = "#c96a6a";
+    said.textContent = error instanceof Error ? error.message : String(error);
+    const shown = () => document.body.prepend(said);
+    if (document.body) shown();
+    else document.addEventListener("DOMContentLoaded", shown, { once: true });
+  });
   return bridge;
 }
 
-void start().catch((error: unknown) => {
-  document.body.insertAdjacentHTML("afterbegin", `<p style="color:#c96a6a">${String(error instanceof Error ? error.message : error)}</p>`);
-});
+start();

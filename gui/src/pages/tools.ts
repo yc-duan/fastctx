@@ -1,0 +1,181 @@
+// The World's tools as the interface carries them out for an open page
+// (`../page/tools.ts` is the contract a page is written against). Reading
+// tools answer from what the user can read anyway: the World the interface
+// holds, the project's map and journals, a file on a machine. Doing tools
+// go to the core as acts of this page's version, where the declaration and
+// the user's consent are checked; the interface never decides them itself.
+
+import type { Tools } from "../page/tools";
+import { residentsOf, jobsOf, type Store } from "../app/store";
+import { journal, project, readText } from "../world/bridge";
+import type { Address } from "../world/events";
+import type { PageInvocation, PageResult, RunReply } from "../world/pages";
+import type { ResidentNow, Writer } from "../world/world";
+
+export interface ToolsOptions {
+  town: string;
+  store: Store;
+  /** Opens a conversation in the interface, leaving the page. */
+  open(address: Address): void;
+  /** Asks the core to do one of the page's acts. */
+  act(action: PageInvocation): Promise<PageResult>;
+}
+
+type Answer<K extends keyof Tools> = Tools[K]["answer"];
+
+const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
+
+function state(resident: ResidentNow): Answer<"world.now">["agents"][number]["state"] {
+  if (resident.now?.waiting_for_user) return "waiting";
+  if (resident.now?.activity === "busy") return "working";
+  if (resident.now?.activity === "asleep") return "asleep";
+  return "idle";
+}
+
+function writer(by: Writer): string {
+  switch (by.kind) {
+    case "user":
+      return "user";
+    case "resident":
+      return `${by.address.resident} · ${by.address.machine}`;
+    case "session":
+      return agentName(by.agent);
+  }
+}
+
+function text(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value) throw new Error(`${name} is missing`);
+  return value;
+}
+
+/** What a run printed, as the World windowed it. */
+function printed(reply: RunReply): string {
+  return reply.output.pieces
+    .map((piece) => {
+      switch (piece.kind) {
+        case "text":
+        case "part_of_line":
+          return piece.text;
+        case "omitted":
+          return `… lines ${piece.first_line}–${piece.last_line} …\n`;
+        case "image":
+          return `[image ${piece.width}×${piece.height}]\n`;
+        case "unreadable":
+          return `[line ${piece.line}: ${piece.reason}]\n`;
+      }
+    })
+    .join("");
+}
+
+function exit(reply: RunReply): number | null {
+  const status = reply.state.kind === "ended" || reply.state.kind === "exited" ? reply.state.status : null;
+  if (!status) return null;
+  return "code" in status ? status.code : 128 + status.signal;
+}
+
+export function toolsFor(options: ToolsOptions): (tool: string, args: Record<string, unknown>) => Promise<unknown> {
+  const { town, store } = options;
+  const now = async () => {
+    if (!store.world.get()) await store.refresh();
+    const world = store.world.get();
+    if (!world) throw new Error(store.trouble.get() ?? "the World has not answered");
+    return world;
+  };
+
+  const tools: { [K in keyof Tools]: (args: Record<string, unknown>) => Promise<Answer<K>> } = {
+    async "world.now"() {
+      const world = await now();
+      return {
+        machines: world.nodes.machines.map((node) => ({
+          name: node.name,
+          online: node.online === true,
+          system: node.facts.Ok?.os ?? null,
+          device: node.device === true,
+        })),
+        agents: residentsOf(world).map((resident) => {
+          const address = { resident: resident.about.id, machine: resident.about.machine };
+          return {
+            resident: address.resident,
+            machine: address.machine,
+            agent: agentName(resident.about.host.agent),
+            project: resident.town,
+            title: resident.about.origin.kind === "colleague" ? resident.about.origin.label : null,
+            state: state(resident),
+            since: resident.now?.since ?? null,
+            last: resident.last_action?.what ?? null,
+          };
+        }),
+      };
+    },
+
+    async "project.map"() {
+      const { map } = await project(town);
+      return {
+        project: map.town,
+        name: map.record.name,
+        what: map.record.what,
+        machines: map.record.machines,
+        journals: map.journals.map((summary) => ({
+          journal: summary.journal,
+          description: summary.description?.text ?? null,
+          entries: summary.entries,
+          latest: summary.latest?.at ?? null,
+        })),
+        pages: [],
+      };
+    },
+
+    async "journal.read"(args) {
+      const view = await journal(town, text(args.journal, "journal"), typeof args.before === "string" ? args.before : null);
+      return {
+        entries: [...view.entries].reverse().map((entry) => ({ id: entry.stamp.id, at: entry.stamp.at, by: writer(entry.stamp.by), text: entry.text })),
+        more: view.first > 1,
+      };
+    },
+
+    async "file.read"(args) {
+      const tail = typeof args.tail === "number" && args.tail > 0 ? args.tail : null;
+      const read = await readText(text(args.machine, "machine"), text(args.path, "path"), tail ? { kind: "tail", bytes: tail } : { kind: "all" });
+      return { text: read.text, size: read.info.file.size, modified: read.info.file.modified, offset: read.info.offset };
+    },
+
+    async "job.read"(args) {
+      const machine = text(args.machine, "machine");
+      const id = text(args.job, "job");
+      const job = jobsOf(await now()).find((running) => running.job === id && running.machine === machine);
+      if (!job) throw new Error(`job ${id} is not running on ${machine}`);
+      const output = await readText(machine, job.output, { kind: "tail", bytes: 16 * 1024 });
+      return { job: id, command: job.command, state: "running", exit: null, started: job.started_at, output: output.text ?? "" };
+    },
+
+    async open(args) {
+      options.open({ resident: text(args.resident, "resident"), machine: text(args.machine, "machine") });
+      return {};
+    },
+
+    async run(args) {
+      const result = await options.act({ kind: "run", machine: text(args.machine, "machine"), script: text(args.command, "command") });
+      if (result.kind !== "run") throw new Error("the World answered something other than a run");
+      return { exit: exit(result), output: printed(result) };
+    },
+
+    async say(args) {
+      const to = { resident: text(args.resident, "resident"), machine: text(args.machine, "machine") };
+      const result = await options.act({ kind: "say", to, text: text(args.text, "text") });
+      if (result.kind !== "said") throw new Error("the World answered something other than words said");
+      return { delivered: true };
+    },
+
+    async "journal.add"(args) {
+      const result = await options.act({ kind: "journal", journal: text(args.journal, "journal"), text: text(args.text, "text") });
+      if (result.kind !== "entry_added") throw new Error("the World answered something other than an entry");
+      return { id: result.id };
+    },
+  };
+
+  return (tool, args) => {
+    const known = Object.prototype.hasOwnProperty.call(tools, tool) ? tools[tool as keyof Tools] : undefined;
+    if (!known) return Promise.reject(new Error(`World has no tool ${tool} for a page`));
+    return known(args);
+  };
+}

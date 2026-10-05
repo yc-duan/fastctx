@@ -120,7 +120,7 @@ export class Sidebar {
         const inside = order(residents.filter((r) => r.town === town));
         const shut = folded.has(town);
         const asking = inside.some((r) => r.now?.waiting_for_user);
-        const current = place.kind === "project" && place.town === town;
+        const current = (place.kind === "project" || place.kind === "journal" || place.kind === "page") && place.town === town;
         return `<li class="project-place${shut ? " shut" : ""}">
           <div class="place-row">
             <a class="place${current ? " current" : ""}" href="${link({ kind: "project", town })}"><span class="place-name">${escape(name)}</span>

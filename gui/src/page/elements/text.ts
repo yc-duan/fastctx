@@ -13,8 +13,9 @@ import base from "../../design/base.css?raw";
 import highlight from "../../design/highlight.css?raw";
 import { render } from "../../conversation/prose";
 import { BOUND, PageElement, escape, sheet } from "../element";
+import { themedWithin } from "../themed";
 
-const prose = sheet(`${base}\n${highlight}\n:host { display: block; }`);
+const prose = sheet(`${base}\n${themedWithin(highlight)}\n:host { display: block; }`);
 
 /** The text an element holds, from wherever it was given. */
 function textOf(element: PageElement & HTMLElement, data: unknown): string {

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>mark50 调参看板</title>
+  </head>
+  <body>
+    <h1>mark50 调参看板</h1>
+    <w-grid columns="3">
+      <w-stat label="第 7 组验证损失" value="0.412" delta="-0.031" good="down" note="比昨天最好的一组"></w-stat>
+      <w-stat label="最好准确率" value="88.4" unit="%" delta="+1.2" note="第 7 组"></w-stat>
+      <w-stat label="lab 显卡占用" value="83" unit="%" note="两张 4090"></w-stat>
+    </w-grid>
+
+    <w-card title="损失" note="第 7 组 · 每 50 步">
+      <w-chart tool="file.read" args='{"machine":"lab","path":"/runs/7/metrics.jsonl"}' pick="text" parse="jsonl" x="step" y="loss,val_loss" labels="训练,验证"></w-chart>
+    </w-card>
+
+    <w-grid columns="2">
+      <w-card title="各组结果" note="runs.csv">
+        <w-table tool="file.read" args='{"machine":"laptop","path":"D:/mark50/runs.csv"}' pick="text" parse="csv" columns="run:组,lr:学习率,batch:批,val_loss:验证损失,acc:准确率"></w-table>
+      </w-card>
+      <w-card title="谁在干活">
+        <w-machine name="lab"></w-machine>
+        <w-agent resident="codex-0d1e" machine="lab"></w-agent>
+        <w-agent resident="claude-2b1c" machine="laptop"></w-agent>
+      </w-card>
+    </w-grid>
+
+    <w-grid columns="2">
+      <w-card title="训练日志的末尾" note="lab · /runs/7/train.log">
+        <w-file machine="lab" path="/runs/7/train.log" tail="4000" height="200"></w-file>
+      </w-card>
+      <w-card title="调参手记">
+        <w-journal journal="tuning" limit="2"></w-journal>
+      </w-card>
+    </w-grid>
+
+    <w-card title="动手">
+      <w-grid columns="2">
+        <w-run machine="lab" command="nvidia-smi --query-gpu=utilization.gpu --format=csv" label="看一眼显卡"></w-run>
+        <w-say resident="codex-0d1e" machine="lab" text="第 9 组学习率减半再跑 3000 步" label="让它重跑第 9 组"></w-say>
+      </w-grid>
+    </w-card>
+  </body>
+</html>
