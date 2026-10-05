@@ -1,0 +1,82 @@
+.world-pdf-view {
+  overflow: auto;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+.world-pdf-pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--world-pdf-page-gap, 16px);
+  width: max-content;
+  min-width: 100%;
+}
+
+.world-pdf-page {
+  position: relative;
+  flex: none;
+  align-self: center;
+  overflow: hidden;
+  background: white;
+  color-scheme: only light;
+  contain: layout style;
+}
+
+.world-pdf-tile { position: absolute; display: block; pointer-events: none; }
+
+/* PDF.js puts its shared text-measurement canvas directly under body. */
+body > canvas.hiddenCanvasElement { position: absolute; top: 0; left: 0; width: 0; height: 0; display: none; }
+
+/* Text layout follows PDF.js 5.4's TextLayer contract, scoped to this view.
+ * Keep it separate from the full viewer CSS, which styles unrelated UI. */
+.world-pdf-text {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  text-align: initial;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-transform: none;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  user-select: text;
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.world-pdf-text :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.world-pdf-text > :not(.markedContent),
+.world-pdf-text .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.world-pdf-text .markedContent { display: contents; }
+.world-pdf-text span[role="img"] { user-select: none; cursor: default; }
+.world-pdf-text ::selection { background: color-mix(in srgb, Highlight 25%, transparent); }
+.world-pdf-text br::selection { background: transparent; }
+.world-pdf-text[data-main-rotation="90"] { transform: rotate(90deg) translateY(-100%); }
+.world-pdf-text[data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
+.world-pdf-text[data-main-rotation="270"] { transform: rotate(270deg) translateX(-100%); }

@@ -39,6 +39,7 @@ use tauri::Manager as _;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
 
+mod binary_reading;
 #[cfg(windows)]
 mod desktop_presence;
 mod pages;
@@ -488,6 +489,16 @@ async fn read_bytes(
     reading::read_bytes(&shell.world(), machine(machine_name)?, path).await
 }
 
+/// A file's metadata and bytes in one binary IPC response.
+#[tauri::command]
+async fn read_binary(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    binary_reading::read_binary(&shell.world(), machine(machine_name)?, path).await
+}
+
 /// Residents or jobs in detail, by id, from every machine that has them.
 #[tauri::command]
 async fn look(shell: tauri::State<'_, Shell>, ids: Vec<String>) -> Result<Vec<LookedUp>, String> {
@@ -737,6 +748,7 @@ pub fn run() {
             look,
             read_text,
             read_bytes,
+            read_binary,
             control,
             offers,
             invite,
