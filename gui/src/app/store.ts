@@ -74,9 +74,10 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   return { live, world, trouble, clock, unanswered, refresh: ask };
 }
 
-/** Every resident each machine answered with. */
+/** Every resident each machine answered with that is still in the World;
+ *  one the user removed is answered with too, and left out here. */
 export function residentsOf(world: WorldNow | null): ResidentNow[] {
-  return (world?.who.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
+  return (world?.who.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
 }
 
 /** Every job still running, on every machine that answered. */

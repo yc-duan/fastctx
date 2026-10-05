@@ -15,12 +15,16 @@ import { fileLink } from "../app/places";
 
 /** What can be done to the agent beyond its conversation, as the user.
  *  Each rejects with what the World said when it was not done. */
+/** What an act did not fully do, said stage by stage; empty when all of
+ *  it was done. */
+export type Unfinished = string[];
+
 export interface Manage {
-  sleep(): Promise<void>;
-  wake(): Promise<void>;
+  sleep(): Promise<Unfinished>;
+  wake(): Promise<Unfinished>;
   /** Into a project, or out of any where null. */
-  move(town: string | null): Promise<void>;
-  remove(): Promise<void>;
+  move(town: string | null): Promise<Unfinished>;
+  remove(): Promise<Unfinished>;
   /** The projects an agent on a machine can be in: those spanning it. */
   towns(machine: string): { town: string; name: string }[];
   /** It is no longer in the World: its conversation is left. */
@@ -141,14 +145,14 @@ export class Details {
     if (note) note.textContent = text;
   }
 
-  private manageWith(what: Managing, act: () => Promise<void>, done: string): void {
+  private manageWith(what: Managing, act: () => Promise<Unfinished>, done: string): void {
     const { words } = this.options;
     this.managing = what;
     this.manageNote = "";
     this.redraw();
     act()
-      .then(() => {
-        this.manageNote = done;
+      .then((unfinished) => {
+        this.manageNote = unfinished.length ? unfinished.join("；") : done;
       })
       .catch((error: unknown) => {
         this.manageNote = words.failed(error instanceof Error ? error.message : String(error));
@@ -167,12 +171,25 @@ export class Details {
     this.confirm ??= new Confirm({ close: words.cancel, working: words.working, failed: words.failed });
     const who =
       about.origin.kind === "colleague" ? about.origin.label : this.options.someone({ resident: about.id, machine: about.machine });
+    let unfinished: Unfinished = [];
     this.confirm.ask({
       title: words.removeTitle(who),
       what: words.removeWhat,
       go: words.removeGo,
-      act: () => manage.remove(),
-      done: () => manage.removed(),
+      act: async () => {
+        unfinished = await manage.remove();
+      },
+      // Removed from the World, but a step of it not done (a window the
+      // World cannot close): that is said here before the conversation is
+      // left behind.
+      done: () => {
+        if (!unfinished.length) manage.removed();
+        else {
+          this.manageNote = `${words.removedButNot}${unfinished.join("；")}`;
+          this.spoken.textContent = this.manageNote;
+          this.redraw();
+        }
+      },
     });
   }
 

@@ -3220,7 +3220,8 @@
                     "what": "pwd",
                     "result": "exit 0"
                   },
-                  "moved": null
+                  "moved": null,
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3260,7 +3261,8 @@
                   "moved": {
                     "to": "project-2",
                     "at": "2026-10-04T12:06:07Z"
-                  }
+                  },
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3303,7 +3305,8 @@
                   "moved": {
                     "to": null,
                     "at": "2026-10-04T12:06:07Z"
-                  }
+                  },
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3326,7 +3329,8 @@
                   "here": false,
                   "now": null,
                   "last_action": null,
-                  "moved": null
+                  "moved": null,
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3358,7 +3362,59 @@
                     "waiting_for_user": false
                   },
                   "last_action": null,
-                  "moved": null
+                  "moved": null,
+                  "removed": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "waiting_for_user": true
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "moved": null,
+                  "removed": "2026-10-04T12:06:07Z"
                 }
               ],
               "jobs": [
@@ -3488,7 +3544,8 @@
                     "what": "pwd",
                     "result": "exit 0"
                   },
-                  "moved": null
+                  "moved": null,
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3528,7 +3585,8 @@
                   "moved": {
                     "to": "project-2",
                     "at": "2026-10-04T12:06:07Z"
-                  }
+                  },
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3571,7 +3629,8 @@
                   "moved": {
                     "to": null,
                     "at": "2026-10-04T12:06:07Z"
-                  }
+                  },
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3594,7 +3653,8 @@
                   "here": false,
                   "now": null,
                   "last_action": null,
-                  "moved": null
+                  "moved": null,
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3626,7 +3686,59 @@
                     "waiting_for_user": false
                   },
                   "last_action": null,
-                  "moved": null
+                  "moved": null,
+                  "removed": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "waiting_for_user": true
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "moved": null,
+                  "removed": "2026-10-04T12:06:07Z"
                 }
               ],
               "jobs": [
@@ -3735,7 +3847,8 @@
                     "what": "pwd",
                     "result": "exit 0"
                   },
-                  "moved": null
+                  "moved": null,
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3775,7 +3888,8 @@
                   "moved": {
                     "to": "project-2",
                     "at": "2026-10-04T12:06:07Z"
-                  }
+                  },
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3818,7 +3932,8 @@
                   "moved": {
                     "to": null,
                     "at": "2026-10-04T12:06:07Z"
-                  }
+                  },
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3841,7 +3956,8 @@
                   "here": false,
                   "now": null,
                   "last_action": null,
-                  "moved": null
+                  "moved": null,
+                  "removed": null
                 },
                 {
                   "about": {
@@ -3873,7 +3989,59 @@
                     "waiting_for_user": false
                   },
                   "last_action": null,
-                  "moved": null
+                  "moved": null,
+                  "removed": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "waiting_for_user": true
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "moved": null,
+                  "removed": "2026-10-04T12:06:07Z"
                 }
               ],
               "jobs": [
@@ -8334,5 +8502,314 @@
       "effort": null,
       "usage": null
     }
+  },
+  "management": {
+    "calls": [
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "remove"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "sleep"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "wake"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "move",
+          "town": "project-0"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "move",
+          "town": null
+        }
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "remove"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "sleep"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "wake"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "move",
+          "town": "project-0"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "move",
+          "town": null
+        }
+      }
+    ],
+    "replies": [
+      {
+        "reply": "managed",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "managed": {
+          "removed": null,
+          "town": null,
+          "activity": "asleep",
+          "steps": [
+            {
+              "stage": "host",
+              "outcome": "done",
+              "detail": "The runtime unloaded."
+            }
+          ],
+          "notification": null
+        }
+      },
+      {
+        "reply": "managed",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "managed": {
+          "removed": null,
+          "town": null,
+          "activity": "idle",
+          "steps": [
+            {
+              "stage": "host",
+              "outcome": "done",
+              "detail": "Resumed without a message."
+            }
+          ],
+          "notification": null
+        }
+      },
+      {
+        "reply": "managed",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "managed": {
+          "removed": null,
+          "town": null,
+          "activity": "idle",
+          "steps": [
+            {
+              "stage": "host",
+              "outcome": "pending",
+              "detail": "Unsubscribed; waiting for thread/closed."
+            }
+          ],
+          "notification": null
+        }
+      },
+      {
+        "reply": "managed",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "managed": {
+          "removed": null,
+          "town": null,
+          "activity": null,
+          "steps": [
+            {
+              "stage": "host",
+              "outcome": "unsupported",
+              "detail": "This editor window has no supported unload entrance."
+            }
+          ],
+          "notification": null
+        }
+      },
+      {
+        "reply": "managed",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "managed": {
+          "removed": "2026-10-04T12:00:00Z",
+          "town": null,
+          "activity": "idle",
+          "steps": [
+            {
+              "stage": "host",
+              "outcome": "failed",
+              "detail": "The thread has another active writer."
+            },
+            {
+              "stage": "records",
+              "outcome": "done",
+              "detail": "Records archived; World jobs continue."
+            }
+          ],
+          "notification": null
+        }
+      },
+      {
+        "reply": "managed",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "managed": {
+          "removed": null,
+          "town": "project-0",
+          "activity": "busy",
+          "steps": [
+            {
+              "stage": "records",
+              "outcome": "done",
+              "detail": "Project membership changed."
+            }
+          ],
+          "notification": {
+            "kind": "handed",
+            "id": "project-0123"
+          }
+        }
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "managed",
+        "removed": null,
+        "town": null,
+        "activity": "asleep",
+        "steps": [
+          {
+            "stage": "host",
+            "outcome": "done",
+            "detail": "The runtime unloaded."
+          }
+        ],
+        "notification": null
+      },
+      {
+        "reply": "managed",
+        "removed": null,
+        "town": null,
+        "activity": "idle",
+        "steps": [
+          {
+            "stage": "host",
+            "outcome": "done",
+            "detail": "Resumed without a message."
+          }
+        ],
+        "notification": null
+      },
+      {
+        "reply": "managed",
+        "removed": null,
+        "town": null,
+        "activity": "idle",
+        "steps": [
+          {
+            "stage": "host",
+            "outcome": "pending",
+            "detail": "Unsubscribed; waiting for thread/closed."
+          }
+        ],
+        "notification": null
+      },
+      {
+        "reply": "managed",
+        "removed": null,
+        "town": null,
+        "activity": null,
+        "steps": [
+          {
+            "stage": "host",
+            "outcome": "unsupported",
+            "detail": "This editor window has no supported unload entrance."
+          }
+        ],
+        "notification": null
+      },
+      {
+        "reply": "managed",
+        "removed": "2026-10-04T12:00:00Z",
+        "town": null,
+        "activity": "idle",
+        "steps": [
+          {
+            "stage": "host",
+            "outcome": "failed",
+            "detail": "The thread has another active writer."
+          },
+          {
+            "stage": "records",
+            "outcome": "done",
+            "detail": "Records archived; World jobs continue."
+          }
+        ],
+        "notification": null
+      },
+      {
+        "reply": "managed",
+        "removed": null,
+        "town": "project-0",
+        "activity": "busy",
+        "steps": [
+          {
+            "stage": "records",
+            "outcome": "done",
+            "detail": "Project membership changed."
+          }
+        ],
+        "notification": {
+          "kind": "handed",
+          "id": "project-0123"
+        }
+      }
+    ]
   }
 }

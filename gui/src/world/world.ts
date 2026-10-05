@@ -54,6 +54,8 @@ export interface ResidentNow {
   about: About;
   town: TownName | null;
   here: boolean;
+  /** When the user removed it from the World; its records are archived. */
+  removed?: Timestamp | null;
   now: Now | null;
   last_action: Action | null;
   moved: Moved | null;

@@ -32,6 +32,8 @@ import type { WorldAgents } from "../src/world/agents";
 import type { Control, Controlled, Offers } from "../src/world/control";
 import type { FileReadPart, FileReadResult } from "../src/world/file-read";
 import type { Attachment } from "../src/world/attachments";
+import type { Managed } from "../src/world/management";
+import type { Address } from "../src/world/wire";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
     events: SessionEvent[];
@@ -67,6 +69,8 @@ export const fixture = ${json.trimEnd()} satisfies {
   };
   // Claude's requests as they come, and the answers its hooks take.
   claude: { events: SessionEvent[]; answers: Control[]; unavailable: Offers; idle: Offers };
+  // What the user's management of an agent answers, stage by stage.
+  management: { calls: unknown; remote_calls: unknown; replies: { reply: "managed"; resident: Address; managed: Managed }[]; remote_replies: unknown };
 };
 `;
 const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);

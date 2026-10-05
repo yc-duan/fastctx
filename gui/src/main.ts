@@ -77,6 +77,7 @@ import { specimenComputer, specimenFiles, specimenOffers, specimenRead, specimen
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { PageScreen } from "./pages/view";
+import { manage as manageResident, type Management } from "./world/management";
 import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
 import { act as pageAct, consent as pageConsent, pageHistory, pages as readPages, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
@@ -362,9 +363,7 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
           ? undefined
           : () => new Promise<void>((resolve) => setTimeout(resolve, 2400)),
       markdown,
-      // Sleeping, waking, moving and removing come with the World's calls
-      // for them; until then only a specimen shows where they will be.
-      manage: live ? undefined : specimenManage(),
+      manage: live ? liveManage(address) : specimenManage(),
     }),
     label: detailsWords.open,
     look,
@@ -378,11 +377,40 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
   };
 }
 
+/** The projects an agent on `machine` can be in: those spanning it. */
+function townsOn(machine: string): { town: string; name: string }[] {
+  return (store.world.peek()?.towns ?? [])
+    .filter((town) => town.record.machines.includes(machine))
+    .map((town) => ({ town: town.town, name: town.record.name }));
+}
+
+/** Managing an agent for the user: each act is the World's, and whatever
+ *  stage of it was not done is said in the card. */
+function liveManage(address: Address): Manage {
+  const act = async (action: Management) => {
+    const managed = await manageResident(address, action);
+    void store.refresh();
+    return managed.steps
+      .filter((step): step is typeof step & { outcome: "pending" | "unsupported" | "failed" } => step.outcome !== "done")
+      .map((step) => detailsWords.unfinished(step.stage, step.outcome, step.detail));
+  };
+  return {
+    sleep: () => act({ do: "sleep" }),
+    wake: () => act({ do: "wake" }),
+    move: (town) => act({ do: "move", town }),
+    remove: () => act({ do: "remove" }),
+    towns: townsOn,
+    removed: () => {
+      location.hash = link({ kind: "home" });
+    },
+  };
+}
+
 /** A specimen's agent can be managed only to look at: each act says it is
  *  a specimen, after a moment. */
 function specimenManage(): Manage {
   const refuse = () =>
-    new Promise<void>((_, reject) =>
+    new Promise<string[]>((_, reject) =>
       setTimeout(() => reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")), 700),
     );
   return {
@@ -390,10 +418,7 @@ function specimenManage(): Manage {
     wake: refuse,
     move: refuse,
     remove: refuse,
-    towns: (machine) =>
-      (store.world.peek()?.towns ?? [])
-        .filter((town) => town.record.machines.includes(machine))
-        .map((town) => ({ town: town.town, name: town.record.name })),
+    towns: townsOn,
     removed: () => {
       location.hash = link({ kind: "home" });
     },

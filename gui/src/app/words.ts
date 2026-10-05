@@ -470,6 +470,11 @@ export interface DetailsWords {
   removeTitle(who: string): string;
   removeWhat: string;
   removeGo: string;
+  /** Before what of a removal was not done. */
+  removedButNot: string;
+  /** A stage of an act that was not done: where, how, and the World's
+   *  own account of it. */
+  unfinished(stage: string, outcome: "pending" | "unsupported" | "failed", detail: string): string;
   cancel: string;
   working: string;
   failed(why: string): string;
@@ -526,8 +531,11 @@ export const zhDetails: DetailsWords = {
   remove: "移除",
   removeTitle: (who) => `移除 ${who}？`,
   removeWhat:
-    "世界不再把它列为居民，界面与 fastctx w 里都看不到它了。它的记录挪进归档，一个字都不删；它起的、还在跑的作业照跑，列进没人看着的那一段。",
+    "它离开世界：界面里不再列出它，fastctx w 里记着它何时被移除，它再调用世界的工具会被拒绝。它的记录挪进归档，一个字都不删；它起的、还在跑的作业照跑。",
   removeGo: "移除",
+  removedButNot: "已从世界移除。没办完的：",
+  unfinished: (stage, outcome, detail) =>
+    `${{ host: "宿主", records: "世界的记录", tools: "工具", notification: "告诉它" }[stage] ?? stage}${{ pending: "还在等", unsupported: "做不到", failed: "没办成" }[outcome]}（${detail}）`,
   cancel: "关闭",
   working: "正在办…",
   failed: (why) => `没办成：${why}`,
@@ -584,8 +592,11 @@ export const enDetails: DetailsWords = {
   remove: "Remove",
   removeTitle: (who) => `Remove ${who}?`,
   removeWhat:
-    "The World stops listing it as a resident; it no longer shows here or in fastctx w. Its records are moved to the archive, nothing deleted; jobs it started keep running and are listed with the unattended ones.",
+    "It leaves the World: the interface no longer lists it, fastctx w notes when it was removed, and its calls to the World's tools are refused. Its records are moved to the archive, nothing deleted; jobs it started keep running.",
   removeGo: "Remove",
+  removedButNot: "Removed from the World. Not finished: ",
+  unfinished: (stage, outcome, detail) =>
+    `${{ host: "the host", records: "the World's records", tools: "its tools", notification: "telling it" }[stage] ?? stage} ${{ pending: "is still pending", unsupported: "cannot be done", failed: "failed" }[outcome]} (${detail})`,
   cancel: "Close",
   working: "Working…",
   failed: (why) => `Not done: ${why}`,

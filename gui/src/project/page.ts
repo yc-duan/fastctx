@@ -83,7 +83,7 @@ export class ProjectPage {
   /** `pages` says why where they could not be read. */
   update(map: MapView, who: WorldWho, now: Date, pages: PageSummary[] | { error: string }): void {
     const { words } = this.options;
-    const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
+    const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
     const here = residents.filter((r) => r.here);
     const jobs = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));
     const record = map.record;

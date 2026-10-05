@@ -143,7 +143,7 @@ export class HomePage {
   }
 
   private residents(): ResidentNow[] {
-    return (this.world?.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
+    return (this.world?.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
   }
 
   private section(kind: string, title: string, body: string): string {

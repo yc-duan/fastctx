@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use fastctx_client::{Conversation, World};
 use fastctx_types::device::DeviceJoined;
+use fastctx_types::management::{Managed, Management};
 use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use fastctx_types::residents::Landed;
 use fastctx_types::session::SessionEvent;
@@ -365,6 +366,23 @@ async fn stop(
     Ok(stopped)
 }
 
+/// Removes a resident from the World, lets it sleep, wakes it or moves it
+/// to another project, as the user; each stage is answered as it went.
+#[tauri::command]
+async fn manage(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: Option<String>,
+    action: Management,
+) -> Result<Managed, String> {
+    let (_, managed) = shell
+        .world()
+        .manage(resident(resident_id)?, machine(machine_name)?, action)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(managed)
+}
+
 /// Does something to a resident's conversation for the user, besides
 /// speaking into it.
 #[tauri::command]
@@ -635,6 +653,7 @@ pub fn run() {
             upload_bytes,
             open,
             stop,
+            manage,
             look,
             read_text,
             read_bytes,
