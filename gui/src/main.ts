@@ -714,6 +714,8 @@ function show(next: Place): void {
         store,
         words: english ? enWelcome : zhWelcome,
         head,
+        // A phone in the shell, or a specimen asked to show one.
+        device: live ? !onComputer() : params.has("phone"),
         setup: () => (live ? setupState() : Promise.reject(new Error("specimen"))),
         legacy: (legacy) => legacySaid(legacy, english ? enSettings : zhSettings),
         place: () => (live ? placeFastctx() : notLive()),

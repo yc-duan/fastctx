@@ -15,9 +15,12 @@ export interface WelcomeOptions {
   store: Store;
   words: WelcomeWords;
   head(title: string, actions?: string): string;
+  /** This interface runs on a phone: it joins as a device, and nothing
+   *  is set up on it. */
+  device: boolean;
   setup(): Promise<Setup>;
   place(): Promise<string>;
-  join(code: string, name: string | null): Promise<{ world: string; name: string; kept: JoinKept }>;
+  join(code: string, name: string | null): Promise<{ world: string; name: string; kept: JoinKept | null }>;
   hubHere(addresses: string[]): Promise<string>;
   applyHosts(codex: boolean, claude: boolean): Promise<string[]>;
   /** What was done with what an old fastctx left, in a sentence. */
@@ -36,7 +39,7 @@ export class WelcomePage implements Page {
   private step: Step = "choose";
   private hub: "here" | "server" = "here";
   private setup: Setup | null = null;
-  private joined: { world: string; name: string; kept: JoinKept } | null = null;
+  private joined: { world: string; name: string; kept: JoinKept | null } | null = null;
   private busy = false;
 
   constructor(private readonly options: WelcomeOptions) {
@@ -89,7 +92,7 @@ export class WelcomePage implements Page {
         ]
       : [];
     this.here.innerHTML = `
-      <h2 class="section-title">${escape(words.thisComputer)}</h2>
+      <h2 class="section-title">${escape(this.options.device ? words.thisPhone : words.thisComputer)}</h2>
       <p class="welcome-facts">${[name ? words.facts(name, world) : "", ...facts]
         .filter(Boolean)
         .map((fact) => `<span class="fact">${escape(fact)}</span>`)
@@ -104,11 +107,14 @@ export class WelcomePage implements Page {
       case "choose":
         this.body.innerHTML = `
           <ul class="welcome-paths">
-            ${[
-              ["join", words.join, words.joinWhat],
-              ["found", words.found, words.foundWhat],
-              ["alone", words.alone, words.aloneWhat],
-            ]
+            ${(this.options.device
+              ? [["join", words.join, words.joinPhoneWhat]]
+              : [
+                  ["join", words.join, words.joinWhat],
+                  ["found", words.found, words.foundWhat],
+                  ["alone", words.alone, words.aloneWhat],
+                ]
+            )
               .map(
                 ([path, title, what]) =>
                   `<li><button class="welcome-path" type="button" data-path="${path}"><span class="welcome-path-title">${escape(title!)}</span><span class="welcome-path-what">${escape(what!)}</span></button></li>`,
@@ -163,8 +169,9 @@ export class WelcomePage implements Page {
         break;
       case "joined": {
         const joined = this.joined!;
-        const kept =
-          joined.kept.kind === "command"
+        const kept = !joined.kept
+          ? ""
+          : joined.kept.kind === "command"
             ? `<p>${escape(words.keptCommand)}</p><pre class="welcome-command mono">${escape(joined.kept.command)}</pre>`
             : `<p>${escape(words.kept[joined.kept.kind])}</p>`;
         const setup = this.setup;
@@ -175,14 +182,18 @@ export class WelcomePage implements Page {
         this.body.innerHTML = `
           <div class="welcome-form">
             <h2 class="welcome-form-title">${escape(words.joined(joined.world, joined.name))}</h2>
-            <div class="welcome-kept">${kept}</div>
-            <section class="welcome-hosts">
+            ${kept ? `<div class="welcome-kept">${kept}</div>` : ""}
+            ${
+              this.options.device
+                ? `<p class="welcome-kept">${escape(words.phoneJoined)}</p>`
+                : `<section class="welcome-hosts">
               <h3 class="field-label">${escape(words.hosts)}</h3>
               <p class="field-hint">${escape(words.hostsWhat)}</p>
               ${host("codex", words.codex)}${host("claude", words.claude)}
               <button class="text-button apply-now" type="button">${escape(words.applyGo)}</button>
               <p class="sheet-note" hidden></p>
-            </section>
+            </section>`
+            }
             <footer class="welcome-foot"><span></span><button class="sheet-go enter" type="button">${escape(words.enter)}</button></footer>
           </div>`;
         break;

@@ -756,6 +756,7 @@ export const enPalette: PaletteWords = {
 export interface WelcomeWords {
   lede: string;
   thisComputer: string;
+  thisPhone: string;
   facts(name: string, world: string | null): string;
   placed: string;
   notPlaced: string;
@@ -765,6 +766,8 @@ export interface WelcomeWords {
   serviceOff: string;
   join: string;
   joinWhat: string;
+  joinPhoneWhat: string;
+  phoneJoined: string;
   found: string;
   foundWhat: string;
   alone: string;
@@ -802,6 +805,7 @@ export interface WelcomeWords {
 export const zhWelcome: WelcomeWords = {
   lede: "让你的几台电脑，和住在上面的 Codex、Claude，在同一个世界里。",
   thisComputer: "这台电脑",
+  thisPhone: "这部手机",
   facts: (name, world) => (world ? `叫 ${name}，在世界 ${world} 里` : `叫 ${name}，此刻独自一台`),
   placed: "fastctx 已就位",
   notPlaced: "fastctx 还没放好",
@@ -811,6 +815,8 @@ export const zhWelcome: WelcomeWords = {
   serviceOff: "还没有开机自启的服务",
   join: "加入已有的世界",
   joinWhat: "另一台设备在 World 里「邀请一台设备」，会给你一个邀请码。",
+  joinPhoneWhat: "在电脑上的 World 里「邀请一台设备」、选「一部手机」，把给出的邀请码粘贴到这里。",
+  phoneJoined: "这部手机现在带着自己的钥匙，以你的身份看着世界、和智能体说话；上面什么都不跑。",
   found: "建一个新世界",
   foundWhat: "要有一个中枢，别的设备都连向它：可以是这台电脑，也可以是一台服务器。",
   alone: "先独自用",
@@ -858,6 +864,7 @@ export const zhWelcome: WelcomeWords = {
 export const enWelcome: WelcomeWords = {
   lede: "Your computers, and the Codex and Claude living on them, in one World.",
   thisComputer: "This computer",
+  thisPhone: "This phone",
   facts: (name, world) => (world ? `named ${name}, in the World ${world}` : `named ${name}, on its own for now`),
   placed: "fastctx is in place",
   notPlaced: "fastctx is not in place yet",
@@ -867,6 +874,8 @@ export const enWelcome: WelcomeWords = {
   serviceOff: "no service keeps it running yet",
   join: "Join a World",
   joinWhat: "Another device's World gives you an invitation code under “Invite a device”.",
+  joinPhoneWhat: "In World on a computer, invite a device, choose a phone, and paste the invitation here.",
+  phoneJoined: "This phone now carries its own key: it watches the World and speaks to agents as you, and runs nothing.",
   found: "Found a new World",
   foundWhat: "It needs a hub every device connects to: this computer, or a server.",
   alone: "Stay on its own",
