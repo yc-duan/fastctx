@@ -54,7 +54,7 @@ import {
   zhSettings,
   zhShell,
   zhWelcome, readerWords } from "./app/words";
-import { Details } from "./conversation/details";
+import { Details, type Manage } from "./conversation/details";
 import { Conversation } from "./conversation/model";
 import { ConversationPage, type Someone } from "./conversation/page";
 import { redrawDiagrams } from "./conversation/diagrams";
@@ -349,6 +349,9 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
           ? undefined
           : () => new Promise<void>((resolve) => setTimeout(resolve, 2400)),
       markdown,
+      // Sleeping, waking, moving and removing come with the World's calls
+      // for them; until then only a specimen shows where they will be.
+      manage: live ? undefined : specimenManage(),
     }),
     label: detailsWords.open,
     look,
@@ -359,6 +362,28 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
           r.about.origin.asked_by.resident === address.resident &&
           r.about.origin.asked_by.machine === address.machine,
       ),
+  };
+}
+
+/** A specimen's agent can be managed only to look at: each act says it is
+ *  a specimen, after a moment. */
+function specimenManage(): Manage {
+  const refuse = () =>
+    new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")), 700),
+    );
+  return {
+    sleep: refuse,
+    wake: refuse,
+    move: refuse,
+    remove: refuse,
+    towns: (machine) =>
+      (store.world.peek()?.towns ?? [])
+        .filter((town) => town.record.machines.includes(machine))
+        .map((town) => ({ town: town.town, name: town.record.name })),
+    removed: () => {
+      location.hash = link({ kind: "home" });
+    },
   };
 }
 

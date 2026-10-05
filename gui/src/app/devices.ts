@@ -7,6 +7,7 @@
 import qrcode from "qrcode-generator";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { Confirm, Sheet } from "./confirm";
 import type { DeviceWords } from "./words";
 
 export interface DevicesOptions {
@@ -40,46 +41,15 @@ export function qrSvg(text: string): string {
   return `<svg class="qr" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img"><rect width="${size}" height="${size}" fill="#fff"/><path d="${path}" fill="#111"/></svg>`;
 }
 
-class Sheet {
-  readonly dialog: HTMLDialogElement;
-  readonly body: HTMLElement;
-  busy = false;
-
-  constructor(className: string) {
-    this.dialog = document.createElement("dialog");
-    this.dialog.className = `sheet ${className}`;
-    this.dialog.innerHTML = `<form class="sheet-body" method="dialog"></form>`;
-    document.body.append(this.dialog);
-    this.body = this.dialog.querySelector("form")!;
-    this.dialog.addEventListener("click", (event) => {
-      if (event.target === this.dialog || (event.target as HTMLElement).closest(".sheet-close")) this.close();
-    });
-    this.dialog.addEventListener("cancel", (event) => {
-      if (this.busy) event.preventDefault();
-    });
-  }
-
-  head(title: string, close: string): string {
-    return `<header class="sheet-head"><h2 class="sheet-title">${escape(title)}</h2><button class="icon-button sheet-close" type="button" aria-label="${escape(close)}">${glyph("close", 18)}</button></header>`;
-  }
-
-  show(): void {
-    if (!this.dialog.open) this.dialog.showModal();
-  }
-
-  close(): void {
-    if (!this.busy) this.dialog.close();
-  }
-}
-
 export class Devices {
   private readonly invitation = new Sheet("device-sheet");
-  private readonly confirm = new Sheet("device-sheet confirm-sheet");
+  private readonly confirm: Confirm;
   private hours = 24;
   /** Whether the invitation is for a phone rather than a computer. */
   private device = false;
 
   constructor(private readonly options: DevicesOptions) {
+    this.confirm = new Confirm(options.words);
     this.invitation.body.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       const kind = target.closest<HTMLButtonElement>("[data-device]");
@@ -201,35 +171,6 @@ export class Devices {
   }
 
   private ask(title: string, what: string, fields: string, go: string, act: () => Promise<void>): void {
-    const { words } = this.options;
-    this.confirm.body.innerHTML = `
-      ${this.confirm.head(title, words.close)}
-      <p class="confirm-what">${escape(what)}</p>
-      ${fields}
-      <p class="sheet-note" hidden></p>
-      <footer class="sheet-foot"><span></span><button class="sheet-go danger" type="submit">${escape(go)}</button></footer>`;
-    this.confirm.body.onsubmit = (event) => {
-      event.preventDefault();
-      if (this.confirm.busy) return;
-      const button = this.confirm.body.querySelector<HTMLButtonElement>(".sheet-go")!;
-      const note = this.confirm.body.querySelector<HTMLElement>(".sheet-note")!;
-      this.confirm.busy = true;
-      button.disabled = true;
-      button.textContent = words.working;
-      act()
-        .then(() => {
-          this.confirm.busy = false;
-          this.confirm.close();
-          this.options.changed();
-        })
-        .catch((error: unknown) => {
-          this.confirm.busy = false;
-          button.disabled = false;
-          button.textContent = go;
-          note.textContent = words.failed(String(error));
-          note.hidden = false;
-        });
-    };
-    this.confirm.show();
+    this.confirm.ask({ title, what, fields, go, act, done: () => this.options.changed() });
   }
 }

@@ -445,6 +445,28 @@ export interface DetailsWords {
   openedOwn: string;
   cannotLook(why: string): string;
   notFound: string;
+  manage: string;
+  sleep: string;
+  wake: string;
+  /** Why an agent in the middle of a turn cannot be put to sleep. */
+  cannotSleepBusy: string;
+  slept: string;
+  woke: string;
+  move: string;
+  moveTo: string;
+  /** Beside the project it is in now. */
+  inHere: string;
+  leaveProject: string;
+  noOtherProject: string;
+  moved(project: string): string;
+  left: string;
+  remove: string;
+  removeTitle(who: string): string;
+  removeWhat: string;
+  removeGo: string;
+  cancel: string;
+  working: string;
+  failed(why: string): string;
 }
 
 export const zhDetails: DetailsWords = {
@@ -482,6 +504,27 @@ export const zhDetails: DetailsWords = {
   openedOwn: "已在一个新的终端窗口里打开",
   cannotLook: (why) => `问不到它的详情：${why}`,
   notFound: "世界里没有找到它。",
+  manage: "管理",
+  sleep: "让它睡着",
+  wake: "叫醒它",
+  cannotSleepBusy: "它正在跑一轮，跑完了才能睡",
+  slept: "它睡着了；谁对它说话，它就醒来",
+  woke: "它醒了，在场",
+  move: "换项目",
+  moveTo: "换到哪个项目",
+  inHere: "在这里",
+  leaveProject: "离开项目",
+  noOtherProject: "这台机器上没有别的项目",
+  moved: (project) => `已替它换到「${project}」，并照实告诉了它是你换的`,
+  left: "已替它离开项目，并照实告诉了它是你做的",
+  remove: "移除",
+  removeTitle: (who) => `移除 ${who}？`,
+  removeWhat:
+    "世界不再把它列为居民，界面与 fastctx w 里都看不到它了。它的记录挪进归档，一个字都不删；它起的、还在跑的作业照跑，列进没人看着的那一段。",
+  removeGo: "移除",
+  cancel: "关闭",
+  working: "正在办…",
+  failed: (why) => `没办成：${why}`,
 };
 
 export const enDetails: DetailsWords = {
@@ -519,6 +562,27 @@ export const enDetails: DetailsWords = {
   openedOwn: "Opened in a new terminal window",
   cannotLook: (why) => `Its details could not be asked: ${why}`,
   notFound: "It was not found in the World.",
+  manage: "Manage",
+  sleep: "Put it to sleep",
+  wake: "Wake it",
+  cannotSleepBusy: "It is in the middle of a turn; it can sleep once the turn ends",
+  slept: "It is asleep; speaking to it wakes it",
+  woke: "It is awake and here",
+  move: "Move to a project",
+  moveTo: "Which project",
+  inHere: "in it now",
+  leaveProject: "Out of any project",
+  noOtherProject: "No other project spans this machine",
+  moved: (project) => `Moved it to “${project}” for you, and told it so plainly`,
+  left: "Took it out of the project for you, and told it so plainly",
+  remove: "Remove",
+  removeTitle: (who) => `Remove ${who}?`,
+  removeWhat:
+    "The World stops listing it as a resident; it no longer shows here or in fastctx w. Its records are moved to the archive, nothing deleted; jobs it started keep running and are listed with the unattended ones.",
+  removeGo: "Remove",
+  cancel: "Close",
+  working: "Working…",
+  failed: (why) => `Not done: ${why}`,
 };
 
 export interface ProjectFormWords {

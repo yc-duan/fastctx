@@ -9,7 +9,23 @@ import { glyph } from "./glyphs";
 import type { Address } from "../world/events";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import type { DetailsWords } from "../app/words";
+import { Confirm } from "../app/confirm";
+import { redrawKeepingFocus } from "../app/focus";
 import { fileLink } from "../app/places";
+
+/** What can be done to the agent beyond its conversation, as the user.
+ *  Each rejects with what the World said when it was not done. */
+export interface Manage {
+  sleep(): Promise<void>;
+  wake(): Promise<void>;
+  /** Into a project, or out of any where null. */
+  move(town: string | null): Promise<void>;
+  remove(): Promise<void>;
+  /** The projects an agent on a machine can be in: those spanning it. */
+  towns(machine: string): { town: string; name: string }[];
+  /** It is no longer in the World: its conversation is left. */
+  removed(): void;
+}
 
 export interface DetailsOptions {
   words: DetailsWords;
@@ -26,61 +42,135 @@ export interface DetailsOptions {
   attach?: (() => Promise<void>) | undefined;
   /** The conversation as Markdown, for copying out. */
   markdown?: (() => string) | undefined;
+  /** Managing it, where the World can. */
+  manage?: Manage | undefined;
 }
 
 const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
+type Managing = "sleep" | "wake" | "move";
+
 export class Details {
   readonly element: HTMLElement;
   private readonly body: HTMLElement;
+  /** Kept across redraws, so what is said is announced once. */
+  private readonly spoken: HTMLElement;
   private note = "";
+  private manageNote = "";
+  /** What is being done to it now, so the card drawn again in the
+   *  meantime still says so. */
+  private managing: Managing | null = null;
+  /** Whether the projects to move it to are shown. */
+  private moving = false;
+  private confirm: Confirm | null = null;
+  private shown: { detail: ResidentDetail; colleagues: ResidentNow[]; now: Date } | null = null;
 
   constructor(private readonly options: DetailsOptions) {
     this.element = document.createElement("aside");
     this.element.className = "details";
     this.element.hidden = true;
-    this.element.innerHTML = `<div class="details-body"></div>`;
+    this.element.innerHTML = `<div class="details-body"></div><p class="spoken" role="status"></p>`;
     this.body = this.element.querySelector<HTMLElement>(".details-body")!;
+    this.spoken = this.element.querySelector<HTMLElement>(".spoken")!;
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-act]");
       if (!button || button.disabled) return;
-      if (button.dataset.act === "export" && options.markdown) {
-        void navigator.clipboard.writeText(options.markdown()).then(
-          () => this.say(options.words.exported),
-          (error: unknown) => this.say(String(error)),
-        );
-        return;
-      }
-      if (button.dataset.act === "attach" && options.attach) {
-        this.say(options.words.openedOwn);
-        options.attach().then(
-          () => this.say(""),
-          (error: unknown) => this.say(String(error)),
-        );
-        return;
-      }
-      if (button.dataset.act === "stop") {
-        button.disabled = true;
-        void options
-          .stop()
-          .then((stopped) => {
-            this.note = stopped ? options.words.stopped : options.words.notRunning;
-          })
-          .catch((error: unknown) => {
-            this.note = String(error);
-          })
-          .finally(() => {
-            button.disabled = false;
-            this.say(this.note);
-          });
+      const { words, manage } = options;
+      switch (button.dataset.act) {
+        case "export":
+          if (!options.markdown) return;
+          void navigator.clipboard.writeText(options.markdown()).then(
+            () => this.say(words.exported),
+            (error: unknown) => this.say(String(error)),
+          );
+          return;
+        case "attach":
+          if (!options.attach) return;
+          this.say(words.openedOwn);
+          options.attach().then(
+            () => this.say(""),
+            (error: unknown) => this.say(String(error)),
+          );
+          return;
+        case "stop":
+          button.disabled = true;
+          void options
+            .stop()
+            .then((stopped) => {
+              this.note = stopped ? words.stopped : words.notRunning;
+            })
+            .catch((error: unknown) => {
+              this.note = String(error);
+            })
+            .finally(() => {
+              button.disabled = false;
+              this.say(this.note);
+            });
+          return;
+        case "sleep":
+          if (manage) this.manageWith("sleep", () => manage.sleep(), words.slept);
+          return;
+        case "wake":
+          if (manage) this.manageWith("wake", () => manage.wake(), words.woke);
+          return;
+        case "move":
+          this.moving = !this.moving;
+          this.redraw();
+          return;
+        case "move-to": {
+          if (!manage || !this.shown) return;
+          const town = button.dataset.town || null;
+          const name = manage.towns(this.shown.detail.resident.about.machine).find((t) => t.town === town)?.name ?? town;
+          this.moving = false;
+          this.manageWith("move", () => manage.move(town), name ? words.moved(name) : words.left);
+          return;
+        }
+        case "remove":
+          if (manage && this.shown) this.askRemove(manage, this.shown.detail.resident);
       }
     });
   }
 
   private say(text: string): void {
     this.note = text;
+    this.spoken.textContent = text;
     const note = this.element.querySelector<HTMLElement>(".details-note");
     if (note) note.textContent = text;
+  }
+
+  private manageWith(what: Managing, act: () => Promise<void>, done: string): void {
+    const { words } = this.options;
+    this.managing = what;
+    this.manageNote = "";
+    this.redraw();
+    act()
+      .then(() => {
+        this.manageNote = done;
+      })
+      .catch((error: unknown) => {
+        this.manageNote = words.failed(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        this.managing = null;
+        this.spoken.textContent = this.manageNote;
+        this.redraw();
+      });
+  }
+
+  /** Asks once more before it is removed: what removing means is said. */
+  private askRemove(manage: Manage, resident: ResidentNow): void {
+    const { words } = this.options;
+    const about = resident.about;
+    this.confirm ??= new Confirm({ close: words.cancel, working: words.working, failed: words.failed });
+    const who =
+      about.origin.kind === "colleague" ? about.origin.label : this.options.someone({ resident: about.id, machine: about.machine });
+    this.confirm.ask({
+      title: words.removeTitle(who),
+      what: words.removeWhat,
+      go: words.removeGo,
+      act: () => manage.remove(),
+      done: () => manage.removed(),
+    });
   }
 
   get open(): boolean {
@@ -89,15 +179,26 @@ export class Details {
 
   set open(shown: boolean) {
     this.element.hidden = !shown;
+    if (!shown) this.moving = false;
   }
 
   /** The World could not say. */
   unknown(why: string | null): void {
     const { words } = this.options;
+    this.shown = null;
     this.body.innerHTML = `<p class="quiet">${escape(why ? words.cannotLook(why) : words.notFound)}</p>`;
   }
 
+  private redraw(): void {
+    if (this.shown) this.show(this.shown.detail, this.shown.colleagues, this.shown.now);
+  }
+
   show(detail: ResidentDetail, colleagues: ResidentNow[], now: Date): void {
+    this.shown = { detail, colleagues, now };
+    redrawKeepingFocus(this.body, () => this.draw(detail, colleagues, now));
+  }
+
+  private draw(detail: ResidentDetail, colleagues: ResidentNow[], now: Date): void {
     const { words, span } = this.options;
     const r = detail.resident;
     const about = r.about;
@@ -130,8 +231,8 @@ export class Details {
     // Only what the World started has an interface of its own to open; a
     // session the user opened is already open where they opened it.
     const own = this.options.attach && about.world_started && about.machine === this.options.here();
-    const section = (title: string, body: string) =>
-      body ? `<section class="details-section"><h3 class="details-title">${escape(title)}</h3>${body}</section>` : "";
+    const section = (title: string, body: string, kind = "") =>
+      body ? `<section class="details-section${kind}"><h3 class="details-title">${escape(title)}</h3>${body}</section>` : "";
     const task = detail.asked ? `<p class="details-task">${escape(detail.asked)}</p>` : "";
     const asked = colleagues.length
       ? `<ul class="details-people">${colleagues
@@ -170,11 +271,55 @@ export class Details {
         ${this.options.markdown ? `<button class="text-button" type="button" data-act="export">${glyph("copy", 14)}<span>${escape(words.exportMarkdown)}</span></button>` : ""}
         <span class="details-note">${escape(this.note)}</span>
       </div>
+      ${section(words.manage, this.manageBody(r), " details-manage")}
       ${section(words.task, task)}
       ${section(words.colleagues, asked)}
       ${section(words.running, running)}
       ${section(words.actions(detail.actions.length, detail.actions_total), actions)}
       <p class="details-records"><span>${escape(words.records)}</span><code>${escape(`${about.machine}:${detail.records}`)}</code></p>`;
+  }
+
+  /** Sleep or wake, move to a project, remove: what the World can do to
+   *  it for the user, and the projects to move it to when asked. */
+  private manageBody(r: ResidentNow): string {
+    const { words, manage } = this.options;
+    if (!manage) return "";
+    const doing = this.managing;
+    const busy = r.now?.activity === "busy";
+    const button = (act: string, icon: Parameters<typeof glyph>[0], label: string, disabled: boolean, extra = "") =>
+      `<button class="text-button" type="button" data-act="${act}"${disabled ? " disabled" : ""}${extra}>${glyph(icon, 14)}<span>${escape(label)}</span></button>`;
+    const rest =
+      r.now?.activity === "asleep"
+        ? button("wake", "wake", doing === "wake" ? words.working : words.wake, doing !== null)
+        : button(
+            "sleep",
+            "sleep",
+            doing === "sleep" ? words.working : words.sleep,
+            doing !== null || busy,
+            busy ? ` title="${escape(words.cannotSleepBusy)}"` : "",
+          );
+    const move = button(
+      "move",
+      "move",
+      doing === "move" ? words.working : words.move,
+      doing !== null,
+      ` aria-expanded="${this.moving}"`,
+    );
+    const remove = `<button class="text-button details-remove" type="button" data-act="remove"${doing !== null ? " disabled" : ""}>${glyph("archive", 14)}<span>${escape(words.remove)}</span></button>`;
+    let projects = "";
+    if (this.moving) {
+      const towns = manage.towns(r.about.machine);
+      const choices = towns.map(
+        (t) =>
+          `<button type="button" class="choice${t.town === r.town ? " chosen" : ""}" data-act="move-to" data-town="${escape(t.town)}"${t.town === r.town ? ` disabled aria-current="true"` : ""}>${escape(t.name)}${t.town === r.town ? `<span class="choice-note">${escape(words.inHere)}</span>` : ""}</button>`,
+      );
+      if (r.town) choices.push(`<button type="button" class="choice" data-act="move-to" data-town="">${escape(words.leaveProject)}</button>`);
+      const elsewhere = towns.some((t) => t.town !== r.town) || r.town;
+      projects = `<div class="details-move" role="group" aria-label="${escape(words.moveTo)}"><span class="details-faint">${escape(words.moveTo)}</span>${
+        elsewhere ? `<div class="choice-options">${choices.join("")}</div>` : `<span class="choice-none">${escape(words.noOtherProject)}</span>`
+      }</div>`;
+    }
+    return `<div class="details-acts">${rest}${move}${remove}</div>${projects}<p class="details-note details-manage-note">${escape(this.manageNote)}</p>`;
   }
 }
 

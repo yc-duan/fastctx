@@ -5,8 +5,10 @@ import type { Glyph } from "./tool";
 
 type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "stop" | "send" | "attach" | "file" | Frame;
 
-/** The frame's own glyphs: the sidebar, new conversations, settings. */
-type Frame = "menu" | "plus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back";
+/** The frame's own glyphs: the sidebar, new conversations, settings, and
+ *  what can be done to an agent (sleep, wake, move to a project, remove,
+ *  which archives it). */
+type Frame = "menu" | "plus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move" | "archive";
 
 const paths: Record<Named, string> = {
   menu: '<path d="M4 7h12M4 13h8"/>',
@@ -17,6 +19,10 @@ const paths: Record<Named, string> = {
   close: '<path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/>',
   more: '<circle cx="5.5" cy="10" r="0.6" fill="currentColor"/><circle cx="10" cy="10" r="0.6" fill="currentColor"/><circle cx="14.5" cy="10" r="0.6" fill="currentColor"/>',
   back: '<path d="M11.5 5.5L7 10l4.5 4.5"/>',
+  sleep: '<path d="M15 12.4A5.75 5.75 0 0 1 7.6 5a5.75 5.75 0 1 0 7.4 7.4z"/>',
+  wake: '<path d="M3.75 14.75h12.5"/><path d="M6.5 14.75a3.5 3.5 0 0 1 7 0"/><path d="M10 6v2M5.4 8.4l1.2 1.2M14.6 8.4l-1.2 1.2"/>',
+  move: '<path d="M3.75 6.25a1 1 0 0 1 1-1h3.2l1.5 1.5h5.8a1 1 0 0 1 1 1v6.75a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1z"/><path d="M7.75 11h4.5M10.5 9.25L12.25 11l-1.75 1.75"/>',
+  archive: '<rect x="3.75" y="4.75" width="12.5" height="3" rx="0.75"/><path d="M5 7.75v6.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-6.5"/><path d="M8.25 10.75h3.5"/>',
   read: '<path d="M4.5 4.5h7l4 4v7a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M11.5 4.5v4h4"/><path d="M7 11h6M7 13.5h4"/>',
   edit: '<path d="M12.6 4.6l2.8 2.8-8.2 8.2H4.4v-2.8z"/><path d="M11 6.2l2.8 2.8"/>',
   command: '<path d="M4.5 6l3.5 4-3.5 4"/><path d="M10 14.5h5.5"/>',

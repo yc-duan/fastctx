@@ -453,6 +453,30 @@
   color: var(--text-3);
 }
 
+/* Managing it: a row of quiet actions, the projects to move it to under
+   them when asked, and what the World answered. */
+.details-manage .details-acts {
+  margin-top: 0;
+}
+
+.details-remove:hover:not(:disabled) {
+  color: var(--wrong);
+}
+
+.details-move {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.details-manage-note {
+  margin: var(--space-2) 0 0;
+}
+
+.details-manage-note:empty {
+  display: none;
+}
+
 .details-section {
   margin-top: var(--space-5);
 }
