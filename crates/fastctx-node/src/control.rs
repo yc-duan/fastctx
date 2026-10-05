@@ -54,6 +54,13 @@ pub async fn offers(
 /// the World does not hold (the user's own Codex in an app) take nothing.
 pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     let host = host_of(node, resident)?;
+    let gate = node.residents.management(resident)?;
+    // Claude commands may wait for user interaction. Stopping their host
+    // must remain possible; its bridge reports the interrupted invocation.
+    // Answers also pass a queued lifecycle writer so a dialog cannot deadlock it.
+    let _reading =
+        if host == "Codex" && !matches!(control, Control::Answer { .. }) { Some(gate.read().await) } else { None };
+    node.residents.active(resident)?;
     match host {
         "Codex" => crate::codex::control::control(node, resident, control).await,
         "Claude" => crate::claude::control::control(node, resident, control).await,
@@ -72,6 +79,7 @@ pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offe
 
 /// The host a resident of this machine is held through, by name.
 fn host_of(node: &Node, resident: &ResidentId) -> Result<&'static str, Failure> {
+    node.residents.active(resident)?;
     let (about, _) = node
         .residents
         .about(resident)

@@ -233,6 +233,9 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
             )));
         }
     };
+    let gate = node.residents.management(&id)?;
+    let _writing = gate.write().await;
+    node.residents.active(&id)?;
     map::catch_up(node, &town).await?;
     let record = blocking(node, &town, read::latest).await?.ok_or_else(|| map::no_ledger(node, &town))?;
     if !record.machines.contains(&here) {

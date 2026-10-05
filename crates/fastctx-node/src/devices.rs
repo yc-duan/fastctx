@@ -18,6 +18,7 @@ use std::sync::Arc;
 use fastctx_types::MachineName;
 use fastctx_types::calls::Call;
 use fastctx_types::ipc::{Failure, Peer};
+use fastctx_types::management::Management;
 use fastctx_types::remote::{RemoteCall, RemoteReply, RemoteResult};
 
 use crate::Node;
@@ -37,6 +38,10 @@ pub fn admit(node: &Node, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::Open { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Control { .. }
+            | RemoteCall::Manage {
+                action: Management::Remove | Management::Sleep | Management::Wake | Management::Move { .. },
+                ..
+            }
             | RemoteCall::Offers { .. }
             | RemoteCall::Watch { .. }
             // Reading the user's own files, from the machine that has them,

@@ -72,6 +72,21 @@ pub async fn tell(node: &Arc<Node>, to: &Address, id: NoticeId, notice: Notice, 
 /// Tells a resident of this machine something: kept first, then handed over
 /// the way its host lets the World in.
 pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
+    let gate = node.residents.management(to)?;
+    let _reading = gate.read().await;
+    tell_here_locked(node, to, delivery, owed).await
+}
+
+pub(crate) async fn tell_here_locked(
+    node: &Arc<Node>,
+    to: &ResidentId,
+    delivery: Delivery,
+    owed: Owed,
+) -> Result<Landed, Failure> {
+    let removed = node.residents.removed(to).is_some();
+    if !removed || matches!(delivery.notice, Notice::Words { .. } | Notice::Attached { .. }) {
+        node.residents.active(to)?;
+    }
     let (about, town) = node
         .residents
         .about(to)
@@ -91,6 +106,14 @@ pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, ow
             .map_err(|error| Failure::new(format!("keeping it: {error}")))?
             .map_err(|error| Failure::new(format!("keeping it: {error}")))?
     };
+    if removed {
+        return Ok(Landed::Waiting {
+            why: Some(
+                "the resident was removed; this fact is preserved in its archived inbox and will not wake it".into(),
+            ),
+            answered: false,
+        });
+    }
     if !kept {
         if let Some(why) = crate::delivery::input_uncertainty(&directory, &pending.delivery.id)
             .map_err(|error| Failure::new(error.to_string()))?
@@ -100,7 +123,7 @@ pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, ow
         // The same thing told again: it is on its way or went in already.
         return Ok(Landed::Waiting { why: None, answered: answered(node, to, &about) });
     }
-    hand_over(node, to, &about, &directory, pending).await
+    hand_over_locked(node, to, &about, &directory, pending).await
 }
 
 /// Puts something kept into the resident's session, if its host lets the
@@ -112,7 +135,20 @@ pub async fn hand_over(
     directory: &ResidentDir,
     pending: Pending,
 ) -> Result<Landed, Failure> {
+    let gate = node.residents.management(to)?;
+    let _reading = gate.read().await;
+    hand_over_locked(node, to, about, directory, pending).await
+}
+
+async fn hand_over_locked(
+    node: &Arc<Node>,
+    to: &ResidentId,
+    about: &About,
+    directory: &ResidentDir,
+    pending: Pending,
+) -> Result<Landed, Failure> {
     node.ready().await;
+    node.residents.active(to)?;
     if let Some(landed) = crate::claude::deliver(node, to, about, directory, &pending).await {
         return landed;
     }
@@ -378,6 +414,9 @@ pub async fn settle(directory: &ResidentDir, id: &NoticeId) -> Result<Option<Pen
 /// turns not yet told are told.
 pub async fn restore(node: &Arc<Node>) {
     for resident in node.residents.everyone() {
+        if resident.removed.is_some() {
+            continue;
+        }
         let directory = node.world.resident(resident.town.as_ref(), &resident.id);
         let result = async {
             // An older node may have saved only part of a terminal outbox.
@@ -418,6 +457,10 @@ pub async fn recover(node: &Arc<Node>) {
         let node = node.clone();
         tokio::spawn(async move {
             let directory = node.world.resident(resident.town.as_ref(), &resident.id);
+            if resident.removed.is_some() {
+                crate::turns::pay(&node, &resident.id, &directory).await;
+                return;
+            }
             let result = async {
                 let speaking = node.residents.speaking(&resident.id).expect("resident on record");
                 let guard = speaking.lock().await;
@@ -459,6 +502,9 @@ pub async fn recover(node: &Arc<Node>) {
 /// recovery, this never treats an in-flight submission as interrupted.
 pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
     for resident in node.residents.everyone() {
+        if resident.removed.is_some() {
+            continue;
+        }
         if !resident.about.world_started || resident.about.host.agent.as_str() != "codex" {
             continue;
         }

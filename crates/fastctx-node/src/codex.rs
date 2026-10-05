@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use fastctx_hosts::codex::HostEvent;
 use fastctx_types::ResidentId;
-use fastctx_types::residents::{Activity, Origin};
+use fastctx_types::residents::Activity;
 use fastctx_types::session::SessionEvent;
 use tokio::sync::mpsc;
 
@@ -20,13 +20,12 @@ use crate::Node;
 pub mod control;
 pub mod watch;
 
-/// Makes the World's own Codex threads known to the host again. Those idle
-/// whose asker is gone are asleep: the node that kept them is gone too.
+/// Makes the World's own Codex threads known to the host again. Idle
+/// sessions start asleep: this node has not loaded their runtimes yet.
 pub async fn adopt(node: &Arc<Node>) {
-    let here = node.machine();
     for resident in node.residents.everyone() {
         let about = &resident.about;
-        if !about.world_started {
+        if !about.world_started || resident.removed.is_some() {
             continue;
         }
         // What it was told of its town when it was started, it still has.
@@ -45,12 +44,11 @@ pub async fn adopt(node: &Arc<Node>) {
                 continue;
             }
         }
-        let asleep = match &about.origin {
-            Origin::Colleague { asked_by, .. } => !node.residents.requester_here(asked_by, &here),
-            Origin::User => false,
-        };
-        if asleep && resident.now.as_ref().is_some_and(|now| now.activity == Activity::Idle) {
-            let slept = node.residents.change_now(&node.world, &about.id, |now| now.activity = Activity::Asleep);
+        if resident.now.as_ref().is_some_and(|now| now.activity == Activity::Idle) {
+            let slept = node.residents.change_now(&node.world, &about.id, |now| {
+                now.activity = Activity::Asleep;
+                now.since = jiff::Timestamp::now();
+            });
             if let Err(error) = slept {
                 node.log.line(format_args!("recording that {} sleeps: {error}", about.id));
             }
@@ -90,7 +88,7 @@ fn durable(event: &HostEvent) -> bool {
     match event {
         HostEvent::Synchronized { .. } => false,
         HostEvent::Happened { event, .. } => event.happened.kept(),
-        HostEvent::Desk { .. } | HostEvent::Gone { .. } => true,
+        HostEvent::Unloaded { .. } | HostEvent::Desk { .. } | HostEvent::Gone { .. } => true,
     }
 }
 
@@ -154,6 +152,16 @@ async fn drain(node: &Arc<Node>, thread: &str) {
         let Some(id) = node.residents.resident_of_thread(thread) else { return };
         let result = match event {
             HostEvent::Synchronized { .. } => unreachable!("barriers do not enter the durable queue"),
+            HostEvent::Unloaded { .. } => {
+                if !node.codex.loaded(thread) {
+                    node.residents.change_now(&node.world, &id, |now| {
+                        now.activity = Activity::Asleep;
+                        now.since = jiff::Timestamp::now();
+                    })
+                } else {
+                    Ok(())
+                }
+            }
             HostEvent::Happened { event, .. } => match control::reported(node, &id, thread, &event) {
                 Ok(()) => crate::turns::apply(node, &id, event).await,
                 Err(error) => Err(error),
@@ -276,9 +284,11 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
                         (thread.clone(), HostEvent::Gone { how: how.clone(), turns: vec![(thread, turn)] })
                     })
                     .collect(),
-                event @ (HostEvent::Happened { .. } | HostEvent::Desk { .. }) => {
+                event @ (HostEvent::Happened { .. } | HostEvent::Desk { .. } | HostEvent::Unloaded { .. }) => {
                     let thread = match &event {
-                        HostEvent::Happened { thread, .. } | HostEvent::Desk { thread, .. } => thread.clone(),
+                        HostEvent::Happened { thread, .. }
+                        | HostEvent::Desk { thread, .. }
+                        | HostEvent::Unloaded { thread } => thread.clone(),
                         _ => unreachable!(),
                     };
                     vec![(thread, event)]

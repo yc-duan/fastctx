@@ -34,6 +34,7 @@ pub fn who(
             now: resident.now,
             last_action,
             moved: None,
+            removed: resident.removed,
         });
     }
     // Those who moved away are listed in the town they left, with all.
@@ -46,6 +47,7 @@ pub fn who(
                 here: false,
                 now: None,
                 last_action: last_action(world, &former.id, Some(town))?,
+                removed: crate::residents::removal(world, &former.id)?,
                 moved: Some(Moved { to: former.to, at: former.at }),
             });
         }

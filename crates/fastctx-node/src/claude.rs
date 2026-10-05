@@ -21,6 +21,7 @@ pub(crate) mod calls;
 pub(crate) mod control;
 mod fork;
 pub(crate) mod history;
+pub mod management;
 pub(crate) mod pairing;
 mod process;
 
@@ -172,6 +173,9 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     else {
         return;
     };
+    if node.residents.removed(&resident).is_some() {
+        return;
+    }
     let reading = node.claude.state.lock().expect("never poisoned").sessions[&session].reading.clone();
     let _reading = reading.lock().await;
     if let Err(error) = control::look(node, &resident, directory).await {
@@ -580,6 +584,7 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
     let resident = node.claude.state.lock().expect("never poisoned").sessions.get(&session)
         .and_then(|entry| entry.resident.clone())
         .ok_or_else(|| Failure::new(format!("Claude call {tool_use_id} belongs to session {session}, whose resident could not be registered; see the node log")))?;
+    node.residents.active(&resident)?;
     let town =
         node.residents.town_of(&resident).ok_or_else(|| Failure::new("the paired Claude resident is missing"))?;
     Ok(fastctx_types::residents::Whereabouts { resident, town })
@@ -601,6 +606,11 @@ async fn pair(node: &Arc<Node>, session: &str) {
             return;
         }
     };
+    let Ok(gate) = node.residents.management(&resident) else { return };
+    let _reading = gate.read().await;
+    if node.residents.removed(&resident).is_some() {
+        return;
+    }
     let speaking = node.residents.speaking(&resident).expect("known resident");
     let guard = speaking.lock().await;
     let current = node.residents.about(&resident).and_then(|(about, _)| about.session);
@@ -720,7 +730,16 @@ pub async fn deliver(
     if let Err(error) = crate::inbox::target(directory, &pending.delivery.id, &session) {
         return Some(Err(Failure::new(error.to_string())));
     }
-    if !about.world_started {
+    let asleep = node.residents.now(to).is_some_and(|now| now.activity == Activity::Asleep);
+    let stopped_background = if !about.world_started && asleep {
+        match management::background_session(node, &session).await {
+            Ok(found) => found.is_some(),
+            Err(error) => return Some(Err(error)),
+        }
+    } else {
+        false
+    };
+    if !about.world_started && !stopped_background {
         // The user's own session: whatever its state, its mod hands this over
         // when the session runs, and when the user opens it again.
         return Some(into_inbox(node, &session, directory, pending));

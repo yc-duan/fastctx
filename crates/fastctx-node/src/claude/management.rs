@@ -1,0 +1,116 @@
+//! Background lifecycle through Claude Code's CLI, without synthetic words.
+
+use crate::Node;
+use fastctx_hosts::claude::{background, exchange};
+use fastctx_types::{ResidentId, ipc::Failure};
+use std::ffi::OsString;
+use std::sync::Arc;
+
+async fn run(node: &Arc<Node>, args: Vec<OsString>) -> Result<String, Failure> {
+    let super::Command { program, cwd, env } = super::command(node)?;
+    tokio::task::spawn_blocking(move || background::claude(&program, &args, &cwd, &env))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(Failure::new)
+}
+
+/// Only supervisor records have a background management ID. The same CLI
+/// also lists interactive sessions and unmanaged background processes.
+pub async fn background_session(node: &Arc<Node>, session: &str) -> Result<Option<serde_json::Value>, Failure> {
+    let listed = run(node, vec!["agents".into(), "--json".into(), "--all".into()]).await?;
+    let agents: Vec<serde_json::Value> =
+        serde_json::from_str(&listed).map_err(|error| Failure::new(error.to_string()))?;
+    let found: Vec<_> = agents
+        .iter()
+        .filter(|agent| {
+            agent["kind"].as_str() == Some("background")
+                && agent["id"].as_str().is_some_and(|id| id.len() == 8 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+                && (agent["sessionId"].as_str() == Some(session) || agent["id"].as_str() == Some(session))
+        })
+        .collect();
+    match found.as_slice() {
+        [] => Ok(None),
+        [agent] => Ok(Some((*agent).clone())),
+        _ => Err(Failure::new("Claude Code identified more than one background session for this resident")),
+    }
+}
+
+pub async fn stop(node: &Arc<Node>, resident: &ResidentId, session: &str, idle_only: bool) -> Result<(), Failure> {
+    let agent = background_session(node, session).await?.ok_or_else(|| {
+        Failure::new("Claude Code has no supervisor management ID for this session; its window was not closed")
+    })?;
+    if agent["pid"].as_u64() == Some(0) {
+        return Err(Failure::new("Claude Code returned an invalid zero process ID; the session was not stopped"));
+    };
+    if agent["pid"].as_u64().is_none() {
+        return settle_stopped(node, resident, session).await;
+    }
+    if idle_only && agent["status"].as_str() != Some("idle") {
+        return Err(Failure::new(format!(
+            "Claude Code reports status {}; only an idle background session can sleep",
+            agent["status"]
+        )));
+    }
+    let id = agent["id"].as_str().ok_or_else(|| Failure::new("Claude Code returned no background id"))?;
+    run(node, vec!["stop".into(), id.into()]).await?;
+    if super::running(node, session).await? {
+        return Err(Failure::new("Claude Code accepted stop, but still reports a running background process"));
+    }
+    settle_stopped(node, resident, session).await
+}
+
+/// A completion written just before stop takes precedence over an inferred
+/// interruption. Leave the reports for the ordinary consumer to acknowledge.
+async fn settle_stopped(node: &Arc<Node>, resident: &ResidentId, session: &str) -> Result<(), Failure> {
+    let directory = exchange::sessions(node.world.path()).join(session);
+    let mut problems = exchange::recover_reports(&directory)
+        .map_err(|error| Failure::new(format!("Claude is stopped; recovering its final reports: {error}")))?;
+    let (reports, more) = exchange::harvest(&directory)
+        .map_err(|error| Failure::new(format!("Claude is stopped; reading its final reports: {error}")))?;
+    problems.extend(more);
+    if !problems.is_empty() {
+        return Err(Failure::new(format!(
+            "Claude is stopped; its final reports could not be read: {}",
+            problems.join("; ")
+        )));
+    }
+    for report in reports {
+        for event in report.events {
+            if let exchange::Reported::Happened(event) = event
+                && matches!(event.happened, fastctx_types::session::Happened::TurnEnded { .. })
+            {
+                crate::turns::apply(node, resident, event)
+                    .await
+                    .map_err(|error| Failure::new(format!("Claude is stopped; recording its final turn: {error}")))?;
+            }
+        }
+    }
+    super::ended(node, resident, session, Some("its background process is stopped".into()))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))
+}
+
+pub async fn wake(node: &Arc<Node>, session: &str) -> Result<(), Failure> {
+    let record = background_session(node, session)
+        .await?
+        .ok_or_else(|| Failure::new("Claude Code no longer identifies a background session for this resident"))?;
+    let session = record["sessionId"]
+        .as_str()
+        .ok_or_else(|| Failure::new("Claude Code did not provide the background session's full conversation ID"))?;
+    if super::running(node, session).await? {
+        return Ok(());
+    }
+    let output = run(node, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
+    let started = background::started(&output).ok_or_else(|| {
+        Failure::new(format!("Claude Code did not identify the resumed background session: {output}"))
+    })?;
+    if !session.starts_with(&started) {
+        return Err(Failure::new(format!(
+            "Claude Code started {started}, not the requested {session}; the resident was not rebound"
+        )));
+    }
+    if !super::running(node, session).await? {
+        return Err(Failure::new("Claude Code accepted resume but does not report the original session running"));
+    }
+    Ok(())
+}

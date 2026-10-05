@@ -70,6 +70,13 @@ pub(super) fn read(
         };
         for directory in scan.dirs(&parent) {
             scan.jobs(&directory.join("jobs"));
+            let original_directory = directory;
+            let archived = original_directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.parse::<ResidentId>().ok())
+                .is_some_and(|id| world.removed(&id).exists());
+            let directory = if archived { original_directory.join("archive") } else { original_directory.clone() };
             let path = directory.join("about");
             if let Some(about) = scan.optional::<About>(&path) {
                 let files = residents.entry(about.id.clone()).or_default();
@@ -89,7 +96,7 @@ pub(super) fn read(
                             "moved",
                             &[
                                 &Address { machine: machine.clone(), resident: about.id.clone() }.tag(),
-                                &directory.to_string_lossy(),
+                                &original_directory.to_string_lossy(),
                                 &moved.at.to_string(),
                             ],
                         ),
@@ -103,7 +110,7 @@ pub(super) fn read(
                             to: moved.to,
                         },
                     });
-                } else if active {
+                } else if active && !archived {
                     match crate::residents::read_now(&world.resident(place.as_ref(), &about.id)) {
                         Ok(Some(now)) if now.activity == Activity::Asleep => scan.undated.push(UndatedFact {
                             resident: Address { machine: machine.clone(), resident: about.id.clone() },
@@ -115,7 +122,7 @@ pub(super) fn read(
                         Err(error) => scan.issue(&directory.join("now"), error),
                     }
                 }
-                scan.resident(&about, &directory, place.as_ref(), files);
+                scan.resident(&about, &directory, &original_directory, place.as_ref(), files);
             }
         }
     }
@@ -256,7 +263,14 @@ impl Scan<'_> {
         }
     }
 
-    fn resident(&mut self, about: &About, directory: &Path, town: Option<&TownName>, files: &mut ResidentFiles) {
+    fn resident(
+        &mut self,
+        about: &About,
+        directory: &Path,
+        original: &Path,
+        town: Option<&TownName>,
+        files: &mut ResidentFiles,
+    ) {
         let address = Address { machine: self.machine.clone(), resident: about.id.clone() };
         for path in self.json_files(&directory.join("turns")) {
             if let Some(finished) = self.optional::<Finished>(&path) {
@@ -336,7 +350,10 @@ impl Scan<'_> {
                 },
             ),
             MessageKind::Told { to, turn, outcome } => scan.events.push(SinceEvent {
-                id: identity("answer-delivery", &[&address.tag(), &path.to_string_lossy(), &number.to_string()]),
+                id: identity(
+                    "answer-delivery",
+                    &[&address.tag(), &original.join("messages").to_string_lossy(), &number.to_string()],
+                ),
                 at: line.at,
                 machine: scan.machine.clone(),
                 town: known(town),
@@ -352,7 +369,10 @@ impl Scan<'_> {
             }
             match action.result.parse::<ResidentId>() {
                 Ok(id) => scan.events.push(SinceEvent {
-                    id: identity("asked", &[&address.tag(), &path.to_string_lossy(), &number.to_string()]),
+                    id: identity(
+                        "asked",
+                        &[&address.tag(), &original.join("actions").to_string_lossy(), &number.to_string()],
+                    ),
                     at: action.at,
                     machine: scan.machine.clone(),
                     town: known(town),

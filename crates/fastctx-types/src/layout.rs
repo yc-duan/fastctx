@@ -107,7 +107,14 @@ impl WorldDir {
     /// The directory of a resident that lives on this machine: in its town,
     /// or outside every town.
     pub fn resident(&self, town: Option<&TownName>, resident: &ResidentId) -> ResidentDir {
-        ResidentDir { path: self.residents(town).join(resident.as_str()) }
+        let base = self.residents(town).join(resident.as_str());
+        let path = if self.removed(resident).exists() { base.join("archive") } else { base };
+        ResidentDir { path }
+    }
+
+    /// A durable membership tombstone, independent of the resident's town.
+    pub fn removed(&self, resident: &ResidentId) -> PathBuf {
+        self.root.join("removed-residents").join(format!("{resident}.json"))
     }
 
     /// The directory of what a resident of another machine did here, such
@@ -222,11 +229,19 @@ impl ResidentDir {
     }
 
     pub fn jobs(&self) -> PathBuf {
-        self.path.join("jobs")
+        self.work_path().join("jobs")
     }
 
     pub fn out(&self) -> PathBuf {
-        self.path.join("out")
+        self.work_path().join("out")
+    }
+
+    fn work_path(&self) -> &Path {
+        if self.path.file_name().is_some_and(|name| name == "archive") {
+            self.path.parent().expect("archive is inside a resident directory")
+        } else {
+            &self.path
+        }
     }
 
     pub fn job_record(&self, job: &JobId) -> PathBuf {

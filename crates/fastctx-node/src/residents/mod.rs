@@ -17,6 +17,8 @@
 //! lives in now are marked as left (`records::move_to`).
 
 mod records;
+mod removal;
+pub use removal::removal;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io;
@@ -70,6 +72,8 @@ pub struct Heard {
 }
 
 struct Live {
+    removed: Option<Timestamp>,
+    management: Arc<tokio::sync::RwLock<()>>,
     about: About,
     town: Option<TownName>,
     /// A Claude session's inbox address, for commands from its native shell.
@@ -98,6 +102,8 @@ impl Live {
             .map(|(turn, readers)| (turn.clone(), readers.iter().cloned().collect()))
             .collect();
         Self {
+            removed: None,
+            management: Arc::new(tokio::sync::RwLock::new(())),
             about,
             town,
             inbox: None,
@@ -114,6 +120,7 @@ impl Live {
 
 /// One resident on record, as `fastctx w` needs it.
 pub struct OnRecord {
+    pub removed: Option<Timestamp>,
     pub id: ResidentId,
     pub town: Option<TownName>,
     pub here: bool,
@@ -125,6 +132,7 @@ impl Residents {
     /// Reads every resident this machine has a record of. A record that
     /// cannot be read is reported and left as it is.
     pub fn load(world: &WorldDir) -> io::Result<(Self, Vec<(PathBuf, io::Error)>)> {
+        removal::recover(world)?;
         let mut state = State::default();
         let mut problems = Vec::new();
         // Each resident's directories, one in each town it lived in.
@@ -162,7 +170,7 @@ impl Residents {
                 }
             };
             for (left, moved) in &homes {
-                if *left != town {
+                if *left != town && removal(world, &id)?.is_none() {
                     records::carry_obligations(world, &id, left.as_ref(), town.as_ref())?;
                 }
                 if let Some(moved) = moved
@@ -196,7 +204,8 @@ impl Residents {
             });
             // Who is owed the turns the node stopped under: they are told how
             // those turns ended once the node is up (`unfinished`).
-            let live = Live::new(about, town.clone(), now);
+            let mut live = Live::new(about, town.clone(), now);
+            live.removed = removal(world, &id)?;
             state.live.insert(live.about.id.clone(), live);
         }
         Ok((Self { state: Mutex::new(state) }, problems))
@@ -205,18 +214,23 @@ impl Residents {
     /// The resident `id` lives in `town` from now on. Returns whether it
     /// moved: it may live there already.
     pub fn enter(&self, world: &WorldDir, id: &ResidentId, town: &TownName) -> io::Result<bool> {
+        self.relocate(world, id, Some(town))
+    }
+
+    pub fn relocate(&self, world: &WorldDir, id: &ResidentId, town: Option<&TownName>) -> io::Result<bool> {
+        self.active(id).map_err(io::Error::other)?;
         let mut state = self.lock();
         let Some(live) = state.live.get_mut(id) else {
             return Err(io::Error::new(io::ErrorKind::NotFound, format!("no resident {id} lives here")));
         };
-        if live.town.as_ref() == Some(town) {
+        if live.town.as_ref() == town {
             return Ok(false);
         }
         let from = live.town.clone();
-        records::move_to(world, id, from.as_ref(), Some(town), &live.about, live.now.as_ref())?;
-        live.town = Some(town.clone());
-        state.former.retain(|former| !(former.id == *id && former.town.as_ref() == Some(town)));
-        state.former.push(Former { id: id.clone(), town: from, to: Some(town.clone()), at: Timestamp::now() });
+        records::move_to(world, id, from.as_ref(), town, &live.about, live.now.as_ref())?;
+        live.town = town.cloned();
+        state.former.retain(|former| !(former.id == *id && former.town.as_ref() == town));
+        state.former.push(Former { id: id.clone(), town: from, to: town.cloned(), at: Timestamp::now() });
         Ok(true)
     }
 
@@ -263,6 +277,9 @@ impl Residents {
         if let Some(resident) = hints.resident {
             return match state.live.get_mut(&resident) {
                 Some(live) => {
+                    if live.removed.is_some() {
+                        return Err(removal::refused(&resident));
+                    }
                     live.connections += 1;
                     Ok(Whereabouts { resident, town: live.town.clone() })
                 }
@@ -275,12 +292,18 @@ impl Residents {
             && let Some(resident) = state.threads.get(thread).cloned()
             && let Some(live) = state.live.get_mut(&resident)
         {
+            if live.removed.is_some() {
+                return Err(removal::refused(&resident));
+            }
             live.connections += 1;
             return Ok(Whereabouts { resident, town: live.town.clone() });
         }
         if let Some(resident) = hints.was
             && let Some(live) = state.live.get_mut(&resident)
         {
+            if live.removed.is_some() {
+                return Err(removal::refused(&resident));
+            }
             live.connections += 1;
             return Ok(Whereabouts { resident, town: live.town.clone() });
         }
@@ -374,6 +397,9 @@ impl Residents {
         let Some(live) = state.live.get_mut(id) else {
             return Ok(());
         };
+        if live.removed.is_some() {
+            return Ok(());
+        }
         let mut about = live.about.clone();
         about.session = Some(session.to_string());
         if model.is_some() {
@@ -430,6 +456,7 @@ impl Residents {
             .iter()
             .map(|(id, live)| OnRecord {
                 id: id.clone(),
+                removed: live.removed,
                 town: live.town.clone(),
                 here: here(live),
                 about: live.about.clone(),
@@ -446,6 +473,7 @@ impl Residents {
         self.lock()
             .live
             .values()
+            .filter(|live| live.removed.is_none())
             .flat_map(|live| {
                 let mut turns: BTreeSet<String> = live.owed.keys().cloned().collect();
                 if let Some(now) = &live.now
@@ -498,6 +526,9 @@ impl Residents {
         let Some(live) = state.live.get_mut(id) else {
             return Ok(());
         };
+        if live.removed.is_some() {
+            return Ok(());
+        }
         let mut now = live.now.clone().unwrap_or_else(|| idle(Timestamp::now()));
         change(&mut now);
         records::write_now(&world.resident(live.town.as_ref(), id), &now)?;
@@ -616,6 +647,9 @@ impl Residents {
         let Some(live) = state.live.get_mut(id) else {
             return Ok(());
         };
+        if live.removed.is_some() {
+            return Ok(());
+        }
         let mut now = live.now.clone().unwrap_or_else(|| idle(Timestamp::now()));
         let previous_owed = live.owed.clone();
         change(live, &mut now);
@@ -635,6 +669,9 @@ impl Residents {
 }
 
 fn here(live: &Live) -> bool {
+    if live.removed.is_some() {
+        return false;
+    }
     if live.about.world_started {
         live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
     } else {

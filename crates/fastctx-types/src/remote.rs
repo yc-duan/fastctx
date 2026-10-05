@@ -2,6 +2,7 @@
 //! lives there (`world-network.md`, 四种话).
 
 use crate::agents::AgentsReply;
+use crate::management::{Managed, Management};
 use serde::{Deserialize, Serialize};
 
 use crate::copy::{CopyReport, Place};
@@ -69,6 +70,8 @@ pub enum RemoteCall {
     Stop { resident: ResidentId },
     /// Do something to a resident's conversation there, for the user.
     Control { resident: ResidentId, control: Control },
+    /// Manage this resident as the user, on its own machine.
+    Manage { resident: ResidentId, action: Management },
     /// What a resident's conversation there offers now.
     Offers { resident: ResidentId },
     /// What that machine is like, for `fastctx nodes`.
@@ -121,6 +124,7 @@ pub enum RemoteReply {
     Stopped {
         stopped: bool,
     },
+    Managed(Managed),
     Controlled(Controlled),
     Offers(Box<Offers>),
     /// A watch ended: the caller left, or the session's machine stopped it.

@@ -1,6 +1,7 @@
 //! Everything a local client can ask the node, and the answers.
 
 use crate::agents::WorldAgents;
+use crate::management::{Managed, Management};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +88,8 @@ pub enum Call {
     /// Does something to a resident's conversation on any machine for the
     /// user, besides speaking into it (`session::control`).
     Control { resident: ResidentId, machine: Option<MachineName>, control: Control },
+    /// Manage this resident as the user, on its own machine.
+    Manage { resident: ResidentId, machine: Option<MachineName>, action: Management },
     /// What a resident's conversation on any machine offers now: the
     /// controls it takes, its commands and models, its usage.
     Offers { resident: ResidentId, machine: Option<MachineName> },
@@ -159,6 +162,10 @@ pub enum Reply {
     Stopped {
         resident: Address,
         stopped: bool,
+    },
+    Managed {
+        resident: Address,
+        managed: Managed,
     },
     Controlled {
         resident: Address,
