@@ -20,6 +20,7 @@ mod controls;
 mod history;
 mod items;
 pub mod launch;
+mod lifetime;
 mod notifications;
 mod offers;
 mod presentation;
@@ -40,6 +41,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use launch::Launch;
+use lifetime::ServerUse;
 use server::{AppServer, Inbound, Unanswered};
 
 pub type Log = Arc<dyn Fn(String) + Send + Sync>;
@@ -235,6 +237,7 @@ pub struct CodexHost {
 #[derive(Default)]
 struct State {
     notification_sequence: u64,
+    server_users: usize,
     server: Option<(Arc<AppServer>, Launch)>,
     threads: HashMap<String, Thread>,
 }
@@ -317,8 +320,8 @@ impl CodexHost {
     }
 
     /// Starts a thread without a turn, so the caller can record it before
-    /// any event of its first turn. Returns the thread and the model Codex
-    /// chose from the user's configuration.
+    /// any event of its first turn. Persists the empty thread before returning
+    /// its ID and model, so an idle app-server replacement can resume it.
     pub async fn start_thread(self: &Arc<Self>, spec: ThreadSpec) -> Result<(String, Option<String>), String> {
         let server = self.server().await?;
         let answer = server
@@ -342,6 +345,7 @@ impl CodexHost {
             .ok_or("thread/start answered without a thread id")?
             .to_string();
         let model = answer.get("model").and_then(Value::as_str).map(str::to_string);
+        server.persist_new_thread(&thread).await?;
         // Codex keeps a name given before the thread's first turn and writes
         // it with the thread (0.160). A thread without the name still works.
         if let Some(name) = &spec.name
@@ -353,6 +357,9 @@ impl CodexHost {
         // among it, may have come before this answer.
         let mut state = self.lock();
         let current = matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server));
+        if !current {
+            return Err("the Codex app-server stopped while creating the thread".into());
+        }
         let entry = state.threads.entry(thread.clone()).or_default();
         entry.spec = Some(spec);
         entry.loaded = current;
@@ -513,8 +520,7 @@ impl CodexHost {
     /// is not ended in it, whatever the record says.
     pub async fn history(self: &Arc<Self>, thread: &str) -> Result<Vec<SessionEvent>, String> {
         let server = self.server().await?;
-        // A newly created thread can have an empty, buffered rollout while
-        // its MCP servers start. There is no durable item to read yet.
+        // A new thread is durable, but has no completed items to read yet.
         if self.lock().threads.get(thread).is_some_and(|t| t.created_here && !t.completed_item) {
             return Ok(Vec::new());
         }
@@ -622,20 +628,38 @@ impl CodexHost {
     }
 
     /// The running app-server, started on first use or after it stopped.
-    /// When the user's configuration changed since it started and no turn
-    /// runs, it is replaced first, so threads take up the app's new binary
-    /// and Computer Use pipe; a running turn finishes on the old one.
-    async fn server(self: &Arc<Self>) -> Result<Arc<AppServer>, String> {
-        let config = launch::read_config(&self.codex_home)?;
+    /// A replacement waits for running turns and callers using the current
+    /// process. Its identity includes the app's binary and Computer Use
+    /// connection, not incidental writes to the user's configuration.
+    async fn server(self: &Arc<Self>) -> Result<ServerUse, String> {
         let _starting = self.starting.lock().await;
+        {
+            let mut state = self.lock();
+            let busy = state.server_users != 0
+                || state.threads.values().any(|thread| thread.turn.is_some() || thread.submitted);
+            if busy && let Some((server, _)) = &state.server {
+                let server = server.clone();
+                state.server_users += 1;
+                return Ok(ServerUse::new(server, self.clone()));
+            }
+        }
+        let path = self.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("PATH")).map(|(_, value)| value);
+        let launch = launch::resolve(&self.codex_home, path)?;
         let replaced = {
             let _generation = self.generation.lock().expect("never poisoned");
             let mut state = self.lock();
-            let busy = state.threads.values().any(|thread| thread.turn.is_some() || thread.submitted);
+            let busy = state.server_users != 0
+                || state.threads.values().any(|thread| thread.turn.is_some() || thread.submitted);
             match &state.server {
-                Some((server, launch)) if launch.config == config || busy => return Ok(server.clone()),
+                Some((server, previous)) if previous.same_runtime(&launch) || busy => {
+                    let server = server.clone();
+                    state.server_users += 1;
+                    return Ok(ServerUse::new(server, self.clone()));
+                }
                 Some((server, _)) => {
-                    (self.log)("the user's Codex configuration changed; restarting the app-server".to_string());
+                    (self.log)(
+                        "the Codex program or desktop tool connection changed; restarting the app-server".to_string(),
+                    );
                     server.kill();
                     let replaced = server.clone();
                     self.resolve_requests(
@@ -651,8 +675,6 @@ impl CodexHost {
         if let Some(replaced) = replaced {
             replaced.wait().await;
         }
-        let path = self.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("PATH")).map(|(_, value)| value);
-        let launch = launch::resolve(&self.codex_home, path)?;
         let (server, inbound) =
             AppServer::spawn(&launch.binary, &launch.args, &self.workdir, &self.env, self.log.clone())
                 .map_err(|error| format!("starting {}: {error}", launch.binary.display()))?;
@@ -692,10 +714,12 @@ impl CodexHost {
             server.pid(),
             launch.binary.display()
         ));
-        if !matches!(&self.lock().server, Some((current, _)) if Arc::ptr_eq(current, &server)) {
+        let mut state = self.lock();
+        if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server)) {
             return Err("the app-server exited during initialization".to_string());
         }
-        Ok(server)
+        state.server_users += 1;
+        Ok(ServerUse::new(server, self.clone()))
     }
 
     /// Records that a turn ended and reports it with its last message.
