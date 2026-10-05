@@ -85,8 +85,10 @@ export class PageScreen {
     this.element.querySelector(".page-versions")!.addEventListener("click", () => void this.showVersions());
     this.element.querySelector(".page-reload")!.addEventListener("click", () => void this.load());
     this.notice.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-bring]");
+      const target = event.target as HTMLElement;
+      const button = target.closest<HTMLButtonElement>("[data-bring]");
       if (button) this.bringBack(Number(button.dataset.bring));
+      if (target.closest("[data-reload]")) void this.load();
     });
     void this.load();
   }
@@ -150,7 +152,19 @@ export class PageScreen {
     const context = this.options.context();
     const html = compose(view.html, { theme: context.theme, locale: context.locale });
     const frame = mountFrame(this.stage, html, view.publication.title || view.page);
-    this.host = new PageHost({ frame, version: this.options.version_, context: this.options.context, call: this.options.tools(view) });
+    this.host = new PageHost({
+      frame,
+      version: this.options.version_,
+      context: this.options.context,
+      call: this.options.tools(view),
+      left: () => {
+        // A page that navigates its own frame away is closed, and said so.
+        this.host = null;
+        this.stage.replaceChildren();
+        this.notice.hidden = false;
+        this.notice.innerHTML = `<p>${escape(this.options.words.wentAway)}</p><button class="text-button" type="button" data-reload>${escape(this.options.words.reload)}</button>`;
+      },
+    });
   }
 
   private async drawNotice(view: PageView): Promise<void> {

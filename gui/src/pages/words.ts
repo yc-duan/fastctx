@@ -15,6 +15,8 @@ export interface PageWords {
   acts: string;
   versions: string;
   reload: string;
+  /** The page navigated its own frame somewhere else. */
+  wentAway: string;
   withdraw: string;
   /** What a version may do. */
   run(machine: string): string;
@@ -66,6 +68,7 @@ export const zhPages: PageWords = {
   acts: "它能做的事",
   versions: "版本",
   reload: "重新载入",
+  wentAway: "这一页把自己的框换成了别的东西，界面已经把它关掉。重新载入会打开发布的那一版。",
   withdraw: "撤下",
   run: (machine) => `在 ${machine} 上跑`,
   say: (who) => `对 ${who} 说话`,
@@ -113,6 +116,7 @@ export const enPages: PageWords = {
   acts: "What it may do",
   versions: "Versions",
   reload: "Reload",
+  wentAway: "This page replaced itself with something else in its frame, so it was closed. Reloading opens the published version.",
   withdraw: "Take down",
   run: (machine) => `Run on ${machine}`,
   say: (who) => `Speak to ${who}`,

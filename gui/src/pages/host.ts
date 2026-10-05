@@ -29,6 +29,9 @@ export interface HostOptions {
   call(tool: string, args: Record<string, unknown>): Promise<unknown>;
   /** The page has said it is ready. */
   ready?(): void;
+  /** The frame no longer holds the page it was given: it navigated itself
+   *  somewhere else, or loaded again. The host has stopped answering. */
+  left(): void;
 }
 
 type Id = string | number;
@@ -141,8 +144,18 @@ export class PageHost {
   private readonly listen = (event: MessageEvent) => this.heard(event);
   private initialized = false;
 
+  private loads = 0;
+  private closed = false;
+  /** The frame loads once with the page it was given. Whatever loads in it
+   *  after that is not that page, and is not answered. */
+  private readonly loaded = () => {
+    this.loads += 1;
+    if (this.loads > 1) this.leave();
+  };
+
   constructor(private readonly options: HostOptions) {
     window.addEventListener("message", this.listen);
+    options.frame.addEventListener("load", this.loaded);
   }
 
   /** Tells the page the theme or language changed. */
@@ -151,7 +164,15 @@ export class PageHost {
   }
 
   close(): void {
+    this.closed = true;
     window.removeEventListener("message", this.listen);
+    this.options.frame.removeEventListener("load", this.loaded);
+  }
+
+  private leave(): void {
+    if (this.closed) return;
+    this.close();
+    this.options.left();
   }
 
   private post(message: object): void {
@@ -167,6 +188,12 @@ export class PageHost {
     const { id, method } = message;
     const params = message.params ?? {};
     if (id === undefined) {
+      // The World's runtime says so as the page's document goes away,
+      // before anything that replaces it can speak in the same frame.
+      if (method === "world/leaving") {
+        this.leave();
+        return;
+      }
       if (method === "ui/notifications/initialized") {
         this.initialized = true;
         this.options.ready?.();

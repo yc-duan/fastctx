@@ -70,6 +70,10 @@ export async function connect(name: string, version: string, start: PageContext,
     context = contextOf(given, context);
   };
 
+  // The host stops answering this frame once the page goes: whatever is
+  // loaded in its place is not the page the user opened.
+  window.addEventListener("pagehide", () => post({ method: "world/leaving", params: {} }));
+
   window.addEventListener("message", (event) => {
     if (event.source !== host) return;
     const message = event.data as Message;
