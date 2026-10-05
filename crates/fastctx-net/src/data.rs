@@ -1,9 +1,9 @@
 //! Data connections: one per transfer, between a source and a sink, paired
 //! by the hub. Bytes travel as binary messages; the two ends may also say
 //! short things to each other, as JSON in text messages, such as which of
-//! the offered files the sink wants. What the bytes must be is said in a
-//! signed message on the control connection, so the hub in between can
-//! neither change them unnoticed nor make them up.
+//! the offered files the sink wants. Signed control messages or signed
+//! stream pieces describe the bytes, so the hub in between can neither
+//! change them unnoticed nor make them up.
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Serialize;

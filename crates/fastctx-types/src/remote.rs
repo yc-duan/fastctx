@@ -31,6 +31,8 @@ pub enum RemoteCall {
     Since { since: jiff::Timestamp, town: Option<TownName> },
     /// Facts from this machine's official agent programs.
     Agents,
+    /// A user's byte read. `read` binds the signed data pieces to this call.
+    ReadFile { request: crate::file_read::ReadFileRequest, read: u64 },
     /// The documents of a canon there, for a town's map.
     Canon { path: String },
     /// Start a colleague there for a resident of the calling machine.
@@ -86,6 +88,9 @@ pub enum RemoteReply {
     Who(WhoReply),
     Since(crate::since::SinceReply),
     Agents(AgentsReply),
+    FileRead {
+        result: crate::file_read::FileReadResult,
+    },
     Asked {
         colleague: ResidentId,
     },

@@ -7303,5 +7303,508 @@
         }
       }
     ]
+  },
+  "file_read": {
+    "calls": [
+      {
+        "call": "read_file",
+        "machine": "desktop",
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "all"
+          }
+        }
+      },
+      {
+        "call": "read_file",
+        "machine": null,
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "all"
+          }
+        }
+      },
+      {
+        "call": "read_file",
+        "machine": "desktop",
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "tail",
+            "bytes": 4096
+          }
+        }
+      },
+      {
+        "call": "read_file",
+        "machine": null,
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "tail",
+            "bytes": 4096
+          }
+        }
+      },
+      {
+        "call": "read_file",
+        "machine": "desktop",
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "range",
+            "offset": 4294967296,
+            "bytes": 1048576
+          }
+        }
+      },
+      {
+        "call": "read_file",
+        "machine": null,
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "range",
+            "offset": 4294967296,
+            "bytes": 1048576
+          }
+        }
+      },
+      {
+        "call": "read_file",
+        "machine": "desktop",
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "range",
+            "offset": 0,
+            "bytes": 0
+          }
+        }
+      },
+      {
+        "call": "read_file",
+        "machine": null,
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "range",
+            "offset": 0,
+            "bytes": 0
+          }
+        }
+      }
+    ],
+    "replies": [
+      {
+        "reply": "file_read",
+        "result": {
+          "Ok": {
+            "bytes": 4,
+            "file": {
+              "size": 5368709120,
+              "modified": "2026-10-04T12:06:07.123456789Z"
+            }
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "not_found",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "permission_denied",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "is_directory",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "not_regular_file",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "invalid_input",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "changed",
+            "message": "The source machine's exact error 中文",
+            "bytes": 4,
+            "observed": {
+              "size": 5368709128,
+              "modified": "2026-10-04T12:06:07.123456789Z"
+            }
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "io",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "read_file",
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "all"
+          }
+        },
+        "read": 17
+      },
+      {
+        "call": "read_file",
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "tail",
+            "bytes": 4096
+          }
+        },
+        "read": 17
+      },
+      {
+        "call": "read_file",
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "range",
+            "offset": 4294967296,
+            "bytes": 1048576
+          }
+        },
+        "read": 17
+      },
+      {
+        "call": "read_file",
+        "request": {
+          "path": "C:/work/中文 项目/output.bin",
+          "range": {
+            "kind": "range",
+            "offset": 0,
+            "bytes": 0
+          }
+        },
+        "read": 17
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "file_read",
+        "result": {
+          "Ok": {
+            "bytes": 4,
+            "file": {
+              "size": 5368709120,
+              "modified": "2026-10-04T12:06:07.123456789Z"
+            }
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "not_found",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "permission_denied",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "is_directory",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "not_regular_file",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "invalid_input",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "changed",
+            "message": "The source machine's exact error 中文",
+            "bytes": 4,
+            "observed": {
+              "size": 5368709128,
+              "modified": "2026-10-04T12:06:07.123456789Z"
+            }
+          }
+        }
+      },
+      {
+        "reply": "file_read",
+        "result": {
+          "Err": {
+            "kind": "io",
+            "message": "The source machine's exact error 中文",
+            "bytes": 0,
+            "observed": null
+          }
+        }
+      }
+    ],
+    "frames": [
+      {
+        "kind": "file_read",
+        "id": 1,
+        "part": {
+          "kind": "opened",
+          "info": {
+            "machine": "desktop",
+            "path": "/srv/中文 项目/output.bin",
+            "file": {
+              "size": 5368709120,
+              "modified": "2026-10-04T12:06:07.123456789Z"
+            },
+            "offset": 4294967296,
+            "length": 4
+          }
+        }
+      },
+      {
+        "kind": "file_read",
+        "id": 1,
+        "part": {
+          "kind": "chunk",
+          "offset": 4294967296,
+          "bytes": 4
+        }
+      },
+      {
+        "kind": "reply",
+        "id": 1,
+        "reply": {
+          "Ok": {
+            "reply": "file_read",
+            "result": {
+              "Ok": {
+                "bytes": 4,
+                "file": {
+                  "size": 5368709120,
+                  "modified": "2026-10-04T12:06:07.123456789Z"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "reply",
+        "id": 1,
+        "reply": {
+          "Ok": {
+            "reply": "file_read",
+            "result": {
+              "Err": {
+                "kind": "not_found",
+                "message": "The source machine's exact error 中文",
+                "bytes": 0,
+                "observed": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "reply",
+        "id": 1,
+        "reply": {
+          "Ok": {
+            "reply": "file_read",
+            "result": {
+              "Err": {
+                "kind": "permission_denied",
+                "message": "The source machine's exact error 中文",
+                "bytes": 0,
+                "observed": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "reply",
+        "id": 1,
+        "reply": {
+          "Ok": {
+            "reply": "file_read",
+            "result": {
+              "Err": {
+                "kind": "is_directory",
+                "message": "The source machine's exact error 中文",
+                "bytes": 0,
+                "observed": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "reply",
+        "id": 1,
+        "reply": {
+          "Ok": {
+            "reply": "file_read",
+            "result": {
+              "Err": {
+                "kind": "not_regular_file",
+                "message": "The source machine's exact error 中文",
+                "bytes": 0,
+                "observed": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "reply",
+        "id": 1,
+        "reply": {
+          "Ok": {
+            "reply": "file_read",
+            "result": {
+              "Err": {
+                "kind": "invalid_input",
+                "message": "The source machine's exact error 中文",
+                "bytes": 0,
+                "observed": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "reply",
+        "id": 1,
+        "reply": {
+          "Ok": {
+            "reply": "file_read",
+            "result": {
+              "Err": {
+                "kind": "changed",
+                "message": "The source machine's exact error 中文",
+                "bytes": 4,
+                "observed": {
+                  "size": 5368709128,
+                  "modified": "2026-10-04T12:06:07.123456789Z"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "reply",
+        "id": 1,
+        "reply": {
+          "Ok": {
+            "reply": "file_read",
+            "result": {
+              "Err": {
+                "kind": "io",
+                "message": "The source machine's exact error 中文",
+                "bytes": 0,
+                "observed": null
+              }
+            }
+          }
+        }
+      }
+    ],
+    "binary_payload": [
+      0,
+      255,
+      13,
+      10
+    ]
   }
 }

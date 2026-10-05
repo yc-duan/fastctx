@@ -3,7 +3,8 @@
 //! nothing (`fastctx_net::trust::Kind`). What concerns one resident it asks
 //! of that resident's machine itself, as a machine does for its user: so
 //! the words are known to have been typed on the device, and a watch comes
-//! straight from where the conversation lives. What concerns the whole
+//! straight from where the conversation lives; a file the user reads, it
+//! reads from the machine that has it. What concerns the whole
 //! World it hands to any machine's node, which makes the call for it as
 //! for a user at that machine, so the World is asked around in one place.
 //! A device never runs, writes, copies, asks a colleague or sends a
@@ -35,6 +36,9 @@ pub fn admit(node: &Node, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::Control { .. }
             | RemoteCall::Offers { .. }
             | RemoteCall::Watch { .. }
+            // Reading the user's own files, from the machine that has them:
+            // a byte stream, which no relay carries.
+            | RemoteCall::ReadFile { .. }
             | RemoteCall::Relay { .. }
     );
     if device && !users_own {

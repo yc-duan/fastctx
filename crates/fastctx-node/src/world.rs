@@ -192,6 +192,10 @@ impl fastctx_net::link::Node for Handler {
                     crate::talk::serve_watch(&node, resident, watch, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node).await.map(RemoteReply::Agents),
+                RemoteCall::ReadFile { request, read } => {
+                    let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;
+                    crate::file_read::serve(&node, request, read, stream).await
+                }
                 RemoteCall::Open { agent, town, text, model, reasoning_effort } => {
                     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
                     let (resident, landed) = crate::talk::open_here(&node, &from, agent, town, text, options).await?;

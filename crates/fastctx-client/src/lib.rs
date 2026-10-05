@@ -10,12 +10,14 @@
 //! it; [`Conversation`], talking to a resident and following its turns.
 
 pub mod conversation;
+pub mod file_read;
 pub mod host;
 pub mod shown;
 pub mod town;
 pub mod world;
 
 pub use conversation::{Conversation, Following, Moment};
+pub use file_read::Reading;
 pub use town::TownView;
 pub use world::{Error, Said, TownRecord, World};
 
@@ -189,6 +191,7 @@ impl Client {
                 Err(broken(format!("the node answered call {answered}, not {id}")))
             }
             NodeFrame::Watched { .. } => Err(broken("the node answered a call as a watch".to_string())),
+            NodeFrame::FileRead { .. } => Err(broken("use read_file to consume a file byte stream".to_string())),
         }
     }
 

@@ -22,6 +22,8 @@ use crate::{CallError, Client, ConnectError, Watching};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
+    FileRead(#[from] fastctx_types::file_read::FileReadError),
+    #[error(transparent)]
     Connect(#[from] ConnectError),
     #[error(transparent)]
     Call(#[from] CallError),
@@ -79,7 +81,7 @@ impl World {
         &self.dir
     }
 
-    async fn connect(&self) -> Result<Client, Error> {
+    pub(crate) async fn connect(&self) -> Result<Client, Error> {
         Ok(Client::connect_or_start_with(&self.dir, self.peer.clone(), self.node_program.as_deref()).await?)
     }
 

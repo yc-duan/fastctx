@@ -30,6 +30,7 @@ import type { WorldWho, NodesReply, TownSummary, JournalSummary } from "../src/w
 import type { WorldSince } from "../src/world/since";
 import type { WorldAgents } from "../src/world/agents";
 import type { Control, Controlled, Offers } from "../src/world/control";
+import type { FileReadPart, FileReadResult } from "../src/world/file-read";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
     events: SessionEvent[];
@@ -42,6 +43,16 @@ export const fixture = ${json.trimEnd()} satisfies {
   since: { replies: ({ reply: "since" } & WorldSince)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
   agents: { replies: ({ reply: "agents" } & WorldAgents)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
   control: { controls: Control[]; controlled: Controlled[]; offers: Offers[] };
+  // The page sees how a read ended and what was opened; the stream itself
+  // is the shell's.
+  file_read: {
+    calls: unknown;
+    replies: { reply: "file_read"; result: FileReadResult }[];
+    remote_calls: unknown;
+    remote_replies: unknown;
+    frames: ({ kind: "file_read"; id: number; part: FileReadPart } | { kind: "reply"; id: number; reply: unknown })[];
+    binary_payload: unknown;
+  };
 };
 `;
 const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);
