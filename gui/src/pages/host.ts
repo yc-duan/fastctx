@@ -12,6 +12,7 @@
 
 import type { Theme } from "../page/bridge";
 import { faces } from "./faces";
+import type { PageFrame } from "./frame";
 
 const PROTOCOL = "2026-01-26";
 
@@ -22,7 +23,7 @@ export interface HostContext {
 }
 
 export interface HostOptions {
-  frame: HTMLIFrameElement;
+  frame: PageFrame;
   version: string;
   context(): HostContext;
   /** Does what the page asked; what it resolves with is the answer. */
@@ -31,7 +32,7 @@ export interface HostOptions {
   ready?(): void;
   /** The frame no longer holds the page it was given: it navigated itself
    *  somewhere else, or loaded again. The host has stopped answering. */
-  left(): void;
+  left(error?: string): void;
 }
 
 type Id = string | number;
@@ -141,21 +142,11 @@ function hostContext(context: HostContext): Record<string, unknown> {
 }
 
 export class PageHost {
-  private readonly listen = (event: MessageEvent) => this.heard(event);
   private initialized = false;
-
-  private loads = 0;
   private closed = false;
-  /** The frame loads once with the page it was given. Whatever loads in it
-   *  after that is not that page, and is not answered. */
-  private readonly loaded = () => {
-    this.loads += 1;
-    if (this.loads > 1) this.leave();
-  };
 
   constructor(private readonly options: HostOptions) {
-    window.addEventListener("message", this.listen);
-    options.frame.addEventListener("load", this.loaded);
+    options.frame.listen(value => this.heard(value), error => this.leave(error));
   }
 
   /** Tells the page the theme or language changed. */
@@ -165,29 +156,30 @@ export class PageHost {
 
   close(): void {
     this.closed = true;
-    window.removeEventListener("message", this.listen);
-    this.options.frame.removeEventListener("load", this.loaded);
+    this.options.frame.close();
   }
 
-  private leave(): void {
+  private leave(error?: string): void {
     if (this.closed) return;
     this.close();
-    this.options.left();
+    this.options.left(error);
   }
 
   private post(message: object): void {
-    // The page's origin is opaque: "*" is the only target that reaches it,
-    // and the frame's own window is the only one addressed.
-    this.options.frame.contentWindow?.postMessage({ jsonrpc: "2.0", ...message }, "*");
+    if (!this.closed) this.options.frame.post({ jsonrpc: "2.0", ...message });
   }
 
-  private heard(event: MessageEvent): void {
-    if (!event.source || event.source !== this.options.frame.contentWindow) return;
-    const message = event.data as Message;
+  private heard(value: unknown): void {
+    if (this.closed) return;
+    const message = value as Message;
     if (!message || message.jsonrpc !== "2.0" || typeof message.method !== "string") return;
     const { id, method } = message;
     const params = message.params ?? {};
     if (id === undefined) {
+      if (method === "world/isolation-failed") {
+        this.leave(String(params.message));
+        return;
+      }
       // The World's runtime says so as the page's document goes away,
       // before anything that replaces it can speak in the same frame.
       if (method === "world/leaving") {

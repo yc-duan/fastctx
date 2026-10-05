@@ -1244,6 +1244,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "tauri-plugin-world-pages",
  "tokio",
  "uuid",
  "windows",
@@ -4578,6 +4579,19 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "tauri-plugin-world-pages"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "tokio",
+ "webview2-com",
+ "windows",
 ]
 
 [[package]]

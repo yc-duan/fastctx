@@ -722,11 +722,12 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(windows)]
+    #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
     let Some(desktop) = desktop_presence::enter().expect("starting World's desktop presence") else {
         return;
     };
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_world_pages::init())
         // Its script also sends every link that opens a new window to the
         // system's browser, where the webview alone would drop it.
         .plugin(tauri_plugin_opener::init())
@@ -803,8 +804,10 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build())
         .plugin(tauri_plugin_updater::Builder::new().build());
+    #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
+    let builder = builder.plugin(desktop_presence::plugin(desktop));
     #[cfg(windows)]
-    let builder = builder.plugin(desktop_presence::plugin(desktop)).plugin(titlebar::plugin());
+    let builder = builder.plugin(titlebar::plugin());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::plugin());
     let context = tauri::generate_context!();

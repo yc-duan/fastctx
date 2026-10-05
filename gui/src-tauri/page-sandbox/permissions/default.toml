@@ -1,0 +1,3 @@
+[default]
+description = "The main interface owns native page surfaces."
+permissions = ["allow-mount", "allow-place", "allow-post", "allow-close", "allow-font"]
