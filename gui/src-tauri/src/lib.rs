@@ -8,6 +8,8 @@
 mod setup;
 #[cfg(desktop)]
 mod terminal;
+#[cfg(desktop)]
+mod user_path;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

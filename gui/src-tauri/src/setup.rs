@@ -105,7 +105,8 @@ pub fn setup() -> Result<Setup, String> {
 }
 
 /// Puts the fastctx this application carries where the hosts and the
-/// service run it from.
+/// service run it from, and that directory on the user's PATH, so a
+/// terminal opened afterwards has the command.
 pub fn place() -> Result<String, String> {
     let places = places()?;
     if carried().is_none() {
@@ -115,6 +116,9 @@ pub fn place() -> Result<String, String> {
     if let Some(leftover) = report.leftovers.first() {
         return Err(format!("placed, but could not clear {leftover}"));
     }
+    let bin = installed.parent().ok_or("the placed fastctx has no directory")?;
+    crate::user_path::add(bin)
+        .map_err(|error| format!("{} is in place, but putting it on the PATH failed: {error}", installed.display()))?;
     Ok(installed.display().to_string())
 }
 
