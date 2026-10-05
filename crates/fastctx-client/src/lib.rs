@@ -18,6 +18,7 @@ pub mod device;
 pub mod file_read;
 pub mod host;
 mod management;
+pub mod pages;
 pub mod shown;
 pub mod town;
 pub mod world;
@@ -250,6 +251,11 @@ impl Watching {
 /// World's `run` started it; an agent's session, when that agent's own
 /// shell did, as its host says; otherwise whoever is at the terminal.
 pub fn command_peer() -> Peer {
+    if let Some(page) = std::env::var_os("FASTCTX_PAGE") {
+        let page = page.to_str().expect("FASTCTX_PAGE must be UTF-8");
+        let page = serde_json::from_str(page).expect("FASTCTX_PAGE must hold the page identity stamped by the node");
+        return Peer::Page { page };
+    }
     let resident = std::env::var("FASTCTX_RESIDENT").ok().and_then(|address| address.parse().ok());
     let set = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
     let session = match (set("CODEX_THREAD_ID"), set("CLAUDE_CODE_MESSAGING_SOCKET")) {

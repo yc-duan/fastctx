@@ -1,0 +1,304 @@
+//! Publications and user consent. Mutations compare the caller's base
+//! against a fresh ledger; immutable paths arbitrate cross-machine races.
+
+pub mod actions;
+pub mod read;
+
+use std::sync::Arc;
+
+use fastctx_types::ipc::Failure;
+use fastctx_types::pages::{
+    PageAct, PageCall, PageConsent, PageDraft, PageVersion, consent_path, html_path, version_path,
+};
+use fastctx_types::project::{Stamp, Writer};
+use fastctx_types::{MachineName, PageName, Reply, TownName};
+use jiff::Timestamp;
+
+use crate::Node;
+use crate::town::caller::Caller;
+
+pub async fn call(
+    node: &Arc<Node>,
+    caller: &Caller,
+    opened_on: &MachineName,
+    call: PageCall,
+) -> Result<Reply, Failure> {
+    match call {
+        PageCall::Publish { town, page, base, draft } => {
+            publisher(caller)?;
+            let town = caller.town_or(node, town)?;
+            let _writing = node.writing.lock().await;
+            refresh(node, &town).await?;
+            let stored = stored(node, &town, &page)?;
+            check_base(&page, base, stored.current().map(|v| v.version))?;
+            validate_acts(node, &town, &draft.acts).await?;
+            publish(node, caller, &town, &page, base, draft, false, None).await
+        }
+        PageCall::Withdraw { town, page, base } => {
+            publisher(caller)?;
+            let town = caller.town_or(node, town)?;
+            let _writing = node.writing.lock().await;
+            refresh(node, &town).await?;
+            let stored = stored(node, &town, &page)?;
+            check_base(&page, Some(base), stored.current().map(|v| v.version))?;
+            let current = stored.view(&town, &page, None).map_err(Failure::new)?;
+            let draft = PageDraft {
+                title: current.publication.title,
+                description: current.publication.description,
+                acts: Vec::new(),
+                html: String::new(),
+            };
+            publish(node, caller, &town, &page, Some(base), draft, true, None).await
+        }
+        PageCall::Restore { town, page, base, version } => {
+            publisher(caller)?;
+            let town = caller.town_or(node, town)?;
+            let _writing = node.writing.lock().await;
+            refresh(node, &town).await?;
+            let stored = stored(node, &town, &page)?;
+            check_base(&page, Some(base), stored.current().map(|v| v.version))?;
+            let source = stored.view(&town, &page, Some(version)).map_err(Failure::new)?;
+            let withdrawn = source.publication.withdrawn;
+            let draft = PageDraft {
+                title: source.publication.title,
+                description: source.publication.description,
+                acts: source.publication.acts,
+                html: source.html.unwrap_or_default(),
+            };
+            publish(node, caller, &town, &page, Some(base), draft, withdrawn, Some(version)).await
+        }
+        PageCall::Read { town, page, version } => {
+            let town = caller.town_or(node, town)?;
+            read_ready(node, &town).await?;
+            Ok(Reply::Page {
+                view: Box::new(stored(node, &town, &page)?.view(&town, &page, version).map_err(Failure::new)?),
+            })
+        }
+        PageCall::History { town, page } => {
+            let town = caller.town_or(node, town)?;
+            read_ready(node, &town).await?;
+            let stored = stored(node, &town, &page)?;
+            stored.view(&town, &page, None).map_err(Failure::new)?;
+            Ok(Reply::PageHistory { town, page, versions: stored.versions.into_values().map(|(v, _)| v).collect() })
+        }
+        PageCall::List { town } => {
+            let town = caller.town_or(node, town)?;
+            read_ready(node, &town).await?;
+            require_town(node, &town)?;
+            let pages = read::summaries(&node.world, &town).map_err(io_failure)?;
+            Ok(Reply::Pages { town, pages })
+        }
+        PageCall::Consent { town, page, version, base, acts } => {
+            user(caller)?;
+            let town = caller.town_or(node, town)?;
+            let _writing = node.writing.lock().await;
+            refresh(node, &town).await?;
+            let stored = stored(node, &town, &page)?;
+            check_base(&page, Some(version), stored.current().map(|v| v.version))?;
+            let current = stored.current().expect("checked current version");
+            let current_consent = stored.consent.as_ref().map(|c| c.version);
+            if base != current_consent {
+                let current = current_consent.map_or_else(|| "none".to_string(), |v| v.to_string());
+                return Err(Failure::new(format!(
+                    "consent for {page} is at version {current}; read the page before changing consent"
+                )));
+            }
+            if acts.iter().any(|act| {
+                !current.acts.contains(act) && !stored.consent.as_ref().is_some_and(|c| c.acts.contains(act))
+            }) {
+                return Err(Failure::new("consent includes an action this page has not declared"));
+            }
+            let consent = PageConsent {
+                version: next(base)?,
+                base,
+                page_version: version,
+                acts: unique(acts),
+                stamp: Stamp { by: Writer::User, on: opened_on.clone(), at: Timestamp::now() },
+            };
+            let files = vec![(consent_path(&page, consent.version), pretty(&consent)?)];
+            crate::ledger::write(node, &town, files, None).await.map_err(|failure| {
+                Failure::new(format!(
+                    "changing consent for {page}: {failure}; read the page before changing consent again"
+                ))
+            })?;
+            Ok(Reply::PageConsent { town, page, consent })
+        }
+        PageCall::Act { town, page, version, action } => {
+            user(caller)?;
+            let town = caller.town_or(node, town)?;
+            actions::relay(node, opened_on, town, page, version, action).await.map(|result| Reply::PageAct { result })
+        }
+    }
+}
+
+pub(super) fn stored(node: &Node, town: &TownName, page: &PageName) -> Result<read::Page, Failure> {
+    require_town(node, town)?;
+    Ok(read::all(&node.world, town).map_err(io_failure)?.remove(page).unwrap_or_default())
+}
+
+fn require_town(node: &Node, town: &TownName) -> Result<(), Failure> {
+    if crate::town::read::latest(&node.world, town).map_err(io_failure)?.is_none() {
+        return Err(crate::town::map::no_ledger(node, town));
+    }
+    Ok(())
+}
+
+pub(super) async fn refresh(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
+    crate::town::map::query(node, town).await?;
+    current(node, town, true).await
+}
+
+/// Online readers include consent just written on another device. When
+/// disconnected, the already replicated publication remains readable.
+async fn read_ready(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
+    crate::town::map::query(node, town).await?;
+    current(node, town, false).await
+}
+
+/// Queries the same verified ledger path for every relay, whether the
+/// project spans it or not. Reads may use an offline copy; an admission
+/// cannot use possibly superseded consent or a withdrawn publication.
+async fn current(node: &Arc<Node>, town: &TownName, required: bool) -> Result<(), Failure> {
+    let Some(link) = node.link() else { return require_town(node, town) };
+    let _syncing = node.syncing.lock().await;
+    let offline = || {
+        Failure::new(format!(
+            "cannot verify the current page and consent for {town}: the hub connection ended; no action was admitted"
+        ))
+    };
+    let Some(catalog) = link.try_ledger_catalog().await.map_err(Failure::new)? else {
+        return if required { Err(offline()) } else { Ok(()) };
+    };
+    let latest = catalog
+        .into_iter()
+        .find(|(name, _)| name == town)
+        .map(|(_, seq)| seq)
+        .ok_or_else(|| crate::town::map::no_ledger(node, town))?;
+    let complete = crate::ledger::take(node, &link, town, latest, true).await.map_err(Failure::new)?;
+    if !complete && required {
+        return Err(offline());
+    }
+    require_town(node, town)
+}
+
+pub(super) fn check_base(page: &PageName, base: Option<u32>, current: Option<u32>) -> Result<(), Failure> {
+    if base == current {
+        return Ok(());
+    }
+    Err(Failure::new(match current {
+        Some(current) => {
+            format!("page {page} is at version {current}; read it first, then publish with --base {current}")
+        }
+        None => format!("page {page} has no version yet; read before publishing without a base"),
+    }))
+}
+
+pub(super) fn user(caller: &Caller) -> Result<(), Failure> {
+    if matches!(caller, Caller::User) {
+        Ok(())
+    } else {
+        Err(Failure::new("only the user can change page consent or relay an open page's action"))
+    }
+}
+
+fn publisher(caller: &Caller) -> Result<(), Failure> {
+    if matches!(caller, Caller::Page(_)) { Err(Failure::new("pages cannot publish pages")) } else { Ok(()) }
+}
+
+fn next(base: Option<u32>) -> Result<u32, Failure> {
+    base.unwrap_or(0).checked_add(1).ok_or_else(|| Failure::new("the version number is exhausted"))
+}
+
+fn unique(acts: Vec<PageAct>) -> Vec<PageAct> {
+    let mut unique = Vec::new();
+    for act in acts {
+        if !unique.contains(&act) {
+            unique.push(act);
+        }
+    }
+    unique
+}
+
+async fn validate_acts(node: &Arc<Node>, town: &TownName, acts: &[PageAct]) -> Result<(), Failure> {
+    for act in acts {
+        match act {
+            PageAct::Run { machine, script } => {
+                if script.trim().is_empty() {
+                    return Err(Failure::new("a page run needs its exact nonempty command"));
+                }
+                if machine != &node.machine()
+                    && !node.link().is_some_and(|link| link.members().0.machines().any(|m| &m.name == machine))
+                {
+                    return Err(Failure::new(format!("{machine} is not a machine in this World")));
+                }
+            }
+            PageAct::Say { to } => actions::resident(node, town, to).await?,
+            PageAct::Journal { journal } => {
+                if !crate::town::read::journal_names(&node.world, town).map_err(io_failure)?.contains(journal) {
+                    return Err(Failure::new(format!("{town} has no journal {journal}")));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn publish(
+    node: &Arc<Node>,
+    caller: &Caller,
+    town: &TownName,
+    page: &PageName,
+    base: Option<u32>,
+    draft: PageDraft,
+    withdrawn: bool,
+    restored_from: Option<u32>,
+) -> Result<Reply, Failure> {
+    let version = next(base)?;
+    let publication = PageVersion {
+        version,
+        base,
+        title: draft.title,
+        description: draft.description,
+        acts: unique(draft.acts),
+        withdrawn,
+        restored_from,
+        by: caller.writer(),
+        on: node.machine(),
+        at: Timestamp::now(),
+    };
+    let mut files = vec![(version_path(page, version), pretty(&publication)?)];
+    let html = (!withdrawn).then_some(draft.html);
+    let html_bytes = html.as_ref().map_or(0, String::len);
+    if let Some(html) = &html {
+        files.push((html_path(page, version), html.as_bytes().to_vec()));
+    }
+    if let Err(failure) = crate::ledger::write(node, town, files, None).await {
+        if failure.message.contains("already") {
+            refresh(node, town).await?;
+            let current = stored(node, town, page)?.current().map(|v| v.version);
+            check_base(page, base, current)?;
+        }
+        return Err(Failure::new(format!("publishing page {page} (HTML {html_bytes} bytes): {failure}")));
+    }
+    let consent = stored(node, town, page)?.consent;
+    Ok(Reply::Page {
+        view: Box::new(fastctx_types::pages::PageView {
+            town: town.clone(),
+            page: page.clone(),
+            publication,
+            html,
+            consent,
+        }),
+    })
+}
+
+fn pretty(value: &impl serde::Serialize) -> Result<Vec<u8>, Failure> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|e| Failure::new(e.to_string()))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn io_failure(error: std::io::Error) -> Failure {
+    Failure::new(format!("reading the page ledger: {error}"))
+}

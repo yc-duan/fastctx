@@ -1,0 +1,142 @@
+//! File-based page publication and reads.
+
+use clap::{ArgAction, Subcommand};
+use fastctx_types::pages::{PageAct, PageCall, PageDraft};
+use fastctx_types::{Call, Reply, TownName};
+use std::path::PathBuf;
+
+use crate::ask;
+
+/// Minimal page guidance, kept in one place for the resident-facing copy.
+pub const PAGE_HELP: &str = "Publish a UTF-8 HTML file. Read before editing; publish again with --base VERSION. Declare actions with --run MACHINE COMMAND, --say MACHINE RESIDENT, or --write JOURNAL; repeat each as needed. The user must consent before a page acts.";
+
+#[derive(Subcommand)]
+pub enum PageCommand {
+    /// Publish a complete HTML page version.
+    Publish {
+        name: String,
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        /// Run this exact command on this machine; repeat for each command.
+        #[arg(long, num_args = 2, value_names = ["MACHINE", "COMMAND"], action = ArgAction::Append)]
+        run: Vec<String>,
+        /// Speak to this resident on this machine; repeat for each resident.
+        #[arg(long, num_args = 2, value_names = ["MACHINE", "RESIDENT"], action = ArgAction::Append)]
+        say: Vec<String>,
+        /// Write to this journal; repeat for each journal.
+        #[arg(long, value_name = "JOURNAL", action = ArgAction::Append)]
+        write: Vec<String>,
+        #[arg(long)]
+        base: Option<u32>,
+        #[arg(long)]
+        town: Option<String>,
+    },
+    /// Read a page, optionally writing its exact HTML to a file.
+    Read {
+        name: String,
+        #[arg(long)]
+        version: Option<u32>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        town: Option<String>,
+    },
+    /// List a project's pages.
+    List {
+        #[arg(long)]
+        town: Option<String>,
+    },
+}
+
+pub fn run(command: PageCommand) -> anyhow::Result<()> {
+    let town = |given: Option<String>| -> anyhow::Result<Option<TownName>> {
+        Ok(match given {
+            Some(town) => Some(town.parse()?),
+            None => ask::town_from_run(),
+        })
+    };
+    let mut output = None;
+    let mut reading = false;
+    let call = match command {
+        PageCommand::Publish { name, file, title, description, run, say, write, base, town: given } => {
+            let bytes = std::fs::read(&file).map_err(|e| anyhow::anyhow!("reading {}: {e}", file.display()))?;
+            let html = String::from_utf8(bytes)
+                .map_err(|_| anyhow::anyhow!("{} is not UTF-8 text; write the page in UTF-8", file.display()))?;
+            let mut acts = Vec::new();
+            for pair in run.chunks(2) {
+                acts.push(PageAct::Run { machine: pair[0].parse()?, script: pair[1].clone() });
+            }
+            for pair in say.chunks(2) {
+                acts.push(PageAct::Say {
+                    to: fastctx_types::Address { machine: pair[0].parse()?, resident: pair[1].parse()? },
+                });
+            }
+            for journal in write {
+                acts.push(PageAct::Journal { journal: journal.parse()? });
+            }
+            let draft = PageDraft {
+                title: title.unwrap_or_else(|| name.clone()),
+                description: description.unwrap_or_default(),
+                acts,
+                html,
+            };
+            PageCall::Publish { town: town(given)?, page: name.parse()?, base, draft }
+        }
+        PageCommand::Read { name, version, out, town: given } => {
+            reading = true;
+            output = out;
+            PageCall::Read { town: town(given)?, page: name.parse()?, version }
+        }
+        PageCommand::List { town: given } => PageCall::List { town: town(given)? },
+    };
+    let (reply, here) = ask::call(Call::Page(call))?;
+    match reply {
+        Reply::Page { view } => {
+            let version = &view.publication;
+            if let Some(path) = output {
+                let html = view.html.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("page {} version {} is withdrawn and has no HTML", view.page, version.version)
+                })?;
+                std::fs::write(&path, html.as_bytes())?;
+                println!(
+                    "=== page {} · {} on {here}, version {}, HTML written to {} ===",
+                    view.page,
+                    view.town,
+                    version.version,
+                    path.display()
+                );
+            } else {
+                println!(
+                    "=== page {} · {} on {here}, version {}{} ===",
+                    view.page,
+                    view.town,
+                    version.version,
+                    if version.withdrawn { "; withdrawn" } else { "" }
+                );
+                if reading {
+                    println!(
+                        "{}\n{}\nActions: {}",
+                        version.title,
+                        version.description,
+                        serde_json::to_string(&version.acts)?
+                    );
+                    if let Some(html) = &view.html {
+                        print!("{html}");
+                    }
+                }
+            }
+        }
+        Reply::Pages { town, pages } => {
+            println!("=== pages of {town} on {here} ({}) ===", pages.len());
+            for page in pages {
+                println!("{}", fastctx_hands::pages::line(&page));
+            }
+        }
+        other => anyhow::bail!("the node answered something else: {other:?}"),
+    }
+    Ok(())
+}

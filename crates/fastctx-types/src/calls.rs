@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::copy::{CopyReport, Place};
 use crate::project::{Attachment, JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use crate::residents::{Delivery, Hints, Host, Landed, Seen, Whereabouts};
-use crate::run::{RunReply, RunRequest};
+use crate::run::{JobOwner, RunReply, RunRequest};
 use crate::session::control::{Control, Controlled, Offers};
 use crate::town::{LookedUp, WorldWho};
 use crate::world::NodesReply;
@@ -19,42 +19,83 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
     /// A session says who it is; the node finds or makes its resident.
-    Arrive { host: Host, hints: Hints },
+    Arrive {
+        host: Host,
+        hints: Hints,
+    },
     /// Run a script for a resident of this machine, on this machine or on
     /// the machine `node` names.
-    Run { resident: ResidentId, request: RunRequest, node: Option<MachineName> },
+    Run {
+        resident: ResidentId,
+        request: RunRequest,
+        node: Option<MachineName>,
+    },
     /// Writes files for a resident of this machine, on this machine or on
     /// the machine `node` names.
-    Write { resident: ResidentId, op: WriteOp, node: Option<MachineName> },
+    Write {
+        resident: ResidentId,
+        op: WriteOp,
+        node: Option<MachineName>,
+    },
     /// Copies files or a directory from one machine to another.
-    Copy { from: Place, to: Place },
+    Copy {
+        from: Place,
+        to: Place,
+    },
     /// Reads a file's original bytes for the user, here or on `machine`.
     /// The connection carries `NodeFrame::FileRead` pieces until its reply.
-    ReadFile { machine: Option<MachineName>, request: crate::file_read::ReadFileRequest },
+    ReadFile {
+        machine: Option<MachineName>,
+        request: crate::file_read::ReadFileRequest,
+    },
     /// Asks for a colleague for a resident of this machine
     /// (`ask_colleague`): a Codex resident started on this machine or on
     /// the machine `node` names, with `prompt` as its first words. `label`
     /// is the task's few words.
-    Ask { resident: ResidentId, label: String, prompt: String, node: Option<MachineName> },
+    Ask {
+        resident: ResidentId,
+        label: String,
+        prompt: String,
+        node: Option<MachineName>,
+    },
     /// Words from a resident of this machine to another resident, on any
     /// machine (`message_colleague`); `machine` is where it lives, when the
     /// speaker said. The speaker is owed the end of the turn they go into.
-    Message { resident: ResidentId, to: ResidentId, machine: Option<MachineName>, text: String },
+    Message {
+        resident: ResidentId,
+        to: ResidentId,
+        machine: Option<MachineName>,
+        text: String,
+    },
     /// Records what a resident saw of files on this machine through
     /// `fastctx view`; the resident may live on another machine.
-    Saw { owner: Address, town: Option<TownName>, seen: Vec<Seen> },
+    Saw {
+        owner: Address,
+        town: Option<TownName>,
+        seen: Vec<Seen>,
+    },
     /// Who is in a town and what each is doing, asking each machine it spans
     /// (`fastctx w`); without a town, the caller's, or the World as a whole
     /// for a caller in none. With `all`, also the residents who have left.
-    Who { all: bool, town: Option<TownName> },
+    Who {
+        all: bool,
+        town: Option<TownName>,
+    },
     /// Existing records strictly after `since`, from every machine of `town`
     /// or the whole World when absent. No caller-town default is applied.
-    Since { since: Timestamp, town: Option<TownName> },
+    Since {
+        since: Timestamp,
+        town: Option<TownName>,
+    },
     /// Agent programs on one machine, or every online machine in the World.
-    Agents { machine: Option<MachineName> },
+    Agents {
+        machine: Option<MachineName>,
+    },
     /// One resident or job in detail, by its id, from every machine that
     /// has it (`fastctx w <id>`).
-    Look { ids: Vec<String> },
+    Look {
+        ids: Vec<String>,
+    },
     /// The user's words to a resident on any machine (`fastctx talk`);
     /// `machine` is where it lives, when the user said.
     Talk {
@@ -66,11 +107,18 @@ pub enum Call {
     },
     /// The user's byte stream, followed by an empty frame, on its own IPC
     /// connection. The final Uploaded reply is sent only after verification.
-    Upload { target: crate::attachments::UploadTarget, node: Option<MachineName>, file: crate::attachments::UploadFile },
+    Upload {
+        target: crate::attachments::UploadTarget,
+        node: Option<MachineName>,
+        file: crate::attachments::UploadFile,
+    },
     /// Watches a resident on any machine: the node answers with its history
     /// and then each event as it happens, for as long as the connection
     /// stays open.
-    Watch { resident: ResidentId, machine: Option<MachineName> },
+    Watch {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+    },
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.
     Open {
@@ -84,36 +132,65 @@ pub enum Call {
         attachments: Vec<crate::attachments::Attachment>,
     },
     /// Stops the turn a resident on any machine is running, for the user.
-    Stop { resident: ResidentId, machine: Option<MachineName> },
+    Stop {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+    },
     /// Does something to a resident's conversation on any machine for the
     /// user, besides speaking into it (`session::control`).
-    Control { resident: ResidentId, machine: Option<MachineName>, control: Control },
+    Control {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        control: Control,
+    },
     /// Manage this resident as the user, on its own machine.
-    Manage { resident: ResidentId, machine: Option<MachineName>, action: Management },
+    Manage {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        action: Management,
+    },
     /// What a resident's conversation on any machine offers now: the
     /// controls it takes, its commands and models, its usage.
-    Offers { resident: ResidentId, machine: Option<MachineName> },
+    Offers {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+    },
     /// How to open a resident of this machine in its host's own interface,
     /// for the user (`fastctx attach`).
-    Attach { resident: ResidentId },
+    Attach {
+        resident: ResidentId,
+    },
     /// What waits to be handed to a resident with the answer of a World
     /// tool, oldest first, with what it is to be told of where it is. It is
     /// handed to no other answer meanwhile.
-    Collect { resident: ResidentId },
+    Collect {
+        resident: ResidentId,
+    },
     /// The named notices from `Collect`, and all its town notes, went out
     /// with the answer. Unnamed notices remain waiting; an empty list can
     /// acknowledge the town notes alone.
-    Taken { resident: ResidentId, ids: Vec<NoticeId> },
+    Taken {
+        resident: ResidentId,
+        ids: Vec<NoticeId>,
+    },
     /// `fastctx project`.
     Project(ProjectCall),
     /// `fastctx journal`.
     Journal(JournalCall),
+    Page(crate::pages::PageCall),
     /// A supervisor says its job's record has changed: the shell started
     /// or exited, the output ended, or nothing of the job runs any more.
-    JobChanged { job: JobId, owner: Address, town: Option<TownName> },
+    JobChanged {
+        job: JobId,
+        owner: JobOwner,
+        town: Option<TownName>,
+    },
     /// Joins this machine to a World with a code, under `name` or the name
     /// it has.
-    Join { code: String, name: Option<MachineName> },
+    Join {
+        code: String,
+        name: Option<MachineName>,
+    },
     /// Makes an invitation for one more machine, or for a device such as a
     /// phone, which carries the user's words and looks and runs nothing.
     Invite {
@@ -123,7 +200,10 @@ pub enum Call {
         device: bool,
     },
     /// Revokes a member's key, so no machine trusts it any more.
-    Revoke { name: MachineName, reason: String },
+    Revoke {
+        name: MachineName,
+        reason: String,
+    },
     /// This machine leaves its World and becomes a World of one again.
     Leave,
     /// The node hands the World over once idle and exits: a system service
@@ -136,6 +216,26 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    Page {
+        view: Box<crate::pages::PageView>,
+    },
+    Pages {
+        town: TownName,
+        pages: Vec<crate::pages::PageSummary>,
+    },
+    PageHistory {
+        town: TownName,
+        page: crate::PageName,
+        versions: Vec<crate::pages::PageVersion>,
+    },
+    PageConsent {
+        town: TownName,
+        page: crate::PageName,
+        consent: crate::pages::PageConsent,
+    },
+    PageAct {
+        result: crate::pages::PageResult,
+    },
     Uploaded(crate::attachments::Attachment),
     Arrived(Whereabouts),
     Run(RunReply),

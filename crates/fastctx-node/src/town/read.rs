@@ -109,7 +109,11 @@ pub fn find_entry(world: &WorldDir, town: &TownName, id: &EntryId) -> io::Result
 pub fn writers<'a>(writers: impl Iterator<Item = &'a Writer>) -> usize {
     let mut seen: Vec<&Writer> = Vec::new();
     for writer in writers {
-        if !seen.contains(&writer) {
+        let same = |other: &&Writer| match (*other, writer) {
+            (Writer::Page { page: a }, Writer::Page { page: b }) => a.town == b.town && a.page == b.page,
+            _ => *other == writer,
+        };
+        if !seen.iter().any(same) {
             seen.push(writer);
         }
     }

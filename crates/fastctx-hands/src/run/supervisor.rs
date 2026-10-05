@@ -29,7 +29,7 @@ use super::{record, shell};
 /// World kept in `world`, until nothing of it runs any more.
 pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Result<()> {
     supervise_with(world, record_path, |world, record| {
-        let resident = world.owner(&record.machine, record.town.as_ref(), &record.owner);
+        let resident = world.job_owner(&record.machine, record.town.as_ref(), &record.owner);
         let (program, args) = shell::command(&resident.job_script(&record.id))?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
         let environment = shell::environment(&shell::Context {

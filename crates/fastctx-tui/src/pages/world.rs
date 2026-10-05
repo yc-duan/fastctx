@@ -187,7 +187,12 @@ impl WorldPage {
                             "{} · {} · {}",
                             job.machine,
                             words.since(job.started_at, ctx.now),
-                            words.started_by(&who::address_name(ctx, &job.owner))
+                            words.started_by(
+                                &job.owner
+                                    .resident()
+                                    .map(|owner| who::address_name(ctx, owner))
+                                    .unwrap_or_else(|| job.owner.to_string())
+                            )
                         ),
                         ctx.look.text(Role::Faint),
                     ));

@@ -141,7 +141,7 @@ impl TownView {
 
     /// What runs on with nobody here who started it.
     pub fn unattended(&self) -> Vec<&RunningJob> {
-        self.jobs.iter().filter(|job| !self.present.contains(&job.owner)).collect()
+        self.jobs.iter().filter(|job| job.owner.resident().is_none_or(|owner| !self.present.contains(owner))).collect()
     }
 
     /// Whether `machine` answered.

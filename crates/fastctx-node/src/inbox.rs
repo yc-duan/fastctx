@@ -243,7 +243,7 @@ fn parse_pending(directory: &ResidentDir, path: &Path, bytes: &[u8]) -> io::Resu
 /// has ended by then, nobody else will tell, and the caller does.
 pub fn owe_job(world: &WorldDir, here: &MachineName, job: &JobId, record_path: &Path) -> io::Result<JobRecord> {
     let job_record = record::read(record_path)?;
-    let directory = world.owner(here, job_record.town.as_ref(), &job_record.owner);
+    let directory = world.job_owner(here, job_record.town.as_ref(), &job_record.owner);
     match publish_new(&directory.job_owed(job), b"", Permissions::Private) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
@@ -255,10 +255,11 @@ pub fn owe_job(world: &WorldDir, here: &MachineName, job: &JobId, record_path: &
 /// Tells the resident that started the job of `record` that it ended, if it
 /// has and the resident is owed that word.
 pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<()> {
+    let Some(owner) = record.owner.resident() else { return Ok(()) };
     let Some(end) = &record.end else {
         return Ok(());
     };
-    let owed = node.world.owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(&record.id);
+    let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(&record.id);
     if !owed.exists() {
         return Ok(());
     }
@@ -271,7 +272,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         output: record.output.clone(),
     };
     let id = NoticeId::try_from(format!("{}-{}", record.machine, record.id)).expect("a machine and a job make an id");
-    tell(node, &record.owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;
+    tell(node, owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;
     match std::fs::remove_file(&owed) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),

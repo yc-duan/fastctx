@@ -40,7 +40,7 @@ impl ProgramUse {
 /// is used to remove copies. Existing jobs can only finish in the meantime.
 pub fn uses(world: &WorldDir) -> io::Result<Vec<ProgramUse>> {
     let mut uses = Vec::new();
-    for residents in world.resident_parents()? {
+    for residents in world.job_parents()? {
         for resident in entries(&residents)? {
             for path in entries(&resident.join("jobs"))? {
                 if path.extension().is_none_or(|extension| extension != "json") {

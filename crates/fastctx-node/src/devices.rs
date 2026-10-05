@@ -19,6 +19,7 @@ use fastctx_types::MachineName;
 use fastctx_types::calls::Call;
 use fastctx_types::ipc::{Failure, Peer};
 use fastctx_types::management::Management;
+use fastctx_types::pages::PageCall;
 use fastctx_types::remote::{RemoteCall, RemoteReply, RemoteResult};
 
 use crate::Node;
@@ -76,6 +77,15 @@ pub async fn relay(node: &Arc<Node>, from: &MachineName, call: serde_json::Value
             | Call::Nodes
             | Call::Project(_)
             | Call::Journal(_)
+            | Call::Page(
+                PageCall::Read { .. }
+                    | PageCall::List { .. }
+                    | PageCall::History { .. }
+                    | PageCall::Consent { .. }
+                    | PageCall::Act { .. }
+                    | PageCall::Withdraw { .. }
+                    | PageCall::Restore { .. }
+            )
     );
     if !made {
         return Err(Failure::new(
@@ -83,7 +93,10 @@ pub async fn relay(node: &Arc<Node>, from: &MachineName, call: serde_json::Value
         ));
     }
     let user = Peer::Command { resident: None, session: None };
-    let reply = crate::server::handle(node, &user, call).await?;
+    let reply = match call {
+        Call::Page(call) => crate::pages::call(node, &crate::town::caller::Caller::User, from, call).await?,
+        call => crate::server::handle(node, &user, call).await?,
+    };
     let reply = serde_json::to_value(reply).map_err(|error| Failure::new(format!("writing the answer: {error}")))?;
     Ok(RemoteReply::Relayed { answer: reply })
 }

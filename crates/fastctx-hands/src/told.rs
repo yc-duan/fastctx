@@ -47,6 +47,7 @@ pub fn told(notice: &Notice) -> String {
 /// reader knows who is speaking (`world-colleagues.md`, 两个工具).
 pub fn words(from: &Speaker, text: &str) -> String {
     let from = match from {
+        Speaker::Page { page } => page.to_string(),
         Speaker::User { machine } => format!("the user, on {machine}"),
         Speaker::Resident { address } => format!("{} on {}", address.resident, address.machine),
         Speaker::World => "the World".to_string(),

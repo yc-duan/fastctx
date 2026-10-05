@@ -11,13 +11,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use fastctx_platform::user_environment;
-use fastctx_types::{Address, MachineName, TownName};
+use fastctx_types::{MachineName, TownName};
 
 /// What the shell is told besides the user's environment.
 pub struct Context<'a> {
     pub machine: &'a MachineName,
-    /// The resident the job is for, at the machine it lives on.
-    pub owner: &'a Address,
+    /// Its resident or page identity, passed to commands the script starts.
+    pub owner: &'a fastctx_types::run::JobOwner,
     pub town: Option<&'a TownName>,
     /// The directory of the fastctx binary, put first on the PATH so that
     /// `fastctx view` and the other commands are this same version.
@@ -49,7 +49,16 @@ pub fn environment(context: &Context<'_>) -> io::Result<Vec<(OsString, OsString)
 /// environment. Resolving that environment belongs to the caller.
 pub fn environment_from(mut env: Vec<(OsString, OsString)>, context: &Context<'_>) -> Vec<(OsString, OsString)> {
     set(&mut env, "FASTCTX_MACHINE", context.machine.as_str());
-    set(&mut env, "FASTCTX_RESIDENT", context.owner.tag());
+    match context.owner {
+        fastctx_types::run::JobOwner::Resident(address) => {
+            set(&mut env, "FASTCTX_RESIDENT", address.tag());
+            unset(&mut env, "FASTCTX_PAGE");
+        }
+        fastctx_types::run::JobOwner::Page { page } => {
+            unset(&mut env, "FASTCTX_RESIDENT");
+            set(&mut env, "FASTCTX_PAGE", serde_json::to_string(page).expect("page identity serializes"));
+        }
+    }
     match context.town {
         Some(town) => set(&mut env, "FASTCTX_TOWN", town.as_str()),
         None => unset(&mut env, "FASTCTX_TOWN"),
