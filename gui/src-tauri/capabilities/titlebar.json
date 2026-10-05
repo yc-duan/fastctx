@@ -1,0 +1,7 @@
+{
+  "identifier": "world-titlebar",
+  "description": "The main Windows page may register its titlebar regions and operate its own window.",
+  "platforms": ["windows"],
+  "windows": ["main"],
+  "permissions": ["world-titlebar:default"]
+}

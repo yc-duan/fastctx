@@ -1214,6 +1214,7 @@ dependencies = [
  "tokio",
  "uuid",
  "windows",
+ "windows-core",
  "windows-registry",
 ]
 

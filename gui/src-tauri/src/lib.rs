@@ -36,6 +36,9 @@ mod desktop_presence;
 mod reading;
 mod uploading;
 
+#[cfg(windows)]
+mod titlebar;
+
 struct Shell {
     connection: connection::Connection,
     watches: Mutex<HashMap<u64, JoinHandle<()>>>,
@@ -656,6 +659,9 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build());
     #[cfg(windows)]
-    let builder = builder.plugin(desktop_presence::plugin(desktop));
-    builder.run(tauri::generate_context!()).expect("running the World's window");
+    let builder = builder.plugin(desktop_presence::plugin(desktop)).plugin(titlebar::plugin());
+    let context = tauri::generate_context!();
+    #[cfg(windows)]
+    let context = titlebar::configure(context);
+    builder.run(context).expect("running the World's window");
 }
