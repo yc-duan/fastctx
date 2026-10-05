@@ -9,7 +9,7 @@ import type { WorldAgents } from "./agents";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
-import type { Attachment } from "./attachments";
+import type { Attachment, UploadTarget } from "./attachments";
 import type { ConnectionState } from "./device";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
@@ -80,22 +80,22 @@ export function talk(who: Address, text: string, attachments: Attachment[] = [])
   return invoke("talk", { residentId: who.resident, machineName: who.machine, text, attachments });
 }
 
-/** Carries a file on this computer to the agent's machine for words to
- *  it; `sent` hears how many bytes have gone. */
-export function uploadPath(who: Address, path: string, sent: (bytes: number) => void): Promise<Attachment> {
+/** Carries a file on this computer to a machine, for an agent there or
+ *  one about to be asked in; `sent` hears how many bytes have gone. */
+export function uploadPath(machine: MachineName, target: UploadTarget, path: string, sent: (bytes: number) => void): Promise<Attachment> {
   const pieces = new Channel<number>();
   pieces.onmessage = sent;
-  return invoke("upload_path", { residentId: who.resident, machineName: who.machine, path, sent: pieces });
+  return invoke("upload_path", { target, machineName: machine, path, sent: pieces });
 }
 
-/** Carries bytes the page holds (a pasted picture) to the agent's machine.
- *  They go as the call's body; who and what as headers. */
-export async function uploadBytes(who: Address, file: File): Promise<Attachment> {
+/** Carries bytes the page holds (a pasted picture) to a machine. They go
+ *  as the call's body; where and what as headers. */
+export async function uploadBytes(machine: MachineName, target: UploadTarget, file: File): Promise<Attachment> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   return invoke("upload_bytes", bytes, {
     headers: {
-      resident: encodeURIComponent(who.resident),
-      machine: encodeURIComponent(who.machine),
+      target: encodeURIComponent(JSON.stringify(target)),
+      machine: encodeURIComponent(machine),
       name: encodeURIComponent(file.name),
       type: encodeURIComponent(file.type),
     },
@@ -111,8 +111,9 @@ export function open(
   text: string,
   model: string | null = null,
   effort: string | null = null,
+  attachments: Attachment[] = [],
 ): Promise<{ to: Address; landed: Landed }> {
-  return invoke("open", { agent, town, machineName: machine, text, model, effort });
+  return invoke("open", { agent, town, machineName: machine, text, model, effort, attachments });
 }
 
 /** What happened in the World after a moment, as each machine's records

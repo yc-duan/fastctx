@@ -219,23 +219,22 @@ async fn talk(
     Ok(Spoken { to: said.to, landed: said.landed })
 }
 
-/// Carries a file on this computer to a resident's machine, for words to
-/// it; `sent` hears how much has gone.
+/// Carries a file on this computer to a machine, for words to an agent
+/// there or to one about to be asked in; `sent` hears how much has gone.
 #[tauri::command]
 async fn upload_path(
     shell: tauri::State<'_, Shell>,
-    resident_id: String,
+    target: fastctx_types::attachments::UploadTarget,
     machine_name: Option<String>,
     path: String,
     sent: Channel<u64>,
 ) -> Result<fastctx_types::attachments::Attachment, String> {
-    let target = fastctx_types::attachments::UploadTarget::Resident { resident: resident(resident_id)? };
     uploading::from_path(&shell.world(), target, machine(machine_name)?, std::path::Path::new(&path), sent).await
 }
 
-/// Carries bytes the page holds to a resident's machine. The bytes are the
-/// body; whom they are for and what they are come as headers, each
-/// percent-encoded, since a name may be in any language.
+/// Carries bytes the page holds to a machine. The bytes are the body; whom
+/// they are for (the target as JSON) and what they are come as headers,
+/// each percent-encoded, since a name may be in any language.
 #[tauri::command]
 async fn upload_bytes(
     shell: tauri::State<'_, Shell>,
@@ -248,7 +247,8 @@ async fn upload_bytes(
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("the attachment's bytes did not come as bytes".into());
     };
-    let target = fastctx_types::attachments::UploadTarget::Resident { resident: resident(header("resident")?)? };
+    let target: fastctx_types::attachments::UploadTarget =
+        serde_json::from_str(&header("target")?).map_err(|error| format!("the upload's target: {error}"))?;
     let machine = machine(Some(header("machine")?).filter(|name| !name.is_empty()))?;
     uploading::from_bytes(&shell.world(), target, machine, header("name")?, header("type")?, bytes.clone()).await
 }
@@ -310,13 +310,14 @@ async fn open(
     text: String,
     model: Option<String>,
     effort: Option<String>,
+    attachments: Option<Vec<fastctx_types::attachments::Attachment>>,
 ) -> Result<Spoken, String> {
     let agent = AgentName::try_from(agent.as_str()).map_err(|error| error.to_string())?;
     let town = town.map(|town| TownName::try_from(town).map_err(|error| error.to_string())).transpose()?;
     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort: effort };
     let said = shell
         .world()
-        .open_with_options(agent, town, machine(machine_name)?, text, options)
+        .open_with_attachments(agent, town, machine(machine_name)?, text, options, attachments.unwrap_or_default())
         .await
         .map_err(|error| error.to_string())?;
     Ok(Spoken { to: said.to, landed: said.landed })

@@ -116,11 +116,20 @@
   color: var(--caution);
 }
 
+/* The first words, and above them what comes with them. */
+.first-words-box {
+  margin-top: var(--space-4);
+}
+
+.first-words-box .attach-tray {
+  margin-left: 0;
+}
+
 .first-words {
   display: block;
   width: 100%;
   min-height: 6em;
-  margin: var(--space-4) 0 0;
+  margin: 0;
   padding: var(--space-3) var(--space-4);
   border: 0;
   border-radius: var(--radius-m);
@@ -160,6 +169,26 @@
 .sheet-hint {
   font-size: var(--size-small);
   color: var(--text-3);
+}
+
+.sheet-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.sheet-tools .composer-attach {
+  margin-left: -6px;
+}
+
+/* A drop over the sheet covers just the sheet. */
+.new-talk-sheet .sheet-body {
+  position: relative;
+}
+
+.new-talk-sheet .drop-veil {
+  border-radius: var(--radius-l);
 }
 
 .sheet-go {

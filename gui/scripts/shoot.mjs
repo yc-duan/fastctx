@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "find", "attach", "rewind", "usage", "service", "mention", "decision", "log"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "slash", "drawer", "about", "asks", "asks-question", "asks-form", "asks-link", "new-codex", "new-attach", "find", "attach", "rewind", "usage", "service", "mention", "decision", "log"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -125,7 +125,7 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "mention" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" ? "new" : session;
+      const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "mention" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" || session === "new-attach" ? "new" : session;
       const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
       await send("Page.navigate", { url: `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}` });
       await loaded;
@@ -189,6 +189,32 @@ for (const session of sessions) {
       }
       if (session === "new-codex") {
         await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=agent][data-value=codex]')?.click())", awaitPromise: true });
+      }
+      if (session === "new-attach") {
+        // A picture and a log dropped on the sheet wait there; beginning
+        // sends them first, then asks the agent in (a specimen stops there).
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `(async () => {
+            await new Promise((r) => setTimeout(r, 300));
+            const canvas = document.createElement("canvas");
+            canvas.width = 320; canvas.height = 200;
+            const g = canvas.getContext("2d");
+            const grad = g.createLinearGradient(0, 0, 320, 200);
+            grad.addColorStop(0, "#7fa8cf"); grad.addColorStop(1, "#d97757");
+            g.fillStyle = grad; g.fillRect(0, 0, 320, 200);
+            const png = await new Promise((r) => canvas.toBlob(r, "image/png"));
+            const dt = new DataTransfer();
+            dt.items.add(new File([png], "bode-plot.png", { type: "image/png" }));
+            dt.items.add(new File(["x".repeat(64000)], "tuning-run-07.log", { type: "text/plain" }));
+            document.querySelector(".new-talk-sheet form").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+            const t = document.querySelector(".first-words");
+            t.value = "照着这张伯德图和这份调参日志，把相位裕度拉回 45 度以上";
+            t.dispatchEvent(new Event("input"));
+            document.querySelector(".new-talk-sheet .sheet-go").click();
+            await new Promise((r) => setTimeout(r, 2400));
+          })()`,
+        });
       }
       if (session === "invite") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.device-sheet .sheet-go')?.click()" });

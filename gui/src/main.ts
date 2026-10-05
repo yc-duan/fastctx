@@ -5,7 +5,7 @@
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Attachment } from "./world/attachments";
+import type { Attachment, UploadTarget } from "./world/attachments";
 import "katex/dist/katex.min.css";
 import "./design/fonts.css";
 import "./design/tokens.css";
@@ -72,7 +72,7 @@ import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenNow } from "./specimen/world";
-import { specimenComputer, specimenFiles, specimenOffers, specimenRead } from "./specimen/seams";
+import { specimenComputer, specimenFiles, specimenOffers, specimenRead, specimenUpload } from "./specimen/seams";
 import { applyTheme, chooseTheme, themes } from "./theme";
 import type { Address } from "./world/events";
 import type { ResidentDetail } from "./world/world";
@@ -151,14 +151,25 @@ const newTalk = new NewTalk({
   store,
   words: english ? enNewTalk : zhNewTalk,
   agents: (machine) => (live ? agents(machine) : Promise.resolve(specimenAgents(machine))),
-  async begin({ agent, machine, town, text, model, effort }) {
+  async begin({ agent, machine, town, text, model, effort, attachments }) {
     if (!live) throw new Error(english ? "this is a specimen" : "这是样例，没有连着世界");
-    const { to } = await openAgent(agent, machine, town, text, model, effort);
+    const { to } = await openAgent(agent, machine, town, text, model, effort, attachments);
     void store.refresh();
     return to;
   },
   opened(address) {
     location.hash = talkLink(address);
+  },
+  attach: {
+    words: (english ? enComposer : zhComposer).attach,
+    async upload(machine, target, source, progress) {
+      if (!live) return specimenUpload(machine, target, source, progress);
+      if (source.kind === "path") return uploadPath(machine, target, source.path, progress);
+      const done = await uploadBytes(machine, target, source.file);
+      progress(source.file.size);
+      return done;
+    },
+    ...(live ? { drops: windowDrops } : {}),
   },
 });
 
@@ -541,8 +552,9 @@ function liveTalk(address: Address): Page {
       words: composerWords.attach,
       seam: {
         upload: async (source, _name, progress) => {
-          if (source.kind === "path") return uploadPath(address, source.path, progress);
-          const done = await uploadBytes(address, source.file);
+          const target: UploadTarget = { kind: "resident", resident: address.resident };
+          if (source.kind === "path") return uploadPath(address.machine, target, source.path, progress);
+          const done = await uploadBytes(address.machine, target, source.file);
           progress(source.file.size);
           return done;
         },

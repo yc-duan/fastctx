@@ -33,8 +33,8 @@ export interface Attached {
   /** A picture of it, where the page holds its bytes. */
   preview: string | null;
   source: AttachSource;
-  state: "sending" | "ready" | "failed";
-  /** What the World answered once it arrived, handed back with the words. */
+  /** Waiting is a deferred tray's: held here until the words go. */
+  state: "waiting" | "sending" | "ready" | "failed";
   /** What the World answered for it, handed back with the words. */
   ref: unknown;
   why: string | null;
@@ -60,6 +60,9 @@ export class AttachTray {
     private readonly seam: AttachSeam,
     /** Something attached changed: the composer redraws what depends on it. */
     private readonly changed: () => void,
+    /** Holds what is attached until `sendAll`, for words whose agent is
+     *  still being chosen; otherwise each file goes as it is added. */
+    private readonly deferred = false,
   ) {
     this.element = document.createElement("ul");
     this.element.className = "attach-tray";
@@ -68,7 +71,7 @@ export class AttachTray {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-remove], [data-retry]");
       if (!button) return;
       if (button.dataset.remove) this.remove(button.dataset.remove);
-      else this.send(this.items.find((item) => item.key === button.dataset.retry)!);
+      else void this.send(this.items.find((item) => item.key === button.dataset.retry)!);
     });
   }
 
@@ -107,6 +110,35 @@ export class AttachTray {
     return this.items.length;
   }
 
+  /** What the World answered for each attached file that has arrived. */
+  get arrived(): unknown[] {
+    return this.items.filter((item) => item.state === "ready").map((item) => item.ref);
+  }
+
+  /** Sends what is held, one after another, since the first may make the
+   *  place the rest go to; resolves when all have arrived, or rejects with
+   *  the first that did not. */
+  async sendAll(): Promise<void> {
+    for (const item of [...this.items]) {
+      // One taken out while the others went is not sent.
+      if (item.state === "ready" || !this.items.includes(item)) continue;
+      await this.send(item);
+      if (item.state === "failed") throw new Error(item.why ?? item.name);
+    }
+  }
+
+  /** What was sent no longer fits where the words will go (another
+   *  machine, agent or project was chosen): all of it waits again. */
+  reset(): void {
+    if (!this.deferred) return;
+    for (const item of this.items) {
+      item.state = "waiting";
+      item.ref = null;
+      item.why = null;
+    }
+    this.draw();
+  }
+
   /** What arrived, for sending with the words; the tray is emptied. */
   take(): { refs: unknown[]; shown: Attached[] } {
     const ready = this.items.filter((item) => item.state === "ready");
@@ -117,17 +149,18 @@ export class AttachTray {
 
   private add(fields: Omit<Attached, "key" | "state" | "ref" | "why">): void {
     serial += 1;
-    const item: Attached = { ...fields, key: `attach-${serial}`, state: "sending", ref: null, why: null };
+    const item: Attached = { ...fields, key: `attach-${serial}`, state: this.deferred ? "waiting" : "sending", ref: null, why: null };
     this.items.push(item);
-    this.send(item);
+    if (this.deferred) this.draw();
+    else void this.send(item);
   }
 
-  private send(item: Attached): void {
+  private send(item: Attached): Promise<void> {
     item.state = "sending";
     item.why = null;
     this.sent.set(item.key, 0);
     this.draw();
-    this.seam
+    return this.seam
       .upload(item.source, item.name, (sent) => {
         this.sent.set(item.key, sent);
         this.progress(item);

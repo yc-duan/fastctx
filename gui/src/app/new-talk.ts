@@ -6,10 +6,18 @@
 // chosen, and only agents its own programs say can start there; their
 // models are those the program lists. Once the agent is asked in, its
 // conversation opens and its first turn is watched from the start.
+//
+// Files may come with the first words. They wait in the sheet while the
+// machine, agent and project are still being chosen, and go when the
+// conversation is begun: the first makes a place on the chosen machine for
+// the agent about to be asked in, the rest join it there, and the agent
+// starts in that place with all of them.
 
+import { AttachTray, type AttachSource, type AttachWords } from "../conversation/attach";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
+import type { Attachment, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
 import type { Store } from "./store";
@@ -23,6 +31,8 @@ export interface Begun {
   /** The program's own model and effort names; its defaults where null. */
   model: string | null;
   effort: string | null;
+  /** What was attached, already on the machine, for the agent to start with. */
+  attachments: Attachment[];
 }
 
 export interface NewTalkOptions {
@@ -32,6 +42,15 @@ export interface NewTalkOptions {
   agents(machine: string): Promise<WorldAgents>;
   begin(begun: Begun): Promise<Address>;
   opened(address: Address): void;
+  /** Attaching files to the first words, where the World can carry them. */
+  attach?: {
+    words: AttachWords;
+    /** Carries one file to a machine for the conversation about to begin. */
+    upload(machine: string, target: UploadTarget, source: AttachSource, progress: (sent: number) => void): Promise<Attachment>;
+    /** Files dropped onto the window, by path, where the shell gives them
+     *  so; returns how to stop listening. */
+    drops?(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void;
+  };
 }
 
 interface Choice {
@@ -85,6 +104,11 @@ export class NewTalk {
   private effort: string | null = null;
   private asked = new Map<string, Asked>();
   private busy = false;
+  private tray: AttachTray | null = null;
+  /** The place on a machine the files sent so far went to, and for which
+   *  machine, agent and project; another choice needs another place. */
+  private draft: { resident: string; for: string } | null = null;
+  private stopDrops: (() => void) | null = null;
 
   constructor(private readonly options: NewTalkOptions) {
     const { words } = options;
@@ -98,10 +122,13 @@ export class NewTalk {
           <button class="icon-button sheet-close" type="button" aria-label="${escape(words.cancel)}">${glyph("close", 18)}</button>
         </header>
         <div class="choices"></div>
-        <textarea class="first-words" rows="3" placeholder="${escape(words.firstWords)}"></textarea>
+        <div class="first-words-box">
+          <div class="sheet-tray"></div>
+          <textarea class="first-words" rows="3" placeholder="${escape(words.firstWords)}"></textarea>
+        </div>
         <p class="sheet-note" hidden></p>
         <footer class="sheet-foot">
-          <span class="sheet-hint">${escape(words.hint)}</span>
+          <span class="sheet-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><span class="sheet-hint">${escape(words.hint)}</span></span>
           <button class="sheet-go" type="submit">${escape(words.start)}</button>
         </footer>
       </form>`;
@@ -117,7 +144,7 @@ export class NewTalk {
     });
     this.dialog.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-choice]");
-      if (!button || button.disabled) return;
+      if (!button || button.disabled || this.busy) return;
       const value = button.dataset.value!;
       switch (button.dataset.choice) {
         case "machine":
@@ -152,6 +179,99 @@ export class NewTalk {
         void this.submit();
       }
     });
+    this.dialog.addEventListener("close", () => {
+      this.stopDrops?.();
+      this.stopDrops = null;
+    });
+    if (options.attach) this.attaching(options.attach);
+  }
+
+  /** Files come with the first words: picked with the paperclip, pasted,
+   *  or dropped onto the sheet. */
+  private attaching(attach: NonNullable<NewTalkOptions["attach"]>): void {
+    const tray = new AttachTray(
+      attach.words,
+      {
+        upload: async (source, _name, progress) => {
+          const machine = this.machine!;
+          const chosen = this.chosen();
+          const target: UploadTarget =
+            this.draft?.for === chosen
+              ? { kind: "draft", resident: this.draft.resident, town: this.town }
+              : { kind: "new", agent: this.agent, town: this.town };
+          const done = await attach.upload(machine, target, source, progress);
+          this.draft = { resident: done.owner.resident, for: chosen };
+          return done;
+        },
+      },
+      () => this.drawStart(),
+      true,
+    );
+    this.tray = tray;
+    this.dialog.querySelector(".sheet-tray")!.replaceWith(tray.element);
+    const button = this.dialog.querySelector<HTMLButtonElement>(".composer-attach")!;
+    const pick = this.dialog.querySelector<HTMLInputElement>(".composer-pick")!;
+    button.hidden = false;
+    button.innerHTML = glyph("attach", 18);
+    button.setAttribute("aria-label", attach.words.attach);
+    button.title = attach.words.attach;
+    button.addEventListener("click", () => pick.click());
+    pick.addEventListener("change", () => {
+      if (pick.files) tray.addFiles(pick.files);
+      pick.value = "";
+      this.input.focus();
+    });
+    this.input.addEventListener("paste", (event) => {
+      const files = [...(event.clipboardData?.files ?? [])];
+      if (!files.length) return;
+      // Pasted files are attached; pasted words still go into the words.
+      if (!event.clipboardData?.getData("text/plain")) event.preventDefault();
+      tray.addFiles(files);
+    });
+    const veil = document.createElement("div");
+    veil.className = "drop-veil";
+    veil.hidden = true;
+    veil.innerHTML = `<div class="drop-card">${glyph("attach", 22)}<span>${escape(this.options.words.dropHere)}</span></div>`;
+    this.form.append(veil);
+    // In a browser, files dragged over the sheet; in the shell, the window
+    // takes the drop and gives their paths, heard while the sheet is open.
+    let depth = 0;
+    this.form.addEventListener("dragenter", (event) => {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      depth += 1;
+      veil.hidden = false;
+    });
+    this.form.addEventListener("dragleave", () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) veil.hidden = true;
+    });
+    this.form.addEventListener("dragover", (event) => {
+      if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+    });
+    this.form.addEventListener("drop", (event) => {
+      depth = 0;
+      veil.hidden = true;
+      if (!event.dataTransfer?.files.length) return;
+      event.preventDefault();
+      if (!this.busy) tray.addFiles(event.dataTransfer.files);
+    });
+    this.listen = () =>
+      attach.drops?.({
+        over: (over) => {
+          if (this.dialog.open) veil.hidden = !over;
+        },
+        dropped: (paths) => {
+          veil.hidden = true;
+          if (this.dialog.open && !this.busy) tray.addPaths(paths);
+        },
+      }) ?? null;
+  }
+
+  private listen: () => (() => void) | null = () => null;
+
+  /** The machine, agent and project the files go for. */
+  private chosen(): string {
+    return JSON.stringify([this.machine, this.agent, this.town]);
   }
 
   /** Opens the sheet; `town` is the project to begin in, when opened from
@@ -172,7 +292,10 @@ export class NewTalk {
     this.asked.clear();
     if (this.machine) this.ask(this.machine);
     this.draw();
-    if (!this.dialog.open) this.dialog.showModal();
+    if (!this.dialog.open) {
+      this.dialog.showModal();
+      this.stopDrops = this.listen();
+    }
     this.input.focus();
   }
 
@@ -301,25 +424,41 @@ export class NewTalk {
       efforts.length > 1 ? row("effort", words.effort, efforts.map((e) => ({ value: e, label: e })), this.effort) : "",
       row("town", words.project, towns, this.town),
     ].join("");
+    // What was sent went for another machine, agent or project: it is sent
+    // again, to the one chosen now, when the conversation begins.
+    if (this.draft && this.draft.for !== this.chosen()) {
+      this.draft = null;
+      this.tray?.reset();
+    }
     this.drawStart();
   }
 
   private drawStart(): void {
     const chosen = this.agents().find((choice) => choice.value === this.agent);
-    this.start.disabled = this.busy || !this.machine || !!chosen?.disabled || this.input.value.trim() === "";
+    const said = this.input.value.trim() !== "" || (this.tray?.count ?? 0) > 0;
+    this.start.disabled = this.busy || !this.machine || !!chosen?.disabled || !said;
   }
 
   private async submit(): Promise<void> {
     const text = this.input.value.trim();
-    if (this.busy || !this.machine || !text || this.start.disabled) return;
+    if (this.busy || !this.machine || this.start.disabled || (!text && !this.tray?.count)) return;
     this.busy = true;
     this.drawStart();
-    this.start.textContent = this.options.words.starting;
     this.note.hidden = true;
     remember("agent", this.agent);
     if (this.model) remember(`model:${this.agent}`, this.model);
     if (this.effort) remember(`effort:${this.agent}`, this.effort);
+    const { words } = this.options;
     try {
+      if (this.tray?.count) {
+        this.start.textContent = words.sendingFiles;
+        try {
+          await this.tray.sendAll();
+        } catch (error) {
+          throw new NotSent(String(error));
+        }
+      }
+      this.start.textContent = words.starting;
       const address = await this.options.begin({
         agent: this.agent,
         machine: this.machine,
@@ -327,14 +466,18 @@ export class NewTalk {
         text,
         model: this.model,
         effort: this.effort,
+        attachments: (this.tray?.arrived ?? []) as Attachment[],
       });
       this.input.value = "";
+      this.tray?.take();
+      this.draft = null;
       this.busy = false;
       this.dialog.close();
       this.options.opened(address);
     } catch (error) {
       this.busy = false;
-      this.note.textContent = this.options.words.notOpened(String(error));
+      this.note.textContent =
+        error instanceof NotSent ? words.filesNotSent : words.notOpened(error instanceof Error ? error.message : String(error));
       this.note.hidden = false;
     } finally {
       this.start.textContent = this.options.words.start;
@@ -342,3 +485,7 @@ export class NewTalk {
     }
   }
 }
+
+/** A file attached to the first words did not reach the machine; the tray
+ *  says which, and why. */
+class NotSent extends Error {}

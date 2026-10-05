@@ -58,6 +58,12 @@ export interface NewTalkWords {
   hint: string;
   start: string;
   starting: string;
+  /** Said while what is attached goes to the machine, before the agent is
+   *  asked in. */
+  sendingFiles: string;
+  /** Said over the sheet while files are dragged onto it. */
+  dropHere: string;
+  filesNotSent: string;
   cancel: string;
   notOpened(why: string): string;
 }
@@ -82,6 +88,9 @@ export const zhNewTalk: NewTalkWords = {
   hint: "Enter 开始 · Shift+Enter 换行",
   start: "开始",
   starting: "正在请它进来…",
+  sendingFiles: "正在送文件…",
+  dropHere: "放下，就随第一句话一起带过去",
+  filesNotSent: "有文件没送过去，见上面；再试一次，或者拿掉它",
   cancel: "关闭",
   notOpened: (why) => `没能请它进来：${why}`,
 };
@@ -106,6 +115,9 @@ export const enNewTalk: NewTalkWords = {
   hint: "Enter to begin · Shift+Enter for a new line",
   start: "Begin",
   starting: "Asking it in…",
+  sendingFiles: "Sending files…",
+  dropHere: "Drop to bring along with the first words",
+  filesNotSent: "A file did not get there, see above; try again, or remove it",
   cancel: "Close",
   notOpened: (why) => `Could not ask it in: ${why}`,
 };

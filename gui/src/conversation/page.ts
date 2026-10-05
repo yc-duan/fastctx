@@ -509,11 +509,12 @@ export class ConversationPage {
     this.stopDrops =
       attach.drops?.({
         over: (over) => {
-          if (this.element.isConnected) veil.hidden = !over;
+          if (this.element.isConnected && !document.querySelector("dialog[open]")) veil.hidden = !over;
         },
         dropped: (paths) => {
           veil.hidden = true;
-          if (this.element.isConnected) tray.addPaths(paths);
+          // A sheet open over the conversation takes what is dropped on it.
+          if (this.element.isConnected && !document.querySelector("dialog[open]")) tray.addPaths(paths);
         },
       }) ?? null;
   }

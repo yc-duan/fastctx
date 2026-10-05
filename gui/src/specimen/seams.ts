@@ -6,6 +6,8 @@ import type { Setup } from "../world/bridge";
 import type { FileRange } from "../world/file-read";
 import type { TextRead } from "../app/reader";
 import type { Offers } from "../world/control";
+import type { Attachment, UploadTarget } from "../world/attachments";
+import type { AttachSource } from "../conversation/attach";
 
 /** What a specimen conversation offers, so its menus can be looked at. */
 export const specimenOffers: Offers = {
@@ -117,4 +119,40 @@ export async function specimenRead(machine: string, path: string, range: FileRan
 在 lab 上跑 400 轮仿真，阶跃响应的超调不超过 5%，稳态误差在 $\\pm 0.2^\\circ$ 以内。
 `;
   return { info: { machine, path, file: { size: text.length, modified }, offset: 0, length: text.length }, text };
+}
+
+/** A specimen carries nothing anywhere: a file for a new conversation
+ *  arrives after a moment, in a place made up for it, so the sheet can be
+ *  looked at. */
+export function specimenUpload(
+  machine: string,
+  target: UploadTarget,
+  source: AttachSource,
+  progress: (sent: number) => void,
+): Promise<Attachment> {
+  const name = source.kind === "bytes" ? source.file.name : (source.path.split(/[\/]/).pop() ?? source.path);
+  const size = source.kind === "bytes" ? source.file.size : 0;
+  const resident = target.kind === "new" ? `${target.agent}-specimen` : target.resident;
+  return new Promise((resolve) => {
+    let sent = 0;
+    const step = () => {
+      sent = Math.min(size, sent + Math.max(1, size / 8));
+      progress(sent);
+      if (sent < size) {
+        setTimeout(step, 120);
+        return;
+      }
+      resolve({
+        id: `attachment-${Math.random().toString(16).slice(2, 10)}` as Attachment["id"],
+        owner: { resident, machine } as Attachment["owner"],
+        town: target.kind === "resident" ? null : target.town,
+        path: `/home/lenovo/.fastctx/world/attachments/${name}`,
+        name,
+        media_type: source.kind === "bytes" ? source.file.type || "application/octet-stream" : "application/octet-stream",
+        size,
+        sha256: "0".repeat(64),
+      });
+    };
+    step();
+  });
 }
