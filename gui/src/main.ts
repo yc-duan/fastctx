@@ -30,7 +30,7 @@ import { SettingsPage, legacySaid } from "./app/settings";
 import { ReaderPage } from "./app/reader";
 import { WelcomePage } from "./app/welcome";
 import { Shell, pageHead, type Page } from "./app/shell";
-import { effect } from "./app/signals";
+import { effect, signal } from "./app/signals";
 import { createStore, jobsOf, residentsOf } from "./app/store";
 import {
   enComposer,
@@ -78,6 +78,7 @@ import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { PageScreen } from "./pages/view";
 import { manage as manageResident, type Management } from "./world/management";
+import { renewalState, renewHere, renewGuardianHere, type VersionMismatch } from "./world/renewal";
 import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
 import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
@@ -160,6 +161,21 @@ let asDevice = live ? !onComputer() : params.has("phone");
 const head = (title: string, actions?: string) => pageHead(shellWords, title, actions);
 
 let place: Place = { kind: "home" };
+
+/** The World on this computer, where it is older than the interface: the
+ *  node refuses an interface of another protocol, and the reason is asked
+ *  of the program that can still read it. */
+const oldWorld = signal<VersionMismatch | null>(null);
+if (live && onComputer()) {
+  effect(() => {
+    if (!store.trouble.get()) {
+      oldWorld.set(null);
+      return;
+    }
+    // Where it cannot be read either, the refusal itself is what is said.
+    void renewalState().then((status) => oldWorld.set(status.mismatch), () => {});
+  });
+}
 
 const newTalk = new NewTalk({
   store,
@@ -475,7 +491,7 @@ function home(): Page {
         void ask();
       }
     }
-    if (trouble) page.unreachable(trouble, now);
+    if (trouble) page.unreachable(trouble, now, oldWorld.get());
     if (live && document.visibilityState === "visible" && world) seen.now();
   });
   return {
@@ -950,7 +966,25 @@ function show(next: Place): void {
           location.replace(url);
         },
         ago: (at, now) => homeWords.ago(now.getTime() - at.getTime()),
-        computer: live ? (onComputer() ? { setup: setupState, keep: keepHere, release: releaseHere } : undefined) : specimenComputer(),
+        computer: live
+          ? onComputer()
+            ? {
+                setup: setupState,
+                keep: keepHere,
+                release: releaseHere,
+                renewing: {
+                  state: renewalState,
+                  // The program the interface carries is put in place,
+                  // then the node is asked to hand over to it.
+                  renew: async () => {
+                    await placeFastctx();
+                    await renewHere();
+                  },
+                  guardian: renewGuardianHere,
+                },
+              }
+            : undefined
+          : specimenComputer(),
       });
       break;
   }

@@ -2,6 +2,7 @@
 // nothing anywhere, so each part of the interface can be looked at in a
 // plain browser.
 
+import type { RenewalStatus } from "../world/renewal";
 import type { Setup } from "../world/bridge";
 import type { FileRange } from "../world/file-read";
 import type { TextRead } from "../app/reader";
@@ -86,6 +87,19 @@ export function specimenComputer() {
     release: () => {
       kept = false;
       return after({ kind: "removed" as const });
+    },
+    // An older World than the interface, as a computer that has not been
+    // brought up to date shows it.
+    renewing: {
+      state: async (): Promise<RenewalStatus> => ({
+        node: null,
+        mismatch: { node_version: "1.0.0", node_protocol: 5, client_version: "1.0.0", client_protocol: 6 },
+        pending: null,
+        phase: null,
+        error: null,
+      }),
+      renew: () => after(undefined).then(() => Promise.reject(new Error("this is a specimen"))),
+      guardian: () => after(undefined),
     },
   };
 }

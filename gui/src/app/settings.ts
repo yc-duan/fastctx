@@ -6,6 +6,7 @@ import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
+import { RenewalRow, type Renewing } from "./renewal";
 import { desktopAvailable } from "../world/desktop";
 import { chooseNotifying, notifying } from "./presence";
 import type { Page } from "./shell";
@@ -27,6 +28,8 @@ export interface SettingsOptions {
     setup(): Promise<Setup>;
     keep(): Promise<KeptNow>;
     release(): Promise<KeptNow>;
+    /** Which World it runs, and putting a new one in place. */
+    renewing: Renewing;
   } | undefined;
 }
 
@@ -43,6 +46,7 @@ export class SettingsPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
   private stop: () => void;
+  private renewal: RenewalRow | null = null;
   private device: HTMLElement;
   private service: HTMLElement;
   private setup: Setup | null = null;
@@ -59,7 +63,7 @@ export class SettingsPage implements Page {
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-service" hidden></dl></section>
+        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-service" hidden></dl><dl class="facts settings-renewal" hidden></dl></section>
         <section class="home-section"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
@@ -68,6 +72,8 @@ export class SettingsPage implements Page {
     this.service = this.element.querySelector<HTMLElement>(".settings-service")!;
     this.drawLook();
     this.askService();
+    const renewing = options.computer?.renewing;
+    if (renewing) this.renewal = new RenewalRow(this.element.querySelector<HTMLElement>(".settings-renewal")!, words, renewing);
     this.service.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-service]");
       if (button && !button.disabled) this.serve(button.dataset.service as "keep" | "release");
@@ -105,6 +111,7 @@ export class SettingsPage implements Page {
 
   leave(): void {
     this.stop();
+    this.renewal?.leave();
   }
 
   private askService(): void {

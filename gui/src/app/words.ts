@@ -171,6 +171,16 @@ export interface SettingsWords {
   stopped(reason: string): string;
   notInShell: string;
   service: string;
+  /** Which World this computer runs, and putting the new one in place. */
+  worldVersion: string;
+  versionHere(version: string): string;
+  versionOld(node: string, nodeProtocol: number, client: string, clientProtocol: number): string;
+  versionNone: string;
+  renew: string;
+  renewPhase: Record<import("../world/renewal").RenewalPhase, string>;
+  renewFailed(why: string): string;
+  guardian: string;
+  guardianWhy: string;
   serviceOn: string;
   serviceOff: string;
   keep: string;
@@ -217,6 +227,27 @@ export const zhSettings: SettingsWords = {
   stopped: (reason) => `没有在连：${reason}`,
   notInShell: "在浏览器里看的是样例，没有连着世界。",
   service: "开机服务",
+  worldVersion: "世界的版本",
+  versionHere: (version) => `${version}，和界面一致`,
+  versionOld: (node, nodeProtocol, client, clientProtocol) =>
+    `这台电脑上跑的是旧版 ${node}（协议 ${nodeProtocol}），界面是 ${client}（协议 ${clientProtocol}），两边说不上话`,
+  versionNone: "这台电脑上的世界此刻没有在跑",
+  renew: "换成新版",
+  renewPhase: {
+    staged: "新版已经备好，还没换上",
+    preparing: "正在准备新版",
+    waiting_for_idle: "等手上的活告一段落再换，正在跑的不会被打断",
+    awaiting_administrator: "还差一步要管理员确认：更新开机后让这台电脑留在世界里的那部分。手上的活照常",
+    awaiting_legacy_exit:
+      "新版已经备好，等旧版自己退出后接班。旧版交班时可能丢掉一句刚送出的话，所以不强行替换；重启这台电脑就会换上",
+    updating_guardian: "正在更新开机常驻的那部分",
+    returning_to_service: "正在交回给开机服务",
+    complete: "换好了",
+    failed: "没换成",
+  },
+  renewFailed: (why) => `没换成：${why}`,
+  guardian: "请管理员确认",
+  guardianWhy: "更新开机后保持这台电脑在线的那部分；正在做的事照常",
   serviceOn: "装着：这台电脑开机后，没人登录，世界也在这里",
   serviceOff: "没装：只有你登录着时，世界才在这里",
   keep: "装上",
@@ -271,6 +302,28 @@ export const enSettings: SettingsWords = {
   stopped: (reason) => `not connecting: ${reason}`,
   notInShell: "In a browser this is a specimen, not connected to the World.",
   service: "Startup service",
+  worldVersion: "World version",
+  versionHere: (version) => `${version}, the same as this interface`,
+  versionOld: (node, nodeProtocol, client, clientProtocol) =>
+    `This computer runs the older ${node} (protocol ${nodeProtocol}); this interface is ${client} (protocol ${clientProtocol}), and the two cannot talk`,
+  versionNone: "The World is not running on this computer now",
+  renew: "Put the new one in place",
+  renewPhase: {
+    staged: "The new version is ready and not in place yet",
+    preparing: "Preparing the new version",
+    waiting_for_idle: "Waiting for the work at hand to pause; nothing running is cut short",
+    awaiting_administrator:
+      "One step needs an administrator: updating what keeps this computer in the World after it starts. Work goes on",
+    awaiting_legacy_exit:
+      "The new version is ready and takes over once the old one leaves by itself. The old one could lose words just sent if made to hand over, so it is not forced; restarting this computer puts the new one in place",
+    updating_guardian: "Updating what runs from startup",
+    returning_to_service: "Handing back to the startup service",
+    complete: "In place",
+    failed: "Not done",
+  },
+  renewFailed: (why) => `Not done: ${why}`,
+  guardian: "Ask an administrator",
+  guardianWhy: "Updates what keeps this computer online after it starts; current work goes on",
   serviceOn: "Installed: the World is here from boot, before anyone signs in",
   serviceOff: "Not installed: the World is here only while you are signed in",
   keep: "Install",
