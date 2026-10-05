@@ -133,7 +133,8 @@ async fn observe(world: &World, bridge: &Bridge, observed: &mut Observed) -> Res
     let who = world.who(None, true).await.map_err(|error| error.to_string())?;
     for machine in who.machines {
         let MachineWho::Answered { reply } = machine else { continue };
-        let names: Vec<_> = reply.residents.iter().map(|r| format!("{}@{}", r.about.id, r.about.machine)).collect();
+        let residents: Vec<_> = reply.residents.into_iter().filter(|resident| resident.removed.is_none()).collect();
+        let names: Vec<_> = residents.iter().map(|r| format!("{}@{}", r.about.id, r.about.machine)).collect();
         let removed: Vec<_> = observed
             .residents
             .iter()
@@ -144,7 +145,7 @@ async fn observe(world: &World, bridge: &Bridge, observed: &mut Observed) -> Res
             bridge.action("dismissNotice", &format!("{key}:waiting"))?;
             observed.residents.remove(&key);
         }
-        for resident in reply.residents {
+        for resident in residents {
             let key = format!("{}@{}", resident.about.id, resident.about.machine);
             let now = Seen {
                 machine: resident.about.machine.to_string(),
