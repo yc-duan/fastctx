@@ -40,8 +40,8 @@ pub enum Error {
 pub struct World {
     dir: WorldDir,
     peer: Peer,
-    /// The program a node is started from when none runs; this process's
-    /// own executable when unset.
+    /// The program a node is started from when none runs; the installed
+    /// copy when unset, or this process when the World is not installed.
     node_program: Option<std::path::PathBuf>,
     device: Option<std::sync::Arc<crate::device::Device>>,
 }

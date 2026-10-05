@@ -32,6 +32,7 @@ import type { WorldAgents } from "../src/world/agents";
 import type { Control, Controlled, Offers } from "../src/world/control";
 import type { FileReadPart, FileReadResult } from "../src/world/file-read";
 import type { Attachment } from "../src/world/attachments";
+import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRefusal } from "../src/world/renewal";
 export const fixture = ${json.trimEnd()} satisfies {
   session: {
     events: SessionEvent[];
@@ -67,6 +68,7 @@ export const fixture = ${json.trimEnd()} satisfies {
   };
   // Claude's requests as they come, and the answers its hooks take.
   claude: { events: SessionEvent[]; answers: Control[]; unavailable: Offers; idle: Offers };
+  renewal: { requests: MaintenanceRequest[]; responses: MaintenanceResponse[]; statuses: RenewalStatus[]; refused: VersionRefusal };
 };
 `;
 const configFile = ts.readConfigFile(path.join(gui, "tsconfig.json"), ts.sys.readFile);

@@ -62,12 +62,14 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 pub struct Connection {
     reader: FrameReader,
     writer: FrameWriter,
+    server: Option<fastctx_types::ProcessIdentity>,
 }
 
 impl Connection {
     fn new(stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> Self {
         let (reader, writer) = tokio::io::split(Box::new(stream) as Box<dyn Stream>);
         Self {
+            server: None,
             reader: FrameReader(reader),
             writer: FrameWriter {
                 stream: writer,
@@ -75,6 +77,12 @@ impl Connection {
                 pipe: None,
             },
         }
+    }
+
+    /// The OS identity of the local server, when the platform exposes it.
+    /// This is used to retain a legacy node's actual image before renewal.
+    pub fn server_process(&self) -> Option<&fastctx_types::ProcessIdentity> {
+        self.server.as_ref()
     }
 
     /// Separates the two directions, so one task can read while another
@@ -212,7 +220,11 @@ mod imp {
     }
 
     pub async fn connect(address: &Address) -> io::Result<Connection> {
-        UnixStream::connect(&address.0).await.map(Connection::new).map_err(|error| with_place(error, address))
+        let stream = UnixStream::connect(&address.0).await.map_err(|error| with_place(error, address))?;
+        let identity = stream.peer_cred()?.pid().map(|pid| crate::identity_of(pid as u32)).transpose()?.flatten();
+        let mut connection = Connection::new(stream);
+        connection.server = identity;
+        Ok(connection)
     }
 }
 
@@ -331,6 +343,15 @@ mod imp {
                 format!("{address} is held by another user ({owner}), not by this user's node"),
             ));
         }
-        Ok(Connection::new(client))
+        let mut pid = 0;
+        if unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(client.as_raw_handle(), &mut pid) }
+            == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let identity = crate::identity_of(pid)?;
+        let mut connection = Connection::new(client);
+        connection.server = identity;
+        Ok(connection)
     }
 }

@@ -25,6 +25,8 @@ use tokio::sync::Notify;
 
 use crate::Node;
 
+pub(crate) const WAITING: &str = "the node is handing over to its successor; the words go in once it serves";
+
 /// What a guardian handed the node: the channel, and which identity it
 /// runs under.
 pub struct Supervision {
@@ -91,12 +93,15 @@ pub(crate) struct Prepared {
 pub(crate) struct Handoff {
     state: Mutex<State>,
     changed: Notify,
+    watching: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
 struct State {
     /// The guardian asked for the World to be handed on when idle.
     yielding: bool,
+    guardian: bool,
+    maintenance: bool,
     /// Idle while yielding: the node is on its way out, and takes nothing
     /// more on.
     committed: bool,
@@ -132,6 +137,21 @@ impl Drop for Busy {
 }
 
 impl Handoff {
+    pub fn yielding(&self) -> bool {
+        self.state.lock().expect("never poisoned").yielding
+    }
+
+    pub fn cancel(&self) -> bool {
+        let mut state = self.state.lock().expect("never poisoned");
+        if state.committed {
+            return false;
+        }
+        state.maintenance = false;
+        state.yielding = state.guardian;
+        drop(state);
+        self.changed();
+        true
+    }
     /// May words be submitted now? Even a busy thread may finish before
     /// `turn/start` reaches it, so all new submissions wait while yielding.
     pub fn start_turn(self: &Arc<Self>) -> Option<Busy> {
@@ -160,8 +180,8 @@ impl Handoff {
     }
 
     /// Why words wait while the node hands over.
-    pub(crate) fn waiting_why(node: &Node) -> String {
-        format!("the node on {} is handing over to its successor; the words go in once it serves", node.machine())
+    pub(crate) fn waiting_why(_node: &Node) -> String {
+        WAITING.into()
     }
 }
 
@@ -184,6 +204,7 @@ pub(crate) fn follow(node: Arc<Node>, supervision: Prepared) {
     say(ServiceEvent::Serving);
     let watching = node.clone();
     let say_yielded = say.clone();
+    node.handoff.watching.store(true, std::sync::atomic::Ordering::SeqCst);
     tokio::spawn(async move { yield_when_idle(watching, say_yielded).await });
     let reading = node.clone();
     let runtime = tokio::runtime::Handle::current();
@@ -192,15 +213,19 @@ pub(crate) fn follow(node: Arc<Node>, supervision: Prepared) {
             match control.recv().expect("the pipe reader exits the process on closure") {
                 ServiceCommand::YieldWhenIdle => {
                     reading.log.line("the guardian asks for the World to be handed on when idle");
-                    reading.handoff.state.lock().expect("never poisoned").yielding = true;
+                    let mut state = reading.handoff.state.lock().expect("never poisoned");
+                    state.guardian = true;
+                    state.yielding = true;
+                    drop(state);
                     reading.handoff.changed();
                 }
                 ServiceCommand::CancelYield => {
                     let resumed = {
                         let mut state = reading.handoff.state.lock().expect("never poisoned");
-                        let resumed = state.yielding && !state.committed;
+                        let resumed = state.guardian && !state.committed;
                         if resumed {
-                            state.yielding = false;
+                            state.guardian = false;
+                            state.yielding = state.maintenance;
                         }
                         resumed
                     };
@@ -223,9 +248,15 @@ pub(crate) fn follow(node: Arc<Node>, supervision: Prepared) {
 /// as a kept one does, once idle, with nobody to tell.
 pub(crate) fn hand_over(node: Arc<Node>) {
     node.log.line("a service keeps this World's node now: handing the World over once idle");
-    node.handoff.state.lock().expect("never poisoned").yielding = true;
+    {
+        let mut state = node.handoff.state.lock().expect("never poisoned");
+        state.maintenance = true;
+        state.yielding = true;
+    }
     node.handoff.changed();
-    tokio::spawn(async move { yield_when_idle(node, |_| {}).await });
+    if !node.handoff.watching.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        tokio::spawn(async move { yield_when_idle(node, |_| {}).await });
+    }
 }
 
 /// Waits until the node yields: asked to, with no Codex turn running or

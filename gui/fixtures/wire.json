@@ -8334,5 +8334,288 @@
       "effort": null,
       "usage": null
     }
+  },
+  "renewal": {
+    "requests": [
+      {
+        "maintenance": 1,
+        "action": "status"
+      },
+      {
+        "maintenance": 1,
+        "action": "yield"
+      },
+      {
+        "maintenance": 1,
+        "action": "cancel"
+      }
+    ],
+    "responses": [
+      {
+        "kind": "status",
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        }
+      },
+      {
+        "kind": "done"
+      },
+      {
+        "kind": "refused",
+        "reason": "handover already committed"
+      }
+    ],
+    "statuses": [
+      {
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        },
+        "mismatch": null,
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "staged",
+        "error": null
+      },
+      {
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        },
+        "mismatch": null,
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "preparing",
+        "error": null
+      },
+      {
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        },
+        "mismatch": null,
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "waiting_for_idle",
+        "error": null
+      },
+      {
+        "node": null,
+        "mismatch": {
+          "node_version": "1.0.0",
+          "node_protocol": 5,
+          "client_version": "1.0.0",
+          "client_protocol": 6
+        },
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "awaiting_legacy_exit",
+        "error": null
+      },
+      {
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        },
+        "mismatch": null,
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "awaiting_administrator",
+        "error": null
+      },
+      {
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        },
+        "mismatch": null,
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "updating_guardian",
+        "error": null
+      },
+      {
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        },
+        "mismatch": null,
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "returning_to_service",
+        "error": null
+      },
+      {
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        },
+        "mismatch": null,
+        "pending": null,
+        "phase": "complete",
+        "error": null
+      },
+      {
+        "node": {
+          "build": {
+            "version": "1.0.0",
+            "protocol": 6,
+            "digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "process": {
+            "pid": 123,
+            "token": "process-instance"
+          },
+          "yielding": false,
+          "bridge": true,
+          "supervised": false
+        },
+        "mismatch": null,
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "failed",
+        "error": "a staged file is locked"
+      },
+      {
+        "node": null,
+        "mismatch": {
+          "node_version": "1.0.0",
+          "node_protocol": 5,
+          "client_version": "1.0.0",
+          "client_protocol": 6
+        },
+        "pending": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "phase": "staged",
+        "error": null
+      }
+    ],
+    "refused": {
+      "kind": "refused",
+      "reason": "incompatible business protocol",
+      "mismatch": {
+        "node_version": "1.0.0",
+        "node_protocol": 5,
+        "client_version": "1.0.0",
+        "client_protocol": 6
+      }
+    }
   }
 }

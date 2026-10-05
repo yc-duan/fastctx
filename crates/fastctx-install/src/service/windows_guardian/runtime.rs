@@ -159,7 +159,7 @@ pub(super) fn run(
                             }
                             line(&mut log, &format!("node {} is serving as {:?}", node.child.pid, node.child.identity));
                         }
-                        ServiceEvent::Yielded if is_active && node.yielding && !node.yielded => {
+                        ServiceEvent::Yielded if is_active && !node.yielded => {
                             node.yielded = true;
                         }
                         _ => {

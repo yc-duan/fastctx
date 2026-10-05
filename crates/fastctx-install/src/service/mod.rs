@@ -148,6 +148,57 @@ impl Service {
         bail!("fastctx services support Windows and Linux; this platform is not supported")
     }
 
+    /// Whether the protected guardian already runs this image. Linux's
+    /// guardian is systemd itself, so a node image needs no privileged update.
+    pub fn guardian_current(&self, digest: &str) -> anyhow::Result<bool> {
+        self.validate()?;
+        #[cfg(windows)]
+        return windows::guardian_current(self, digest);
+        #[cfg(not(windows))]
+        {
+            let _ = digest;
+            Ok(true)
+        }
+    }
+
+    /// Stages this approved process's image in an existing protected
+    /// registration. It does not stop anything or open the user's World.
+    pub fn renew_guardian(&self, digest: &str) -> anyhow::Result<()> {
+        self.validate()?;
+        #[cfg(windows)]
+        return windows::renew_guardian(self, digest);
+        #[cfg(not(windows))]
+        {
+            let _ = digest;
+            bail!("this platform has no bundled guardian")
+        }
+    }
+
+    pub fn guardian_staged(&self, digest: &str) -> anyhow::Result<bool> {
+        self.validate()?;
+        #[cfg(windows)]
+        return windows::guardian_staged(self, digest);
+        #[cfg(not(windows))]
+        {
+            let _ = digest;
+            Ok(true)
+        }
+    }
+
+    /// The target user has SCM stop/start rights. Restarting after staging
+    /// needs no second elevation, including after the approving helper died.
+    /// The caller holds the startup gate and verifies a serving bridge first.
+    pub fn restart_guardian(&self, digest: &str) -> anyhow::Result<()> {
+        self.validate()?;
+        #[cfg(windows)]
+        return windows::restart_guardian(self, digest);
+        #[cfg(not(windows))]
+        {
+            let _ = digest;
+            Ok(())
+        }
+    }
+
     fn validate(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "linux")]
         if self.kind == Kind::Hub && self.uid != 0 {

@@ -8,12 +8,14 @@ use serde::Serialize;
 mod agents;
 #[path = "gui_wire_fixtures/attachments.rs"]
 mod attachments;
+#[path = "gui_wire_fixtures/claude.rs"]
+mod claude;
 #[path = "gui_wire_fixtures/control.rs"]
 mod control;
 #[path = "gui_wire_fixtures/file_read.rs"]
 mod file_read;
-#[path = "gui_wire_fixtures/claude.rs"]
-mod claude;
+#[path = "gui_wire_fixtures/renewal.rs"]
+mod renewal;
 #[path = "gui_wire_fixtures/session.rs"]
 mod session;
 #[path = "gui_wire_fixtures/since.rs"]
@@ -31,6 +33,7 @@ struct Fixtures {
     file_read: file_read::Fixtures,
     attachments: attachments::Fixtures,
     claude: claude::Fixtures,
+    renewal: renewal::Fixtures,
 }
 
 fn main() {
@@ -43,6 +46,7 @@ fn main() {
         file_read: file_read::fixtures(),
         attachments: attachments::fixtures(),
         claude: claude::fixtures(),
+        renewal: renewal::fixtures(),
     };
     let mut out = io::stdout().lock();
     serde_json::to_writer_pretty(&mut out, &fixtures).expect("serialize GUI fixtures");

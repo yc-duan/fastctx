@@ -270,6 +270,7 @@ impl fastctx_net::link::Node for Handler {
             let Some(node) = node else {
                 return Err(io::Error::other("the node is stopping"));
             };
+            let _answering = node.handoff.call().ok_or_else(|| io::Error::other("the node is handing over"))?;
             if crate::devices::is_device(&node, &from) {
                 return Ok(Err(format!("{from} is a device, and a device sends no letters")));
             }

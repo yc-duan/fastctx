@@ -20,6 +20,7 @@ pub mod names;
 pub mod process;
 pub mod project;
 pub mod remote;
+pub mod renewal;
 pub mod residents;
 pub mod run;
 pub mod session;
