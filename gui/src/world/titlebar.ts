@@ -30,8 +30,29 @@ const selector = "[data-world-titlebar]";
 
 function rectangles(element: HTMLElement): Rect[] {
   if (!element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return [];
-  return Array.from(element.getClientRects(), ({ x, y, width, height }) => ({ x, y, width, height }))
-    .filter(({ width, height }) => width > 0 && height > 0);
+  return Array.from(element.getClientRects(), (rect) => clipped(element, rect))
+    .filter((rect): rect is Rect => rect !== null);
+}
+
+/** What of a box can be seen: an element's boxes keep their full size
+ *  inside an ancestor that clips them (a sidebar folded to no width still
+ *  reports its links where they were), so each is cut to its clipping
+ *  ancestors. */
+function clipped(element: HTMLElement, { left, top, right, bottom }: DOMRect): Rect | null {
+  for (let holder = element.parentElement; holder && holder !== document.documentElement; holder = holder.parentElement) {
+    const style = getComputedStyle(holder);
+    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+    const clip = holder.getBoundingClientRect();
+    if (style.overflowX !== "visible") {
+      left = Math.max(left, clip.left);
+      right = Math.min(right, clip.right);
+    }
+    if (style.overflowY !== "visible") {
+      top = Math.max(top, clip.top);
+      bottom = Math.min(bottom, clip.bottom);
+    }
+  }
+  return right > left && bottom > top ? { x: left, y: top, width: right - left, height: bottom - top } : null;
 }
 
 function regions(): Regions {
@@ -67,7 +88,6 @@ export async function connectTitlebar(options: {
 }): Promise<() => Promise<void>> {
   if (!titlebarAvailable()) throw new Error("Native World titlebars are available only in the Windows shell");
   let disposed = false;
-  let animation = 0;
   let last = "";
   let state: TitlebarState = { maximized: false, hovered: false, pressed: false };
   let sending: Promise<void> | null = null;
@@ -98,19 +118,105 @@ export async function connectTitlebar(options: {
     last = signature;
     if (!disposed) paintState();
   };
-  // A frame sample also follows ancestor motion, transitions, scrolling,
-  // browser zoom and per-monitor DPI. IPC occurs only when geometry changes,
-  // with one update in flight so an old layout cannot overwrite a new one.
-  const sample = () => {
-    if (disposed) return;
-    sending = send();
-    void sending.then(() => { if (!disposed) animation = requestAnimationFrame(sample); }, options.onError);
+
+  // Geometry is sent when it may have changed, never on every frame of an
+  // idle window (following every frame kept an idle shell at a tenth of a
+  // core). What moves a region: pages mounting and marks changing (DOM
+  // mutations), sizes (each marked element and the page), the window's
+  // size, browser zoom and the screen's DPI, fonts arriving, and a
+  // transition or animation of a region or of what holds one, followed
+  // frame by frame only while it runs. IPC occurs only when geometry
+  // changes, with one update in flight so an old layout cannot overwrite a
+  // new one.
+  let queued = 0;
+  let again = false;
+  const moving = new Map<Element, number>();
+  const schedule = () => {
+    if (!disposed && !queued) queued = requestAnimationFrame(flush);
   };
+  const flush = () => {
+    queued = 0;
+    if (sending) {
+      again = true;
+      return;
+    }
+    // A moving element taken out of the page never says it stopped.
+    for (const element of moving.keys()) if (!element.isConnected) moving.delete(element);
+    sending = send();
+    sending.then(
+      () => {
+        sending = null;
+        if (again || moving.size) {
+          again = false;
+          schedule();
+        }
+      },
+      (error: unknown) => {
+        sending = null;
+        options.onError(error);
+      },
+    );
+  };
+  const holdsRegion = (element: Element) => element.matches(selector) || element.querySelector(selector) !== null;
+  const started = (event: Event) => {
+    const element = event.target;
+    if (!(element instanceof Element) || !holdsRegion(element)) return;
+    moving.set(element, (moving.get(element) ?? 0) + 1);
+    schedule();
+  };
+  const ended = (event: Event) => {
+    const element = event.target;
+    if (!(element instanceof Element)) return;
+    const count = moving.get(element);
+    if (count === undefined) return;
+    if (count > 1) moving.set(element, count - 1);
+    else moving.delete(element);
+    schedule();
+  };
+  const sizes = new ResizeObserver(schedule);
+  const observeSizes = () => {
+    sizes.disconnect();
+    sizes.observe(document.documentElement);
+    for (const element of document.querySelectorAll(selector)) sizes.observe(element);
+  };
+  const mutations = new MutationObserver(() => {
+    observeSizes();
+    schedule();
+  });
+  let resolution: MediaQueryList | null = null;
+  const watchResolution = () => {
+    resolution?.removeEventListener("change", resolutionChanged);
+    resolution = matchMedia(`(resolution: ${devicePixelRatio}dppx)`);
+    resolution.addEventListener("change", resolutionChanged);
+  };
+  const resolutionChanged = () => {
+    watchResolution();
+    schedule();
+  };
+  const listening: [EventTarget, string, EventListener][] = [
+    [window, "resize", schedule],
+    [document, "transitionrun", started],
+    [document, "transitionend", ended],
+    [document, "transitioncancel", ended],
+    [document, "animationstart", started],
+    [document, "animationend", ended],
+    [document, "animationcancel", ended],
+    [document.fonts, "loadingdone", schedule],
+  ];
+  if (window.visualViewport) listening.push([window.visualViewport, "resize", schedule]);
   try {
     unlistenError = await listen<string>("world-titlebar-error", ({ payload }) => options.onError(new Error(payload)));
     await send();
     document.addEventListener("click", clicked);
-    animation = requestAnimationFrame(sample);
+    for (const [target, type, listener] of listening) target.addEventListener(type, listener, true);
+    mutations.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-world-titlebar", "class", "style", "hidden"],
+    });
+    observeSizes();
+    watchResolution();
   } catch (error) {
     disposed = true;
     unlistenState();
@@ -120,8 +226,12 @@ export async function connectTitlebar(options: {
   }
   return async () => {
     disposed = true;
-    cancelAnimationFrame(animation);
+    cancelAnimationFrame(queued);
     document.removeEventListener("click", clicked);
+    for (const [target, type, listener] of listening) target.removeEventListener(type, listener, true);
+    mutations.disconnect();
+    sizes.disconnect();
+    resolution?.removeEventListener("change", resolutionChanged);
     unlistenState();
     unlistenError?.();
     try { await sending; }
