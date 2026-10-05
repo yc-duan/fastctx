@@ -422,6 +422,14 @@ async fn apply_hosts(codex: bool, claude: bool, raise: bool, into: bool) -> Resu
         .map_err(|error| error.to_string())?
 }
 
+/// What of the window is kept from one run to the next: where it was and
+/// how large; never whether it shows or how it is framed, which the shell
+/// decides.
+#[cfg(desktop)]
+pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plugin_window_state::StateFlags::SIZE
+    .union(tauri_plugin_window_state::StateFlags::POSITION)
+    .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
+
 pub fn run() {
     #[cfg(windows)]
     let Some(desktop) = desktop_presence::enter().expect("starting World's desktop presence") else {
@@ -476,6 +484,8 @@ pub fn run() {
             #[cfg(desktop)]
             release_here
         ]);
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build());
     #[cfg(windows)]
     let builder = builder.plugin(desktop_presence::plugin(desktop));
     builder.run(tauri::generate_context!()).expect("running the World's window");

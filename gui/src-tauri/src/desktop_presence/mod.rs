@@ -263,6 +263,14 @@ pub fn plugin(instance: Instance) -> TauriPlugin<tauri::Wry> {
             tauri::RunEvent::WindowEvent { label, event, .. } if label == "main" => {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    // The app lives on in the tray, and may never see its exit
+                    // (a shutdown ends it), so the window's place is kept now.
+                    {
+                        use tauri_plugin_window_state::AppHandleExt;
+                        if let Err(error) = app.save_window_state(crate::WINDOW_KEPT) {
+                            report(app, format!("keeping World's window place: {error}"));
+                        }
+                    }
                     if let Some(window) = app.get_webview_window("main")
                         && let Err(error) = window.hide()
                     {
