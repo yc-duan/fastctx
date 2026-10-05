@@ -34,6 +34,7 @@ use tauri::ipc::Channel;
 
 #[cfg(windows)]
 mod desktop_presence;
+mod pages;
 mod reading;
 mod uploading;
 
@@ -654,6 +655,12 @@ pub fn run() {
             open,
             stop,
             manage,
+            pages::page_read,
+            pages::page_history,
+            pages::page_consent,
+            pages::page_act,
+            pages::page_withdraw,
+            pages::page_restore,
             look,
             read_text,
             read_bytes,

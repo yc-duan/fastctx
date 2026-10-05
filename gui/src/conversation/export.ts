@@ -36,7 +36,9 @@ export function markdownOf(conversation: Conversation, words: Words, names: Expo
             ? names.you
             : entry.from.kind === "world"
               ? words.world
-              : `${entry.from.address.resident} · ${entry.from.address.machine}`,
+              : entry.from.kind === "page"
+                ? words.aPage(entry.from.page.page)
+                : `${entry.from.address.resident} · ${entry.from.address.machine}`,
         );
         out.push(entry.text);
         break;

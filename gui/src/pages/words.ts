@@ -6,7 +6,6 @@
 export interface PageWords {
   pages: string;
   noPages: string;
-  unreadable(why: string): string;
   version(n: number): string;
   written(by: string, ago: string): string;
   you: string;
@@ -60,7 +59,6 @@ export interface PageWords {
 export const zhPages: PageWords = {
   pages: "页面",
   noPages: "还没有页面。居民写下的看板、对照表会出现在这里。",
-  unreadable: (why) => `页面此刻读不到：${why}`,
   version: (n) => `第 ${n} 版`,
   written: (by, ago) => `${by} · ${ago}`,
   you: "你",
@@ -108,7 +106,6 @@ export const zhPages: PageWords = {
 export const enPages: PageWords = {
   pages: "Pages",
   noPages: "No pages yet. Dashboards and tables the residents write appear here.",
-  unreadable: (why) => `The pages cannot be read now: ${why}`,
   version: (n) => `version ${n}`,
   written: (by, ago) => `${by} · ${ago}`,
   you: "you",

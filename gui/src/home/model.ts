@@ -1,11 +1,11 @@
 import type { Address, MachineName, Timestamp, TownName } from "../world/wire";
-import type { MachineWho, Node, TownSummary, Writer } from "../world/world";
+import type { JobOwner, MachineWho, Node, TownSummary, Writer } from "../world/world";
 
 /** One line of what happened while the reader was away, read from what
  *  the World answered (`home/since.ts`). */
 export type Happening =
   | { kind: "turn_ended"; at: Timestamp; who: Address; town: TownName | null; how: string; reason: string | null; said: string | null }
-  | { kind: "job_ended"; at: Timestamp; job: string; machine: MachineName; owner: Address; town: TownName | null; how: string }
+  | { kind: "job_ended"; at: Timestamp; job: string; machine: MachineName; owner: JobOwner; town: TownName | null; how: string }
   | { kind: "journal"; at: Timestamp; town: TownName; journal: string; entry: string; by: Writer; first: string | null }
   | { kind: "asked"; at: Timestamp; who: Address; colleague: Address; town: TownName | null; label: string }
   | { kind: "arrived"; at: Timestamp; who: Address; town: TownName | null; agent: string }

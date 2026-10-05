@@ -1,4 +1,763 @@
 {
+  "pages": {
+    "calls": [
+      {
+        "call": "page",
+        "do": "publish",
+        "town": "mark50",
+        "page": "training",
+        "base": null,
+        "draft": {
+          "title": "Training",
+          "description": "Loss by step.",
+          "acts": [
+            {
+              "kind": "run",
+              "machine": "desktop",
+              "script": "printf 'hello\\n'"
+            },
+            {
+              "kind": "say",
+              "to": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            {
+              "kind": "journal",
+              "journal": "experiments"
+            }
+          ],
+          "html": "<!doctype html><title>Training</title><p>Loss</p>"
+        }
+      },
+      {
+        "call": "page",
+        "do": "publish",
+        "town": "mark50",
+        "page": "training",
+        "base": 1,
+        "draft": {
+          "title": "Training",
+          "description": "Loss by step.",
+          "acts": [
+            {
+              "kind": "run",
+              "machine": "desktop",
+              "script": "printf 'hello\\n'"
+            },
+            {
+              "kind": "say",
+              "to": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            {
+              "kind": "journal",
+              "journal": "experiments"
+            }
+          ],
+          "html": "<!doctype html><title>Training</title><p>Loss</p>"
+        }
+      },
+      {
+        "call": "page",
+        "do": "read",
+        "town": "mark50",
+        "page": "training",
+        "version": null
+      },
+      {
+        "call": "page",
+        "do": "read",
+        "town": "mark50",
+        "page": "training",
+        "version": 1
+      },
+      {
+        "call": "page",
+        "do": "list",
+        "town": "mark50"
+      },
+      {
+        "call": "page",
+        "do": "history",
+        "town": "mark50",
+        "page": "training"
+      },
+      {
+        "call": "page",
+        "do": "withdraw",
+        "town": "mark50",
+        "page": "training",
+        "base": 1
+      },
+      {
+        "call": "page",
+        "do": "restore",
+        "town": "mark50",
+        "page": "training",
+        "base": 2,
+        "version": 1
+      },
+      {
+        "call": "page",
+        "do": "consent",
+        "town": "mark50",
+        "page": "training",
+        "version": 1,
+        "base": null,
+        "acts": [
+          {
+            "kind": "run",
+            "machine": "desktop",
+            "script": "printf 'hello\\n'"
+          },
+          {
+            "kind": "say",
+            "to": {
+              "machine": "desktop",
+              "resident": "codex-abcd"
+            }
+          },
+          {
+            "kind": "journal",
+            "journal": "experiments"
+          }
+        ]
+      },
+      {
+        "call": "page",
+        "do": "consent",
+        "town": "mark50",
+        "page": "training",
+        "version": 3,
+        "base": 1,
+        "acts": []
+      },
+      {
+        "call": "page",
+        "do": "act",
+        "town": "mark50",
+        "page": "training",
+        "version": 1,
+        "action": {
+          "kind": "run",
+          "machine": "desktop",
+          "script": "printf 'hello\\n'"
+        }
+      },
+      {
+        "call": "page",
+        "do": "act",
+        "town": "mark50",
+        "page": "training",
+        "version": 1,
+        "action": {
+          "kind": "say",
+          "to": {
+            "machine": "desktop",
+            "resident": "codex-abcd"
+          },
+          "text": "Show the latest loss."
+        }
+      },
+      {
+        "call": "page",
+        "do": "act",
+        "town": "mark50",
+        "page": "training",
+        "version": 1,
+        "action": {
+          "kind": "journal",
+          "journal": "experiments",
+          "text": "The user opened the training page."
+        }
+      }
+    ],
+    "replies": [
+      {
+        "reply": "page",
+        "view": {
+          "town": "mark50",
+          "page": "training",
+          "publication": {
+            "version": 1,
+            "base": null,
+            "title": "Training",
+            "description": "Loss by step.",
+            "acts": [
+              {
+                "kind": "run",
+                "machine": "desktop",
+                "script": "printf 'hello\\n'"
+              },
+              {
+                "kind": "say",
+                "to": {
+                  "machine": "desktop",
+                  "resident": "codex-abcd"
+                }
+              },
+              {
+                "kind": "journal",
+                "journal": "experiments"
+              }
+            ],
+            "withdrawn": false,
+            "restored_from": null,
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            "on": "desktop",
+            "at": "2026-10-04T12:00:00Z"
+          },
+          "html": "<!doctype html><title>Training</title><p>Loss</p>",
+          "consent": {
+            "version": 1,
+            "base": null,
+            "page_version": 1,
+            "acts": [
+              {
+                "kind": "run",
+                "machine": "desktop",
+                "script": "printf 'hello\\n'"
+              },
+              {
+                "kind": "say",
+                "to": {
+                  "machine": "desktop",
+                  "resident": "codex-abcd"
+                }
+              },
+              {
+                "kind": "journal",
+                "journal": "experiments"
+              }
+            ],
+            "stamp": {
+              "by": {
+                "kind": "user"
+              },
+              "on": "phone",
+              "at": "2026-10-04T12:00:00Z"
+            }
+          }
+        }
+      },
+      {
+        "reply": "page",
+        "view": {
+          "town": "mark50",
+          "page": "training",
+          "publication": {
+            "version": 2,
+            "base": 1,
+            "title": "Training",
+            "description": "Loss by step.",
+            "acts": [],
+            "withdrawn": true,
+            "restored_from": null,
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            "on": "desktop",
+            "at": "2026-10-04T12:00:00Z"
+          },
+          "html": null,
+          "consent": {
+            "version": 1,
+            "base": null,
+            "page_version": 1,
+            "acts": [
+              {
+                "kind": "run",
+                "machine": "desktop",
+                "script": "printf 'hello\\n'"
+              },
+              {
+                "kind": "say",
+                "to": {
+                  "machine": "desktop",
+                  "resident": "codex-abcd"
+                }
+              },
+              {
+                "kind": "journal",
+                "journal": "experiments"
+              }
+            ],
+            "stamp": {
+              "by": {
+                "kind": "user"
+              },
+              "on": "phone",
+              "at": "2026-10-04T12:00:00Z"
+            }
+          }
+        }
+      },
+      {
+        "reply": "pages",
+        "town": "mark50",
+        "pages": [
+          {
+            "page": "training",
+            "current": {
+              "version": 3,
+              "base": 2,
+              "title": "Training",
+              "description": "Loss by step.",
+              "acts": [
+                {
+                  "kind": "run",
+                  "machine": "desktop",
+                  "script": "printf 'hello\\n'"
+                },
+                {
+                  "kind": "say",
+                  "to": {
+                    "machine": "desktop",
+                    "resident": "codex-abcd"
+                  }
+                },
+                {
+                  "kind": "journal",
+                  "journal": "experiments"
+                }
+              ],
+              "withdrawn": false,
+              "restored_from": 1,
+              "by": {
+                "kind": "resident",
+                "address": {
+                  "machine": "desktop",
+                  "resident": "codex-abcd"
+                }
+              },
+              "on": "desktop",
+              "at": "2026-10-04T12:00:00Z"
+            }
+          }
+        ]
+      },
+      {
+        "reply": "page_history",
+        "town": "mark50",
+        "page": "training",
+        "versions": [
+          {
+            "version": 1,
+            "base": null,
+            "title": "Training",
+            "description": "Loss by step.",
+            "acts": [
+              {
+                "kind": "run",
+                "machine": "desktop",
+                "script": "printf 'hello\\n'"
+              },
+              {
+                "kind": "say",
+                "to": {
+                  "machine": "desktop",
+                  "resident": "codex-abcd"
+                }
+              },
+              {
+                "kind": "journal",
+                "journal": "experiments"
+              }
+            ],
+            "withdrawn": false,
+            "restored_from": null,
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            "on": "desktop",
+            "at": "2026-10-04T12:00:00Z"
+          },
+          {
+            "version": 2,
+            "base": 1,
+            "title": "Training",
+            "description": "Loss by step.",
+            "acts": [],
+            "withdrawn": true,
+            "restored_from": null,
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            "on": "desktop",
+            "at": "2026-10-04T12:00:00Z"
+          },
+          {
+            "version": 3,
+            "base": 2,
+            "title": "Training",
+            "description": "Loss by step.",
+            "acts": [
+              {
+                "kind": "run",
+                "machine": "desktop",
+                "script": "printf 'hello\\n'"
+              },
+              {
+                "kind": "say",
+                "to": {
+                  "machine": "desktop",
+                  "resident": "codex-abcd"
+                }
+              },
+              {
+                "kind": "journal",
+                "journal": "experiments"
+              }
+            ],
+            "withdrawn": false,
+            "restored_from": 1,
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            "on": "desktop",
+            "at": "2026-10-04T12:00:00Z"
+          }
+        ]
+      },
+      {
+        "reply": "page_consent",
+        "town": "mark50",
+        "page": "training",
+        "consent": {
+          "version": 1,
+          "base": null,
+          "page_version": 1,
+          "acts": [
+            {
+              "kind": "run",
+              "machine": "desktop",
+              "script": "printf 'hello\\n'"
+            },
+            {
+              "kind": "say",
+              "to": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            {
+              "kind": "journal",
+              "journal": "experiments"
+            }
+          ],
+          "stamp": {
+            "by": {
+              "kind": "user"
+            },
+            "on": "phone",
+            "at": "2026-10-04T12:00:00Z"
+          }
+        }
+      },
+      {
+        "reply": "page_act",
+        "result": {
+          "kind": "run",
+          "machine": "desktop",
+          "job": "j-abc123",
+          "state": {
+            "kind": "ended",
+            "status": {
+              "code": 0
+            }
+          },
+          "output": {
+            "log": "C:/world/towns/mark50/pages/training/out/j-abc123.log",
+            "bytes": 6,
+            "lines": 1,
+            "pieces": [
+              {
+                "kind": "text",
+                "first_line": 1,
+                "text": "hello\n"
+              }
+            ],
+            "legacy": null,
+            "escaped_lines": 0
+          }
+        }
+      },
+      {
+        "reply": "page_act",
+        "result": {
+          "kind": "said",
+          "to": {
+            "machine": "desktop",
+            "resident": "codex-abcd"
+          },
+          "landed": {
+            "kind": "sent"
+          }
+        }
+      },
+      {
+        "reply": "page_act",
+        "result": {
+          "kind": "entry_added",
+          "journal": "experiments",
+          "id": "20261004T120000Z-desktop"
+        }
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "page_action",
+        "source": {
+          "town": "mark50",
+          "page": "training",
+          "version": 1,
+          "by": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-abcd"
+            }
+          },
+          "on": "desktop",
+          "opened_on": "phone"
+        },
+        "action": {
+          "kind": "run",
+          "machine": "desktop",
+          "script": "printf 'hello\\n'"
+        }
+      },
+      {
+        "call": "page_action",
+        "source": {
+          "town": "mark50",
+          "page": "training",
+          "version": 1,
+          "by": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-abcd"
+            }
+          },
+          "on": "desktop",
+          "opened_on": "phone"
+        },
+        "action": {
+          "kind": "say",
+          "to": {
+            "machine": "desktop",
+            "resident": "codex-abcd"
+          },
+          "text": "Show the latest loss."
+        }
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "page_action",
+        "result": {
+          "kind": "run",
+          "machine": "desktop",
+          "job": "j-abc123",
+          "state": {
+            "kind": "ended",
+            "status": {
+              "code": 0
+            }
+          },
+          "output": {
+            "log": "C:/world/towns/mark50/pages/training/out/j-abc123.log",
+            "bytes": 6,
+            "lines": 1,
+            "pieces": [
+              {
+                "kind": "text",
+                "first_line": 1,
+                "text": "hello\n"
+              }
+            ],
+            "legacy": null,
+            "escaped_lines": 0
+          }
+        }
+      },
+      {
+        "reply": "page_action",
+        "result": {
+          "kind": "said",
+          "to": {
+            "machine": "desktop",
+            "resident": "codex-abcd"
+          },
+          "landed": {
+            "kind": "sent"
+          }
+        }
+      }
+    ],
+    "speaker": {
+      "kind": "page",
+      "page": {
+        "town": "mark50",
+        "page": "training",
+        "version": 1,
+        "by": {
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-abcd"
+          }
+        },
+        "on": "desktop",
+        "opened_on": "phone"
+      }
+    },
+    "writer": {
+      "kind": "page",
+      "page": {
+        "town": "mark50",
+        "page": "training",
+        "version": 1,
+        "by": {
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-abcd"
+          }
+        },
+        "on": "desktop",
+        "opened_on": "phone"
+      }
+    },
+    "job_owner": {
+      "page": {
+        "town": "mark50",
+        "page": "training",
+        "version": 1,
+        "by": {
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-abcd"
+          }
+        },
+        "on": "desktop",
+        "opened_on": "phone"
+      }
+    },
+    "peer": {
+      "kind": "page",
+      "page": {
+        "town": "mark50",
+        "page": "training",
+        "version": 1,
+        "by": {
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-abcd"
+          }
+        },
+        "on": "desktop",
+        "opened_on": "phone"
+      }
+    },
+    "map": {
+      "town": "mark50",
+      "ledger": "C:/world/towns/mark50/ledger",
+      "record": {
+        "version": 1,
+        "name": "Mark 50",
+        "what": "Training experiments",
+        "machines": [
+          "desktop"
+        ],
+        "places": [],
+        "canon": null,
+        "by": {
+          "kind": "user"
+        },
+        "on": "desktop",
+        "at": "2026-10-04T12:00:00Z"
+      },
+      "opened": {
+        "by": {
+          "kind": "user"
+        },
+        "on": "desktop",
+        "at": "2026-10-04T12:00:00Z"
+      },
+      "journals": [],
+      "pages": [
+        {
+          "page": "training",
+          "current": {
+            "version": 3,
+            "base": 2,
+            "title": "Training",
+            "description": "Loss by step.",
+            "acts": [
+              {
+                "kind": "run",
+                "machine": "desktop",
+                "script": "printf 'hello\\n'"
+              },
+              {
+                "kind": "say",
+                "to": {
+                  "machine": "desktop",
+                  "resident": "codex-abcd"
+                }
+              },
+              {
+                "kind": "journal",
+                "journal": "experiments"
+              }
+            ],
+            "withdrawn": false,
+            "restored_from": 1,
+            "by": {
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-abcd"
+              }
+            },
+            "on": "desktop",
+            "at": "2026-10-04T12:00:00Z"
+          }
+        }
+      ],
+      "canon": null
+    }
+  },
   "session": {
     "events": [
       {

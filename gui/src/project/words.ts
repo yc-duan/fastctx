@@ -20,6 +20,8 @@ export interface ProjectWords {
   placesTab: string;
   opened(by: string, on: string, day: string): string;
   you: string;
+  /** An open page, as who wrote an entry. */
+  aPage(name: string): string;
   entries(n: number): string;
   writers(n: number): string;
   latest(by: string, ago: string): string;
@@ -72,6 +74,7 @@ export const zhProject: ProjectWords = {
   placesTab: "地址簿",
   opened: (by, on, day) => `${then(by)}在 ${on} 上开启 · ${day}`,
   you: "你",
+  aPage: (name) => `页面「${name}」`,
   entries: (n) => `${n} 条`,
   writers: (n) => `${n} 位写过`,
   latest: (by, ago) => `最近一条：${by} · ${ago}`,
@@ -118,6 +121,7 @@ export const enProject: ProjectWords = {
   placesTab: "Places",
   opened: (by, on, day) => `Opened by ${by} on ${on}, ${day}`,
   you: "you",
+  aPage: (name) => `the page “${name}”`,
   entries: (n) => `${n} entr${n === 1 ? "y" : "ies"}`,
   writers: (n) => `${n} writer${n === 1 ? "" : "s"}`,
   latest: (by, ago) => `latest: ${by}, ${ago}`,

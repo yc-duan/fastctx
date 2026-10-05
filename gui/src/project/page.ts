@@ -9,7 +9,7 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
-import type { MapView, ProjectRecord, ResidentNow, RunningJob, WorldWho, Writer } from "../world/world";
+import { ownerResident, type MapView, type ProjectRecord, type ResidentNow, type RunningJob, type WorldWho, type Writer } from "../world/world";
 import type { PageSummary, PageWriter } from "../world/pages";
 import type { PageWords } from "../pages/words";
 import type { HomeWords } from "../home/words";
@@ -80,8 +80,7 @@ export class ProjectPage {
     });
   }
 
-  /** `pages` says why where they could not be read. */
-  update(map: MapView, who: WorldWho, now: Date, pages: PageSummary[] | { error: string }): void {
+  update(map: MapView, who: WorldWho, now: Date): void {
     const { words } = this.options;
     const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
     const here = residents.filter((r) => r.here);
@@ -111,7 +110,7 @@ export class ProjectPage {
                 .join("")}</ul>`
             : ""),
       ],
-      ["pages", this.options.pageWords.pages, this.pages(map.town, pages, now)],
+      ["pages", this.options.pageWords.pages, this.pages(map.town, map.pages, now)],
       [
         "journals",
         words.journals,
@@ -186,9 +185,8 @@ export class ProjectPage {
 
   /** The pages, the latest changed first; a page taken down stays, faint,
    *  so it can be brought back. */
-  private pages(town: string, pages: PageSummary[] | { error: string }, now: Date): string {
+  private pages(town: string, pages: PageSummary[], now: Date): string {
     const { pageWords: words, home } = this.options;
-    if ("error" in pages) return `<p class="quiet caution">${escape(words.unreadable(pages.error))}</p>`;
     if (!pages.length) return `<p class="quiet">${escape(words.noPages)}</p>`;
     const sorted = [...pages].sort((a, b) => Date.parse(b.current.at) - Date.parse(a.current.at));
     return `<ul class="page-links">${sorted
@@ -237,9 +235,20 @@ export class ProjectPage {
    *  who started it, said when they have gone. */
   private job(job: RunningJob, residents: ResidentNow[], now: Date): string {
     const { words, home } = this.options;
-    const owner = residents.find((r) => r.about.id === job.owner.resident && r.about.machine === job.owner.machine);
-    const name = owner ? home.someone(agentName(owner.about.host.agent), owner.about.machine) : `${job.owner.resident} · ${job.owner.machine}`;
+    const address = ownerResident(job.owner);
+    if (!address) {
+      // A page started it, while the user had it open: no one is there to
+      // leave.
+      return this.jobLine(job, now, home.startedBy(home.aPage("page" in job.owner ? job.owner.page.page : "")));
+    }
+    const owner = residents.find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+    const name = owner ? home.someone(agentName(owner.about.host.agent), owner.about.machine) : `${address.resident} · ${address.machine}`;
     const by = owner?.here ? home.startedBy(name) : `${home.startedBy(name)} · ${words.ownerLeft}`;
+    return this.jobLine(job, now, by);
+  }
+
+  private jobLine(job: RunningJob, now: Date, by: string): string {
+    const { home } = this.options;
     return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
   }
 

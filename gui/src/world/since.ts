@@ -4,7 +4,7 @@
 
 import type { TurnEnd } from "./events";
 import type { Address, JobId, JournalName, MachineName, NoticeId, Timestamp, TownName } from "./wire";
-import type { Host, Location, Origin, Writer } from "./world";
+import type { Host, JobOwner, Location, Origin, Writer } from "./world";
 
 export interface WorldSince {
   machine: MachineName;
@@ -52,7 +52,7 @@ export type SinceKind =
   | {
       kind: "job_ended";
       job: JobId;
-      owner: Address;
+      owner: JobOwner;
       started_at: Timestamp;
       elapsed_ms: number;
       how: EndedHow;
