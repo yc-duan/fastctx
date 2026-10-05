@@ -27,6 +27,10 @@ export interface SidebarOptions {
 
 const agentName = (agent: string) => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);
 
+/** An answer usually comes within a second and is asked for every two;
+ *  after this many seconds without one, the sidebar says so. */
+const SLOW = 5;
+
 /** Projects folded shut by the reader, kept on this device. */
 const folded = new Set<string>(
   (() => {
@@ -88,6 +92,7 @@ export class Sidebar {
       options.store.world.get();
       options.store.trouble.get();
       options.store.clock.get();
+      options.store.unanswered.get();
       this.draw();
     });
   }
@@ -105,7 +110,8 @@ export class Sidebar {
         <span class="place-mark">${knotMark()}</span><span class="place-name">${escape(words.world)}</span>
         ${waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : ""}
       </a>
-      ${store.trouble.peek() ? `<p class="sidebar-trouble">${escape(words.unreachable)}</p>` : ""}`;
+      ${store.trouble.peek() ? `<p class="sidebar-trouble">${escape(words.unreachable)}</p>` : ""}
+      ${store.unanswered.peek() >= SLOW ? `<p class="sidebar-trouble" role="status">${escape(words.unanswered(store.unanswered.peek()))}</p>` : ""}`;
 
     const towns = world?.towns ?? [];
     const named = new Set(towns.map((town) => town.town));

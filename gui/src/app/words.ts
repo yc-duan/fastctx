@@ -31,6 +31,8 @@ export interface ShellWords {
   nobodyHere: string;
   /** The World on this machine could not be asked. */
   unreachable: string;
+  /** The World has been asked and has not answered for this many seconds. */
+  unanswered(seconds: number): string;
   thisOne: string;
   phone: string;
   joinOrFound: string;
@@ -1353,6 +1355,7 @@ export const zhShell: ShellWords = {
   noProjects: "还没有项目",
   nobodyHere: "此刻没有谁在",
   unreachable: "问不到世界",
+  unanswered: (seconds) => `世界已经 ${seconds} 秒没回答`,
   thisOne: "这台",
   phone: "手机",
   joinOrFound: "加入或建一个世界",
@@ -1384,6 +1387,7 @@ export const enShell: ShellWords = {
   noProjects: "No projects yet",
   nobodyHere: "Nobody here right now",
   unreachable: "The World cannot be asked",
+  unanswered: (seconds) => `The World has not answered for ${seconds} s`,
   thisOne: "this one",
   phone: "phone",
   joinOrFound: "Join or found a World",

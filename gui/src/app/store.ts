@@ -17,6 +17,11 @@ export interface Store {
   readonly trouble: Signal<string | null>;
   /** When the World was last read, or the specimen's moment. */
   readonly clock: Signal<Date>;
+  /** How many seconds the World has been asked without answering yet, 0
+   *  while it is not being asked. Nothing gives up on it: a machine that
+   *  keeps its connection but never answers holds the answer back, and
+   *  this says so instead of the page standing still in silence. */
+  readonly unanswered: Signal<number>;
   /** Asks again at once, as after the user changed something. */
   refresh(): Promise<void>;
 }
@@ -28,24 +33,30 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   const world = signal<WorldNow | null>(null);
   const trouble = signal<string | null>(null);
   const clock = signal(new Date());
+  const unanswered = signal(0);
 
   if (!live) {
     const shown = specimen();
     world.set(shown.world);
     clock.set(shown.now);
-    return { live, world, trouble, clock, refresh: async () => {} };
+    return { live, world, trouble, clock, unanswered, refresh: async () => {} };
   }
 
   let timer = 0;
   let asking: Promise<void> | null = null;
   const ask = (): Promise<void> => {
-    asking ??= worldNow()
+    if (asking) return asking;
+    const began = Date.now();
+    const counting = window.setInterval(() => unanswered.set(Math.floor((Date.now() - began) / 1000)), 1000);
+    asking = worldNow()
       .then((now) => {
         world.set(now);
         trouble.set(null);
       })
       .catch((error: unknown) => trouble.set(String(error)))
       .finally(() => {
+        clearInterval(counting);
+        unanswered.set(0);
         clock.set(new Date());
         asking = null;
       });
@@ -60,7 +71,7 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   };
   document.addEventListener("visibilitychange", () => void loop());
   void loop();
-  return { live, world, trouble, clock, refresh: ask };
+  return { live, world, trouble, clock, unanswered, refresh: ask };
 }
 
 /** Every resident each machine answered with. */
