@@ -39,7 +39,15 @@ export interface WorldNow {
   towns: TownSummary[];
 }
 
-export type Piece = { kind: "event"; event: SessionEvent } | { kind: "ended"; error: string | null };
+export type Piece =
+  | { kind: "event"; event: SessionEvent }
+  | { kind: "ended"; error: string | null }
+  /** On a phone: the stream was read again from the start after the
+   *  connection came back; it replaces everything shown. */
+  | { kind: "reset"; history: SessionEvent[] }
+  /** On a phone: the stream broke, and waits for the connection or for the
+   *  app to come to the front. */
+  | { kind: "interrupted"; error: string | null };
 
 export type Landed =
   | { kind: "uncertain"; why: string }

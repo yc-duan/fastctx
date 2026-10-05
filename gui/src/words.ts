@@ -83,6 +83,8 @@ export interface Words {
   /** The watch on the session ended: the node ended it, or the connection
    *  to it broke. */
   watchEnded(why: string | null): string;
+  /** The live stream broke and is waiting to be read again. */
+  watchInterrupted(why: string | null): string;
   /** Words that could not be sent. */
   notSent(why: string): string;
   /** The way into a colleague's own conversation. */
@@ -221,6 +223,7 @@ export const zh: Words = {
   moreLines: (n) => `还有 ${n} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
   watchEnded: (why) => (why ? `没在看着它了：${why}` : "没在看着它了"),
+  watchInterrupted: (why) => (why ? `连接断了，等重新连上：${why}` : "连接断了，等重新连上"),
   notSent: (why) => `没送出去：${why}`,
   openColleague: "看它",
   stillRunning: "它起的、还在跑的",
@@ -332,6 +335,7 @@ export const en: Words = {
   moreLines: (n) => `${n} more lines`,
   unchangedLines: (n) => `${n} unchanged lines`,
   watchEnded: (why) => (why ? `No longer watching: ${why}` : "No longer watching"),
+  watchInterrupted: (why) => (why ? `Disconnected, waiting to reconnect: ${why}` : "Disconnected, waiting to reconnect"),
   notSent: (why) => `Not sent: ${why}`,
   openColleague: "Open",
   stillRunning: "Still running, started here",

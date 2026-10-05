@@ -537,6 +537,20 @@
   color: var(--text-3);
 }
 
+/* What to set by hand on a phone, in order. */
+.settings-steps {
+  flex: 1 1 100%;
+  margin: var(--space-1) 0 var(--space-2);
+  padding-left: 1.4em;
+  font-size: var(--size-small);
+  color: var(--text-2);
+  line-height: var(--leading-prose);
+}
+
+.settings-steps li + li {
+  margin-top: var(--space-1);
+}
+
 .facts .settings-legacy {
   font-size: var(--size-small);
   color: var(--text-2);

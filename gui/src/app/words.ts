@@ -181,6 +181,21 @@ export interface SettingsWords {
   renewFailed(why: string): string;
   guardian: string;
   guardianWhy: string;
+  /** A phone: what it lets the World do in the background. */
+  phoneNotices: string;
+  phoneNoticesOn: string;
+  phoneNoticesOff: string;
+  phoneAllow: string;
+  phoneOpenNotices: string;
+  phoneBattery: string;
+  phoneBatteryOn: string;
+  phoneBatteryOff: string;
+  phoneOpenBattery: string;
+  phonePowerSave: string;
+  phoneMaker(maker: string): string;
+  /** What to set by hand on a maker's phones, which no app can read. */
+  phoneVendor: Record<"honor" | "xiaomi" | "other", string[]>;
+  phoneOpenApp: string;
   serviceOn: string;
   serviceOff: string;
   keep: string;
@@ -248,6 +263,32 @@ export const zhSettings: SettingsWords = {
   renewFailed: (why) => `没换成：${why}`,
   guardian: "请管理员确认",
   guardianWhy: "更新开机后保持这台电脑在线的那部分；正在做的事照常",
+  phoneNotices: "提醒",
+  phoneNoticesOn: "允许：有智能体等你回答、你开的对话说完了，手机会叫你",
+  phoneNoticesOff: "没允许：手机不会叫你",
+  phoneAllow: "允许提醒",
+  phoneOpenNotices: "打开提醒设置",
+  phoneBattery: "电池优化",
+  phoneBatteryOn: "不限制世界：它在后台也能看着",
+  phoneBatteryOff: "系统可能在后台停下世界，提醒就会晚到或不到",
+  phoneOpenBattery: "打开电池设置",
+  phonePowerSave: "省电模式开着，后台会更慢",
+  phoneMaker: (maker) => `${maker} 的后台设置`,
+  phoneVendor: {
+    honor: [
+      "在设置里搜「应用启动管理」，找到世界，关掉自动管理，打开「允许自启动」「允许关联启动」「允许后台活动」",
+      "搜「电池优化」，选「所有应用」，把世界设为「不允许」（不让系统优化它）",
+      "电池 › 更多电池设置，打开「休眠时始终保持网络连接」",
+      "在最近任务里把世界的卡片往下拉，锁住它",
+    ],
+    xiaomi: [
+      "在世界的应用详情里，把省电策略设为「无限制」",
+      "同一页里打开「自启动」",
+      "在最近任务里长按世界的卡片，锁住它",
+    ],
+    other: [],
+  },
+  phoneOpenApp: "打开世界的应用详情",
   serviceOn: "装着：这台电脑开机后，没人登录，世界也在这里",
   serviceOff: "没装：只有你登录着时，世界才在这里",
   keep: "装上",
@@ -324,6 +365,32 @@ export const enSettings: SettingsWords = {
   renewFailed: (why) => `Not done: ${why}`,
   guardian: "Ask an administrator",
   guardianWhy: "Updates what keeps this computer online after it starts; current work goes on",
+  phoneNotices: "Calls",
+  phoneNoticesOn: "Allowed: the phone calls you when an agent waits for you or a conversation you opened finishes",
+  phoneNoticesOff: "Not allowed: the phone will not call you",
+  phoneAllow: "Allow calls",
+  phoneOpenNotices: "Open notification settings",
+  phoneBattery: "Battery optimisation",
+  phoneBatteryOn: "The World is not limited: it keeps watching in the background",
+  phoneBatteryOff: "The system may stop the World in the background, and calls come late or not at all",
+  phoneOpenBattery: "Open battery settings",
+  phonePowerSave: "Power saving is on; the background is slower",
+  phoneMaker: (maker) => `${maker} background settings`,
+  phoneVendor: {
+    honor: [
+      "Search Settings for App launch, find World, turn off automatic management, and allow auto-launch, secondary launch and running in the background",
+      "Search for Battery optimisation, choose All apps, and set World to Don't allow",
+      "Under Battery › More battery settings, keep the network connected during sleep",
+      "In Recents, pull World's card down to lock it",
+    ],
+    xiaomi: [
+      "In World's app details, set the battery saver to No restrictions",
+      "On the same page, turn on Autostart",
+      "In Recents, long-press World's card and lock it",
+    ],
+    other: [],
+  },
+  phoneOpenApp: "Open World's app details",
   serviceOn: "Installed: the World is here from boot, before anyone signs in",
   serviceOff: "Not installed: the World is here only while you are signed in",
   keep: "Install",

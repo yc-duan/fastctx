@@ -73,12 +73,13 @@ import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenNow } from "./specimen/world";
-import { specimenComputer, specimenFiles, specimenOffers, specimenRead, specimenUpload } from "./specimen/seams";
+import { specimenComputer, specimenFiles, specimenOffers, specimenPhone, specimenRead, specimenUpload } from "./specimen/seams";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { PageScreen } from "./pages/view";
 import { manage as manageResident, type Management } from "./world/management";
 import { FileSearch } from "./world/file-search";
+import { configurePhone, onPhone, phoneSeam, routeActivations } from "./app/phone";
 import { renewalState, renewHere, renewGuardianHere, type VersionMismatch } from "./world/renewal";
 import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
@@ -128,7 +129,7 @@ import {
 } from "./world/bridge";
 import { en, zh } from "./words";
 import { desktopAvailable } from "./world/desktop";
-import { startPresence } from "./app/presence";
+import { notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
 import { installFrame } from "./app/frame";
 import { nameCodeCopy } from "./conversation/prose";
@@ -148,6 +149,7 @@ const words = english ? en : zh;
 const homeWords = english ? enHome : zhHome;
 const projectWords = english ? enProject : zhProject;
 const pageWords = english ? enPages : zhPages;
+const presenceWords = english ? enPresence : zhPresence;
 const shellWords = english ? enShell : zhShell;
 document.documentElement.lang = english ? "en" : "zh-CN";
 
@@ -697,8 +699,21 @@ function liveTalk(address: Address): Page {
     page.running(jobs, now);
   });
   const take = (piece: Piece) => {
-    if (piece.kind === "event") conversation.event(piece.event);
-    else page.lost(piece.error);
+    switch (piece.kind) {
+      case "event":
+        page.resumed();
+        conversation.event(piece.event);
+        return;
+      case "reset":
+        page.resumed();
+        conversation.history(piece.history);
+        return;
+      case "interrupted":
+        page.broken(piece.error);
+        return;
+      case "ended":
+        page.lost(piece.error);
+    }
   };
   // Each watch is one reading of the session; when the host replaces or
   // removes turns, what is shown is read again from a fresh one.
@@ -974,6 +989,10 @@ function show(next: Place): void {
           location.replace(url);
         },
         ago: (at, now) => homeWords.ago(now.getTime() - at.getTime()),
+        phone: live ? (onPhone() ? phoneSeam : undefined) : params.has("phone") ? specimenPhone : undefined,
+        notifyChanged: (on) => {
+          if (live && onPhone()) void configurePhone(presenceWords, on).catch((error: unknown) => console.error("telling the phone its calls", error));
+        },
         computer: live
           ? onComputer()
             ? {
@@ -1152,9 +1171,16 @@ if (!live && params.get("s") === "new") newTalk.open();
 if (!live && params.get("s") === "new-project") projectForm.open();
 if (!live && params.get("s") === "invite") devices.invite();
 
+// On a phone the app's own process calls the user, from the rules and
+// words the page gives it; a tap on a call opens what it was about.
+if (live && onPhone()) {
+  void configurePhone(presenceWords, notifying()).catch((error: unknown) => console.error("telling the phone its calls", error));
+  void routeActivations().catch((error: unknown) => console.error("opening tapped calls", error));
+}
+
 startPresence({
   store,
-  words: english ? enPresence : zhPresence,
+  words: presenceWords,
   someone: (r) => shellWords.someone(agentName(r.about.host.agent), r.about.machine),
   stop: (address) => stop(address),
 });

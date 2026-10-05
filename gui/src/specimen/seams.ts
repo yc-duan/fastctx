@@ -2,6 +2,7 @@
 // nothing anywhere, so each part of the interface can be looked at in a
 // plain browser.
 
+import type { PhoneSeam } from "../app/phone";
 import type { RenewalStatus } from "../world/renewal";
 import type { Setup } from "../world/bridge";
 import type { FileRange } from "../world/file-read";
@@ -170,3 +171,19 @@ export function specimenUpload(
     step();
   });
 }
+
+/** An Honor phone that has not been set up for the background yet: calls
+ *  allowed, battery optimisation still on. */
+export const specimenPhone: PhoneSeam = {
+  status: async () => ({
+    notificationsAllowed: true,
+    alertChannelAllowed: true,
+    batteryOptimizationExempt: false,
+    powerSave: false,
+    manufacturer: "HONOR",
+    model: "ANN-AN00",
+    background: { vendor: "honor", backgroundRestricted: false },
+  }),
+  allow: async () => {},
+  open: () => Promise.reject(new Error("this is a specimen")),
+};

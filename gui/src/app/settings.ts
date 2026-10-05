@@ -7,6 +7,7 @@ import { redrawKeepingFocus } from "./focus";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
 import { RenewalRow, type Renewing } from "./renewal";
+import { PhoneRow, type PhoneSeam } from "./phone";
 import { desktopAvailable } from "../world/desktop";
 import { chooseNotifying, notifying } from "./presence";
 import type { Page } from "./shell";
@@ -31,6 +32,11 @@ export interface SettingsOptions {
     /** Which World it runs, and putting a new one in place. */
     renewing: Renewing;
   } | undefined;
+  /** This is an Android phone: what it lets the World do in the background. */
+  phone?: PhoneSeam | undefined;
+  /** Whether calls are wanted changed, for where calls are made by more
+   *  than the page. */
+  notifyChanged?(on: boolean): void;
 }
 
 /** What was done with what an old fastctx left, in a sentence; nothing
@@ -63,7 +69,7 @@ export class SettingsPage implements Page {
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-service" hidden></dl><dl class="facts settings-renewal" hidden></dl></section>
+        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-service" hidden></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-phone" hidden></dl></section>
         <section class="home-section"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
@@ -74,6 +80,7 @@ export class SettingsPage implements Page {
     this.askService();
     const renewing = options.computer?.renewing;
     if (renewing) this.renewal = new RenewalRow(this.element.querySelector<HTMLElement>(".settings-renewal")!, words, renewing);
+    if (options.phone) new PhoneRow(this.element.querySelector<HTMLElement>(".settings-phone")!, words, options.phone);
     this.service.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-service]");
       if (button && !button.disabled) this.serve(button.dataset.service as "keep" | "release");
@@ -102,6 +109,7 @@ export class SettingsPage implements Page {
           return;
         case "notify":
           chooseNotifying(value === "on");
+          options.notifyChanged?.(value === "on");
           break;
       }
       redrawKeepingFocus(this.element, () => this.drawLook());
@@ -190,7 +198,9 @@ export class SettingsPage implements Page {
       row("size", words.textSize, [["", words.system], ...textSizes.map((size): [string, string] => [size, words.sizes[size]!])], chosenSize() ?? ""),
       row("language", words.language, [["zh", "中文"], ["en", "English"]], language),
       // Only where the shell can call the user from outside the window.
-      desktopAvailable() ? row("notify", words.notify, [["on", words.notifyOn], ["off", words.notifyOff]], notifying() ? "on" : "off") : "",
+      desktopAvailable() || this.options.phone
+        ? row("notify", words.notify, [["on", words.notifyOn], ["off", words.notifyOff]], notifying() ? "on" : "off")
+        : "",
     ].join("");
   }
 

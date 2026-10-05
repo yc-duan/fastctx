@@ -831,8 +831,27 @@ export class ConversationPage {
    *  says it is no longer live. */
   lost(why: string | null): void {
     this.gone = this.options.words.watchEnded(why);
+    this.interrupted = false;
     this.drawState();
   }
+
+  /** The live stream broke and waits to be read again: what is shown
+   *  stays, and the bar says it is waiting. */
+  broken(why: string | null): void {
+    this.gone = this.options.words.watchInterrupted(why);
+    this.interrupted = true;
+    this.drawState();
+  }
+
+  /** The stream came back after it broke. */
+  resumed(): void {
+    if (!this.interrupted) return;
+    this.interrupted = false;
+    this.gone = null;
+    this.drawState();
+  }
+
+  private interrupted = false;
 
   /** The state last said, and where it is said to a screen reader. */
   private said: string | null = null;
