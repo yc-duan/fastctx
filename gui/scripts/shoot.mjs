@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "join", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-form", "new-codex", "new-attach", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "join", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-form", "new-codex", "new-attach", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "page"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -132,12 +132,17 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "mention" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" || session === "new-attach" ? "new" : session === "manage" ? "about" : session === "join" ? "welcome" : session === "queue" ? "codex" : session;
       const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
-      await send("Page.navigate", { url: `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}` });
+      // A page an agent wrote is its own document, with a stand-in host.
+      const written = session === "page";
+      const url = written ? `${base}/page-specimen.html?theme=${theme}${extra ? `&${extra}` : ""}` : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
+      await send("Page.navigate", { url });
       await loaded;
       // The interface loads after the engine check: wait until it is there.
       await send("Runtime.evaluate", {
         awaitPromise: true,
-        expression: "new Promise((r) => { const look = () => (document.querySelector('.shell') ? r(true) : setTimeout(look, 30)); look(); })",
+        expression: written
+          ? "new Promise((r) => { const look = () => (customElements.get('w-card') ? setTimeout(r, 900) : setTimeout(look, 30)); look(); })"
+          : "new Promise((r) => { const look = () => (document.querySelector('.shell') ? r(true) : setTimeout(look, 30)); look(); })",
       });
       if (session === "drawer") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.menu-button')?.click()" });
@@ -290,7 +295,8 @@ for (const session of sessions) {
         });
         problems.push(`${session} ${size.name} ${theme}: the page is ${page.w}px wide: ${wide.value}`);
       }
-      if (page.h > page.inner + 1) problems.push(`${session} ${size.name} ${theme}: the page scrolls, ${page.h}px in a ${page.inner}px screen`);
+      // A page an agent wrote scrolls inside the frame the host gives it.
+      if (!written && page.h > page.inner + 1) problems.push(`${session} ${size.name} ${theme}: the page scrolls, ${page.h}px in a ${page.inner}px screen`);
       const shot = await send("Page.captureScreenshot", { format: "png" });
       const file = join(out, `${session}-${size.name}-${theme}.png`);
       writeFileSync(file, Buffer.from(shot.data, "base64"));
