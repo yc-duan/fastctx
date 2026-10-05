@@ -96,6 +96,13 @@ pub enum Call {
     Agents {
         machine: Option<MachineName>,
     },
+    /// The user's word, from one of the user's devices, on whether Claude
+    /// Code on `machine` may run the World's sessions without approvals: its
+    /// record that the user accepted the bypass-permissions dialog.
+    ClaudeConsent {
+        machine: MachineName,
+        accept: bool,
+    },
     /// One resident or job in detail, by its id, from every machine that
     /// has it (`fastctx w <id>`).
     Look {
@@ -242,6 +249,13 @@ pub enum Reply {
         result: crate::pages::PageResult,
     },
     FilesFound(crate::file_search::FileSearchReply),
+    /// What Claude Code on `machine` now records; `changed` is false when it
+    /// already said so.
+    ClaudeConsent {
+        machine: MachineName,
+        accepted: bool,
+        changed: bool,
+    },
     Uploaded(crate::attachments::Attachment),
     Arrived(Whereabouts),
     Run(RunReply),

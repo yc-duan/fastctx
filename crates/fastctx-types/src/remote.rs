@@ -60,6 +60,10 @@ pub enum RemoteCall {
     FindFiles {
         request: crate::file_search::FileSearchRequest,
     },
+    /// The user's word on Claude Code's bypass-permissions consent there.
+    ClaudeConsent {
+        accept: bool,
+    },
     /// The documents of a canon there, for a town's map.
     Canon {
         path: String,
@@ -160,6 +164,10 @@ pub enum RemoteReply {
         result: crate::pages::PageResult,
     },
     FilesFound(crate::file_search::FileSearchReply),
+    ClaudeConsent {
+        accepted: bool,
+        changed: bool,
+    },
     Uploaded(crate::attachments::Attachment),
     Run(RunReply),
     Written {

@@ -472,6 +472,10 @@
   gap: var(--space-2);
 }
 
+.host-use .caution {
+  color: var(--caution);
+}
+
 .host-line .text-button {
   margin-left: auto;
   min-height: 0;

@@ -435,6 +435,27 @@ async fn manage(
     Ok(managed)
 }
 
+/// What Claude Code on a machine records of the user's consent to running
+/// the World's sessions without approvals, after the user's word on it.
+#[derive(serde::Serialize)]
+struct ClaudeConsent {
+    accepted: bool,
+    changed: bool,
+}
+
+/// The user's word, given in the interface, on Claude Code's
+/// bypass-permissions consent on one machine.
+#[tauri::command]
+async fn claude_consent(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    accept: bool,
+) -> Result<ClaudeConsent, String> {
+    let machine = machine_name.parse().map_err(|error| format!("{error}"))?;
+    let (accepted, changed) = shell.world().claude_consent(machine, accept).await.map_err(|error| error.to_string())?;
+    Ok(ClaudeConsent { accepted, changed })
+}
+
 /// Does something to a resident's conversation for the user, besides
 /// speaking into it.
 #[tauri::command]
@@ -727,6 +748,7 @@ pub fn run() {
             open,
             stop,
             manage,
+            claude_consent,
             find_files,
             pages::page_read,
             pages::page_history,

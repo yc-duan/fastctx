@@ -30,6 +30,10 @@ impl Device {
                 session.machine(&machine)?;
                 (machine, RemoteCall::FindFiles { request }, None)
             }
+            Call::ClaudeConsent { machine, accept } => {
+                session.machine(&machine)?;
+                (machine, RemoteCall::ClaudeConsent { accept }, None)
+            }
             Call::Talk { to, machine, text, attachments } => {
                 let machine = session.locate(&to, machine).await?;
                 (machine, RemoteCall::Talk { to: to.clone(), text, attachments }, Some(to))
@@ -88,6 +92,9 @@ impl Device {
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
+            (RemoteCall::ClaudeConsent { .. }, RemoteReply::ClaudeConsent { accepted, changed }) => {
+                Reply::ClaudeConsent { machine: machine.clone(), accepted, changed }
+            }
             (RemoteCall::Talk { .. }, RemoteReply::Said { landed }) => {
                 Reply::Spoken { to: address.expect("talk resident"), landed }
             }

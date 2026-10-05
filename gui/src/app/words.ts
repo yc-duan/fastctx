@@ -60,6 +60,10 @@ export interface NewTalkWords {
   unsure: string;
   notInstalled: string;
   loggedOut: string;
+  /** On Claude, where the user has not yet let it work without asking. */
+  needsConsent: string;
+  /** The consent sheet's button, when starting follows it. */
+  allowAndStart: string;
   firstWords: string;
   hint: string;
   start: string;
@@ -90,6 +94,8 @@ export const zhNewTalk: NewTalkWords = {
   unsure: "说不准能不能用",
   notInstalled: "没装",
   loggedOut: "没登录",
+  needsConsent: "要你许可一次",
+  allowAndStart: "许可并开始",
   firstWords: "对它说的第一句话…",
   hint: "Enter 开始 · Shift+Enter 换行",
   start: "开始",
@@ -117,6 +123,8 @@ export const enNewTalk: NewTalkWords = {
   unsure: "may or may not work",
   notInstalled: "not installed",
   loggedOut: "not logged in",
+  needsConsent: "needs your consent once",
+  allowAndStart: "Allow and begin",
   firstWords: "The first thing to say…",
   hint: "Enter to begin · Shift+Enter for a new line",
   start: "Begin",
@@ -442,6 +450,11 @@ export interface MachinesWords {
   renew: string;
   applied: string;
   notApplied(why: string): string;
+  /** Whether Claude here may work without asking for approval. */
+  unattendedYes: string;
+  unattendedNo: string;
+  allow: string;
+  withdraw: string;
 }
 
 export const zhMachines: MachinesWords = {
@@ -462,6 +475,10 @@ export const zhMachines: MachinesWords = {
   renew: "换成新版",
   applied: "改好了",
   notApplied: (why) => `没改成：${why}`,
+  unattendedYes: "已许可它不经审批干活",
+  unattendedNo: "还没许可它不经审批干活，世界请不来它",
+  allow: "许可…",
+  withdraw: "撤回",
   title: "机器",
   here: "这台",
   online: (since) => `在线，${since}起`,
@@ -494,6 +511,10 @@ export const enMachines: MachinesWords = {
   renew: "Use the new one",
   applied: "Done",
   notApplied: (why) => `Not done: ${why}`,
+  unattendedYes: "allowed to work without asking",
+  unattendedNo: "not yet allowed to work without asking; the World cannot bring it in",
+  allow: "Allow…",
+  withdraw: "Withdraw",
   title: "Machines",
   here: "this one",
   online: (since) => `online since ${since}`,
@@ -805,6 +826,45 @@ export const enProjectForm: ProjectFormWords = {
   saving: "Writing…",
   cancel: "Close",
   failed: (why) => `Could not write it: ${why}`,
+};
+
+/** The user's consent to Claude working without asking, on one machine. */
+export interface ConsentWords {
+  title(machine: string): string;
+  what(machine: string): string;
+  allow: string;
+  withdrawTitle(machine: string): string;
+  withdrawWhat: string;
+  withdrawGo: string;
+  working: string;
+  failed(why: string): string;
+  close: string;
+}
+
+export const zhConsent: ConsentWords = {
+  title: (machine) => `许可 Claude 在 ${machine} 上不经审批地干活`,
+  what: (machine) =>
+    `世界在 ${machine} 上请来的 Claude 会直接跑命令、改文件、上网，不再一件件问你，后果由你负责。这和你在 Claude Code 里选「Bypass permissions」是同一回事：世界会在这台机器的 Claude Code 设置里写下 skipDangerousModePermissionPrompt: true。之后随时能在「机器」里撤回。`,
+  allow: "许可",
+  withdrawTitle: (machine) => `撤回 Claude 在 ${machine} 上的许可`,
+  withdrawWhat: "撤回之后，世界在这台机器上再请 Claude，Claude Code 会拒绝，直到你再次许可。",
+  withdrawGo: "撤回",
+  working: "正在写…",
+  failed: (why) => `没写成：${why}`,
+  close: "关闭",
+};
+
+export const enConsent: ConsentWords = {
+  title: (machine) => `Let Claude work on ${machine} without asking`,
+  what: (machine) =>
+    `Claude brought in by the World on ${machine} will run commands, change files and go online without asking you each time, and you answer for what it does. It is the same as choosing "Bypass permissions" in Claude Code: the World writes skipDangerousModePermissionPrompt: true into Claude Code's settings on that machine. You can withdraw it under Machines at any time.`,
+  allow: "Allow",
+  withdrawTitle: (machine) => `Withdraw Claude's consent on ${machine}`,
+  withdrawWhat: "Once withdrawn, Claude Code refuses when the World brings Claude in on this machine, until you allow it again.",
+  withdrawGo: "Withdraw",
+  working: "Writing…",
+  failed: (why) => `Not written: ${why}`,
+  close: "Close",
 };
 
 export interface DeviceWords {

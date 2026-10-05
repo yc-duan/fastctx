@@ -65,7 +65,16 @@ pub struct AgentFacts {
     pub models: Fact<Vec<AgentModel>>,
     /// The local apply receipt, not a claim about already-open sessions.
     pub integration: Fact<Integration>,
+    /// Whether the World can start this agent here without approvals.
+    /// Claude Code needs the user's one-time consent to its
+    /// bypass-permissions mode on this machine; Codex needs none.
+    #[serde(default = "unreported")]
+    pub unattended: Fact<bool>,
     pub timings: Vec<ProbeTime>,
+}
+
+fn unreported() -> Fact<bool> {
+    Fact::unavailable("this machine's World does not report it")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

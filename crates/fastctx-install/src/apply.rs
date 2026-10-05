@@ -162,6 +162,32 @@ pub fn status(places: &Places) -> Result<Status, Error> {
     })
 }
 
+/// Whether Claude Code here starts the World's sessions without approvals:
+/// the user accepted its bypass-permissions dialog (`claude::consent`).
+/// Where Claude Code has never kept settings, nothing was accepted.
+pub fn claude_consent(places: &Places) -> Result<bool, Error> {
+    if !places.claude_home.is_dir() {
+        return Ok(false);
+    }
+    let settings = Snapshot::read(places.claude_home.join("settings.json"))?;
+    crate::claude::consent::accepted(settings.bytes()).map_err(Error::Claude)
+}
+
+/// Records the user's word on it, given on one of the user's own devices,
+/// and says whether the settings changed. Claude Code rewrites the file
+/// itself, so the edit is published only if it is still as it was read.
+pub fn consent_claude(places: &Places, accept: bool) -> Result<bool, Error> {
+    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let settings = Snapshot::read(places.claude_home.join("settings.json"))?;
+    let Some(bytes) = crate::claude::consent::set(settings.bytes(), accept).map_err(Error::Claude)? else {
+        return Ok(false);
+    };
+    Transaction::new([FileChange::write(settings, bytes)])
+        .commit()
+        .map_err(|failure| Error::Files(failure.to_string()))?;
+    Ok(true)
+}
+
 /// What an apply or unapply did, for the person who asked.
 #[derive(Clone, Debug, Default)]
 pub struct Report {

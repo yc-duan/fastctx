@@ -31,6 +31,9 @@ export interface AgentFacts {
   login: Fact<LoginStatus>;
   models: Fact<AgentModel[]>;
   integration: Fact<Integration>;
+  /** Whether the World can start it there without approvals: Claude needs
+   *  the user's consent once on that machine. An older World does not say. */
+  unattended?: Fact<boolean>;
   timings: { step: string; elapsed_ms: number }[];
 }
 

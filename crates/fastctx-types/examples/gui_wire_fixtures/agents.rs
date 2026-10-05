@@ -34,6 +34,7 @@ pub fn fixtures() -> Fixtures {
             reasoning_efforts: vec![ReasoningEffort { effort: "medium".into(), description: "Example effort".into() }],
         }]),
         integration: Fact::known(Integration::In),
+        unattended: Fact::known(true),
         timings: vec![ProbeTime { step: "model/list".into(), elapsed_ms: 0 }],
     };
     let claude = AgentFacts {
@@ -48,6 +49,7 @@ pub fn fixtures() -> Fixtures {
         login: Fact::known(LoginStatus::LoggedOut),
         models: Fact::unavailable("no public non-session CLI catalog"),
         integration: Fact::known(Integration::Out),
+        unattended: Fact::known(false),
         timings: vec![],
     };
     let mut missing = codex.clone();

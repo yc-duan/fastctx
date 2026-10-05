@@ -24,6 +24,7 @@ pub fn probe(cwd: &Path, env: &[(OsString, OsString)], path: Option<&OsString>) 
             "Claude Code has no public non-session CLI model catalog; the World does not use Agent SDK or -p",
         ),
         integration: Fact::unavailable("the node supplies its apply status"),
+        unattended: Fact::unavailable("the node supplies the user's consent"),
         timings,
     };
     if let Some(program) = program {

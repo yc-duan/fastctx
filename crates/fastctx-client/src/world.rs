@@ -168,6 +168,16 @@ impl World {
         }
     }
 
+    /// The user's word on whether Claude Code on `machine` may run the
+    /// World's sessions without approvals. Answers what it now records and
+    /// whether that changed.
+    pub async fn claude_consent(&self, machine: MachineName, accept: bool) -> Result<(bool, bool), Error> {
+        match self.ask(Call::ClaudeConsent { machine, accept }).await? {
+            Reply::ClaudeConsent { accepted, changed, .. } => Ok((accepted, changed)),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// The World's projects, including those that do not span this machine.
     /// When its hub is disconnected, a node lists the copies it already has;
     /// `nodes` reports that connection state alongside the available projects.

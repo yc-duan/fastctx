@@ -43,6 +43,9 @@ export interface NewTalkOptions {
   agents(machine: string): Promise<WorldAgents>;
   begin(begun: Begun): Promise<Address>;
   opened(address: Address): void;
+  /** Asks the user to let Claude work without asking on a machine, where
+   *  it has not yet; true once Claude Code there records it. */
+  allowClaude?(machine: string, go: string): Promise<boolean>;
   /** Attaching files to the first words, where the World can carry them. */
   attach?: {
     words: AttachWords;
@@ -356,6 +359,9 @@ export class NewTalk {
         return { ...agent, note: words.loggedOut, disabled: true };
       }
       const version = facts.version.kind === "known" ? /\d+(?:\.\d+)+/.exec(facts.version.value)?.[0] : undefined;
+      if (facts.unattended?.kind === "known" && !facts.unattended.value) {
+        return { ...agent, note: version ? `${version} · ${words.needsConsent}` : words.needsConsent };
+      }
       return { ...agent, note: version };
     });
   }
@@ -440,9 +446,23 @@ export class NewTalk {
     this.start.disabled = this.busy || !this.machine || !!chosen?.disabled || !said;
   }
 
+  /** Claude starts on a machine only once the user has let it work
+   *  without asking there: asked now, when it is needed. Not knowing is
+   *  not a no; Claude Code then says for itself. */
+  private async allowed(machine: string): Promise<boolean> {
+    const asked = this.asked.get(machine);
+    const facts = asked?.state === "known" ? factsFor(asked.facts, "claude") : null;
+    if (facts?.unattended?.kind !== "known" || facts.unattended.value) return true;
+    if (!this.options.allowClaude || !(await this.options.allowClaude(machine, this.options.words.allowAndStart))) return false;
+    facts.unattended = { kind: "known", value: true };
+    this.draw();
+    return true;
+  }
+
   private async submit(): Promise<void> {
     const text = this.input.value.trim();
     if (this.busy || !this.machine || this.start.disabled || (!text && !this.tray?.count)) return;
+    if (this.agent === "claude" && !(await this.allowed(this.machine))) return;
     this.busy = true;
     this.drawStart();
     this.note.hidden = true;

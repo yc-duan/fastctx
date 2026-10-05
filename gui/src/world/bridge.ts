@@ -172,6 +172,12 @@ export function joinDevice(code: string, name: string | null): Promise<{ world: 
 }
 
 /** Residents or jobs in detail, from every machine that has them. */
+/** The user's word on whether Claude Code on a machine may run the World's
+ *  sessions without approvals; what it now records, and whether it changed. */
+export function claudeConsent(machine: MachineName, accept: boolean): Promise<{ accepted: boolean; changed: boolean }> {
+  return invoke("claude_consent", { machineName: machine, accept });
+}
+
 export function look(ids: string[]): Promise<LookedUp[]> {
   return invoke("look", { ids });
 }

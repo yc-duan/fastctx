@@ -54,6 +54,9 @@ pub fn admit(node: &Node, from: &MachineName, call: &RemoteCall) -> Result<(), F
             // machine that has them limits the search to the conversation's
             // places, and reads no contents.
             | RemoteCall::FindFiles { .. }
+            // The user's consent to Claude Code's bypass-permissions mode,
+            // which only the user gives, on the machine it is about.
+            | RemoteCall::ClaudeConsent { .. }
             | RemoteCall::Relay { .. }
     );
     if device && !users_own {

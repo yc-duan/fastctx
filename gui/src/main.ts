@@ -34,6 +34,7 @@ import { effect, signal } from "./app/signals";
 import { createStore, jobsOf, residentsOf } from "./app/store";
 import {
   enComposer,
+  enConsent,
   enPresence,
   enDetails,
   enDevices,
@@ -45,6 +46,7 @@ import {
   enShell,
   enWelcome,
   zhComposer,
+  zhConsent,
   zhPresence,
   zhDetails,
   zhDevices,
@@ -56,6 +58,7 @@ import {
   zhShell,
   zhWelcome, readerWords } from "./app/words";
 import { Details, type Manage } from "./conversation/details";
+import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
 import { ConversationPage, type Someone } from "./conversation/page";
 import { redrawDiagrams } from "./conversation/diagrams";
@@ -115,6 +118,7 @@ import {
   projectNew,
   agents,
   attachHere,
+  claudeConsent,
   open as openAgent,
   openOutside,
   since,
@@ -180,6 +184,12 @@ if (live && onComputer()) {
   });
 }
 
+// Letting Claude work without asking on a machine: only the user's press,
+// on one of the user's devices, writes it there.
+const consent = new ClaudeConsent(english ? enConsent : zhConsent, (machine, accept) =>
+  live ? claudeConsent(machine, accept) : Promise.reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")),
+);
+
 const newTalk = new NewTalk({
   store,
   words: english ? enNewTalk : zhNewTalk,
@@ -193,6 +203,7 @@ const newTalk = new NewTalk({
   opened(address) {
     location.hash = talkLink(address);
   },
+  allowClaude: (machine, go) => consent.allow(machine, go),
   attach: {
     words: (english ? enComposer : zhComposer).attach,
     async upload(machine, target, source, progress) {
@@ -944,6 +955,10 @@ function show(next: Place): void {
               }),
         applyHere: (agent, into) =>
           live ? applyHosts(agent === "codex", agent === "claude", false, into) : Promise.reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")),
+        consent: {
+          allow: (machine) => consent.allow(machine, (english ? enConsent : zhConsent).allow),
+          withdraw: (machine) => consent.withdraw(machine),
+        },
       });
       break;
     case "welcome":

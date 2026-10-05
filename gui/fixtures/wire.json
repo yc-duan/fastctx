@@ -7702,6 +7702,10 @@
                     "kind": "known",
                     "value": "in"
                   },
+                  "unattended": {
+                    "kind": "known",
+                    "value": true
+                  },
                   "timings": [
                     {
                       "step": "model/list",
@@ -7743,6 +7747,10 @@
                     "kind": "known",
                     "value": "out"
                   },
+                  "unattended": {
+                    "kind": "known",
+                    "value": false
+                  },
                   "timings": []
                 },
                 {
@@ -7770,6 +7778,10 @@
                   "integration": {
                     "kind": "known",
                     "value": "absent"
+                  },
+                  "unattended": {
+                    "kind": "known",
+                    "value": true
                   },
                   "timings": [
                     {
@@ -7808,6 +7820,10 @@
                     "kind": "known",
                     "value": "old"
                   },
+                  "unattended": {
+                    "kind": "known",
+                    "value": true
+                  },
                   "timings": [
                     {
                       "step": "model/list",
@@ -7845,6 +7861,10 @@
                   "integration": {
                     "kind": "failed",
                     "reason": "receipt unreadable"
+                  },
+                  "unattended": {
+                    "kind": "known",
+                    "value": false
                   },
                   "timings": []
                 }
@@ -7941,6 +7961,10 @@
               "kind": "known",
               "value": "in"
             },
+            "unattended": {
+              "kind": "known",
+              "value": true
+            },
             "timings": [
               {
                 "step": "model/list",
@@ -7982,6 +8006,10 @@
               "kind": "known",
               "value": "out"
             },
+            "unattended": {
+              "kind": "known",
+              "value": false
+            },
             "timings": []
           },
           {
@@ -8009,6 +8037,10 @@
             "integration": {
               "kind": "known",
               "value": "absent"
+            },
+            "unattended": {
+              "kind": "known",
+              "value": true
             },
             "timings": [
               {
@@ -8047,6 +8079,10 @@
               "kind": "known",
               "value": "old"
             },
+            "unattended": {
+              "kind": "known",
+              "value": true
+            },
             "timings": [
               {
                 "step": "model/list",
@@ -8084,6 +8120,10 @@
             "integration": {
               "kind": "failed",
               "reason": "receipt unreadable"
+            },
+            "unattended": {
+              "kind": "known",
+              "value": false
             },
             "timings": []
           }

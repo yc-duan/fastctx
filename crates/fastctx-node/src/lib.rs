@@ -16,6 +16,7 @@ mod claude;
 pub mod claude_request;
 mod codex;
 mod colleagues;
+mod consent;
 mod control;
 mod copy;
 mod delivery;

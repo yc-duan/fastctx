@@ -343,6 +343,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|(to, landed)| Reply::Spoken { to, landed })
         }
         Call::Agents { machine } => crate::agents::query(node, machine).await.map(Reply::Agents),
+        Call::ClaudeConsent { machine, accept } => {
+            users_voice(node, peer)?;
+            crate::consent::call(node, machine.clone(), accept).await.map(|(accepted, changed)| Reply::ClaudeConsent {
+                machine,
+                accepted,
+                changed,
+            })
+        }
         Call::FindFiles { machine, request } => {
             crate::file_search::call(node, machine, request).await.map(Reply::FilesFound)
         }

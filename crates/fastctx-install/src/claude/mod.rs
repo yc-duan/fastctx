@@ -17,6 +17,7 @@
 //! An install can leave an enabledPlugins entry without a listable record;
 //! registration cleanup removes only this product's declarations in that case.
 
+pub mod consent;
 pub(crate) mod history;
 mod jsonc;
 mod limit;

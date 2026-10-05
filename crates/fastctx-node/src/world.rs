@@ -197,6 +197,11 @@ impl fastctx_net::link::Node for Handler {
                     crate::talk::serve_watch(&node, resident, watch, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node).await.map(RemoteReply::Agents),
+                RemoteCall::ClaudeConsent { accept } => {
+                    crate::consent::here(&node, accept, format!("the user on {from}"))
+                        .await
+                        .map(|(accepted, changed)| RemoteReply::ClaudeConsent { accepted, changed })
+                }
                 RemoteCall::FindFiles { request } => {
                     crate::file_search::here(&node, from, request).await.map(RemoteReply::FilesFound)
                 }

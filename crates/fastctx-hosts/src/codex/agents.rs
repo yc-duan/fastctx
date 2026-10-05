@@ -84,6 +84,8 @@ fn empty(program: Fact<Option<AgentProgram>>) -> AgentFacts {
         login: Fact::unavailable("no selected Codex program"),
         models: Fact::unavailable("no selected Codex program"),
         integration: Fact::unavailable("the node supplies its apply status"),
+        // The World starts Codex threads with approvals never asked.
+        unattended: Fact::known(true),
         timings: Vec::new(),
     }
 }

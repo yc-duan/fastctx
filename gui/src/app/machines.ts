@@ -34,6 +34,9 @@ export interface MachinesOptions {
   /** Puts the World's tools into an agent's program on this machine, or
    *  takes them out; what it could not do, said. */
   applyHere(agent: "codex" | "claude", into: boolean): Promise<string[]>;
+  /** Asks the user, and gives or withdraws Claude's consent to work
+   *  without asking on a machine; true once it is done. */
+  consent?: { allow(machine: string): Promise<boolean>; withdraw(machine: string): Promise<boolean> };
 }
 
 /** What is known of the agents on one machine. */
@@ -66,9 +69,10 @@ export class MachinesPage implements Page {
     this.list = this.element.querySelector<HTMLElement>(".machines-list")!;
     this.element.querySelector(".invite")!.addEventListener("click", () => options.devices.invite());
     this.list.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-revoke], [data-leave], [data-apply]");
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-revoke], [data-leave], [data-apply], [data-consent]");
       if (!button || button.disabled) return;
-      if (button.dataset.apply) void this.apply(button, button.dataset.apply as "codex" | "claude", button.dataset.into === "1");
+      if (button.dataset.consent) void this.consent(button, button.dataset.consent === "allow");
+      else if (button.dataset.apply) void this.apply(button, button.dataset.apply as "codex" | "claude", button.dataset.into === "1");
       else if (button.dataset.revoke) options.devices.revoke(button.dataset.revoke);
       else options.devices.leave();
     });
@@ -102,6 +106,19 @@ export class MachinesPage implements Page {
   private redraw(): void {
     this.drawn = "";
     this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
+  }
+
+  /** The sheet says what it means and writes it; the machine is asked
+   *  again so the line says what Claude Code now records. */
+  private async consent(button: HTMLButtonElement, allow: boolean): Promise<void> {
+    const machine = button.closest<HTMLElement>("[data-machine]")?.dataset.machine ?? "";
+    const consent = this.options.consent;
+    if (!consent || !machine) return;
+    const done = await (allow ? consent.allow(machine) : consent.withdraw(machine));
+    if (!done) return;
+    this.asked.delete(machine);
+    this.redraw();
+    void this.ask();
   }
 
   private async apply(button: HTMLButtonElement, agent: "codex" | "claude", into: boolean): Promise<void> {
@@ -227,7 +244,14 @@ export class MachinesPage implements Page {
           ? `<button class="text-button quiet-button" type="button" data-apply="${agent}" data-into="${integration === "in" ? "0" : "1"}">${escape(integration === "in" ? words.takeOut : integration === "old" ? words.renew : words.putIn)}</button>`
           : "";
       const loggedOut = facts.login.kind === "known" && facts.login.value.kind === "logged_out";
-      return `<li class="host-line"><span class="host-name">${escape(name)}${version ? `<span class="host-version">${escape(version)}</span>` : ""}</span><span class="host-fact${loggedOut ? " caution" : ""}">${escape(login)}</span>${tools || act ? `<span class="host-use">${tools ? `<span>${escape(tools)}</span>` : ""}${act}</span>` : ""}</li>`;
+      // Claude works for the World only once the user let it skip
+      // approvals there; said, and changed, from any of the user's devices.
+      const unattended = agent === "claude" && facts.unattended?.kind === "known" ? facts.unattended.value : null;
+      const consent =
+        unattended === null || !this.options.consent
+          ? ""
+          : `<span class="host-use"><span class="${unattended ? "" : "caution"}">${escape(unattended ? words.unattendedYes : words.unattendedNo)}</span><button class="text-button quiet-button" type="button" data-consent="${unattended ? "withdraw" : "allow"}">${escape(unattended ? words.withdraw : words.allow)}</button></span>`;
+      return `<li class="host-line"><span class="host-name">${escape(name)}${version ? `<span class="host-version">${escape(version)}</span>` : ""}</span><span class="host-fact${loggedOut ? " caution" : ""}">${escape(login)}</span>${tools || act ? `<span class="host-use">${tools ? `<span>${escape(tools)}</span>` : ""}${act}</span>` : ""}${consent}</li>`;
     });
     return `<ul class="machine-hosts" aria-label="${escape(words.hosts)}">${lines.join("")}</ul>${note}`;
   }
