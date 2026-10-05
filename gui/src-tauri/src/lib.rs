@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use fastctx_client::{Conversation, World};
 use fastctx_types::device::DeviceJoined;
+use fastctx_types::file_search::{FileSearchReply, FileSearchRequest};
 use fastctx_types::management::{Managed, Management};
 use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use fastctx_types::residents::Landed;
@@ -369,6 +370,17 @@ async fn stop(
     Ok(stopped)
 }
 
+/// Names of files for an `@` in the user's words, found on `machine_name`
+/// (this node when absent) in the places the request's scope allows.
+#[tauri::command]
+async fn find_files(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    request: FileSearchRequest,
+) -> Result<FileSearchReply, String> {
+    shell.world().find_files(machine(machine_name)?, request).await.map_err(|error| error.to_string())
+}
+
 /// Removes a resident from the World, lets it sleep, wakes it or moves it
 /// to another project, as the user; each stage is answered as it went.
 #[tauri::command]
@@ -678,6 +690,7 @@ pub fn run() {
             open,
             stop,
             manage,
+            find_files,
             pages::page_read,
             pages::page_history,
             pages::page_consent,

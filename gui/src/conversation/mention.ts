@@ -7,6 +7,8 @@ import { escape } from "./prose";
 export interface FoundFile {
   /** The file's own absolute path on the agent's machine. */
   path: string;
+  /** Its path within the place it was found in, where that is known. */
+  relative?: string;
 }
 
 export interface FileWords {
@@ -31,8 +33,10 @@ export function mentioned(file: FoundFile): string {
   return `\`${file.path}\` `;
 }
 
-/** A found file in the menu: its name, then the directory it is in. */
+/** A found file in the menu: its name, then the directory it is in,
+ *  within its place where that is known. */
 export function fileRow(file: FoundFile): string {
-  const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"));
-  return `<span class="menu-name">${escape(file.path.slice(cut + 1))}</span><span class="menu-what mention-dir">${escape(file.path.slice(0, cut + 1))}</span>`;
+  const shown = file.relative ?? file.path;
+  const cut = Math.max(shown.lastIndexOf("/"), shown.lastIndexOf("\\"));
+  return `<span class="menu-name">${escape(shown.slice(cut + 1))}</span><span class="menu-what mention-dir">${escape(shown.slice(0, cut + 1))}</span>`;
 }

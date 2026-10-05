@@ -78,6 +78,7 @@ import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { PageScreen } from "./pages/view";
 import { manage as manageResident, type Management } from "./world/management";
+import { FileSearch } from "./world/file-search";
 import { renewalState, renewHere, renewGuardianHere, type VersionMismatch } from "./world/renewal";
 import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
@@ -609,6 +610,8 @@ function liveTalk(address: Address): Page {
   };
   const here = world?.here ?? null;
   const conversation = new Conversation();
+  // Names of files for an `@`, on the agent's machine, in its places.
+  const search = new FileSearch(address.machine, address.resident);
   const page: ConversationPage = new ConversationPage({
     words,
     here: here ?? "",
@@ -627,6 +630,10 @@ function liveTalk(address: Address): Page {
       open: openOutside,
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
+    files: {
+      words: composerWords.files,
+      find: (query) => search.find(query).then((files) => files.map((file) => ({ path: file.path, relative: file.relative }))),
+    },
     attach: {
       words: composerWords.attach,
       seam: {
@@ -742,6 +749,7 @@ function liveTalk(address: Address): Page {
       left = true;
       running();
       page.leave();
+      search.close();
       if (watchId !== null) void unwatch(watchId);
     },
   };
