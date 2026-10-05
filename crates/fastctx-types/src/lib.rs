@@ -11,6 +11,7 @@ pub mod agents;
 pub mod attachments;
 pub mod calls;
 pub mod copy;
+pub mod device;
 pub mod file_read;
 pub mod files;
 pub mod ipc;

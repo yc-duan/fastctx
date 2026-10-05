@@ -86,6 +86,8 @@ import {
   placeFastctx,
   setupState,
   onComputer,
+  connectionState,
+  joinDevice,
   readText,
   uploadBytes,
   uploadPath,
@@ -136,6 +138,10 @@ document.documentElement.lang = english ? "en" : "zh-CN";
 const specimen = specimenNow();
 const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
 const live = store.live;
+/** Whether this interface reaches the World as a device (a phone, or a
+ *  computer started with --device): it joins as one and sets nothing up.
+ *  A specimen shows one when asked. The shell's own answer follows. */
+let asDevice = live ? !onComputer() : params.has("phone");
 
 const head = (title: string, actions?: string) => pageHead(shellWords, title, actions);
 
@@ -758,12 +764,14 @@ function show(next: Place): void {
         store,
         words: english ? enWelcome : zhWelcome,
         head,
-        // A phone in the shell, or a specimen asked to show one.
-        device: live ? !onComputer() : params.has("phone"),
+        device: asDevice,
         setup: () => (live ? setupState() : Promise.reject(new Error("specimen"))),
         legacy: (legacy) => legacySaid(legacy, english ? enSettings : zhSettings),
         place: () => (live ? placeFastctx() : notLive()),
-        join: (code, name) => (live ? joinWorld(code, name) : notLive()),
+        join: (code, name) =>
+          live && asDevice
+            ? joinDevice(code, name).then((joined) => ({ ...joined, kept: null }))
+            : (live ? joinWorld(code, name) : notLive()),
         hubHere: (addresses) => (live ? hubHere(addresses) : notLive()),
         applyHosts: (codex, claude) => (live ? applyHosts(codex, claude, false, true) : notLive()),
         enter() {
@@ -943,6 +951,14 @@ applyTheme(() => {
   void redrawDiagrams(shell.element);
 });
 show(specimenPlace() ?? placeOf(location.hash));
+// A device that has not joined has nothing to show but the way in.
+if (live) {
+  void connectionState().then((state) => {
+    asDevice = state.mode === "device";
+    if (asDevice && !state.device?.world && place.kind === "home") location.hash = link({ kind: "welcome" });
+    else if (place.kind === "welcome") show(place);
+  });
+}
 if (!live && params.get("s") === "new") newTalk.open();
 if (!live && params.get("s") === "new-project") projectForm.open();
 if (!live && params.get("s") === "invite") devices.invite();

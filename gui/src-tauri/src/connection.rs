@@ -1,0 +1,131 @@
+//! The shell selects a transport once; every page keeps the same World API.
+
+use std::path::PathBuf;
+use std::sync::RwLock;
+
+use fastctx_client::World;
+use fastctx_client::device::Device;
+use fastctx_platform::{Permissions, ensure_private_dir, publish};
+pub use fastctx_types::device::{ConnectionMode as Mode, ConnectionState as State};
+#[cfg(desktop)]
+use fastctx_types::{ipc::Peer, layout::WorldDir};
+
+pub struct Connection {
+    directory: PathBuf,
+    current: RwLock<Selected>,
+}
+
+struct Selected {
+    mode: Mode,
+    world: World,
+    #[cfg(desktop)]
+    program: Option<PathBuf>,
+}
+
+impl Connection {
+    pub fn open(directory: PathBuf) -> Result<Self, String> {
+        ensure_private_dir(&directory).map_err(|error| error.to_string())?;
+        let device_requested = std::env::args_os().any(|argument| argument == "--device");
+        let mode = if device_requested {
+            Mode::Device
+        } else {
+            match std::fs::read(directory.join("connection.json")) {
+                Ok(bytes) => {
+                    serde_json::from_slice(&bytes).map_err(|error| format!("reading the connection choice: {error}"))?
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if cfg!(mobile) {
+                        Mode::Device
+                    } else {
+                        Mode::Local
+                    }
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        };
+        let current = Self::make(&directory, mode)?;
+        // A desktop shortcut can select a device before the first page calls
+        // World, so a computer used only as an interface never starts a node.
+        if device_requested {
+            publish(&directory.join("connection.json"), b"\"device\"", Permissions::Private)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(Self { directory, current: RwLock::new(current) })
+    }
+
+    pub fn world(&self) -> World {
+        self.current.read().expect("shell connection").world.clone()
+    }
+
+    pub fn state(&self) -> State {
+        let selected = self.current.read().expect("shell connection");
+        State { mode: selected.mode, device: selected.world.device().map(|device| device.state()) }
+    }
+
+    pub fn select(&self, mode: Mode) -> Result<(State, bool), String> {
+        let mut selected = self.current.write().expect("shell connection");
+        let changed = selected.mode != mode;
+        if changed {
+            if let Some(device) = selected.world.device()
+                && device.state().name.is_some()
+            {
+                return Err("leave this device's World before switching to a local node".into());
+            }
+            let next = Self::make(&self.directory, mode)?;
+            let bytes = serde_json::to_vec(&mode).map_err(|error| error.to_string())?;
+            publish(&self.directory.join("connection.json"), &bytes, Permissions::Private)
+                .map_err(|error| error.to_string())?;
+            *selected = next;
+        }
+        Ok((State { mode: selected.mode, device: selected.world.device().map(|device| device.state()) }, changed))
+    }
+
+    #[cfg(desktop)]
+    pub fn local_program(&self) -> Result<PathBuf, String> {
+        self.current
+            .read()
+            .expect("shell connection")
+            .program
+            .clone()
+            .ok_or_else(|| "this interface is a device; there is no local node or agent host".into())
+    }
+
+    /// Keep the transport check and the snapshot together: switching modes
+    /// must never pass a device World to code that installs a node service.
+    #[cfg(desktop)]
+    pub fn local_world(&self) -> Result<World, String> {
+        let selected = self.current.read().expect("shell connection");
+        if selected.mode != Mode::Local {
+            return Err("this interface is a device; it does not join a local node".into());
+        }
+        Ok(selected.world.clone())
+    }
+
+    fn make(directory: &std::path::Path, mode: Mode) -> Result<Selected, String> {
+        match mode {
+            Mode::Device => {
+                let directory = directory.join("device");
+                let open = if cfg!(mobile) { Device::open_managed } else { Device::open };
+                let device = open(directory).map_err(|error| error.to_string())?;
+                Ok(Selected {
+                    mode,
+                    world: World::from_device(device),
+                    #[cfg(desktop)]
+                    program: None,
+                })
+            }
+            Mode::Local => {
+                #[cfg(mobile)]
+                return Err("this platform uses a device connection; it cannot run a local node".into());
+                #[cfg(desktop)]
+                {
+                    let root = fastctx_platform::fastctx_root().map_err(|error| error.to_string())?;
+                    let program = root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
+                    let world = World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None })
+                        .starting_node_from(program.clone());
+                    Ok(Selected { mode, world, program: Some(program) })
+                }
+            }
+        }
+    }
+}

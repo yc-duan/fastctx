@@ -10,6 +10,7 @@ import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
 import type { Attachment } from "./attachments";
+import type { ConnectionState } from "./device";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
@@ -148,6 +149,17 @@ export function readText(machine: MachineName, path: string, range: FileRange): 
 /** A file on a machine, whole, as bytes for the page to show as it is. */
 export function readBytes(machine: MachineName, path: string): Promise<BytesRead> {
   return invoke("read_bytes", { machineName: machine, path });
+}
+
+/** How the shell reaches the World now: its own node, or as a device. */
+export function connectionState(): Promise<ConnectionState> {
+  return invoke("connection_state");
+}
+
+/** Joins a World as a device with an invitation made for one; nothing is
+ *  installed or started here. */
+export function joinDevice(code: string, name: string | null): Promise<{ world: string; name: MachineName }> {
+  return invoke("join_device", { code, name });
 }
 
 /** Residents or jobs in detail, from every machine that has them. */

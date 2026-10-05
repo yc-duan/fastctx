@@ -4,6 +4,8 @@
 //! watched conversation streams the session's events to the page as they
 //! come. The page speaks as the person at this machine, never as a session.
 
+mod connection;
+
 #[cfg(desktop)]
 mod setup;
 #[cfg(desktop)]
@@ -12,13 +14,11 @@ mod terminal;
 mod user_path;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use fastctx_client::{Conversation, World};
-use fastctx_types::ipc::Peer;
-use fastctx_types::layout::WorldDir;
+use fastctx_types::device::DeviceJoined;
 use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use fastctx_types::residents::Landed;
 use fastctx_types::session::SessionEvent;
@@ -27,6 +27,7 @@ use fastctx_types::town::{LookedUp, WorldWho};
 use fastctx_types::world::NodesReply;
 use fastctx_types::{Address, AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
 use serde::Serialize;
+use tauri::Manager as _;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
 
@@ -36,13 +37,70 @@ mod reading;
 mod uploading;
 
 struct Shell {
-    world: World,
-    /// The copy of fastctx placed for the hosts, which starts the node and
-    /// opens residents in their own interfaces.
-    #[cfg_attr(mobile, allow(dead_code))]
-    program: PathBuf,
+    connection: connection::Connection,
     watches: Mutex<HashMap<u64, JoinHandle<()>>>,
     next: AtomicU64,
+}
+
+impl Shell {
+    fn world(&self) -> World {
+        self.connection.world()
+    }
+}
+
+/// Available before joining and while no machines can answer.
+#[tauri::command]
+fn connection_state(shell: tauri::State<'_, Shell>) -> connection::State {
+    shell.connection.state()
+}
+
+/// Desktop can use a local node or a device identity; mobile uses a device.
+#[tauri::command]
+async fn select_connection(
+    shell: tauri::State<'_, Shell>,
+    mode: connection::Mode,
+) -> Result<connection::State, String> {
+    let (state, changed) = shell.connection.select(mode)?;
+    if changed {
+        for (_, watch) in shell.watches.lock().expect("watch table").drain() {
+            watch.abort();
+        }
+    }
+    Ok(state)
+}
+
+/// A scanned code and a pasted code take the same path. No service is installed.
+#[tauri::command]
+async fn join_device(
+    shell: tauri::State<'_, Shell>,
+    code: String,
+    name: Option<String>,
+) -> Result<DeviceJoined, String> {
+    let world = shell.world();
+    if world.device().is_none() {
+        return Err("select the device connection before joining with a device invitation".into());
+    }
+    let (world, name) = world.join(code, machine(name)?).await.map_err(|error| error.to_string())?;
+    Ok(DeviceJoined { world, name })
+}
+
+/// Also callable by the native application's network/resume callbacks.
+#[tauri::command]
+fn reconnect(shell: tauri::State<'_, Shell>) -> Result<(), String> {
+    reconnect_world(&shell.world())
+}
+
+/// Native network and foreground-service callbacks use this after shell
+/// setup. It interrupts an old dial/socket and the retry backoff immediately.
+pub fn reconnect_device(app: &tauri::AppHandle) -> Result<(), String> {
+    let shell = app.try_state::<Shell>().ok_or("the World shell has not started yet")?;
+    reconnect_world(&shell.world())
+}
+
+fn reconnect_world(world: &World) -> Result<(), String> {
+    let device = world.device().ok_or("this interface uses a local node, not a device connection")?;
+    device.reconnect();
+    Ok(())
 }
 
 /// The World as the front page reads it, asked in one go.
@@ -89,7 +147,7 @@ fn machine(name: Option<String>) -> Result<Option<MachineName>, String> {
 
 #[tauri::command]
 async fn world_now(shell: tauri::State<'_, Shell>) -> Result<WorldNow, String> {
-    let world = &shell.world;
+    let world = shell.world();
     let (who, nodes, towns) = tokio::join!(world.who(None, true), world.nodes(), world.towns());
     let nodes = nodes.map_err(|error| error.to_string())?;
     Ok(WorldNow {
@@ -109,9 +167,10 @@ async fn watch(
     machine_name: Option<String>,
     pieces: Channel<Piece>,
 ) -> Result<Watch, String> {
-    let (mut conversation, history) = Conversation::watch(&shell.world, resident(resident_id)?, machine(machine_name)?)
-        .await
-        .map_err(|error| error.to_string())?;
+    let (mut conversation, history) =
+        Conversation::watch(&shell.world(), resident(resident_id)?, machine(machine_name)?)
+            .await
+            .map_err(|error| error.to_string())?;
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
     let task = tauri::async_runtime::spawn(async move {
         loop {
@@ -153,7 +212,7 @@ async fn talk(
     attachments: Option<Vec<fastctx_types::attachments::Attachment>>,
 ) -> Result<Spoken, String> {
     let said = shell
-        .world
+        .world()
         .talk_with_attachments(resident(resident_id)?, machine(machine_name)?, text, attachments.unwrap_or_default())
         .await
         .map_err(|error| error.to_string())?;
@@ -171,7 +230,7 @@ async fn upload_path(
     sent: Channel<u64>,
 ) -> Result<fastctx_types::attachments::Attachment, String> {
     let target = fastctx_types::attachments::UploadTarget::Resident { resident: resident(resident_id)? };
-    uploading::from_path(&shell.world, target, machine(machine_name)?, std::path::Path::new(&path), sent).await
+    uploading::from_path(&shell.world(), target, machine(machine_name)?, std::path::Path::new(&path), sent).await
 }
 
 /// Carries bytes the page holds to a resident's machine. The bytes are the
@@ -191,7 +250,7 @@ async fn upload_bytes(
     };
     let target = fastctx_types::attachments::UploadTarget::Resident { resident: resident(header("resident")?)? };
     let machine = machine(Some(header("machine")?).filter(|name| !name.is_empty()))?;
-    uploading::from_bytes(&shell.world, target, machine, header("name")?, header("type")?, bytes.clone()).await
+    uploading::from_bytes(&shell.world(), target, machine, header("name")?, header("type")?, bytes.clone()).await
 }
 
 /// Undoes `encodeURIComponent`.
@@ -221,7 +280,8 @@ struct Project {
 #[tauri::command]
 async fn project(shell: tauri::State<'_, Shell>, town: String) -> Result<Project, String> {
     let town = TownName::try_from(town).map_err(|error| error.to_string())?;
-    let (map, who) = tokio::join!(shell.world.map(Some(town.clone())), shell.world.who(Some(town), false));
+    let world = shell.world();
+    let (map, who) = tokio::join!(world.map(Some(town.clone())), world.who(Some(town), false));
     Ok(Project { map: map.map_err(|error| error.to_string())?, who: who.map_err(|error| error.to_string())? })
 }
 
@@ -236,7 +296,7 @@ async fn journal(
     let town = TownName::try_from(town).map_err(|error| error.to_string())?;
     let journal = JournalName::try_from(journal).map_err(|error| error.to_string())?;
     let before = before.map(|id| EntryId::try_from(id).map_err(|error| error.to_string())).transpose()?;
-    shell.world.journal(Some(town), journal, before).await.map_err(|error| error.to_string())
+    shell.world().journal(Some(town), journal, before).await.map_err(|error| error.to_string())
 }
 
 /// Asks an agent into the World for the user: on a machine, in a town,
@@ -255,7 +315,7 @@ async fn open(
     let town = town.map(|town| TownName::try_from(town).map_err(|error| error.to_string())).transpose()?;
     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort: effort };
     let said = shell
-        .world
+        .world()
         .open_with_options(agent, town, machine(machine_name)?, text, options)
         .await
         .map_err(|error| error.to_string())?;
@@ -272,7 +332,7 @@ async fn since(
 ) -> Result<fastctx_types::since::WorldSince, String> {
     let since: jiff::Timestamp = since.parse().map_err(|error: jiff::Error| error.to_string())?;
     let town = town.map(|town| TownName::try_from(town).map_err(|error| error.to_string())).transpose()?;
-    shell.world.since(since, town).await.map_err(|error| error.to_string())
+    shell.world().since(since, town).await.map_err(|error| error.to_string())
 }
 
 /// The agents each machine can start, as their official programs say:
@@ -282,7 +342,7 @@ async fn agents(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
 ) -> Result<fastctx_types::agents::WorldAgents, String> {
-    shell.world.agents(machine(machine_name)?).await.map_err(|error| error.to_string())
+    shell.world().agents(machine(machine_name)?).await.map_err(|error| error.to_string())
 }
 
 /// Stops the turn a resident is running; says whether one was.
@@ -293,7 +353,7 @@ async fn stop(
     machine_name: Option<String>,
 ) -> Result<bool, String> {
     let (_, stopped) =
-        shell.world.stop(resident(resident_id)?, machine(machine_name)?).await.map_err(|error| error.to_string())?;
+        shell.world().stop(resident(resident_id)?, machine(machine_name)?).await.map_err(|error| error.to_string())?;
     Ok(stopped)
 }
 
@@ -307,7 +367,7 @@ async fn control(
     control: Control,
 ) -> Result<Controlled, String> {
     let (_, controlled) = shell
-        .world
+        .world()
         .control(resident(resident_id)?, machine(machine_name)?, control)
         .await
         .map_err(|error| error.to_string())?;
@@ -316,9 +376,16 @@ async fn control(
 
 /// What a resident's conversation offers now.
 #[tauri::command]
-async fn offers(shell: tauri::State<'_, Shell>, resident_id: String, machine_name: Option<String>) -> Result<Offers, String> {
-    let (_, offers) =
-        shell.world.offers(resident(resident_id)?, machine(machine_name)?).await.map_err(|error| error.to_string())?;
+async fn offers(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: Option<String>,
+) -> Result<Offers, String> {
+    let (_, offers) = shell
+        .world()
+        .offers(resident(resident_id)?, machine(machine_name)?)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(offers)
 }
 
@@ -330,7 +397,7 @@ async fn read_text(
     path: String,
     range: fastctx_types::file_read::FileRange,
 ) -> Result<reading::TextRead, String> {
-    reading::read_text(&shell.world, machine(machine_name)?, path, range).await
+    reading::read_text(&shell.world(), machine(machine_name)?, path, range).await
 }
 
 /// A file on a machine, whole, as bytes for the page to show as it is.
@@ -340,13 +407,13 @@ async fn read_bytes(
     machine_name: Option<String>,
     path: String,
 ) -> Result<reading::BytesRead, String> {
-    reading::read_bytes(&shell.world, machine(machine_name)?, path).await
+    reading::read_bytes(&shell.world(), machine(machine_name)?, path).await
 }
 
 /// Residents or jobs in detail, by id, from every machine that has them.
 #[tauri::command]
 async fn look(shell: tauri::State<'_, Shell>, ids: Vec<String>) -> Result<Vec<LookedUp>, String> {
-    shell.world.look(ids).await.map_err(|error| error.to_string())
+    shell.world().look(ids).await.map_err(|error| error.to_string())
 }
 
 /// A version of a town's record, as the World stamped it.
@@ -364,7 +431,7 @@ fn town(name: String) -> Result<TownName, String> {
 /// Opens a project with the first version of its record.
 #[tauri::command]
 async fn project_new(shell: tauri::State<'_, Shell>, name: String, fields: RecordFields) -> Result<TownRecord, String> {
-    let made = shell.world.open_town(town(name)?, fields).await.map_err(|error| error.to_string())?;
+    let made = shell.world().open_town(town(name)?, fields).await.map_err(|error| error.to_string())?;
     Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })
 }
 
@@ -375,13 +442,13 @@ async fn project_edit(
     name: String,
     fields: RecordFields,
 ) -> Result<TownRecord, String> {
-    let made = shell.world.edit_town(Some(town(name)?), fields).await.map_err(|error| error.to_string())?;
+    let made = shell.world().edit_town(Some(town(name)?), fields).await.map_err(|error| error.to_string())?;
     Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })
 }
 
 #[tauri::command]
 async fn journals(shell: tauri::State<'_, Shell>, name: String) -> Result<Vec<JournalSummary>, String> {
-    Ok(shell.world.journals(Some(town(name)?)).await.map_err(|error| error.to_string())?.1)
+    Ok(shell.world().journals(Some(town(name)?)).await.map_err(|error| error.to_string())?.1)
 }
 
 /// An entry the user writes in a journal, starting the journal when it has
@@ -396,7 +463,7 @@ async fn journal_add(
 ) -> Result<String, String> {
     let journal = JournalName::try_from(journal).map_err(|error| error.to_string())?;
     let reply = shell
-        .world
+        .world()
         .add_entry(Some(town(name)?), journal, text, description, Vec::new(), Vec::new(), None)
         .await
         .map_err(|error| error.to_string())?;
@@ -417,20 +484,20 @@ async fn invite(
     let expires = jiff::Timestamp::now()
         .checked_add(jiff::SignedDuration::from_hours(i64::from(hours)))
         .map_err(|error| error.to_string())?;
-    shell.world.invite(machine(name)?, expires, device.unwrap_or(false)).await.map_err(|error| error.to_string())
+    shell.world().invite(machine(name)?, expires, device.unwrap_or(false)).await.map_err(|error| error.to_string())
 }
 
 /// No machine trusts `name`'s key any more.
 #[tauri::command]
 async fn revoke(shell: tauri::State<'_, Shell>, name: String, reason: String) -> Result<(), String> {
     let name = name.parse::<MachineName>().map_err(|error| error.to_string())?;
-    shell.world.revoke(name, reason).await.map_err(|error| error.to_string())
+    shell.world().revoke(name, reason).await.map_err(|error| error.to_string())
 }
 
 /// This machine leaves its World and becomes a World of one again.
 #[tauri::command]
 async fn leave(shell: tauri::State<'_, Shell>) -> Result<(), String> {
-    shell.world.leave().await.map_err(|error| error.to_string())
+    shell.world().leave().await.map_err(|error| error.to_string())
 }
 
 /// Opens a resident on this computer in its own official interface, in a
@@ -438,7 +505,7 @@ async fn leave(shell: tauri::State<'_, Shell>) -> Result<(), String> {
 #[cfg(desktop)]
 #[tauri::command]
 async fn attach_here(shell: tauri::State<'_, Shell>, resident_id: String) -> Result<(), String> {
-    let program = shell.program.clone();
+    let program = shell.connection.local_program()?;
     let resident = resident(resident_id)?;
     tauri::async_runtime::spawn_blocking(move || terminal::attach(&program, &resident))
         .await
@@ -448,22 +515,29 @@ async fn attach_here(shell: tauri::State<'_, Shell>, resident_id: String) -> Res
 /// Where this computer stands with the World.
 #[cfg(desktop)]
 #[tauri::command]
-async fn setup_state() -> Result<setup::Setup, String> {
+async fn setup_state(shell: tauri::State<'_, Shell>) -> Result<setup::Setup, String> {
+    shell.connection.local_program()?;
     tauri::async_runtime::spawn_blocking(setup::setup).await.map_err(|error| error.to_string())?
 }
 
 /// Puts the fastctx this application carries in place for the hosts.
 #[cfg(desktop)]
 #[tauri::command]
-async fn place_fastctx() -> Result<String, String> {
+async fn place_fastctx(shell: tauri::State<'_, Shell>) -> Result<String, String> {
+    shell.connection.local_program()?;
     tauri::async_runtime::spawn_blocking(setup::place).await.map_err(|error| error.to_string())?
 }
 
 /// Joins a World with a code, under `name` or the name this machine has.
 #[cfg(desktop)]
 #[tauri::command]
-async fn join_world(shell: tauri::State<'_, Shell>, code: String, name: Option<String>) -> Result<setup::Joined, String> {
-    setup::join(&shell.world, code.trim().to_string(), machine(name)?).await
+async fn join_world(
+    shell: tauri::State<'_, Shell>,
+    code: String,
+    name: Option<String>,
+) -> Result<setup::Joined, String> {
+    let world = shell.connection.local_world()?;
+    setup::join(&world, code.trim().to_string(), machine(name)?).await
 }
 
 /// Has a system service keep this computer's node, asking once for
@@ -471,7 +545,9 @@ async fn join_world(shell: tauri::State<'_, Shell>, code: String, name: Option<S
 #[cfg(desktop)]
 #[tauri::command]
 async fn keep_here(shell: tauri::State<'_, Shell>) -> Result<setup::KeptNow, String> {
-    setup::keep(&shell.world).await
+    // A computer that joined as a device has no node to keep.
+    shell.connection.local_program()?;
+    setup::keep(&shell.world()).await
 }
 
 /// Removes the service that keeps this computer's node.
@@ -484,14 +560,22 @@ async fn release_here() -> Result<setup::KeptNow, String> {
 /// Founds a hub on this computer; returns the code that founds its World.
 #[cfg(desktop)]
 #[tauri::command]
-async fn hub_here(public: Vec<String>) -> Result<String, String> {
+async fn hub_here(shell: tauri::State<'_, Shell>, public: Vec<String>) -> Result<String, String> {
+    shell.connection.local_program()?;
     tauri::async_runtime::spawn_blocking(move || setup::hub_here(public)).await.map_err(|error| error.to_string())?
 }
 
 /// Puts the World's tools into this computer's hosts, or takes them out.
 #[cfg(desktop)]
 #[tauri::command]
-async fn apply_hosts(codex: bool, claude: bool, raise: bool, into: bool) -> Result<Vec<String>, String> {
+async fn apply_hosts(
+    shell: tauri::State<'_, Shell>,
+    codex: bool,
+    claude: bool,
+    raise: bool,
+    into: bool,
+) -> Result<Vec<String>, String> {
+    shell.connection.local_program()?;
     tauri::async_runtime::spawn_blocking(move || setup::hosts(codex, claude, raise, into))
         .await
         .map_err(|error| error.to_string())?
@@ -505,23 +589,28 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
     .union(tauri_plugin_window_state::StateFlags::POSITION)
     .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(windows)]
     let Some(desktop) = desktop_presence::enter().expect("starting World's desktop presence") else {
         return;
     };
-    let root = fastctx_platform::fastctx_root().expect("finding this user's fastctx directory");
-    // When no node runs, it is started from the stable copy fastctx keeps
-    // for the hosts, never from this program.
-    let program = root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
-    let world = World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None })
-        .starting_node_from(program.clone());
     let builder = tauri::Builder::default()
         // Its script also sends every link that opens a new window to the
         // system's browser, where the webview alone would drop it.
         .plugin(tauri_plugin_opener::init())
-        .manage(Shell { world, program, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) })
+        .setup(|app| {
+            let directory = app.path().app_data_dir()?;
+            let connection = tauri::async_runtime::block_on(async { connection::Connection::open(directory) })
+                .map_err(std::io::Error::other)?;
+            app.manage(Shell { connection, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            connection_state,
+            select_connection,
+            join_device,
+            reconnect,
             world_now,
             since,
             agents,

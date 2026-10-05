@@ -8,7 +8,10 @@
 //! World it hands to any machine's node, which makes the call for it as
 //! for a user at that machine, so the World is asked around in one place.
 //! A device never runs, writes, copies, asks a colleague or sends a
-//! letter: those are a machine's and its residents' own.
+//! letter: those are a machine's and its residents' own. No machine invites
+//! or revokes for it either: a machine's invitation is a machine's word,
+//! so a lost phone could bring a stranger in through one; a device revokes
+//! only itself, over its own link, when it leaves.
 
 use std::sync::Arc;
 
@@ -68,8 +71,6 @@ pub async fn relay(node: &Arc<Node>, from: &MachineName, call: serde_json::Value
             | Call::Nodes
             | Call::Project(_)
             | Call::Journal(_)
-            | Call::Invite { .. }
-            | Call::Revoke { .. }
     );
     if !made {
         return Err(Failure::new(

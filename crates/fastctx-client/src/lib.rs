@@ -1,16 +1,20 @@
-//! The one way into the node.
+//! The interface to the World, through a local node or a device's own link.
 //!
 //! Commands, the TUI, a job's supervisor and later the graphical interface
-//! all reach the node through a `Client`: it connects to the node's local
+//! reach a local node through a `Client`: it connects to the node's local
 //! endpoint, says who is speaking, and sends calls, each answered once.
 //! Nothing outside the node writes the World's state; clients ask.
 //!
 //! Above it, what every interface shares: [`World`], one method for each
 //! thing asked of the World; [`TownView`], who is where in the shape to show
 //! it; [`Conversation`], talking to a resident and following its turns.
+//! A [`device::Device`] supplies the same World API on a computer or phone
+//! that runs no node, keeping its identity and network connection in the
+//! application's own directory.
 
 pub mod attachments;
 pub mod conversation;
+pub mod device;
 pub mod file_read;
 pub mod host;
 pub mod shown;
@@ -201,21 +205,32 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
-        Ok(Watching { client: self, id })
+        Ok(Watching { transport: WatchingTransport::Local { client: self, id } })
     }
 }
 
 /// A watch the node hands over as it goes; dropping it ends the watch.
 pub struct Watching {
-    client: Client,
-    id: u64,
+    transport: WatchingTransport,
+}
+
+enum WatchingTransport {
+    Local { client: Client, id: u64 },
+    Device(device::watch::Watching),
 }
 
 impl Watching {
+    pub(crate) fn device(watching: device::watch::Watching) -> Self {
+        Self { transport: WatchingTransport::Device(watching) }
+    }
+
     /// The next piece; `None` once the watch ended as it should.
     pub async fn next(&mut self) -> Result<Option<Watched>, CallError> {
-        let frame = self
-            .client
+        let (client, expected) = match &mut self.transport {
+            WatchingTransport::Local { client, id } => (client, id),
+            WatchingTransport::Device(watching) => return watching.next().await,
+        };
+        let frame = client
             .connection
             .recv()
             .await
@@ -223,8 +238,8 @@ impl Watching {
             .ok_or_else(|| CallError::Broken(std::io::ErrorKind::UnexpectedEof.into()))?;
         let broken = |what: String| CallError::Broken(std::io::Error::other(what));
         match serde_json::from_slice::<NodeFrame>(&frame).map_err(|error| broken(error.to_string()))? {
-            NodeFrame::Watched { id, watched } if id == self.id => Ok(Some(watched)),
-            NodeFrame::Reply { id, reply } if id == self.id => reply.map(|_| None).map_err(CallError::Failed),
+            NodeFrame::Watched { id, watched } if id == *expected => Ok(Some(watched)),
+            NodeFrame::Reply { id, reply } if id == *expected => reply.map(|_| None).map_err(CallError::Failed),
             _ => Err(broken("the node answered another call on a watch".to_string())),
         }
     }

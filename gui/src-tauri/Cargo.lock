@@ -1183,6 +1183,7 @@ dependencies = [
 name = "fastctx-client"
 version = "1.0.0"
 dependencies = [
+ "fastctx-net",
  "fastctx-platform",
  "fastctx-types",
  "jiff",
