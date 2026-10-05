@@ -105,9 +105,14 @@ const once = (method) =>
 
 await send("Page.enable");
 await send("Runtime.enable");
+// The browser's own errors: a resource the content policy refused, one
+// that did not load.
+await send("Log.enable");
 const problems = [];
 listeners.add((data) => {
   if (data.method === "Runtime.exceptionThrown") problems.push(data.params.exceptionDetails.exception?.description ?? "exception");
+  // A browser asks for a favicon on its own; the shell never does.
+  if (data.method === "Log.entryAdded" && data.params.entry.level === "error" && !data.params.entry.url?.endsWith("/favicon.ico")) problems.push(`${data.params.entry.text} ${data.params.entry.url ?? ""}`.trim());
   if (data.method === "Runtime.consoleAPICalled" && data.params.type === "error") {
     problems.push(data.params.args.map((arg) => arg.value ?? arg.description).join(" "));
   }
