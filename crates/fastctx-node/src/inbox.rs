@@ -118,11 +118,16 @@ pub fn settle(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pendi
     let directory = &current;
     let Some(pending) = read_here(directory, id)? else { return Ok(None) };
     if delivered_here(directory, id)? {
-        std::fs::remove_file(path(directory, id))?;
+        if directory.path().file_name().is_none_or(|name| name != "archive") {
+            std::fs::remove_file(path(directory, id))?;
+        }
         return Ok(None);
     }
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(directory.delivered())?;
     file.write_all(format!("{id}\n").as_bytes())?;
+    if directory.path().file_name().is_some_and(|name| name == "archive") {
+        return Ok(Some(pending));
+    }
     match std::fs::remove_file(path(directory, id)) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
         _ => {}
@@ -197,6 +202,9 @@ pub fn paid(directory: &ResidentDir, id: &NoticeId) -> io::Result<()> {
     let (_transaction, current) = crate::resident_storage::current(directory)?;
     let directory = &current;
     publish(&directory.outbox().join(format!("{id}.paid")), b"", Permissions::Private)?;
+    if directory.path().file_name().is_some_and(|name| name == "archive") {
+        return Ok(());
+    }
     match std::fs::remove_file(directory.outbox().join(format!("{id}.json"))) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),

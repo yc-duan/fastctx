@@ -101,6 +101,7 @@ fn residents() -> Vec<ResidentNow> {
                 what: "pwd".into(),
                 result: "exit 0".into(),
             }),
+            removed: None,
             moved: match i {
                 0 => None,
                 1 => Some(Moved { to: Some("project-2".parse().unwrap()), at: at() }),
@@ -125,6 +126,10 @@ fn residents() -> Vec<ResidentNow> {
     let mut legacy = residents[3].clone();
     legacy.now = Some(now);
     residents.push(legacy);
+    let mut removed = residents[0].clone();
+    removed.here = false;
+    removed.removed = Some(at());
+    residents.push(removed);
     residents
 }
 

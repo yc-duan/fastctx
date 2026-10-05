@@ -169,6 +169,10 @@ fn who(resident: &ResidentNow, now: Timestamp) -> String {
         }
         Origin::Colleague { asked_by, label } => format!("for {asked_by} \"{label}\""),
     });
+    if let Some(at) = resident.removed {
+        parts.push(format!("removed {} ago", ago(at, now)));
+        return parts.join(" · ");
+    }
     parts.push(match (&resident.moved, activity(resident)) {
         (Some(moved), _) => match &moved.to {
             Some(town) => format!("moved to {town} {} ago", ago(moved.at, now)),
@@ -185,7 +189,9 @@ fn who(resident: &ResidentNow, now: Timestamp) -> String {
 /// what it is doing or did last.
 fn doing(resident: &ResidentNow, job: Option<&RunningJob>, now: Timestamp) -> String {
     let mut parts = Vec::new();
-    if let Some(state) = &resident.now {
+    if let Some(state) = &resident.now
+        && resident.removed.is_none()
+    {
         parts.push(state_of(state, now));
         if state.desk {
             parts.push(format!("using Computer Use on {}", resident.about.machine));

@@ -21,6 +21,7 @@ mod history;
 mod items;
 pub mod launch;
 mod lifetime;
+mod management;
 mod notifications;
 mod offers;
 mod presentation;
@@ -185,6 +186,9 @@ pub enum HostEvent {
         thread: String,
         done: EventBarrier,
     },
+    Unloaded {
+        thread: String,
+    },
     Happened {
         thread: String,
         event: SessionEvent,
@@ -262,6 +266,7 @@ struct Thread {
     completed_item: bool,
     spec: Option<ThreadSpec>,
     loaded: bool,
+    subscribed: bool,
     /// The turn running now: reported started, or named in the answer to
     /// the words that started it.
     turn: Option<String>,
@@ -371,6 +376,7 @@ impl CodexHost {
         let entry = state.threads.entry(thread.clone()).or_default();
         entry.spec = Some(spec);
         entry.loaded = current;
+        entry.subscribed = current;
         entry.created_here = true;
         entry.model = model.clone();
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
@@ -606,7 +612,7 @@ impl CodexHost {
             let Some(entry) = state.threads.get_mut(thread) else {
                 return Err(format!("no Codex thread {thread} is known on this machine"));
             };
-            if entry.loaded {
+            if entry.loaded && entry.subscribed {
                 return Ok(());
             }
             // Resuming starts the thread's tool servers again; what they say
@@ -638,6 +644,7 @@ impl CodexHost {
         // Another client may have started a turn while resume's reply was
         // in flight. Preserve any turn already reported by a notification.
         entry.loaded = true;
+        entry.subscribed = true;
         entry.selection = selection;
         entry.model = answer.get("model").and_then(Value::as_str).map(str::to_string);
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
@@ -699,8 +706,12 @@ impl CodexHost {
         {
             let _generation = self.generation.lock().expect("never poisoned");
             let mut state = self.lock();
-            for thread in state.threads.values_mut() {
+            for (id, thread) in &mut state.threads {
+                if thread.loaded {
+                    let _ = self.events.send(HostEvent::Unloaded { thread: id.clone() });
+                }
                 thread.loaded = false;
+                thread.subscribed = false;
                 thread.turn = None;
                 thread.requests.clear();
                 thread.usage = None;
@@ -1085,7 +1096,9 @@ impl CodexHost {
                 // Unloaded: the next words resume it.
                 if let Some(entry) = self.lock().threads.get_mut(&thread) {
                     entry.loaded = false;
+                    entry.subscribed = false;
                 }
+                let _ = self.events.send(HostEvent::Unloaded { thread });
             }
             _ => {}
         }
@@ -1156,6 +1169,9 @@ impl CodexHost {
         };
         (self.log)(format!("the Codex app-server stopped ({how})"));
         let _ = self.events.send(HostEvent::Gone { how, turns });
+        for thread in self.lock().threads.keys() {
+            let _ = self.events.send(HostEvent::Unloaded { thread: thread.clone() });
+        }
     }
 }
 

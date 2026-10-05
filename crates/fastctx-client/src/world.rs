@@ -115,7 +115,7 @@ impl World {
         Ok((reply, client.machine.clone()))
     }
 
-    async fn ask(&self, call: Call) -> Result<Reply, Error> {
+    pub(crate) async fn ask(&self, call: Call) -> Result<Reply, Error> {
         Ok(self.call(call).await?.0)
     }
 

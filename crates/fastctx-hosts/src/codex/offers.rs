@@ -69,7 +69,8 @@ impl CodexHost {
 
     pub async fn offers(self: &Arc<Self>, thread: &str) -> Result<Offers, String> {
         let server = self.server().await?;
-        self.ensure_loaded(&server, thread).await?;
+        // Inspecting a sleeping resident must not subscribe it again.
+        // Catalogs are server-wide; unavailable per-thread usage is reported.
         let models = self.models(&server).await?;
         let skills = self.skills(&server, thread).await?;
         let limits = server.request("account/rateLimits/read", json!({})).await;

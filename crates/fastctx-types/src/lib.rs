@@ -16,6 +16,7 @@ pub mod file_read;
 pub mod files;
 pub mod ipc;
 pub mod layout;
+pub mod management;
 pub mod names;
 pub mod process;
 pub mod project;

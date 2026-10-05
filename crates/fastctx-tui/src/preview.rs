@@ -80,6 +80,7 @@ fn resident(
         now: None,
         last_action: None,
         moved: None,
+        removed: None,
     }
 }
 

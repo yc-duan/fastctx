@@ -87,6 +87,7 @@ pub async fn look_here(node: &Arc<Node>, id: &str) -> Option<Looked> {
                     here: record.here,
                     now: record.now,
                     moved: None,
+                    removed: record.removed,
                 },
                 records: directory.path().to_string_lossy().replace('\\', "/"),
                 actions,

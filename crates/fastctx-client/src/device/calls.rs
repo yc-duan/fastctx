@@ -37,6 +37,10 @@ impl Device {
                 let machine = session.locate(&resident, machine).await?;
                 (machine, RemoteCall::Stop { resident: resident.clone() }, Some(resident))
             }
+            Call::Manage { resident, machine, action } => {
+                let machine = session.locate(&resident, machine).await?;
+                (machine, RemoteCall::Manage { resident: resident.clone(), action }, Some(resident))
+            }
             Call::Control { resident, machine, control } => {
                 let machine = session.locate(&resident, machine).await?;
                 (machine, RemoteCall::Control { resident: resident.clone(), control }, Some(resident))
@@ -75,6 +79,9 @@ impl Device {
             }
             (RemoteCall::Stop { .. }, RemoteReply::Stopped { stopped }) => {
                 Reply::Stopped { resident: address.expect("stop resident"), stopped }
+            }
+            (RemoteCall::Manage { .. }, RemoteReply::Managed(managed)) => {
+                Reply::Managed { resident: address.expect("manage resident"), managed }
             }
             (RemoteCall::Control { .. }, RemoteReply::Controlled(controlled)) => {
                 Reply::Controlled { resident: address.expect("control resident"), controlled }

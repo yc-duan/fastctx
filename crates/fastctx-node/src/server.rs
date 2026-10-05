@@ -92,6 +92,12 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.drain().await?;
             return Ok(());
         }
+        if let Some(removed) = arrived.residents.iter().find(|id| node.residents.removed(id).is_some()) {
+            let reply = Err::<Reply, _>(node.residents.active(removed).expect_err("removed resident"));
+            writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
+            writer.drain().await?;
+            continue;
+        }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
         let reply = match call {
             Call::Collect { resident } => collect(node, resident, &mut arrived.collected, &mut arrived.notes).await,
@@ -265,6 +271,11 @@ async fn taken(
 }
 
 pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
+    if let Ok(Caller::Resident(address)) = caller::of(node, peer)
+        && address.machine == node.machine()
+    {
+        node.residents.active(&address.resident)?;
+    }
     match call {
         Call::Arrive { host, hints } => {
             if host.agent.as_str() == "claude" || hints.tool_use_id.is_some() {
@@ -318,6 +329,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::talk::stop(node, resident, machine)
                 .await
                 .map(|(resident, stopped)| Reply::Stopped { resident, stopped })
+        }
+        Call::Manage { resident, machine, action } => {
+            users_voice(node, peer)?;
+            crate::management::manage(node, resident, machine, action)
+                .await
+                .map(|(resident, managed)| Reply::Managed { resident, managed })
         }
         Call::Control { resident, machine, control } => {
             users_voice(node, peer)?;
@@ -410,6 +427,7 @@ fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
 
 /// The town a resident of this machine lives in.
 fn town_of(node: &Node, resident: &ResidentId) -> Result<Option<TownName>, Failure> {
+    node.residents.active(resident)?;
     node.residents
         .town_of(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))

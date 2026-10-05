@@ -31,6 +31,9 @@ pub struct ResidentNow {
     /// It lived in `town` and moved away: what it did there stays there.
     #[serde(default)]
     pub moved: Option<Moved>,
+    /// Removed from the World, with records preserved in its archive.
+    #[serde(default)]
+    pub removed: Option<Timestamp>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

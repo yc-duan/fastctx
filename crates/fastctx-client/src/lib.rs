@@ -17,6 +17,7 @@ pub mod conversation;
 pub mod device;
 pub mod file_read;
 pub mod host;
+mod management;
 pub mod shown;
 pub mod town;
 pub mod world;

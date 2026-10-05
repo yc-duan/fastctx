@@ -14,6 +14,9 @@ use crate::Node;
 
 /// The command that opens `resident` in its host's own interface.
 pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostCommand, Failure> {
+    let gate = node.residents.management(resident)?;
+    let _reading = gate.read().await;
+    node.residents.active(resident)?;
     let here = node.machine();
     let (about, _) = node.residents.about(resident).ok_or_else(|| {
         Failure::new(format!(

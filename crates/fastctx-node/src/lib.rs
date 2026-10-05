@@ -30,6 +30,7 @@ mod letters;
 mod log;
 mod look;
 mod machine;
+mod management;
 mod own;
 mod resident_storage;
 mod residents;

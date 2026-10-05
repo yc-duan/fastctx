@@ -15,8 +15,12 @@ pub fn lock() -> MutexGuard<'static, ()> {
 pub fn current(directory: &ResidentDir) -> io::Result<(MutexGuard<'static, ()>, ResidentDir)> {
     let guard = lock();
     let mut directory = directory.clone();
-    let town = directory
-        .path()
+    let base = if directory.path().file_name().is_some_and(|name| name == "archive") {
+        directory.path().parent().expect("archive parent")
+    } else {
+        directory.path()
+    };
+    let town = base
         .parent()
         .and_then(|path| path.parent())
         .ok_or_else(|| io::Error::other("resident directory has no town"))?;
@@ -28,13 +32,20 @@ pub fn current(directory: &ResidentDir) -> io::Result<(MutexGuard<'static, ()>, 
     .ok_or_else(|| io::Error::other("resident directory has no World"))?;
     let world = WorldDir::at(root);
     let id = ResidentId::try_from(
-        directory
-            .path()
-            .file_name()
+        base.file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| io::Error::other("resident directory has no id"))?,
     )
     .map_err(io::Error::other)?;
+    if world.removed(&id).exists() {
+        let name = town.file_name().and_then(|name| name.to_str());
+        let town = name
+            .filter(|name| *name != "outside")
+            .map(fastctx_types::TownName::try_from)
+            .transpose()
+            .map_err(io::Error::other)?;
+        return Ok((guard, world.resident(town.as_ref(), &id)));
+    }
     let mut seen = std::collections::HashSet::new();
     loop {
         if !seen.insert(directory.path().to_path_buf()) {

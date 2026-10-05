@@ -156,7 +156,7 @@ pub fn address(resident: &ResidentNow) -> Address {
 }
 
 pub fn busy(resident: &ResidentNow) -> bool {
-    resident.now.as_ref().is_some_and(|now| now.activity == Activity::Busy)
+    resident.removed.is_none() && resident.now.as_ref().is_some_and(|now| now.activity == Activity::Busy)
 }
 
 /// When it last did anything the World saw.

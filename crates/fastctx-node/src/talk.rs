@@ -484,6 +484,7 @@ pub async fn stop(
 /// whose plugin is paired with the World, through its mod. A Codex session
 /// of the user's own belongs to the program it is open in.
 pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, Failure> {
+    node.residents.active(resident)?;
     let (about, _) = node
         .residents
         .about(resident)

@@ -114,7 +114,8 @@ pub fn arrive_in(world: &WorldDir, id: &ResidentId, town: Option<&TownName>, abo
 }
 
 pub fn append_message(directory: &ResidentDir, message: &MessageLine) -> io::Result<()> {
-    append_lines(&directory.messages(), std::slice::from_ref(message))
+    let (_transaction, current) = crate::resident_storage::current(directory)?;
+    append_lines(&current.messages(), std::slice::from_ref(message))
 }
 
 /// Appends one action to a resident's `actions`.
@@ -124,6 +125,7 @@ pub fn record_action(
     town: Option<&TownName>,
     action: &Action,
 ) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
     append_lines(&world.resident(town, resident).actions(), std::slice::from_ref(action))
 }
 
@@ -136,6 +138,7 @@ pub fn record_seen(
     town: Option<&TownName>,
     seen: &[Seen],
 ) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
     let directory = world.owner(here, town, owner);
     ensure_private_dir(directory.path())?;
     append_lines(&directory.seen(), seen)
