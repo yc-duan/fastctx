@@ -40,7 +40,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "join", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-form", "new-codex", "new-attach", "find", "attach", "rewind", "usage", "service", "mention", "decision", "log"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "palette", "welcome", "join", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-form", "new-codex", "new-attach", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -130,7 +130,7 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "mention" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" || session === "new-attach" ? "new" : session === "manage" ? "about" : session === "join" ? "welcome" : session;
+      const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "mention" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" || session === "new-attach" ? "new" : session === "manage" ? "about" : session === "join" ? "welcome" : session === "queue" ? "codex" : session;
       const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
       await send("Page.navigate", { url: `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}` });
       await loaded;
@@ -240,6 +240,20 @@ for (const session of sessions) {
       }
       if (session === "about") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.details-toggle')?.click()" });
+      }
+      if (session === "queue") {
+        // Words said while the agent works: two wait their turn.
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `(async () => {
+            await new Promise((r) => setTimeout(r, 1300));
+            const t = document.querySelector(".composer textarea");
+            const say = (text) => { t.value = text; t.dispatchEvent(new Event("input")); document.querySelector(".composer-action").click(); };
+            say("先别动 writer.rs，等我看完这份日志再说");
+            say("看完之后把 retry 的测试在 lab 上也跑一遍，结果贴给我");
+            await new Promise((r) => setTimeout(r, 300));
+          })()`,
+        });
       }
       if (session === "join") {
         // The way into a World with a code, pasted or (on a phone) scanned.

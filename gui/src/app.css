@@ -902,3 +902,134 @@ button.composer-context[hidden] {
   font: inherit;
   box-shadow: 0 2px 0 -1px var(--accent);
 }
+
+/* Words said while the agent works: a small list above the composer, the
+   next to go first, each with what can be done to it. */
+.send-queue {
+  margin: 0 0 var(--space-2);
+  border-radius: var(--radius-m);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  font-size: var(--size-small);
+}
+
+.send-queue[hidden] {
+  display: none;
+}
+
+.queue-head {
+  padding: 6px var(--space-3) 4px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.queue-head.held {
+  color: var(--caution);
+}
+
+.queue-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 2px;
+  max-height: 168px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.queue-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 34px;
+  padding: 2px var(--space-2) 2px 2px;
+  border-top: 1px solid var(--divider);
+}
+
+.queue-row.dragging {
+  position: relative;
+  z-index: 1;
+  border-radius: var(--radius-s);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.queue-grip {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 28px;
+  color: var(--text-3);
+  cursor: grab;
+  touch-action: none;
+}
+
+.queue-row.dragging .queue-grip {
+  cursor: grabbing;
+}
+
+.queue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
+.queue-files {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.queue-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.queue-acts .icon-button {
+  width: 26px;
+  height: 26px;
+  color: var(--text-3);
+}
+
+.queue-acts .text-button {
+  min-height: 26px;
+  padding: 0 var(--space-2);
+  font-size: 12px;
+}
+
+.queue-now .glyph {
+  color: var(--accent);
+}
+
+.queue-row.editing {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: var(--space-2);
+}
+
+.queue-edit {
+  flex: 1 1 100%;
+  min-height: 3em;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  outline: 0;
+  resize: vertical;
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--focus);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+}
+
+.queue-row.editing .queue-acts {
+  margin-left: auto;
+}
+

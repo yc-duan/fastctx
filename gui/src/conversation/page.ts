@@ -7,6 +7,7 @@ import type { Words } from "../words";
 import type { Control, Controlled, ModelOffer, Offers } from "../world/control";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
+import { SendQueue, type Queued } from "./queue";
 import { Menu, commandRow, commandsOf, modelRow, type MenuCommand } from "./commands";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import type { Details } from "./details";
@@ -23,6 +24,11 @@ export interface Someone {
   model: string | null;
   town: string | null;
 }
+
+/** What came of words sent: a turn this conversation will see end; taken,
+ *  but into a turn whose end it will not see (delivery uncertain, or a host
+ *  that tells the World nothing of its turns); or not taken. */
+export type Sent = "turn" | "unseen" | "failed";
 
 export interface PageOptions {
   words: Words;
@@ -69,8 +75,9 @@ export interface PageOptions {
     words: FileWords;
     find(query: string): Promise<FoundFile[]>;
   };
-  /** Sends the user's words, and what arrived of what was attached. */
-  send(text: string, attached: { refs: unknown[]; shown: Attached[] }): void;
+  /** Sends the user's words, and what arrived of what was attached;
+   *  resolves with what came of them. */
+  send(text: string, attached: { refs: unknown[]; shown: Attached[] }): Promise<Sent> | void;
   stop(): void;
 }
 
@@ -126,6 +133,7 @@ export class ConversationPage {
         <form class="composer">
           <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div></div>
           <div class="composer-confirm" hidden></div>
+          <div class="composer-queue"></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
@@ -172,6 +180,11 @@ export class ConversationPage {
     this.input = this.element.querySelector("textarea")!;
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
+    this.queue = new SendQueue(options.draftKey ?? "", words.queue, {
+      now: (item) => this.sendQueued(item, true),
+      changed: () => this.drawAction(),
+    });
+    this.element.querySelector(".composer-queue")!.replaceWith(this.queue.element);
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
     if (options.controls) this.menus(options.controls);
@@ -272,6 +285,7 @@ export class ConversationPage {
     const moving = this.options.conversation.moving();
     if (this.wasMoving && !moving) void this.askOffers();
     this.wasMoving = moving;
+    this.releaseQueued();
   }
 
   /** Stops what the page keeps asking for. */
@@ -341,7 +355,50 @@ export class ConversationPage {
     }
     this.clear();
     this.following = true;
-    this.options.send(text, attached);
+    // While a turn is under way, or a queued one is on its way, words wait
+    // their turn instead of cutting into it.
+    if (this.options.conversation.busy() || this.released !== null) {
+      this.queue.add(text, attached);
+      return;
+    }
+    // Words the user sends while the queue waits on them: once their turn
+    // ends as it should, the queue goes on.
+    this.failed = null;
+    void this.options.send(text, attached);
+  }
+
+  /** Sends what waits: the first, once a turn has ended as it should and
+   *  nothing else is on its way; a turn stopped or failed holds them. */
+  private releaseQueued(): void {
+    const conversation = this.options.conversation;
+    // The one sent last is on its way until a turn after it has ended.
+    if (this.released !== null && conversation.ended() > this.released) this.released = null;
+    const last = conversation.lastEnd();
+    const idle = !conversation.busy() && !conversation.waiting();
+    const stopped = idle && last !== null && last.how !== "completed";
+    this.queue.hold(this.failed ?? (stopped ? "stopped" : null));
+    if (!idle || this.released !== null || this.failed || stopped) return;
+    const head = this.queue.head();
+    if (head && this.queue.take(head.key)) this.sendQueued(head, false);
+  }
+
+  /** Sends one that waited: `now` when the user asked, into the turn under
+   *  way; otherwise as the next turn. */
+  private sendQueued(item: Queued, now: boolean): void {
+    const conversation = this.options.conversation;
+    if (!now) this.released = conversation.ended();
+    this.failed = null;
+    this.following = true;
+    const sent = this.options.send(item.text, item.attached);
+    void Promise.resolve(sent).then((came) => {
+      // No turn to wait for: the rest wait for the user, said above them.
+      if (came === "failed" || came === "unseen") {
+        this.released = null;
+        this.failed = came === "failed" ? "not_taken" : "unsure";
+      }
+      this.update();
+    });
+    this.update();
   }
 
   private clear(): void {
@@ -473,6 +530,12 @@ export class ConversationPage {
     field.addEventListener("blur", () => finish(true));
   }
   private tray: AttachTray | null = null;
+  private queue!: SendQueue;
+  /** How many turns had ended when the last queued words were sent. */
+  private released: number | null = null;
+  /** The last queued words were not taken, or went where their turn's end
+   *  will not be seen: the rest wait for the user. */
+  private failed: "not_taken" | "unsure" | null = null;
   private stopDrops: (() => void) | null = null;
 
   /** Files come with the words: picked with the paperclip, pasted, or
@@ -794,7 +857,8 @@ export class ConversationPage {
       this.name.removeAttribute("title");
     }
     const waiting = !this.gone && conversation.waiting();
-    const working = !this.gone && !waiting && conversation.moving();
+    // Working for the whole of a turn, not only while something shows.
+    const working = !this.gone && !waiting && conversation.busy();
     const now = this.gone ?? (waiting ? words.waitingForYou : working ? words.working : words.idle);
     // A screen reader hears the conversation change state, once each time:
     // its words as they stream would be too many to hear.
@@ -841,9 +905,12 @@ export class ConversationPage {
   private drawAction(): void {
     const { words, conversation } = this.options;
     const typed = this.input.value.trim() !== "" || (this.tray?.count ?? 0) > 0;
-    const stop = !typed && conversation.moving();
+    const busy = conversation.busy();
+    const stop = !typed && busy;
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
-    this.action.setAttribute("aria-label", stop ? words.stop : words.send);
+    const label = stop ? words.stop : typed && (busy || this.released !== null) ? words.queue.queue : words.send;
+    this.action.setAttribute("aria-label", label);
+    this.action.title = label;
     this.action.classList.toggle("stop", stop);
     this.action.disabled = !typed && !stop;
   }

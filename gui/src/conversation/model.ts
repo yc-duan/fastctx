@@ -70,6 +70,13 @@ export class Conversation {
   /** The host replaced or removed turns: what is shown must be read again. */
   stale = false;
   private serial = 0;
+  /** Turns begun and not yet ended, as the World tells them. */
+  private running = new Set<string>();
+  /** How many turns have ended while watched (history read again is not
+   *  a turn ending), and how the last one did. */
+  private endings = 0;
+  private lastEnding: TurnEnd | null = null;
+  private replaying = false;
 
   private key(prefix: string): string {
     this.serial += 1;
@@ -83,7 +90,10 @@ export class Conversation {
     const waiting = this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting");
     this.entries = [];
     this.stale = false;
+    this.running.clear();
+    this.replaying = true;
     for (const event of events) this.event(event);
+    this.replaying = false;
     for (const ask of waiting) {
       if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.entries.push(ask);
     }
@@ -93,6 +103,8 @@ export class Conversation {
     const at = Date.parse(event.at);
     switch (event.event) {
       case "turn_started":
+        this.running.add(event.turn);
+        return;
       case "realtime":
       case "realtime_grew":
         return;
@@ -175,7 +187,10 @@ export class Conversation {
         this.title = event.title;
         return;
       case "turn_ended": {
+        this.running.delete(event.turn);
         if (this.entries.some((entry) => entry.kind === "ended" && entry.turn === event.turn)) return;
+        if (!this.replaying) this.endings += 1;
+        this.lastEnding = event.end;
         for (const entry of this.entries) {
           if (entry.kind === "tool" && entry.turn === event.turn && entry.ended === null) entry.ended = { at, use: "cut" };
           if (entry.kind === "prose" && entry.turn === event.turn) entry.writing = false;
@@ -356,6 +371,22 @@ export class Conversation {
   sent(key: string, state: SendState): void {
     const entry = this.entries.find((candidate) => candidate.key === key);
     if (entry?.kind === "heard" && entry.sending) entry.sending = state;
+  }
+
+  /** Whether a turn is under way: begun and not ended, or anything shown
+   *  still happening. */
+  busy(): boolean {
+    return this.running.size > 0 || this.moving();
+  }
+
+  /** How many turns have ended while watched. */
+  ended(): number {
+    return this.endings;
+  }
+
+  /** How the last turn that ended did: completed, stopped or failed. */
+  lastEnd(): TurnEnd | null {
+    return this.lastEnding;
   }
 
   /** Whether anything shown is happening now. */

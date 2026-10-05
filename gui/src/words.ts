@@ -1,3 +1,4 @@
+import type { QueueWords } from "./conversation/queue";
 // Every word the interface says on its own account, in the user's words
 // (`world-gui.md`, 用词): plain, without role-play; what agents and tools
 // produce is never translated.
@@ -35,6 +36,7 @@ export interface Tally {
 }
 
 export interface Words {
+  queue: QueueWords;
   act(act: Act, tense: Tense): string;
   failedTool(name: string): string;
   tally(tally: Tally): string;
@@ -137,6 +139,22 @@ const enActs: Record<Act, [string, string, string]> = {
 const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 : 2);
 
 export const zh: Words = {
+  queue: {
+    waiting: (count) => `排着的 ${count} 句，这一轮说完后一句一句发出`,
+    held: "这一轮停下了，排着的先留着；点「现在发」接着发",
+    notTaken: "上一句没发出去（见对话里），排着的先留着；点「现在发」接着发",
+    unsure: "上一句送没送进它这一轮说不准（见对话里），排着的先留着；点「现在发」接着发",
+    sendNow: "现在发",
+    sendNowTitle: "不等这一轮说完，现在就发给它",
+    edit: "改",
+    save: "保存",
+    cancel: "算了",
+    remove: "拿掉",
+    reorder: "按住拖动换顺序；也可以 Alt 加上下方向键",
+    files: (count) => `${count} 个文件`,
+    empty: "没有要发的",
+    queue: "排到这一轮之后",
+  },
   act: (act, tense) => zhActs[act][index(tense)],
   failedTool: (name) => `${name} 失败`,
   tally: (t) => {
@@ -229,6 +247,22 @@ export const zh: Words = {
 };
 
 export const en: Words = {
+  queue: {
+    waiting: (count) => `${count} queued; sent one by one once this turn ends`,
+    held: "This turn was stopped; what is queued waits. Send one to go on",
+    notTaken: "The last one was not sent (see above); the rest wait. Send one to go on",
+    unsure: "Whether the last one reached its turn is not known (see above); the rest wait. Send one to go on",
+    sendNow: "Send now",
+    sendNowTitle: "Send it now, without waiting for this turn to end",
+    edit: "Edit",
+    save: "Save",
+    cancel: "Cancel",
+    remove: "Remove",
+    reorder: "Hold and drag to reorder, or Alt with the up and down arrows",
+    files: (count) => `${count} files`,
+    empty: "Nothing to send",
+    queue: "Queue after this turn",
+  },
   act: (act, tense) => enActs[act][index(tense)],
   failedTool: (name) => `${name} Failed`,
   tally: (t) => {

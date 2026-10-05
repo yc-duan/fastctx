@@ -605,7 +605,7 @@ function liveTalk(address: Address): Page {
         attached.shown.map(({ name, size, image, preview }) => ({ name, size, image, preview })),
       );
       page.update();
-      talk(address, text, attached.refs as Attachment[])
+      return talk(address, text, attached.refs as Attachment[])
         .then(({ to, landed }) => {
           // Words in a turn take their place when the session hears them;
           // words in no turn yet say where they are.
@@ -614,10 +614,14 @@ function liveTalk(address: Address): Page {
             conversation.sent(key, { state: "landed", how: landed.kind, machine: to.machine, why });
             page.update();
           }
+          // A turn whose end this conversation will not see leaves nothing
+          // for words queued after these to wait on.
+          return landed.kind === "uncertain" || (landed.kind === "waiting" && !landed.answered) ? ("unseen" as const) : ("turn" as const);
         })
         .catch((error: unknown) => {
           conversation.sent(key, { state: "failed", why: String(error) });
           page.update();
+          return "failed" as const;
         });
     },
     stop() {
