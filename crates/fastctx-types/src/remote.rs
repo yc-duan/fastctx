@@ -22,29 +22,63 @@ use crate::{AgentName, ResidentId, TownName};
 pub enum RemoteCall {
     /// A page action admitted by a machine's user-only page gate. Devices
     /// use Relay(Page::Act), never this execution call.
-    PageAction { source: crate::pages::PageSource, action: crate::pages::PageInvocation },
+    PageAction {
+        source: crate::pages::PageSource,
+        action: crate::pages::PageInvocation,
+    },
     /// Run a script there for a resident of the calling machine.
-    Run { resident: ResidentId, town: Option<TownName>, request: RunRequest },
+    Run {
+        resident: ResidentId,
+        town: Option<TownName>,
+        request: RunRequest,
+    },
     /// Write files there for a resident of the calling machine.
-    Write { resident: ResidentId, town: Option<TownName>, op: WriteOp },
+    Write {
+        resident: ResidentId,
+        town: Option<TownName>,
+        op: WriteOp,
+    },
     /// Who is on that machine and what each is doing, for `fastctx w`: in
     /// `town`, or in every town and none.
-    Who { all: bool, town: Option<TownName> },
+    Who {
+        all: bool,
+        town: Option<TownName>,
+    },
     /// Existing local records strictly after this timestamp. Large replies
     /// use the telephone's existing authenticated data connection.
-    Since { since: jiff::Timestamp, town: Option<TownName> },
+    Since {
+        since: jiff::Timestamp,
+        town: Option<TownName>,
+    },
     /// Facts from this machine's official agent programs.
     Agents,
     /// A user's byte read. `read` binds the signed data pieces to this call.
-    ReadFile { request: crate::file_read::ReadFileRequest, read: u64 },
+    ReadFile {
+        request: crate::file_read::ReadFileRequest,
+        read: u64,
+    },
+    FindFiles {
+        request: crate::file_search::FileSearchRequest,
+    },
     /// The documents of a canon there, for a town's map.
-    Canon { path: String },
+    Canon {
+        path: String,
+    },
     /// Start a colleague there for a resident of the calling machine.
-    Ask { asker: ResidentId, town: Option<TownName>, label: String, prompt: String },
+    Ask {
+        asker: ResidentId,
+        town: Option<TownName>,
+        label: String,
+        prompt: String,
+    },
     /// Whether a resident with this id lives there.
-    Find { resident: ResidentId },
+    Find {
+        resident: ResidentId,
+    },
     /// A resident or job of that machine in detail, for `fastctx w <id>`.
-    Look { id: String },
+    Look {
+        id: String,
+    },
     /// The user's words, typed on the calling machine, to a resident there.
     Talk {
         to: ResidentId,
@@ -54,11 +88,17 @@ pub enum RemoteCall {
     },
     /// Bytes arrive through this signed call's data connection, followed by
     /// the JSON word "uploaded". Only a user-authorized entrance emits this.
-    Upload { target: crate::attachments::UploadTarget, file: crate::attachments::UploadFile },
+    Upload {
+        target: crate::attachments::UploadTarget,
+        file: crate::attachments::UploadFile,
+    },
     /// Watch a resident there: what it hands over goes over the call's data
     /// connection until the caller closes it, each piece signed by the
     /// machine that holds the session, naming `watch` and numbered from 0.
-    Watch { resident: ResidentId, watch: u64 },
+    Watch {
+        resident: ResidentId,
+        watch: u64,
+    },
     /// Open a session there for the user, as `Call::Open`.
     Open {
         agent: AgentName,
@@ -70,28 +110,47 @@ pub enum RemoteCall {
         attachments: Vec<crate::attachments::Attachment>,
     },
     /// Stop the turn a resident there is running, for the user.
-    Stop { resident: ResidentId },
+    Stop {
+        resident: ResidentId,
+    },
     /// Do something to a resident's conversation there, for the user.
-    Control { resident: ResidentId, control: Control },
+    Control {
+        resident: ResidentId,
+        control: Control,
+    },
     /// Manage this resident as the user, on its own machine.
-    Manage { resident: ResidentId, action: Management },
+    Manage {
+        resident: ResidentId,
+        action: Management,
+    },
     /// What a resident's conversation there offers now.
-    Offers { resident: ResidentId },
+    Offers {
+        resident: ResidentId,
+    },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
     /// Copy `from`, a path there, to another machine.
-    CopySend { from: String, to: Place },
+    CopySend {
+        from: String,
+        to: Place,
+    },
     /// Take a copy from the calling machine, over the call's data
     /// connection: first the manifest, whose size and digest are these, then
     /// the files the receiver asks for. `to` ends in a separator to copy
     /// into that directory.
-    CopyReceive { to: String, manifest_bytes: u64, manifest_sha256: String },
+    CopyReceive {
+        to: String,
+        manifest_bytes: u64,
+        manifest_sha256: String,
+    },
     /// A device's call that asks of the whole World (who is in it, what
     /// happened since, its projects), made by this machine's node for the
     /// user holding the device, as for a user at this machine. `made` is a
     /// local `Call`, as JSON; what a device asks of one resident it asks of
     /// that resident's machine itself.
-    Relay { made: serde_json::Value },
+    Relay {
+        made: serde_json::Value,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +159,7 @@ pub enum RemoteReply {
     PageAction {
         result: crate::pages::PageResult,
     },
+    FilesFound(crate::file_search::FileSearchReply),
     Uploaded(crate::attachments::Attachment),
     Run(RunReply),
     Written {

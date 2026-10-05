@@ -197,6 +197,9 @@ impl fastctx_net::link::Node for Handler {
                     crate::talk::serve_watch(&node, resident, watch, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node).await.map(RemoteReply::Agents),
+                RemoteCall::FindFiles { request } => {
+                    crate::file_search::here(&node, from, request).await.map(RemoteReply::FilesFound)
+                }
                 RemoteCall::ReadFile { request, read } => {
                     let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;
                     crate::file_read::serve(&node, request, read, stream).await

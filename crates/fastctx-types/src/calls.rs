@@ -48,6 +48,11 @@ pub enum Call {
         machine: Option<MachineName>,
         request: crate::file_read::ReadFileRequest,
     },
+    /// File-name completion, with scope checked on the machine holding it.
+    FindFiles {
+        machine: Option<MachineName>,
+        request: crate::file_search::FileSearchRequest,
+    },
     /// Asks for a colleague for a resident of this machine
     /// (`ask_colleague`): a Codex resident started on this machine or on
     /// the machine `node` names, with `prompt` as its first words. `label`
@@ -236,6 +241,7 @@ pub enum Reply {
     PageAct {
         result: crate::pages::PageResult,
     },
+    FilesFound(crate::file_search::FileSearchReply),
     Uploaded(crate::attachments::Attachment),
     Arrived(Whereabouts),
     Run(RunReply),

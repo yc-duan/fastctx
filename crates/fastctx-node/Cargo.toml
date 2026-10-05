@@ -15,6 +15,7 @@ harness = false
 [dependencies]
 anyhow.workspace = true
 fastctx-hands = { path = "../fastctx-hands" }
+fastctx-file-search = { path = "../fastctx-file-search" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-install = { path = "../fastctx-install" }
 fastctx-net = { path = "../fastctx-net" }

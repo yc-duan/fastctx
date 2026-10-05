@@ -8734,6 +8734,276 @@
       10
     ]
   },
+  "file_search": {
+    "calls": [
+      {
+        "call": "find_files",
+        "machine": null,
+        "request": {
+          "do": "start",
+          "scope": {
+            "scope": "resident",
+            "resident": "codex-a1b2",
+            "roots": []
+          }
+        }
+      },
+      {
+        "call": "find_files",
+        "machine": "desktop",
+        "request": {
+          "do": "start",
+          "scope": {
+            "scope": "resident",
+            "resident": "codex-a1b2",
+            "roots": []
+          }
+        }
+      },
+      {
+        "call": "find_files",
+        "machine": null,
+        "request": {
+          "do": "start",
+          "scope": {
+            "scope": "roots",
+            "roots": [
+              "C:/work/中文 项目"
+            ]
+          }
+        }
+      },
+      {
+        "call": "find_files",
+        "machine": "desktop",
+        "request": {
+          "do": "start",
+          "scope": {
+            "scope": "roots",
+            "roots": [
+              "C:/work/中文 项目"
+            ]
+          }
+        }
+      },
+      {
+        "call": "find_files",
+        "machine": null,
+        "request": {
+          "do": "query",
+          "search": "79dcc61ceab94d2dac41c71c5bd9f828",
+          "query": "调用.rs",
+          "limit": 20
+        }
+      },
+      {
+        "call": "find_files",
+        "machine": "desktop",
+        "request": {
+          "do": "query",
+          "search": "79dcc61ceab94d2dac41c71c5bd9f828",
+          "query": "调用.rs",
+          "limit": 20
+        }
+      },
+      {
+        "call": "find_files",
+        "machine": null,
+        "request": {
+          "do": "close",
+          "search": "79dcc61ceab94d2dac41c71c5bd9f828"
+        }
+      },
+      {
+        "call": "find_files",
+        "machine": "desktop",
+        "request": {
+          "do": "close",
+          "search": "79dcc61ceab94d2dac41c71c5bd9f828"
+        }
+      }
+    ],
+    "replies": [
+      {
+        "reply": "files_found",
+        "machine": "desktop",
+        "state": "started",
+        "search": "79dcc61ceab94d2dac41c71c5bd9f828"
+      },
+      {
+        "reply": "files_found",
+        "machine": "desktop",
+        "state": "matches",
+        "query": "调用.rs",
+        "ready": false,
+        "total": 0,
+        "files": []
+      },
+      {
+        "reply": "files_found",
+        "machine": "desktop",
+        "state": "matches",
+        "query": "调用.rs",
+        "ready": false,
+        "total": 1,
+        "files": [
+          {
+            "path": "C:/work/中文 项目/src/调用.rs",
+            "root": "C:/work/中文 项目",
+            "relative": "src/调用.rs"
+          }
+        ]
+      },
+      {
+        "reply": "files_found",
+        "machine": "desktop",
+        "state": "matches",
+        "query": "调用.rs",
+        "ready": true,
+        "total": 2,
+        "files": [
+          {
+            "path": "C:/work/中文 项目/src/调用.rs",
+            "root": "C:/work/中文 项目",
+            "relative": "src/调用.rs"
+          }
+        ]
+      },
+      {
+        "reply": "files_found",
+        "machine": "desktop",
+        "state": "matches",
+        "query": "missing",
+        "ready": true,
+        "total": 0,
+        "files": []
+      },
+      {
+        "reply": "files_found",
+        "machine": "desktop",
+        "state": "closed"
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "find_files",
+        "request": {
+          "do": "start",
+          "scope": {
+            "scope": "resident",
+            "resident": "codex-a1b2",
+            "roots": []
+          }
+        }
+      },
+      {
+        "call": "find_files",
+        "request": {
+          "do": "start",
+          "scope": {
+            "scope": "roots",
+            "roots": [
+              "C:/work/中文 项目"
+            ]
+          }
+        }
+      },
+      {
+        "call": "find_files",
+        "request": {
+          "do": "query",
+          "search": "79dcc61ceab94d2dac41c71c5bd9f828",
+          "query": "调用.rs",
+          "limit": 20
+        }
+      },
+      {
+        "call": "find_files",
+        "request": {
+          "do": "close",
+          "search": "79dcc61ceab94d2dac41c71c5bd9f828"
+        }
+      }
+    ],
+    "remote_results": [
+      {
+        "Ok": {
+          "reply": "files_found",
+          "machine": "desktop",
+          "state": "started",
+          "search": "79dcc61ceab94d2dac41c71c5bd9f828"
+        }
+      },
+      {
+        "Ok": {
+          "reply": "files_found",
+          "machine": "desktop",
+          "state": "matches",
+          "query": "调用.rs",
+          "ready": false,
+          "total": 0,
+          "files": []
+        }
+      },
+      {
+        "Ok": {
+          "reply": "files_found",
+          "machine": "desktop",
+          "state": "matches",
+          "query": "调用.rs",
+          "ready": false,
+          "total": 1,
+          "files": [
+            {
+              "path": "C:/work/中文 项目/src/调用.rs",
+              "root": "C:/work/中文 项目",
+              "relative": "src/调用.rs"
+            }
+          ]
+        }
+      },
+      {
+        "Ok": {
+          "reply": "files_found",
+          "machine": "desktop",
+          "state": "matches",
+          "query": "调用.rs",
+          "ready": true,
+          "total": 2,
+          "files": [
+            {
+              "path": "C:/work/中文 项目/src/调用.rs",
+              "root": "C:/work/中文 项目",
+              "relative": "src/调用.rs"
+            }
+          ]
+        }
+      },
+      {
+        "Ok": {
+          "reply": "files_found",
+          "machine": "desktop",
+          "state": "matches",
+          "query": "missing",
+          "ready": true,
+          "total": 0,
+          "files": []
+        }
+      },
+      {
+        "Ok": {
+          "reply": "files_found",
+          "machine": "desktop",
+          "state": "closed"
+        }
+      },
+      {
+        "Err": {
+          "message": "file search is closed or belongs to another caller"
+        }
+      }
+    ]
+  },
   "attachments": {
     "calls": [
       {

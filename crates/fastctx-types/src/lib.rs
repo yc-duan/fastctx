@@ -13,6 +13,7 @@ pub mod calls;
 pub mod copy;
 pub mod device;
 pub mod file_read;
+pub mod file_search;
 pub mod files;
 pub mod ipc;
 pub mod layout;
