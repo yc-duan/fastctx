@@ -173,28 +173,20 @@ impl Session {
         let remote = RemoteCall::Relay { made: serde_json::to_value(&call).map_err(failed)? };
         let mut unanswered = Vec::new();
         for machine in machines {
-            // A relay gets the existing three-heartbeat liveness window.
-            // After that reads can move on; writes may already have acted,
-            // so resubmitting them would risk duplicate entries/invitations.
-            let answer =
-                tokio::time::timeout(fastctx_net::wire::SILENCE, self.link.call(&machine, remote.clone())).await;
-            match answer {
-                Ok(Ok(Ok(RemoteReply::Relayed { answer }))) => {
+            // Heartbeats establish connection liveness, not a deadline for
+            // completing a query or transferring its answer. Only a reported
+            // delivery/connection failure permits trying another machine.
+            match self.link.call(&machine, remote.clone()).await {
+                Ok(Ok(RemoteReply::Relayed { answer })) => {
                     return Ok((serde_json::from_value(answer).map_err(failed)?, machine));
                 }
-                Ok(Ok(Ok(_))) => return Err(failed(format!("{machine} answered something other than a relayed call"))),
-                Ok(Ok(Err(error))) => return Err(failed(format!("on {machine}: {error}"))),
-                Ok(Err(error @ CallFailure::NotConnected { .. })) => return Err(failed(error)),
-                Ok(Err(error @ CallFailure::Unknown { .. })) if !repeatable => return Err(failed(error)),
-                Ok(Err(error)) => unanswered.push(error.to_string()),
-                Err(_) if !repeatable => {
-                    return Err(failed(format!(
-                        "{machine} did not answer within {} s; whether it acted is not known; this write was not sent again",
-                        fastctx_net::wire::SILENCE.as_secs()
-                    )));
+                Ok(Ok(_)) => return Err(failed(format!("{machine} answered something other than a relayed call"))),
+                Ok(Err(error)) => return Err(failed(format!("on {machine}: {error}"))),
+                Err(error @ CallFailure::NotConnected { .. }) => return Err(failed(error)),
+                Err(error @ CallFailure::Unknown { .. }) if !repeatable => {
+                    return Err(failed(format!("{error}; this write was not sent again")));
                 }
-                Err(_) => unanswered
-                    .push(format!("{machine} did not answer within {} s", fastctx_net::wire::SILENCE.as_secs())),
+                Err(error) => unanswered.push(error.to_string()),
             }
         }
         Err(failed(format!("no online machine answered: {}", unanswered.join("; "))))

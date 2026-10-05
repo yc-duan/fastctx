@@ -168,7 +168,9 @@ impl World {
         }
     }
 
-    /// The towns this machine is part of.
+    /// The World's projects, including those that do not span this machine.
+    /// When its hub is disconnected, a node lists the copies it already has;
+    /// `nodes` reports that connection state alongside the available projects.
     pub async fn towns(&self) -> Result<Vec<TownSummary>, Error> {
         match self.ask(Call::Project(ProjectCall::List)).await? {
             Reply::Towns { towns } => Ok(towns),

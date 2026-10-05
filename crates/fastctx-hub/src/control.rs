@@ -399,6 +399,7 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
             }
             Ok(Told::Written { seq })
         }
+        Question::LedgerCatalog | Question::LedgerQuery { .. } => crate::ledger_query::answer(hub, name, question),
         Question::LedgerTowns => Ok(Told::Towns { towns: hub.ledgers.lock().expect("never poisoned").towns_of(name) }),
         Question::LedgerRead { town, after } => {
             let (entries, more) = hub.ledgers.lock().expect("never poisoned").read(name, &town, after)?;

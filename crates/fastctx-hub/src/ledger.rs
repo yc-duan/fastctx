@@ -152,6 +152,15 @@ impl Ledgers {
         if !ledger.machines.contains(name) {
             return Err(format!("{town} does not span {name}"));
         }
+        self.read_world(town, after)
+    }
+
+    /// Reads for an authenticated machine's explicit query. The caller
+    /// checks membership kind before entering this storage-only method.
+    pub fn read_world(&self, town: &TownName, after: u64) -> Result<(Vec<(u64, Signed)>, bool), String> {
+        if !self.towns.contains_key(town) {
+            return Err(format!("the hub has no ledger for {town}"));
+        }
         let files =
             numbered(&self.dir.join(town.as_str())).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
         // An answer is its frame around the entries, each separated by a

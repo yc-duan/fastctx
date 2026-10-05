@@ -9,6 +9,7 @@
 //! message is for this machine, and that a call is not one it took before.
 
 mod changes;
+mod ledger_query;
 mod letters;
 mod outgoing;
 mod session;
@@ -297,7 +298,42 @@ impl Link {
         town: &TownName,
         after: u64,
     ) -> Result<(Vec<(u64, crate::ledger::Entry, Signed)>, bool), String> {
-        let (entries, more) = match self.inner.ask(Question::LedgerRead { town: town.clone(), after }).await? {
+        self.read_ledger(town, Question::LedgerRead { town: town.clone(), after }).await
+    }
+
+    /// The complete project directory, without subscribing to its ledgers.
+    pub async fn ledger_catalog(&self) -> Result<Vec<(TownName, u64)>, String> {
+        match self.inner.ask(Question::LedgerCatalog).await? {
+            Told::Towns { towns } => Ok(towns),
+            _ => Err("the hub answered something other than the project directory".to_string()),
+        }
+    }
+
+    /// Reads a town for an explicit user query, checking the same signatures
+    /// as replication. Membership in the town is not a read boundary.
+    pub async fn ledger_query(
+        &self,
+        town: &TownName,
+        after: u64,
+    ) -> Result<(Vec<(u64, crate::ledger::Entry, Signed)>, bool), String> {
+        self.read_ledger(town, Question::LedgerQuery { town: town.clone(), after }).await
+    }
+
+    async fn read_ledger(
+        &self,
+        town: &TownName,
+        question: Question,
+    ) -> Result<(Vec<(u64, crate::ledger::Entry, Signed)>, bool), String> {
+        let answer = self.inner.ask(question).await?;
+        self.read_ledger_answer(town, answer).await
+    }
+
+    async fn read_ledger_answer(
+        &self,
+        town: &TownName,
+        answer: Told,
+    ) -> Result<(Vec<(u64, crate::ledger::Entry, Signed)>, bool), String> {
+        let (entries, more) = match answer {
             Told::Entries { entries, more } => (entries, more),
             _ => return Err("the hub answered something else".to_string()),
         };
@@ -509,15 +545,25 @@ impl Inner {
     async fn ask(&self, question: Question) -> Result<Told, String> {
         let connection =
             self.connected().await.ok_or_else(|| format!("not connected to the hub: {}", self.not_connected()))?;
+        self.ask_on(connection, question)
+            .await?
+            .ok_or_else(|| "the connection to the hub ended before it answered".to_string())
+    }
+
+    /// None means that the connection ended, distinct from a hub refusal.
+    async fn ask_on(&self, connection: Connection, question: Question) -> Result<Option<Told>, String> {
         let id = self.next_id();
         let (answer, answered) = oneshot::channel();
         self.asks.lock().expect("never poisoned").insert(id, answer);
         if connection.up.send(Up::Ask { id, question }).is_err() {
             self.asks.lock().expect("never poisoned").remove(&id);
-            return Err("the connection to the hub ended".to_string());
+            return Ok(None);
         }
         // The answer, or the end of the connection, which drops the sender.
-        answered.await.unwrap_or_else(|_| Err("the connection to the hub ended before it answered".to_string()))
+        match answered.await {
+            Ok(answer) => answer.map(Some),
+            Err(_) => Ok(None),
+        }
     }
 
     async fn call(

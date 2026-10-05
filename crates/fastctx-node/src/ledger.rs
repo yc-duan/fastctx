@@ -33,9 +33,13 @@ use jiff::Timestamp;
 
 use crate::Node;
 
+pub(crate) mod query;
+pub use query::query;
+
 /// Writes an entry into `town`'s ledger: `files`, at paths relative to the
 /// ledger, and for a version of the town's record the machines it spans
-/// from then on. Returns once this machine has it, when the town spans it.
+/// from then on. Returns once this machine has the accepted entry, including
+/// when it wrote on behalf of a device into a town that does not span it.
 pub async fn write(
     node: &Arc<Node>,
     town: &TownName,
@@ -56,8 +60,15 @@ pub async fn write(
                 machines,
                 files,
             };
-            link.ledger_write(&entry).await.map_err(Failure::new)?;
-            sync(node, Some(town.clone())).await.map_err(Failure::new)
+            let accepted = link.ledger_write(&entry).await.map_err(Failure::new)?;
+            let _syncing = node.syncing.lock().await;
+            if take(node, &link, town, accepted, true).await.map_err(Failure::new)? {
+                Ok(())
+            } else {
+                Err(Failure::new(format!(
+                    "the hub accepted entry {accepted} of {town}, but its connection ended before the local copy arrived"
+                )))
+            }
         }
         None => {
             let (world, here, town) = (node.world.clone(), node.machine(), town.clone());
@@ -131,21 +142,39 @@ pub async fn sync(node: &Arc<Node>, town: Option<TownName>) -> Result<(), String
         if town.as_ref().is_some_and(|town| *town != name) {
             continue;
         }
-        if let Err(error) = take(node, &link, &name, latest).await {
+        if let Err(error) = take(node, &link, &name, latest, false).await {
             problems.push(error);
         }
     }
     if problems.is_empty() { Ok(()) } else { Err(problems.join("; ")) }
 }
 
-/// Takes `town`'s entries after the ones this machine has, up to `latest`.
-async fn take(node: &Arc<Node>, link: &Link, town: &TownName, latest: u64) -> Result<(), String> {
+/// Takes `town`'s entries through `latest`. False means an explicit query's
+/// control connection ended; refusals, invalid entries and disk errors fail.
+pub(super) async fn take(
+    node: &Arc<Node>,
+    link: &Link,
+    town: &TownName,
+    latest: u64,
+    query: bool,
+) -> Result<bool, String> {
     let directory = node.world.town(town);
     let mut after = cursor(&directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
+    if origin(&directory)
+        .map_err(|error| format!("reading {town}'s ledger: {error}"))?
+        .is_some_and(|world| world != link.membership().world)
+    {
+        return Err(format!(
+            "{town}'s existing ledger belongs to another World; kept in {}",
+            directory.path().display()
+        ));
+    }
     while after < latest {
-        let (entries, more) = link.ledger_read(town, after).await?;
+        let page =
+            if query { link.try_ledger_query(town, after).await? } else { Some(link.ledger_read(town, after).await?) };
+        let Some((entries, more)) = page else { return Ok(false) };
         if entries.is_empty() {
-            break;
+            return Err(format!("the hub promised {latest} entries of {town}, but stopped after {after}"));
         }
         for (seq, entry, signed) in entries {
             if seq != after + 1 {
@@ -158,14 +187,14 @@ async fn take(node: &Arc<Node>, link: &Link, town: &TownName, latest: u64) -> Re
                 .map_err(|error| format!("taking entry {seq} of {town}: {error}"))?;
             after = seq;
         }
-        if !more {
-            break;
+        if !more && after < latest {
+            return Err(format!("the hub ended {town}'s ledger at {after}, before its promised {latest}"));
         }
     }
-    Ok(())
+    Ok(true)
 }
 
-/// Carries every town this machine kept outside the World it is in now:
+/// Carries only towns created under this node's standalone World identity:
 /// its entries are written to the hub again, in order, by this machine and
 /// for this World, and the copies signed for the old one are let go. A town
 /// the hub has some entries of already, the same ones, is carried on from
@@ -173,6 +202,15 @@ async fn take(node: &Arc<Node>, link: &Link, town: &TownName, latest: u64) -> Re
 /// not be carried.
 async fn carry(node: &Arc<Node>, link: &Link, at_hub: &BTreeMap<TownName, u64>) -> Vec<String> {
     let world = link.membership().world.clone();
+    let alone = match std::fs::read(node.world.path().join("alone.json")) {
+        Ok(bytes) => match serde_json::from_slice::<WorldId>(&bytes) {
+            Ok(alone) if alone != world => alone,
+            Ok(_) => return Vec::new(),
+            Err(error) => return vec![format!("reading the standalone World identity: {error}")],
+        },
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => return vec![format!("reading the standalone World identity: {error}")],
+    };
     let here = node.machine();
     let towns = match node.world.towns() {
         Ok(towns) => towns,
@@ -188,13 +226,13 @@ async fn carry(node: &Arc<Node>, link: &Link, at_hub: &BTreeMap<TownName, u64>) 
                 continue;
             }
         };
-        let elsewhere = entries.iter().filter(|(_, entry, _)| entry.world != world).count();
-        if elsewhere == 0 {
+        let own = entries.iter().filter(|(_, entry, _)| entry.world == alone).count();
+        if own == 0 {
             continue;
         }
-        if elsewhere < entries.len() {
+        if own < entries.len() {
             problems.push(format!(
-                "{town} has entries of this World and of another; it is left as it is in {}",
+                "{town} mixes standalone entries with another World; it is left as it is in {}",
                 directory.path().display()
             ));
             continue;
@@ -355,6 +393,11 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
 
 fn cursor(directory: &TownDir) -> io::Result<u64> {
     Ok(numbered(&directory.signed())?.last().map(|(seq, _)| *seq).unwrap_or(0))
+}
+
+/// The immutable intake identity, independent of the current machine name.
+fn origin(directory: &TownDir) -> io::Result<Option<WorldId>> {
+    numbered(&directory.signed())?.first().map(|(_, path)| read_entry(path).map(|(entry, _)| entry.world)).transpose()
 }
 
 /// Every entry this machine has of a town, in order, as its author claims
