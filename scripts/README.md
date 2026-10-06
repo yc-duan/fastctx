@@ -101,9 +101,11 @@ development build under an existing version needs an explicit replacement of
 that directory; commands already issued retain their previous pinned digest.
 Symbolic links, junctions, hard links, special files and directory indexes are
 not served. The public routes are only
-`/fastctx/releases/v<version>/<one of the three filenames>`. Both Linux
-archives must exist and match their manifest before any of the files is
-offered. File reads and hashing run independently of WebSocket heartbeats;
+`/fastctx/releases/v<version>/<one of the three filenames>`. A download
+streams the named file without hashing it: the line that fetches it carries
+the archive digest and checks it. Both Linux archives must exist and match
+their manifest when a member asks for the release, which it does before
+making an invitation. File reads and hashing run independently of WebSocket heartbeats;
 the two World WebSocket paths retain their transport and frame semantics.
 An archive download has no time limit.
 
