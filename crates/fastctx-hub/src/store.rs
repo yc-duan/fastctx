@@ -36,6 +36,10 @@ pub struct HubFile {
     pub listen: SocketAddr,
     /// Present until the first machine founds the World with it.
     pub founding: Option<Secret>,
+    /// The SHA-256 of the founding secret once it was used: the founder,
+    /// asking again with it, is told it joined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub founded_with: Option<fastctx_net::sign::Digest>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -242,11 +246,11 @@ impl Store {
         }
     }
 
-    /// When the latest invitation, grant or revocation held was made.
+    /// When the latest grant or revocation held was made. Invitations are
+    /// not counted: how a member came in depends only on its inviter's
+    /// standing, which grants and revocations change, and a member that may
+    /// invite must not hold up everyone's grants by dating invitations ahead.
     pub fn latest(&self) -> Option<Timestamp> {
-        let invitations = self.members.invitations.iter().filter_map(|invitation| {
-            invitation.endorsement.claim::<fastctx_net::trust::Endorsement>().ok().and_then(|endorsement| endorsement.at)
-        });
         let grants =
             self.members.grants.iter().filter_map(|signed| signed.claim::<fastctx_net::scope::Grant>().ok()).map(|grant| grant.at);
         let revocations = self
@@ -255,7 +259,7 @@ impl Store {
             .iter()
             .filter_map(|signed| signed.claim::<fastctx_net::trust::Revocation>().ok())
             .map(|revocation| revocation.at);
-        invitations.chain(grants).chain(revocations).max()
+        grants.chain(revocations).max()
     }
 
     pub fn invitation(&self, invite: &PublicKey) -> Option<&Invitation> {

@@ -66,8 +66,14 @@ pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Re
     if let Some(link) = node.link() {
         let membership = link.membership();
         // Joined with this code before, though whoever asked may not have
-        // heard: it is joined.
+        // heard: it is joined, unless it was sent away since.
         if membership.world == *code.world() {
+            if let Status::Stopped { reason } = link.status() {
+                return Err(Failure::new(format!(
+                    "this machine was {} in the World {} and is no longer: {reason}",
+                    membership.name, membership.world
+                )));
+            }
             return Ok((membership.world.to_string(), membership.name.clone()));
         }
         return Err(Failure::new(format!(

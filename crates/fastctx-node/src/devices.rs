@@ -148,6 +148,16 @@ pub async fn relay(node: &Arc<Node>, member: &Member, call: serde_json::Value) -
                     .filter(|summary| crate::admission::in_scope(node, &member.scope, &summary.town))
                     .collect(),
             },
+            // The canon lives on a machine of its own, which this machine
+            // read as itself: the device sees it only if it may read there.
+            Reply::Map { mut map } => {
+                if let Some(canon) = &map.record.canon
+                    && let Err(denied) = member.scope.allows(&canon.machine, Action::Read, None)
+                {
+                    map.canon = Some(Err(format!("{from} may not read on {}: {denied}", canon.machine)));
+                }
+                Reply::Map { map }
+            }
             reply => reply,
         },
     };

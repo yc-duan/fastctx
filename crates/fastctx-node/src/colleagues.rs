@@ -39,6 +39,7 @@ pub async fn ask(
 ) -> Result<Address, Failure> {
     let here = node.machine();
     let at = Timestamp::now();
+    let mut _reaching = None;
     let colleague = match target.filter(|target| *target != here) {
         None => {
             let address = Address { machine: here.clone(), resident: asker.clone() };
@@ -49,6 +50,8 @@ pub async fn ask(
             let link = node.link().ok_or_else(|| {
                 Failure::new(format!("there is no machine {target}: {here} is in no World with other machines"))
             })?;
+            // Held until the asking is recorded, below.
+            _reaching = Some(node.reaching.hold(&asker, &target));
             let call = RemoteCall::Ask { asker: asker.clone(), town: town.clone(), label: label.clone(), prompt };
             match link.call(&target, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
                 Ok(RemoteReply::Asked { colleague }) => Address { machine: target, resident: colleague },
@@ -284,6 +287,8 @@ pub async fn message(
         None => locate(node, &from, town.as_ref(), &to).await?,
     };
     let to = Address { machine, resident: to };
+    // Held until the words are recorded: its answer may come quickly.
+    let _reaching = (to.machine != here).then(|| node.reaching.hold(&from, &to.machine));
     let sender = Address { machine: here, resident: from.clone() };
     let notice = Notice::Words { from: Speaker::Resident { address: sender.clone() }, text };
     let landed = speech::tell(node, &to, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;

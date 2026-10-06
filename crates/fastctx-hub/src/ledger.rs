@@ -103,7 +103,6 @@ impl Ledgers {
             return Err(format!("the item is by {}, sent by {from}", item.signer()));
         }
         let town = item.town().clone();
-        let readers = |town: &TownId| table.readers(town).any(|reader| reader.name == *from);
         let mut tell: Vec<MachineName> = Vec::new();
         match &item {
             Item::Entry(entry) => {
@@ -114,8 +113,8 @@ impl Ledgers {
                     if entry.paths != [naming_token()] || !entry.dirs.is_empty() {
                         return Err("the World's own ledger holds its naming key and nothing else".to_string());
                     }
-                } else if !readers(&town) {
-                    return Err(format!("{from}'s scope does not include that project"));
+                } else if !table.may_write(from, &town) {
+                    return Err(format!("{from}'s scope does not include writing in that project"));
                 }
                 let ledger = self.towns.get(&town);
                 if ledger.is_none() && entry.machines.is_none() && town != TownId::world() {

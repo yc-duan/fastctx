@@ -58,7 +58,8 @@ pub fn init(dir: &Path, public: Vec<SocketAddr>, listen: SocketAddr) -> anyhow::
         anyhow::bail!("{} already holds a hub", dir.display());
     }
     let certificate = HubCertificate::generate().map_err(anyhow::Error::msg)?;
-    let hub = HubFile { world: WorldId::generate()?, public, listen, founding: Some(Secret::generate()?) };
+    let hub =
+        HubFile { world: WorldId::generate()?, public, listen, founding: Some(Secret::generate()?), founded_with: None };
     Store::create(dir, &hub, &certificate)?;
     founding_code(dir)
 }
@@ -247,8 +248,10 @@ async fn connection(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStrea
         (wire::CONTROL_PATH, Intent::Session { key, proof, letters }) => {
             control::session(hub, socket, peer, binding, key, proof, letters).await;
         }
-        (wire::CONTROL_PATH, Intent::Join { record, founding }) => {
-            let outcome = join::join(&hub, &record, founding.as_ref());
+        // Only the founder joins straight away, with the founding secret;
+        // an invited machine first proves it holds the invitation's key.
+        (wire::CONTROL_PATH, Intent::Join { record, founding: Some(founding) }) => {
+            let outcome = join::join(&hub, &record, Some(&founding));
             joined(&hub, &mut socket, peer, outcome).await;
         }
         (wire::CONTROL_PATH, Intent::Invited { invite, proof }) => {
@@ -305,19 +308,20 @@ async fn connection(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStrea
 
 /// Tells a joining machine whether it joined, and every member that the
 /// members changed.
-async fn joined(
-    hub: &Hub,
-    socket: &mut Socket,
-    peer: SocketAddr,
-    outcome: Result<(fastctx_net::trust::WorldId, MachineName), String>,
-) {
+async fn joined(hub: &Hub, socket: &mut Socket, peer: SocketAddr, outcome: Result<join::Joined, String>) {
     match outcome {
-        Ok((world, name)) => {
-            hub.log.line(format_args!("{peer}: {name} joined"));
+        Ok(join::Joined { world, name, new }) => {
+            if new {
+                hub.log.line(format_args!("{peer}: {name} joined"));
+            } else {
+                hub.log.line(format_args!("{peer}: {name} joined again, as it was"));
+            }
             let _ = send(socket, &Down::Joined { world, name }).await;
             let _ = socket.close(None).await;
-            for session in hub.sessions().values() {
-                let _ = session.out.send(Out::Frame(Down::MembersChanged));
+            if new {
+                for session in hub.sessions().values() {
+                    let _ = session.out.send(Out::Frame(Down::MembersChanged));
+                }
             }
         }
         Err(reason) => {

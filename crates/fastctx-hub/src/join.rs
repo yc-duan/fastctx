@@ -46,7 +46,15 @@ fn usable(store: &Store, invitation: &crate::store::Invitation) -> Result<(), St
     Ok(())
 }
 
-pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Result<(WorldId, MachineName), String> {
+/// A machine joined: the World, its name, and whether it is new, rather than
+/// told again that it joined.
+pub(crate) struct Joined {
+    pub world: WorldId,
+    pub name: MachineName,
+    pub new: bool,
+}
+
+pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Result<Joined, String> {
     let claimed: Record = signed.claim().map_err(|error| format!("the record: {error}"))?;
     let record: Record = signed.open(&claimed.key, Domain::Record).map_err(|error| format!("the record: {error}"))?;
     let mut store = hub.store();
@@ -65,7 +73,15 @@ pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Res
         if store.table().get(&record.name).is_none_or(|member| member.key != record.key) {
             return Err(format!("{} was a member, and is not trusted any more", record.name));
         }
-        return Ok((world, record.name));
+        // The founder proves itself with the secret it founded with; an
+        // invited machine proved it holds the invitation's key before this.
+        if matches!(record.credential, Credential::Founder) {
+            let used = founding.map(|secret| fastctx_net::sign::Digest(fastctx_net::sign::sha256(&*secret.0)));
+            if used.is_none() || used != store.hub.founded_with {
+                return Err("the founding code was used already, or is not this hub's".to_string());
+            }
+        }
+        return Ok(Joined { world, name: record.name, new: false });
     }
     if let Some(member) = store.table().by_key(&record.key) {
         return Err(format!("this machine's key is a member already, as {}", member.name));
@@ -77,6 +93,7 @@ pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Res
                 return Err("the founding code was used already, or is not this hub's".to_string());
             }
             admit(&mut store, &record, signed)?;
+            store.hub.founded_with = Some(fastctx_net::sign::Digest(fastctx_net::sign::sha256(&*secret.0)));
             store.hub.founding = None;
             store.save_hub().map_err(|error| format!("the hub could not record the founding: {error}"))?;
         }
@@ -125,7 +142,7 @@ pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Res
             return Err("an invited machine joins with its invitation".to_string());
         }
     }
-    Ok((world, record.name))
+    Ok(Joined { world, name: record.name, new: true })
 }
 
 /// The key of the invitation that admits `record`; `None` for the founder.

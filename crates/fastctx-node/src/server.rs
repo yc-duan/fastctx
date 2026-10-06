@@ -507,6 +507,7 @@ async fn run(
     let here = node.machine();
     let script = request.script.clone();
     let started_at = jiff::Timestamp::now();
+    let mut _reaching = None;
     let reply = match target.filter(|target| *target != here) {
         None => {
             let owner = Address { machine: here.clone(), resident: resident.clone() };
@@ -516,6 +517,9 @@ async fn run(
             let link = node.link().ok_or_else(|| {
                 Failure::new(format!("there is no machine {target}: {here} is in no World with other machines"))
             })?;
+            // Held until the run is recorded: a job that ends at once is told
+            // of before.
+            _reaching = Some(node.reaching.hold(&resident, &target));
             let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request };
             match link.call(&target, call).await.map_err(|failure| Failure::new(called(&failure)))? {
                 Ok(RemoteReply::Run(reply)) => reply,

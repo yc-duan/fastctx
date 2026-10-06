@@ -31,6 +31,12 @@ pub struct State {
     /// Entries that opened and did not check out, with why: they are never
     /// taken into the town.
     pub refused: BTreeMap<u64, String>,
+    /// Entries kept unopened because their author did not stand where it
+    /// would have to, as this machine knows the members now, with why. They
+    /// are judged again whenever the entries are opened: what this machine
+    /// knows of the members may be behind.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub doubtful: BTreeMap<u64, String>,
 }
 
 impl Items {

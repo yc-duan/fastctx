@@ -103,6 +103,9 @@ pub(crate) struct Node {
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
     taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
+    /// The machines residents here are asking something of right now
+    /// (`admission::letters`).
+    reaching: admission::letters::Reaching,
     effects_ready: std::sync::atomic::AtomicBool,
     effects_changed: tokio::sync::Notify,
     /// Whether turns may start, while a guardian may ask for the World to
@@ -282,6 +285,7 @@ pub async fn run_replacing(
         naming: RwLock::new(None),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
+        reaching: Default::default(),
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),
         handoff: Arc::new(handoff::Handoff::default()),

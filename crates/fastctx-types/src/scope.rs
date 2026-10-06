@@ -224,6 +224,11 @@ impl<P: Ord + Clone> Scope<P> {
 }
 
 impl Scope {
+    /// Whether it writes in `town`'s ledger: the project, and writing.
+    pub fn writes(&self, town: &TownId) -> bool {
+        self.projects.contains(town) && self.actions.contains(&Action::Write)
+    }
+
     /// Everything, inviting included: the scope of a member nobody limited.
     pub fn all() -> Self {
         Self { machines: Set::All, agents: Set::All, projects: Set::All, actions: Set::All, invite: true }

@@ -346,7 +346,9 @@ impl Link {
 
     /// An invitation for one more member, valid until `expires`: a machine,
     /// or a device such as a phone; `name` is the name it must take, if
-    /// given; `scope` what it may do, when not everything.
+    /// given; `scope` what it may do. Not given, it may do everything this
+    /// machine may give, and never invite: that right is given only on
+    /// purpose.
     pub async fn invite(
         &self,
         name: Option<MachineName>,
@@ -355,7 +357,20 @@ impl Link {
         scope: Option<Scope>,
     ) -> Result<Code, String> {
         self.refresh().await?;
-        self.inner.members().table.may_invite(&self.inner.membership.name, scope.as_ref().unwrap_or(&Scope::all()))?;
+        let scope = {
+            let members = self.inner.members();
+            let me = members
+                .table
+                .get(&self.inner.membership.name)
+                .ok_or_else(|| format!("{} is not a member this machine trusts", self.inner.membership.name))?;
+            let scope = scope.unwrap_or_else(|| {
+                let mut scope = if me.manage { Scope::all() } else { me.scope.clone() };
+                scope.invite = false;
+                scope
+            });
+            members.table.may_invite(&self.inner.membership.name, &scope)?;
+            Some(scope)
+        };
         let secret = crate::code::InviteSecret::generate().map_err(|error| error.to_string())?;
         let invite = secret.key();
         let membership = &self.inner.membership;
@@ -458,8 +473,11 @@ impl Inner {
     /// behind it (`wire::Told::Members`).
     fn stamp(&self) -> Timestamp {
         let now = Timestamp::now();
-        match self.members().latest {
-            Some(latest) if latest >= now => latest + jiff::SignedDuration::from_micros(1),
+        let latest = self.members().latest;
+        match latest {
+            // A latest the hub dates beyond any clock is refused by it as
+            // such; this machine signs no time it cannot write.
+            Some(latest) if latest >= now => latest.checked_add(jiff::SignedDuration::from_micros(1)).unwrap_or(latest),
             _ => now,
         }
     }

@@ -11,7 +11,8 @@
 //! own devices, a page's words come from the machine that admitted its
 //! action, and the World's are this machine's own.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use fastctx_net::scope::{Action, Denied};
 use fastctx_net::trust::Member;
@@ -65,15 +66,25 @@ fn may_talk(node: &Node, member: &Member, to: &ResidentId) -> Result<(), String>
 }
 
 /// Whether news from `member` may reach `to`: it may talk to it, or `to`
-/// reached out to `member`'s machine itself.
+/// reached out to `member`'s machine itself: it is asking it something now,
+/// or its actions, in any project it has lived in, name it.
 async fn answers(node: &Arc<Node>, member: &Member, to: &ResidentId) -> Result<(), String> {
     let Err(refused) = may_talk(node, member, to) else { return Ok(()) };
-    let Some(town) = node.residents.town_of(to) else {
+    if node.residents.town_of(to).is_none() {
         return Err(format!("no resident {to} lives on {}", node.machine()));
-    };
-    let actions = node.world.resident(town.as_ref(), to).actions();
-    let machine = member.name.clone();
-    let reached = tokio::task::spawn_blocking(move || reached_out(&actions, &machine)).await.unwrap_or(false);
+    }
+    if node.reaching.holds(to, &member.name) {
+        return Ok(());
+    }
+    let (world, to_owned, machine) = (node.world.clone(), to.clone(), member.name.clone());
+    let reached = tokio::task::spawn_blocking(move || {
+        let towns = world.towns().unwrap_or_default();
+        std::iter::once(None)
+            .chain(towns.iter().map(Some))
+            .any(|town| reached_out(&world.resident(town, &to_owned).actions(), &machine))
+    })
+    .await
+    .unwrap_or(false);
     if reached { Ok(()) } else { Err(format!("{refused}, and {to} asked nothing of it")) }
 }
 
@@ -83,4 +94,40 @@ fn reached_out(actions: &std::path::Path, machine: &MachineName) -> bool {
     text.lines()
         .filter_map(|line| serde_json::from_str::<fastctx_types::residents::Action>(line).ok())
         .any(|action| action.machine == *machine)
+}
+
+/// The machines residents here are asking something of right now: news
+/// from one may arrive before the asking is recorded in their actions.
+#[derive(Default)]
+pub struct Reaching(Mutex<HashMap<(ResidentId, MachineName), usize>>);
+
+impl Reaching {
+    /// Notes that `resident` is asking `machine` something until the
+    /// returned guard is dropped.
+    pub fn hold(&self, resident: &ResidentId, machine: &MachineName) -> Held<'_> {
+        let key = (resident.clone(), machine.clone());
+        *self.0.lock().expect("never poisoned").entry(key.clone()).or_default() += 1;
+        Held { reaching: self, key }
+    }
+
+    fn holds(&self, resident: &ResidentId, machine: &MachineName) -> bool {
+        self.0.lock().expect("never poisoned").contains_key(&(resident.clone(), machine.clone()))
+    }
+}
+
+pub struct Held<'a> {
+    reaching: &'a Reaching,
+    key: (ResidentId, MachineName),
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        let mut held = self.reaching.0.lock().expect("never poisoned");
+        if let Some(count) = held.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 {
+                held.remove(&self.key);
+            }
+        }
+    }
 }

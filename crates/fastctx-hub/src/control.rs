@@ -426,7 +426,7 @@ fn invite(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
     if endorsement.world != store.hub.world {
         return Err(format!("the endorsement is for the World {}", endorsement.world));
     }
-    made_now(endorsement.at, store.latest(), "invitation")?;
+    made_now(endorsement.at, None, "invitation")?;
     if endorsement.expires <= Timestamp::now() {
         return Err("the invitation has expired already".to_string());
     }

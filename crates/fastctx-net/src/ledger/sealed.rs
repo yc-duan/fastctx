@@ -15,8 +15,8 @@
 //! really writes, so what the hub refuses by them is what a reader would.
 //!
 //! Anyone can seal some key to a member's public sealing key, so a copy
-//! that opens is not yet the entry's key: the key is the one that opens the
-//! entry, and a reader tries every copy for it until one does.
+//! that opens is not yet the entry's key: the key is the one the entry
+//! commits to, and a reader tries every copy for it until one is.
 
 use std::collections::BTreeSet;
 
@@ -60,6 +60,9 @@ pub struct SealedEntry {
     pub dirs: Vec<PathToken>,
     /// The entry's key, sealed to each reader.
     pub keys: Vec<Wrapped>,
+    /// The SHA-256 of the entry's key, so that one key and no other opens
+    /// it: an author cannot show different readers different entries.
+    pub commit: Bytes,
     /// The entry as its author signed it, sealed with its key.
     pub body: Bytes,
 }
@@ -130,6 +133,13 @@ pub struct EntryKey(Zeroizing<[u8; 32]>);
 impl EntryKey {
     fn cipher(&self) -> ChaCha20Poly1305 {
         ChaCha20Poly1305::new(&(*self.0).into())
+    }
+
+    /// What an entry sealed with this key commits to.
+    fn commitment(&self) -> Bytes {
+        let mut bytes = b"fastctx-world/3/entry-key-commitment\0".to_vec();
+        bytes.extend_from_slice(&*self.0);
+        Bytes(crate::sign::sha256(&bytes).to_vec())
     }
 }
 
@@ -216,6 +226,7 @@ pub fn seal_entry(
         paths,
         dirs,
         keys,
+        commit: entry_key.commitment(),
         body: Bytes(body),
     });
     Ok(Signed::new(key, Domain::LedgerItem, &item))
@@ -280,6 +291,9 @@ pub fn open_sealed<'a>(
         };
         let Ok(bytes) = <[u8; 32]>::try_from(bytes.as_slice()) else { continue };
         let key = EntryKey(Zeroizing::new(bytes));
+        if key.commitment() != entry.commit {
+            continue;
+        }
         if let Ok(plaintext) = key.cipher().decrypt(&[0_u8; 12].into(), Payload { msg: &entry.body.0, aad: &aad }) {
             return Ok(Some((key, inner_from(&plaintext)?)));
         }

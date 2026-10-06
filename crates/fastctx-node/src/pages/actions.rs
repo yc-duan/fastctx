@@ -78,6 +78,11 @@ async fn admitted(
     if !stored.consent.as_ref().is_some_and(|consent| consent.acts.contains(&act)) {
         return Err(Failure::new(format!("the user has not consented to this action by page {page}")));
     }
+    // The user agrees on some machine, which writes it down for them; what
+    // it wrote counts only as far as that machine could do it itself, as a
+    // member that could only write in the project could write anything.
+    let by = stored.consent_by.clone().ok_or_else(|| Failure::new(format!("page {page}'s consent has no writer")))?;
+    consenter_may(node, &by, action, &town)?;
     Ok(PageSource {
         town,
         page,
@@ -86,6 +91,32 @@ async fn admitted(
         on: publication.on.clone(),
         opened_on,
     })
+}
+
+/// Whether the machine `by`, which wrote the user's consent, could do
+/// `action` itself.
+fn consenter_may(node: &Node, by: &MachineName, action: &PageInvocation, town: &TownName) -> Result<(), Failure> {
+    let link = node.link().ok_or_else(|| Failure::new(format!("{} is in no World", node.machine())))?;
+    let (table, _) = link.members();
+    let member = table
+        .get(by)
+        .ok_or_else(|| Failure::new(format!("the consent was written by {by}, which is not a member any more")))?;
+    let refused = |denied: fastctx_net::scope::Denied| {
+        Failure::new(format!("the consent was written by {by}, and {by} may not do this itself: {denied}"))
+    };
+    match action {
+        PageInvocation::Run { machine, .. } => {
+            member.scope.allows(machine, fastctx_net::scope::Action::Run, None).map_err(refused)
+        }
+        PageInvocation::Say { to, .. } => {
+            member.scope.allows(&to.machine, fastctx_net::scope::Action::Talk, Some(&to.resident.agent())).map_err(refused)
+        }
+        PageInvocation::Journal { .. } => {
+            let writes = member.manage
+                || crate::ledger::names::town_id(node, town).is_some_and(|id| member.scope.writes(&id));
+            if writes { Ok(()) } else { Err(Failure::new(format!("the consent was written by {by}, which may not write in {town}"))) }
+        }
+    }
 }
 
 /// A page action another machine relayed here: done once this machine has

@@ -78,7 +78,7 @@ pub fn load(node: &Arc<Node>, link: &Link) {
             continue;
         }
         let Ok(Some((_, inner))) = link.open_sealed(entry, shares.get(seq).into_iter().flatten()) else { continue };
-        if let Ok(naming) = super::open::world_entry(&inner, &table) {
+        if let Some(naming) = super::open::naming_in(&inner, &table) {
             set(node, naming);
             return;
         }

@@ -300,10 +300,10 @@ pub enum Told {
         revocations: Vec<Signed>,
         grants: Vec<Signed>,
         presence: Vec<Presence>,
-        /// When the latest invitation, grant or revocation the hub holds was
-        /// made: a new one is dated after it, so that every machine, taking
-        /// them in the order they were made, takes them in the order the hub
-        /// took them, whatever the members' clocks.
+        /// When the latest grant or revocation the hub holds was made: a new
+        /// one is dated after it, so that every machine, taking them in the
+        /// order they were made, takes them in the order the hub took them,
+        /// whatever the members' clocks.
         #[serde(default)]
         latest: Option<Timestamp>,
     },

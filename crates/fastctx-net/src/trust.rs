@@ -351,15 +351,25 @@ impl Table {
     /// Who may read `town`: the members with management rights, and those
     /// whose scope includes it. The World's own ledger is everyone's.
     pub fn readers(&self, town: &TownId) -> impl Iterator<Item = &Member> {
+        // Reading needs no action: what a member may see of a project, it
+        // may read.
         let world = *town == TownId::world();
         self.trusted.values().filter(move |member| world || member.manage || member.scope.projects.contains(town))
     }
 
     /// Whether `name` could write in `town` when it says it did, at `at`:
-    /// it held management rights then, or its scope then included the town.
+    /// it held management rights then, or its scope then included the town
+    /// and writing.
     pub fn could_write(&self, name: &MachineName, town: &TownId, at: Timestamp) -> bool {
         self.around(at, |at| {
-            self.history.scope_at(name, at, 0).is_some_and(|(scope, manage)| manage || scope.projects.contains(town))
+            self.history.scope_at(name, at, 0).is_some_and(|(scope, manage)| manage || scope.writes(town))
+        })
+    }
+
+    /// Whether `name` may write in `town` now.
+    pub fn may_write(&self, name: &MachineName, town: &TownId) -> bool {
+        self.trusted.get(name).is_some_and(|member| {
+            member.kind.is_machine() && (member.manage || *town == TownId::world() || member.scope.writes(town))
         })
     }
 
@@ -369,19 +379,20 @@ impl Table {
         self.around(at, |at| self.history.held_at(name, at))
     }
 
-    /// Whether `test` holds at `at`, or at a change to the members up to
-    /// `CLOCK_TOLERANCE` after it. What a member writes in a ledger is
-    /// dated by its own clock, which may be behind the clock of the member
-    /// that just changed its standing; the hub took it by the standing it
-    /// had. Being dated anywhere else is no help to a writer: it chooses
-    /// the date.
+    /// Whether `test` holds at some moment within `CLOCK_TOLERANCE` of `at`.
+    /// What a member writes in a ledger is dated by its own clock, and a
+    /// change to its standing by the clock of the member that signed it;
+    /// either may run ahead of the other, and the hub took the entry by the
+    /// standing the writer had. Being judged at any other moment is no help
+    /// to a writer: it chooses the date anyway. Standing changes only at a
+    /// change to the members, so those moments, and the window's start, are
+    /// all there is to test.
     fn around(&self, at: Timestamp, test: impl Fn(Timestamp) -> bool) -> bool {
-        test(at)
-            || self
-                .history
-                .changes
-                .range((Bound::Excluded(at), Bound::Included(at.saturating_add(CLOCK_TOLERANCE).unwrap_or(at))))
-                .any(|change| test(*change))
+        let from = at.saturating_sub(CLOCK_TOLERANCE).unwrap_or(at);
+        let until = at.saturating_add(CLOCK_TOLERANCE).unwrap_or(at);
+        test(from)
+            || test(at)
+            || self.history.changes.range((Bound::Excluded(from), Bound::Included(until))).any(|change| test(*change))
     }
 
     /// Whether `by` may revoke `name`: a member with management rights may
@@ -963,6 +974,7 @@ fn replay(
                             || revocation.by == revocation.name
                             || (target.is_some_and(|target| target.invited_by.as_ref() == Some(&revocation.by))
                                 && standing.history.delegated(&revocation.name)
+                                && !standing.history.managers.contains(&revocation.name)
                                 && accepted.get(&revocation.by).is_some_and(|signer| signer.kind.is_machine()))));
                 if !may {
                     refused.push((

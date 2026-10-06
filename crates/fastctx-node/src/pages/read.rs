@@ -12,8 +12,14 @@ use fastctx_types::{PageName, TownName};
 pub struct Page {
     pub versions: BTreeMap<u32, (PageVersion, Option<String>)>,
     pub consent: Option<PageConsent>,
+    /// The machine whose entry holds the consent: what the user agreed to
+    /// counts only as far as that machine could do it.
+    pub consent_by: Option<fastctx_types::MachineName>,
 }
 
+/// Every page of `town`, from its entries. A file that is not a well-formed
+/// version or consent is not one: anyone who may write in the project could
+/// have put it there, and it does not take the other pages down with it.
 pub fn all(world: &WorldDir, town: &TownName) -> io::Result<BTreeMap<PageName, Page>> {
     let mut pages = BTreeMap::<PageName, Page>::new();
     for (_, entry) in crate::ledger::entries_after(world, town, 0)? {
@@ -21,30 +27,34 @@ pub fn all(world: &WorldDir, town: &TownName) -> io::Result<BTreeMap<PageName, P
             let parts: Vec<_> = file.path.split('/').collect();
             match parts.as_slice() {
                 ["pages", name, "versions", _, "page.json"] => {
-                    let name: PageName = name.parse().map_err(io::Error::other)?;
-                    let version: PageVersion = serde_json::from_slice(&file.bytes.0).map_err(io::Error::other)?;
+                    let Ok(name) = name.parse::<PageName>() else { continue };
+                    let Ok(version) = serde_json::from_slice::<PageVersion>(&file.bytes.0) else { continue };
                     if file.path != version_path(&name, version.version) {
-                        return Err(io::Error::other(format!("{} disagrees with its version", file.path)));
+                        continue;
                     }
                     let html = entry.files.iter().find(|f| f.path == html_path(&name, version.version));
                     let html = match (version.withdrawn, html) {
-                        (false, Some(html)) => Some(String::from_utf8(html.bytes.0.clone()).map_err(io::Error::other)?),
+                        (false, Some(html)) => match String::from_utf8(html.bytes.0.clone()) {
+                            Ok(html) => Some(html),
+                            Err(_) => continue,
+                        },
                         (true, None) => None,
-                        _ => return Err(io::Error::other(format!("{} has inconsistent HTML", file.path))),
+                        _ => continue,
                     };
                     pages.entry(name).or_default().versions.insert(version.version, (version, html));
                 }
                 ["pages", name, "consent", _] => {
-                    let name: PageName = name.parse().map_err(io::Error::other)?;
-                    let consent: PageConsent = serde_json::from_slice(&file.bytes.0).map_err(io::Error::other)?;
+                    let Ok(name) = name.parse::<PageName>() else { continue };
+                    let Ok(consent) = serde_json::from_slice::<PageConsent>(&file.bytes.0) else { continue };
                     if file.path != consent_path(&name, consent.version)
                         || consent.stamp.by != fastctx_types::project::Writer::User
                     {
-                        return Err(io::Error::other(format!("{} is not a user consent record", file.path)));
+                        continue;
                     }
                     let page = pages.entry(name).or_default();
                     if page.consent.as_ref().is_none_or(|old| old.version < consent.version) {
                         page.consent = Some(consent);
+                        page.consent_by = Some(entry.author.clone());
                     }
                 }
                 _ => {}
