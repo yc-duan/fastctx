@@ -27,6 +27,7 @@ pub mod guidance;
 pub mod legacy;
 pub mod plan;
 pub mod renewal;
+pub mod server;
 pub mod service;
 mod source;
 pub mod transaction;

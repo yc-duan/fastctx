@@ -67,6 +67,11 @@ jobs:
             package: linux-x64
             binary: fastctx
             rustflags: ''
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            package: linux-arm64
+            binary: fastctx
+            rustflags: ''
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -77,7 +82,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ startsWith(matrix.target, 'x86_64-unknown-linux') && 'x86_64-unknown-linux-musl' || startsWith(matrix.target, 'aarch64-unknown-linux') && 'aarch64-unknown-linux-musl' || matrix.target }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -93,9 +98,7 @@ jobs:
         run: |
           python -m pip install ziglang==0.14.1
           cargo install --locked cargo-zigbuild --version 0.23.0
-          cargo zigbuild --locked --release -p fastctx --bin fastctx --target x86_64-unknown-linux-gnu.2.31
-      - if: runner.os != 'Linux'
-        run: cargo build --locked --release -p fastctx --bin fastctx --target '${{ matrix.target }}'
+      - run: node scripts/kernel.mjs '${{ matrix.target }}'
       - name: Verify executable lifetime across node replacement
         if: runner.os == 'Windows' || runner.os == 'Linux'
         run: |
@@ -106,10 +109,21 @@ jobs:
             export FASTCTX_TEST_BASH=/bin/bash
             export FASTCTX_TEST_ROOT="$RUNNER_TEMP"
           fi
-          cargo test --locked --release -p fastctx-node --test own_lifetime --target '${{ matrix.target }}'
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            build_target='${{ matrix.target }}'
+            build_target="${build_target/-gnu/-musl}"
+            cargo zigbuild --locked --release -p fastctx-node --test own_lifetime --target "$build_target"
+            mapfile -t tests < <(find "target/$build_target/release/deps" -maxdepth 1 -name 'own_lifetime-*' ! -name '*.d' -type f -executable)
+            test "${#tests[@]}" = 1
+            "${tests[0]}"
+          else
+            cargo test --locked --release -p fastctx-node --test own_lifetime --target '${{ matrix.target }}'
+          fi
       - name: Verify version and package the native program
         run: |
-          binary='target/${{ matrix.target }}/release/${{ matrix.binary }}'
+          build_target='${{ matrix.target }}'
+          if [[ "$RUNNER_OS" == Linux ]]; then build_target="${build_target/-gnu/-musl}"; fi
+          binary="target/$build_target/release/${{ matrix.binary }}"
           version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
           test "$("$binary" --version)" = "fastctx $version"
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi

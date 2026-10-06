@@ -15,6 +15,7 @@ TARGETS = {
     'x86_64-pc-windows-msvc': ('win32', 'x64'),
     'aarch64-pc-windows-msvc': ('win32', 'arm64'),
     'x86_64-unknown-linux-gnu': ('linux', 'x64'),
+    'aarch64-unknown-linux-gnu': ('linux', 'arm64'),
     'x86_64-apple-darwin': ('darwin', 'x64'),
     'aarch64-apple-darwin': ('darwin', 'arm64'),
 }
@@ -39,7 +40,23 @@ def verify_machine(binary, target):
         assert struct.unpack_from('<H', binary, offset+4)[0] == {'x64': 0x8664, 'arm64': 0xaa64}[arch]
     elif os == 'linux':
         assert binary[:6] == b'\x7fELF\x02\x01', 'Expected a little-endian ELF64 executable'
-        assert struct.unpack_from('<H', binary, 18)[0] == 62
+        assert struct.unpack_from('<H', binary, 18)[0] == {'x64': 62, 'arm64': 183}[arch]
+        # A historical GNU archive name is retained for the old upgrader.
+        # Its new payload is musl: no runtime loader or shared libraries.
+        offset = struct.unpack_from('<Q', binary, 32)[0]
+        entry_size, count = struct.unpack_from('<HH', binary, 54)
+        for index in range(count):
+            entry = offset + index * entry_size
+            kind = struct.unpack_from('<I', binary, entry)[0]
+            assert kind != 3, 'Linux releases must not have PT_INTERP'
+            if kind == 2:
+                dynamic_offset = struct.unpack_from('<Q', binary, entry + 8)[0]
+                dynamic_size = struct.unpack_from('<Q', binary, entry + 32)[0]
+                for position in range(dynamic_offset, dynamic_offset + dynamic_size, 16):
+                    tag = struct.unpack_from('<q', binary, position)[0]
+                    assert tag != 1, 'Linux releases must not have DT_NEEDED'
+                    if tag == 0:
+                        break
     else:
         assert struct.unpack_from('<I', binary)[0] == 0xfeedfacf, 'Expected a Mach-O 64 executable'
         assert struct.unpack_from('<I', binary, 4)[0] == {'x64': 0x01000007, 'arm64': 0x0100000c}[arch]
@@ -107,7 +124,8 @@ def platform(args):
     metadata.update(os=[os], cpu=[arch])
     npm(args.output, metadata['name'], metadata, {f'licenses/{n}': data for n, data in legal.items()} |
         {f'bin/{executable}': (binary, 0o755)})
-    evidence = dict(version=VERSION, target=args.target, archive=name,
+    build_target = args.target.replace('-unknown-linux-gnu', '-unknown-linux-musl')
+    evidence = dict(version=VERSION, target=args.target, build_target=build_target, archive=name,
                     members={n: digest(data) for n, (data, _) in sorted(files.items())})
     (args.output/f'{args.target}.json').write_bytes(json_bytes(evidence))
     checksums(args.output)
