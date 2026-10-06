@@ -1,13 +1,15 @@
 // The machines of the World: the hub they reach, each one's system, whether
 // it is online and since when, where it stands (management rights, who
-// brought it in, what it may use), who is on it and what runs there, and the
-// agents its own programs say it has: installed or not, which version,
-// logged in or not, and whether the sessions the user opens there have the
-// World's tools. On this machine those tools can be put in or taken out
-// here; from a machine with management rights, what a member may use is set
-// here. A member that just came in with this machine's invitation is said
-// first, with the one button that revokes it. A machine named in the address
-// is brought into view and marked.
+// brought it in, what it may use), where it hangs in the tree (the relay it
+// connects through, and whether it relays itself), who is on it and what
+// runs there, and the agents its own programs say it has: installed or not,
+// which version, logged in or not, and whether the sessions the user opens
+// there have the World's tools. On this machine those tools can be put in or
+// taken out here; from a machine with management rights, what a member may
+// use, where it connects and whether a machine relays are set here. A member
+// that just came in with this machine's invitation is said first, with the
+// one button that revokes it. A machine named in the address is brought into
+// view and marked.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -19,11 +21,12 @@ import type { Node, Scope } from "../world/world";
 import type { Devices } from "./devices";
 import { GrantSheet } from "./grant";
 import { standingLine } from "./scope";
+import { placeLine, RelaySheet, RouteSheet, structure } from "./tree";
 import { talkLink } from "./places";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { jobsOf, residentsOf, type Store } from "./store";
-import type { DeviceWords, MachinesWords, ScopeWords } from "./words";
+import type { DeviceWords, MachinesWords, ScopeWords, TreeWords } from "./words";
 import { agentName, titleOf } from "../world/names";
 
 export interface MachinesOptions {
@@ -32,10 +35,16 @@ export interface MachinesOptions {
   devices: Devices;
   deviceWords: DeviceWords;
   scopeWords: ScopeWords;
+  treeWords: TreeWords;
   /** Whether this machine holds management rights. */
   manages(): boolean;
   /** Sets what a member may use, and whether it manages. */
   grant(member: string, scope: Scope, manage: boolean): Promise<void>;
+  /** Sets the relays a member connects through, in order; none for
+   *  straight to the hub. */
+  route(member: string, via: string[]): Promise<void>;
+  /** Makes a machine relay at `publicAt`, or stop when it is empty. */
+  setRelay(machine: string, publicAt: string[], listen: string | null): Promise<void>;
   /** The user has been shown that a member came in. */
   seen(member: string): Promise<void>;
   head(title: string, actions?: string): string;
@@ -68,9 +77,13 @@ export class MachinesPage implements Page {
   private shape = "";
   private note: { machine: string; text: string } | null = null;
   private readonly granting: GrantSheet;
+  private readonly routing: RouteSheet;
+  private readonly relaying: RelaySheet;
 
   constructor(private readonly options: MachinesOptions) {
     this.granting = new GrantSheet(options.words, options.scopeWords, options.deviceWords);
+    this.routing = new RouteSheet(options.treeWords);
+    this.relaying = new RelaySheet(options.treeWords);
     this.title = options.focus ?? options.words.title;
     this.element = document.createElement("div");
     this.element.className = "machines-page";
@@ -91,10 +104,16 @@ export class MachinesPage implements Page {
     this.element.querySelector(".invite")!.addEventListener("click", () => options.devices.invite());
     this.list.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
-        "[data-revoke], [data-leave], [data-apply], [data-consent], [data-scope], [data-seen], [data-not-me]",
+        "[data-revoke], [data-leave], [data-apply], [data-consent], [data-scope], [data-route], [data-relay], [data-seen], [data-not-me], [data-show]",
       );
       if (!button || button.disabled) return;
+      if (button.dataset.show) {
+        this.list.querySelector<HTMLElement>(`[data-machine="${CSS.escape(button.dataset.show)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
       if (button.dataset.scope) this.scope(button.dataset.scope);
+      else if (button.dataset.route) this.route(button.dataset.route);
+      else if (button.dataset.relay) this.relay(button.dataset.relay);
       else if (button.dataset.seen) void this.seen(button, button.dataset.seen);
       else if (button.dataset.notMe) {
         const name = button.dataset.notMe;
@@ -145,6 +164,32 @@ export class MachinesPage implements Page {
         invite: true,
       },
       (scope, manage) => this.options.grant(member, scope, manage),
+      () => void this.options.store.refresh(),
+    );
+  }
+
+  /** The sheet that sets where `member` connects. */
+  private route(member: string): void {
+    const world = this.options.store.world.peek();
+    const node = world?.nodes.machines.find((n) => n.name === member);
+    if (!world || !node) return;
+    const relays = world.nodes.machines.filter((n) => !n.revoked && n.place?.relays_at?.length).map((n) => n.name);
+    this.routing.open(
+      node,
+      relays,
+      (via) => this.options.route(member, via),
+      () => void this.options.store.refresh(),
+    );
+  }
+
+  /** The sheet that sets whether `machine` relays. */
+  private relay(machine: string): void {
+    const world = this.options.store.world.peek();
+    const node = world?.nodes.machines.find((n) => n.name === machine);
+    if (!node) return;
+    this.relaying.open(
+      node,
+      (publicAt, listen) => this.options.setRelay(machine, publicAt, listen),
       () => void this.options.store.refresh(),
     );
   }
@@ -215,7 +260,10 @@ export class MachinesPage implements Page {
   private top(world: WorldNow, now: Date): string {
     const { words } = this.options;
     const link = world.nodes.link;
-    const hub = link.kind === "online" ? `<p class="machines-hub">${escape(words.hub(link.hub))}</p>` : "";
+    const hub =
+      link.kind === "online"
+        ? `<p class="machines-hub">${escape(link.relay ? words.hubVia(link.relay, link.hub) : words.hub(link.hub))}</p>`
+        : "";
     const joined = (world.nodes.joined ?? [])
       .map(
         (member) => `<li class="joined-line" data-joined="${escape(member.name)}">
@@ -224,7 +272,7 @@ export class MachinesPage implements Page {
         </li>`,
       )
       .join("");
-    return `${hub}${joined ? `<ul class="joined-lines" aria-live="polite">${joined}</ul>` : ""}`;
+    return `${hub}${joined ? `<ul class="joined-lines" aria-live="polite">${joined}</ul>` : ""}${structure(world.nodes.machines, world.here, this.options.treeWords)}`;
   }
 
   /** Where a member stands: its rights, who brought it in, what it may use. */
@@ -238,7 +286,8 @@ export class MachinesPage implements Page {
         : words.invitedBy(standing.invited_by)
       : words.founder;
     const sealing = standing.sealing ? "" : `<p class="machine-standing caution">${escape(words.noSealing)}</p>`;
-    return `<p class="machine-standing">${standing.manage ? `<span class="tag tag-manage">${escape(words.manages)}</span>` : ""}<span>${escape(standingLine(standing, scopeWords))}</span><span class="sep">·</span><span class="standing-from">${escape(from)}</span></p>${sealing}`;
+    const place = placeLine(node, this.options.treeWords);
+    return `<p class="machine-standing">${standing.manage ? `<span class="tag tag-manage">${escape(words.manages)}</span>` : ""}<span>${escape(standingLine(standing, scopeWords))}</span><span class="sep">·</span><span class="standing-from">${escape(from)}</span></p>${place ? `<p class="machine-place">${escape(place)}</p>` : ""}${sealing}`;
   }
 
   private machine(node: Node, world: WorldNow, now: Date): string {
@@ -255,10 +304,16 @@ export class MachinesPage implements Page {
     const residents = residentsOf(world).filter((r) => r.about.machine === node.name && (r.here || r.now?.waiting_for_user));
     const jobs = jobsOf(world).filter((job) => job.machine === node.name);
     const link = world.nodes.link;
-    const route =
-      node.name === world.here && link.kind === "online"
-        ? words.via(link.route.kind === "card" ? link.route.name : link.route.kind === "proxy" ? link.route.proxy : link.route.kind)
+    const way =
+      link.kind === "online"
+        ? link.route.kind === "card"
+          ? link.route.name
+          : link.route.kind === "proxy"
+            ? link.route.proxy
+            : link.route.kind
         : "";
+    const route =
+      node.name === world.here && link.kind === "online" ? (link.relay ? words.viaRelay(way, link.relay) : words.via(way)) : "";
     // A phone is a member nothing runs on: it is named as one, not asked.
     const describe = node.device
       ? escape(words.device)
@@ -270,7 +325,7 @@ export class MachinesPage implements Page {
     const kind = node.revoked ? "revoked" : node.online === true ? "online" : node.online === false ? "offline" : "unknown";
     const focus = this.options.focus === node.name ? " focused" : "";
     return `<li class="machine-entry ${kind}${focus}" data-machine="${escape(node.name)}">
-      <div class="machine-line"><span class="dot" aria-hidden="true"></span><h2 class="machine-title">${escape(node.name)}</h2>${node.name === world.here ? `<span class="tag">${escape(words.here)}</span>` : ""}${node.device ? `<span class="tag">${escape(words.phone)}</span>` : ""}<span class="machine-state">${escape(state)}</span></div>
+      <div class="machine-line"><span class="dot" aria-hidden="true"></span><h2 class="machine-title">${escape(node.name)}</h2>${node.name === world.here ? `<span class="tag">${escape(words.here)}</span>` : ""}${node.device ? `<span class="tag">${escape(words.phone)}</span>` : ""}${node.place?.relays_at?.length && !node.revoked ? `<span class="tag tag-relay">${escape(words.relayTag)}</span>` : ""}<span class="machine-state">${escape(state)}</span></div>
       ${describe ? `<p class="machine-facts">${describe}</p>` : ""}
       ${this.standing(node)}
       ${facts ? `<p class="machine-home"><span>${escape(words.home)}</span><code>${escape(facts.home)}</code></p>` : ""}
@@ -294,16 +349,21 @@ export class MachinesPage implements Page {
     </li>`;
   }
 
-  /** What this machine may do to a member: set its scope, with management
-   *  rights; revoke it, with them or when it is this machine's own branch;
-   *  leave, when it is this machine. Nothing it may not do is offered. */
+  /** What this machine may do to a member: set its scope, where it
+   *  connects and whether it relays, with management rights; revoke it,
+   *  with them or when it is this machine's own branch; leave, when it is
+   *  this machine. Nothing it may not do is offered. */
   private acts(node: Node, world: WorldNow): string {
     const words = this.options.deviceWords;
     const manages = this.options.manages();
     const button = (attribute: string, value: string, label: string) =>
       `<button class="text-button quiet-button" type="button" ${attribute}="${escape(value)}">${escape(label)}</button>`;
     const acts: string[] = [];
-    if (manages && node.standing) acts.push(button("data-scope", node.name, this.options.words.changeScope));
+    if (manages && node.standing) {
+      acts.push(button("data-scope", node.name, this.options.words.changeScope));
+      acts.push(button("data-route", node.name, this.options.words.changeRoute));
+      if (!node.device) acts.push(button("data-relay", node.name, this.options.words.relaySettings));
+    }
     if (node.name === world.here) acts.push(button("data-leave", "1", words.leave));
     else if (manages || (node.standing?.delegated && node.standing.invited_by === world.here)) {
       acts.push(button("data-revoke", node.name, words.revoke));

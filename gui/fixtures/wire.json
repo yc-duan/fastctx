@@ -4900,6 +4900,16 @@
               "manage": true,
               "invited_by": null,
               "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
             }
           },
           {
@@ -4941,6 +4951,17 @@
               "invited_by": "desktop",
               "delegated": true,
               "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
             }
           },
           {
@@ -4995,6 +5016,16 @@
               "manage": true,
               "invited_by": null,
               "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
             }
           },
           {
@@ -5036,6 +5067,17 @@
               "invited_by": "desktop",
               "delegated": true,
               "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
             }
           },
           {
@@ -5097,6 +5139,16 @@
               "manage": true,
               "invited_by": null,
               "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
             }
           },
           {
@@ -5138,6 +5190,17 @@
               "invited_by": "desktop",
               "delegated": true,
               "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
             }
           },
           {
@@ -5191,6 +5254,16 @@
               "manage": true,
               "invited_by": null,
               "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
             }
           },
           {
@@ -5232,6 +5305,17 @@
               "invited_by": "desktop",
               "delegated": true,
               "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
             }
           },
           {
@@ -5289,6 +5373,16 @@
               "manage": true,
               "invited_by": null,
               "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
             }
           },
           {
@@ -5330,6 +5424,17 @@
               "invited_by": "desktop",
               "delegated": true,
               "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
             }
           },
           {
@@ -5388,6 +5493,16 @@
               "manage": true,
               "invited_by": null,
               "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
             }
           },
           {
@@ -5429,6 +5544,17 @@
               "invited_by": "desktop",
               "delegated": true,
               "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
             }
           },
           {
@@ -5487,6 +5613,16 @@
               "manage": true,
               "invited_by": null,
               "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
             }
           },
           {
@@ -5528,6 +5664,17 @@
               "invited_by": "desktop",
               "delegated": true,
               "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
             }
           },
           {
@@ -5585,6 +5732,16 @@
               "manage": true,
               "invited_by": null,
               "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
             }
           },
           {
@@ -5626,6 +5783,137 @@
               "invited_by": "desktop",
               "delegated": true,
               "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
+            }
+          },
+          {
+            "name": "laptop",
+            "online": false,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Err": "offline"
+            },
+            "revoked": {
+              "by": "desktop",
+              "at": "2026-10-04T12:06:07Z",
+              "reason": "retired"
+            }
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "world": "Example world",
+        "link": {
+          "kind": "online",
+          "since": "2026-10-04T12:06:07Z",
+          "hub": "203.0.113.5:7444",
+          "relay": "la",
+          "route": {
+            "kind": "system"
+          }
+        },
+        "machines": [
+          {
+            "name": "desktop",
+            "online": true,
+            "since": "2026-10-04T12:06:07Z",
+            "facts": {
+              "Ok": {
+                "name": "desktop",
+                "os": "windows",
+                "arch": "x86_64",
+                "home": "C:/Users/example",
+                "temp": "C:/Temp",
+                "path_separator": "\\",
+                "case_sensitive": false,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "hub"
+                }
+              ],
+              "relays_at": [
+                "203.0.113.5:7444"
+              ]
+            }
+          },
+          {
+            "name": "lab",
+            "online": null,
+            "since": null,
+            "facts": {
+              "Ok": {
+                "name": "lab",
+                "os": "linux",
+                "arch": "aarch64",
+                "home": "/home/example",
+                "temp": "/tmp",
+                "path_separator": "/",
+                "case_sensitive": true,
+                "version": "fixture-version"
+              }
+            },
+            "revoked": null,
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            },
+            "place": {
+              "via": [
+                {
+                  "kind": "relay",
+                  "machine": "desktop"
+                },
+                {
+                  "kind": "hub"
+                }
+              ]
             }
           },
           {

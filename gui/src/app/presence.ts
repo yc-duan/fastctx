@@ -1,6 +1,7 @@
 // When the World calls the user from outside the window: an agent began
-// waiting for their answer, or a conversation they opened finished a turn,
-// while the window is not in front of them. What is said is the World's
+// waiting for their answer, a conversation they opened finished a turn, or
+// a member came in with this machine's invitation, while the window is not
+// in front of them. What is said is the World's
 // own fact, never a summary. A notification is taken back once what it
 // called for no longer holds, and a click on it opens that conversation.
 // The shell's own mechanics are in `world/desktop.ts`.
@@ -8,7 +9,7 @@
 import { connectDesktop, desktopAvailable, dismissDesktopNotice, getWindowPresence, notifyDesktop } from "../world/desktop";
 import type { Address } from "../world/events";
 import type { ResidentNow } from "../world/world";
-import { placeOf, talkLink } from "./places";
+import { link, placeOf, talkLink } from "./places";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 
@@ -19,6 +20,9 @@ export interface PresenceWords {
   finishedBody(town: string | null, last: string | null): string;
   open: string;
   stop: string;
+  /** A member came in with this machine's invitation. */
+  joined(name: string, device: boolean): string;
+  joinedBody: string;
 }
 
 export interface PresenceOptions {
@@ -63,6 +67,26 @@ export function startPresence(options: PresenceOptions): void {
       console.error("World desktop", notificationId, error);
     },
   }).catch((error: unknown) => console.error("Connecting World's desktop", error));
+
+  // Who came in with this machine's invitations: each called about once,
+  // the first look only learns.
+  let joined: Set<string> | null = null;
+  effect(() => {
+    const world = store.world.get();
+    if (!world) return;
+    const now = world.nodes.joined ?? [];
+    const before = joined;
+    joined = new Set(now.map((member) => member.name));
+    if (!before || !notifying()) return;
+    for (const member of now.filter((member) => !before.has(member.name))) {
+      void call(`joined:${member.name}`, {
+        title: words.joined(member.name, member.device === true),
+        body: words.joinedBody,
+        route: link({ kind: "machine", name: member.name }),
+        actions: [{ id: "open", title: words.open }],
+      });
+    }
+  });
 
   // What each conversation was last seen doing; the first look only learns.
   let seen: Map<string, { waiting: boolean; busy: boolean }> | null = null;

@@ -40,6 +40,7 @@ import {
   enDevices,
   enScope,
   enMachines,
+  enTree,
   enNewTalk,
   enPalette,
   enProjectForm,
@@ -53,6 +54,7 @@ import {
   zhDevices,
   zhScope,
   zhMachines,
+  zhTree,
   zhNewTalk,
   zhPalette,
   zhProjectForm,
@@ -135,6 +137,8 @@ import {
   watch,
   type Piece,
   type WorldNow,
+  route as routeMember,
+  setRelay,
 } from "./world/bridge";
 import { en, zh } from "./words";
 import { updating } from "./world/updater";
@@ -996,8 +1000,11 @@ function show(next: Place): void {
         devices,
         deviceWords,
         scopeWords,
+        treeWords: english ? enTree : zhTree,
         manages,
         grant: (member, scope, manage) => (live ? grant(member, scope, manage) : notLive()),
+        route: (member, via) => (live ? routeMember(member, via) : notLive()),
+        setRelay: (machine, publicAt, listen) => (live ? setRelay(machine, publicAt, listen).then(() => {}) : notLive()),
         seen: (member) => (live ? seenJoined(member) : notLive()),
         head,
         focus: next.kind === "machine" ? next.name : null,

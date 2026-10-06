@@ -144,6 +144,8 @@ export const zhPresence: PresenceWords = {
   finishedBody: (town, last) => [town ? `项目 ${town}` : null, last].filter(Boolean).join(" · ") || "打开它，看它说了什么。",
   open: "打开",
   stop: "停下",
+  joined: (name, device) => `${device ? "手机" : "机器"} ${name} 用你发的邀请进来了`,
+  joinedBody: "不是你请进来的，打开机器页一键吊销它。",
 };
 
 export const enPresence: PresenceWords = {
@@ -153,6 +155,8 @@ export const enPresence: PresenceWords = {
   finishedBody: (town, last) => [town, last].filter(Boolean).join(" · ") || "Open it to see what it said.",
   open: "Open",
   stop: "Stop",
+  joined: (name, device) => `${device ? "The phone" : "The machine"} ${name} came in with your invitation`,
+  joinedBody: "If you did not bring it in, revoke it from the machines page.",
 };
 
 export interface SettingsWords {
@@ -489,6 +493,13 @@ export interface MachinesWords {
   withdraw: string;
   /** The hub every machine reaches, by its address. */
   hub(address: string): string;
+  /** This machine reaches the World through a relay, at `address`. */
+  hubVia(relay: string, address: string): string;
+  /** The way out of this machine, to the relay it is on. */
+  viaRelay(route: string, relay: string): string;
+  changeRoute: string;
+  relaySettings: string;
+  relayTag: string;
   manages: string;
   founder: string;
   invitedBy(name: string): string;
@@ -528,6 +539,11 @@ export const zhMachines: MachinesWords = {
   allow: "许可…",
   withdraw: "撤回",
   hub: (address) => `中枢在 ${address}`,
+  hubVia: (relay, address) => `经转接站 ${relay}（${address}）连着世界`,
+  viaRelay: (route, relay) => `经${route}连着转接站 ${relay}`,
+  changeRoute: "上游…",
+  relaySettings: "转接站…",
+  relayTag: "转接站",
   manages: "管理",
   founder: "建世界的那台",
   invitedBy: (name) => `${name} 邀请进来的`,
@@ -554,6 +570,108 @@ export const zhMachines: MachinesWords = {
   via: (route) => `经${route}连着中枢`,
 };
 
+/** Where a member hangs in the World's tree, and the sheets that set it. */
+export interface TreeWords {
+  /** Above the tree on the machines page. */
+  structure: string;
+  hub: string;
+  here: string;
+  relayTag: string;
+  /** Connects through `first`, falling back to `then` in order. */
+  through(first: string, then: string[]): string;
+  relaysAt(addresses: string[]): string;
+  thenHub: string;
+  straightSaid: string;
+  routeTitle(name: string): string;
+  routeWhat: string;
+  first: string;
+  fallback: string;
+  relay(name: string): string;
+  straight: string;
+  hubLast: string;
+  noRelays: string;
+  routeGo: string;
+  relayTitle(name: string): string;
+  relayWhat: string;
+  publicAt: string;
+  publicHint: string;
+  listenAt: string;
+  listenHint: string;
+  relayGo: string;
+  relayChange: string;
+  stopRelaying: string;
+  publicNeeded: string;
+  working: string;
+  failed(why: string): string;
+  close: string;
+}
+
+export const zhTree: TreeWords = {
+  structure: "世界的结构",
+  hub: "中枢",
+  here: "这台",
+  relayTag: "转接站",
+  through: (first, then) => (then.length ? `经转接站 ${first} 连上来，它不通时走 ${then.join("、")}` : `经转接站 ${first} 连上来`),
+  relaysAt: (addresses) => `在 ${addresses.join("、")} 替下面的机器转接`,
+  thenHub: "，都不通时直连中枢",
+  straightSaid: "直连中枢",
+  routeTitle: (name) => `${name} 经哪里连上来`,
+  routeWhat: "世界是一棵以中枢为根的树。同挂在一个转接站下面的机器，彼此说话不绕中枢；转接站只转话，看不见内容。",
+  first: "先连",
+  fallback: "它不通时",
+  relay: (name) => name,
+  straight: "直连中枢",
+  hubLast: "直连中枢",
+  noRelays: "世界里还没有转接站：先在一台机器上点「转接站…」，把它设成转接站。",
+  routeGo: "就这样连",
+  relayTitle: (name) => `让 ${name} 当转接站`,
+  relayWhat: "路线经过它的机器会连到它这里，再由它连上世界。它只转话，读不到、改不了经过的内容；它停了，下面的机器自己改连中枢，等它回来再回去。",
+  publicAt: "下面的机器拨哪个地址",
+  publicHint: "IP:端口，几个就用逗号隔开；它所在的网络要放行这个端口。",
+  listenAt: "它在本机哪里监听",
+  listenHint: "留空就在所有网卡上监听同一个端口。",
+  relayGo: "设成转接站",
+  relayChange: "改好",
+  stopRelaying: "不再当转接站",
+  publicNeeded: "至少写一个下面的机器拨得通的地址。",
+  working: "稍等…",
+  failed: (why) => `没办成：${why}`,
+  close: "关闭",
+};
+
+export const enTree: TreeWords = {
+  structure: "How the World hangs together",
+  hub: "The hub",
+  here: "this one",
+  relayTag: "relay",
+  through: (first, then) => (then.length ? `connects through ${first}, then ${then.join(", then ")}` : `connects through ${first}`),
+  relaysAt: (addresses) => `relays at ${addresses.join(", ")}`,
+  thenHub: ", then straight to the hub",
+  straightSaid: "Straight to the hub",
+  routeTitle: (name) => `Where ${name} connects`,
+  routeWhat: "The World is a tree rooted at the hub. Machines below one relay speak without going through the hub; a relay only passes on what is said, and cannot read it.",
+  first: "First through",
+  fallback: "When it is down",
+  relay: (name) => name,
+  straight: "Straight to the hub",
+  hubLast: "Straight to the hub",
+  noRelays: "No machine relays yet: make one a relay first, with “Relay…” on it.",
+  routeGo: "Connect this way",
+  relayTitle: (name) => `${name} as a relay`,
+  relayWhat: "Machines whose route leads through it connect to it, and it connects them on to the World. It passes on what is said and can neither read nor change it; when it stops, the machines below it go to the hub, and come back once it is back.",
+  publicAt: "Where the machines below dial it",
+  publicHint: "IP:port, several separated by commas; its network must let the port through.",
+  listenAt: "Where it listens",
+  listenHint: "Left empty, on every interface at the same port.",
+  relayGo: "Make it a relay",
+  relayChange: "Change",
+  stopRelaying: "Stop relaying",
+  publicNeeded: "Give at least one address the machines below can reach.",
+  working: "Working…",
+  failed: (why) => `Not done: ${why}`,
+  close: "Close",
+};
+
 export const enMachines: MachinesWords = {
   phone: "phone",
   device: "A device that carries you; nothing runs on it",
@@ -576,7 +694,12 @@ export const enMachines: MachinesWords = {
   unattendedNo: "not yet allowed to work without asking; the World cannot bring it in",
   allow: "Allow…",
   withdraw: "Withdraw",
-  hub: (address) => `The hub is at ${address}`,
+  hub: (address) => `hub at ${address}`,
+  hubVia: (relay, address) => `Connected to the World through the relay ${relay} (${address})`,
+  viaRelay: (route, relay) => `reaches the relay ${relay} ${route}`,
+  changeRoute: "Upstream…",
+  relaySettings: "Relay…",
+  relayTag: "relay",
   manages: "manages",
   founder: "founded the World",
   invitedBy: (name) => `invited by ${name}`,

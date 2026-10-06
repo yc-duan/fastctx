@@ -227,6 +227,19 @@ export function grant(member: MachineName, scope: Scope, manage: boolean): Promi
   return invoke("grant", { member, scope, manage });
 }
 
+/** Where `member` connects from now on: through the relays `via`, in
+ *  order, then the hub; straight to the hub when `via` is empty. */
+export function route(member: MachineName, via: MachineName[]): Promise<void> {
+  return invoke("route", { member, via });
+}
+
+/** Makes `machine` relay, dialed at `public` (IP:port each) and listening
+ *  at `listen`, or stop relaying when `public` is empty. Resolves to where
+ *  it relays now. */
+export function setRelay(machine: MachineName, publicAt: string[], listen: string | null): Promise<string[]> {
+  return invoke("set_relay", { machine, public: publicAt, listen });
+}
+
 /** The user has been shown that `member` came in with this machine's
  *  invitation. */
 export function seen(member: MachineName): Promise<void> {

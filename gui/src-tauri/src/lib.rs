@@ -615,6 +615,50 @@ async fn grant(
     shell.world().grant(member, scope, manage).await.map_err(|error| error.to_string())
 }
 
+/// Where `member` connects from now on: through the relays `via`, in
+/// order, then the hub; straight to the hub when there are none.
+#[tauri::command]
+async fn route(shell: tauri::State<'_, Shell>, member: String, via: Vec<String>) -> Result<(), String> {
+    use fastctx_types::world::Upstream;
+    let member = member.parse::<MachineName>().map_err(|error| error.to_string())?;
+    let via = via
+        .into_iter()
+        .map(|machine| machine.parse::<MachineName>().map(|machine| Upstream::Relay { machine }))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let via = if via.is_empty() { vec![Upstream::Hub] } else { via };
+    shell.world().route(member, via).await.map_err(|error| error.to_string())
+}
+
+/// Makes `machine` relay, dialed at `public` and listening at `listen`
+/// (every address, on the first public port, when not given), or stop
+/// relaying when `public` is empty. Returns where it relays now.
+#[tauri::command]
+async fn set_relay(
+    shell: tauri::State<'_, Shell>,
+    machine: String,
+    public: Vec<String>,
+    listen: Option<String>,
+) -> Result<Vec<String>, String> {
+    let machine = machine.parse::<MachineName>().map_err(|error| error.to_string())?;
+    let address = |text: &str| {
+        text.trim().parse::<std::net::SocketAddr>().map_err(|_| format!("{} is not an address as IP:port", text.trim()))
+    };
+    let public = public.iter().filter(|text| !text.trim().is_empty()).map(|text| address(text)).collect::<Result<Vec<_>, _>>()?;
+    let relay = match public.first() {
+        None => None,
+        Some(first) => {
+            let listen = match listen.as_deref().map(str::trim).filter(|text| !text.is_empty()) {
+                Some(text) => address(text)?,
+                None if first.is_ipv4() => std::net::SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), first.port()),
+                None => std::net::SocketAddr::new(std::net::Ipv6Addr::UNSPECIFIED.into(), first.port()),
+            };
+            Some(fastctx_types::world::RelaySetting { listen, public })
+        }
+    };
+    shell.world().set_relay(machine, relay).await.map_err(|error| error.to_string())
+}
+
 /// The user has been shown that `member` came in with this machine's
 /// invitation.
 #[tauri::command]
@@ -808,6 +852,8 @@ pub fn run() {
             offers,
             invite,
             grant,
+            route,
+            set_relay,
             seen,
             revoke,
             leave,

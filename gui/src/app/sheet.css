@@ -656,3 +656,12 @@
 .invitation.invitation-wide {
   grid-template-columns: minmax(0, 1fr);
 }
+
+/* On a phone every sheet rises from the bottom, edge to edge, whatever
+   width it takes on a wider screen. */
+@media (max-width: 760px) {
+  .device-sheet .sheet-body,
+  .grant-sheet .sheet-body {
+    width: 100%;
+  }
+}

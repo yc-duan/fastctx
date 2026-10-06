@@ -120,7 +120,7 @@ export type Route =
 export type LinkState =
   | { kind: "alone" }
   | { kind: "connecting"; since: Timestamp; last_error: string | null }
-  | { kind: "online"; since: Timestamp; hub: string; route: Route }
+  | { kind: "online"; since: Timestamp; hub: string; relay?: MachineName | null; route: Route }
   | { kind: "stopped"; reason: string };
 
 export interface NodesReply {
@@ -143,6 +143,19 @@ export interface Node {
   device?: boolean;
   /** What it may do; absent when it is revoked or the World is one machine. */
   standing?: Standing | null;
+  /** Where it hangs in the World's tree; absent as `standing` is. */
+  place?: Place | null;
+}
+
+/** One upstream a machine connects to (`fastctx_types::world::Upstream`). */
+export type Upstream = { kind: "hub" } | { kind: "relay"; machine: MachineName };
+
+/** Where a member hangs in the tree (`fastctx_types::world::Place`). */
+export interface Place {
+  /** The upstreams it connects through, in order; the hub is the last of any. */
+  via: Upstream[];
+  /** Where machines below it dial it, when it relays. */
+  relays_at?: string[];
 }
 
 /** Everything, or only these (`fastctx_types::scope::Set`). */
