@@ -56,6 +56,14 @@ impl SessionChange {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionChange {
+    /// Current input state, outside the host transcript and replaced as a whole.
+    Composer {
+        composer: Box<crate::composer::Composer>,
+    },
+    /// A shared-input checkpoint failed; observers receive the actual failure.
+    ComposerFailed {
+        error: String,
+    },
     /// Re-read host history: a stable host operation removed or replaced
     /// turns. This says nothing about restoring files on disk.
     HistoryChanged,

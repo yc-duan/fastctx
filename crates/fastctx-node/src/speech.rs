@@ -194,16 +194,73 @@ async fn into_thread(
     directory: &ResidentDir,
     pending: Pending,
 ) -> Result<Landed, Failure> {
+    submit_thread(node, id, thread, directory, pending, false, false)
+        .await
+        .map(|landed| landed.expect("ordinary submissions do not defer to a composer"))
+}
+
+/// Submits exactly one composer message. Automatic release rechecks idle while holding the speech lock.
+pub async fn send_composer(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    delivery: Delivery,
+    idle_only: bool,
+) -> Result<Option<Landed>, Failure> {
+    node.ready().await;
+    let gate = node.residents.management(id)?;
+    let _reading = gate.read().await;
+    node.residents.active(id)?;
+    let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
+    let directory = node.world.resident(town.as_ref(), id);
+    if about.world_started
+        && about.host.agent.as_str() == "codex"
+        && let Some(thread) = &about.session
+    {
+        let Some(_answering) = node.handoff.call() else {
+            return Err(Failure::new(crate::handoff::WAITING));
+        };
+        let pending =
+            Pending { delivery, readers: Vec::new(), state: PendingState::Waiting, working: false, session: None };
+        return submit_thread(node, id, thread, &directory, pending, true, idle_only).await;
+    }
+    if idle_only && node.residents.now(id).is_some_and(|now| now.activity == fastctx_types::residents::Activity::Busy) {
+        return Ok(None);
+    }
+    tell_here_locked(node, id, delivery, Owed::Nobody).await.map(Some)
+}
+
+async fn submit_thread(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    thread: &str,
+    directory: &ResidentDir,
+    pending: Pending,
+    single: bool,
+    idle_only: bool,
+) -> Result<Option<Landed>, Failure> {
     // Its tools start before the words go in, outside the lock others' words
     // and its turns' ends wait on.
     let missing = node.codex.prepare(thread).await.map_err(Failure::new)?;
     let speaking = node.residents.speaking(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
     let _speaking = speaking.lock().await;
+    if single
+        && idle_only
+        && (node.residents.now(id).is_some_and(|now| now.activity == fastctx_types::residents::Activity::Busy)
+            || node.codex.running_turn(thread).is_some())
+    {
+        return Ok(None);
+    }
     // A node handing the World on starts no turn; the words wait for its
     // successor, which hands them over when it serves.
     let Some(_starting) = node.handoff.start_turn() else {
-        return Ok(Landed::Waiting { why: Some(crate::handoff::Handoff::waiting_why(node)), answered: true });
+        if single {
+            return Err(Failure::new(crate::handoff::Handoff::waiting_why(node)));
+        }
+        return Ok(Some(Landed::Waiting { why: Some(crate::handoff::Handoff::waiting_why(node)), answered: true }));
     };
+    if single {
+        crate::inbox::keep(directory, &pending).map_err(|error| Failure::new(error.to_string()))?;
+    }
     let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)
         .map_err(|error| Failure::new(error.to_string()))?
         .into_iter()
@@ -229,17 +286,20 @@ async fn into_thread(
         if let Some(why) = crate::delivery::input_uncertainty(directory, &pending.delivery.id)
             .map_err(|error| Failure::new(error.to_string()))?
         {
-            return Ok(Landed::Uncertain { why });
+            return Ok(Some(Landed::Uncertain { why }));
         }
         return match crate::delivery::input_turn(directory, &pending.delivery.id)
             .map_err(|error| Failure::new(error.to_string()))?
         {
-            Some(turn) => Ok(Landed::JoinedTurn { turn }),
-            None => Ok(Landed::Waiting {
+            Some(turn) => Ok(Some(Landed::JoinedTurn { turn })),
+            None => Ok(Some(Landed::Waiting {
                 why: Some("this delivery is already recorded; it was not submitted again".to_string()),
                 answered: true,
-            }),
+            })),
         };
+    }
+    if single {
+        batch.retain(|kept| kept.delivery.id == pending.delivery.id);
     }
     for kept in &mut batch {
         if kept.working {
@@ -286,6 +346,10 @@ async fn into_thread(
             for kept in &batch {
                 set_state(directory, &kept.delivery.id, PendingState::Waiting).await?;
             }
+            if single {
+                crate::inbox::withdraw(directory, &pending.delivery.id)
+                    .map_err(|error| Failure::new(error.to_string()))?;
+            }
             return Err(Failure::new(why));
         }
         Err(SendError::Unknown(why)) => {
@@ -294,7 +358,7 @@ async fn into_thread(
             crate::turns::unresolved(node, id, directory, &mut handover, TurnHow::Interrupted, why.clone())
                 .await
                 .map_err(|error| Failure::new(error.to_string()))?;
-            return Ok(Landed::Uncertain { why });
+            return Ok(Some(Landed::Uncertain { why }));
         }
     };
     if let Err(error) = bind(node, id, directory, &mut handover, &sent.turn).await {
@@ -313,7 +377,7 @@ async fn into_thread(
         crate::turns::health(node, id, Some(sent.turn.clone()), health)
             .map_err(|error| Failure::new(error.to_string()))?;
     }
-    Ok(if sent.joined { Landed::JoinedTurn { turn: sent.turn } } else { Landed::NewTurn { turn: sent.turn } })
+    Ok(Some(if sent.joined { Landed::JoinedTurn { turn: sent.turn } } else { Landed::NewTurn { turn: sent.turn } }))
 }
 
 /// Commits the consuming turn for the entire batch before changing either
@@ -339,6 +403,7 @@ pub async fn bind(
         node.residents.owe(&node.world, id, turn, &readers, active).map_err(|error| Failure::new(error.to_string()))?;
     }
     for input in &handover.inputs {
+        crate::composer::bound(node, id, &input.delivery.id, turn).await?;
         heard(node, id, &input.delivery, turn);
         settle(directory, &input.delivery.id).await?;
     }

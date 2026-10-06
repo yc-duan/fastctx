@@ -866,6 +866,7 @@ dependencies = [
  "fastctx-net",
  "fastctx-platform",
  "fastctx-types",
+ "getrandom 0.3.4",
  "jiff",
  "serde",
  "serde_json",

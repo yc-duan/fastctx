@@ -6,6 +6,7 @@
 
 #[cfg(target_os = "android")]
 mod android;
+mod composer;
 mod connection;
 
 #[cfg(desktop)]
@@ -754,6 +755,12 @@ pub fn run() {
             project_edit,
             watch,
             unwatch,
+            composer::composer_read,
+            composer::composer_watch,
+            composer::composer_update,
+            composer::composer_send,
+            composer::composer_attach_path,
+            composer::composer_attach_bytes,
             talk,
             upload_path,
             upload_bytes,

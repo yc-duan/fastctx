@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use fastctx_net::link::Feed;
 use fastctx_types::MachineName;
-use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget};
+use fastctx_types::attachments::{UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::mpsc;
@@ -15,13 +15,14 @@ use super::{Device, failed};
 use crate::Error;
 
 impl Device {
-    pub(crate) async fn upload(
+    pub(crate) async fn upload_scoped(
         &self,
         target: UploadTarget,
         machine: Option<MachineName>,
         file: UploadFile,
+        composer: Option<fastctx_types::composer::UploadScope>,
         mut source: impl AsyncRead + Unpin,
-    ) -> Result<Attachment, Error> {
+    ) -> Result<Uploaded, Error> {
         let session = self.connected()?;
         session.check_identity().await?;
         let machine = match &target {
@@ -56,7 +57,7 @@ impl Device {
                 Ok(())
             })
         });
-        let remote = RemoteCall::Upload { target: target.clone(), file: file.clone() };
+        let remote = RemoteCall::Upload { target: target.clone(), file: file.clone(), composer };
         let answer = session.link.call_with_stream(&machine, remote, feed);
         let sending = async {
             let mut buffer = vec![0u8; UPLOAD_CHUNK];
@@ -103,9 +104,14 @@ impl Device {
                 }));
             }
         };
-        let RemoteReply::Uploaded(attachment) = reply else {
-            return Err(failed(format!("{machine} answered something other than an upload")));
+        let uploaded = match reply {
+            RemoteReply::Uploaded(attachment) => Uploaded { attachment, composer: None },
+            RemoteReply::ComposerUploaded(result) => {
+                Uploaded { attachment: result.attachment, composer: Some(result.updated) }
+            }
+            _ => return Err(failed(format!("{machine} answered something other than an upload"))),
         };
+        let attachment = &uploaded.attachment;
         let owner_matches = match target {
             UploadTarget::Resident { resident } => attachment.owner.resident == resident,
             UploadTarget::Draft { resident, town } => attachment.owner.resident == resident && attachment.town == town,
@@ -114,6 +120,6 @@ impl Device {
         if attachment.owner.machine != machine || attachment.file != file || !owner_matches {
             return Err(failed("the upload receipt differs from the requested file or destination"));
         }
-        Ok(attachment)
+        Ok(uploaded)
     }
 }

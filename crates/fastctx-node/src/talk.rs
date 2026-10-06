@@ -83,6 +83,7 @@ pub async fn watch(
     node: &Arc<Node>,
     resident: ResidentId,
     machine: Option<MachineName>,
+    composer: Option<String>,
 ) -> Result<mpsc::UnboundedReceiver<Result<Watched, String>>, Failure> {
     let here = node.machine();
     let machine = match machine {
@@ -91,9 +92,18 @@ pub async fn watch(
     };
     let (sender, receiver) = mpsc::unbounded_channel();
     if machine == here {
-        let (history, mut events) = watch_here(node, &resident).await?;
+        let lease = match composer {
+            Some(name) => Some(crate::composer::watch(node, &resident, name).await?),
+            None => None,
+        };
+        let (history, mut events) = if lease.is_some() {
+            (Vec::new(), node.watchers.watch(&resident))
+        } else {
+            watch_here(node, &resident).await?
+        };
         let _ = sender.send(Ok(Watched::History { events: history }));
         tokio::spawn(async move {
+            let _lease = lease;
             loop {
                 tokio::select! {
                     event = events.recv() => match event {
@@ -133,7 +143,7 @@ pub async fn watch(
             }
         })
     });
-    let call = RemoteCall::Watch { resident, watch };
+    let call = RemoteCall::Watch { resident, watch, composer };
     tokio::spawn(async move {
         let ended = match link.call_with_stream(&machine, call, feed).await {
             Ok(Ok(_)) => return,
@@ -336,10 +346,19 @@ pub async fn serve_watch(
     node: &Arc<Node>,
     resident: ResidentId,
     watch: u64,
+    composer: Option<String>,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
+    let _lease = match composer {
+        Some(name) => Some(crate::composer::watch(node, &resident, name).await?),
+        None => None,
+    };
     let link = link(node)?;
-    let (history, mut events) = watch_here(node, &resident).await?;
+    let (history, mut events) = if _lease.is_some() {
+        (Vec::new(), node.watchers.watch(&resident))
+    } else {
+        watch_here(node, &resident).await?
+    };
     let mut n = 0;
     let mut next = Some(Watched::History { events: history });
     loop {

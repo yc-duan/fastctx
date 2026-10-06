@@ -13,6 +13,7 @@
 //! application's own directory.
 
 pub mod attachments;
+pub mod composer;
 pub mod conversation;
 pub mod device;
 pub mod file_read;

@@ -1,0 +1,137 @@
+//! Atomic composer checkpoints follow resident relocation.
+
+use super::*;
+
+/// Lifecycle hooks leave conversations without a shared composer untouched.
+pub(super) fn existing(node: &Node, id: &ResidentId) -> Result<Option<Cell>, Failure> {
+    if let Some(cell) = node.composers.cells.lock().expect("composer cells").get(id).cloned() {
+        return Ok(Some(cell));
+    }
+    let Some((_, town)) = node.residents.about(id) else { return Ok(None) };
+    let directory = node.world.resident(town.as_ref(), id);
+    let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
+    if directory.path().join("composer.json").try_exists().map_err(failure)? {
+        Ok(Some(node.composers.cell(id)))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(super) fn load(node: &Node, id: &ResidentId, cell: &mut Option<Stored>) -> Result<(), Failure> {
+    if cell.is_some() {
+        return Ok(());
+    }
+    let (_, town) = node.residents.about(id).ok_or_else(|| failure("unknown resident"))?;
+    let directory = node.world.resident(town.as_ref(), id);
+    let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
+    let state = match std::fs::read(directory.path().join("composer.json")) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(failure)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Stored::default(),
+        Err(error) => return Err(failure(error)),
+    };
+    *cell = Some(state);
+    Ok(())
+}
+
+pub(super) fn publish(
+    node: &Node,
+    id: &ResidentId,
+    cell: &mut Option<Stored>,
+    mut next: Stored,
+) -> Result<(), Failure> {
+    next.revision = next.revision.checked_add(1).ok_or_else(|| failure("revision overflow"))?;
+    let (_, town) = node.residents.about(id).ok_or_else(|| failure("unknown resident"))?;
+    let directory = node.world.resident(town.as_ref(), id);
+    let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
+    let bytes = serde_json::to_vec(&next).map_err(failure)?;
+    if let Err(error) = fastctx_platform::atomic::publish_checked(
+        &directory.path().join("composer.json"),
+        &bytes,
+        fastctx_platform::Permissions::Private,
+        true,
+        || Ok(()),
+    ) {
+        if error.published {
+            *cell = Some(next);
+        }
+        let error = failure(error.error);
+        if let Some(state) = cell.as_mut() {
+            state.held = Some(error.message.clone());
+        }
+        node.watchers.publish(
+            id,
+            &SessionEvent {
+                at: jiff::Timestamp::now(),
+                happened: Happened::Changed {
+                    turn: None,
+                    change: SessionChange::ComposerFailed { error: error.message.clone() },
+                },
+            },
+        );
+        return Err(error);
+    }
+    let view = next.view();
+    *cell = Some(next);
+    node.watchers.publish(id, &event(view));
+    Ok(())
+}
+
+pub(super) fn event(composer: fastctx_types::composer::Composer) -> SessionEvent {
+    SessionEvent {
+        at: jiff::Timestamp::now(),
+        happened: Happened::Changed { turn: None, change: SessionChange::Composer { composer: Box::new(composer) } },
+    }
+}
+
+/// Restores delivery reservations before automatic release starts.
+pub async fn recover(node: &Arc<Node>) -> Result<(), Failure> {
+    for resident in node.residents.everyone() {
+        if resident.removed.is_some() {
+            continue;
+        }
+        let directory = node.world.resident(resident.town.as_ref(), &resident.id);
+        if !directory.path().join("composer.json").try_exists().map_err(failure)? {
+            continue;
+        }
+        let cell = node.composers.cell(&resident.id);
+        let mut cell = cell.lock().await;
+        load(node, &resident.id, &mut cell)?;
+        let mut next = cell.as_ref().expect("loaded").clone();
+        let flights: Vec<_> = next.sending.take().into_iter().chain(next.pending.clone()).collect();
+        for flight in flights {
+            if let Some(turn) = crate::delivery::input_turn(&directory, &flight.delivery.id).map_err(failure)? {
+                next.queue.retain(|entry| entry.id != flight.entry);
+                next.pending.retain(|pending| pending.delivery.id != flight.delivery.id);
+                if flight.automatic && !next.ended.contains(&turn) {
+                    next.awaiting_turn = Some(turn);
+                }
+            } else {
+                let why = crate::delivery::input_uncertainty(&directory, &flight.delivery.id).map_err(failure)?;
+                if let Some(why) = why {
+                    next.pending.retain(|pending| pending.delivery.id != flight.delivery.id);
+                    next.held = Some(why.clone());
+                    if let Some(entry) = next.queue.iter_mut().find(|entry| entry.id == flight.entry) {
+                        entry.submitted = Some(flight.delivery.id);
+                        entry.error = Some(why);
+                    }
+                    next.retire_unobserved(&flight.entry);
+                } else if !next.pending.iter().any(|pending| pending.delivery.id == flight.delivery.id) {
+                    // No consuming turn was acknowledged before the node stopped.
+                    // Return a Waiting inbox entry to the composer instead of batching it later.
+                    crate::inbox::withdraw(&directory, &flight.delivery.id).map_err(failure)?;
+                    next.held = Some(
+                        "the node restarted before a host submission was recorded; this message remains queued".into(),
+                    );
+                    if let Some(entry) = next.queue.iter_mut().find(|entry| entry.id == flight.entry) {
+                        entry.error = next.held.clone();
+                    }
+                }
+            }
+        }
+        publish(node, &resident.id, &mut cell, next)?;
+        drop(cell);
+        uploads::recover(node, &resident.id).await?;
+        schedule(node, &resident.id);
+    }
+    Ok(())
+}

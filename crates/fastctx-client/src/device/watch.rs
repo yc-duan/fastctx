@@ -29,16 +29,26 @@ pub(crate) struct Watching {
 }
 
 impl Device {
-    pub(crate) async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {
+    pub(crate) async fn watch(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        composer: Option<String>,
+    ) -> Result<Watching, Error> {
         let session = self.connected()?;
         session.check_identity().await?;
         let machine = session.locate(&resident, machine).await?;
-        Watching::start(session, machine, resident)
+        Watching::start(session, machine, resident, composer)
     }
 }
 
 impl Watching {
-    fn start(session: Arc<Session>, machine: MachineName, resident: ResidentId) -> Result<Self, Error> {
+    fn start(
+        session: Arc<Session>,
+        machine: MachineName,
+        resident: ResidentId,
+        composer: Option<String>,
+    ) -> Result<Self, Error> {
         let watch = u64::from_le_bytes(fastctx_net::sign::random::<8>()?);
         let (sender, pieces) = mpsc::unbounded_channel();
         let (feeding, link, from) = (sender.clone(), session.link.clone(), machine.clone());
@@ -46,7 +56,7 @@ impl Watching {
         let task = tokio::spawn(async move {
             let ended = tokio::select! {
                 () = sender.closed() => return,
-                result = session.link.call_with_stream(&machine, RemoteCall::Watch { resident, watch }, feed) => result,
+                result = session.link.call_with_stream(&machine, RemoteCall::Watch { resident, watch, composer }, feed) => result,
             };
             let error = match ended {
                 Ok(Ok(RemoteReply::Watched)) => return,

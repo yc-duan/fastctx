@@ -39,6 +39,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
         &event.happened
     {
         node.residents.change_now(&node.world, id, |now| now.waiting_for_user = *waiting)?;
+        if !waiting {
+            crate::composer::changed(node, id);
+        }
     }
     // Its name, for those who list the World rather than watch it.
     if let Happened::Titled { title } = &event.happened {
@@ -161,6 +164,7 @@ pub async fn finish_locked(
         crate::desk::turn_ended(node, id, turn);
         node.watchers.publish(id, &event);
     }
+    crate::composer::turn_ended(node, id, turn, &finished.end.how).await.map_err(std::io::Error::other)?;
     for handover in &accepted {
         for input in &handover.inputs {
             crate::inbox::settle(&directory, &input.delivery.id)?;
@@ -374,6 +378,8 @@ pub async fn unresolved(
         if crate::delivery::event(directory, &format!("uncertain:{}", pending.delivery.id), &event)? {
             node.watchers.publish(id, &event);
         }
+        let why = handover.unresolved.as_ref().and_then(|end| end.reason.as_deref()).unwrap_or_default();
+        crate::composer::uncertain(node, id, &pending.delivery.id, why).await.map_err(std::io::Error::other)?;
         crate::inbox::retain_uncertain(directory, pending)?;
     }
     // The handover retains the exact payload and the uncertainty even when

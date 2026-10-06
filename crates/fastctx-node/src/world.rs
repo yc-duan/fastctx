@@ -191,10 +191,10 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
-                RemoteCall::Watch { resident, watch } => {
+                RemoteCall::Watch { resident, watch, composer } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
-                    crate::talk::serve_watch(&node, resident, watch, stream).await
+                    crate::talk::serve_watch(&node, resident, watch, composer, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node).await.map(RemoteReply::Agents),
                 RemoteCall::ClaudeConsent { accept } => {
@@ -224,6 +224,9 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Control { resident, control } => {
                     crate::control::control_here(&node, &resident, control).await.map(RemoteReply::Controlled)
+                }
+                RemoteCall::Composer { resident, request } => {
+                    crate::composer::here(&node, &from, &resident, request).await.map(RemoteReply::Composer)
                 }
                 RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
                     .await
@@ -266,9 +269,11 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(RemoteReply::Copied)
                 }
-                RemoteCall::Upload { target, file } => {
+                RemoteCall::Upload { target, file, composer } => {
                     let stream = stream.ok_or_else(|| Failure::new("an upload requires its data connection"))?;
-                    crate::attachments::receive(&node, target, file, stream).await.map(RemoteReply::Uploaded)
+                    crate::attachments::receive(&node, &from, target, file, composer, stream)
+                        .await
+                        .map(crate::attachments::remote_reply)
                 }
             }
         })

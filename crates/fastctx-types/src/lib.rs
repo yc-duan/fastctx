@@ -10,6 +10,7 @@
 pub mod agents;
 pub mod attachments;
 pub mod calls;
+pub mod composer;
 pub mod copy;
 pub mod device;
 pub mod file_read;
