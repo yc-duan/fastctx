@@ -18,6 +18,7 @@ mod claude;
 pub mod claude_request;
 mod codex;
 mod colleagues;
+mod composer;
 mod consent;
 mod control;
 mod copy;
@@ -88,6 +89,7 @@ pub(crate) struct Node {
     claude: claude::Claude,
     desk: desk::Desk,
     watchers: watch::Watchers,
+    composers: composer::Composers,
     file_searches: file_search::Searches,
     log: Arc<log::Log>,
     /// Present while the machine is a member of a World with others.
@@ -278,6 +280,7 @@ pub async fn run_replacing(
         claude: claude::Claude::default(),
         desk: desk::Desk::default(),
         watchers: watch::Watchers::default(),
+        composers: composer::Composers::default(),
         file_searches: file_search::Searches::default(),
         log,
         link: RwLock::new(None),
@@ -314,8 +317,10 @@ pub async fn run_replacing(
     speech::restore(&node).await;
     unfinished.extend(node.residents.unfinished());
     turns::recover(&node, unfinished.into_iter().collect()).await;
+    composer::recover(&node).await.map_err(anyhow::Error::from)?;
     node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
     node.effects_changed.notify_waiters();
+    composer::resume(&node);
     speech::recover(&node).await;
     let jobs_node = node.clone();
     tokio::spawn(async move {

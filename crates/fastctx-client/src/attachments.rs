@@ -1,6 +1,6 @@
 //! Streaming uploads use a dedicated IPC connection, just as watches do.
 
-use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget};
+use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
 use fastctx_types::ipc::{ClientFrame, NodeFrame};
 use fastctx_types::{Call, MachineName, Reply};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
@@ -17,16 +17,27 @@ impl Client {
     /// must end at the declared size; an empty IPC frame commits that end.
     /// Dropping this future closes the connection and abandons the upload.
     pub async fn upload(
+        self,
+        target: UploadTarget,
+        node: Option<MachineName>,
+        file: UploadFile,
+        source: impl AsyncRead + Unpin,
+    ) -> Result<Attachment, CallError> {
+        self.upload_scoped(target, node, file, None, source).await.map(|uploaded| uploaded.attachment)
+    }
+
+    pub(crate) async fn upload_scoped(
         mut self,
         target: UploadTarget,
         node: Option<MachineName>,
         file: UploadFile,
+        composer: Option<fastctx_types::composer::UploadScope>,
         mut source: impl AsyncRead + Unpin,
-    ) -> Result<Attachment, CallError> {
+    ) -> Result<Uploaded, CallError> {
         self.next += 1;
         let id = self.next;
         let size = file.size;
-        let call = Call::Upload { target, node, file };
+        let call = Call::Upload { target, node, file, composer };
         self.connection.send(&crate::to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
         let (mut reader, mut writer) = self.connection.split();
         let send = async {
@@ -61,7 +72,10 @@ impl Client {
                 .ok_or_else(|| broken("the node disconnected during upload"))?;
             match serde_json::from_slice::<NodeFrame>(&frame).map_err(|error| broken(error.to_string()))? {
                 NodeFrame::Reply { id: answered, reply } if answered == id => match reply.map_err(CallError::Failed)? {
-                    Reply::Uploaded(attachment) => Ok(attachment),
+                    Reply::Uploaded(attachment) => Ok(Uploaded { attachment, composer: None }),
+                    Reply::ComposerUploaded(result) => {
+                        Ok(Uploaded { attachment: result.attachment, composer: Some(result.updated) })
+                    }
                     _ => Err(broken("the node answered something other than an upload")),
                 },
                 _ => Err(broken("the node answered another call during upload")),
@@ -118,9 +132,29 @@ impl World {
         source: impl AsyncRead + Unpin,
     ) -> Result<Attachment, Error> {
         if let Some(device) = self.device() {
-            return device.upload(target, node, file, source).await;
+            return device.upload_scoped(target, node, file, None, source).await.map(|uploaded| uploaded.attachment);
         }
         Ok(self.connect().await?.upload(target, node, file, source).await?)
+    }
+
+    /// Uploads and attaches to the shared draft as one node-owned lifetime.
+    pub async fn upload_composer(
+        &self,
+        resident: fastctx_types::ResidentId,
+        node: Option<MachineName>,
+        file: UploadFile,
+        scope: fastctx_types::composer::UploadScope,
+        source: impl AsyncRead + Unpin,
+    ) -> Result<fastctx_types::composer::UploadResult, Error> {
+        let target = UploadTarget::Resident { resident };
+        let uploaded = match self.device() {
+            Some(device) => device.upload_scoped(target, node, file, Some(scope), source).await?,
+            None => self.connect().await?.upload_scoped(target, node, file, Some(scope), source).await?,
+        };
+        let updated = uploaded
+            .composer
+            .ok_or_else(|| Error::Unexpected("the upload returned no shared-composer result".into()))?;
+        Ok(fastctx_types::composer::UploadResult { attachment: uploaded.attachment, updated })
     }
 
     pub async fn talk_with_attachments(

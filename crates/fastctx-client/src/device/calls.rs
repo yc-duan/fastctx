@@ -26,6 +26,10 @@ impl Device {
         session.check_identity().await?;
         let here = session.link.membership().name.clone();
         let (machine, remote, resident) = match call {
+            Call::Composer { resident, machine, request } => {
+                let machine = session.locate(&resident, machine).await?;
+                (machine, RemoteCall::Composer { resident: resident.clone(), request }, Some(resident))
+            }
             Call::FindFiles { machine, request } => {
                 let machine =
                     machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
@@ -87,6 +91,7 @@ impl Device {
         let answer = session.link.call(&machine, remote.clone()).await.map_err(failed)?.map_err(failed)?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
+            (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::ClaudeConsent { .. }, RemoteReply::ClaudeConsent { accepted, changed }) => {
                 Reply::ClaudeConsent { machine: machine.clone(), accepted, changed }

@@ -18,6 +18,12 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    /// Reads or changes the shared composer on the resident's machine.
+    Composer {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        request: crate::composer::Request,
+    },
     /// A session says who it is; the node finds or makes its resident.
     Arrive {
         host: Host,
@@ -123,6 +129,8 @@ pub enum Call {
         target: crate::attachments::UploadTarget,
         node: Option<MachineName>,
         file: crate::attachments::UploadFile,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        composer: Option<crate::composer::UploadScope>,
     },
     /// Watches a resident on any machine: the node answers with its history
     /// and then each event as it happens, for as long as the connection
@@ -130,6 +138,8 @@ pub enum Call {
     Watch {
         resident: ResidentId,
         machine: Option<MachineName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        composer: Option<String>,
     },
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.
@@ -244,6 +254,8 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    ComposerUploaded(Box<crate::composer::UploadResult>),
+    Composer(Box<crate::composer::Updated>),
     Page {
         view: Box<crate::pages::PageView>,
     },

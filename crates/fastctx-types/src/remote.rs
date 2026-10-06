@@ -20,6 +20,11 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    /// The user's shared composer, addressed directly to its resident machine.
+    Composer {
+        resident: ResidentId,
+        request: crate::composer::Request,
+    },
     /// A page action admitted by a machine's user-only page gate. Devices
     /// use Relay(Page::Act), never this execution call.
     PageAction {
@@ -95,6 +100,8 @@ pub enum RemoteCall {
     Upload {
         target: crate::attachments::UploadTarget,
         file: crate::attachments::UploadFile,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        composer: Option<crate::composer::UploadScope>,
     },
     /// Watch a resident there: what it hands over goes over the call's data
     /// connection until the caller closes it, each piece signed by the
@@ -102,6 +109,8 @@ pub enum RemoteCall {
     Watch {
         resident: ResidentId,
         watch: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        composer: Option<String>,
     },
     /// Open a session there for the user, as `Call::Open`.
     Open {
@@ -160,6 +169,8 @@ pub enum RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    ComposerUploaded(Box<crate::composer::UploadResult>),
+    Composer(Box<crate::composer::Updated>),
     PageAction {
         result: crate::pages::PageResult,
     },

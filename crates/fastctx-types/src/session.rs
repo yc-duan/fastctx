@@ -133,6 +133,10 @@ impl Happened {
         !matches!(
             self,
             Happened::Began { .. }
+                | Happened::Changed {
+                    change: SessionChange::Composer { .. } | SessionChange::ComposerFailed { .. },
+                    ..
+                }
                 | Happened::Grew { .. }
                 | Happened::Updated { .. }
                 | Happened::RealtimeGrew { .. }

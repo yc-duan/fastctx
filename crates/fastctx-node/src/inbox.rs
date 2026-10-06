@@ -68,6 +68,16 @@ pub fn retain_uncertain(directory: &ResidentDir, pending: &Pending) -> io::Resul
     }
 }
 
+/// Returns a definitely refused composer input to its own queue, before any host accepted it.
+pub fn withdraw(directory: &ResidentDir, id: &NoticeId) -> io::Result<()> {
+    let (_transaction, directory) = crate::resident_storage::current(directory)?;
+    let Some(pending) = read_here(&directory, id)? else { return Ok(()) };
+    if pending.state != PendingState::Waiting {
+        return Err(io::Error::other("cannot withdraw an input crossing the host boundary"));
+    }
+    std::fs::remove_file(path(&directory, id))
+}
+
 /// Records how far something kept has come.
 pub fn set_state(directory: &ResidentDir, id: &NoticeId, state: PendingState) -> io::Result<()> {
     let (_transaction, current) = crate::resident_storage::current(directory)?;

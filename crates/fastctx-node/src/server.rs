@@ -69,9 +69,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 .await?;
             return writer.drain().await;
         }
-        if let Call::Watch { resident, machine } = call {
+        if let Call::Watch { resident, machine, composer } = call {
             // A watch keeps the connection until one end leaves.
-            let ended = match crate::talk::watch(node, resident, machine).await {
+            let ended = match crate::talk::watch(node, resident, machine, composer).await {
                 Err(failure) => Err(failure),
                 Ok(mut watched) => loop {
                     tokio::select! {
@@ -106,9 +106,11 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             return crate::file_read::serve_local(node, machine, request, id, &mut reader, &mut writer).await;
         }
-        if let Call::Upload { target, node: machine, file } = call {
+        if let Call::Upload { target, node: machine, file, composer } = call {
             let reply = match users_voice(node, &hello.peer) {
-                Ok(()) => crate::attachments::upload(node, target, machine, file, reader).await.map(Reply::Uploaded),
+                Ok(()) => crate::attachments::upload(node, target, machine, file, composer, reader)
+                    .await
+                    .map(crate::attachments::reply),
                 Err(error) => Err(error),
             };
             writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
@@ -378,6 +380,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::control::control(node, resident, machine, control)
                 .await
                 .map(|(resident, controlled)| Reply::Controlled { resident, controlled })
+        }
+        Call::Composer { resident, machine, request } => {
+            users_voice(node, peer)?;
+            crate::composer::request(node, resident, machine, request).await.map(|updated| Reply::Composer(Box::new(updated)))
         }
         Call::Offers { resident, machine } => crate::control::offers(node, resident, machine)
             .await

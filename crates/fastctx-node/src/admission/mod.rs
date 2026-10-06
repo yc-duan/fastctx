@@ -36,6 +36,7 @@ struct Asked<'a> {
 fn asked(call: &RemoteCall) -> Asked<'_> {
     let reaches = match call {
         RemoteCall::Talk { to: who, .. }
+        | RemoteCall::Composer { resident: who, .. }
         | RemoteCall::Watch { resident: who, .. }
         | RemoteCall::Stop { resident: who }
         | RemoteCall::Control { resident: who, .. }
@@ -62,6 +63,7 @@ fn asked(call: &RemoteCall) -> Asked<'_> {
         }
         RemoteCall::Talk { to, .. } => (Action::Talk, resident(to), None),
         RemoteCall::Watch { resident: who, .. }
+        | RemoteCall::Composer { resident: who, .. }
         | RemoteCall::Stop { resident: who }
         | RemoteCall::Control { resident: who, .. }
         | RemoteCall::Manage { resident: who, .. }

@@ -38,6 +38,7 @@ pub fn admit(member: &Member, call: &RemoteCall) -> Result<(), Failure> {
     let users_own = matches!(
         call,
         RemoteCall::Talk { .. }
+            | RemoteCall::Composer { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Control { .. }

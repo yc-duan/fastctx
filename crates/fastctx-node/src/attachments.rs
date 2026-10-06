@@ -8,7 +8,7 @@ use fastctx_net::data::Stream;
 use fastctx_net::link::Feed;
 use fastctx_platform::FileLock;
 use fastctx_platform::ipc::FrameReader;
-use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget};
+use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
@@ -46,23 +46,45 @@ pub async fn upload(
     target: UploadTarget,
     machine: Option<MachineName>,
     file: UploadFile,
+    composer: Option<fastctx_types::composer::UploadScope>,
     mut source: FrameReader,
-) -> Result<Attachment, Failure> {
+) -> Result<Uploaded, Failure> {
     validate_file(&file)?;
-    let machine = machine.unwrap_or_else(|| node.machine());
+    let machine = match machine {
+        Some(machine) => machine,
+        None if composer.is_some() => match &target {
+            UploadTarget::Resident { resident } if node.residents.about(resident).is_some() => node.machine(),
+            UploadTarget::Resident { resident } => crate::colleagues::find(node, resident).await?,
+            _ => return Err(failure("a shared composer upload needs an existing resident")),
+        },
+        None => node.machine(),
+    };
     if machine == node.machine() {
-        let mut arriving = prepare(node, target, file).await?;
-        loop {
-            let piece = source
-                .recv_up_to(UPLOAD_CHUNK)
-                .await
-                .map_err(failure)?
-                .ok_or_else(|| failure("the uploader disconnected before ending the file"))?;
-            if piece.is_empty() {
-                return arriving.finish();
-            }
-            arriving.write(&piece)?;
+        if let Some(cached) = cached(node, &node.machine(), &target, &file, composer.as_ref()).await? {
+            return Ok(cached);
         }
+        let mut arriving = prepare(node, target, file).await?;
+        let mut guard = shared(node, &node.machine(), &arriving.attachment, composer.as_ref()).await?;
+        let result = async {
+            loop {
+                let piece = source
+                    .recv_up_to(UPLOAD_CHUNK)
+                    .await
+                    .map_err(failure)?
+                    .ok_or_else(|| failure("the uploader disconnected before ending the file"))?;
+                if piece.is_empty() {
+                    return finish(arriving, guard.as_mut()).await;
+                }
+                arriving.write(&piece)?;
+            }
+        }
+        .await;
+        if let Err(error) = &result
+            && let Some(guard) = guard.as_mut()
+        {
+            guard.fail(error).await;
+        }
+        return result;
     }
     let link = node.link().ok_or_else(|| failure("this machine is not connected to a World"))?;
     let size = file.size;
@@ -73,16 +95,16 @@ pub async fn upload(
             if let Err(reason) = forward(source, stream, size).await {
                 *feeding_error.lock().expect("never poisoned") = Some(reason);
             }
-            // This runs only after the data connection is paired. Closing
-            // it ends the receiver's read, and the signed control reply is
-            // authoritative: a data close must not mask its ENOSPC or hash
-            // failure, nor a lost data receipt invalidate a verified upload.
+            // Keep the destination's verified receipt or explicit failure authoritative.
             Ok(())
         })
     });
-    let answer = link.call_with_stream(&machine, RemoteCall::Upload { target, file }, feed).await;
+    let answer = link.call_with_stream(&machine, RemoteCall::Upload { target, file, composer }, feed).await;
     let result = match answer {
-        Ok(Ok(RemoteReply::Uploaded(attachment))) => return Ok(attachment),
+        Ok(Ok(RemoteReply::Uploaded(attachment))) => return Ok(Uploaded { attachment, composer: None }),
+        Ok(Ok(RemoteReply::ComposerUploaded(result))) => {
+            return Ok(Uploaded { attachment: result.attachment, composer: Some(result.updated) });
+        }
         Ok(Ok(_)) => failure(format!("{machine} answered something other than an upload")),
         Ok(Err(error)) => Failure::new(format!("on {machine}: {}", error.message)),
         Err(error) => failure(error),
@@ -90,6 +112,65 @@ pub async fn upload(
     match source_error.lock().expect("never poisoned").take() {
         Some(reason) => Err(Failure::new(format!("{}; source stream: {reason}", result.message))),
         None => Err(result),
+    }
+}
+
+async fn cached(
+    node: &Arc<Node>,
+    from: &MachineName,
+    target: &UploadTarget,
+    file: &UploadFile,
+    scope: Option<&fastctx_types::composer::UploadScope>,
+) -> Result<Option<Uploaded>, Failure> {
+    let Some(scope) = scope else { return Ok(None) };
+    let UploadTarget::Resident { resident } = target else {
+        return Err(failure("a shared composer upload needs an existing resident"));
+    };
+    Ok(crate::composer::uploads::cached(node, resident, from, scope, file)
+        .await?
+        .map(|result| Uploaded { attachment: result.attachment, composer: Some(result.updated) }))
+}
+
+async fn shared(
+    node: &Arc<Node>,
+    from: &MachineName,
+    attachment: &Attachment,
+    scope: Option<&fastctx_types::composer::UploadScope>,
+) -> Result<Option<crate::composer::uploads::Guard>, Failure> {
+    match scope {
+        Some(scope) => {
+            crate::composer::uploads::begin(node, &attachment.owner.resident, from, scope, attachment).await.map(Some)
+        }
+        None => Ok(None),
+    }
+}
+
+async fn finish(arriving: Arriving, guard: Option<&mut crate::composer::uploads::Guard>) -> Result<Uploaded, Failure> {
+    let attachment = arriving.finish()?;
+    let composer = match guard {
+        Some(guard) => Some(guard.finish(&attachment).await),
+        None => None,
+    };
+    Ok(Uploaded { attachment, composer })
+}
+
+pub fn reply(uploaded: Uploaded) -> fastctx_types::Reply {
+    match uploaded.composer {
+        Some(updated) => fastctx_types::Reply::ComposerUploaded(Box::new(fastctx_types::composer::UploadResult {
+            attachment: uploaded.attachment,
+            updated,
+        })),
+        None => fastctx_types::Reply::Uploaded(uploaded.attachment),
+    }
+}
+
+pub fn remote_reply(uploaded: Uploaded) -> RemoteReply {
+    match uploaded.composer {
+        Some(updated) => RemoteReply::ComposerUploaded(Box::new(fastctx_types::composer::UploadResult {
+            attachment: uploaded.attachment,
+            updated,
+        })),
+        None => RemoteReply::Uploaded(uploaded.attachment),
     }
 }
 
@@ -119,21 +200,36 @@ async fn forward(mut source: FrameReader, mut stream: Stream, size: u64) -> Resu
 /// The destination of an authenticated upload call and its data stream.
 pub async fn receive(
     node: &Arc<Node>,
+    from: &MachineName,
     target: UploadTarget,
     file: UploadFile,
+    composer: Option<fastctx_types::composer::UploadScope>,
     mut stream: Stream,
-) -> Result<Attachment, Failure> {
+) -> Result<Uploaded, Failure> {
     validate_file(&file)?;
+    if let Some(cached) = cached(node, from, &target, &file, composer.as_ref()).await? {
+        return Ok(cached);
+    }
     let size = file.size;
     let mut arriving = prepare(node, target, file).await?;
-    stream.take(size, |piece| arriving.write(piece).map_err(|e| e.message)).await.map_err(Failure::new)?;
-    let end: String = stream.hear().await.map_err(failure)?;
-    if end != "uploaded" {
-        return Err(failure("the uploader did not end the file"));
+    let mut guard = shared(node, from, &arriving.attachment, composer.as_ref()).await?;
+    let result = async {
+        stream.take(size, |piece| arriving.write(piece).map_err(|error| error.message)).await.map_err(Failure::new)?;
+        let end: String = stream.hear().await.map_err(failure)?;
+        if end != "uploaded" {
+            return Err(failure("the uploader did not end the file"));
+        }
+        let uploaded = finish(arriving, guard.as_mut()).await?;
+        stream.done().await.map_err(failure)?;
+        Ok(uploaded)
     }
-    let attachment = arriving.finish()?;
-    stream.done().await.map_err(failure)?;
-    Ok(attachment)
+    .await;
+    if let Err(error) = &result
+        && let Some(guard) = guard.as_mut()
+    {
+        guard.fail(error).await;
+    }
+    result
 }
 
 fn validate_file(file: &UploadFile) -> Result<(), Failure> {

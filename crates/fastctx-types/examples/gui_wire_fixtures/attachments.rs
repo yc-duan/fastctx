@@ -37,16 +37,23 @@ pub fn fixtures() -> Fixtures {
     let target = UploadTarget::Resident { resident: owner.resident.clone() };
     Fixtures {
         calls: vec![
-            Call::Upload { target: target.clone(), node: Some(owner.machine.clone()), file: file.clone() },
+            Call::Upload {
+                target: target.clone(),
+                node: Some(owner.machine.clone()),
+                file: file.clone(),
+                composer: None,
+            },
             Call::Upload {
                 target: UploadTarget::New { agent: "codex".parse().unwrap(), town: town.clone() },
                 node: Some(owner.machine.clone()),
                 file: file.clone(),
+                composer: None,
             },
             Call::Upload {
                 target: UploadTarget::Draft { resident: owner.resident.clone(), town: town.clone() },
                 node: Some(owner.machine.clone()),
                 file: file.clone(),
+                composer: None,
             },
             Call::Talk {
                 to: owner.resident.clone(),
@@ -76,7 +83,7 @@ pub fn fixtures() -> Fixtures {
             },
         ],
         remote_calls: vec![
-            RemoteCall::Upload { target, file },
+            RemoteCall::Upload { target, file, composer: None },
             RemoteCall::Talk { to: owner.resident.clone(), text: text.clone(), attachments: attachments.clone() },
             RemoteCall::Open {
                 agent: "codex".parse().unwrap(),

@@ -18,6 +18,12 @@ impl Live {
 
     pub fn observe(&mut self, event: &SessionEvent) -> bool {
         match &event.happened {
+            Happened::Changed { change: SessionChange::Composer { .. }, .. } => {
+                self.items.retain(|snapshot| {
+                    !matches!(&snapshot.happened, Happened::Changed { change: SessionChange::Composer { .. }, .. })
+                });
+                self.items.push(event.clone());
+            }
             Happened::Changed { change: SessionChange::HistoryChanged, .. } => {
                 self.items.clear();
                 self.deltas.clear();

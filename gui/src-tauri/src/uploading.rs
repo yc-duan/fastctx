@@ -65,6 +65,43 @@ async fn digest(path: &Path) -> std::io::Result<(u64, String)> {
     }
 }
 
+pub async fn composer_path(
+    world: &World,
+    resident: fastctx_types::ResidentId,
+    node: Option<MachineName>,
+    scope: fastctx_types::composer::UploadScope,
+    path: &Path,
+    sent: Channel<u64>,
+) -> Result<fastctx_types::composer::UploadResult, String> {
+    let name =
+        path.file_name().map(|name| name.to_string_lossy().into_owned()).ok_or("an attachment has no file name")?;
+    let (size, sha256) = digest(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
+    let file = tokio::fs::File::open(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
+    let upload = UploadFile { media_type: media_type_of(&name).to_string(), name, size, sha256 };
+    world
+        .upload_composer(resident, node, upload, scope, Counted { inner: file, sent, total: 0 })
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub async fn composer_bytes(
+    world: &World,
+    resident: fastctx_types::ResidentId,
+    node: Option<MachineName>,
+    scope: fastctx_types::composer::UploadScope,
+    name: String,
+    media_type: String,
+    bytes: Vec<u8>,
+) -> Result<fastctx_types::composer::UploadResult, String> {
+    let upload = UploadFile {
+        media_type: if media_type.is_empty() { media_type_of(&name).to_string() } else { media_type },
+        name,
+        size: bytes.len() as u64,
+        sha256: hex(&Sha256::digest(&bytes)),
+    };
+    world.upload_composer(resident, node, upload, scope, bytes.as_slice()).await.map_err(|error| error.to_string())
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

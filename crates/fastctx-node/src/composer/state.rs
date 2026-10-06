@@ -1,0 +1,248 @@
+//! Persisted edit identities and delivery reservations, separate from view snapshots.
+
+use std::collections::{HashMap, HashSet};
+
+use fastctx_types::composer::{Change, Character, CharacterId, Composer, Draft, Mutation, Queued, Target};
+use fastctx_types::ipc::Failure;
+use fastctx_types::residents::{Delivery, Landed};
+use fastctx_types::{MachineName, NoticeId};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Document {
+    pub epoch: u64,
+    atoms: Vec<Atom>,
+    pub attachments: Vec<fastctx_types::attachments::Attachment>,
+    pub uploads: Vec<fastctx_types::composer::Uploading>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Atom {
+    character: Character,
+    deleted: bool,
+}
+
+impl Document {
+    pub fn view(&self) -> Draft {
+        let characters: Vec<_> = self.atoms.iter().filter(|a| !a.deleted).map(|a| a.character.clone()).collect();
+        Draft {
+            epoch: self.epoch,
+            text: characters.iter().map(|c| c.text.as_str()).collect(),
+            characters,
+            attachments: self.attachments.clone(),
+            uploads: self.uploads.clone(),
+        }
+    }
+
+    pub fn edit(
+        &mut self,
+        operation: &str,
+        after: &Option<CharacterId>,
+        delete: &[CharacterId],
+        insert: &str,
+    ) -> Result<(), Failure> {
+        let position = match after {
+            None => 0,
+            Some(id) => {
+                self.atoms
+                    .iter()
+                    .position(|a| &a.character.id == id)
+                    .ok_or_else(|| Failure::new("the insertion anchor is not in this draft"))?
+                    + 1
+            }
+        };
+        for id in delete {
+            if !self.atoms.iter().any(|a| &a.character.id == id) {
+                return Err(Failure::new("a deleted character is not in this draft"));
+            }
+        }
+        for atom in &mut self.atoms {
+            if delete.contains(&atom.character.id) {
+                atom.deleted = true;
+            }
+        }
+        self.atoms.splice(
+            position..position,
+            insert.chars().enumerate().map(|(index, c)| Atom {
+                character: Character { id: CharacterId { operation: operation.into(), index }, text: c.to_string() },
+                deleted: false,
+            }),
+        );
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Entry {
+    pub id: NoticeId,
+    pub from: MachineName,
+    pub document: Document,
+    #[serde(skip)]
+    pub editors: HashSet<String>,
+    pub error: Option<String>,
+    pub submitted: Option<NoticeId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Flight {
+    pub entry: NoticeId,
+    pub delivery: Delivery,
+    pub automatic: bool,
+    pub idle_only: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Receipt {
+    pub from: MachineName,
+    pub mutation: Mutation,
+    pub landed: Option<Landed>,
+    pub failure: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Stored {
+    pub revision: u64,
+    pub draft: Document,
+    pub queue: Vec<Entry>,
+    pub unobserved: Vec<Entry>,
+    pub held: Option<String>,
+    pub awaiting_turn: Option<String>,
+    pub sending: Option<Flight>,
+    pub pending: Vec<Flight>,
+    pub opportunity: Option<String>,
+    pub ended: HashSet<String>,
+    pub receipts: HashMap<String, Receipt>,
+    pub uploads: HashMap<String, super::uploads::UploadRecord>,
+}
+
+impl Stored {
+    pub fn retire_unobserved(&mut self, id: &NoticeId) {
+        if let Some(position) = self.queue.iter().position(|entry| &entry.id == id) {
+            self.unobserved.push(self.queue.remove(position));
+        }
+    }
+
+    pub fn view(&self) -> Composer {
+        Composer {
+            revision: self.revision,
+            draft: self.draft.view(),
+            queue: self
+                .queue
+                .iter()
+                .map(|entry| Queued {
+                    id: entry.id.clone(),
+                    from: entry.from.clone(),
+                    draft: entry.document.view(),
+                    editing: !entry.editors.is_empty(),
+                    sending: self.sending.iter().chain(self.pending.iter()).any(|flight| flight.entry == entry.id),
+                    error: entry.error.clone(),
+                })
+                .collect(),
+            unobserved: self
+                .unobserved
+                .iter()
+                .map(|entry| Queued {
+                    id: entry.id.clone(),
+                    from: entry.from.clone(),
+                    draft: entry.document.view(),
+                    editing: false,
+                    sending: false,
+                    error: entry.error.clone(),
+                })
+                .collect(),
+            held: self.held.clone(),
+            awaiting_turn: self.awaiting_turn.clone(),
+        }
+    }
+
+    pub fn entry(&mut self, id: &NoticeId) -> Result<&mut Entry, Failure> {
+        if self.sending.iter().chain(self.pending.iter()).any(|flight| &flight.entry == id) {
+            return Err(Failure::new("that queued message is being delivered"));
+        }
+        self.queue.iter_mut().find(|e| &e.id == id).ok_or_else(|| Failure::new("that queued message no longer exists"))
+    }
+
+    pub fn document(&mut self, target: &Target, epoch: u64) -> Result<&mut Document, Failure> {
+        let document = match target {
+            Target::Draft => &mut self.draft,
+            Target::Queued { id } => &mut self.entry(id)?.document,
+        };
+        if document.epoch != epoch {
+            return Err(Failure::new(
+                "this draft was already sent; keep your local edit and apply it to the new epoch",
+            ));
+        }
+        Ok(document)
+    }
+
+    pub fn edit(&mut self, mutation: &Mutation) -> Result<(), Failure> {
+        match &mutation.change {
+            Change::Edit { target, epoch, after, delete, insert } => {
+                self.document(target, *epoch)?.edit(&mutation.operation, after, delete, insert)
+            }
+            Change::Attach { target, epoch, attachment } => {
+                let document = self.document(target, *epoch)?;
+                if !document.attachments.iter().any(|a| a.id == attachment.id) {
+                    document.attachments.push(attachment.clone());
+                }
+                Ok(())
+            }
+            Change::Detach { target, epoch, attachment } => {
+                let document = self.document(target, *epoch)?;
+                document.attachments.retain(|a| &a.id != attachment);
+                document.uploads.retain(|upload| &upload.id != attachment);
+                Ok(())
+            }
+            Change::Delete { id } => {
+                if self.unobserved.iter().any(|entry| &entry.id == id) {
+                    self.unobserved.retain(|entry| &entry.id != id);
+                    return Ok(());
+                }
+                self.entry(id)?;
+                self.queue.retain(|e| &e.id != id);
+                Ok(())
+            }
+            Change::Move { id, before } => {
+                self.entry(id)?;
+                if before.as_ref() == Some(id) {
+                    return Ok(());
+                }
+                if let Some(before) = before {
+                    self.entry(before)?;
+                }
+                let position = self.queue.iter().position(|e| &e.id == id).expect("checked entry");
+                let entry = self.queue.remove(position);
+                let position = before
+                    .as_ref()
+                    .and_then(|id| self.queue.iter().position(|e| &e.id == id))
+                    .unwrap_or(self.queue.len());
+                self.queue.insert(position, entry);
+                Ok(())
+            }
+            _ => Err(Failure::new("this operation requires the delivery coordinator")),
+        }
+    }
+
+    pub fn reserve(&mut self, id: &NoticeId, automatic: bool, idle_only: bool) -> Result<Flight, Failure> {
+        if self.sending.is_some() || (automatic && !self.pending.is_empty()) {
+            return Err(Failure::new("another composer message is being delivered"));
+        }
+        let entry = self.entry(id)?;
+        if !entry.document.uploads.is_empty() {
+            return Err(Failure::new("this message still has an unfinished attachment upload"));
+        }
+        if entry.submitted.is_some() {
+            return Err(Failure::new(
+                "this message crossed the host boundary without a known acceptance; it cannot be submitted again",
+            ));
+        }
+        let draft = entry.document.view();
+        let delivery = crate::attachments::delivery(&entry.from, draft.text, draft.attachments);
+        let flight = Flight { entry: id.clone(), delivery, automatic, idle_only };
+        self.sending = Some(flight.clone());
+        if automatic {
+            self.opportunity = None;
+        }
+        Ok(flight)
+    }
+}

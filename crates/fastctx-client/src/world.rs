@@ -325,10 +325,19 @@ impl World {
     /// Watches a resident on any machine: its history, then each event as
     /// it happens.
     pub async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {
+        self.watch_with_composer(resident, machine, None).await
+    }
+
+    pub(crate) async fn watch_with_composer(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        composer: Option<String>,
+    ) -> Result<Watching, Error> {
         if let Some(device) = &self.device {
-            return Ok(Watching::device(device.watch(resident, machine).await?));
+            return Ok(Watching::device(device.watch(resident, machine, composer).await?));
         }
-        Ok(self.connect().await?.watch(Call::Watch { resident, machine }).await?)
+        Ok(self.connect().await?.watch(Call::Watch { resident, machine, composer }).await?)
     }
 
     pub async fn copy(&self, from: Place, to: Place) -> Result<CopyReport, Error> {

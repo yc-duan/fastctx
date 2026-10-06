@@ -1,0 +1,146 @@
+//! The resident machine's shared input and deferred messages.
+
+use serde::{Deserialize, Serialize};
+
+use crate::attachments::Attachment;
+use crate::residents::Landed;
+use crate::{MachineName, NoticeId};
+
+/// A Unicode scalar's stable identity. Indices count scalars, not UTF-16 units.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CharacterId {
+    pub operation: String,
+    pub index: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Character {
+    pub id: CharacterId,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Draft {
+    /// Changes when the draft is sent. Edits to an earlier epoch fail explicitly.
+    pub epoch: u64,
+    pub text: String,
+    pub characters: Vec<Character>,
+    pub attachments: Vec<Attachment>,
+    pub uploads: Vec<Uploading>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Uploading {
+    pub id: NoticeId,
+    pub file: crate::attachments::UploadFile,
+    pub error: Option<String>,
+}
+
+/// Binds an attachment's entire upload lifetime to one shared draft.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadScope {
+    pub operation: String,
+    pub target: Target,
+    pub epoch: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadResult {
+    pub attachment: Attachment,
+    pub updated: Result<Updated, crate::ipc::Failure>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Queued {
+    pub id: NoticeId,
+    pub from: MachineName,
+    pub draft: Draft,
+    pub editing: bool,
+    pub sending: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Composer {
+    pub revision: u64,
+    pub draft: Draft,
+    pub queue: Vec<Queued>,
+    /// Submitted messages with no observable outcome; retained separately and never resubmitted.
+    pub unobserved: Vec<Queued>,
+    /// The reason automatic release has stopped; it is never hidden by reconnecting.
+    pub held: Option<String>,
+    pub awaiting_turn: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Target {
+    Draft,
+    Queued { id: NoticeId },
+}
+
+/// An operation ID is unique per client operation and reused only for an exact retry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mutation {
+    pub operation: String,
+    #[serde(flatten)]
+    pub change: Change,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum Change {
+    /// Deletes only named characters. Concurrent inserts are never overwritten.
+    Edit {
+        target: Target,
+        epoch: u64,
+        after: Option<CharacterId>,
+        delete: Vec<CharacterId>,
+        insert: String,
+    },
+    Attach {
+        target: Target,
+        epoch: u64,
+        attachment: Attachment,
+    },
+    Detach {
+        target: Target,
+        epoch: u64,
+        attachment: NoticeId,
+    },
+    /// Sends the current shared draft, or appends it when the resident is busy.
+    Send {
+        epoch: u64,
+    },
+    /// Pauses a queued item while this watch is editing it. Closing the watch ends it.
+    Editing {
+        id: NoticeId,
+        watch: String,
+        editing: bool,
+    },
+    Delete {
+        id: NoticeId,
+    },
+    /// Moves one item before another, or to the end. Sending items cannot move.
+    Move {
+        id: NoticeId,
+        before: Option<NoticeId>,
+    },
+    /// Immediately delivers precisely this item, without advancing other queued items.
+    SendQueued {
+        id: NoticeId,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum Request {
+    Read,
+    Mutate { mutation: Box<Mutation> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Updated {
+    pub composer: Composer,
+    pub landed: Option<Landed>,
+}

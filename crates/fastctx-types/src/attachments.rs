@@ -37,6 +37,13 @@ pub struct Attachment {
     pub file: UploadFile,
 }
 
+/// The existing byte upload may also complete a shared composer attachment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Uploaded {
+    pub attachment: Attachment,
+    pub composer: Option<Result<crate::composer::Updated, crate::ipc::Failure>>,
+}
+
 impl Attachment {
     pub fn is_image(&self) -> bool {
         self.file.media_type.starts_with("image/")
