@@ -264,6 +264,40 @@ pub fn describe(error: &tokio_tungstenite::tungstenite::Error) -> String {
     }
 }
 
+/// How long to wait before dialing again after `failures` failures in a
+/// row: the first retry is at once; after that a random wait up to a ceiling
+/// that doubles with each failure, to a minute, so machines that lost their
+/// upstream together do not all return in the same instant.
+pub fn backoff(failures: u32) -> std::time::Duration {
+    if failures <= 1 {
+        return std::time::Duration::ZERO;
+    }
+    let ceiling_ms = 1000_u64.saturating_mul(1 << (failures - 2).min(6)).min(60_000);
+    let random = u64::from_le_bytes(crate::sign::random::<8>().unwrap_or([0; 8]));
+    std::time::Duration::from_millis(250 + random % ceiling_ms.saturating_sub(250).max(1))
+}
+
+/// Asks the upstream at `addresses` whether it takes sessions now
+/// (`wire::Intent::Probe`).
+pub async fn probe(addresses: &[SocketAddr], pin: CertPin) -> Result<(), String> {
+    let mut socket = dial(addresses, pin, crate::wire::CONTROL_PATH, crate::wire::MAX_CONTROL_FRAME).await?.socket;
+    let hello = Up::Hello {
+        protocol: crate::wire::PROTOCOL,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        intent: crate::wire::Intent::Probe,
+    };
+    send(&mut socket, &hello).await?;
+    let answer = tokio::time::timeout(SILENCE, recv(&mut socket)).await;
+    let _ = socket.close(None).await;
+    match answer {
+        Ok(Ok(Some(Down::Ready))) => Ok(()),
+        Ok(Ok(Some(Down::Refused { reason }))) => Err(reason.to_string()),
+        Ok(Ok(_)) => Err("it answered something other than whether it is ready".to_string()),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err(format!("no answer within {} s", SILENCE.as_secs())),
+    }
+}
+
 /// Sends one frame.
 pub async fn send<S>(socket: &mut S, frame: &Up) -> Result<(), String>
 where

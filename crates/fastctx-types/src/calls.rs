@@ -237,6 +237,19 @@ pub enum Call {
     Seen {
         member: MachineName,
     },
+    /// Sets where the member `member` connects: through `via`, in order, as
+    /// this machine, which must hold management rights.
+    Route {
+        member: MachineName,
+        via: Vec<crate::world::Upstream>,
+    },
+    /// Makes `machine` relay for the machines whose routes lead through it,
+    /// as `relay` says, or stop relaying: this machine itself, or another,
+    /// asked as a member with management rights.
+    SetRelay {
+        machine: MachineName,
+        relay: Option<crate::world::RelaySetting>,
+    },
     /// Revokes a member's key, so no machine trusts it any more.
     Revoke {
         name: MachineName,
@@ -255,6 +268,10 @@ pub enum Call {
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
     ComposerUploaded(Box<crate::composer::UploadResult>),
+    /// Where the machine relays now; nowhere when it stopped.
+    Relaying {
+        relays_at: Vec<String>,
+    },
     Composer(Box<crate::composer::Updated>),
     Page {
         view: Box<crate::pages::PageView>,

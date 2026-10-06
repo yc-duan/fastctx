@@ -161,7 +161,7 @@ async fn answer_call(inner: &Arc<Inner>, up: &Outgoing, call: u64, opened: &Enve
         inner.node.log(format!("announcing a large answer to {caller}: {error}"));
         return;
     }
-    if let Err(error) = crate::data::source(&inner.membership, &inner.key, ticket, &key, &bytes).await {
+    if let Err(error) = crate::data::source(&inner.data_endpoint(), &inner.key, ticket, &key, &bytes).await {
         inner.node.log(format!("sending a large answer to {caller}: {error}"));
     }
 }
@@ -248,14 +248,14 @@ async fn open_call(inner: &Inner, opened: &Envelope, keys: &Keys) -> Result<(Rem
         Body::Call { call } => Ok((call, None)),
         Body::StreamCall { call, ticket, key } => {
             from_the_caller(&ticket)?;
-            let stream = Stream::open(&inner.membership, &inner.key, ticket, &key, End::Sink)
+            let stream = Stream::open(&inner.data_endpoint(), &inner.key, ticket, &key, End::Sink)
                 .await
                 .map_err(|error| format!("opening its data connection: {error}"))?;
             Ok((call, Some(stream)))
         }
         Body::LargeCall { carried } => {
             from_the_caller(&carried.ticket)?;
-            let bytes = crate::data::sink(&inner.membership, &inner.key, &carried)
+            let bytes = crate::data::sink(&inner.data_endpoint(), &inner.key, &carried)
                 .await
                 .map_err(|error| format!("fetching it, too large for a message: {error}"))?;
             Ok((serde_json::from_slice(&bytes).map_err(|error| format!("it cannot be read: {error}"))?, None))

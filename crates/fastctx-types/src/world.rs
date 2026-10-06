@@ -33,11 +33,14 @@ pub enum LinkState {
         since: Timestamp,
         last_error: Option<String>,
     },
-    /// Connected to the hub at `hub`, the connection leaving this machine
-    /// by `route`.
+    /// Connected at the address `hub`: the hub's, or the relay `relay`'s
+    /// when it connects through one; the connection leaves this machine by
+    /// `route`.
     Online {
         since: Timestamp,
         hub: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay: Option<MachineName>,
         route: Route,
     },
     /// The hub refused this machine for good.
@@ -69,6 +72,34 @@ impl std::fmt::Display for Route {
             Route::System => f.write_str("along the system's routes"),
         }
     }
+}
+
+/// One upstream a machine may connect to (`world-network.md`, 一个中枢，一棵树).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Upstream {
+    Hub,
+    Relay { machine: MachineName },
+}
+
+/// Where a machine relays for the machines below it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelaySetting {
+    /// Where it listens.
+    pub listen: std::net::SocketAddr,
+    /// Where the machines below it dial it, written into its record.
+    pub public: Vec<std::net::SocketAddr>,
+}
+
+/// Where a member hangs in the World's tree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Place {
+    /// The upstreams it connects through, in the order it tries them; the
+    /// hub is the last of any.
+    pub via: Vec<Upstream>,
+    /// Where machines below it dial it, when it relays.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relays_at: Vec<String>,
 }
 
 /// `fastctx nodes`: this machine's link, and every machine of the World.
@@ -134,6 +165,9 @@ pub struct Node {
     /// World with others.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standing: Option<Standing>,
+    /// Where it hangs in the World's tree; `None` as for `standing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<Place>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

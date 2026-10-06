@@ -46,6 +46,8 @@ pub struct MembersFile {
     pub revocations: Vec<Signed>,
     #[serde(default)]
     pub grants: Vec<Signed>,
+    #[serde(default)]
+    pub routes: Vec<Signed>,
 }
 
 /// Where this machine's letters stand with the hub.

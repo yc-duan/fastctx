@@ -270,6 +270,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         link: LinkState::Online {
             since: ago(now, 300),
             hub: "121.40.82.28:7443".into(),
+            relay: None,
             route: Route::Card { name: "以太网 2".into() },
         },
         machines: vec![

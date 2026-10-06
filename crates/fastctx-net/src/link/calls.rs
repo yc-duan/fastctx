@@ -189,7 +189,7 @@ impl Inner {
             let (opened, opening) = oneshot::channel();
             let inner = self.clone();
             let task = tokio::spawn(async move {
-                let _ = opened.send(Stream::open(&inner.membership, &inner.key, ticket, &key, End::Source).await);
+                let _ = opened.send(Stream::open(&inner.data_endpoint(), &inner.key, ticket, &key, End::Source).await);
             });
             (message, Side::Opening(task, opening))
         } else {
@@ -214,7 +214,7 @@ impl Inner {
                 let message = seal(&Body::LargeCall { carried });
                 let (inner, name) = (self.clone(), to.clone());
                 let task = tokio::spawn(async move {
-                    if let Err(error) = crate::data::source(&inner.membership, &inner.key, ticket, &key, &bytes).await {
+                    if let Err(error) = crate::data::source(&inner.data_endpoint(), &inner.key, ticket, &key, &bytes).await {
                         inner.node.log(format!("sending a large call to {name}: {error}"));
                     }
                 });
@@ -386,7 +386,7 @@ impl Inner {
         if ticket.source != *to || ticket.sink != self.membership.name {
             return Err(format!("the ticket is for {} to {}", ticket.source, ticket.sink));
         }
-        let bytes = crate::data::sink(&self.membership, &self.key, carried).await?;
+        let bytes = crate::data::sink(&self.data_endpoint(), &self.key, carried).await?;
         serde_json::from_slice(&bytes).map_err(|error| format!("the answer cannot be read: {error}"))
     }
 

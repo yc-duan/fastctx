@@ -1,5 +1,5 @@
 //! Data connections: one per transfer, between a source and a sink, paired
-//! by the hub. Bytes travel as messages; the two ends may also say short
+//! by their nearest common upstream: the hub, or a relay both are below. Bytes travel as messages; the two ends may also say short
 //! things to each other, as JSON, such as which of the offered files the
 //! sink wants. Every message is sealed with the key the call or answer
 //! that asked for the transfer carried (`crate::stream_crypto`), so the hub
@@ -11,8 +11,8 @@ use serde::de::DeserializeOwned;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::dial::{self, HubSocket};
-use crate::link::Membership;
 use crate::sign::{Digest, Domain, SecretKey, Signed, sha256};
+use crate::tree::Endpoint;
 use crate::stream_crypto::{Piece, Sealing, StreamKey};
 use crate::wire::{self, Carried, Down, End, Intent, PROTOCOL, Ticket, Up};
 
@@ -30,11 +30,11 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// Opens this machine's end of the transfer `ticket` names, sealed with
-    /// `sealed_with`, and waits for the other end. The hub ends the wait if
-    /// the other end's machine leaves.
+    /// Opens this machine's end of the transfer `ticket` names, through
+    /// `upstream`, sealed with `sealed_with`, and waits for the other end.
+    /// The upstream ends the wait if the other end's machine leaves.
     pub async fn open(
-        membership: &Membership,
+        upstream: &Endpoint,
         key: &SecretKey,
         ticket: Signed,
         sealed_with: &StreamKey,
@@ -42,13 +42,13 @@ impl Stream {
     ) -> Result<Self, String> {
         let stream = ticket.claim::<Ticket>().map_err(|error| format!("the ticket: {error}"))?.stream;
         let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
-        let dialed = dial::dial(&membership.hub, membership.cert, wire::DATA_PATH, limit).await?;
+        let dialed = dial::dial(&upstream.addresses, upstream.cert, wire::DATA_PATH, limit).await?;
         let mut socket = dialed.socket;
         let proof = key.sign(Domain::Session, &dialed.binding);
         let hello = Up::Hello {
             protocol: PROTOCOL,
             version: env!("CARGO_PKG_VERSION").to_string(),
-            intent: Intent::Data { key: key.public(), proof, ticket, end },
+            intent: Intent::Data { key: key.public(), proof, ticket, end, on_behalf: None },
         };
         dial::send(&mut socket, &hello).await?;
         match dial::recv(&mut socket).await? {
@@ -176,21 +176,21 @@ enum Message {
 
 /// Sends `bytes` as the source of the transfer `ticket` names.
 pub async fn source(
-    membership: &Membership,
+    upstream: &Endpoint,
     key: &SecretKey,
     ticket: Signed,
     sealed_with: &StreamKey,
     bytes: &[u8],
 ) -> Result<(), String> {
-    let mut stream = Stream::open(membership, key, ticket, sealed_with, End::Source).await?;
+    let mut stream = Stream::open(upstream, key, ticket, sealed_with, End::Source).await?;
     stream.send(bytes).await?;
     stream.finish().await
 }
 
 /// Takes the bytes `carried` promised, as the sink of its transfer, and
 /// checks them.
-pub async fn sink(membership: &Membership, key: &SecretKey, carried: &Carried) -> Result<Vec<u8>, String> {
-    let mut stream = Stream::open(membership, key, carried.ticket.clone(), &carried.key, End::Sink).await?;
+pub async fn sink(upstream: &Endpoint, key: &SecretKey, carried: &Carried) -> Result<Vec<u8>, String> {
+    let mut stream = Stream::open(upstream, key, carried.ticket.clone(), &carried.key, End::Sink).await?;
     let mut bytes = Vec::new();
     stream
         .take(carried.bytes, |piece| {

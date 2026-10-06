@@ -27,5 +27,6 @@ pub mod seal;
 pub mod sign;
 pub mod stream_crypto;
 pub mod tls;
+pub mod tree;
 pub mod trust;
 pub mod wire;

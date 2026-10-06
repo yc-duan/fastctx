@@ -51,7 +51,7 @@ pub enum Domain {
     /// (`crate::scope`).
     Grant,
     /// A member with management rights saying which upstream a machine
-    /// connects to, or that a machine relays for others.
+    /// connects to (`crate::tree`).
     Route,
 }
 

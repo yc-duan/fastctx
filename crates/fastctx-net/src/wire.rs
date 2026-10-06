@@ -11,6 +11,12 @@
 //! envelope signed by the member that says it, around a body sealed for the
 //! member it is for (`crate::envelope`), so the hub can route it but not
 //! read it, change it or make one up.
+//!
+//! A relay speaks the hub's side of these frames to the machines below it
+//! and the machine's side to its own upstream, on one relay session that
+//! carries the sessions of every machine below it (`crate::tree`): each
+//! carried session is attached by name, and its frames pass wrapped in
+//! `Up::For` and `Down::To`.
 
 use fastctx_types::MachineName;
 use jiff::Timestamp;
@@ -30,6 +36,13 @@ pub const DATA_PATH: &str = "/fastctx/world/3/data";
 /// letters share that connection, so nothing on it may be large enough to
 /// hold the others up; anything larger goes over a data connection.
 pub const MAX_CONTROL_FRAME: usize = 256 * 1024;
+
+/// The largest frame on a relay session: a control frame wrapped once for
+/// the machine it is for (`Down::To`, `Up::For`). Every hop wraps the frame
+/// afresh, so one wrapping is the most there is; it adds the variant and
+/// field names, a machine name of at most 32 bytes and a tag of at most 20
+/// digits, under 100 bytes in all, and a kilobyte leaves room to spare.
+pub const MAX_RELAYED_FRAME: usize = MAX_CONTROL_FRAME + 1024;
 
 /// The largest binary message on a data connection.
 pub const MAX_DATA_MESSAGE: usize = 1024 * 1024;
@@ -94,6 +107,27 @@ pub enum Up {
         id: u64,
         question: Question,
     },
+    /// On a relay session: `name` connected below this relay, with its
+    /// letters where they stand. `tag` is this relay's number for the
+    /// attachment, carried by every frame of it, so a frame of an earlier
+    /// attachment of the same machine is told apart.
+    Attach {
+        name: MachineName,
+        tag: u64,
+        letters: Letters,
+    },
+    /// On a relay session: the attachment `tag` of `name` ended.
+    Detach {
+        name: MachineName,
+        tag: u64,
+    },
+    /// On a relay session: a frame from `name`, which the relay checked is
+    /// the machine on that connection below it.
+    For {
+        name: MachineName,
+        tag: u64,
+        frame: Box<Up>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -109,8 +143,25 @@ pub enum Intent {
     /// key's signature of the TLS exporter. The hub answers with the
     /// invitation, and the machine then sends its record (`Up::Admit`).
     Invited { invite: PublicKey, proof: Signature },
-    /// One end of a data connection.
-    Data { key: PublicKey, proof: Signature, ticket: Signed, end: End },
+    /// One end of a data connection. A relay opening it upward for a
+    /// machine below it names that machine in `on_behalf`; `key` and
+    /// `proof` are then the relay's own.
+    Data {
+        key: PublicKey,
+        proof: Signature,
+        ticket: Signed,
+        end: End,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_behalf: Option<MachineName>,
+    },
+    /// A relay's session with its upstream, carrying the sessions of the
+    /// machines below it. `proof` is the relay's key's signature of the TLS
+    /// exporter, as for a member's session.
+    Relay { key: PublicKey, proof: Signature },
+    /// Whether this upstream takes sessions now: answered `Down::Ready`,
+    /// or refused, and closed. A machine on a fallback upstream asks its
+    /// preferred one.
+    Probe,
 }
 
 /// Where a machine's letters stand, as it remembers: the hub's letters to it
@@ -222,6 +273,19 @@ pub enum Down {
     },
     /// The members, or which of them are revoked, changed.
     MembersChanged,
+    /// The relay session is open.
+    Relaying {
+        world: WorldId,
+        name: MachineName,
+    },
+    /// On a relay session: a frame for `name`, in its attachment `tag`.
+    To {
+        name: MachineName,
+        tag: u64,
+        frame: Box<Down>,
+    },
+    /// This upstream takes sessions now (`Intent::Probe`).
+    Ready,
     /// A town this machine spans, or one an item was just sealed for it in,
     /// has new items in its ledger.
     LedgerChanged {
@@ -276,6 +340,8 @@ pub enum Question {
     Republish { record: Signed },
     /// A member with management rights sets what a member may do.
     Grant { grant: Signed },
+    /// A member with management rights sets where a member connects.
+    Route { route: Signed },
     /// Keep this item, a sealed entry or a sealed copy of an entry's key, in
     /// its town's ledger (`crate::ledger`).
     LedgerWrite { item: Signed },
@@ -299,9 +365,11 @@ pub enum Told {
         records: Vec<Signed>,
         revocations: Vec<Signed>,
         grants: Vec<Signed>,
+        #[serde(default)]
+        routes: Vec<Signed>,
         presence: Vec<Presence>,
-        /// When the latest grant or revocation the hub holds was made: a new
-        /// one is dated after it, so that every machine, taking them in the
+        /// When the latest grant, route or revocation the hub holds was made:
+        /// a new one is dated after it, so that every machine, taking them in the
         /// order they were made, takes them in the order the hub took them,
         /// whatever the members' clocks.
         #[serde(default)]

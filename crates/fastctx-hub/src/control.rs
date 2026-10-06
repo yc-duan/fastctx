@@ -7,6 +7,7 @@ use std::sync::Arc;
 use fastctx_net::envelope::{self, Envelope, Kind};
 use fastctx_net::scope::{Grant, Scope};
 use fastctx_net::sign::{Domain, PublicKey, Signature, Signed};
+use fastctx_net::tree::Route;
 use fastctx_net::trust::{Endorsement, Record, Revocation};
 use fastctx_net::wire::{self, CallStatus, Down, Letters, Presence, Question, Refusal, SILENCE, Told, Up};
 use fastctx_types::MachineName;
@@ -114,7 +115,7 @@ pub(crate) async fn session(
 
 /// Registers the session, replacing an older one of the same member, and
 /// queues the welcome and every letter waiting for the member, in order.
-fn open(
+pub(crate) fn open(
     hub: &Hub,
     name: &MachineName,
     generation: u64,
@@ -165,7 +166,7 @@ fn open(
     Ok(())
 }
 
-fn close(hub: &Hub, name: &MachineName, generation: u64) {
+pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
     {
         let mut store = hub.store();
         let mut sessions = hub.sessions();
@@ -179,10 +180,12 @@ fn close(hub: &Hub, name: &MachineName, generation: u64) {
             if let Err(error) = store.save_letters() {
                 hub.log.line(format_args!("recording that {name} left: {error}"));
             }
+            // The data connections waiting for it wait no longer; a session
+            // that replaced this one keeps its own.
+            crate::data::member_left(hub, name);
         }
     }
     fail_calls_of(hub, name, generation);
-    crate::data::member_left(hub, name);
 }
 
 /// Ends every call this session made or was to answer.
@@ -206,7 +209,7 @@ fn fail_calls_of(hub: &Hub, name: &MachineName, generation: u64) {
     }
 }
 
-fn handle(
+pub(crate) fn handle(
     hub: &Hub,
     name: &MachineName,
     generation: u64,
@@ -240,6 +243,9 @@ fn handle(
         }
         Up::Admit { .. } => {
             return Err(Refusal::Broken { reason: "a member's session admits nobody".to_string() });
+        }
+        Up::Attach { .. } | Up::Detach { .. } | Up::For { .. } => {
+            return Err(Refusal::Broken { reason: "a member's session carries no other machine".to_string() });
         }
     }
     Ok(())
@@ -383,6 +389,7 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
                 records: store.members.records.iter().map(|admitted| admitted.record.clone()).collect(),
                 revocations: store.members.revocations.clone(),
                 grants: store.members.grants.clone(),
+                routes: store.members.routes.clone(),
                 presence,
                 latest: store.latest(),
             })
@@ -391,6 +398,7 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
         Question::Revoke { revocation } => revoke(hub, name, revocation).map(|()| Told::Done),
         Question::Republish { record } => republish(hub, name, record).map(|()| Told::Done),
         Question::Grant { grant: signed } => grant(hub, name, signed).map(|()| Told::Done),
+        Question::Route { route: signed } => route(hub, name, signed).map(|()| Told::Done),
         Question::LedgerWrite { item } => {
             let (town, seq, tell) = {
                 let store = hub.store();
@@ -476,13 +484,14 @@ fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
         revocation
     };
     hub.log.line(format_args!("{} revoked {}: {}", revoked.by, revoked.name, revoked.reason));
+    let refusal =
+        Refusal::Revoked { by: revoked.by.clone(), at: revoked.at, reason: revoked.reason.clone() };
+    if let Some(relay) = hub.relays().get(&revoked.name) {
+        let _ = relay.out.send(Out::End(refusal.clone()));
+    }
     let sessions = hub.sessions();
     if let Some(session) = sessions.get(&revoked.name) {
-        let _ = session.out.send(Out::End(Refusal::Revoked {
-            by: revoked.by.clone(),
-            at: revoked.at,
-            reason: revoked.reason.clone(),
-        }));
+        let _ = session.out.send(Out::End(refusal));
     }
     for session in sessions.values() {
         let _ = session.out.send(Out::Frame(Down::MembersChanged));
@@ -490,7 +499,7 @@ fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
     Ok(())
 }
 
-/// Every machine judges invitations, grants and revocations by the time
+/// Every machine judges invitations, grants, routes and revocations by the time
 /// they say they were made (`fastctx_net::trust`). So a member that no
 /// longer holds a right must not date one back to when it did, nor date one
 /// far ahead, which would hold up everyone's after it; and each must be
@@ -515,8 +524,9 @@ fn made_now(at: Option<Timestamp>, latest: Option<Timestamp>, what: &str) -> Res
     Ok(())
 }
 
-/// A member's record again, with its sealing key: the hub keeps it in place
-/// of the one it had, when the name, key and credential are the same.
+/// A member's record again, with its sealing key and where it relays, if it
+/// does: the hub keeps it in place of the one it had, when the name, key and
+/// credential are the same.
 fn republish(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
     {
         let mut store = hub.store();
@@ -544,8 +554,14 @@ fn republish(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String
         }
         admitted.record = signed;
         store.save_members().map_err(|error| format!("the hub could not store the record: {error}"))?;
+        match &record.relay {
+            Some(offer) => hub.log.line(format_args!(
+                "{name} published its record, relaying at {}",
+                offer.addresses.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+            )),
+            None => hub.log.line(format_args!("{name} published its record")),
+        }
     }
-    hub.log.line(format_args!("{name} published its sealing key"));
     for session in hub.sessions().values() {
         let _ = session.out.send(Out::Frame(Down::MembersChanged));
     }
@@ -580,6 +596,47 @@ fn grant(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
         (grant.member, grant.version)
     };
     hub.log.line(format_args!("{name} granted {member} version {version}"));
+    for session in hub.sessions().values() {
+        let _ = session.out.send(Out::Frame(Down::MembersChanged));
+    }
+    Ok(())
+}
+
+/// A route from a member with management rights, kept when it is the next
+/// version for its member.
+fn route(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
+    let (member, version) = {
+        let mut store = hub.store();
+        let signer = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
+        if !signer.manage {
+            return Err(format!("{name} does not hold management rights"));
+        }
+        let route: Route = signed.open(&signer.key, Domain::Route).map_err(|error| format!("the route: {error}"))?;
+        if route.by != *name || route.world != store.hub.world {
+            return Err(format!("the route is by {} for the World {}", route.by, route.world));
+        }
+        let member =
+            store.table().get(&route.member).cloned().ok_or_else(|| format!("{} is not a member", route.member))?;
+        if member.key != route.key {
+            return Err(format!("{} has another key", route.member));
+        }
+        for upstream in &route.via {
+            if let fastctx_net::tree::Upstream::Relay { machine } = upstream
+                && (*machine == route.member || store.table().carries(&route.member, machine))
+            {
+                return Err(format!("{machine} connects through {}: the route makes a loop", route.member));
+            }
+        }
+        made_now(Some(route.at), store.latest(), "route")?;
+        let next = store.table().route(&route.member).map(|latest| latest.version + 1).unwrap_or(1);
+        if route.version != next {
+            return Err(format!("the next route for {} is version {next}", route.member));
+        }
+        store.members.routes.push(signed);
+        store.save_members().map_err(|error| format!("the hub could not store the route: {error}"))?;
+        (route.member, route.version)
+    };
+    hub.log.line(format_args!("{name} routed {member}, version {version}"));
     for session in hub.sessions().values() {
         let _ = session.out.send(Out::Frame(Down::MembersChanged));
     }

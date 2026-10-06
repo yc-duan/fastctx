@@ -84,6 +84,8 @@ fn asked(call: &RemoteCall) -> Asked<'_> {
         RemoteCall::PageAction { source, .. } => (Action::Page, None, Some(&source.town)),
         // Checked by what it asks, in `devices::relay`.
         RemoteCall::Relay { .. } => (Action::W, None, None),
+        // Admitted by management rights alone, in `admit`.
+        RemoteCall::SetRelay { .. } => (Action::W, None, None),
     };
     Asked { action, agent, town, resident: reaches }
 }
@@ -109,6 +111,17 @@ pub fn admit(node: &Arc<Node>, from: &MachineName, call: &RemoteCall) -> Result<
     crate::devices::admit(&member, call)?;
     if matches!(call, RemoteCall::Relay { .. }) {
         return Ok(member);
+    }
+    // Where a machine relays is the World's shape, set by the machines that
+    // manage it.
+    if matches!(call, RemoteCall::SetRelay { .. }) {
+        if member.manage {
+            return Ok(member);
+        }
+        return Err(Failure::new(format!(
+            "{} refused {from}: only a machine with management rights sets where a machine relays",
+            node.machine()
+        )));
     }
     let asked = asked(call);
     let here = node.machine();

@@ -1,6 +1,7 @@
 //! Data connections: one per transfer, paired by the hub and relayed byte
 //! for byte, so a large transfer never holds up the heartbeats, calls and
-//! letters on the control connections.
+//! letters on the control connections. An end may come through a relay,
+//! which opens it on behalf of the machine below it.
 //!
 //! Each end connects with the ticket its source signed. The first to arrive
 //! waits for the other; the second hands its connection to the first, which
@@ -13,7 +14,9 @@ use fastctx_net::sign::{Domain, PublicKey, Signature, Signed};
 use fastctx_net::wire::{Down, End, Refusal, Ticket};
 use fastctx_types::MachineName;
 use futures_util::{SinkExt as _, StreamExt as _};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::oneshot;
+use tokio_tungstenite::WebSocketStream;
 
 use crate::{Hub, Socket, refuse, send};
 
@@ -25,6 +28,7 @@ pub(crate) struct Waiting {
     hand_over: oneshot::Sender<Socket>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn end(
     hub: Arc<Hub>,
     mut socket: Socket,
@@ -33,15 +37,26 @@ pub(crate) async fn end(
     proof: Signature,
     signed: Signed,
     end: End,
+    on_behalf: Option<MachineName>,
 ) {
-    let (stream, me, other) = match check(&hub, &binding, &key, &proof, &signed, end) {
+    let (stream, me, other) = match check(&hub, &binding, &key, &proof, &signed, end, on_behalf) {
         Ok(checked) => checked,
         Err(reason) => {
             refuse(&mut socket, reason).await;
             return;
         }
     };
-    let waiting = hub.waiting.lock().expect("never poisoned").remove(&stream);
+    // Taken out, or put in to wait, in one look: two ends that come at once
+    // find each other.
+    let (hand_over, handed) = oneshot::channel();
+    let waiting = {
+        let mut waiting = hub.waiting.lock().expect("never poisoned");
+        let found = waiting.remove(&stream);
+        if found.is_none() {
+            waiting.insert(stream, Waiting { ticket: signed.clone(), end, other: other.clone(), hand_over });
+        }
+        found
+    };
     match waiting {
         Some(waiting) if waiting.ticket == signed && waiting.end != end => {
             let (source, sink) = if end == End::Source { (&me, &other) } else { (&other, &me) };
@@ -57,11 +72,6 @@ pub(crate) async fn end(
             drop(waiting);
         }
         None => {
-            let (hand_over, handed) = oneshot::channel();
-            hub.waiting
-                .lock()
-                .expect("never poisoned")
-                .insert(stream, Waiting { ticket: signed, end, other: other.clone(), hand_over });
             let peer = tokio::select! {
                 handed = handed => handed.ok(),
                 // The waiting end gave up or vanished.
@@ -81,9 +91,9 @@ pub(crate) async fn end(
     }
 }
 
-/// Checks the ticket and that the connecting machine is the end it says.
-/// Returns the stream, the connecting member and the member at the other
-/// end.
+/// Checks the ticket and that the connecting machine is the end it says, or
+/// a relay that carries that end. Returns the stream, the member at this end
+/// and the member at the other.
 fn check(
     hub: &Hub,
     binding: &[u8; 32],
@@ -91,9 +101,15 @@ fn check(
     proof: &Signature,
     signed: &Signed,
     end: End,
+    on_behalf: Option<MachineName>,
 ) -> Result<(u64, MachineName, MachineName), Refusal> {
-    let name = hub.member(key, proof, binding)?;
+    let connecting = hub.member(key, proof, binding)?;
     let broken = |reason: String| Refusal::Broken { reason };
+    let name = match on_behalf {
+        Some(below) if hub.store().table().carries(&connecting, &below) => below,
+        Some(below) => return Err(broken(format!("{below}'s route does not lead through {connecting}"))),
+        None => connecting,
+    };
     let claimed: Ticket = signed.claim().map_err(|error| broken(format!("the ticket: {error}")))?;
     let (source_key, world) = {
         let store = hub.store();
@@ -133,6 +149,17 @@ async fn relay(mut first: Socket, mut second: Socket) -> u64 {
     if send(&mut first, &Down::Paired).await.is_err() || send(&mut second, &Down::Paired).await.is_err() {
         return 0;
     }
+    splice(first, second).await
+}
+
+/// Passes messages both ways between two paired connections, of either
+/// side's making, until either is done; returns how many bytes passed from
+/// the first to the second.
+pub(crate) async fn splice<A, B>(first: WebSocketStream<A>, second: WebSocketStream<B>) -> u64
+where
+    A: AsyncRead + AsyncWrite + Unpin,
+    B: AsyncRead + AsyncWrite + Unpin,
+{
     let mut carried = 0_u64;
     let (mut first_sink, mut first_stream) = first.split();
     let (mut second_sink, mut second_stream) = second.split();

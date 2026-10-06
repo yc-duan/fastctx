@@ -250,6 +250,7 @@ impl Session {
             revoked: None,
             device: true,
             standing: table.get(&me).map(standing),
+            place: fastctx_net::tree::place(&table, &me),
         }];
         for (name, heard) in heard {
             let seen = presence.iter().find(|seen| seen.name == name);
@@ -261,6 +262,7 @@ impl Session {
             };
             machines.push(NodeView {
                 standing: table.get(&name).map(standing),
+                place: fastctx_net::tree::place(&table, &name),
                 online: seen.map(|seen| seen.online),
                 since: seen.and_then(|seen| seen.since),
                 name,
@@ -278,6 +280,7 @@ impl Session {
                 device: false,
                 revoked: Some(Revoked { by: revocation.by.clone(), at: revocation.at, reason: revocation.reason.clone() }),
                 standing: None,
+                place: None,
             });
         }
         Ok(NodesReply {

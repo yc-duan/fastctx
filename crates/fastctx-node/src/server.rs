@@ -443,6 +443,31 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let scope = crate::ledger::names::by_id(node, scope).map_err(Failure::new)?;
             link.grant(&name, scope, manage).await.map(|()| Reply::Done).map_err(Failure::new)
         }
+        Call::Route { member: name, via } => {
+            users_voice(node, peer)?;
+            let link = member(node)?;
+            let via = via
+                .into_iter()
+                .map(|upstream| match upstream {
+                    fastctx_types::world::Upstream::Hub => fastctx_net::tree::Upstream::Hub,
+                    fastctx_types::world::Upstream::Relay { machine } => fastctx_net::tree::Upstream::Relay { machine },
+                })
+                .collect();
+            link.route(&name, via).await.map(|()| Reply::Done).map_err(Failure::new)
+        }
+        Call::SetRelay { machine, relay } => {
+            users_voice(node, peer)?;
+            let link = member(node)?;
+            if machine == link.membership().name {
+                return crate::relay::set(node, relay).await.map(|relays_at| Reply::Relaying { relays_at });
+            }
+            match link.call(&machine, fastctx_types::remote::RemoteCall::SetRelay { relay }).await {
+                Ok(Ok(fastctx_types::remote::RemoteReply::Relaying { relays_at })) => Ok(Reply::Relaying { relays_at }),
+                Ok(Ok(_)) => Err(Failure::new(format!("{machine} answered something else"))),
+                Ok(Err(failure)) => Err(failure),
+                Err(failure) => Err(Failure::new(failure.to_string())),
+            }
+        }
         Call::Seen { member: name } => {
             users_voice(node, peer)?;
             crate::admitted::shown(node, &name)
@@ -689,6 +714,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
         revoked: None,
         device: false,
         standing: link.as_ref().and_then(|link| link.me()).as_ref().map(standing),
+        place: link.as_ref().and_then(|link| fastctx_net::tree::place(&link.table(), &here)),
     }];
     if let Some(link) = &link {
         let refreshed = link.refresh().await;
@@ -704,6 +730,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                 seen.as_ref().map(|presence| (Some(presence.online), presence.since)).unwrap_or((None, None));
             let online = if refreshed.is_ok() { online } else { None };
             let (link, name, standing) = (link.clone(), member.name.clone(), Some(standing(member)));
+            let place = fastctx_net::tree::place(&table, &name);
             let unknown = refreshed.as_ref().err().cloned();
             asks.push(tokio::spawn(async move {
                 // A device is listed as such and never asked: nothing runs
@@ -725,7 +752,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                         None => "the hub did not say whether it is connected".to_string(),
                     })
                 };
-                NodeView { name, online, since, facts, revoked: None, device, standing }
+                NodeView { name, online, since, facts, revoked: None, device, standing, place }
             }));
         }
         for (name, revocation) in table.revoked_members() {
@@ -741,6 +768,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                     reason: revocation.reason.clone(),
                 }),
                 standing: None,
+                place: None,
             });
         }
         for ask in asks {

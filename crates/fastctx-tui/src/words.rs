@@ -620,7 +620,17 @@ impl Words {
         }
     }
 
-    pub fn link_online(&self, hub: &str, route: &Route, since: &str) -> String {
+    pub fn link_online(&self, hub: &str, relay: Option<&fastctx_types::MachineName>, route: &Route, since: &str) -> String {
+        if let Some(relay) = relay {
+            return match (self.lang, route) {
+                (Lang::Zh, Route::Local) => format!("{since} 起连着本机上的转接站 {relay}"),
+                (Lang::Zh, Route::Card { name }) => format!("{since} 起直接经网卡「{name}」连着转接站 {relay}（{hub}）"),
+                (Lang::Zh, Route::Proxy { proxy }) => format!("{since} 起经代理 {proxy} 连着转接站 {relay}（{hub}）"),
+                (Lang::Zh, Route::System) => format!("{since} 起按系统的路由连着转接站 {relay}（{hub}）"),
+                (Lang::En, Route::Local) => format!("connected since {since} to the relay on this machine, {relay}"),
+                (Lang::En, route) => format!("connected since {since} through the relay {relay} at {hub}, {route}"),
+            };
+        }
         match (self.lang, route) {
             (Lang::Zh, Route::Local) => format!("{since} 起连着本机上的中枢 {hub}"),
             (Lang::Zh, Route::Card { name }) => format!("{since} 起直接经网卡「{name}」连着中枢 {hub}"),

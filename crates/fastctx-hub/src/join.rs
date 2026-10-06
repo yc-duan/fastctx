@@ -116,6 +116,7 @@ pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Res
                 &records,
                 &store.members.revocations,
                 &store.members.grants,
+                &store.members.routes,
                 &Known::default(),
             );
             if table.get(&record.name).is_none() {

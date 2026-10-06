@@ -72,6 +72,7 @@ pub async fn attempt(
             key: key.public(),
             credential,
             seal: Some(keys.seal.public()),
+            relay: None,
         };
         Signed::new(key, Domain::Record, &record)
     };

@@ -186,8 +186,14 @@ fn nodes() -> Vec<NodesReply> {
         Route::Proxy { proxy: "http://proxy.example.test:8080".into() },
         Route::System,
     ] {
-        links.push(LinkState::Online { since: at(), hub: "hub.example.test".into(), route });
+        links.push(LinkState::Online { since: at(), hub: "hub.example.test".into(), relay: None, route });
     }
+    links.push(LinkState::Online {
+        since: at(),
+        hub: "203.0.113.5:7444".into(),
+        relay: Some("la".parse().unwrap()),
+        route: Route::System,
+    });
     links
         .into_iter()
         .enumerate()
@@ -215,6 +221,7 @@ fn nodes() -> Vec<NodesReply> {
                         delegated: false,
                         sealing: true,
                     }),
+                    place: Some(Place { via: vec![Upstream::Hub], relays_at: vec!["203.0.113.5:7444".into()] }),
                     facts: Ok(MachineFacts {
                         name: machine(),
                         os: "windows".into(),
@@ -245,6 +252,10 @@ fn nodes() -> Vec<NodesReply> {
                         delegated: true,
                         sealing: false,
                     }),
+                    place: Some(Place {
+                        via: vec![Upstream::Relay { machine: machine() }, Upstream::Hub],
+                        relays_at: Vec::new(),
+                    }),
                     facts: Ok(MachineFacts {
                         name: "lab".parse().unwrap(),
                         os: "linux".into(),
@@ -264,6 +275,7 @@ fn nodes() -> Vec<NodesReply> {
                     revoked: Some(Revoked { by: machine(), at: at(), reason: "retired".into() }),
                     device: false,
                     standing: None,
+                    place: None,
                 },
             ],
             joined: if i == 1 {

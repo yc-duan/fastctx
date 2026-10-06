@@ -50,6 +50,7 @@ use serde::{Deserialize, Serialize};
 use crate::ledger::TownId;
 use crate::scope::{Grant, Scope};
 use crate::seal::SealPublic;
+use crate::tree::{RelayOffer, Route, Upstream};
 use crate::sign::{Digest, Domain, PublicKey, Signed, sha256};
 
 /// How far apart the clocks of the members and the hub are taken to be:
@@ -210,6 +211,10 @@ pub struct Record {
     /// joined before sealing, until it republishes its record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seal: Option<SealPublic>,
+    /// Where it can be reached as a relay, while it is one
+    /// (`crate::tree`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<RelayOffer>,
 }
 
 /// A statement that a key is no longer trusted, signed by a member allowed
@@ -240,6 +245,8 @@ pub struct Member {
     pub key: PublicKey,
     /// Its sealing key; `None` until it published one.
     pub seal: Option<SealPublic>,
+    /// Where it is reached as a relay, while it is one.
+    pub relay: Option<RelayOffer>,
     /// Who invited it; `None` for the founder.
     pub invited_by: Option<MachineName>,
     /// What its inviter admitted it as; the founder is a machine.
@@ -274,6 +281,8 @@ pub struct Table {
     former: BTreeMap<MachineName, Former>,
     /// The latest grant taken for each member.
     grants: BTreeMap<MachineName, Grant>,
+    /// The latest route taken for each member.
+    routes: BTreeMap<MachineName, Route>,
     /// What each member was granted when, for what it could do at a time.
     history: History,
     /// Records in the hub's list that were refused, and why.
@@ -341,6 +350,38 @@ impl Table {
             return Err(format!("{name} is a device, and a device writes nothing in the ledger"));
         }
         self.key_at(name, at).ok_or_else(|| format!("{name} wrote this after it stopped being a member"))
+    }
+
+    /// The latest route taken for `name`.
+    pub fn route(&self, name: &MachineName) -> Option<&Route> {
+        self.routes.get(name)
+    }
+
+    /// The upstreams `name` connects to, in the order it tries them.
+    pub fn upstreams(&self, name: &MachineName) -> Vec<Upstream> {
+        self.routes.get(name).map(|route| route.via.clone()).unwrap_or_else(Route::direct)
+    }
+
+    /// Whether the relay `relay` carries what `name` says: it is the relay
+    /// itself, or `name`'s routes lead up through it. A relay that claims to
+    /// carry a member any other way is not believed.
+    pub fn carries(&self, relay: &MachineName, name: &MachineName) -> bool {
+        let mut seen = BTreeSet::new();
+        let mut below = vec![name.clone()];
+        while let Some(member) = below.pop() {
+            if member == *relay {
+                return true;
+            }
+            if !seen.insert(member.clone()) {
+                continue;
+            }
+            for upstream in self.upstreams(&member) {
+                if let Upstream::Relay { machine } = upstream {
+                    below.push(machine);
+                }
+            }
+        }
+        false
     }
 
     /// The latest grant taken for `name`.
@@ -444,6 +485,7 @@ pub fn check(
     records: &[Signed],
     revocations: &[Signed],
     grants: &[Signed],
+    routes: &[Signed],
     known: &Known,
 ) -> (Table, Known) {
     let mut table = Table::default();
@@ -483,8 +525,9 @@ pub fn check(
     }
 
     let grants = open_grants(world, grants, &accepted, &mut table.refused);
+    let routes = open_routes(world, routes, &accepted, &mut table.refused);
     let revocations = open_revocations(world, revocations, &known, &accepted, &mut table.refused);
-    let standing = replay(&accepted, &grants, &revocations, &mut table.refused);
+    let standing = replay(&accepted, &grants, &revocations, &routes, &mut table.refused);
     for (signed, _) in standing.revocations.values() {
         if !known.revocations.contains(signed) {
             known.revocations.push(signed.clone());
@@ -513,6 +556,7 @@ pub fn check(
                     name: name.clone(),
                     key: joined.record.key,
                     seal: joined.record.seal,
+                    relay: joined.record.relay.clone(),
                     invited_by: joined.invited_by.clone(),
                     kind: joined.kind,
                     manage: standing.history.managers.contains(name),
@@ -537,6 +581,7 @@ pub fn check(
         }
     }
     table.grants = standing.latest.into_iter().filter(|(name, _)| table.trusted.contains_key(name)).collect();
+    table.routes = standing.routes.into_iter().filter(|(name, _)| table.trusted.contains_key(name)).collect();
     table.history = standing.history;
     (table, known)
 }
@@ -762,6 +807,40 @@ fn open_grants(
     opened
 }
 
+/// The routes signed by the member they say they are by, for a member of
+/// this World with the key they name.
+fn open_routes(
+    world: &WorldId,
+    routes: &[Signed],
+    accepted: &BTreeMap<MachineName, Joined>,
+    refused: &mut Vec<(String, String)>,
+) -> Vec<(Route, [u8; 32])> {
+    let mut opened = Vec::new();
+    for signed in routes {
+        let route = match signed.claim::<Route>() {
+            Ok(route) => route,
+            Err(error) => {
+                refused.push(("a route".to_string(), error.to_string()));
+                continue;
+            }
+        };
+        let label = format!("the route {} for {} by {}", route.version, route.member, route.by);
+        let Some(signer) = accepted.get(&route.by) else {
+            refused.push((label, "its signer is not a member".to_string()));
+            continue;
+        };
+        match signed.open::<Route>(&signer.record.key, Domain::Route) {
+            Ok(route) if route.world != *world => refused.push((label, format!("it is for the World {}", route.world))),
+            Ok(route) if accepted.get(&route.member).is_none_or(|member| member.record.key != route.key) => {
+                refused.push((label, "it names a member that is not here with that key".to_string()))
+            }
+            Ok(route) => opened.push((route, sha256(&signed.data.0))),
+            Err(error) => refused.push((label, error.to_string())),
+        }
+    }
+    opened
+}
+
 /// A revocation signed by the member it says it is by, of a member of this
 /// World by the key it names; whether this machine accepted it before.
 struct Opened {
@@ -911,6 +990,7 @@ impl History {
 struct Standing {
     history: History,
     latest: BTreeMap<MachineName, Grant>,
+    routes: BTreeMap<MachineName, Route>,
     /// The revocations that stand, by the key they revoke.
     revocations: BTreeMap<PublicKey, (Signed, Revocation)>,
 }
@@ -918,19 +998,22 @@ struct Standing {
 enum Event<'a> {
     Revoked(&'a Opened),
     Granted(&'a Grant),
+    Routed(&'a Route),
 }
 
-/// Replays grants and revocations in the order they were made: a
-/// revocation before a grant made at the same instant, and grants made at
-/// one instant by the digest of their signed bytes, so every machine reaches
-/// the same answer whatever order the hub lists them in. A grant counts when
-/// its signer held management rights then and it is the next version for its
-/// member; a revocation counts when its signer could revoke that member then,
-/// or when this machine accepted it before.
+/// Replays grants, routes and revocations in the order they were made: a
+/// revocation before a grant made at the same instant, a grant before a
+/// route, and those made at one instant by the digest of their signed bytes,
+/// so every machine reaches the same answer whatever order the hub lists
+/// them in. A grant or a route counts when its signer held management rights
+/// then and it is the next version for its member; a revocation counts when
+/// its signer could revoke that member then, or when this machine accepted
+/// it before.
 fn replay(
     accepted: &BTreeMap<MachineName, Joined>,
     grants: &[(Grant, [u8; 32])],
     revocations: &[Opened],
+    routes: &[(Route, [u8; 32])],
     refused: &mut Vec<(String, String)>,
 ) -> Standing {
     let mut history = History::default();
@@ -948,13 +1031,17 @@ fn replay(
             history.promote(name, Timestamp::MIN);
         }
     }
-    let mut standing = Standing { history, latest: BTreeMap::new(), revocations: BTreeMap::new() };
+    let mut standing =
+        Standing { history, latest: BTreeMap::new(), routes: BTreeMap::new(), revocations: BTreeMap::new() };
     let mut events: Vec<(Timestamp, u8, [u8; 32], Event)> = Vec::new();
     for opened in revocations {
         events.push((opened.revocation.at, 0, sha256(&opened.signed.data.0), Event::Revoked(opened)));
     }
     for (grant, digest) in grants {
         events.push((grant.at, 1, *digest, Event::Granted(grant)));
+    }
+    for (route, digest) in routes {
+        events.push((route.at, 2, *digest, Event::Routed(route)));
     }
     events.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
     let key_of = |name: &MachineName| accepted.get(name).map(|joined| joined.record.key);
@@ -1011,6 +1098,21 @@ fn replay(
                 standing.history.scopes.entry(grant.member.clone()).or_default().push((at, grant.scope.clone()));
                 standing.history.changes.insert(at);
                 standing.latest.insert(grant.member.clone(), grant.clone());
+            }
+            Event::Routed(route) => {
+                let signer_revoked = key_of(&route.by).is_some_and(|key| standing.revocations.contains_key(&key));
+                let member_revoked = key_of(&route.member).is_some_and(|key| standing.revocations.contains_key(&key));
+                let label = format!("the route {} for {} by {}", route.version, route.member, route.by);
+                if signer_revoked || member_revoked || !standing.history.managers.contains(&route.by) {
+                    refused.push((label, format!("{} did not hold management rights then", route.by)));
+                    continue;
+                }
+                let next = standing.routes.get(&route.member).map(|latest| latest.version + 1).unwrap_or(1);
+                if route.version != next {
+                    refused.push((label, format!("the next route for {} was version {next}", route.member)));
+                    continue;
+                }
+                standing.routes.insert(route.member.clone(), route.clone());
             }
         }
     }

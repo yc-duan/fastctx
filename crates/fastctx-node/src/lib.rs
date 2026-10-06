@@ -38,6 +38,7 @@ mod machine;
 mod management;
 mod own;
 mod pages;
+mod relay;
 mod renewal;
 mod renewal_legacy;
 mod resident_storage;
@@ -94,6 +95,8 @@ pub(crate) struct Node {
     log: Arc<log::Log>,
     /// Present while the machine is a member of a World with others.
     link: RwLock<Option<Arc<Link>>>,
+    /// Present while this machine relays for others (`relay`).
+    relay: tokio::sync::Mutex<Option<relay::Running>>,
     /// Held while the towns' ledgers are taken or written, one at a time.
     syncing: tokio::sync::Mutex<()>,
     /// The World's naming key, once this machine has opened it
@@ -284,6 +287,7 @@ pub async fn run_replacing(
         file_searches: file_search::Searches::default(),
         log,
         link: RwLock::new(None),
+        relay: tokio::sync::Mutex::new(None),
         syncing: tokio::sync::Mutex::new(()),
         naming: RwLock::new(None),
         writing: tokio::sync::Mutex::new(()),
@@ -302,6 +306,7 @@ pub async fn run_replacing(
     if let Some((membership, key)) = membership {
         node.log.line(format_args!("a member of the World {} as {}", membership.world, membership.name));
         world::start(&node, membership, key).context("starting the link to the hub")?;
+        relay::resume(&node).await;
     }
     codex::adopt(&node).await;
     codex::listen(node.clone(), codex_events);

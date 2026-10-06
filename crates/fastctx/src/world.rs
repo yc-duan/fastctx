@@ -2,7 +2,7 @@
 //! revoking, leaving, and seeing the machines (`world-network.md`).
 
 use clap::{Args, Subcommand};
-use fastctx_types::world::{LinkState, NodesReply};
+use fastctx_types::world::{LinkState, NodesReply, RelaySetting, Upstream};
 use fastctx_types::{Call, MachineName, Reply};
 use jiff::{SignedDuration, Timestamp};
 
@@ -38,6 +38,35 @@ pub struct GrantArgs {
     /// What it may do; everything when nothing is limited.
     #[command(flatten)]
     scope: crate::scope_args::ScopeArgs,
+}
+
+#[derive(Args)]
+pub struct RouteArgs {
+    /// The member whose route this sets.
+    member: MachineName,
+    /// A relay it connects through; give it once for each, in the order it
+    /// tries them. The hub comes after them; with none, it connects straight
+    /// to the hub.
+    #[arg(long = "via")]
+    via: Vec<MachineName>,
+}
+
+#[derive(Args)]
+pub struct RelayArgs {
+    /// The machine that relays; this one when not given.
+    #[arg(long)]
+    machine: Option<MachineName>,
+    /// An address the machines below it dial, as IP:PORT; give it once for
+    /// each.
+    #[arg(long = "public", required_unless_present = "off")]
+    public: Vec<std::net::SocketAddr>,
+    /// Where it listens; all addresses, on the first public port, when not
+    /// given.
+    #[arg(long)]
+    listen: Option<std::net::SocketAddr>,
+    /// Stop relaying.
+    #[arg(long, conflicts_with_all = ["public", "listen"])]
+    off: bool,
 }
 
 #[derive(Args)]
@@ -109,6 +138,55 @@ pub fn grant(args: GrantArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn route(args: RouteArgs) -> anyhow::Result<()> {
+    let via: Vec<Upstream> = args.via.iter().cloned().map(|machine| Upstream::Relay { machine }).collect();
+    let said = if via.is_empty() {
+        "straight to the hub".to_string()
+    } else {
+        let relays: Vec<String> = args.via.iter().map(ToString::to_string).collect();
+        format!("through {}, then the hub", relays.join(", then "))
+    };
+    let via = if via.is_empty() { vec![Upstream::Hub] } else { via };
+    match call(Call::Route { member: args.member.clone(), via })? {
+        Reply::Done => println!("{} connects {said} from now on", args.member),
+        other => anyhow::bail!("the node answered something else: {other:?}"),
+    }
+    Ok(())
+}
+
+pub fn relay(args: RelayArgs) -> anyhow::Result<()> {
+    let machine = match args.machine {
+        Some(machine) => machine,
+        None => match call(Call::Nodes)? {
+            Reply::Nodes(reply) => reply.machine,
+            other => anyhow::bail!("the node answered something else: {other:?}"),
+        },
+    };
+    let relay = if args.off {
+        None
+    } else {
+        let first = args.public.first().expect("clap requires a public address");
+        let listen = args.listen.unwrap_or_else(|| {
+            let any = if first.is_ipv4() {
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+            } else {
+                std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+            };
+            std::net::SocketAddr::new(any, first.port())
+        });
+        Some(RelaySetting { listen, public: args.public })
+    };
+    match call(Call::SetRelay { machine: machine.clone(), relay })? {
+        Reply::Relaying { relays_at } if relays_at.is_empty() => println!("{machine} relays for no machine now"),
+        Reply::Relaying { relays_at } => println!(
+            "{machine} relays at {}; `fastctx route <member> --via {machine}` puts a machine below it",
+            relays_at.join(", ")
+        ),
+        other => anyhow::bail!("the node answered something else: {other:?}"),
+    }
+    Ok(())
+}
+
 pub fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     match call(Call::Revoke { name: args.machine.clone(), reason: args.reason })? {
         Reply::Done => println!("revoked {}: no machine of the World trusts its key any more", args.machine),
@@ -166,8 +244,11 @@ fn call(call: Call) -> anyhow::Result<Reply> {
 fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
     let link = match (&reply.world, &reply.link) {
         (_, LinkState::Alone) => "a World of one machine".to_string(),
-        (Some(world), LinkState::Online { since, hub, route }) => {
+        (Some(world), LinkState::Online { since, hub, relay: None, route }) => {
             format!("in {world}; connected to the hub at {hub}, {route}, since {}", clock(*since, now))
+        }
+        (Some(world), LinkState::Online { since, hub, relay: Some(relay), route }) => {
+            format!("in {world}; connected through the relay {relay} at {hub}, {route}, since {}", clock(*since, now))
         }
         (Some(world), LinkState::Connecting { last_error: None, .. }) => format!("in {world}; connecting to the hub"),
         (Some(world), LinkState::Connecting { since, last_error: Some(error) }) => {
@@ -211,7 +292,8 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
             Err(_) if node.online == Some(false) || node.revoked.is_some() => String::new(),
             Err(error) => format!("not known: {error}"),
         };
-        let line = format!("{:width$}  {state}", node.name);
+        let place = node.place.as_ref().map(place).unwrap_or_default();
+        let line = format!("{:width$}  {state}{place}", node.name);
         if facts.is_empty() {
             text.push_str(&format!("{line}\n"));
         } else {
@@ -219,6 +301,27 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
         }
     }
     text
+}
+
+/// Where a machine hangs in the tree, when that is more than straight below
+/// the hub.
+fn place(place: &fastctx_types::world::Place) -> String {
+    let relays: Vec<String> = place
+        .via
+        .iter()
+        .filter_map(|upstream| match upstream {
+            Upstream::Relay { machine } => Some(machine.to_string()),
+            Upstream::Hub => None,
+        })
+        .collect();
+    let mut said = String::new();
+    if !relays.is_empty() {
+        said.push_str(&format!(" · through {}", relays.join(", then ")));
+    }
+    if !place.relays_at.is_empty() {
+        said.push_str(&format!(" · relays at {}", place.relays_at.join(", ")));
+    }
+    said
 }
 
 /// A moment as the local clock reads it: the time today, the date before.

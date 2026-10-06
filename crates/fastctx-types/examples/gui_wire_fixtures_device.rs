@@ -20,6 +20,7 @@ fn main() {
             link: LinkState::Online {
                 since: "2026-10-04T12:00:00Z".parse().expect("fixture time"),
                 hub: "192.0.2.1:7443".into(),
+                relay: None,
                 route: Route::System,
             },
         }),

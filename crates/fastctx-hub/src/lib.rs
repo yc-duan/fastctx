@@ -7,18 +7,25 @@
 //! pairs the two ends of each data transfer, and keeps the list of members
 //! (`world-network.md`).
 //!
+//! A relay is the hub's forwarding layer without its store (`relay`): it
+//! carries the sessions of the machines below it over one relay session
+//! with its own upstream (`attached`), and pairs the data connections of
+//! two machines both below it itself.
+//!
 //! The hub reads only what it needs to route: what members say to each
 //! other is sealed for the member it is for, and signed by the member that
 //! says it, so the hub can neither read it nor speak for anyone; every
 //! machine checks the signature and the list of members itself before
 //! acting on anything (`fastctx_net::trust`).
 
+mod attached;
 mod control;
 mod data;
 mod join;
 mod ledger;
 mod ledger_query;
 mod log;
+pub mod relay;
 mod store;
 
 use std::collections::HashMap;
@@ -81,6 +88,8 @@ pub fn founding_code(dir: &Path) -> anyhow::Result<Code> {
 pub(crate) struct Hub {
     store: Mutex<Store>,
     sessions: Mutex<HashMap<MachineName, Session>>,
+    /// The relay sessions, by relay.
+    relays: Mutex<HashMap<MachineName, attached::RelaySession>>,
     calls: Mutex<HashMap<u64, control::Pending>>,
     waiting: Mutex<HashMap<u64, data::Waiting>>,
     /// Taken after `store` when both are held.
@@ -108,6 +117,10 @@ impl Hub {
 
     fn sessions(&self) -> MutexGuard<'_, HashMap<MachineName, Session>> {
         self.sessions.lock().expect("never poisoned")
+    }
+
+    fn relays(&self) -> MutexGuard<'_, HashMap<MachineName, attached::RelaySession>> {
+        self.relays.lock().expect("never poisoned")
     }
 
     fn next(&self) -> u64 {
@@ -174,6 +187,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
     let hub = Arc::new(Hub {
         store: Mutex::new(store),
         sessions: Mutex::new(HashMap::new()),
+        relays: Mutex::new(HashMap::new()),
         calls: Mutex::new(HashMap::new()),
         waiting: Mutex::new(HashMap::new()),
         ledgers: Mutex::new(ledgers),
@@ -197,14 +211,15 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         }
     }
     hub.log.line(format_args!("shutting down"));
-    let sessions: Vec<mpsc::UnboundedSender<Out>> =
+    let mut sessions: Vec<mpsc::UnboundedSender<Out>> =
         hub.sessions().values().map(|session| session.out.clone()).collect();
+    sessions.extend(hub.relays().values().map(|relay| relay.out.clone()));
     for out in &sessions {
         let _ = out.send(Out::End(Refusal::ShuttingDown));
     }
     // Each writer says why and closes; one that cannot is gone anyway.
     let deadline = tokio::time::Instant::now() + SILENCE;
-    while !hub.sessions().is_empty() && tokio::time::Instant::now() < deadline {
+    while !(hub.sessions().is_empty() && hub.relays().is_empty()) && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     Ok(())
@@ -247,6 +262,13 @@ async fn connection(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStrea
     match (path.as_str(), intent) {
         (wire::CONTROL_PATH, Intent::Session { key, proof, letters }) => {
             control::session(hub, socket, peer, binding, key, proof, letters).await;
+        }
+        (wire::CONTROL_PATH, Intent::Relay { key, proof }) => {
+            attached::session(hub, socket, peer, binding, key, proof).await;
+        }
+        (wire::CONTROL_PATH, Intent::Probe) => {
+            let _ = send(&mut socket, &Down::Ready).await;
+            let _ = socket.close(None).await;
         }
         // Only the founder joins straight away, with the founding secret;
         // an invited machine first proves it holds the invitation's key.
@@ -297,8 +319,8 @@ async fn connection(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStrea
             });
             joined(&hub, &mut socket, peer, outcome).await;
         }
-        (wire::DATA_PATH, Intent::Data { key, proof, ticket, end }) => {
-            data::end(hub, socket, binding, key, proof, ticket, end).await;
+        (wire::DATA_PATH, Intent::Data { key, proof, ticket, end, on_behalf }) => {
+            data::end(hub, socket, binding, key, proof, ticket, end, on_behalf).await;
         }
         _ => {
             refuse(&mut socket, Refusal::Broken { reason: format!("that is not said on {path}") }).await;

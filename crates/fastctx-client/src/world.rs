@@ -381,6 +381,24 @@ impl World {
         done(self.ask(Call::Grant { member, scope, manage }).await?)
     }
 
+    /// Sets where `member` connects: through `via`, in order.
+    pub async fn route(&self, member: MachineName, via: Vec<fastctx_types::world::Upstream>) -> Result<(), Error> {
+        done(self.ask(Call::Route { member, via }).await?)
+    }
+
+    /// Makes `machine` relay as `relay` says, or stop relaying; returns
+    /// where it relays now.
+    pub async fn set_relay(
+        &self,
+        machine: MachineName,
+        relay: Option<fastctx_types::world::RelaySetting>,
+    ) -> Result<Vec<String>, Error> {
+        match self.ask(Call::SetRelay { machine, relay }).await? {
+            Reply::Relaying { relays_at } => Ok(relays_at),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// The user has seen that `member` joined with this machine's invitation.
     pub async fn seen(&self, member: MachineName) -> Result<(), Error> {
         done(self.ask(Call::Seen { member }).await?)

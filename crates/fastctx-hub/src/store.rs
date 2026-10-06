@@ -4,7 +4,7 @@
 //! <hub>/hub.json              the World's id, the hub's addresses, the founding secret until it is used
 //! <hub>/tls/certificate.der   the hub's certificate, pinned by every machine
 //! <hub>/tls/key.der
-//! <hub>/members.json          every record, revocation and invitation
+//! <hub>/members.json          every record, revocation, invitation, grant and route
 //! <hub>/letters.json          where each member's letters stand
 //! <hub>/outbox/<name>/<seq>   letters waiting for a member, one file each
 //! ```
@@ -49,6 +49,8 @@ pub struct Members {
     pub invitations: Vec<Invitation>,
     #[serde(default)]
     pub grants: Vec<Signed>,
+    #[serde(default)]
+    pub routes: Vec<Signed>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -169,6 +171,7 @@ impl Store {
                     &records,
                     &self.members.revocations,
                     &self.members.grants,
+                    &self.members.routes,
                     &Known::default(),
                 )
                 .0
@@ -246,20 +249,23 @@ impl Store {
         }
     }
 
-    /// When the latest grant or revocation held was made. Invitations are
-    /// not counted: how a member came in depends only on its inviter's
-    /// standing, which grants and revocations change, and a member that may
-    /// invite must not hold up everyone's grants by dating invitations ahead.
+    /// When the latest grant, route or revocation held was made.
+    /// Invitations are not counted: how a member came in depends only on its
+    /// inviter's standing, which grants and revocations change, and a member
+    /// that may invite must not hold up everyone's grants by dating
+    /// invitations ahead.
     pub fn latest(&self) -> Option<Timestamp> {
         let grants =
             self.members.grants.iter().filter_map(|signed| signed.claim::<fastctx_net::scope::Grant>().ok()).map(|grant| grant.at);
+        let routes =
+            self.members.routes.iter().filter_map(|signed| signed.claim::<fastctx_net::tree::Route>().ok()).map(|route| route.at);
         let revocations = self
             .members
             .revocations
             .iter()
             .filter_map(|signed| signed.claim::<fastctx_net::trust::Revocation>().ok())
             .map(|revocation| revocation.at);
-        grants.chain(revocations).max()
+        grants.chain(routes).chain(revocations).max()
     }
 
     pub fn invitation(&self, invite: &PublicKey) -> Option<&Invitation> {

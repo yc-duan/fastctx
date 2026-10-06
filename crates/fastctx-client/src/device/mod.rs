@@ -259,7 +259,9 @@ impl Session {
 pub(super) fn link_state(link: &Link) -> LinkState {
     match link.status() {
         Status::Connecting { since, last_error } => LinkState::Connecting { since, last_error },
-        Status::Online { since, address, route } => LinkState::Online { since, hub: address.to_string(), route },
+        Status::Online { since, address, relay, route } => {
+            LinkState::Online { since, hub: address.to_string(), relay, route }
+        }
         Status::Stopped { reason } => LinkState::Stopped { reason },
     }
 }

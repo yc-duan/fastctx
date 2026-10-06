@@ -120,6 +120,12 @@ enum Command {
     /// Set what a member of the World may do, as a machine that holds
     /// management rights.
     Grant(world::GrantArgs),
+    /// Set where a member of the World connects: through relays, or straight
+    /// to the hub, as a machine that holds management rights.
+    Route(world::RouteArgs),
+    /// Make a machine of the World relay for the machines whose routes lead
+    /// through it, or stop relaying.
+    Relay(world::RelayArgs),
     /// Stop every machine of the World trusting a machine's key, as when it
     /// is lost.
     Revoke(world::RevokeArgs),
@@ -191,6 +197,8 @@ fn main() -> ExitCode {
         Command::Join(args) => world::join(args),
         Command::Invite(args) => world::invite(args),
         Command::Grant(args) => world::grant(args),
+        Command::Route(args) => world::route(args),
+        Command::Relay(args) => world::relay(args),
         Command::Revoke(args) => world::revoke(args),
         Command::Leave => world::leave(),
         Command::Hub(command) => world::hub(command),

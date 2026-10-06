@@ -1,5 +1,11 @@
-//! The link's connections: dialing the hub, the welcome, and everything
+//! The link's connections: dialing an upstream, the welcome, and everything
 //! that passes on one connection until it ends; then dialing again.
+//!
+//! The upstreams are tried in the order the machine's route gives them
+//! (`crate::tree`); one that cannot be reached or does not take the session
+//! gives way to the next. A machine on a fallback asks its preferred
+//! upstreams now and then whether they take sessions again, and returns to
+//! the first that does.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,20 +20,28 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use super::letters::{self, Outbox, Receipt};
 use super::outgoing::Outgoing;
 use super::{CallEvent, Connection, Inner, Status};
-use crate::dial;
+use crate::dial::{self, HubSocket};
 use crate::envelope::{self, Kind};
 use crate::message::LetterBody;
 use crate::seal::Sealed;
 use crate::sign::{Domain, Signed, sha256};
+use crate::tree::{Endpoint, Upstream};
 use crate::wire::{self, Down, HEARTBEAT, Intent, Letters, PROTOCOL, Refusal, SILENCE, Up};
 
 /// A connection that stays up this long counts as healthy: the next failure
 /// is tried again at once.
 const STABLE: Duration = Duration::from_secs(60);
 
+/// How often a machine on a fallback upstream asks its preferred ones
+/// whether they take sessions again: the longest it stays on the fallback
+/// after a relay it belongs under is back.
+const RETURN: Duration = Duration::from_secs(60);
+
 enum Ended {
     /// Try again.
     Retry(String),
+    /// Connect again at once, from the first upstream.
+    Reroute(String),
     /// The hub refused this machine for good.
     Stop(String),
 }
@@ -51,6 +65,11 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
                 inner.status.send_replace(Status::Stopped { reason });
                 return;
             }
+            Ended::Reroute(reason) => {
+                inner.node.log(format!("connecting again: {reason}"));
+                inner.status.send_replace(Status::Connecting { since: Timestamp::now(), last_error: Some(reason) });
+                failures = 0;
+            }
             Ended::Retry(reason) => {
                 let was_online = matches!(*inner.status.borrow(), Status::Online { .. });
                 if online_since.is_some_and(|since| since.elapsed() >= STABLE) {
@@ -66,7 +85,7 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
                 };
                 inner.status.send_replace(Status::Connecting { since, last_error: Some(reason) });
                 tokio::select! {
-                    _ = tokio::time::sleep(backoff(failures)) => {},
+                    _ = tokio::time::sleep(dial::backoff(failures)) => {},
                     changed = changed(&inner, &mut changes) => {
                         reconnect(&inner, changed.expect("watching network and resume notifications"));
                         failures = 0;
@@ -96,24 +115,34 @@ fn reconnect(inner: &Inner, reason: &str) {
     dial::network_changed();
 }
 
-/// The first retry is at once; after that a random wait up to a ceiling that
-/// doubles with each failure, to a minute, so machines that lost the hub
-/// together do not all return in the same instant.
-fn backoff(failures: u32) -> Duration {
-    if failures <= 1 {
-        return Duration::ZERO;
-    }
-    let ceiling_ms = 1000_u64.saturating_mul(1 << (failures - 2).min(6)).min(60_000);
-    let random = u64::from_le_bytes(crate::sign::random::<8>().unwrap_or([0; 8]));
-    Duration::from_millis(250 + random % ceiling_ms.saturating_sub(250).max(1))
+/// A session the hub welcomed, through one upstream.
+struct Opened {
+    socket: HubSocket,
+    address: std::net::SocketAddr,
+    route: fastctx_types::world::Route,
+    taken: u64,
+    hub_letters: u64,
 }
 
+/// Opens a session through the first upstream that takes it.
 async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ended {
+    let endpoints = inner.endpoints();
+    let mut failures = Vec::new();
+    for (index, endpoint) in endpoints.iter().enumerate() {
+        match open(inner, endpoint).await {
+            Ok(opened) => return connected(inner, online_since, &endpoints[..=index], opened).await,
+            Err(Ended::Retry(reason)) => failures.push(format!("{}: {reason}", endpoint.upstream)),
+            Err(ended) => return ended,
+        }
+    }
+    Ended::Retry(failures.join("; "))
+}
+
+async fn open(inner: &Inner, endpoint: &Endpoint) -> Result<Opened, Ended> {
     let membership = &inner.membership;
-    let dialed = match dial::dial(&membership.hub, membership.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await {
-        Ok(dialed) => dialed,
-        Err(error) => return Ended::Retry(error),
-    };
+    let dialed = dial::dial(&endpoint.addresses, endpoint.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
+        .await
+        .map_err(Ended::Retry)?;
     let (address, route) = (dialed.address, dialed.route.clone());
     let mut socket = dialed.socket;
     let proof = inner.key.sign(Domain::Session, &dialed.binding);
@@ -128,30 +157,36 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => return Ended::Retry(error),
-        Err(_) => return Ended::Retry("sending the hello to the hub timed out".to_string()),
+        Ok(Err(error)) => return Err(Ended::Retry(error)),
+        Err(_) => return Err(Ended::Retry("sending the hello timed out".to_string())),
     }
     let welcome = match tokio::time::timeout(SILENCE, dial::recv(&mut socket)).await {
         Ok(Ok(Some(frame))) => frame,
-        Ok(Ok(None)) => return Ended::Retry("the hub closed the connection".to_string()),
-        Ok(Err(error)) => return Ended::Retry(error),
+        Ok(Ok(None)) => return Err(Ended::Retry("the connection was closed".to_string())),
+        Ok(Err(error)) => return Err(Ended::Retry(error)),
         Err(_) => {
-            return Ended::Retry(format!("the hub did not welcome this machine within {} s", SILENCE.as_secs()));
+            return Err(Ended::Retry(format!("no welcome came within {} s", SILENCE.as_secs())));
         }
     };
-    let (taken, hub_letters) = match welcome {
+    match welcome {
         Down::Welcome { world, name, taken, letters, .. } => {
             if world != membership.world || name != membership.name {
-                return Ended::Retry(format!(
+                return Err(Ended::Retry(format!(
                     "the hub knows this machine as {name} in {world}, not {} in {}",
                     membership.name, membership.world
-                ));
+                )));
             }
-            (taken, letters)
+            Ok(Opened { socket, address, route, taken, hub_letters: letters })
         }
-        Down::Refused { reason } => return refused(reason),
-        _ => return Ended::Retry("the hub's first frame was not a welcome".to_string()),
-    };
+        Down::Refused { reason } => Err(refused(reason)),
+        _ => Err(Ended::Retry("the first frame was not a welcome".to_string())),
+    }
+}
+
+/// Everything that passes on a session once it is welcomed, until it ends.
+async fn connected(inner: &Arc<Inner>, online_since: &mut Option<Instant>, tried: &[Endpoint], opened: Opened) -> Ended {
+    let Opened { socket, address, route, taken, hub_letters } = opened;
+    let endpoint = tried.last().expect("a session is opened through an upstream").clone();
 
     // The hub holds this machine's letters through `taken`.
     if let Err(error) = held(inner, taken) {
@@ -168,17 +203,28 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
         }
     }
 
+    // Registered before the connection is published, so a change of the
+    // upstreams noticed from then on ends it.
+    let rerouted = inner.rerouted.notified();
+    tokio::pin!(rerouted);
+    rerouted.as_mut().enable();
+
     let generation = inner.next_id();
     let (up, mut outgoing) = Outgoing::channel();
-    *inner.connection.lock().expect("never poisoned") = Some(Connection { generation, up: up.clone() });
-    inner.status.send_replace(Status::Online { since: Timestamp::now(), address, route: route.clone() });
+    *inner.connection.lock().expect("never poisoned") =
+        Some(Connection { generation, up: up.clone(), endpoint: endpoint.clone(), tried: tried.to_vec() });
+    let relay = match &endpoint.upstream {
+        Upstream::Hub => None,
+        Upstream::Relay { machine } => Some(machine.clone()),
+    };
+    inner.status.send_replace(Status::Online { since: Timestamp::now(), address, relay, route: route.clone() });
     *online_since = Some(Instant::now());
-    inner.node.log(format!("connected to the hub at {address}, {route}"));
+    inner.node.log(format!("connected to {} at {address}, {route}", endpoint.upstream));
 
     // This guard also runs when a network event cancels connect(). Pending
     // callers must learn that their old connection ended before another
     // connection can be published.
-    let mut connected = Connected { inner, generation, reason: "the connection was interrupted".to_string() };
+    let mut guard = Connected { inner, generation, reason: "the connection was interrupted".to_string() };
 
     let (mut sink, mut stream) = socket.split();
     let (writer_done, mut writer_stopped) = oneshot::channel::<()>();
@@ -202,6 +248,10 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
         tokio::spawn(flush(inner.clone(), up.clone(), taken)),
         tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, letter_failed)),
     ]);
+    let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
+    if tried.len() > 1 {
+        tasks.0.push(tokio::spawn(ask_preferred(tried[..tried.len() - 1].to_vec(), returned)));
+    }
     {
         let inner = inner.clone();
         tasks.0.push(tokio::spawn(async move {
@@ -232,6 +282,8 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
                 break Ended::Retry(format!("the hub did not answer a heartbeat for {} s", SILENCE.as_secs()));
             },
             _ = &mut writer_stopped => break Ended::Retry("writing to the hub failed".to_string()),
+            () = &mut rerouted => break Ended::Reroute("the upstreams this machine connects through changed".to_string()),
+            Ok(upstream) = &mut preferred_back => break Ended::Reroute(format!("{upstream} takes sessions again")),
             failed = &mut letters_failed => break Ended::Retry(failed.unwrap_or_else(|_| "taking letters stopped".to_string())),
             next = stream.next() => next,
         };
@@ -295,7 +347,13 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
             Down::Refused { reason } => break refused(reason),
-            Down::Welcome { .. } | Down::Joined { .. } | Down::Endorsement { .. } | Down::Paired => {
+            Down::Welcome { .. }
+            | Down::Joined { .. }
+            | Down::Endorsement { .. }
+            | Down::Paired
+            | Down::Relaying { .. }
+            | Down::To { .. }
+            | Down::Ready => {
                 break Ended::Retry("the hub sent a frame that belongs to another kind of connection".to_string());
             }
         }
@@ -303,14 +361,14 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
 
     drop(tasks);
     drop(up);
-    connected.reason = match &ended {
-        Ended::Retry(reason) | Ended::Stop(reason) => reason.clone(),
+    guard.reason = match &ended {
+        Ended::Retry(reason) | Ended::Reroute(reason) | Ended::Stop(reason) => reason.clone(),
     };
     if matches!(ended, Ended::Stop(_)) {
         // Publish the authenticated revocation before dropping pending
         // questions. When leaving, the hub may close the revoked session
         // before the separate acknowledgement of the revocation arrives.
-        inner.status.send_replace(Status::Stopped { reason: connected.reason.clone() });
+        inner.status.send_replace(Status::Stopped { reason: guard.reason.clone() });
     }
     ended
 }
@@ -351,6 +409,20 @@ fn refused(reason: Refusal) -> Ended {
     match reason {
         Refusal::Revoked { .. } => Ended::Stop(reason.to_string()),
         other => Ended::Retry(other.to_string()),
+    }
+}
+
+/// Asks the upstreams before the one this machine is on, every `RETURN`,
+/// whether they take sessions; says the first that does.
+async fn ask_preferred(preferred: Vec<Endpoint>, returned: oneshot::Sender<Upstream>) {
+    loop {
+        tokio::time::sleep(RETURN).await;
+        for endpoint in &preferred {
+            if dial::probe(&endpoint.addresses, endpoint.cert).await.is_ok() {
+                let _ = returned.send(endpoint.upstream.clone());
+                return;
+            }
+        }
     }
 }
 

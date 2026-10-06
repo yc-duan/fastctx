@@ -116,6 +116,7 @@ pub async fn leave(node: &Arc<Node>) -> Result<(), Failure> {
         link.revoke(&me, "left").await.map_err(|error| Failure::new(format!("telling the hub: {error}")))?;
     }
     link.stop();
+    *node.relay.lock().await = None;
     *node.link.write().expect("never poisoned") = None;
     let net = node.world.net();
     let aside = node.world.path().join(format!("net-left-{}", jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
@@ -128,7 +129,9 @@ pub fn link_state(link: Option<&Link>) -> LinkState {
     match link.map(Link::status) {
         None => LinkState::Alone,
         Some(Status::Connecting { since, last_error }) => LinkState::Connecting { since, last_error },
-        Some(Status::Online { since, address, route }) => LinkState::Online { since, hub: address.to_string(), route },
+        Some(Status::Online { since, address, relay, route }) => {
+            LinkState::Online { since, hub: address.to_string(), relay, route }
+        }
         Some(Status::Stopped { reason }) => LinkState::Stopped { reason },
     }
 }
@@ -180,7 +183,10 @@ impl fastctx_net::link::Node for Handler {
             return Ok(None);
         }
         let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
-        node.handoff.call().map(|guard| Some(Box::new(guard) as Box<dyn Send>)).ok_or_else(|| {
+        // Relaying or not changes where this machine's own link connects;
+        // the answer goes out on the connection the call came on first.
+        let held = matches!(call, RemoteCall::SetRelay { .. }).then(|| node.link().map(|link| link.hold_reroute())).flatten();
+        node.handoff.call().map(|guard| Some(Box::new((guard, held)) as Box<dyn Send>)).ok_or_else(|| {
             Failure::new(format!(
                 "the node on {} is handing over to its successor; ask again in a moment",
                 node.machine()
@@ -207,6 +213,9 @@ impl fastctx_net::link::Node for Handler {
                     .await
                     .map(|result| RemoteReply::PageAction { result }),
                 RemoteCall::Relay { made } => crate::devices::relay(&node, &caller, made).await,
+                RemoteCall::SetRelay { relay } => {
+                    crate::relay::set(&node, relay).await.map(|relays_at| RemoteReply::Relaying { relays_at })
+                }
                 RemoteCall::Run { resident, town, request } => {
                     let owner = Address { machine: from, resident };
                     let (reply, _) = node.jobs.run(&node, owner.into(), town, request).await?;
@@ -412,6 +421,7 @@ impl fastctx_net::link::Node for Handler {
     /// ledgers again seals them for it where this machine is the one to.
     fn members_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
+        crate::relay::members_changed(&node);
         tokio::spawn(async move {
             crate::admitted::notice(&node);
             if let Err(error) = crate::ledger::sync_ids(&node, None).await {

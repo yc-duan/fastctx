@@ -164,12 +164,22 @@ pub enum RemoteCall {
     Relay {
         made: serde_json::Value,
     },
+    /// Relay for the machines whose routes lead through this machine, as
+    /// `relay` says, or stop relaying. Only a member with management rights
+    /// asks this.
+    SetRelay {
+        relay: Option<crate::world::RelaySetting>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
     ComposerUploaded(Box<crate::composer::UploadResult>),
+    /// Where the machine relays now; nowhere when it stopped.
+    Relaying {
+        relays_at: Vec<String>,
+    },
     Composer(Box<crate::composer::Updated>),
     PageAction {
         result: crate::pages::PageResult,
