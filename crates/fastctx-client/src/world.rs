@@ -371,6 +371,20 @@ impl World {
         }
     }
 
+    /// A verified hub-hosted installation line for a Linux server. Missing
+    /// releases fail before the node issues an invitation.
+    pub async fn invite_server(
+        &self,
+        name: Option<MachineName>,
+        expires: Timestamp,
+        scope: Option<fastctx_types::scope::NamedScope>,
+    ) -> Result<String, Error> {
+        match self.ask(Call::InviteServer { name, expires, scope }).await? {
+            Reply::ServerInvitation { command } => Ok(command),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Sets what `member` may do, and whether it holds management rights.
     pub async fn grant(
         &self,

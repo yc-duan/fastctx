@@ -222,6 +222,11 @@ export function invite(name: string | null, hours: number, device = false, scope
   return invoke("invite", { name, hours, device, scope });
 }
 
+/** A complete hub-hosted installer line, issued by the local node. */
+export function inviteServer(name: string | null, hours: number, scope: Scope | null = null): Promise<string> {
+  return invoke("invite_server", { name, hours, scope });
+}
+
 /** Sets what `member` may do, and whether it holds management rights. */
 export function grant(member: MachineName, scope: Scope, manage: boolean): Promise<void> {
   return invoke("grant", { member, scope, manage });

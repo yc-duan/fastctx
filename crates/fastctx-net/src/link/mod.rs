@@ -14,6 +14,7 @@
 mod answering;
 mod calls;
 mod changes;
+mod kernel;
 mod ledger;
 mod letters;
 mod outgoing;
@@ -44,9 +45,9 @@ use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::tree::{self, Endpoint, RelayOffer, Route, Upstream};
 use crate::trust::{self, Endorsement, Kind, Member, Record, Revocation, Table};
 use crate::wire::{CallStatus, Presence, Question, Told};
+pub use ledger::{Page, PageItem};
 use sessions::Sessions;
 use state::{Counter, LettersFile, MembersFile, Taken};
-pub use ledger::{Page, PageItem};
 pub use state::{Membership, NetDir};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -272,7 +273,12 @@ impl Link {
             taken,
             sessions: Sessions::default(),
             letters: Mutex::new(Letters { file: letters_file, next }),
-            members: Mutex::new(Members { file: members_file, table: Arc::new(table), presence: Vec::new(), latest: None }),
+            members: Mutex::new(Members {
+                file: members_file,
+                table: Arc::new(table),
+                presence: Vec::new(),
+                latest: None,
+            }),
             refreshing: tokio::sync::Mutex::new(()),
             status,
             connection: Mutex::new(None),

@@ -72,3 +72,65 @@ and service steps repeat without an enrollment receipt. Joining relies on
 net-v3's confirmation of the same World/code/identity after a lost reply.
 Service registration requires systemd 249+. Errors return nonzero with their
 actual reason. Agent hosts, login state and Claude/Codex setup are untouched.
+
+# Hosting the release in your World
+
+The root hub serves releases on its existing TLS port. Prepare a directory
+`<hub>/releases/v<version>/` containing these three copied regular files:
+
+- `fastctx-x86_64-unknown-linux-gnu.tar.gz`
+- `fastctx-aarch64-unknown-linux-gnu.tar.gz`
+- `SHA256SUMS`
+
+Use the packages built by the release chain above, with their matching
+`SHA256SUMS`. Preparing the files in a sibling staging directory and renaming
+the directory to `v<version>` makes publication one step. The hub need not
+restart. A complete manifest may also contain the other release platforms;
+the hub serves only the two Linux archives and the unchanged manifest.
+
+For example, on the hub machine:
+
+```sh
+mkdir -p "$HUB/releases/staging-1.0.0"
+cp "$DIST/fastctx-x86_64-unknown-linux-gnu.tar.gz" "$DIST/fastctx-aarch64-unknown-linux-gnu.tar.gz" "$DIST/SHA256SUMS" "$HUB/releases/staging-1.0.0/"
+mv "$HUB/releases/staging-1.0.0" "$HUB/releases/v1.0.0"
+```
+
+Use a version directory that does not already exist. Publishing a different
+development build under an existing version needs an explicit replacement of
+that directory; commands already issued retain their previous pinned digest.
+Symbolic links, junctions, hard links, special files and directory indexes are
+not served. The public routes are only
+`/fastctx/releases/v<version>/<one of the three filenames>`. Both Linux
+archives must exist and match their manifest before any of the files is
+offered. File reads and hashing run independently of WebSocket heartbeats;
+the two World WebSocket paths retain their transport and frame semantics.
+An archive download has no time limit.
+
+The desktop bridge exposes `invite_server` with `name`, `hours`, and `scope`,
+returning a `String` containing the single installation line. TypeScript calls
+`inviteServer(name, hours, scope)`. The client's equivalent is
+`World::invite_server(name, expires, scope)`; local IPC uses
+`Call::InviteServer` and `Reply::ServerInvitation { command }`. User identity
+and the existing invitation authorization remain required.
+
+The node asks `Question::KernelRelease { version }` for its own package
+version. The root answers `Told::KernelRelease { release, certificate }`:
+the version and two archive SHA-256 values, plus the DER certificate actually
+loaded by that hub's TLS listener. Before computing the SPKI pin, the node
+compares that certificate's complete DER digest with its membership's pinned
+root certificate. The download directory uses the first root address in the
+membership, even when the node is connected through a relay.
+
+`Ask`/`Told` follow the existing control routing through relays. No new
+signature or authorization scheme is introduced. The download itself goes to
+the membership's root address and curl checks the root's key on that TLS
+connection. These additive questions/calls keep network protocol 8 and local
+IPC protocol 6; existing calls retain their meaning. Server invitations need
+a hub and node that implement the new question/call.
+
+Missing or invalid releases return the existing error channel. The message
+names every missing file and gives its hub directory and placement steps;
+checksum, manifest, file-type and I/O errors give their actual reason. No
+invitation is issued and no partial command is returned. The GUI displays
+that error in its invitation sheet and allows the person to try again.

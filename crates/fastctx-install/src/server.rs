@@ -43,12 +43,8 @@ pub fn certificate_pin(certificate_der: &[u8]) -> anyhow::Result<String> {
 /// Requires a POSIX shell, uname, mktemp, curl, tar and sha256sum; no Python.
 /// The kernel owns durable installation, enrollment and service registration.
 pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyhow::Result<String> {
-    let parts: Vec<_> = kernel.version.split('.').collect();
     ensure!(
-        parts.len() == 3
-            && parts.iter().all(|part| !part.is_empty()
-                && part.bytes().all(|byte| byte.is_ascii_digit())
-                && (part.len() == 1 || !part.starts_with('0'))),
+        fastctx_types::kernel::stable_version(kernel.version),
         "the release version must be a stable major.minor.patch version"
     );
     ensure!(

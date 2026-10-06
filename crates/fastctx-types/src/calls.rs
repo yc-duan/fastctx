@@ -225,6 +225,13 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<crate::scope::NamedScope>,
     },
+    /// Checks the hub's release, then invites a Linux server with a complete
+    /// installation command using this node's version.
+    InviteServer {
+        name: Option<MachineName>,
+        expires: Timestamp,
+        scope: Option<crate::scope::NamedScope>,
+    },
     /// Sets what a member may do, and whether it holds management rights,
     /// as this machine, which must hold them.
     Grant {
@@ -388,6 +395,9 @@ pub enum Reply {
     },
     Code {
         code: String,
+    },
+    ServerInvitation {
+        command: String,
     },
     Nodes(NodesReply),
     Done,

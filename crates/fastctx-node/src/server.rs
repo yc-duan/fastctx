@@ -383,7 +383,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Composer { resident, machine, request } => {
             users_voice(node, peer)?;
-            crate::composer::request(node, resident, machine, request).await.map(|updated| Reply::Composer(Box::new(updated)))
+            crate::composer::request(node, resident, machine, request)
+                .await
+                .map(|updated| Reply::Composer(Box::new(updated)))
         }
         Call::Offers { resident, machine } => crate::control::offers(node, resident, machine)
             .await
@@ -436,6 +438,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|code| Reply::Code { code: code.to_text() })
                 .map_err(Failure::new)
+        }
+        Call::InviteServer { name, expires, scope } => {
+            users_voice(node, peer)?;
+            crate::server_invitation::invite(node, name, expires, scope)
+                .await
+                .map(|command| Reply::ServerInvitation { command })
         }
         Call::Grant { member: name, scope, manage } => {
             users_voice(node, peer)?;

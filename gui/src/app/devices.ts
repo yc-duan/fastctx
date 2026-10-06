@@ -18,6 +18,7 @@ export interface DevicesOptions {
   words: DeviceWords;
   scopeWords: ScopeWords;
   invite(name: string | null, hours: number, device: boolean, scope: Scope): Promise<string>;
+  inviteServer(name: string | null, hours: number, scope: Scope): Promise<string>;
   revoke(name: string, reason: string): Promise<void>;
   leave(): Promise<void>;
   /** The machines of the World, which a scope can name. */
@@ -263,15 +264,19 @@ export class Devices {
     this.invitation.busy = true;
     go.disabled = true;
     go.textContent = words.making;
+    const kind = this.kind;
+    const hours = this.hours;
     try {
-      const code = await this.options.invite(name, this.hours, this.kind === "phone", made.scope);
-      const until = this.options.when(new Date(Date.now() + this.hours * 3_600_000));
+      const code = kind === "server"
+        ? await this.options.inviteServer(name, hours, made.scope)
+        : await this.options.invite(name, hours, kind === "phone", made.scope);
+      const until = this.options.when(new Date(Date.now() + hours * 3_600_000));
       const said = words.presetSays(describe(made.scope, this.options.scopeWords));
       const copy = (text: string, label: string) =>
         `<button class="text-button copy-code" type="button" data-copy="${escape(text)}">${glyph("copy", 16)}<span>${escape(label)}</span></button>`;
-      const command = `fastctx join ${code}`;
+      const command = code;
       const body =
-        this.kind === "phone"
+        kind === "phone"
           ? `<div class="invitation">
               <div class="qr-frame">${qrSvg(code, words.qr)}</div>
               <div class="invitation-text">
@@ -283,13 +288,13 @@ export class Devices {
             </div>`
           : `<div class="invitation invitation-wide">
               <div class="invitation-text">
-                <p class="field-label">${escape(this.kind === "server" ? words.serverCommand : words.code)}</p>
-                <p class="invite-code mono">${escape(this.kind === "server" ? command : code)}</p>
+                <p class="field-label">${escape(kind === "server" ? words.serverCommand : words.code)}</p>
+                <p class="invite-code mono">${escape(kind === "server" ? command : code)}</p>
                 <p class="field-hint">${escape(words.until(until))}</p>
-                ${copy(this.kind === "server" ? command : code, words.copy)}
+                ${copy(kind === "server" ? command : code, words.copy)}
               </div>
             </div>`;
-      const steps = this.kind === "phone" ? words.phoneSteps : this.kind === "server" ? words.serverSteps : words.howToSteps;
+      const steps = kind === "phone" ? words.phoneSteps : kind === "server" ? words.serverSteps : words.howToSteps;
       this.invitation.body.innerHTML = `
         ${this.invitation.head(words.inviteTitle, words.close)}
         ${body}

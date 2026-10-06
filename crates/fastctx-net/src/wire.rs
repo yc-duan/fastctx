@@ -330,6 +330,8 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    /// A complete Linux release and the root hub's actual TLS certificate.
+    KernelRelease { version: String },
     /// Every member's record, every revocation, and who is connected.
     Members,
     /// Hold this endorsement until a machine joins with it or it expires.
@@ -361,6 +363,10 @@ pub enum Question {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    KernelRelease {
+        release: fastctx_types::kernel::KernelRelease,
+        certificate: Vec<u8>,
+    },
     Members {
         records: Vec<Signed>,
         revocations: Vec<Signed>,

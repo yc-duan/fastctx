@@ -234,6 +234,22 @@ pub(crate) fn handle(
                 .expect("never poisoned")
                 .retain(|_, pending| !(pending.caller == *name && pending.id == id));
         }
+        Up::Ask { id, question: Question::KernelRelease { version } } => {
+            let releases = hub.releases.clone();
+            let out = out.clone();
+            tokio::spawn(async move {
+                let read = releases.clone();
+                let answer = match tokio::task::spawn_blocking(move || read.ready(&version)).await {
+                    Ok(Ok(published)) => Ok(Told::KernelRelease {
+                        release: published.release,
+                        certificate: releases.certificate.clone(),
+                    }),
+                    Ok(Err(reason)) => Err(reason),
+                    Err(error) => Err(format!("reading the kernel release: {error}")),
+                };
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question } => {
             let answer = ask(hub, name, question);
             reply(Down::Told { id, answer });
@@ -371,6 +387,7 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: Si
 
 fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
+        Question::KernelRelease { .. } => Err("release reads are dispatched asynchronously".into()),
         Question::Members => {
             let store = hub.store();
             let sessions = hub.sessions();
@@ -484,8 +501,7 @@ fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
         revocation
     };
     hub.log.line(format_args!("{} revoked {}: {}", revoked.by, revoked.name, revoked.reason));
-    let refusal =
-        Refusal::Revoked { by: revoked.by.clone(), at: revoked.at, reason: revoked.reason.clone() };
+    let refusal = Refusal::Revoked { by: revoked.by.clone(), at: revoked.at, reason: revoked.reason.clone() };
     if let Some(relay) = hub.relays().get(&revoked.name) {
         let _ = relay.out.send(Out::End(refusal.clone()));
     }
