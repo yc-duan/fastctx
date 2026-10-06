@@ -19,14 +19,12 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildKernel } from "../../scripts/kernel.mjs";
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repo = resolve(gui, "..");
 // Where installed copies look for new versions (`plugins.updater` in
 // `src-tauri/tauri.conf.json`), and where this one will be downloaded from.
 const releases = "https://github.com/yc-duan/fastctx/releases";
-// The toolchain the release workflow pins (`.github/workflows/release.yml`).
-const toolchain = "+1.92.0";
 // No variable of the session that runs this reaches the builds.
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("CLAUDE")));
 env.TAURI_SIGNING_PRIVATE_KEY ??= join(homedir(), ".tauri", "world-updater.key");
@@ -36,18 +34,17 @@ if (env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) {
 const notes = process.argv[2] ? readFileSync(process.argv[2], "utf8").trim() : null;
 const run = (program, args, cwd) => execFileSync(program, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
 
-const triple = /host: (\S+)/.exec(execFileSync("rustc", [toolchain, "-vV"], { env }).toString())[1];
+const kernel = buildKernel(undefined, env);
+const { version, productName } = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.conf.json"), "utf8"));
+if (kernel.version !== version) throw new Error(`the GUI is ${version}; its kernel is ${kernel.version}`);
+const triple = kernel.bundleTarget;
 const exe = process.platform === "win32" ? ".exe" : "";
-run("cargo", [toolchain, "build", "--locked", "--release", "-p", "fastctx", "--bin", "fastctx", "--target", triple], repo);
-
-const target = env.CARGO_TARGET_DIR ?? join(repo, "target");
 const binaries = join(gui, "src-tauri", "binaries");
 mkdirSync(binaries, { recursive: true });
-copyFileSync(join(target, triple, "release", `fastctx${exe}`), join(binaries, `fastctx-${triple}${exe}`));
+copyFileSync(kernel.binary, join(binaries, `fastctx-${triple}${exe}`));
 
 run("npx", ["tauri", "build", "--config", join("src-tauri", "tauri.release.conf.json")], gui);
 
-const { version, productName } = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.conf.json"), "utf8"));
 const bundle = join(env.CARGO_TARGET_DIR ?? join(gui, "src-tauri", "target"), "release", "bundle", "nsis");
 const installer = `${productName}_${version}_x64-setup.exe`;
 const signature = join(bundle, `${installer}.sig`);

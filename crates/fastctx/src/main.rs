@@ -16,6 +16,7 @@ mod page;
 mod project;
 mod renew;
 mod scope_args;
+mod server_install;
 mod service;
 mod talk;
 mod update;
@@ -73,6 +74,9 @@ enum Command {
     Renew(renew::RenewalArgs),
     /// Install, uninstall or inspect a node/hub service on this machine.
     Service(service::ServiceArgs),
+    /// Install a verified release on a Linux server and join a World.
+    #[command(subcommand)]
+    Server(server_install::ServerCommand),
     /// The SYSTEM guardian, dispatched by the Windows service controller.
     #[cfg(windows)]
     #[command(hide = true)]
@@ -180,6 +184,7 @@ fn main() -> ExitCode {
         }
         Command::Renew(args) => renew::run(args),
         Command::Service(args) => service::run(args),
+        Command::Server(command) => server_install::run(command),
         #[cfg(windows)]
         Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
         #[cfg(windows)]

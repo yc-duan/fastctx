@@ -1,0 +1,74 @@
+# Local kernel releases
+
+No script here publishes a release. Build with Rust 1.92.0. Linux also needs
+cargo-zigbuild 0.23.0 and Zig 0.14.1; install the Rust musl target first.
+
+```sh
+rustup target add --toolchain 1.92.0 x86_64-unknown-linux-musl
+node scripts/kernel.mjs x86_64-unknown-linux-gnu
+node scripts/kernel.mjs aarch64-unknown-linux-gnu
+node scripts/kernel.mjs x86_64-pc-windows-msvc
+```
+
+Each command prints the actual binary path and build target. Set
+`CARGO_TARGET_DIR` and `CARGO_BUILD_JOBS` for the machine's build allocation.
+Linux is static musl, with no ELF interpreter or shared library dependencies;
+the archive retains the historical `unknown-linux-gnu` name. Windows uses the
+static MSVC runtime. `gui/scripts/release.mjs` calls this same builder before
+copying the exact kernel into Tauri's sidecar directory. Its installer signing
+step is separate and requires the application's configured signing material.
+
+Generate third-party notices with the matching Rust toolchain and cargo-about
+0.9.0, then assemble local packages:
+
+```sh
+cargo +1.92.0 run --locked --release -p fastctx-tui --example syntax_notices > syntax-notices.md
+python scripts/notices.py --syntax-notices syntax-notices.md --output dist/THIRD_PARTY_LICENSES.md
+python scripts/package.py roots --notices dist/THIRD_PARTY_LICENSES.md --output dist
+python scripts/package.py platform --target x86_64-unknown-linux-gnu --binary TARGET/x86_64-unknown-linux-musl/release/fastctx --notices dist/THIRD_PARTY_LICENSES.md --output dist
+python scripts/package.py verify --output dist
+```
+
+`package.py` accepts the historical release target. A package contains exactly
+the executable, `LICENSE-APACHE`, `NOTICE`, and `THIRD_PARTY_LICENSES.md`, all
+regular files at its root. `SHA256SUMS` covers archives. The platform JSON
+records both the historical target and actual build target, and each member's
+SHA-256. The server command takes the archive digests from `SHA256SUMS`.
+All six platforms can be checked together with `verify --complete`.
+
+# Inviting a Linux server
+
+The desktop GUI can call `fastctx_install::server::command(Kernel, invitation,
+Source)`. `Kernel` supplies a stable version and the **archive** SHA-256 for
+both x86_64 and aarch64. The line selects by `uname -m`. `Source::GitHub` names
+the project's versioned release. `Source::Hub` supplies an HTTPS release
+directory and the base64 SHA-256 of the certificate's DER SubjectPublicKeyInfo;
+`certificate_pin(certificate_der)` computes that value from the issuer's public
+certificate. Append no archive name to the directory.
+The installer appends `fastctx-<architecture>-unknown-linux-gnu.tar.gz`.
+The invitation itself remains an opaque word.
+
+The generated line uses a POSIX shell, uname, mktemp, curl, tar with gzip
+support, and sha256sum. Debian slim does not include curl; it must be present
+before the line runs.
+It downloads the archive, checks its complete digest before unpacking, and
+runs `./fastctx server install <code>`. Hub downloads use curl's `-k` together
+with `--pinnedpubkey sha256//…`, which still checks the peer's key on the
+download connection. Temporary extraction is private and removed on exit.
+There is no Python dependency or downloaded executable bootstrap script.
+The OpenSSL builds shipped for Ubuntu 24.04 (curl 8.5.0), Debian 12 (7.88.1),
+and Debian 13 (8.14.1) were checked with self-signed TLS fixtures: a correct
+pin downloads, and a different key returns curl exit 90 before an HTTP GET.
+The [curl option contract](https://curl.se/docs/manpage.html#--pinnedpubkey)
+defines this check independently of `-k`.
+
+The Rust subcommand copies its own image atomically into `~/.fastctx/bin`,
+retains the three license files, joins, and enables the system service. It
+uses the caller's identity and asks for sudo only for service registration;
+the service runs as the caller's original UID. `FASTCTX_HOME` can select a
+different root. A repeat leaves the installed image and an already running
+service alone. Interrupted downloads restart; durable placement, enrollment
+and service steps repeat without an enrollment receipt. Joining relies on
+net-v3's confirmation of the same World/code/identity after a lost reply.
+Service registration requires systemd 249+. Errors return nonzero with their
+actual reason. Agent hosts, login state and Claude/Codex setup are untouched.
