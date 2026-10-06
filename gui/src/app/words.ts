@@ -1158,8 +1158,8 @@ export const zhDevices: DeviceWords = {
   oneAgentOn: "用哪一个",
   serverSteps: [
     "把这一整行粘进 Linux 服务器的终端运行；",
-    "它会从你的中枢下载、核对 fastctx，然后装好并加入世界；",
-    "按它的提示用 sudo 装上开机服务，之后它就一直连着。",
+    "它从你的中枢下载 fastctx、核对无误后装好，并加入世界；",
+    "装开机服务那一步要管理员权限，不是 root 时它会说明怎样用 sudo；之后它就一直连着。中途断了，同一行再跑一次就接着做完。",
   ],
   serverCommand: "在服务器上运行",
   inviteName: "它叫什么",
@@ -1222,8 +1222,8 @@ export const enDevices: DeviceWords = {
   oneAgentOn: "Which one",
   serverSteps: [
     "Paste this whole line into the Linux server's terminal;",
-    "it downloads and verifies fastctx from your hub, installs it, and joins the World;",
-    "install the service with sudo as it asks, and it stays connected.",
+    "it downloads fastctx from your hub, checks it, installs it and joins the World;",
+    "installing its service needs administrator rights; when not root, it says how to use sudo. Then it stays connected. If it stops halfway, run the same line again to finish.",
   ],
   serverCommand: "On the server, run",
   inviteName: "Its name",
