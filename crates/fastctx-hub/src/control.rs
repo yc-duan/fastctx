@@ -240,10 +240,7 @@ pub(crate) fn handle(
             tokio::spawn(async move {
                 let read = releases.clone();
                 let answer = match tokio::task::spawn_blocking(move || read.ready(&version)).await {
-                    Ok(Ok(published)) => Ok(Told::KernelRelease {
-                        release: published.release,
-                        certificate: releases.certificate.clone(),
-                    }),
+                    Ok(Ok(release)) => Ok(Told::KernelRelease { release, certificate: releases.certificate.clone() }),
                     Ok(Err(reason)) => Err(reason),
                     Err(error) => Err(format!("reading the kernel release: {error}")),
                 };

@@ -4,7 +4,7 @@ mod files;
 pub(crate) mod http;
 
 use std::fs::File;
-use std::io::{self, Read as _, Seek as _};
+use std::io::{self, Read as _};
 use std::path::Path;
 
 use fastctx_types::kernel::{AARCH64_ARCHIVE, KernelRelease, SUMS, X86_64_ARCHIVE, stable_version};
@@ -15,17 +15,20 @@ pub(crate) struct Releases {
     pub certificate: Vec<u8>,
 }
 
-pub(crate) struct Published {
-    pub release: KernelRelease,
-    pub files: [File; 3],
-}
-
 impl Releases {
     pub fn new(directory: &Path, certificate: Vec<u8>) -> io::Result<Self> {
         Ok(Self { files: files::Files::new(directory)?, certificate })
     }
 
-    pub fn ready(&self, version: &str) -> Result<Published, String> {
+    /// One published file, for a download. Nothing is hashed here: the line
+    /// that downloads it carries the digest and checks it, and hashing both
+    /// archives for every unauthenticated request would let anyone keep the
+    /// hub's processors busy with a few bytes each.
+    pub fn file(&self, version: &str, name: &str) -> io::Result<File> {
+        self.files.open(version, name)
+    }
+
+    pub fn ready(&self, version: &str) -> Result<KernelRelease, String> {
         if !stable_version(version) {
             return Err("a kernel release version must be stable major.minor.patch".into());
         }
@@ -37,7 +40,7 @@ impl Releases {
         })
     }
 
-    fn load(&self, version: &str) -> Result<Published, String> {
+    fn load(&self, version: &str) -> Result<KernelRelease, String> {
         let mut files = Vec::new();
         let mut faults = Vec::new();
         for name in [SUMS, X86_64_ARCHIVE, AARCH64_ARCHIVE] {
@@ -54,16 +57,12 @@ impl Releases {
             files.try_into().expect("the three release files were opened");
         let mut bytes = Vec::new();
         sums.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-        sums.rewind().map_err(|error| error.to_string())?;
         let text = std::str::from_utf8(&bytes).map_err(|error| format!("{SUMS} is not UTF-8: {error}"))?;
         let x86_64_sha256 = checksum(text, X86_64_ARCHIVE)?;
         let aarch64_sha256 = checksum(text, AARCH64_ARCHIVE)?;
         verify(&mut x86_64, X86_64_ARCHIVE, &x86_64_sha256)?;
         verify(&mut aarch64, AARCH64_ARCHIVE, &aarch64_sha256)?;
-        Ok(Published {
-            release: KernelRelease { version: version.to_owned(), x86_64_sha256, aarch64_sha256 },
-            files: [sums, x86_64, aarch64],
-        })
+        Ok(KernelRelease { version: version.to_owned(), x86_64_sha256, aarch64_sha256 })
     }
 }
 
@@ -102,5 +101,5 @@ fn verify(file: &mut File, name: &str, expected: &str) -> Result<(), String> {
     if actual != expected {
         return Err(format!("{name} does not match its {SUMS} digest"));
     }
-    file.rewind().map_err(|error| error.to_string())
+    Ok(())
 }

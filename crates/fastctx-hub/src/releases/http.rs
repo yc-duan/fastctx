@@ -90,19 +90,18 @@ async fn respond(
     if !stable_version(version) {
         return Ok(text(StatusCode::NOT_FOUND, "Not found"));
     }
-    let index = match name {
-        SUMS => 0,
-        X86_64_ARCHIVE => 1,
-        AARCH64_ARCHIVE => 2,
+    let gzip = match name {
+        SUMS => false,
+        X86_64_ARCHIVE | AARCH64_ARCHIVE => true,
         _ => return Ok(text(StatusCode::NOT_FOUND, "Not found")),
     };
-    let version = version.to_owned();
+    let (version, name) = (version.to_owned(), name.to_owned());
     let releases = hub.releases.clone();
-    let published = tokio::task::spawn_blocking(move || releases.ready(&version)).await;
-    let published = match published {
-        Ok(Ok(published)) => published,
-        Ok(Err(reason)) => {
-            hub.log.line(format_args!("{peer}: kernel download not ready: {reason}"));
+    let opened = tokio::task::spawn_blocking(move || releases.file(&version, &name)).await;
+    let file = match opened {
+        Ok(Ok(file)) => file,
+        Ok(Err(error)) => {
+            hub.log.line(format_args!("{peer}: kernel download not ready: {path}: {error}"));
             return Ok(text(StatusCode::NOT_FOUND, "Release is not ready"));
         }
         Err(error) => {
@@ -110,7 +109,6 @@ async fn respond(
             return Ok(text(StatusCode::INTERNAL_SERVER_ERROR, "Reading release failed"));
         }
     };
-    let file = published.files.into_iter().nth(index).expect("a fixed public release file index");
     let length = match file.metadata() {
         Ok(metadata) => metadata.len(),
         Err(_) => return Ok(text(StatusCode::INTERNAL_SERVER_ERROR, "Reading release failed")),
@@ -123,7 +121,7 @@ async fn respond(
     };
     Ok(Response::builder()
         .status(StatusCode::OK)
-        .header("Content-Type", if index == 0 { "text/plain; charset=utf-8" } else { "application/gzip" })
+        .header("Content-Type", if gzip { "application/gzip" } else { "text/plain; charset=utf-8" })
         .header("Content-Length", length)
         .body(body)
         .expect("fixed release response headers"))

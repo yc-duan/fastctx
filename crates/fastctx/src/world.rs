@@ -26,6 +26,10 @@ pub struct InviteArgs {
     /// What it may do; everything when nothing is limited.
     #[command(flatten)]
     scope: crate::scope_args::ScopeArgs,
+    /// Print, instead of the code, the one line a Linux server runs to
+    /// download fastctx from the hub, check it, install it and join.
+    #[arg(long)]
+    server: bool,
 }
 
 #[derive(Args)]
@@ -116,11 +120,21 @@ pub fn join(args: JoinArgs) -> anyhow::Result<()> {
 
 pub fn invite(args: InviteArgs) -> anyhow::Result<()> {
     let expires = Timestamp::now() + SignedDuration::from_hours(i64::from(args.hours));
+    let until = expires.to_zoned(jiff::tz::TimeZone::system()).strftime("%Y-%m-%d %H:%M %Z");
+    if args.server {
+        match call(Call::InviteServer { name: args.name.clone(), expires, scope: args.scope.scope() })? {
+            Reply::ServerInvitation { command } => {
+                println!("{command}");
+                eprintln!("Paste this line into the server's terminal. It works once, until {until}.");
+            }
+            other => anyhow::bail!("the node answered something else: {other:?}"),
+        }
+        return Ok(());
+    }
     match call(Call::Invite { name: args.name.clone(), expires, device: false, scope: args.scope.scope() })? {
         Reply::Code { code } => {
             println!("{code}");
             let named = args.name.map(|name| format!(" as {name}")).unwrap_or_default();
-            let until = expires.to_zoned(jiff::tz::TimeZone::system()).strftime("%Y-%m-%d %H:%M %Z");
             eprintln!(
                 "On the machine to invite, run `fastctx join <code>`{named}. The code works once, until {until}."
             );
