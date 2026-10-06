@@ -4,13 +4,42 @@
 //! Admission happens under the store's lock, so one invitation, one name or
 //! the founding secret can never admit two machines racing for it.
 
-use fastctx_net::sign::{Domain, Secret, Signed};
+use fastctx_net::sign::{Domain, PublicKey, Secret, Signature, Signed};
 use fastctx_net::trust::{self, Admission, Credential, Endorsement, Known, Record, WorldId};
 use fastctx_types::MachineName;
 use jiff::Timestamp;
 
 use crate::Hub;
 use crate::store::{Admitted, Store};
+
+/// The invitation whose key `invite` is, for a machine that proved on this
+/// connection that it holds that key: one not used yet, not expired, made by
+/// a member still trusted.
+pub(crate) fn endorsement(
+    hub: &Hub,
+    invite: &PublicKey,
+    proof: &Signature,
+    binding: &[u8; 32],
+) -> Result<Signed, String> {
+    invite.verify(Domain::Session, binding, proof).map_err(|_| "the proof of the invitation's key does not verify")?;
+    let store = hub.store();
+    let invitation = store.invitation(invite).cloned().ok_or("the invitation is not known to the hub")?;
+    usable(&store, &invitation)?;
+    Ok(invitation.endorsement)
+}
+
+fn usable(store: &Store, invitation: &crate::store::Invitation) -> Result<(), String> {
+    if let Some(used_by) = &invitation.used_by {
+        return Err(format!("the invitation was used already, by {used_by}"));
+    }
+    if invitation.expires <= Timestamp::now() {
+        return Err(format!("the invitation expired at {}", invitation.expires.strftime("%Y-%m-%d %H:%M:%S UTC")));
+    }
+    if store.table().get(&invitation.inviter).is_none() {
+        return Err(format!("{}, who made the invitation, is no longer a member", invitation.inviter));
+    }
+    Ok(())
+}
 
 pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Result<(WorldId, MachineName), String> {
     let claimed: Record = signed.claim().map_err(|error| format!("the record: {error}"))?;
@@ -47,18 +76,7 @@ pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Res
                 admission.endorsement.claim().map_err(|error| format!("the endorsement: {error}"))?;
             let invitation =
                 store.invitation(&endorsement.invite).cloned().ok_or("the invitation is not known to the hub")?;
-            if let Some(used_by) = &invitation.used_by {
-                return Err(format!("the invitation was used already, by {used_by}"));
-            }
-            if invitation.expires <= Timestamp::now() {
-                return Err(format!(
-                    "the invitation expired at {}",
-                    invitation.expires.strftime("%Y-%m-%d %H:%M:%S UTC")
-                ));
-            }
-            if store.table().get(&invitation.inviter).is_none() {
-                return Err(format!("{}, who made the invitation, is no longer a member", invitation.inviter));
-            }
+            usable(&store, &invitation)?;
             // The new record must check out the way every machine will
             // check it.
             let founder = store.founder().ok_or("the World has no founder yet")?;

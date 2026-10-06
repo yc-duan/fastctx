@@ -353,7 +353,8 @@ impl Link {
     ) -> Result<Code, String> {
         self.refresh().await?;
         self.inner.members().table.may_invite(&self.inner.membership.name, scope.as_ref().unwrap_or(&Scope::all()))?;
-        let invite = SecretKey::generate().map_err(|error| error.to_string())?;
+        let secret = crate::code::InviteSecret::generate().map_err(|error| error.to_string())?;
+        let invite = secret.key();
         let membership = &self.inner.membership;
         let endorsement = Endorsement {
             world: membership.world.clone(),
@@ -366,14 +367,13 @@ impl Link {
             at: Some(Timestamp::now()),
         };
         let endorsement = Signed::new(&self.inner.key, Domain::Endorsement, &endorsement);
-        self.inner.ask(Question::Invite { endorsement: endorsement.clone() }).await?;
+        self.inner.ask(Question::Invite { endorsement }).await?;
         Ok(Code::Invitation {
             hub: membership.hub.clone(),
             cert: membership.cert,
             world: membership.world.clone(),
             founder: membership.founder,
-            endorsement,
-            seed: crate::sign::Secret(invite.seed()),
+            secret,
         })
     }
 

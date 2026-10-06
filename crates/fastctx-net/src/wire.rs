@@ -84,6 +84,11 @@ pub enum Up {
     Ack {
         seq: u64,
     },
+    /// The record of a machine joining with an invitation, once it has the
+    /// invitation (`Down::Endorsement`).
+    Admit {
+        record: Signed,
+    },
     /// A question for the hub itself.
     Ask {
         id: u64,
@@ -100,6 +105,10 @@ pub enum Intent {
     /// A machine joining: the founder with the hub's founding secret, or an
     /// invited machine with its admission inside the record.
     Join { record: Signed, founding: Option<Secret> },
+    /// A machine holding an invitation's secret: `proof` is the invitation
+    /// key's signature of the TLS exporter. The hub answers with the
+    /// invitation, and the machine then sends its record (`Up::Admit`).
+    Invited { invite: PublicKey, proof: Signature },
     /// One end of a data connection.
     Data { key: PublicKey, proof: Signature, ticket: Signed, end: End },
 }
@@ -165,6 +174,11 @@ pub enum Down {
     Joined {
         world: WorldId,
         name: MachineName,
+    },
+    /// The invitation the joining machine holds the key of, as its inviter
+    /// signed it.
+    Endorsement {
+        endorsement: Signed,
     },
     /// The data connection is paired; bytes follow.
     Paired,

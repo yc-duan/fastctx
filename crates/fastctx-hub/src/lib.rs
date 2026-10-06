@@ -249,23 +249,80 @@ async fn connection(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStrea
         }
         (wire::CONTROL_PATH, Intent::Join { record, founding }) => {
             let outcome = join::join(&hub, &record, founding.as_ref());
-            match outcome {
-                Ok((world, name)) => {
-                    hub.log.line(format_args!("{peer}: {name} joined"));
-                    let _ = send(&mut socket, &Down::Joined { world, name }).await;
-                    let _ = socket.close(None).await;
-                }
+            joined(&hub, &mut socket, peer, outcome).await;
+        }
+        (wire::CONTROL_PATH, Intent::Invited { invite, proof }) => {
+            let endorsement = match join::endorsement(&hub, &invite, &proof, &binding) {
+                Ok(endorsement) => endorsement,
                 Err(reason) => {
                     hub.log.line(format_args!("{peer}: a join was refused: {reason}"));
                     refuse(&mut socket, Refusal::NotAdmitted { reason }).await;
+                    return;
                 }
+            };
+            if send(&mut socket, &Down::Endorsement { endorsement }).await.is_err() {
+                return;
             }
+            let record = match tokio::time::timeout(SILENCE, recv(&mut socket)).await {
+                Ok(Ok(Some(Up::Admit { record }))) => record,
+                // The machine looked at the invitation and did not take it.
+                Ok(Ok(None)) => return,
+                _ => {
+                    refuse(
+                        &mut socket,
+                        Refusal::Broken { reason: "an invited machine sends its record next".to_string() },
+                    )
+                    .await;
+                    return;
+                }
+            };
+            let outcome = join::join(&hub, &record, None).and_then(|joined| {
+                let admitted = record
+                    .claim::<fastctx_net::trust::Record>()
+                    .ok()
+                    .and_then(|record| match record.credential {
+                        fastctx_net::trust::Credential::Invited { admission } => {
+                            admission.claim::<fastctx_net::trust::Admission>().ok()
+                        }
+                        fastctx_net::trust::Credential::Founder => None,
+                    })
+                    .and_then(|admission| admission.endorsement.claim::<fastctx_net::trust::Endorsement>().ok());
+                match admitted {
+                    Some(endorsement) if endorsement.invite == invite => Ok(joined),
+                    _ => Err("the record is admitted by another invitation than the one proved".to_string()),
+                }
+            });
+            joined(&hub, &mut socket, peer, outcome).await;
         }
         (wire::DATA_PATH, Intent::Data { key, proof, ticket, end }) => {
             data::end(hub, socket, binding, key, proof, ticket, end).await;
         }
         _ => {
             refuse(&mut socket, Refusal::Broken { reason: format!("that is not said on {path}") }).await;
+        }
+    }
+}
+
+/// Tells a joining machine whether it joined, and every member that the
+/// members changed.
+async fn joined(
+    hub: &Hub,
+    socket: &mut Socket,
+    peer: SocketAddr,
+    outcome: Result<(fastctx_net::trust::WorldId, MachineName), String>,
+) {
+    match outcome {
+        Ok((world, name)) => {
+            hub.log.line(format_args!("{peer}: {name} joined"));
+            let _ = send(socket, &Down::Joined { world, name }).await;
+            let _ = socket.close(None).await;
+            for session in hub.sessions().values() {
+                let _ = session.out.send(Out::Frame(Down::MembersChanged));
+            }
+        }
+        Err(reason) => {
+            hub.log.line(format_args!("{peer}: a join was refused: {reason}"));
+            refuse(socket, Refusal::NotAdmitted { reason }).await;
         }
     }
 }

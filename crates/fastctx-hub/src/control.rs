@@ -238,6 +238,9 @@ fn handle(
         Up::Hello { .. } => {
             return Err(Refusal::Broken { reason: "a second hello on one connection".to_string() });
         }
+        Up::Admit { .. } => {
+            return Err(Refusal::Broken { reason: "a member's session admits nobody".to_string() });
+        }
     }
     Ok(())
 }

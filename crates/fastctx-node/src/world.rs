@@ -70,7 +70,6 @@ pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Re
         )));
     }
     let code = Code::parse(code).map_err(Failure::new)?;
-    let name = name.unwrap_or_else(|| node.machine());
     let world = node.world.clone();
     let keys = tokio::task::spawn_blocking(move || {
         Ok::<_, io::Error>(Keys { sign: crate::ledger::own_key(&world)?, seal: own_seal(&world)? })
@@ -78,7 +77,10 @@ pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Re
     .await
     .map_err(|error| Failure::new(format!("making this machine's keys: {error}")))?
     .map_err(|error| Failure::new(format!("making this machine's keys: {error}")))?;
-    let membership = fastctx_net::join::join(&code, name.clone(), &keys).await.map_err(Failure::new)?;
+    let asking =
+        fastctx_net::join::Asking { name, fallback: Some(node.machine()), kind: fastctx_net::trust::Kind::Machine };
+    let membership = fastctx_net::join::join(&code, asking, &keys).await.map_err(Failure::new)?;
+    let name = membership.name.clone();
     let net = NetDir::new(node.world.net());
     let recorded = net
         .prepare()

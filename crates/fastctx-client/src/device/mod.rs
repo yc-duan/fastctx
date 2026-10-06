@@ -15,7 +15,7 @@ use std::sync::{Arc, RwLock};
 use fastctx_net::code::Code;
 use fastctx_net::link::{BoxFuture, Keys, Link, Membership, Status};
 use fastctx_net::sign::PublicKey;
-use fastctx_net::trust::{Endorsement, Kind};
+use fastctx_net::trust::Kind;
 use fastctx_types::MachineName;
 pub use fastctx_types::device::DeviceState;
 use fastctx_types::ipc::Failure;
@@ -109,57 +109,75 @@ impl Device {
     async fn join_inner(&self, text: String, name: Option<MachineName>) -> Result<(String, MachineName), Error> {
         let _changing = self.lifecycle.lock().await;
         let code = Code::parse(&text).map_err(failed)?;
-        let Code::Invitation { endorsement, founder, .. } = &code else {
+        let Code::Invitation { founder, .. } = &code else {
             return Err(failed("a device joins with a device invitation, not a founding code"));
         };
-        let endorsement: Endorsement = endorsement.claim().map_err(failed)?;
-        if endorsement.kind != Kind::Device {
-            return Err(failed("this invitation admits a machine; ask for a device invitation"));
-        }
-        let name = name.or(endorsement.name.clone()).ok_or_else(|| failed("give this device a name"))?;
-        if endorsement.name.as_ref().is_some_and(|invited| invited != &name) {
-            return Err(failed("this invitation fixes a different device name"));
-        }
-        let membership = Membership {
-            world: code.world().clone(),
-            name: name.clone(),
-            founder: *founder,
-            hub: code.hub().to_vec(),
-            cert: code.cert(),
+        let of_this_code = |membership: &Membership| {
+            membership.world == *code.world() && membership.hub == code.hub() && membership.cert == code.cert()
         };
         let existing = self.store.load()?;
         self.restore()?;
         let retrying = existing.is_some();
-        let (mut identity, keys) = match existing {
-            Some(identity) if !identity.pending && identity.membership == membership => {
+        // An identity made by an earlier try of this code keeps its name and
+        // keys: its admission may have happened without its reply arriving.
+        let (earlier, directory, keys) = match existing {
+            Some(identity) if !identity.pending && of_this_code(&identity.membership) => {
                 self.connected()?.check_identity().await?;
-                return Ok((membership.world.to_string(), name));
+                return Ok((identity.membership.world.to_string(), identity.membership.name));
             }
-            Some(mut identity) if identity.pending && identity.membership == membership => {
+            Some(mut identity) if identity.pending && of_this_code(&identity.membership) => {
                 let session = self.connected()?;
                 if session.check_identity().await.is_ok() {
                     identity.pending = false;
                     self.store.save(Some(&identity))?;
-                    return Ok((membership.world.to_string(), name));
+                    return Ok((identity.membership.world.to_string(), identity.membership.name));
                 }
                 session.link.stop();
                 *self.session.write().expect("device session") = None;
                 let keys = self.store.keys(&identity)?;
-                (identity, keys)
+                (Some(identity), None, keys)
             }
             Some(_) => return Err(failed("this device has a World identity already; leave it before joining another")),
-            None => self.store.create(membership)?,
+            None => {
+                let (directory, keys) = self.store.create()?;
+                (None, Some(directory), keys)
+            }
         };
-        let admission = fastctx_net::join::attempt(&code, name.clone(), &keys).await;
-        match admission {
-            Err(fastctx_net::join::JoinError::Refused(reason) | fastctx_net::join::JoinError::NotSent(reason))
+        let asking = fastctx_net::join::Asking {
+            name: earlier.as_ref().map(|identity| identity.membership.name.clone()).or(name),
+            fallback: None,
+            kind: Kind::Device,
+        };
+        let adopted = std::sync::Mutex::new(earlier);
+        let before = |chosen: &MachineName| -> Result<(), String> {
+            let mut adopted = adopted.lock().expect("never poisoned");
+            if adopted.is_none() {
+                let membership = Membership {
+                    world: code.world().clone(),
+                    name: chosen.clone(),
+                    founder: *founder,
+                    hub: code.hub().to_vec(),
+                    cert: code.cert(),
+                };
+                let directory = directory.clone().expect("a new identity has its directory");
+                *adopted = Some(self.store.adopt(directory, membership).map_err(|error| error.to_string())?);
+            }
+            Ok(())
+        };
+        let admission = fastctx_net::join::attempt(&code, asking, &keys, before).await;
+        let identity = adopted.into_inner().expect("never poisoned");
+        match (admission, identity) {
+            (Err(fastctx_net::join::JoinError::Refused(reason) | fastctx_net::join::JoinError::NotSent(reason)), _)
                 if !retrying =>
             {
                 self.store.save(None)?;
+                if let Some(directory) = &directory {
+                    self.store.discard(directory);
+                }
                 Err(failed(reason))
             }
-            result => {
-                let world = identity.membership.world.to_string();
+            (result, Some(mut identity)) => {
+                let (world, name) = (identity.membership.world.to_string(), identity.membership.name.clone());
                 if result.is_ok() {
                     identity.pending = false;
                     self.store.save(Some(&identity))?;
@@ -167,11 +185,12 @@ impl Device {
                 self.start(identity, keys)?;
                 result.map_err(failed)?;
                 // Check the inviter-signed kind from the actual member table,
-                // not just the unauthenticated claim parsed from the code.
+                // not just what the hub handed this device.
                 let session = self.connected()?;
                 session.check_identity().await?;
                 Ok((world, name))
             }
+            (result, None) => Err(failed(result.err().map(|error| error.to_string()).unwrap_or_default())),
         }
     }
 

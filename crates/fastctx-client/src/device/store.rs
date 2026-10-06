@@ -47,18 +47,26 @@ impl Store {
         state::write(&self.root.join("identity.json"), &identity)
     }
 
-    pub fn create(&self, membership: Membership) -> io::Result<(Identity, Keys)> {
-        let directory = fastctx_net::sign::random::<8>()?.iter().map(|byte| format!("{byte:02x}")).collect();
-        let identity = Identity { directory, membership, pending: true };
-        ensure_private_dir(&self.directory(&identity))?;
+    /// Makes the keys of an identity still to be admitted, in a directory
+    /// of its own; the identity is kept once its name is known (`adopt`).
+    pub fn create(&self) -> io::Result<(String, Keys)> {
+        let directory: String = fastctx_net::sign::random::<8>()?.iter().map(|byte| format!("{byte:02x}")).collect();
+        let path = self.root.join(&directory);
+        ensure_private_dir(&path)?;
         let key = SecretKey::generate()?;
-        key.create(&self.directory(&identity).join("device.key"))?;
+        key.create(&path.join("device.key"))?;
         let seal = SealKey::generate()?;
-        seal.create(&self.directory(&identity).join("seal.key"))?;
-        // Admission can consume a one-use invitation before its reply reaches
-        // us. Persist the keys and hub coordinates before attempting it.
+        seal.create(&path.join("seal.key"))?;
+        Ok((directory, Keys { sign: key, seal }))
+    }
+
+    /// Keeps the identity whose keys are in `directory`, pending admission.
+    /// Admission can consume a one-use invitation before its reply reaches
+    /// us: the keys and hub coordinates are kept before it is attempted.
+    pub fn adopt(&self, directory: String, membership: Membership) -> io::Result<Identity> {
+        let identity = Identity { directory, membership, pending: true };
         self.save(Some(&identity))?;
-        Ok((identity, Keys { sign: key, seal }))
+        Ok(identity)
     }
 
     /// The identity's keys. A device that joined before sealing makes its
@@ -75,6 +83,11 @@ impl Store {
             other => other?,
         };
         Ok(Keys { sign, seal })
+    }
+
+    /// Removes the keys of an identity that was never kept.
+    pub fn discard(&self, directory: &str) {
+        let _ = std::fs::remove_dir_all(self.root.join(directory));
     }
 
     pub fn net(&self, identity: &Identity) -> NetDir {

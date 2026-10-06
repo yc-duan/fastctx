@@ -295,7 +295,7 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
             Down::Refused { reason } => break refused(reason),
-            Down::Welcome { .. } | Down::Joined { .. } | Down::Paired => {
+            Down::Welcome { .. } | Down::Joined { .. } | Down::Endorsement { .. } | Down::Paired => {
                 break Ended::Retry("the hub sent a frame that belongs to another kind of connection".to_string());
             }
         }

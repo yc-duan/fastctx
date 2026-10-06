@@ -160,6 +160,10 @@ impl PublicKey {
         &self.0
     }
 
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     /// Whether `signature` is this key's signature of `bytes` in `domain`.
     pub fn verify(&self, domain: Domain, bytes: &[u8], signature: &Signature) -> Result<(), BadSignature> {
         let key = VerifyingKey::from_bytes(&self.0).map_err(|_| BadSignature)?;
