@@ -15,7 +15,7 @@ impl Device {
     pub(crate) async fn call(self: &std::sync::Arc<Self>, call: Call) -> Result<(Reply, MachineName), Error> {
         if let Call::Join { code, name } = call {
             let (world, name) = self.join(code, name).await?;
-            return Ok((Reply::Joined { world, name: name.clone() }, name));
+            return Ok((Reply::Joined { world, name: name.clone(), already: false }, name));
         }
         let session = self.connected()?;
         if matches!(call, Call::Leave) {

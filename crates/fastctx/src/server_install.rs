@@ -45,14 +45,24 @@ fn install(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
     let root = fastctx_platform::fastctx_root()?;
     fastctx_platform::ensure_private_dir(&root)?;
     let _lock = fastctx_platform::FileLock::acquire(&root.join("server-install.lock"))?;
+    // Run again, the line says what was there already rather than what it did.
+    let was_installed = fastctx_install::executable::installed_path(&root).try_exists()?;
     let installed = fastctx_install::server::place(&root, &std::env::current_exe()?)?;
-    println!("Installed fastctx {} at {}", env!("CARGO_PKG_VERSION"), installed.display());
+    if was_installed {
+        println!("fastctx {} is installed at {} already", env!("CARGO_PKG_VERSION"), installed.display());
+    } else {
+        println!("Installed fastctx {} at {}", env!("CARGO_PKG_VERSION"), installed.display());
+    }
     match crate::ask::call(Call::Join { code, name })?.0 {
-        Reply::Joined { world, name } => println!("Joined the World {world} as {name}"),
+        Reply::Joined { world, name, already: true } => println!("This machine is {name} in the World {world} already"),
+        Reply::Joined { world, name, .. } => println!("Joined the World {world} as {name}"),
         other => bail!("the node answered something else: {other:?}"),
     }
     let service = Service::new(Kind::Node, &installed, &root);
-    if service.uid == 0 {
+    let was_enabled = service.status().is_ok_and(|status| status.installed && status.enabled);
+    if was_enabled {
+        // Registering again changes nothing that runs.
+    } else if service.uid == 0 {
         service.install()?;
     } else {
         let arguments = [
@@ -88,7 +98,11 @@ fn install(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
         );
     }
     hand_over_to_service(&root, &installed)?;
-    println!("The system service is enabled at boot and keeps this World running without a login.");
+    if was_enabled {
+        println!("Its boot service was enabled already and keeps this World running without a login.");
+    } else {
+        println!("The system service is enabled at boot and keeps this World running without a login.");
+    }
     Ok(())
 }
 

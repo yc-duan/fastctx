@@ -60,8 +60,13 @@ pub fn start(node: &Arc<Node>, membership: Membership, keys: Keys) -> io::Result
     Ok(link)
 }
 
-/// Joins the World `code` is for.
-pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Result<(String, MachineName), Failure> {
+/// Joins the World `code` is for: its id, this machine's name in it, and
+/// whether it was in it before.
+pub async fn join(
+    node: &Arc<Node>,
+    code: &str,
+    name: Option<MachineName>,
+) -> Result<(String, MachineName, bool), Failure> {
     let code = Code::parse(code).map_err(Failure::new)?;
     if let Some(link) = node.link() {
         let membership = link.membership();
@@ -74,7 +79,7 @@ pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Re
                     membership.name, membership.world
                 )));
             }
-            return Ok((membership.world.to_string(), membership.name.clone()));
+            return Ok((membership.world.to_string(), membership.name.clone(), true));
         }
         return Err(Failure::new(format!(
             "this machine is {} in the World {} already; `fastctx leave` first to join another",
@@ -102,7 +107,7 @@ pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Re
     node.set_machine(name.clone());
     let world = membership.world.to_string();
     start(node, membership, keys).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
-    Ok((world, name))
+    Ok((world, name, false))
 }
 
 /// Leaves the World: revokes this machine's own key, when the hub can be

@@ -426,7 +426,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         // could invite or revoke a machine could hand the World to anyone.
         Call::Join { code, name } => {
             users_voice(node, peer)?;
-            crate::world::join(node, &code, name).await.map(|(world, name)| Reply::Joined { world, name })
+            crate::world::join(node, &code, name).await.map(|(world, name, already)| Reply::Joined {
+                world,
+                name,
+                already,
+            })
         }
         Call::Invite { name, expires, device, scope } => {
             users_voice(node, peer)?;

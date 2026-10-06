@@ -395,6 +395,9 @@ pub enum Reply {
     Joined {
         world: String,
         name: MachineName,
+        /// It was in that World before this join.
+        #[serde(default)]
+        already: bool,
     },
     Code {
         code: String,

@@ -351,7 +351,7 @@ impl World {
     /// name in it.
     pub async fn join(&self, code: String, name: Option<MachineName>) -> Result<(String, MachineName), Error> {
         match self.ask(Call::Join { code, name }).await? {
-            Reply::Joined { world, name } => Ok((world, name)),
+            Reply::Joined { world, name, .. } => Ok((world, name)),
             other => Err(unexpected(other)),
         }
     }

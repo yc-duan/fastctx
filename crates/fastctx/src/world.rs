@@ -112,7 +112,7 @@ pub enum HubCommand {
 
 pub fn join(args: JoinArgs) -> anyhow::Result<()> {
     match call(Call::Join { code: args.code, name: args.name })? {
-        Reply::Joined { world, name } => println!("joined the World {world} as {name}"),
+        Reply::Joined { world, name, .. } => println!("joined the World {world} as {name}"),
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
     crate::keep::keep_connected()
