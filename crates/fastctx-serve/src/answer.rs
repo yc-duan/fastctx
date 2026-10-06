@@ -29,6 +29,12 @@ impl Answer {
         Self::text(text, true)
     }
 
+    /// Adds a block after what the answer holds, starting on a line of its own.
+    pub fn follow(&mut self, text: String) {
+        end_line(&mut self.content);
+        self.content.push(Content::Text(text));
+    }
+
     pub async fn sent(mut self) {
         if let Some((mut client, resident, ids)) = self.receipt.take()
             && let Err(error) = client.call(Call::Taken { resident, ids }).await
@@ -120,16 +126,20 @@ pub fn assemble(
     let note_cost = source.note.chars().count();
     let header = first_line_cost(&answer.content);
     let minimum = cost(&answer.content).min(if header + note_cost <= BUDGET { header + note_cost } else { note_cost });
-    let mut left = BUDGET.checked_sub(minimum).ok_or_else(|| io::Error::other("answer source exceeds its budget"))?;
+    // The body may need one newline before whatever is delivered with it;
+    // delivered texts end their own.
+    let mut left =
+        BUDGET.checked_sub(minimum + SEPARATOR).ok_or_else(|| io::Error::other("answer source exceeds its budget"))?;
     let mut additions = Vec::new();
     // Town notes share their acknowledgement, so they are shown together.
     if !notes.is_empty() {
-        let text = notes.join("\n");
+        let text = ended(notes.join("\n"));
         additions.extend(shorten_text(world, text, left)?);
         left -= cost(&additions);
     }
     let mut ids = Vec::new();
     for (id, text) in messages {
+        let text = ended(text);
         let size = text.chars().count();
         if size <= left {
             additions.push(Content::Text(text));
@@ -148,13 +158,35 @@ pub fn assemble(
         }
         ids.push(id);
     }
-    let budget = BUDGET - cost(&additions);
+    let budget = BUDGET - SEPARATOR - cost(&additions);
     if cost(&answer.content) > budget {
         source.keep()?;
         answer.content = fit(std::mem::take(&mut answer.content), budget, &source.note);
     }
+    if !additions.is_empty() {
+        end_line(&mut answer.content);
+    }
     answer.content.extend(additions);
     Ok(ids)
+}
+
+const SEPARATOR: usize = 1;
+
+/// Hosts show text blocks back to back, with nothing between them.
+fn end_line(content: &mut [Content]) {
+    if let Some(Content::Text(last)) = content.last_mut()
+        && !last.ends_with('\n')
+    {
+        last.push('\n');
+    }
+}
+
+/// Each delivered text ends its own line, so the next block starts a new one.
+fn ended(mut text: String) -> String {
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text
 }
 
 fn shorten_text(world: &WorldDir, text: String, budget: usize) -> io::Result<Vec<Content>> {
@@ -199,8 +231,8 @@ mod tests {
         assert_eq!(ids, [first]);
         assert!(cost(&answer.content) <= 150_000);
         assert!(matches!(&answer.content[0], Content::Text(text) if text.starts_with(header)));
-        assert!(answer.content.contains(&Content::Text(words)));
-        assert!(!answer.content.contains(&Content::Text(next.clone())));
+        assert!(answer.content.contains(&Content::Text(format!("{words}\n"))));
+        assert!(!answer.content.contains(&Content::Text(format!("{next}\n"))));
         assert!(
             answer
                 .content
@@ -211,13 +243,14 @@ mod tests {
 
         let mut reply = Answer::text("written".into(), false);
         assert_eq!(assemble(&world, &mut reply, Vec::new(), [(second.clone(), next.clone())]).unwrap(), [second]);
-        assert!(reply.content.contains(&Content::Text(next)));
+        assert!(reply.content.contains(&Content::Text(format!("{next}\n"))));
 
         let huge = "=== colleague codex-5678 on desk ===\n".to_string() + &"😀中文".repeat(100_000);
         let id = NoticeId::try_from("huge").unwrap();
         let mut reply = Answer::text("written".into(), false);
         assert_eq!(assemble(&world, &mut reply, Vec::new(), [(id.clone(), huge.clone())]).unwrap(), [id]);
         assert!(cost(&reply.content) <= 150_000);
+        let huge = format!("{huge}\n");
         let Source { file: Some((path, _)), .. } = Source::text(&world, &huge) else { unreachable!() };
         assert_eq!(std::fs::read_to_string(path).unwrap(), huge);
 
@@ -228,6 +261,7 @@ mod tests {
             assemble(&world, &mut reply, vec![news.clone()], [(waiting, "still waiting".into())]).unwrap().is_empty()
         );
         assert!(cost(&reply.content) <= 150_000);
+        let news = format!("{news}\n");
         let Source { file: Some((path, _)), .. } = Source::text(&world, &news) else { unreachable!() };
         assert_eq!(std::fs::read_to_string(path).unwrap(), news);
 

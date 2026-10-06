@@ -263,7 +263,7 @@ impl Session {
         let mut client = match self.client().await {
             Ok(client) => client,
             Err(error) => {
-                answer.content.push(Content::Text(format!("=== words for you could not be read: {error} ===")));
+                answer.follow(format!("=== words for you could not be read: {error} ==="));
                 return;
             }
         };
@@ -274,7 +274,7 @@ impl Session {
                 let ids = match answer::assemble(&self.world, answer, notes, messages) {
                     Ok(ids) => ids,
                     Err(error) => {
-                        answer.content.push(Content::Text(format!("=== could not prepare words for you: {error} ===")));
+                        answer.follow(format!("=== could not prepare words for you: {error} ==="));
                         return;
                     }
                 };
@@ -283,12 +283,8 @@ impl Session {
                 // one does.
                 answer.receipt = Some((client, whereabouts.resident.clone(), ids));
             }
-            Ok(other) => answer
-                .content
-                .push(Content::Text(format!("=== words for you could not be read: the node answered {other:?} ==="))),
-            Err(error) => {
-                answer.content.push(Content::Text(format!("=== words for you could not be read: {error} ===")))
-            }
+            Ok(other) => answer.follow(format!("=== words for you could not be read: the node answered {other:?} ===")),
+            Err(error) => answer.follow(format!("=== words for you could not be read: {error} ===")),
         }
     }
 
