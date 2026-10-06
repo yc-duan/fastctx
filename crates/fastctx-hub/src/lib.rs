@@ -164,6 +164,12 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
     if store.hub.founding.is_some() {
         log.line(format_args!("the World is not founded yet; `fastctx hub code` prints the founding code"));
     }
+    if !ledgers.older.is_empty() {
+        log.line(format_args!(
+            "{} plaintext ledgers of the network's second version wait for a machine with management rights to seal them",
+            ledgers.older.len()
+        ));
+    }
     let hub = Arc::new(Hub {
         store: Mutex::new(store),
         sessions: Mutex::new(HashMap::new()),

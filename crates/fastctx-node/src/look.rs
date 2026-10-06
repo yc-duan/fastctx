@@ -33,7 +33,10 @@ pub async fn look(node: &Arc<Node>, ids: Vec<String>) -> Vec<LookedUp> {
             let (table, presence) = link.members();
             let me = link.membership().name.clone();
             let mut asks = Vec::new();
-            for member in table.machines().filter(|member| member.name != me) {
+            for member in table
+                .machines()
+                .filter(|member| member.name != me && crate::admission::reaches(node, &table, &member.name))
+            {
                 let online = presence.iter().any(|presence| presence.name == member.name && presence.online);
                 if refreshed.is_err() || !online {
                     unasked.push(format!("{} (offline)", member.name));

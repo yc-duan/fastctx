@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use fastctx_net::trust::Member;
 use fastctx_types::MachineName;
 use fastctx_types::calls::Call;
 use fastctx_types::ipc::{Failure, Peer};
@@ -29,10 +30,11 @@ pub fn is_device(node: &Node, from: &MachineName) -> bool {
     node.link().and_then(|link| link.members().0.get(from).map(|member| !member.kind.is_machine())).unwrap_or(false)
 }
 
-/// Refuses a call `from` may not make: a device asks only for the user's
+/// Refuses a call `member` may not make: a device asks only for the user's
 /// own calls, and only a device has its calls made for it.
-pub fn admit(node: &Node, from: &MachineName, call: &RemoteCall) -> Result<(), Failure> {
-    let device = is_device(node, from);
+pub fn admit(member: &Member, call: &RemoteCall) -> Result<(), Failure> {
+    let from = &member.name;
+    let device = !member.kind.is_machine();
     let users_own = matches!(
         call,
         RemoteCall::Talk { .. }

@@ -210,6 +210,22 @@ pub enum Call {
         expires: Timestamp,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         device: bool,
+        /// What it may do until a grant says otherwise; everything when not
+        /// given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<crate::scope::NamedScope>,
+    },
+    /// Sets what a member may do, and whether it holds management rights,
+    /// as this machine, which must hold them.
+    Grant {
+        member: MachineName,
+        scope: crate::scope::NamedScope,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        manage: bool,
+    },
+    /// The user has seen that `member` joined with this machine's invitation.
+    Seen {
+        member: MachineName,
     },
     /// Revokes a member's key, so no machine trusts it any more.
     Revoke {

@@ -187,7 +187,7 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
         }
         Job::Invite { name, hours } => {
             let expires = Timestamp::now() + jiff::SignedDuration::from_hours(i64::from(hours));
-            Done::Code { code: world.invite(name, expires, false).await?, expires }
+            Done::Code { code: world.invite(name, expires, false, None).await?, expires }
         }
         Job::Join { code, name } => {
             let (world_id, name) = world.join(code, name).await?;

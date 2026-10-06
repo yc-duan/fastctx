@@ -26,6 +26,7 @@ pub mod remote;
 pub mod renewal;
 pub mod residents;
 pub mod run;
+pub mod scope;
 pub mod session;
 pub mod since;
 pub mod town;

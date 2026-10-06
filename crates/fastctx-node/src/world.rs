@@ -20,7 +20,7 @@ use fastctx_types::remote::{Letter, RemoteCall, RemoteReply, RemoteResult};
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::session::Speaker;
 use fastctx_types::world::{LinkState, MachineFacts};
-use fastctx_types::{Address, MachineName, TownName};
+use fastctx_types::{Address, MachineName};
 use jiff::Timestamp;
 
 use crate::Node;
@@ -187,7 +187,8 @@ impl fastctx_net::link::Node for Handler {
                 return Err(Failure::new("the node is stopping"));
             };
             let machine = node.machine();
-            crate::devices::admit(&node, &from, &call)?;
+            let caller = crate::admission::admit(&node, &from, &call)?;
+            let scope = &caller.scope;
             match call {
                 RemoteCall::PageAction { source, action } => crate::pages::actions::execute(&node, source, action)
                     .await
@@ -213,7 +214,9 @@ impl fastctx_net::link::Node for Handler {
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
                     crate::talk::serve_watch(&node, resident, watch, stream).await
                 }
-                RemoteCall::Agents => crate::agents::here(&node).await.map(RemoteReply::Agents),
+                RemoteCall::Agents => crate::agents::here(&node)
+                    .await
+                    .map(|reply| RemoteReply::Agents(crate::admission::seen::agents(scope, reply))),
                 RemoteCall::ClaudeConsent { accept } => {
                     crate::consent::here(&node, accept, format!("the user on {from}"))
                         .await
@@ -245,9 +248,16 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
                     .await
                     .map(|offers| RemoteReply::Offers(Box::new(offers))),
-                RemoteCall::Look { id } => Ok(RemoteReply::Looked { looked: crate::look::look_here(&node, &id).await }),
+                RemoteCall::Look { id } => {
+                    let looked = crate::look::look_here(&node, &id).await;
+                    Ok(RemoteReply::Looked { looked: crate::admission::seen::looked(&node, scope, looked) })
+                }
                 RemoteCall::Find { resident } => {
-                    Ok(RemoteReply::Found { lives_here: node.residents.town_of(&resident).is_some() })
+                    let lives_here = match node.residents.town_of(&resident) {
+                        Some(town) => crate::admission::sees(&node, scope, &resident, town.as_ref()),
+                        None => false,
+                    };
+                    Ok(RemoteReply::Found { lives_here })
                 }
                 RemoteCall::Write { resident, town, op } => {
                     let owner = Address { machine: from, resident };
@@ -260,10 +270,12 @@ impl fastctx_net::link::Node for Handler {
                     .map_err(|error| Failure::new(format!("writing: {error}")))?;
                     Ok(RemoteReply::Written { outcome })
                 }
-                RemoteCall::Who { all, town } => crate::server::who_here(&node, all, town).await.map(RemoteReply::Who),
-                RemoteCall::Since { since, town } => {
-                    crate::since::here(&node, since, town).await.map(RemoteReply::Since)
-                }
+                RemoteCall::Who { all, town } => crate::server::who_here(&node, all, town)
+                    .await
+                    .map(|reply| RemoteReply::Who(crate::admission::seen::who(&node, scope, reply))),
+                RemoteCall::Since { since, town } => crate::since::here(&node, since, town)
+                    .await
+                    .map(|reply| RemoteReply::Since(crate::admission::seen::since(&node, scope, reply))),
                 RemoteCall::Canon { path } => {
                     tokio::task::spawn_blocking(move || crate::town::map::heads(std::path::Path::new(&path)))
                         .await
@@ -353,10 +365,23 @@ impl fastctx_net::link::Node for Handler {
         })
     }
 
-    fn ledger_changed(&self, town: Option<TownName>) {
+    fn ledger_changed(&self, town: Option<fastctx_net::ledger::TownId>) {
         let Some(node) = self.node.upgrade() else { return };
         tokio::spawn(async move {
-            if let Err(error) = crate::ledger::sync(&node, town).await {
+            if let Err(error) = crate::ledger::sync_ids(&node, town).await {
+                node.log.line(format_args!("taking the towns' ledgers: {error}"));
+            }
+        });
+    }
+
+    /// A member that joined, whose scope changed or that published its
+    /// sealing key may lack keys of entries it may read now: taking the
+    /// ledgers again seals them for it where this machine is the one to.
+    fn members_changed(&self) {
+        let Some(node) = self.node.upgrade() else { return };
+        tokio::spawn(async move {
+            crate::admitted::notice(&node);
+            if let Err(error) = crate::ledger::sync_ids(&node, None).await {
                 node.log.line(format_args!("taking the towns' ledgers: {error}"));
             }
         });

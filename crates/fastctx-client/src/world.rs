@@ -348,12 +348,33 @@ impl World {
     }
 
     /// A code for one more machine, or a device, to join with, until
-    /// `expires`.
-    pub async fn invite(&self, name: Option<MachineName>, expires: Timestamp, device: bool) -> Result<String, Error> {
-        match self.ask(Call::Invite { name, expires, device }).await? {
+    /// `expires`, with what it may do when not everything.
+    pub async fn invite(
+        &self,
+        name: Option<MachineName>,
+        expires: Timestamp,
+        device: bool,
+        scope: Option<fastctx_types::scope::NamedScope>,
+    ) -> Result<String, Error> {
+        match self.ask(Call::Invite { name, expires, device, scope }).await? {
             Reply::Code { code } => Ok(code),
             other => Err(unexpected(other)),
         }
+    }
+
+    /// Sets what `member` may do, and whether it holds management rights.
+    pub async fn grant(
+        &self,
+        member: MachineName,
+        scope: fastctx_types::scope::NamedScope,
+        manage: bool,
+    ) -> Result<(), Error> {
+        done(self.ask(Call::Grant { member, scope, manage }).await?)
+    }
+
+    /// The user has seen that `member` joined with this machine's invitation.
+    pub async fn seen(&self, member: MachineName) -> Result<(), Error> {
+        done(self.ask(Call::Seen { member }).await?)
     }
 
     pub async fn revoke(&self, name: MachineName, reason: String) -> Result<(), Error> {

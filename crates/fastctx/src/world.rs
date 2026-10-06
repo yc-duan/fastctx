@@ -21,8 +21,23 @@ pub struct InviteArgs {
     #[arg(long)]
     name: Option<MachineName>,
     /// How many hours the invitation stays valid.
-    #[arg(long, default_value_t = 24)]
+    #[arg(long, default_value_t = 1)]
     hours: u32,
+    /// What it may do; everything when nothing is limited.
+    #[command(flatten)]
+    scope: crate::scope_args::ScopeArgs,
+}
+
+#[derive(Args)]
+pub struct GrantArgs {
+    /// The member whose scope this sets.
+    member: MachineName,
+    /// It holds management rights from now on, and may do everything.
+    #[arg(long)]
+    manage: bool,
+    /// What it may do; everything when nothing is limited.
+    #[command(flatten)]
+    scope: crate::scope_args::ScopeArgs,
 }
 
 #[derive(Args)]
@@ -72,7 +87,7 @@ pub fn join(args: JoinArgs) -> anyhow::Result<()> {
 
 pub fn invite(args: InviteArgs) -> anyhow::Result<()> {
     let expires = Timestamp::now() + SignedDuration::from_hours(i64::from(args.hours));
-    match call(Call::Invite { name: args.name.clone(), expires, device: false })? {
+    match call(Call::Invite { name: args.name.clone(), expires, device: false, scope: args.scope.scope() })? {
         Reply::Code { code } => {
             println!("{code}");
             let named = args.name.map(|name| format!(" as {name}")).unwrap_or_default();
@@ -81,6 +96,14 @@ pub fn invite(args: InviteArgs) -> anyhow::Result<()> {
                 "On the machine to invite, run `fastctx join <code>`{named}. The code works once, until {until}."
             );
         }
+        other => anyhow::bail!("the node answered something else: {other:?}"),
+    }
+    Ok(())
+}
+
+pub fn grant(args: GrantArgs) -> anyhow::Result<()> {
+    match call(Call::Grant { member: args.member.clone(), scope: args.scope.scope_or_all(), manage: args.manage })? {
+        Reply::Done => println!("{} has its new scope; every machine of the World holds it to that", args.member),
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
     Ok(())

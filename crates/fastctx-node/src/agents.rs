@@ -99,7 +99,11 @@ pub async fn query(node: &Arc<Node>, machine: Option<MachineName>) -> Result<Wor
         let (table, presence) = link.members();
         let names: Vec<_> = match &machine {
             Some(name) => vec![name.clone()],
-            None => table.machines().filter(|member| member.name != here).map(|member| member.name.clone()).collect(),
+            None => table
+                .machines()
+                .filter(|member| member.name != here && crate::admission::reaches(node, &table, &member.name))
+                .map(|member| member.name.clone())
+                .collect(),
         };
         for name in names {
             if let Err(error) = &refreshed {

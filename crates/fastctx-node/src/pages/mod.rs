@@ -169,12 +169,13 @@ async fn current(node: &Arc<Node>, town: &TownName, required: bool) -> Result<()
     let Some(catalog) = link.try_ledger_catalog().await.map_err(Failure::new)? else {
         return if required { Err(offline()) } else { Ok(()) };
     };
+    let id = crate::ledger::names::require(node, town).map_err(Failure::new)?;
     let latest = catalog
         .into_iter()
-        .find(|(name, _)| name == town)
+        .find(|(listed, _)| *listed == id)
         .map(|(_, seq)| seq)
         .ok_or_else(|| crate::town::map::no_ledger(node, town))?;
-    let complete = crate::ledger::take(node, &link, town, latest, true).await.map_err(Failure::new)?;
+    let complete = crate::ledger::take(node, &link, &id, latest, true).await.map_err(Failure::new)?;
     if !complete && required {
         return Err(offline());
     }

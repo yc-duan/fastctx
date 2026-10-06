@@ -78,6 +78,40 @@ pub struct NodesReply {
     pub world: Option<String>,
     pub link: LinkState,
     pub machines: Vec<Node>,
+    /// Members that joined with this machine's invitations and the user has
+    /// not been shown yet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joined: Vec<Joined>,
+}
+
+/// A member that came in with this machine's invitation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Joined {
+    pub name: MachineName,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub device: bool,
+    pub noticed_at: Timestamp,
+}
+
+/// Where a member stands in the World: what it may do, as every machine
+/// works it out.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Standing {
+    /// Its scope, projects by their short names; a project this machine
+    /// cannot name is shown by its id.
+    pub scope: crate::scope::Scope<String>,
+    /// Whether it holds management rights.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub manage: bool,
+    /// Who invited it; `None` for the machine that founded the World.
+    pub invited_by: Option<MachineName>,
+    /// Whether it is the branch of an inviter without management rights.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub delegated: bool,
+    /// Whether it has published its sealing key: without one, nothing can
+    /// be sealed to it yet.
+    #[serde(default)]
+    pub sealing: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +130,10 @@ pub struct Node {
     /// World does not ask or work on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub device: bool,
+    /// What it may do; `None` when it is revoked, or this machine is in no
+    /// World with others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standing: Option<Standing>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

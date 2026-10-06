@@ -15,6 +15,7 @@ mod keep;
 mod page;
 mod project;
 mod renew;
+mod scope_args;
 mod service;
 mod talk;
 mod update;
@@ -116,6 +117,9 @@ enum Command {
     Join(world::JoinArgs),
     /// Make a code that lets one more machine join this World.
     Invite(world::InviteArgs),
+    /// Set what a member of the World may do, as a machine that holds
+    /// management rights.
+    Grant(world::GrantArgs),
     /// Stop every machine of the World trusting a machine's key, as when it
     /// is lost.
     Revoke(world::RevokeArgs),
@@ -186,6 +190,7 @@ fn main() -> ExitCode {
         Command::Page(command) => page::run(command),
         Command::Join(args) => world::join(args),
         Command::Invite(args) => world::invite(args),
+        Command::Grant(args) => world::grant(args),
         Command::Revoke(args) => world::revoke(args),
         Command::Leave => world::leave(),
         Command::Hub(command) => world::hub(command),

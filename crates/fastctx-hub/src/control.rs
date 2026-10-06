@@ -387,19 +387,14 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
         Question::Revoke { revocation } => revoke(hub, name, revocation).map(|()| Told::Done),
         Question::Republish { record } => republish(hub, name, record).map(|()| Told::Done),
         Question::Grant { grant: signed } => grant(hub, name, signed).map(|()| Told::Done),
-        Question::LedgerWrite { entry } => {
-            let (seq, town, tell) = {
+        Question::LedgerWrite { item } => {
+            let (town, seq, tell) = {
                 let store = hub.store();
-                let town = entry.claim::<fastctx_net::ledger::Entry>().map(|entry| entry.town).ok();
-                let written =
-                    hub.ledgers.lock().expect("never poisoned").write(&store.hub.world, store.table(), name, entry)?;
-                (written.0, town, written.1)
+                hub.ledgers.lock().expect("never poisoned").write(&store.hub.world, store.table(), name, item)?
             };
-            if let Some(town) = town {
-                hub.log.line(format_args!("{name} wrote entry {seq} of {town}"));
-                for machine in tell {
-                    hub.tell(&machine, Down::LedgerChanged { town: town.clone() });
-                }
+            hub.log.line(format_args!("{name} wrote item {seq} of {town}"));
+            for machine in tell {
+                hub.tell(&machine, Down::LedgerChanged { town: town.clone() });
             }
             Ok(Told::Written { seq })
         }

@@ -12,10 +12,11 @@
 //! member it is for (`crate::envelope`), so the hub can route it but not
 //! read it, change it or make one up.
 
-use fastctx_types::{MachineName, TownName};
+use fastctx_types::MachineName;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use crate::ledger::TownId;
 use crate::sign::{Digest, PublicKey, Secret, Signature, Signed};
 use crate::trust::WorldId;
 
@@ -207,9 +208,10 @@ pub enum Down {
     },
     /// The members, or which of them are revoked, changed.
     MembersChanged,
-    /// A town this machine spans has new entries in its ledger.
+    /// A town this machine spans, or one an item was just sealed for it in,
+    /// has new items in its ledger.
     LedgerChanged {
-        town: TownName,
+        town: TownId,
     },
 }
 
@@ -260,20 +262,20 @@ pub enum Question {
     Republish { record: Signed },
     /// A member with management rights sets what a member may do.
     Grant { grant: Signed },
-    /// Keep this entry in its town's ledger (`crate::ledger`).
-    LedgerWrite { entry: Signed },
+    /// Keep this item, a sealed entry or a sealed copy of an entry's key, in
+    /// its town's ledger (`crate::ledger`).
+    LedgerWrite { item: Signed },
     /// The towns this machine spans, each with the number of its latest
-    /// entry.
+    /// item.
     LedgerTowns,
-    /// The World's towns, for a machine answering its user's queries.
-    /// This does not subscribe it to replication of those towns.
+    /// Every town of the World, each with the number of its latest item.
+    /// This does not subscribe the asker to replication of those towns.
     LedgerCatalog,
     /// An explicitly queried town, including one this machine does not span.
-    /// Only machines may query; devices use a node's admitted Relay calls.
-    LedgerQuery { town: TownName, after: u64 },
-    /// A town's entries after the one numbered `after`, as many as fit in
-    /// one frame.
-    LedgerRead { town: TownName, after: u64 },
+    LedgerQuery { town: TownId, after: u64 },
+    /// A town's items after the one numbered `after`, as many as fit in one
+    /// frame.
+    LedgerRead { town: TownId, after: u64 },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -286,14 +288,14 @@ pub enum Told {
         presence: Vec<Presence>,
     },
     Done,
-    /// The entry is the town's entry `seq`.
+    /// The item is the town's item `seq`.
     Written {
         seq: u64,
     },
     Towns {
-        towns: Vec<(TownName, u64)>,
+        towns: Vec<(TownId, u64)>,
     },
-    /// Entries in order, each with its number; `more` when others follow.
+    /// Items in order, each with its number; `more` when others follow.
     Entries {
         entries: Vec<(u64, Signed)>,
         more: bool,

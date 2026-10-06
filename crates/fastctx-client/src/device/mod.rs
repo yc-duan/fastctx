@@ -16,11 +16,11 @@ use fastctx_net::code::Code;
 use fastctx_net::link::{BoxFuture, Keys, Link, Membership, Status};
 use fastctx_net::sign::PublicKey;
 use fastctx_net::trust::{Endorsement, Kind};
+use fastctx_types::MachineName;
 pub use fastctx_types::device::DeviceState;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
 use fastctx_types::world::LinkState;
-use fastctx_types::{MachineName, TownName};
 
 use crate::world::Error;
 use store::{Identity, Store};
@@ -273,7 +273,7 @@ impl fastctx_net::link::Node for Handler {
         Box::pin(async { Ok(Err("a device receives no letters".to_string())) })
     }
 
-    fn ledger_changed(&self, _: Option<TownName>) {}
+    fn ledger_changed(&self, _: Option<fastctx_net::ledger::TownId>) {}
 
     fn log(&self, line: String) {
         eprintln!("World device: {line}");

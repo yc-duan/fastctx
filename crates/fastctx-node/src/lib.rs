@@ -9,6 +9,8 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+mod admission;
+mod admitted;
 mod agents;
 mod attach;
 mod attachments;
@@ -92,6 +94,9 @@ pub(crate) struct Node {
     link: RwLock<Option<Arc<Link>>>,
     /// Held while the towns' ledgers are taken or written, one at a time.
     syncing: tokio::sync::Mutex<()>,
+    /// The World's naming key, once this machine has opened it
+    /// (`ledger::names`).
+    naming: RwLock<Option<fastctx_net::ledger::NamingKey>>,
     /// Held while a town's record or journals are written from here, from
     /// reading what is there to writing what comes next.
     writing: tokio::sync::Mutex<()>,
@@ -274,6 +279,7 @@ pub async fn run_replacing(
         log,
         link: RwLock::new(None),
         syncing: tokio::sync::Mutex::new(()),
+        naming: RwLock::new(None),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
         effects_ready: std::sync::atomic::AtomicBool::new(false),

@@ -420,14 +420,28 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::world::join(node, &code, name).await.map(|(world, name)| Reply::Joined { world, name })
         }
-        Call::Invite { name, expires, device } => {
+        Call::Invite { name, expires, device, scope } => {
             users_voice(node, peer)?;
             let link = member(node)?;
             let kind = if device { fastctx_net::trust::Kind::Device } else { fastctx_net::trust::Kind::Machine };
-            link.invite(name, expires, kind, None)
+            let scope =
+                scope.map(|scope| crate::ledger::names::by_id(node, scope)).transpose().map_err(Failure::new)?;
+            link.invite(name, expires, kind, scope)
                 .await
                 .map(|code| Reply::Code { code: code.to_text() })
                 .map_err(Failure::new)
+        }
+        Call::Grant { member: name, scope, manage } => {
+            users_voice(node, peer)?;
+            let link = member(node)?;
+            let scope = crate::ledger::names::by_id(node, scope).map_err(Failure::new)?;
+            link.grant(&name, scope, manage).await.map(|()| Reply::Done).map_err(Failure::new)
+        }
+        Call::Seen { member: name } => {
+            users_voice(node, peer)?;
+            crate::admitted::shown(node, &name)
+                .map(|()| Reply::Done)
+                .map_err(|error| Failure::new(format!("recording that {name} was seen: {error}")))
         }
         Call::Revoke { name, reason } => {
             users_voice(node, peer)?;
@@ -601,7 +615,9 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
         let (table, presence) = link.members();
         let me = link.membership().name.clone();
         let mut asks = Vec::new();
-        for member in table.machines().filter(|member| member.name != me && asks_for(&member.name)) {
+        for member in table.machines().filter(|member| {
+            member.name != me && asks_for(&member.name) && crate::admission::reaches(node, &table, &member.name)
+        }) {
             if let Err(error) = &refreshed {
                 machines.push(MachineWho::NoAnswer {
                     machine: member.name.clone(),
@@ -643,11 +659,18 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
     Ok(WorldWho { machine: here, scope, machines })
 }
 
-/// `fastctx nodes`: this machine's link, and each machine of the World with
-/// what it says of itself.
+/// `fastctx nodes`: this machine's link, and each member of the World its
+/// scope covers with what it says of itself and where it stands.
 async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
     let here = node.machine();
     let link = node.link();
+    let standing = |member: &fastctx_net::trust::Member| fastctx_types::world::Standing {
+        scope: crate::ledger::names::by_name(node, &member.scope),
+        manage: member.manage,
+        invited_by: member.invited_by.clone(),
+        delegated: member.delegated,
+        sealing: member.seal.is_some(),
+    };
     let mut machines = vec![NodeView {
         name: here.clone(),
         online: Some(true),
@@ -655,18 +678,22 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
         facts: Ok(crate::world::facts(&here)),
         revoked: None,
         device: false,
+        standing: link.as_ref().and_then(|link| link.me()).as_ref().map(standing),
     }];
     if let Some(link) = &link {
         let refreshed = link.refresh().await;
         let (table, presence) = link.members();
         let mut asks = Vec::new();
-        for member in table.members().filter(|member| member.name != here) {
+        for member in table
+            .members()
+            .filter(|member| member.name != here && crate::admission::reaches(node, &table, &member.name))
+        {
             let seen = presence.iter().find(|presence| presence.name == member.name).cloned();
             let device = !member.kind.is_machine();
             let (online, since) =
                 seen.as_ref().map(|presence| (Some(presence.online), presence.since)).unwrap_or((None, None));
             let online = if refreshed.is_ok() { online } else { None };
-            let (link, name) = (link.clone(), member.name.clone());
+            let (link, name, standing) = (link.clone(), member.name.clone(), Some(standing(member)));
             let unknown = refreshed.as_ref().err().cloned();
             asks.push(tokio::spawn(async move {
                 // A device is listed as such and never asked: nothing runs
@@ -688,7 +715,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                         None => "the hub did not say whether it is connected".to_string(),
                     })
                 };
-                NodeView { name, online, since, facts, revoked: None, device }
+                NodeView { name, online, since, facts, revoked: None, device, standing }
             }));
         }
         for (name, revocation) in table.revoked_members() {
@@ -703,17 +730,27 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                     at: revocation.at,
                     reason: revocation.reason.clone(),
                 }),
+                standing: None,
             });
         }
         for ask in asks {
             machines.push(ask.await.map_err(|error| Failure::new(format!("asking around: {error}")))?);
         }
     }
+    let joined = crate::admitted::fresh(node)
+        .into_iter()
+        .map(|admitted| fastctx_types::world::Joined {
+            name: admitted.name,
+            device: admitted.device,
+            noticed_at: admitted.noticed_at,
+        })
+        .collect();
     Ok(NodesReply {
         machine: here,
         world: link.as_ref().map(|link| link.membership().world.to_string()),
         link: crate::world::link_state(link.as_deref()),
         machines,
+        joined,
     })
 }
 

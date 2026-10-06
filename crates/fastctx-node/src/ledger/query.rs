@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use fastctx_net::ledger::TownId;
 use fastctx_types::TownName;
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{Record, TownSummary};
@@ -11,9 +12,10 @@ use crate::Node;
 use crate::town::read;
 
 /// A town that spans this machine already has background replication. A
-/// World-wide query discovers other towns at the hub when connected. Without
-/// that connection it returns the copies already here; Nodes reports the
-/// disconnected state. Explicit refusals and corrupt data still fail.
+/// World-wide query discovers other towns at the hub when connected, and
+/// takes those this machine can open. Without that connection it returns
+/// the copies already here; Nodes reports the disconnected state. Explicit
+/// refusals and corrupt data still fail.
 pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<TownName>, String> {
     let local = available(node, town).await?;
     if let Some(town) = town
@@ -23,18 +25,24 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
     }
     let Some(link) = node.link() else { return Ok(local.into_keys().collect()) };
     let _syncing = node.syncing.lock().await;
+    super::names::load(node, &link);
     let Some(catalog) = link.try_ledger_catalog().await? else { return Ok(local.into_keys().collect()) };
-    let mut towns = Vec::new();
-    for (name, latest) in catalog {
-        if town.is_none_or(|requested| *requested == name) {
-            let replicated = local.get(&name).is_some_and(|record| record.machines.contains(&node.machine()));
-            if !replicated && !super::take(node, &link, &name, latest, true).await? {
-                return Ok(available(node, town).await?.into_keys().collect());
-            }
-            towns.push(name);
+    // The towns kept and replicated here already, by their ids.
+    let replicated: Vec<TownId> = local
+        .iter()
+        .filter(|(_, record)| record.machines.contains(&node.machine()))
+        .filter_map(|(name, _)| super::names::town_id(node, name))
+        .collect();
+    let wanted = town.and_then(|town| super::names::town_id(node, town));
+    for (id, latest) in catalog {
+        if id == TownId::world() || replicated.contains(&id) || wanted.as_ref().is_some_and(|wanted| *wanted != id) {
+            continue;
+        }
+        if !super::take(node, &link, &id, latest, true).await? {
+            break;
         }
     }
-    Ok(towns)
+    Ok(available(node, town).await?.into_keys().collect())
 }
 
 pub(crate) async fn available(node: &Node, town: Option<&TownName>) -> Result<BTreeMap<TownName, Record>, String> {

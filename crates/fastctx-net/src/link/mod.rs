@@ -14,7 +14,7 @@
 mod answering;
 mod calls;
 mod changes;
-mod ledger_query;
+mod ledger;
 mod letters;
 mod outgoing;
 mod session;
@@ -29,13 +29,14 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use fastctx_types::MachineName;
 use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
-use fastctx_types::{MachineName, TownName};
 use jiff::Timestamp;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::code::Code;
 use crate::data::Stream;
+use crate::ledger::TownId;
 use crate::message::LetterId;
 use crate::scope::{Grant, Scope};
 use crate::seal::SealKey;
@@ -65,9 +66,9 @@ pub trait Node: Send + Sync + 'static {
     /// with the same id, as it may once more when this machine stops before
     /// it records having taken it.
     fn letter(&self, from: MachineName, id: LetterId, letter: Letter) -> BoxFuture<io::Result<Result<(), String>>>;
-    /// The ledger of `town`, or of every town when `None`, may have entries
+    /// The ledger of `town`, or of every town when `None`, may have items
     /// this machine does not have yet.
-    fn ledger_changed(&self, town: Option<TownName>);
+    fn ledger_changed(&self, town: Option<TownId>);
     /// The members, their scopes or who holds management rights may have
     /// changed: the link has just asked the hub.
     fn members_changed(&self) {}
@@ -293,97 +294,6 @@ impl Link {
     /// Asks the hub who the members are now.
     pub async fn refresh(&self) -> Result<(), String> {
         self.inner.refresh().await
-    }
-
-    /// Writes an entry into its town's ledger at the hub, signed as this
-    /// machine. Returns its number there.
-    pub async fn ledger_write(&self, entry: &crate::ledger::Entry) -> Result<u64, String> {
-        let signed = crate::ledger::sign(&self.inner.key, entry);
-        match self.inner.ask(Question::LedgerWrite { entry: signed }).await? {
-            Told::Written { seq } => Ok(seq),
-            _ => Err("the hub answered something else".to_string()),
-        }
-    }
-
-    /// The towns this machine spans, with the number of each one's latest
-    /// entry at the hub.
-    pub async fn ledger_towns(&self) -> Result<Vec<(TownName, u64)>, String> {
-        match self.inner.ask(Question::LedgerTowns).await? {
-            Told::Towns { towns } => Ok(towns),
-            _ => Err("the hub answered something else".to_string()),
-        }
-    }
-
-    /// The entries of `town` after `after`, as signed by their authors, and
-    /// whether more follow. Each is checked against the members; one that
-    /// does not check out is an error, since what follows it cannot be
-    /// taken in order.
-    pub async fn ledger_read(
-        &self,
-        town: &TownName,
-        after: u64,
-    ) -> Result<(Vec<(u64, crate::ledger::Entry, Signed)>, bool), String> {
-        self.read_ledger(town, Question::LedgerRead { town: town.clone(), after }).await
-    }
-
-    /// The complete project directory, without subscribing to its ledgers.
-    pub async fn ledger_catalog(&self) -> Result<Vec<(TownName, u64)>, String> {
-        match self.inner.ask(Question::LedgerCatalog).await? {
-            Told::Towns { towns } => Ok(towns),
-            _ => Err("the hub answered something other than the project directory".to_string()),
-        }
-    }
-
-    /// Reads a town for an explicit user query, checking the same signatures
-    /// as replication. Membership in the town is not a read boundary.
-    pub async fn ledger_query(
-        &self,
-        town: &TownName,
-        after: u64,
-    ) -> Result<(Vec<(u64, crate::ledger::Entry, Signed)>, bool), String> {
-        self.read_ledger(town, Question::LedgerQuery { town: town.clone(), after }).await
-    }
-
-    async fn read_ledger(
-        &self,
-        town: &TownName,
-        question: Question,
-    ) -> Result<(Vec<(u64, crate::ledger::Entry, Signed)>, bool), String> {
-        let answer = self.inner.ask(question).await?;
-        self.read_ledger_answer(town, answer).await
-    }
-
-    async fn read_ledger_answer(
-        &self,
-        town: &TownName,
-        answer: Told,
-    ) -> Result<(Vec<(u64, crate::ledger::Entry, Signed)>, bool), String> {
-        let (entries, more) = match answer {
-            Told::Entries { entries, more } => (entries, more),
-            _ => return Err("the hub answered something else".to_string()),
-        };
-        let mut table = self.inner.members().table.clone();
-        // An entry by a machine that joined after the members were last
-        // asked for: ask again, as for a call from it.
-        let unknown = entries.iter().any(|(_, signed)| {
-            signed
-                .claim::<crate::ledger::Entry>()
-                .is_ok_and(|entry| table.get(&entry.author).is_none() && table.revoked(&entry.author).is_none())
-        });
-        if unknown {
-            self.inner.refresh().await?;
-            table = self.inner.members().table.clone();
-        }
-        let mut read = Vec::new();
-        for (seq, signed) in entries {
-            let entry = crate::ledger::open(&signed, &self.inner.membership.world, &table)
-                .map_err(|error| format!("entry {seq} of {town}: {error}"))?;
-            if entry.town != *town {
-                return Err(format!("entry {seq} of {town} is for the town {}", entry.town));
-            }
-            read.push((seq, entry, signed));
-        }
-        Ok((read, more))
     }
 
     /// Signs `statement` as this machine, in `domain`.

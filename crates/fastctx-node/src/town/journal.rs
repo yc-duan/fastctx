@@ -284,7 +284,7 @@ fn pack(
             machines: None,
             files: files.iter().map(|(path, bytes)| File { path: path.clone(), bytes: Bytes(bytes.clone()) }).collect(),
         };
-        match ledger::fits(&entry) {
+        match crate::ledger::fits(node, town, &entry) {
             Ok(_) => return Ok((files, stamp)),
             Err(over) => {
                 let largest = staged

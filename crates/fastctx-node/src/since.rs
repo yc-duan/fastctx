@@ -84,7 +84,10 @@ pub async fn query(node: &Arc<Node>, since: Timestamp, town: Option<TownName>) -
     if let Some(link) = node.link() {
         let refreshed = link.refresh().await;
         let (table, presence) = link.members();
-        for member in table.machines().filter(|member| asks_for(&member.name)) {
+        for member in table
+            .machines()
+            .filter(|member| asks_for(&member.name) && crate::admission::reaches(node, &table, &member.name))
+        {
             let name = member.name.clone();
             let seen = presence.iter().find(|seen| seen.name == name);
             if refreshed.is_ok()

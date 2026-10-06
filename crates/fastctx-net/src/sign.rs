@@ -199,6 +199,16 @@ impl<'de> Deserialize<'de> for PublicKey {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Signature([u8; 64]);
 
+impl Signature {
+    pub fn to_bytes(&self) -> [u8; 64] {
+        self.0
+    }
+
+    pub fn from_bytes(bytes: [u8; 64]) -> Self {
+        Self(bytes)
+    }
+}
+
 impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Signature({})", URL_SAFE_NO_PAD.encode(self.0))
@@ -261,7 +271,7 @@ impl Signed {
 }
 
 /// Bytes carried in JSON as unpadded URL-safe base64.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bytes(pub Vec<u8>);
 
 impl fmt::Debug for Bytes {

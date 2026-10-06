@@ -1,4 +1,6 @@
-//! Explicit World queries do not change which towns a machine replicates.
+//! Explicit World queries do not change which towns a member replicates.
+//! Any member may read any town's items: what is sealed for others it
+//! cannot open.
 
 use fastctx_net::wire::{Question, Told};
 use fastctx_types::MachineName;
@@ -7,10 +9,7 @@ use crate::Hub;
 
 pub(crate) fn answer(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String> {
     let store = hub.store();
-    let member = store.table().get(name).ok_or_else(|| format!("{name} is not a member"))?;
-    if !member.kind.is_machine() {
-        return Err(format!("{name} is a device; a machine queries the World's ledgers for it"));
-    }
+    store.table().get(name).ok_or_else(|| format!("{name} is not a member"))?;
     let ledgers = hub.ledgers.lock().expect("never poisoned");
     match question {
         Question::LedgerCatalog => Ok(Told::Towns {
