@@ -588,3 +588,71 @@
     justify-self: center;
   }
 }
+
+/* A scope, set part by part: each part everything, or only the things
+   chosen; what it adds up to said beneath. With management rights the
+   parts do not apply, and step back. */
+.grant-sheet .sheet-body {
+  width: min(640px, 100vw - 32px);
+}
+
+.scope-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.scope-parts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  transition: opacity var(--hover) ease;
+}
+
+.scope-editor.managing .scope-parts {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.scope-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.scope-switch input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.scope-switch strong {
+  display: block;
+  font-weight: inherit;
+}
+
+.scope-said {
+  margin: 0;
+  color: var(--text-2);
+}
+
+/* The invitation's own choices under a ready one, and what it amounts to. */
+.invite-detail {
+  margin-top: var(--space-2);
+}
+
+.invite-custom {
+  margin-top: var(--space-3);
+}
+
+.invite-says {
+  margin: var(--space-2) 0 0;
+  color: var(--text-2);
+}
+
+.invitation.invitation-wide {
+  grid-template-columns: minmax(0, 1fr);
+}

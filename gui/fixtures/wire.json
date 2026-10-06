@@ -4888,7 +4888,19 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            }
           },
           {
             "name": "lab",
@@ -4907,7 +4919,29 @@
               }
             },
             "revoked": null,
-            "device": true
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            }
           },
           {
             "name": "laptop",
@@ -4949,7 +4983,19 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            }
           },
           {
             "name": "lab",
@@ -4968,7 +5014,29 @@
               }
             },
             "revoked": null,
-            "device": true
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            }
           },
           {
             "name": "laptop",
@@ -4982,6 +5050,13 @@
               "at": "2026-10-04T12:06:07Z",
               "reason": "retired"
             }
+          }
+        ],
+        "joined": [
+          {
+            "name": "lab",
+            "device": true,
+            "noticed_at": "2026-10-04T12:06:07Z"
           }
         ]
       },
@@ -5010,7 +5085,19 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            }
           },
           {
             "name": "lab",
@@ -5029,7 +5116,29 @@
               }
             },
             "revoked": null,
-            "device": true
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            }
           },
           {
             "name": "laptop",
@@ -5070,7 +5179,19 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            }
           },
           {
             "name": "lab",
@@ -5089,7 +5210,29 @@
               }
             },
             "revoked": null,
-            "device": true
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            }
           },
           {
             "name": "laptop",
@@ -5134,7 +5277,19 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            }
           },
           {
             "name": "lab",
@@ -5153,7 +5308,29 @@
               }
             },
             "revoked": null,
-            "device": true
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            }
           },
           {
             "name": "laptop",
@@ -5199,7 +5376,19 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            }
           },
           {
             "name": "lab",
@@ -5218,7 +5407,29 @@
               }
             },
             "revoked": null,
-            "device": true
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            }
           },
           {
             "name": "laptop",
@@ -5264,7 +5475,19 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            }
           },
           {
             "name": "lab",
@@ -5283,7 +5506,29 @@
               }
             },
             "revoked": null,
-            "device": true
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            }
           },
           {
             "name": "laptop",
@@ -5328,7 +5573,19 @@
                 "version": "fixture-version"
               }
             },
-            "revoked": null
+            "revoked": null,
+            "standing": {
+              "scope": {
+                "machines": "all",
+                "agents": "all",
+                "projects": "all",
+                "actions": "all",
+                "invite": true
+              },
+              "manage": true,
+              "invited_by": null,
+              "sealing": true
+            }
           },
           {
             "name": "lab",
@@ -5347,7 +5604,29 @@
               }
             },
             "revoked": null,
-            "device": true
+            "device": true,
+            "standing": {
+              "scope": {
+                "machines": [
+                  "desktop"
+                ],
+                "agents": [
+                  "codex"
+                ],
+                "projects": [
+                  "garden",
+                  "t-0123456789abcdef"
+                ],
+                "actions": [
+                  "w",
+                  "talk"
+                ],
+                "invite": false
+              },
+              "invited_by": "desktop",
+              "delegated": true,
+              "sealing": false
+            }
           },
           {
             "name": "laptop",

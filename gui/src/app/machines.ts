@@ -1,9 +1,13 @@
-// The machines of the World: each one's system, whether it is online and
-// since when, who is on it and what runs there, and the agents its own
-// programs say it has: installed or not, which version, logged in or not,
-// and whether the sessions the user opens there have the World's tools.
-// On this machine those tools can be put in or taken out here. A machine
-// named in the address is brought into view and marked.
+// The machines of the World: the hub they reach, each one's system, whether
+// it is online and since when, where it stands (management rights, who
+// brought it in, what it may use), who is on it and what runs there, and the
+// agents its own programs say it has: installed or not, which version,
+// logged in or not, and whether the sessions the user opens there have the
+// World's tools. On this machine those tools can be put in or taken out
+// here; from a machine with management rights, what a member may use is set
+// here. A member that just came in with this machine's invitation is said
+// first, with the one button that revokes it. A machine named in the address
+// is brought into view and marked.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -11,13 +15,15 @@ import { redrawKeepingFocus } from "./focus";
 import { osName } from "../home/frontispiece";
 import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
-import type { Node } from "../world/world";
+import type { Node, Scope } from "../world/world";
 import type { Devices } from "./devices";
+import { GrantSheet } from "./grant";
+import { standingLine } from "./scope";
 import { talkLink } from "./places";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { jobsOf, residentsOf, type Store } from "./store";
-import type { DeviceWords, MachinesWords } from "./words";
+import type { DeviceWords, MachinesWords, ScopeWords } from "./words";
 import { agentName, titleOf } from "../world/names";
 
 export interface MachinesOptions {
@@ -25,6 +31,13 @@ export interface MachinesOptions {
   words: MachinesWords;
   devices: Devices;
   deviceWords: DeviceWords;
+  scopeWords: ScopeWords;
+  /** Whether this machine holds management rights. */
+  manages(): boolean;
+  /** Sets what a member may use, and whether it manages. */
+  grant(member: string, scope: Scope, manage: boolean): Promise<void>;
+  /** The user has been shown that a member came in. */
+  seen(member: string): Promise<void>;
   head(title: string, actions?: string): string;
   /** The machine to bring into view, when one was named. */
   focus: string | null;
@@ -54,8 +67,10 @@ export class MachinesPage implements Page {
   private asking = false;
   private shape = "";
   private note: { machine: string; text: string } | null = null;
+  private readonly granting: GrantSheet;
 
   constructor(private readonly options: MachinesOptions) {
+    this.granting = new GrantSheet(options.words, options.scopeWords, options.deviceWords);
     this.title = options.focus ?? options.words.title;
     this.element = document.createElement("div");
     this.element.className = "machines-page";
@@ -65,12 +80,26 @@ export class MachinesPage implements Page {
         `<button class="text-button invite" type="button">${glyph("plus", 16)}<span>${escape(options.deviceWords.invite)}</span></button>`,
       )}
       <div class="machines-list scroller"></div>`;
+    // Only a member that may invite is offered to.
+    effect(() => {
+      const world = options.store.world.get();
+      const me = world?.nodes.machines.find((node) => node.name === world.here);
+      const invites = !me?.device && (!me?.standing || me.standing.manage === true || me.standing.scope.invite);
+      this.element.querySelector<HTMLElement>(".invite")!.hidden = !invites;
+    });
     this.list = this.element.querySelector<HTMLElement>(".machines-list")!;
     this.element.querySelector(".invite")!.addEventListener("click", () => options.devices.invite());
     this.list.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-revoke], [data-leave], [data-apply], [data-consent]");
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+        "[data-revoke], [data-leave], [data-apply], [data-consent], [data-scope], [data-seen], [data-not-me]",
+      );
       if (!button || button.disabled) return;
-      if (button.dataset.consent) void this.consent(button, button.dataset.consent === "allow");
+      if (button.dataset.scope) this.scope(button.dataset.scope);
+      else if (button.dataset.seen) void this.seen(button, button.dataset.seen);
+      else if (button.dataset.notMe) {
+        const name = button.dataset.notMe;
+        options.devices.revoke(name, options.words.notMeWhat(name), () => void options.seen(name).catch(() => {}));
+      } else if (button.dataset.consent) void this.consent(button, button.dataset.consent === "allow");
       else if (button.dataset.apply) void this.apply(button, button.dataset.apply as "codex" | "claude", button.dataset.into === "1");
       else if (button.dataset.revoke) options.devices.revoke(button.dataset.revoke);
       else options.devices.leave();
@@ -100,6 +129,33 @@ export class MachinesPage implements Page {
     }
     this.asking = false;
     this.redraw();
+  }
+
+  /** The sheet that sets what `member` may use. */
+  private scope(member: string): void {
+    const world = this.options.store.world.peek();
+    const node = world?.nodes.machines.find((n) => n.name === member);
+    if (!world || !node?.standing) return;
+    this.granting.open(
+      member,
+      node.standing,
+      {
+        machines: world.nodes.machines.filter((n) => !n.device && !n.revoked).map((n) => n.name),
+        projects: world.towns.map((t) => t.town),
+        invite: true,
+      },
+      (scope, manage) => this.options.grant(member, scope, manage),
+      () => void this.options.store.refresh(),
+    );
+  }
+
+  private async seen(button: HTMLButtonElement, member: string): Promise<void> {
+    button.disabled = true;
+    try {
+      await this.options.seen(member);
+    } finally {
+      void this.options.store.refresh();
+    }
   }
 
   private redraw(): void {
@@ -141,7 +197,7 @@ export class MachinesPage implements Page {
       this.shape = shape;
       void this.ask();
     }
-    const html = `<ol class="machine-entries">${world.nodes.machines.map((node) => this.machine(node, world, now)).join("")}</ol>`;
+    const html = `${this.top(world, now)}<ol class="machine-entries">${world.nodes.machines.map((node) => this.machine(node, world, now)).join("")}</ol>`;
     if (html !== this.drawn) {
       this.drawn = html;
       redrawKeepingFocus(this.list, () => {
@@ -152,6 +208,37 @@ export class MachinesPage implements Page {
       this.focused = true;
       this.list.querySelector<HTMLElement>(`[data-machine="${CSS.escape(this.options.focus)}"]`)?.scrollIntoView({ block: "center" });
     }
+  }
+
+  /** The hub every machine reaches, and the members that just came in with
+   *  this machine's invitations. */
+  private top(world: WorldNow, now: Date): string {
+    const { words } = this.options;
+    const link = world.nodes.link;
+    const hub = link.kind === "online" ? `<p class="machines-hub">${escape(words.hub(link.hub))}</p>` : "";
+    const joined = (world.nodes.joined ?? [])
+      .map(
+        (member) => `<li class="joined-line" data-joined="${escape(member.name)}">
+          <span class="joined-text">${escape(words.joined(member.name, member.device === true, this.options.when(new Date(member.noticed_at), now)))}</span>
+          <span class="joined-acts"><button class="text-button quiet-button" type="button" data-seen="${escape(member.name)}">${escape(words.gotIt)}</button><button class="text-button quiet-button danger" type="button" data-not-me="${escape(member.name)}">${escape(words.notMe)}</button></span>
+        </li>`,
+      )
+      .join("");
+    return `${hub}${joined ? `<ul class="joined-lines" aria-live="polite">${joined}</ul>` : ""}`;
+  }
+
+  /** Where a member stands: its rights, who brought it in, what it may use. */
+  private standing(node: Node): string {
+    const { words, scopeWords } = this.options;
+    const standing = node.standing;
+    if (!standing || node.revoked) return "";
+    const from = standing.invited_by
+      ? standing.delegated
+        ? words.branch(standing.invited_by)
+        : words.invitedBy(standing.invited_by)
+      : words.founder;
+    const sealing = standing.sealing ? "" : `<p class="machine-standing caution">${escape(words.noSealing)}</p>`;
+    return `<p class="machine-standing">${standing.manage ? `<span class="tag tag-manage">${escape(words.manages)}</span>` : ""}<span>${escape(standingLine(standing, scopeWords))}</span><span class="sep">·</span><span class="standing-from">${escape(from)}</span></p>${sealing}`;
   }
 
   private machine(node: Node, world: WorldNow, now: Date): string {
@@ -185,6 +272,7 @@ export class MachinesPage implements Page {
     return `<li class="machine-entry ${kind}${focus}" data-machine="${escape(node.name)}">
       <div class="machine-line"><span class="dot" aria-hidden="true"></span><h2 class="machine-title">${escape(node.name)}</h2>${node.name === world.here ? `<span class="tag">${escape(words.here)}</span>` : ""}${node.device ? `<span class="tag">${escape(words.phone)}</span>` : ""}<span class="machine-state">${escape(state)}</span></div>
       ${describe ? `<p class="machine-facts">${describe}</p>` : ""}
+      ${this.standing(node)}
       ${facts ? `<p class="machine-home"><span>${escape(words.home)}</span><code>${escape(facts.home)}</code></p>` : ""}
       ${
         node.device
@@ -202,16 +290,25 @@ export class MachinesPage implements Page {
       }
       ${jobs.length ? `<p class="machine-jobs">${escape(words.jobs(jobs.length))}</p>` : ""}
       ${node.online === true && !node.revoked && !node.device ? this.hosts(node.name, node.name === world.here) : ""}
-      ${
-        node.revoked || !world.nodes.world
-          ? ""
-          : `<div class="machine-acts">${
-              node.name === world.here
-                ? `<button class="text-button quiet-button" type="button" data-leave="1">${escape(this.options.deviceWords.leave)}</button>`
-                : `<button class="text-button quiet-button" type="button" data-revoke="${escape(node.name)}">${escape(this.options.deviceWords.revoke)}</button>`
-            }</div>`
-      }
+      ${node.revoked || !world.nodes.world ? "" : this.acts(node, world)}
     </li>`;
+  }
+
+  /** What this machine may do to a member: set its scope, with management
+   *  rights; revoke it, with them or when it is this machine's own branch;
+   *  leave, when it is this machine. Nothing it may not do is offered. */
+  private acts(node: Node, world: WorldNow): string {
+    const words = this.options.deviceWords;
+    const manages = this.options.manages();
+    const button = (attribute: string, value: string, label: string) =>
+      `<button class="text-button quiet-button" type="button" ${attribute}="${escape(value)}">${escape(label)}</button>`;
+    const acts: string[] = [];
+    if (manages && node.standing) acts.push(button("data-scope", node.name, this.options.words.changeScope));
+    if (node.name === world.here) acts.push(button("data-leave", "1", words.leave));
+    else if (manages || (node.standing?.delegated && node.standing.invited_by === world.here)) {
+      acts.push(button("data-revoke", node.name, words.revoke));
+    }
+    return acts.length ? `<div class="machine-acts">${acts.join("")}</div>` : "";
   }
 
   /** The agents on a machine as its own programs say them. */

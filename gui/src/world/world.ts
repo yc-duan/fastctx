@@ -128,6 +128,9 @@ export interface NodesReply {
   world: string | null;
   link: LinkState;
   machines: Node[];
+  /** Members that came in with this machine's invitations, not yet shown
+   *  to the user. */
+  joined?: Joined[];
 }
 
 export interface Node {
@@ -138,6 +141,45 @@ export interface Node {
   revoked: Revoked | null;
   /** A phone or another device: nothing runs on it, and it is not asked. */
   device?: boolean;
+  /** What it may do; absent when it is revoked or the World is one machine. */
+  standing?: Standing | null;
+}
+
+/** Everything, or only these (`fastctx_types::scope::Set`). */
+export type ScopeSet<T> = "all" | T[];
+
+/** What a member does on a machine, named after the hand that does it. */
+export type ScopeAction = "run" | "write" | "copy" | "ask_colleague" | "w" | "talk" | "read" | "consent" | "page";
+
+export const scopeActions: ScopeAction[] = ["talk", "w", "read", "run", "write", "copy", "ask_colleague", "page", "consent"];
+
+/** What one member may use and do (`fastctx_types::scope::Scope`), projects
+ *  by their short names; one this machine cannot name, by its id. */
+export interface Scope {
+  machines: ScopeSet<MachineName>;
+  agents: ScopeSet<AgentName>;
+  projects: ScopeSet<string>;
+  actions: ScopeSet<ScopeAction>;
+  invite: boolean;
+}
+
+/** Where a member stands (`fastctx_types::world::Standing`). */
+export interface Standing {
+  scope: Scope;
+  manage?: boolean;
+  /** Who invited it; null for the machine that founded the World. */
+  invited_by: MachineName | null;
+  /** The branch of an inviter without management rights. */
+  delegated?: boolean;
+  /** Whether it has a key others can seal to yet. */
+  sealing: boolean;
+}
+
+/** A member that came in with this machine's invitation. */
+export interface Joined {
+  name: MachineName;
+  device?: boolean;
+  noticed_at: Timestamp;
 }
 
 export interface Revoked {

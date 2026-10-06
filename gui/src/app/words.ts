@@ -487,6 +487,22 @@ export interface MachinesWords {
   unattendedNo: string;
   allow: string;
   withdraw: string;
+  /** The hub every machine reaches, by its address. */
+  hub(address: string): string;
+  manages: string;
+  founder: string;
+  invitedBy(name: string): string;
+  /** Brought in by a member without management rights: its branch. */
+  branch(name: string): string;
+  noSealing: string;
+  changeScope: string;
+  scopeTitle(name: string): string;
+  scopeGo: string;
+  /** A member came in with this machine's invitation. */
+  joined(name: string, device: boolean, at: string): string;
+  notMe: string;
+  gotIt: string;
+  notMeWhat(name: string): string;
 }
 
 export const zhMachines: MachinesWords = {
@@ -511,6 +527,19 @@ export const zhMachines: MachinesWords = {
   unattendedNo: "还没许可它不经审批干活，世界请不来它",
   allow: "许可…",
   withdraw: "撤回",
+  hub: (address) => `中枢在 ${address}`,
+  manages: "管理",
+  founder: "建世界的那台",
+  invitedBy: (name) => `${name} 邀请进来的`,
+  branch: (name) => `${name} 转授进来的，随它`,
+  noSealing: "还没有加密钥匙：它换到新版之前，什么都锁不给它",
+  changeScope: "范围…",
+  scopeTitle: (name) => `${name} 能用什么`,
+  scopeGo: "就这样",
+  joined: (name, device, at) => `${device ? "手机" : "机器"} ${name} 用你发的邀请进来了，${at}`,
+  notMe: "不是我",
+  gotIt: "知道了",
+  notMeWhat: (name) => `${name} 不是你请进来的：吊销它，每台机器从此不再认它，它也再不能回来，除非重新邀请。`,
   title: "机器",
   here: "这台",
   online: (since) => `在线，${since}起`,
@@ -547,6 +576,19 @@ export const enMachines: MachinesWords = {
   unattendedNo: "not yet allowed to work without asking; the World cannot bring it in",
   allow: "Allow…",
   withdraw: "Withdraw",
+  hub: (address) => `The hub is at ${address}`,
+  manages: "manages",
+  founder: "founded the World",
+  invitedBy: (name) => `invited by ${name}`,
+  branch: (name) => `in ${name}'s branch, and stands with it`,
+  noSealing: "no sealing key yet: nothing can be sealed to it until it runs the new version",
+  changeScope: "Scope…",
+  scopeTitle: (name) => `What ${name} may use`,
+  scopeGo: "Set it",
+  joined: (name, device, at) => `${device ? "The phone" : "The machine"} ${name} came in with your invitation, ${at}`,
+  notMe: "That wasn't me",
+  gotIt: "Got it",
+  notMeWhat: (name) => `${name} was not brought in by you: revoke it, and no machine trusts it again; it cannot come back unless invited anew.`,
   title: "Machines",
   here: "this one",
   online: (since) => `online since ${since}`,
@@ -923,9 +965,24 @@ export interface DeviceWords {
   inviteTitle: string;
   inviteWhat: string;
   aComputer: string;
+  aServer: string;
   aPhone: string;
   computerHint: string;
+  serverHint: string;
   phoneHint: string;
+  /** What the new member may use. */
+  scope: string;
+  presetAll: string;
+  presetSelf: string;
+  presetOneAgent: string;
+  presetSome: string;
+  presetCustom: string;
+  /** What a preset lets it do, said before the code is made. */
+  presetSays(said: string): string;
+  selfNeedsName: string;
+  oneAgentOn: string;
+  serverSteps: string[];
+  serverCommand: string;
   phoneSteps: string[];
   inviteName: string;
   inviteNameHint: string;
@@ -958,13 +1015,30 @@ export interface DeviceWords {
 }
 
 export const zhDevices: DeviceWords = {
-  invite: "邀请一台设备",
-  inviteTitle: "邀请一台设备",
+  invite: "邀请",
+  inviteTitle: "邀请一台电脑、服务器或手机",
   inviteWhat: "它是",
   aComputer: "一台电脑",
+  aServer: "一台服务器",
   aPhone: "一部手机",
   computerHint: "智能体可以住在它上面，世界会在它上面干活。",
+  serverHint: "智能体可以住在它上面；给它一个邀请码，在它的终端里加入。",
   phoneHint: "它带着你的身份进来，只用来看和说话，上面不跑任何东西。",
+  scope: "它能用什么",
+  presetAll: "全部",
+  presetSelf: "只用它自己",
+  presetOneAgent: "只用一个智能体",
+  presetSome: "只用某几台机器",
+  presetCustom: "自定义",
+  presetSays: (said) => `进来以后能用的：${said}。别的它看不到。`,
+  selfNeedsName: "「只用它自己」要先给它起个名字。",
+  oneAgentOn: "用哪一个",
+  serverSteps: [
+    "在服务器上装好 fastctx（它的发布页上有各平台的程序）；",
+    "在它的终端里运行下面这一行，它就加入了；",
+    "按它的提示用 sudo 装上开机服务，之后它就一直连着。",
+  ],
+  serverCommand: "在服务器上运行",
   inviteName: "它叫什么",
   inviteNameHint: "小写字母、数字与连字符；不写就由它自己起名",
   valid: "多久内有效",
@@ -1005,13 +1079,30 @@ export const zhDevices: DeviceWords = {
 };
 
 export const enDevices: DeviceWords = {
-  invite: "Invite a device",
-  inviteTitle: "Invite a device",
+  invite: "Invite",
+  inviteTitle: "Invite a computer, server or phone",
   inviteWhat: "It is",
   aComputer: "A computer",
+  aServer: "A server",
   aPhone: "A phone",
   computerHint: "Agents can live on it, and the World works on it.",
+  serverHint: "Agents can live on it; give it a code, and it joins from its terminal.",
   phoneHint: "It comes in as you, to look and speak; nothing runs on it.",
+  scope: "What it may use",
+  presetAll: "Everything",
+  presetSelf: "Only itself",
+  presetOneAgent: "One agent",
+  presetSome: "Some machines",
+  presetCustom: "Choose",
+  presetSays: (said) => `Once in, it may use: ${said}. It sees nothing else.`,
+  selfNeedsName: "Give it a name first, to let it use only itself.",
+  oneAgentOn: "Which one",
+  serverSteps: [
+    "Install fastctx on the server (its release page has a program for each platform);",
+    "run this line in its terminal, and it joins;",
+    "install the service with sudo as it asks, and it stays connected.",
+  ],
+  serverCommand: "On the server, run",
   inviteName: "Its name",
   inviteNameHint: "lowercase letters, digits and hyphens; left empty, it names itself",
   valid: "Valid for",
@@ -1049,6 +1140,111 @@ export const enDevices: DeviceWords = {
   close: "Close",
   failed: (why) => `It did not go through: ${why}`,
   specimen: "This is a specimen, not connected to the World",
+};
+
+export interface ScopeWords {
+  machines: string;
+  agents: string;
+  projects: string;
+  actions: string;
+  allMachines: string;
+  allAgents: string;
+  allProjects: string;
+  allActions: string;
+  noMachines: string;
+  noAgents: string;
+  noProjects: string;
+  noActions: string;
+  projectsOnly(names: string): string;
+  /** Everything, said once. */
+  everything: string;
+  /** Where it may work: which machines, which agents there; `null` for all. */
+  where(machines: string | null, agents: string | null): string;
+  action: Record<import("../world/world").ScopeAction, string>;
+  and: string;
+  sep: string;
+  canInvite: string;
+  manages: string;
+  manage: string;
+  manageHint: string;
+  invite: string;
+  inviteHint: string;
+}
+
+export const zhScope: ScopeWords = {
+  machines: "能用哪几台机器",
+  agents: "能用哪家智能体",
+  projects: "能用哪些项目",
+  actions: "能做哪些事",
+  allMachines: "全部机器",
+  allAgents: "全部智能体",
+  allProjects: "全部项目",
+  allActions: "什么都能做",
+  noMachines: "一台机器都不能用",
+  noAgents: "哪家智能体都不能用",
+  noProjects: "没有项目",
+  noActions: "什么都不能做",
+  projectsOnly: (names) => `项目 ${names}`,
+  everything: "什么都能用",
+  where: (machines, agents) =>
+    machines && agents ? `只用 ${machines} 上的 ${agents}` : machines ? `只用 ${machines}` : agents ? `全部机器上的 ${agents}` : "全部机器",
+  action: {
+    talk: "说话与看着",
+    w: "看谁在、发生了什么",
+    read: "读文件",
+    run: "跑命令",
+    write: "改文件",
+    copy: "搬文件",
+    ask_colleague: "请同事",
+    page: "替页面做事",
+    consent: "许可 Claude 不经审批",
+  },
+  and: "、",
+  sep: " · ",
+  canInvite: "能邀请别人",
+  manages: "什么都能用，也能邀请、吊销、改别人的范围",
+  manage: "握管理权",
+  manageHint: "能邀请任意范围的成员、吊销任何成员、改任何成员的范围。只给最信得过的电脑。",
+  invite: "能邀请别人",
+  inviteHint: "它能在自己的范围里邀请设备或机器进来；它邀请进来的不能再邀请。",
+};
+
+export const enScope: ScopeWords = {
+  machines: "Machines it may use",
+  agents: "Agents it may use",
+  projects: "Projects it may use",
+  actions: "What it may do",
+  allMachines: "every machine",
+  allAgents: "every agent",
+  allProjects: "every project",
+  allActions: "anything",
+  noMachines: "no machine",
+  noAgents: "no agent",
+  noProjects: "no project",
+  noActions: "nothing",
+  projectsOnly: (names) => `the project${names.includes(", ") ? "s" : ""} ${names}`,
+  everything: "anything",
+  where: (machines, agents) =>
+    machines && agents ? `only ${agents} on ${machines}` : machines ? `only ${machines}` : agents ? `${agents} on every machine` : "every machine",
+  action: {
+    talk: "talk and watch",
+    w: "see who is here and what happened",
+    read: "read files",
+    run: "run commands",
+    write: "change files",
+    copy: "copy files",
+    ask_colleague: "ask colleagues",
+    page: "act for pages",
+    consent: "let Claude work without asking",
+  },
+  and: ", ",
+  sep: " · ",
+  canInvite: "may invite",
+  manages: "may use anything, and invite, revoke and set others' scopes",
+  manage: "Holds management rights",
+  manageHint: "May invite members with any scope, revoke any member and set any member's scope. Give it only to the computers you trust most.",
+  invite: "May invite",
+  inviteHint: "It may bring in devices or machines within its own scope; those it brings in may not invite.",
 };
 
 export interface PaletteWords {

@@ -2,7 +2,7 @@
 // would answer on a desktop one morning, and what happened overnight.
 
 import type { Address } from "../world/events";
-import type { About, Action, MachineFacts, ProjectRecord, ResidentNow } from "../world/world";
+import type { About, Action, MachineFacts, ProjectRecord, ResidentNow, Scope } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
@@ -61,16 +61,24 @@ function record(name: string, what: string, machines: string[]): ProjectRecord {
   return { version: 1, name, what, machines, places: [], canon: null, by: { kind: "user" }, on: "desktop", at: at("00:00:00") };
 }
 
+const everything: Scope = { machines: "all", agents: "all", projects: "all", actions: "all", invite: false };
+
 export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date } {
   const world: WorldState = {
     here: "desktop",
     nodes: [
-      { name: "desktop", online: true, since: at("01:10:00"), facts: { Ok: facts("desktop", "windows", "C:/Users/me") }, revoked: null },
-      { name: "laptop", online: true, since: at("02:04:00"), facts: { Ok: facts("laptop", "windows", "C:/Users/lenovo") }, revoked: null },
-      { name: "lab", online: true, since: at("00:00:00"), facts: { Ok: facts("lab", "linux", "/home/lenovo") }, revoked: null },
-      { name: "hangzhou", online: true, since: at("00:00:00"), facts: { Ok: facts("hangzhou", "linux", "/root") }, revoked: null },
-      { name: "studio", online: false, since: at("12:52:00"), facts: { Err: "offline" }, revoked: null },
-      { name: "pixel", online: true, since: at("13:20:00"), facts: { Err: "a device" }, revoked: null, device: true },
+      { name: "desktop", online: true, since: at("01:10:00"), facts: { Ok: facts("desktop", "windows", "C:/Users/me") }, revoked: null,
+        standing: { scope: everything, manage: true, invited_by: "hangzhou", sealing: true } },
+      { name: "laptop", online: true, since: at("02:04:00"), facts: { Ok: facts("laptop", "windows", "C:/Users/lenovo") }, revoked: null,
+        standing: { scope: everything, manage: true, invited_by: "hangzhou", sealing: true } },
+      { name: "lab", online: true, since: at("00:00:00"), facts: { Ok: facts("lab", "linux", "/home/lenovo") }, revoked: null,
+        standing: { scope: { ...everything, machines: ["lab"] }, invited_by: "desktop", sealing: true } },
+      { name: "hangzhou", online: true, since: at("00:00:00"), facts: { Ok: facts("hangzhou", "linux", "/root") }, revoked: null,
+        standing: { scope: { ...everything, machines: ["hangzhou"] }, invited_by: null, sealing: true } },
+      { name: "studio", online: false, since: at("12:52:00"), facts: { Err: "offline" }, revoked: null,
+        standing: { scope: everything, invited_by: "laptop", sealing: false } },
+      { name: "pixel", online: true, since: at("13:20:00"), facts: { Err: "a device" }, revoked: null, device: true,
+        standing: { scope: { machines: ["lab"], agents: ["codex"], projects: "all", actions: ["talk", "w", "read", "page"], invite: false }, invited_by: "desktop", sealing: true } },
     ],
     machines: [
       {
@@ -171,6 +179,7 @@ export function specimenNow(): { world: WorldNow; now: Date; lastVisit: Date; aw
         world: "w-5be1fcee3751dc7a",
         link: { kind: "online", since: at("01:10:02"), hub: "121.40.82.28:7443", route: { kind: "card", name: "以太网 2" } },
         machines: world.nodes,
+        joined: [{ name: "pixel", device: true, noticed_at: at("13:20:00") }],
       },
       towns: world.towns,
     },

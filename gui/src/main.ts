@@ -38,6 +38,7 @@ import {
   enPresence,
   enDetails,
   enDevices,
+  enScope,
   enMachines,
   enNewTalk,
   enPalette,
@@ -50,6 +51,7 @@ import {
   zhPresence,
   zhDetails,
   zhDevices,
+  zhScope,
   zhMachines,
   zhNewTalk,
   zhPalette,
@@ -96,6 +98,7 @@ import {
   control,
   hubHere,
   offers,
+  grant,
   invite,
   joinWorld,
   placeFastctx,
@@ -125,6 +128,7 @@ import {
   since,
   project as readProject,
   revoke,
+  seen as seenJoined,
   stop,
   talk,
   unwatch,
@@ -239,14 +243,26 @@ const projectForm = new ProjectForm({
 });
 
 const deviceWords = english ? enDevices : zhDevices;
+const scopeWords = english ? enScope : zhScope;
 const notLive = () => Promise.reject(new Error(deviceWords.specimen));
+/** Whether this machine holds management rights. A World that says nothing
+ *  of standing is one from before scopes, where every machine could. */
+const manages = (): boolean => {
+  const world = store.world.peek();
+  const me = world?.nodes.machines.find((node) => node.name === world.here);
+  return !me?.standing || me.standing.manage === true;
+};
 const devices = new Devices({
   words: deviceWords,
+  scopeWords,
   // A specimen shows what a code looks like; it admits nobody.
-  invite: (name, hours, device) =>
-    live ? invite(name, hours, device) : Promise.resolve(`fxw3.${"specimen-not-a-real-invitation-".repeat(20)}${name ?? ""}${hours}`),
+  invite: (name, hours, device, scope) =>
+    live ? invite(name, hours, device, scope) : Promise.resolve(`FX4${"0SPECIMENN0TAREAL1NVITAT10N".repeat(5)}${hours}`),
   revoke: (name, reason) => (live ? revoke(name, reason) : notLive()),
   leave: () => (live ? leaveWorld() : notLive()),
+  machines: () => (store.world.peek()?.nodes.machines ?? []).filter((node) => !node.device && !node.revoked).map((node) => node.name),
+  projects: () => (store.world.peek()?.towns ?? []).map((town) => town.town),
+  manages,
   when: (at) => when(at, new Date()),
   changed: () => void store.refresh(),
 });
@@ -979,6 +995,10 @@ function show(next: Place): void {
         words: english ? enMachines : zhMachines,
         devices,
         deviceWords,
+        scopeWords,
+        manages,
+        grant: (member, scope, manage) => (live ? grant(member, scope, manage) : notLive()),
+        seen: (member) => (live ? seenJoined(member) : notLive()),
         head,
         focus: next.kind === "machine" ? next.name : null,
         when,

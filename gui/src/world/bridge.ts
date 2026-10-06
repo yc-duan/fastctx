@@ -13,7 +13,7 @@ import type { Attachment, UploadTarget } from "./attachments";
 import type { ConnectionState } from "./device";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
-import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
+import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Scope, Stamp, TownSummary, WorldWho } from "./world";
 
 export function inShell(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -216,9 +216,21 @@ export function journalAdd(name: string, journal: string, text: string, descript
 }
 
 /** An invitation for one more machine, or for a phone (`device`), valid
- *  for `hours`. */
-export function invite(name: string | null, hours: number, device = false): Promise<string> {
-  return invoke("invite", { name, hours, device });
+ *  for `hours`; what it may do until a grant says otherwise is `scope`,
+ *  everything when null. */
+export function invite(name: string | null, hours: number, device = false, scope: Scope | null = null): Promise<string> {
+  return invoke("invite", { name, hours, device, scope });
+}
+
+/** Sets what `member` may do, and whether it holds management rights. */
+export function grant(member: MachineName, scope: Scope, manage: boolean): Promise<void> {
+  return invoke("grant", { member, scope, manage });
+}
+
+/** The user has been shown that `member` came in with this machine's
+ *  invitation. */
+export function seen(member: MachineName): Promise<void> {
+  return invoke("seen", { member });
 }
 
 export function revoke(name: MachineName, reason: string): Promise<void> {

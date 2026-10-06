@@ -1,20 +1,32 @@
-// Bringing a device into the World and sending one away
-// (`world-network.md`): an invitation, a one-use code shown as text and as
-// a QR code for a phone to scan; revoking a member's key; this machine
-// leaving. Revoking and leaving cannot be taken back, so each says what it
-// does and waits for a second press before it does it.
+// Bringing a member into the World and sending one away
+// (`world-network.md`, 邀请码): an invitation for a computer, a server or a
+// phone, with what it may use once in, given as a few ready choices each said
+// in a sentence, or set part by part; a one-use code shown as text, as a QR
+// code for a phone to scan, or as the line a server runs. Revoking a member's
+// key; this machine leaving. Revoking and leaving cannot be taken back, so
+// each says what it does and waits for a second press before it does it.
 
 import qrcode from "qrcode-generator";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import type { Scope } from "../world/world";
 import { Confirm, Sheet } from "./confirm";
-import type { DeviceWords } from "./words";
+import { describe, everything, ScopeEditor } from "./scope";
+import type { DeviceWords, ScopeWords } from "./words";
 
 export interface DevicesOptions {
   words: DeviceWords;
-  invite(name: string | null, hours: number, device: boolean): Promise<string>;
+  scopeWords: ScopeWords;
+  invite(name: string | null, hours: number, device: boolean, scope: Scope): Promise<string>;
   revoke(name: string, reason: string): Promise<void>;
   leave(): Promise<void>;
+  /** The machines of the World, which a scope can name. */
+  machines(): string[];
+  /** The projects, by their short names. */
+  projects(): string[];
+  /** Whether this machine holds management rights: only then may it hand
+   *  on the right to invite. */
+  manages(): boolean;
   /** A moment as the interface says it. */
   when(at: Date): string;
   /** Something changed in the World: ask again. */
@@ -23,11 +35,23 @@ export interface DevicesOptions {
 
 const validity = [1, 24, 72];
 
+type Kind = "computer" | "server" | "phone";
+type Preset = "all" | "self" | "one-agent" | "some" | "custom";
+
+/** The ready choices for each kind of member, the first the default. */
+const presets: Record<Kind, Preset[]> = {
+  computer: ["all", "some", "custom"],
+  server: ["self", "all", "custom"],
+  phone: ["all", "one-agent", "some", "custom"],
+};
+
 /** A QR code as an SVG of dark squares on light, whatever the theme:
  *  scanners read dark on light, and the code is never drawn by a pen. */
 export function qrSvg(text: string, label: string): string {
   const code = qrcode(0, "L");
-  code.addData(text, "Byte");
+  // Upper case letters and digits fit the alphanumeric mode, which packs
+  // them densest; an invitation code is written that way on purpose.
+  code.addData(text, /^[0-9A-Z $%*+\-./:]*$/.test(text) ? "Alphanumeric" : "Byte");
   code.make();
   const count = code.getModuleCount();
   const quiet = 4;
@@ -44,23 +68,43 @@ export function qrSvg(text: string, label: string): string {
 export class Devices {
   private readonly invitation = new Sheet("device-sheet");
   private readonly confirm: Confirm;
-  private hours = 24;
-  /** Whether the invitation is for a phone rather than a computer. */
-  private device = false;
+  private hours = 1;
+  private kind: Kind = "computer";
+  private preset: Preset = "all";
+  /** The machines chosen for "some machines", and the one agent chosen. */
+  private some: string[] = [];
+  private agent = { machine: "", agent: "codex" };
+  private editor: ScopeEditor | null = null;
 
   constructor(private readonly options: DevicesOptions) {
     this.confirm = new Confirm(options.words);
     this.invitation.body.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
-      const kind = target.closest<HTMLButtonElement>("[data-device]");
+      const kind = target.closest<HTMLButtonElement>("[data-kind]");
       if (kind) {
-        // The sheet is drawn again: what the invitation is for changes what
-        // it says.
-        const name = this.invitation.body.querySelector<HTMLInputElement>("[name=name]")?.value ?? "";
-        this.device = kind.dataset.device === "true";
-        this.invite();
-        const input = this.invitation.body.querySelector<HTMLInputElement>("[name=name]");
-        if (input) input.value = name;
+        this.kind = kind.dataset.kind as Kind;
+        this.preset = presets[this.kind][0];
+        this.redraw();
+        return;
+      }
+      const preset = target.closest<HTMLButtonElement>("[data-preset]");
+      if (preset) {
+        this.preset = preset.dataset.preset as Preset;
+        this.redraw();
+        return;
+      }
+      const some = target.closest<HTMLButtonElement>("[data-some]");
+      if (some) {
+        const machine = some.dataset.some!;
+        this.some = this.some.includes(machine) ? this.some.filter((m) => m !== machine) : [...this.some, machine];
+        this.redraw();
+        return;
+      }
+      const pick = target.closest<HTMLButtonElement>("[data-pick-machine], [data-pick-agent]");
+      if (pick) {
+        if (pick.dataset.pickMachine) this.agent.machine = pick.dataset.pickMachine;
+        if (pick.dataset.pickAgent) this.agent.agent = pick.dataset.pickAgent;
+        this.redraw();
         return;
       }
       const hours = target.closest<HTMLButtonElement>("[data-hours]");
@@ -73,13 +117,17 @@ export class Devices {
         }
       }
       if (target.closest(".copy-code")) {
-        const code = this.invitation.body.querySelector<HTMLElement>(".invite-code")?.textContent ?? "";
-        void navigator.clipboard.writeText(code).then(() => {
-          const copy = this.invitation.body.querySelector<HTMLElement>(".copy-code span");
-          if (copy) copy.textContent = options.words.copied;
+        const button = target.closest<HTMLElement>(".copy-code")!;
+        const text = button.dataset.copy ?? "";
+        void navigator.clipboard.writeText(text).then(() => {
+          const label = button.querySelector("span");
+          if (label) label.textContent = options.words.copied;
         });
       }
       if (target.closest(".make-again")) this.invite();
+    });
+    this.invitation.body.addEventListener("input", (event) => {
+      if ((event.target as HTMLInputElement).name === "name") this.say();
     });
     this.invitation.body.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -89,58 +137,164 @@ export class Devices {
 
   /** The sheet that makes an invitation. */
   invite(): void {
+    this.some = [];
+    this.agent = { machine: this.options.machines()[0] ?? "", agent: "codex" };
+    this.editor = null;
+    this.draw("");
+    this.invitation.show();
+    this.invitation.body.querySelector<HTMLInputElement>("[name=name]")?.focus();
+  }
+
+  /** Draws the sheet again, keeping the name typed so far. */
+  private redraw(): void {
+    const name = this.invitation.body.querySelector<HTMLInputElement>("[name=name]")?.value ?? "";
+    if (this.preset !== "custom") this.editor = null;
+    this.draw(name);
+  }
+
+  private draw(name: string): void {
     const { words } = this.options;
+    const choices = <T extends string>(label: string, attribute: string, items: T[], chosen: T | ((item: T) => boolean), title: (item: T) => string, role = "radio") =>
+      `<div class="choice-options" role="${role === "radio" ? "radiogroup" : "group"}" aria-label="${escape(label)}">${items
+        .map((item) => {
+          const on = typeof chosen === "function" ? chosen(item) : item === chosen;
+          const state = role === "radio" ? `role="radio" aria-checked="${on}"` : `aria-pressed="${on}"`;
+          return `<button type="button" class="choice${on ? " chosen" : ""}" ${state} ${attribute}="${escape(item)}">${escape(title(item))}</button>`;
+        })
+        .join("")}</div>`;
+    const kindTitle = (kind: Kind) => (kind === "computer" ? words.aComputer : kind === "server" ? words.aServer : words.aPhone);
+    const presetTitle = (preset: Preset) =>
+      ({ all: words.presetAll, self: words.presetSelf, "one-agent": words.presetOneAgent, some: words.presetSome, custom: words.presetCustom })[preset];
+    const hint = this.kind === "computer" ? words.computerHint : this.kind === "server" ? words.serverHint : words.phoneHint;
     this.invitation.body.innerHTML = `
       ${this.invitation.head(words.inviteTitle, words.close)}
       <div class="field"><span class="field-label">${escape(words.inviteWhat)}</span>
-        <div class="choice-options" role="radiogroup" aria-label="${escape(words.inviteWhat)}">${([false, true] as const)
-          .map(
-            (device) =>
-              `<button type="button" class="choice${device === this.device ? " chosen" : ""}" role="radio" aria-checked="${device === this.device}" data-device="${device}">${escape(device ? words.aPhone : words.aComputer)}</button>`,
-          )
-          .join("")}</div>
-        <span class="field-hint">${escape(this.device ? words.phoneHint : words.computerHint)}</span></div>
+        ${choices(words.inviteWhat, "data-kind", ["computer", "server", "phone"] as Kind[], this.kind, kindTitle)}
+        <span class="field-hint">${escape(hint)}</span></div>
       <label class="field"><span class="field-label">${escape(words.inviteName)}</span>
-        <input name="name" autocomplete="off" spellcheck="false" class="mono" pattern="[a-z][a-z0-9-]{0,31}">
+        <input name="name" autocomplete="off" spellcheck="false" class="mono" pattern="[a-z][a-z0-9-]{0,31}" value="${escape(name)}">
         <span class="field-hint">${escape(words.inviteNameHint)}</span></label>
+      <div class="field"><span class="field-label">${escape(words.scope)}</span>
+        ${choices(words.scope, "data-preset", presets[this.kind], this.preset, presetTitle)}
+        ${this.presetFields()}
+        <p class="field-hint invite-says" aria-live="polite"></p></div>
       <div class="field"><span class="field-label">${escape(words.valid)}</span>
-        <div class="choice-options" role="radiogroup" aria-label="${escape(words.valid)}">${validity
-          .map(
-            (hours) =>
-              `<button type="button" class="choice${hours === this.hours ? " chosen" : ""}" role="radio" aria-checked="${hours === this.hours}" data-hours="${hours}">${escape(words.hours(hours))}</button>`,
-          )
-          .join("")}</div></div>
+        ${choices(words.valid, "data-hours", validity.map(String), String(this.hours), (hours) => words.hours(Number(hours)))}</div>
       <p class="sheet-note" role="alert" hidden></p>
       <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.make)}</button></footer>`;
-    this.invitation.show();
-    this.invitation.body.querySelector<HTMLInputElement>("[name=name]")?.focus();
+    const custom = this.invitation.body.querySelector<HTMLElement>(".invite-custom");
+    if (custom && this.editor) this.editor.hook(custom);
+    this.say();
+  }
+
+  /** The fields a preset asks for beyond itself. */
+  private presetFields(): string {
+    const { words } = this.options;
+    const machines = this.options.machines();
+    const chips = (attribute: string, items: string[], on: (item: string) => boolean, title: (item: string) => string = (item) => item) =>
+      `<div class="choice-options invite-detail">${items
+        .map((item) => `<button type="button" class="choice${on(item) ? " chosen" : ""}" aria-pressed="${on(item)}" ${attribute}="${escape(item)}">${escape(title(item))}</button>`)
+        .join("")}</div>`;
+    if (this.preset === "some") return chips("data-some", machines, (m) => this.some.includes(m));
+    if (this.preset === "one-agent") {
+      return `<span class="field-hint">${escape(words.oneAgentOn)}</span>
+        ${chips("data-pick-machine", machines, (m) => m === this.agent.machine)}
+        ${chips("data-pick-agent", ["codex", "claude"], (a) => a === this.agent.agent, (a) => (a === "codex" ? "Codex" : "Claude Code"))}`;
+    }
+    if (this.preset === "custom") {
+      this.editor ??= new ScopeEditor(
+        this.options.scopeWords,
+        { machines, projects: this.options.projects(), invite: this.options.manages(), manage: null },
+        everything(),
+      );
+      return `<div class="invite-custom">${this.editor.html()}</div>`;
+    }
+    return "";
+  }
+
+  private name(): string | null {
+    return this.invitation.body.querySelector<HTMLInputElement>("[name=name]")?.value.trim() || null;
+  }
+
+  /** The scope the choices make; `null` with why when they make none yet. */
+  private scope(): { scope: Scope } | { why: string } {
+    const all = everything();
+    switch (this.preset) {
+      case "all":
+        return { scope: all };
+      case "self": {
+        const name = this.name();
+        return name ? { scope: { ...all, machines: [name] } } : { why: this.options.words.selfNeedsName };
+      }
+      case "some":
+        return { scope: { ...all, machines: [...this.some] } };
+      case "one-agent":
+        return {
+          scope: { ...all, machines: [this.agent.machine], agents: [this.agent.agent], actions: ["talk", "w", "read", "page"] },
+        };
+      case "custom":
+        return { scope: this.editor?.value() ?? all };
+    }
+  }
+
+  /** Says, under the choices, what the member may do once in. */
+  private say(): void {
+    const says = this.invitation.body.querySelector<HTMLElement>(".invite-says");
+    if (!says) return;
+    const made = this.scope();
+    says.textContent = "scope" in made ? this.options.words.presetSays(describe(made.scope, this.options.scopeWords)) : made.why;
+    // The custom fields say it themselves, as they change.
+    says.hidden = this.preset === "custom";
   }
 
   private async make(): Promise<void> {
     const { words } = this.options;
     if (this.invitation.busy) return;
-    const name = this.invitation.body.querySelector<HTMLInputElement>("[name=name]")?.value.trim() || null;
+    const name = this.name();
     const go = this.invitation.body.querySelector<HTMLButtonElement>(".sheet-go");
     const note = this.invitation.body.querySelector<HTMLElement>(".sheet-note");
     if (!go || !note) return;
+    const made = this.scope();
+    if (!("scope" in made)) {
+      note.textContent = made.why;
+      note.hidden = false;
+      return;
+    }
     this.invitation.busy = true;
     go.disabled = true;
     go.textContent = words.making;
     try {
-      const code = await this.options.invite(name, this.hours, this.device);
+      const code = await this.options.invite(name, this.hours, this.kind === "phone", made.scope);
       const until = this.options.when(new Date(Date.now() + this.hours * 3_600_000));
+      const said = words.presetSays(describe(made.scope, this.options.scopeWords));
+      const copy = (text: string, label: string) =>
+        `<button class="text-button copy-code" type="button" data-copy="${escape(text)}">${glyph("copy", 16)}<span>${escape(label)}</span></button>`;
+      const command = `fastctx join ${code}`;
+      const body =
+        this.kind === "phone"
+          ? `<div class="invitation">
+              <div class="qr-frame">${qrSvg(code, words.qr)}</div>
+              <div class="invitation-text">
+                <p class="field-label">${escape(words.code)}</p>
+                <p class="invite-code mono">${escape(code)}</p>
+                <p class="field-hint">${escape(words.until(until))}</p>
+                ${copy(code, words.copy)}
+              </div>
+            </div>`
+          : `<div class="invitation invitation-wide">
+              <div class="invitation-text">
+                <p class="field-label">${escape(this.kind === "server" ? words.serverCommand : words.code)}</p>
+                <p class="invite-code mono">${escape(this.kind === "server" ? command : code)}</p>
+                <p class="field-hint">${escape(words.until(until))}</p>
+                ${copy(this.kind === "server" ? command : code, words.copy)}
+              </div>
+            </div>`;
+      const steps = this.kind === "phone" ? words.phoneSteps : this.kind === "server" ? words.serverSteps : words.howToSteps;
       this.invitation.body.innerHTML = `
         ${this.invitation.head(words.inviteTitle, words.close)}
-        <div class="invitation">
-          <div class="qr-frame">${qrSvg(code, words.qr)}</div>
-          <div class="invitation-text">
-            <p class="field-label">${escape(words.code)}</p>
-            <p class="invite-code mono">${escape(code)}</p>
-            <p class="field-hint">${escape(words.until(until))}</p>
-            <button class="text-button copy-code" type="button">${glyph("copy", 16)}<span>${escape(words.copy)}</span></button>
-          </div>
-        </div>
-        <section class="how-to"><h3 class="field-label">${escape(words.howTo)}</h3><ol>${(this.device ? words.phoneSteps : words.howToSteps).map((step) => `<li>${escape(step)}</li>`).join("")}</ol></section>
+        ${body}
+        <p class="field-hint invite-says">${escape(said)}</p>
+        <section class="how-to"><h3 class="field-label">${escape(words.howTo)}</h3><ol>${steps.map((step) => `<li>${escape(step)}</li>`).join("")}</ol></section>
         <footer class="sheet-foot"><span></span><button class="text-button make-again" type="button">${escape(words.again)}</button></footer>`;
     } catch (error) {
       note.textContent = words.failed(String(error));
@@ -152,15 +306,17 @@ export class Devices {
     }
   }
 
-  /** Asks once more before revoking `name`. */
-  revoke(name: string): void {
+  /** Asks once more before revoking `name`; `what` says why, when it is
+   *  not the plain revoking of a lost device. */
+  revoke(name: string, what?: string, done?: () => void): void {
     const { words } = this.options;
     this.ask(
       words.revokeTitle(name),
-      words.revokeWhat(name),
+      what ?? words.revokeWhat(name),
       `<label class="field"><span class="field-label">${escape(words.reason)}</span><input name="reason" autocomplete="off" value="${escape(words.reasonDefault)}"></label>`,
       words.revokeGo,
       () => this.options.revoke(name, this.confirm.body.querySelector<HTMLInputElement>("[name=reason]")?.value.trim() || words.reasonDefault),
+      done,
     );
   }
 
@@ -170,7 +326,17 @@ export class Devices {
     this.ask(words.leaveTitle, words.leaveWhat, "", words.leaveGo, () => this.options.leave());
   }
 
-  private ask(title: string, what: string, fields: string, go: string, act: () => Promise<void>): void {
-    this.confirm.ask({ title, what, fields, go, act, done: () => this.options.changed() });
+  private ask(title: string, what: string, fields: string, go: string, act: () => Promise<void>, done?: () => void): void {
+    this.confirm.ask({
+      title,
+      what,
+      fields,
+      go,
+      act,
+      done: () => {
+        done?.();
+        this.options.changed();
+      },
+    });
   }
 }

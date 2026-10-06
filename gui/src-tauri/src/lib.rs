@@ -590,11 +590,36 @@ async fn invite(
     name: Option<String>,
     hours: u32,
     device: Option<bool>,
+    scope: Option<fastctx_types::scope::NamedScope>,
 ) -> Result<String, String> {
     let expires = jiff::Timestamp::now()
         .checked_add(jiff::SignedDuration::from_hours(i64::from(hours)))
         .map_err(|error| error.to_string())?;
-    shell.world().invite(machine(name)?, expires, device.unwrap_or(false)).await.map_err(|error| error.to_string())
+    shell
+        .world()
+        .invite(machine(name)?, expires, device.unwrap_or(false), scope)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// What `member` may do from now on, and whether it holds management rights.
+#[tauri::command]
+async fn grant(
+    shell: tauri::State<'_, Shell>,
+    member: String,
+    scope: fastctx_types::scope::NamedScope,
+    manage: bool,
+) -> Result<(), String> {
+    let member = member.parse::<MachineName>().map_err(|error| error.to_string())?;
+    shell.world().grant(member, scope, manage).await.map_err(|error| error.to_string())
+}
+
+/// The user has been shown that `member` came in with this machine's
+/// invitation.
+#[tauri::command]
+async fn seen(shell: tauri::State<'_, Shell>, member: String) -> Result<(), String> {
+    let member = member.parse::<MachineName>().map_err(|error| error.to_string())?;
+    shell.world().seen(member).await.map_err(|error| error.to_string())
 }
 
 /// No machine trusts `name`'s key any more.
@@ -775,6 +800,8 @@ pub fn run() {
             control,
             offers,
             invite,
+            grant,
+            seen,
             revoke,
             leave,
             #[cfg(desktop)]
