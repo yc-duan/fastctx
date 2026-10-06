@@ -50,8 +50,8 @@ use serde::{Deserialize, Serialize};
 use crate::ledger::TownId;
 use crate::scope::{Grant, Scope};
 use crate::seal::SealPublic;
-use crate::tree::{RelayOffer, Route, Upstream};
 use crate::sign::{Digest, Domain, PublicKey, Signed, sha256};
+use crate::tree::{RelayOffer, Route, Upstream};
 
 /// How far apart the clocks of the members and the hub are taken to be:
 /// Kerberos's default tolerance for clocks kept by NTP. The hub takes an
@@ -544,10 +544,9 @@ pub fn check(
     for (name, joined) in &accepted {
         if let Some((_, revocation)) = standing.revocations.get(&joined.record.key) {
             table.revoked.insert(name.clone(), revocation.clone());
-            table.former.insert(
-                name.clone(),
-                Former { key: joined.record.key, kind: joined.kind, until: Some(revocation.at) },
-            );
+            table
+                .former
+                .insert(name.clone(), Former { key: joined.record.key, kind: joined.kind, until: Some(revocation.at) });
             continue;
         }
         match scopes.remove(name) {
@@ -739,7 +738,12 @@ enum Admitted {
     No(String),
 }
 
-fn admitted(world: &WorldId, record: &Record, admission: &Signed, accepted: &BTreeMap<MachineName, Joined>) -> Admitted {
+fn admitted(
+    world: &WorldId,
+    record: &Record,
+    admission: &Signed,
+    accepted: &BTreeMap<MachineName, Joined>,
+) -> Admitted {
     let claimed = match admission.claim::<Admission>() {
         Ok(admission) => admission,
         Err(error) => return Admitted::No(format!("its admission {error}")),

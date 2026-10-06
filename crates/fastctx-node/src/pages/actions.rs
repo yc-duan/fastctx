@@ -83,14 +83,7 @@ async fn admitted(
     // member that could only write in the project could write anything.
     let by = stored.consent_by.clone().ok_or_else(|| Failure::new(format!("page {page}'s consent has no writer")))?;
     consenter_may(node, &by, action, &town)?;
-    Ok(PageSource {
-        town,
-        page,
-        version,
-        by: Box::new(publication.by.clone()),
-        on: publication.on.clone(),
-        opened_on,
-    })
+    Ok(PageSource { town, page, version, by: Box::new(publication.by.clone()), on: publication.on.clone(), opened_on })
 }
 
 /// Whether the machine `by`, which wrote the user's consent, could do
@@ -108,13 +101,18 @@ fn consenter_may(node: &Node, by: &MachineName, action: &PageInvocation, town: &
         PageInvocation::Run { machine, .. } => {
             member.scope.allows(machine, fastctx_net::scope::Action::Run, None).map_err(refused)
         }
-        PageInvocation::Say { to, .. } => {
-            member.scope.allows(&to.machine, fastctx_net::scope::Action::Talk, Some(&to.resident.agent())).map_err(refused)
-        }
+        PageInvocation::Say { to, .. } => member
+            .scope
+            .allows(&to.machine, fastctx_net::scope::Action::Talk, Some(&to.resident.agent()))
+            .map_err(refused),
         PageInvocation::Journal { .. } => {
-            let writes = member.manage
-                || crate::ledger::names::town_id(node, town).is_some_and(|id| member.scope.writes(&id));
-            if writes { Ok(()) } else { Err(Failure::new(format!("the consent was written by {by}, which may not write in {town}"))) }
+            let writes =
+                member.manage || crate::ledger::names::town_id(node, town).is_some_and(|id| member.scope.writes(&id));
+            if writes {
+                Ok(())
+            } else {
+                Err(Failure::new(format!("the consent was written by {by}, which may not write in {town}")))
+            }
         }
     }
 }

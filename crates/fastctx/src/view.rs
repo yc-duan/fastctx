@@ -46,7 +46,10 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
     }
     let lines = args.lines.as_deref().map(parse_lines).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let options = Options { lines, encoding: args.encoding, machine: machine(&world) };
+    // Inside a World `run` the answer's first line already names the machine.
+    let in_run = std::env::var_os("FASTCTX_MACHINE").is_some();
+    let options =
+        Options { lines, encoding: args.encoding, machine: if in_run { None } else { machine(&world) }, in_run };
     let mut out = std::io::stdout().lock();
     let seen = view(&paths, &options, &mut out)?;
     out.flush()?;
@@ -65,12 +68,8 @@ fn parse_lines(text: &str) -> anyhow::Result<(u64, u64)> {
     Ok((first, last))
 }
 
-/// The machine to name in head notes: the one `run` says it is on, or the
-/// one this World is on.
+/// The machine to name in head notes: the one this World is on.
 fn machine(world: &WorldDir) -> Option<String> {
-    if let Ok(machine) = std::env::var("FASTCTX_MACHINE") {
-        return Some(machine);
-    }
     let bytes = std::fs::read(world.machine_file()).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     value.get("name")?.as_str().map(str::to_string)

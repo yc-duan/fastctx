@@ -40,12 +40,9 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
 
 fn introduction(id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> String {
     match town {
-        Some(town) => {
-            format!("=== you are {id} on {here}, living in the town {town}; its map: fastctx project map ===")
-        }
-        None => format!(
-            "=== you are {id} on {here}, in no town yet. When the user names the project to work on, enter its town: fastctx project enter <town> (fastctx project list lists them) ==="
-        ),
+        Some(town) => format!("=== you are {id} on {here}, in the town {town}; its map: fastctx project map ==="),
+        // When to enter a town is said once, in the session's guidance.
+        None => format!("=== you are {id} on {here}, in no town ==="),
     }
 }
 

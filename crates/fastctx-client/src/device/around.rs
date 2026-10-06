@@ -121,7 +121,9 @@ impl Session {
             .into_iter()
             .map(|(machine, heard)| match heard {
                 Heard::Answered(RemoteReply::Who(reply)) if reply.machine == machine => MachineWho::Answered { reply },
-                Heard::Answered(_) => MachineWho::NoAnswer { machine, reason: "it answered something else".to_string() },
+                Heard::Answered(_) => {
+                    MachineWho::NoAnswer { machine, reason: "it answered something else".to_string() }
+                }
                 Heard::Offline(since) => MachineWho::Offline { machine, since },
                 Heard::NoAnswer(reason) => MachineWho::NoAnswer { machine, reason },
             })
@@ -162,7 +164,9 @@ impl Session {
                     undated.append(&mut reply.undated);
                     MachineSince::Answered { reply: reply.coverage }
                 }
-                Heard::Answered(_) => MachineSince::NoAnswer { machine, reason: "it answered something else".to_string() },
+                Heard::Answered(_) => {
+                    MachineSince::NoAnswer { machine, reason: "it answered something else".to_string() }
+                }
                 Heard::Offline(since) => MachineSince::Offline { machine, since },
                 Heard::NoAnswer(reason) => MachineSince::NoAnswer { machine, reason },
             });
@@ -278,7 +282,11 @@ impl Session {
                 since: None,
                 facts: Err("revoked".to_string()),
                 device: false,
-                revoked: Some(Revoked { by: revocation.by.clone(), at: revocation.at, reason: revocation.reason.clone() }),
+                revoked: Some(Revoked {
+                    by: revocation.by.clone(),
+                    at: revocation.at,
+                    reason: revocation.reason.clone(),
+                }),
                 standing: None,
                 place: None,
             });

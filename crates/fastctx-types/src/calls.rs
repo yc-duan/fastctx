@@ -262,6 +262,9 @@ pub enum Call {
     HandOver,
     /// This machine's link and every machine of the World (`fastctx nodes`).
     Nodes,
+    /// The names of the machines a session here works on: this one, and the
+    /// others its scope reaches, as the members table holds them now.
+    Machines,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -390,6 +393,10 @@ pub enum Reply {
         code: String,
     },
     Nodes(NodesReply),
+    Machines {
+        here: MachineName,
+        others: Vec<MachineName>,
+    },
     Done,
 }
 

@@ -255,10 +255,18 @@ impl Store {
     /// that may invite must not hold up everyone's grants by dating
     /// invitations ahead.
     pub fn latest(&self) -> Option<Timestamp> {
-        let grants =
-            self.members.grants.iter().filter_map(|signed| signed.claim::<fastctx_net::scope::Grant>().ok()).map(|grant| grant.at);
-        let routes =
-            self.members.routes.iter().filter_map(|signed| signed.claim::<fastctx_net::tree::Route>().ok()).map(|route| route.at);
+        let grants = self
+            .members
+            .grants
+            .iter()
+            .filter_map(|signed| signed.claim::<fastctx_net::scope::Grant>().ok())
+            .map(|grant| grant.at);
+        let routes = self
+            .members
+            .routes
+            .iter()
+            .filter_map(|signed| signed.claim::<fastctx_net::tree::Route>().ok())
+            .map(|route| route.at);
         let revocations = self
             .members
             .revocations

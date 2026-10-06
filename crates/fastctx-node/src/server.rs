@@ -383,7 +383,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Composer { resident, machine, request } => {
             users_voice(node, peer)?;
-            crate::composer::request(node, resident, machine, request).await.map(|updated| Reply::Composer(Box::new(updated)))
+            crate::composer::request(node, resident, machine, request)
+                .await
+                .map(|updated| Reply::Composer(Box::new(updated)))
         }
         Call::Offers { resident, machine } => crate::control::offers(node, resident, machine)
             .await
@@ -493,6 +495,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Copy { from, to } => crate::copy::copy(node, from, to).await.map(Reply::Copied),
         Call::Nodes => nodes(node).await.map(Reply::Nodes),
+        Call::Machines => Ok(machines(node)),
     }
 }
 
@@ -696,6 +699,24 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
 
 /// `fastctx nodes`: this machine's link, and each member of the World its
 /// scope covers with what it says of itself and where it stands.
+/// This machine and the other machines its scope reaches, from the members
+/// table as it stands, asking none of them.
+fn machines(node: &Arc<Node>) -> Reply {
+    let here = node.machine();
+    let others = node
+        .link()
+        .map(|link| {
+            let (table, _) = link.members();
+            table
+                .machines()
+                .filter(|member| member.name != here && crate::admission::reaches(node, &table, &member.name))
+                .map(|member| member.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    Reply::Machines { here, others }
+}
+
 async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
     let here = node.machine();
     let link = node.link();

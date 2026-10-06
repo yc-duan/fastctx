@@ -185,7 +185,8 @@ impl fastctx_net::link::Node for Handler {
         let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
         // Relaying or not changes where this machine's own link connects;
         // the answer goes out on the connection the call came on first.
-        let held = matches!(call, RemoteCall::SetRelay { .. }).then(|| node.link().map(|link| link.hold_reroute())).flatten();
+        let held =
+            matches!(call, RemoteCall::SetRelay { .. }).then(|| node.link().map(|link| link.hold_reroute())).flatten();
         node.handoff.call().map(|guard| Some(Box::new((guard, held)) as Box<dyn Send>)).ok_or_else(|| {
             Failure::new(format!(
                 "the node on {} is handing over to its successor; ask again in a moment",
@@ -267,11 +268,9 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Control { resident, control } => {
                     crate::control::control_here(&node, &resident, control).await.map(RemoteReply::Controlled)
                 }
-                RemoteCall::Composer { resident, request } => {
-                    crate::composer::here(&node, &from, &resident, request)
-                        .await
-                        .map(|updated| RemoteReply::Composer(Box::new(updated)))
-                }
+                RemoteCall::Composer { resident, request } => crate::composer::here(&node, &from, &resident, request)
+                    .await
+                    .map(|updated| RemoteReply::Composer(Box::new(updated))),
                 RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
                     .await
                     .map(|offers| RemoteReply::Offers(Box::new(offers))),
@@ -315,9 +314,9 @@ impl fastctx_net::link::Node for Handler {
                     let to_machine = to.machine.ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
                     // This machine sends as itself: where it sends, the
                     // caller's scope must reach too.
-                    scope.allows(&to_machine, fastctx_net::scope::Action::Copy, None).map_err(|denied| {
-                        Failure::new(format!("{machine} refused {from}: {denied}"))
-                    })?;
+                    scope
+                        .allows(&to_machine, fastctx_net::scope::Action::Copy, None)
+                        .map_err(|denied| Failure::new(format!("{machine} refused {from}: {denied}")))?;
                     let from = path;
                     crate::copy::send(&node, &from, &to_machine, &to.path).await.map(RemoteReply::Copied)
                 }

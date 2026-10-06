@@ -65,8 +65,13 @@ pub fn init(dir: &Path, public: Vec<SocketAddr>, listen: SocketAddr) -> anyhow::
         anyhow::bail!("{} already holds a hub", dir.display());
     }
     let certificate = HubCertificate::generate().map_err(anyhow::Error::msg)?;
-    let hub =
-        HubFile { world: WorldId::generate()?, public, listen, founding: Some(Secret::generate()?), founded_with: None };
+    let hub = HubFile {
+        world: WorldId::generate()?,
+        public,
+        listen,
+        founding: Some(Secret::generate()?),
+        founded_with: None,
+    };
     Store::create(dir, &hub, &certificate)?;
     founding_code(dir)
 }

@@ -57,7 +57,7 @@ impl Inner {
             return Err(CallFailure::NotConnected { reason: self.not_connected() });
         };
         let Some(member) = self.member(to).await else {
-            return Err(CallFailure::NotMember(to.clone()));
+            return Err(self.not_member(to));
         };
         let Some(seal) = member.seal else {
             return Err(CallFailure::Unreachable {
@@ -214,7 +214,9 @@ impl Inner {
                 let message = seal(&Body::LargeCall { carried });
                 let (inner, name) = (self.clone(), to.clone());
                 let task = tokio::spawn(async move {
-                    if let Err(error) = crate::data::source(&inner.data_endpoint(), &inner.key, ticket, &key, &bytes).await {
+                    if let Err(error) =
+                        crate::data::source(&inner.data_endpoint(), &inner.key, ticket, &key, &bytes).await
+                    {
                         inner.node.log(format!("sending a large call to {name}: {error}"));
                     }
                 });
@@ -337,7 +339,7 @@ impl Inner {
                 }
                 CallEvent::Status(CallStatus::NotMember) => {
                     waiting.answered = true;
-                    return Err(CallFailure::NotMember(to.clone()));
+                    return Err(self.not_member(to));
                 }
                 CallEvent::Status(CallStatus::Lost) => {
                     waiting.answered = true;

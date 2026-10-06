@@ -69,7 +69,9 @@ pub(super) fn call(shared: &Shared, name: &MachineName, tag: u64, id: u64, messa
         Some(target) => {
             let target_tag = target.tag;
             if target.send(&to, Out::Frame(Down::Incoming { call: number, message })) {
-                state.calls.insert(number, Call::Here { caller: name.clone(), caller_tag: tag, id, target: to, target_tag });
+                state
+                    .calls
+                    .insert(number, Call::Here { caller: name.clone(), caller_tag: tag, id, target: to, target_tag });
                 CallStatus::Delivered
             } else {
                 CallStatus::Offline { last_seen: Some(Timestamp::now()) }

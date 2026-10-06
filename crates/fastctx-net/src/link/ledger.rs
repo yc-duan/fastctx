@@ -143,9 +143,9 @@ impl Inner {
         let mut table = self.members().table.clone();
         // An item by a member that joined after the members were last asked
         // for: ask again, as for a call from it.
-        let unknown = entries.iter().any(|(_, signed)| {
-            signed.claim::<Item>().is_ok_and(|item| table.key_ever(item.signer()).is_none())
-        });
+        let unknown = entries
+            .iter()
+            .any(|(_, signed)| signed.claim::<Item>().is_ok_and(|item| table.key_ever(item.signer()).is_none()));
         if unknown {
             self.refresh().await?;
             table = self.members().table.clone();

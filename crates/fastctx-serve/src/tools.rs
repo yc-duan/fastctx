@@ -22,15 +22,22 @@ impl Writer {
     }
 }
 
+/// The machines a session works on as its tools were listed: this one, and
+/// the others its scope reaches.
+pub struct Machines {
+    pub here: String,
+    pub others: Vec<String>,
+}
+
 /// The tools this session lists. A colleague has no colleague tools of its
 /// own: the World is one level deep (`world-colleagues.md`).
-pub fn definitions(writer: Writer, colleague: bool) -> Value {
+pub fn definitions(writer: Writer, colleague: bool, machines: Option<&Machines>) -> Value {
     let mut tools = match writer {
-        Writer::Edit => vec![run_definition(), edit_definition(), write_definition()],
-        Writer::ApplyPatch => vec![run_definition(), apply_patch_definition()],
+        Writer::Edit => vec![run_definition(machines), edit_definition(machines), write_definition(machines)],
+        Writer::ApplyPatch => vec![run_definition(machines), apply_patch_definition(machines)],
     };
     if !colleague {
-        tools.push(ask_colleague_definition());
+        tools.push(ask_colleague_definition(machines));
         tools.push(message_colleague_definition());
     }
     for tool in &mut tools {
@@ -41,9 +48,24 @@ pub fn definitions(writer: Writer, colleague: bool) -> Value {
     Value::Array(tools)
 }
 
-const NODE: &str = "The name of the machine whose files to change. Without it, this machine.";
+/// The `node` parameter, naming the machines there are when the node could
+/// say: a model that knows them reaches the right one by the user's words.
+fn node(subject: &str, machines: Option<&Machines>) -> Value {
+    let description = match machines {
+        Some(machines) => {
+            let mut names = vec![format!("{} (this one)", machines.here)];
+            names.extend(machines.others.iter().cloned());
+            format!(
+                "{subject}, by name; without it, this machine. The World's machines when this session began: {}.",
+                names.join(", ")
+            )
+        }
+        None => format!("{subject}, by name, as `fastctx nodes` lists them; without it, this machine."),
+    };
+    json!({ "type": "string", "description": description })
+}
 
-fn run_definition() -> Value {
+fn run_definition(machines: Option<&Machines>) -> Value {
     json!({
         "name": "run",
         "description": RUN_DESCRIPTION,
@@ -58,10 +80,7 @@ fn run_definition() -> Value {
                     "type": "string",
                     "description": "The absolute path of the directory to start in, on the machine the script runs on. Without it the script starts in that machine's home directory."
                 },
-                "node": {
-                    "type": "string",
-                    "description": "The name of the machine to run on. Without it the script runs on this machine."
-                }
+                "node": node("The machine to run on", machines)
             },
             "required": ["command"],
             "additionalProperties": false
@@ -79,15 +98,15 @@ fn run_definition() -> Value {
 const RUN_DESCRIPTION: &str = "\
 Run a bash script on a machine of the World and read what it prints.
 
-The script runs on this machine unless `node` names another. Everything in it then happens on that machine: its files, paths, programs and environment, so write paths the way that machine does. The first line of the answer names the machine it ran on.
+The script runs on this machine unless `node` names another; everything in it then happens on that machine, with its files, programs and environment. Every machine runs it in bash with the GNU tools, Windows ones too, where paths are written like C:/Users/me; there `df`, `du`, `ls` and `find` answer what PowerShell would, without the second layer of quoting that PowerShell inside bash needs and that breaks easily. On Windows that bash is Git Bash, which rewrites arguments shaped like Unix paths, such as /FI, before a Windows program sees them; put MSYS_NO_PATHCONV=1 before such a command. The first line of the answer names the machine it ran on.
 
 Each call is a fresh login shell: no directory, variable or function carries over from an earlier call, and nothing is read from standard input, so a program that asks for input fails at once instead of waiting. The script starts in the machine's home directory unless `cwd` names another. Standard output and standard error arrive together, in the order a terminal would show them. Images that a program draws with the kitty or iTerm2 terminal graphics protocols come back as images.
 
-Besides the machine's own programs, the shell has the World's commands, each explained by its `--help`: `fastctx view` shows files, several at once, with line numbers, and images as images; `fastctx w` shows who is in your town and what each is doing; `fastctx project` shows the towns, each a project, and their maps, and `fastctx project enter <town>` moves you into one, only when the user says which project to work on; `fastctx journal` reads and adds to your town's journals; `fastctx page` publishes a page into your town, HTML the user opens in World's interface, live with the World's facts; `fastctx nodes` lists the machines and what each is like; `fastctx copy` copies files and directories from one machine to another, written MACHINE:PATH.
+Besides the machine's own programs, the shell has the World's commands, each explained by its `--help`: `fastctx nodes` lists the machines, which are online and what each runs; `fastctx copy` copies files and directories between machines, written MACHINE:PATH; `fastctx view` shows files, several at once, with line numbers, and images as images; `fastctx w` shows who is in your town and what each is doing; `fastctx project` lists the towns, each a project, and shows their maps, and `fastctx project enter <town>` moves you into one, only when the user says which project to work on; `fastctx journal` reads and adds to your town's journals; `fastctx page` publishes a page, HTML the user opens in World's interface.
 
 A call waits up to 15 seconds. A script still running then goes on in the background; the answer names the file its output continues in, which you can read while it grows. When it ends you are told, with the answer to your next call of a World tool.";
 
-fn edit_definition() -> Value {
+fn edit_definition(machines: Option<&Machines>) -> Value {
     json!({
         "name": "edit",
         "description": EDIT_DESCRIPTION,
@@ -98,7 +117,7 @@ fn edit_definition() -> Value {
                 "old_string": { "type": "string", "description": "The text to replace, exactly as it is in the file." },
                 "new_string": { "type": "string", "description": "The text to put in its place." },
                 "replace_all": { "type": "boolean", "description": "Replace every occurrence of old_string, not just one. Default false." },
-                "node": { "type": "string", "description": NODE }
+                "node": node("The machine whose files to change", machines)
             },
             "required": ["file_path", "old_string", "new_string"],
             "additionalProperties": false
@@ -112,7 +131,7 @@ Replace exact text in a file on a machine of the World.
 
 `old_string` must appear in the file exactly as given, whitespace and indentation included, and only once: include enough surrounding lines to make it unique, or set `replace_all` to replace every occurrence. The file keeps its encoding and line endings. `file_path` is absolute, written the way the machine `node` names writes paths. The answer shows the changed lines with their line numbers.";
 
-fn write_definition() -> Value {
+fn write_definition(machines: Option<&Machines>) -> Value {
     json!({
         "name": "write",
         "description": WRITE_DESCRIPTION,
@@ -121,7 +140,7 @@ fn write_definition() -> Value {
             "properties": {
                 "file_path": { "type": "string", "description": "The absolute path of the file to create or replace." },
                 "content": { "type": "string", "description": "The file's whole new contents." },
-                "node": { "type": "string", "description": NODE }
+                "node": node("The machine whose files to change", machines)
             },
             "required": ["file_path", "content"],
             "additionalProperties": false
@@ -135,7 +154,7 @@ Create a file, or replace a file's whole contents, on a machine of the World.
 
 To change part of a file, use `edit`. A file you looked at with `fastctx view` that has changed since is not overwritten, so nobody's change is lost unseen: look at it again first. Missing parent directories are created. `file_path` is absolute, written the way the machine `node` names writes paths.";
 
-fn apply_patch_definition() -> Value {
+fn apply_patch_definition(machines: Option<&Machines>) -> Value {
     json!({
         "name": "apply_patch",
         "description": APPLY_PATCH_DESCRIPTION,
@@ -143,7 +162,7 @@ fn apply_patch_definition() -> Value {
             "type": "object",
             "properties": {
                 "input": { "type": "string", "description": "The whole patch, from *** Begin Patch to *** End Patch." },
-                "node": { "type": "string", "description": NODE }
+                "node": node("The machine whose files to change", machines)
             },
             "required": ["input"],
             "additionalProperties": false
@@ -169,7 +188,7 @@ Each file's section starts with `*** Add File:`, `*** Delete File:` or `*** Upda
 
 Every path is absolute, written the way the machine `node` names writes paths; a relative path is refused. Files keep their encoding and line endings. The answer lists what changed: A added, M modified, D deleted.";
 
-fn ask_colleague_definition() -> Value {
+fn ask_colleague_definition(machines: Option<&Machines>) -> Value {
     json!({
         "name": "ask_colleague",
         "description": ASK_COLLEAGUE_DESCRIPTION,
@@ -184,10 +203,7 @@ fn ask_colleague_definition() -> Value {
                     "type": "string",
                     "description": "A label for the task in three to eight words, shown beside the colleague in fastctx w."
                 },
-                "node": {
-                    "type": "string",
-                    "description": "The name of the machine the colleague works on. Without it, this machine."
-                }
+                "node": node("The machine the colleague works on", machines)
             },
             "required": ["prompt", "description"],
             "additionalProperties": false
@@ -208,7 +224,7 @@ Ask a colleague to take on a part of the work: a GPT resident of the World, star
 Unlike a subagent of your own, which lives inside this conversation, a colleague lives in the World: it works on whichever machine `node` names, it keeps working if you stop, and everyone in the town can see it with `fastctx w`. The call returns at once with the colleague's id. Each time the colleague ends a turn, its last message is delivered to you, under a line saying how the turn ended; that message is its answer, or its question to you. Reply, or give it more, with message_colleague. See what it is doing at any time with `fastctx w <id>`.
 
 Working with a colleague:
-- GPT is strong on a part and weak on the whole. Within one part it reads all of the material before acting, works a hard point for hours, changes its approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not yet taken shape, or to build a whole thing from nothing, it returns pieces that are careful one by one and have no idea holding them together. Keep the whole yourself, and give it parts.
+- GPT is strong on a part and weak on the whole. Within one part it reads all of the material before acting, works a hard point for hours, changes its approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not yet taken shape, or to build a whole thing from nothing, it returns pieces that are careful one by one and have no idea holding them together.
 - Build the whole yourself, and hand out the parts as they appear: a piece of code whose need can be stated and whose result facts can judge, something that must be airtight, a behaviour nobody understands yet, a detail that must be exactly right, an exhaustive check of an outside fact such as an interface or a program's real behaviour, a counterexample to make, an experiment or a measurement that answers a definite question. The moment you are about to read through a pile of material, try a set of cases or make something airtight is the moment to ask. That you could do it in a few minutes is no reason to keep it: done in minutes, it is often done shallowly.
 - Do not use it mainly to review what you made; that is its weakest use. Give it things to build, find out or measure.
 - Say what this part needs and why, and where things stand. Point at the material rather than summarizing it. Do not fence it in with which files it may touch or which checks it must pass, and do not tell it how to work: that is where it is strongest. Tell it the rules it must keep: what must not be broken, and the limits of anything shared it will touch, such as a server's memory.

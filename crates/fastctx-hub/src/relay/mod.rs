@@ -83,8 +83,7 @@ impl Relay {
     ) -> Result<Self, String> {
         let tls = tokio_rustls::TlsAcceptor::from(settings.certificate.server_config()?);
         let listen = settings.listen;
-        let listener =
-            TcpListener::bind(listen).await.map_err(|error| format!("listening on {listen}: {error}"))?;
+        let listener = TcpListener::bind(listen).await.map_err(|error| format!("listening on {listen}: {error}"))?;
         let shared = Arc::new(Shared {
             me,
             world,

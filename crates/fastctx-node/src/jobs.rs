@@ -98,7 +98,7 @@ impl Jobs {
         }
         let output = {
             let log = PathBuf::from(&record.output);
-            tokio::task::spawn_blocking(move || window::window(&log, window::BUDGET))
+            tokio::task::spawn_blocking(move || window::window(&log))
                 .await
                 .map_err(|error| Failure::new(format!("reading the output: {error}")))?
                 .map_err(|error| failure("reading the output", error))?

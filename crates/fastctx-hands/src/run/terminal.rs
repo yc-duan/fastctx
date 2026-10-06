@@ -66,7 +66,14 @@ pub struct Lines<R> {
     /// A kitty image sent in several chunks, gathered so far.
     kitty: Option<Vec<u8>>,
     finished: bool,
+    /// Whether `fastctx view` wrote any of the output so far.
+    saw_view: bool,
 }
+
+/// What `fastctx view` writes first inside a World `run`: an OSC string no
+/// terminal shows, by which the answer knows the output is files the
+/// resident asked to read rather than a program's output.
+pub const VIEW_MARK: &str = "\x1b]7701;fastctx;view\x07";
 
 enum Pending {
     Text(Vec<u8>),
@@ -99,7 +106,13 @@ impl<R: Read> Lines<R> {
             text: Vec::new(),
             kitty: None,
             finished: false,
+            saw_view: false,
         }
+    }
+
+    /// Whether `fastctx view` wrote any of the lines read so far.
+    pub fn saw_view(&self) -> bool {
+        self.saw_view
     }
 
     /// The next line, or `None` after the last.
@@ -190,6 +203,8 @@ impl<R: Read> Lines<R> {
             }
         } else if let Some(rest) = body.strip_prefix(b"1337;File=") {
             self.iterm_file(rest);
+        } else if VIEW_MARK.as_bytes()[2..VIEW_MARK.len() - 1] == *body {
+            self.saw_view = true;
         }
         // Other strings (window titles, hyperlinks, kitty commands that are
         // not images) are not shown, as a terminal does not show them.

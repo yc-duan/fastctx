@@ -1,10 +1,12 @@
 //! What a session the user opens is told about the World, in its host's
-//! guidance file (`world-run.md`, 模型怎样知道): which tools are the World's,
-//! the commands its shell has, and the one rule a session needs before it
-//! touches anything, that it enters a project only when the user says.
+//! guidance file (`world-run.md`, 模型怎样知道): that the World's other
+//! machines are at hand by name through its tools, and the one rule a
+//! session needs before it touches anything, that it enters a project only
+//! when the user says.
 //!
-//! The words are the model's: the World's commands under their names, a
-//! town as the commands call a project.
+//! A host may list a server's tools by name only until they are used, so
+//! these words alone must lead a model to the tools. What the shell's
+//! commands do is said once, in `run`'s own description.
 
 /// The writing tools a host's sessions are given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,25 +20,18 @@ pub enum Writer {
 /// The block of guidance for a host whose sessions write with `writer`.
 pub fn guidance(writer: Writer) -> String {
     let write = match writer {
-        Writer::Edit => "`edit` and `write` change files",
-        Writer::ApplyPatch => "`apply_patch` changes files",
+        Writer::Edit => "`edit` and `write` change its files",
+        Writer::ApplyPatch => "`apply_patch` changes its files",
     };
     format!(
         "\
 ## The World
 
-This machine belongs to a World: the user's machines, and the agents working on them, connected by fastctx. Its tools are in this session: `run` runs a bash script, {write}, each on any machine of the World; `ask_colleague` brings in a GPT colleague that works on its own while you go on.
+This machine belongs to a World: the user's machines, connected by fastctx, and the agents working on them. Each of those machines is at hand from this session by its name, with no address, login or key: `run` runs a bash script on it and {write}, given its name as `node`; without `node` they act here. `fastctx nodes`, in `run`, lists the machines and what each runs. When the user speaks of one of them, work on it this way.
 
-When you work in a town, the World's name for a project, run commands and change files with these tools rather than your host's own: the work then happens on the machine it belongs to, the others in the town can see it, and what you wrote is known to be yours.
+When you work in a town, the World's name for a project, run commands and change files with these tools rather than your host's own: the work then happens on the machine it belongs to, the others in the town can see it, and what you wrote is known to be yours. Enter a town with `fastctx project enter <town>` only when the user tells you which project to work on.
 
-In `run`, beside each machine's own programs:
-- `fastctx view` shows files, several at once, with line numbers, and images as images.
-- `fastctx w` shows who is in your town and what each is doing.
-- `fastctx project enter <town>` moves you into a town. Use it only when the user tells you which project to work on.
-- `fastctx journal` reads and adds to your town's journals, the history of its work.
-- `fastctx page` publishes a page into your town: HTML the user opens in World's interface, live with the World's facts. `fastctx page --help` says how to write one.
-
-`fastctx --help` lists every command; each explains itself with its own `--help`.
+`ask_colleague` brings in a GPT colleague that works on its own while you go on. `run`'s description lists the World's other commands, and `fastctx --help` explains each.
 "
     )
 }

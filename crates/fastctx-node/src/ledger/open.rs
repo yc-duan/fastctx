@@ -60,7 +60,12 @@ pub fn town(node: &Arc<Node>, link: &Link, town: &TownId) -> Result<Vec<String>,
         };
         if *town == TownId::world() {
             if node.naming.read().expect("never poisoned").is_some() {
-                refuse(&mut state, *seq, format!("the World's own ledger: entry {seq} is a second naming key"), &mut problems);
+                refuse(
+                    &mut state,
+                    *seq,
+                    format!("the World's own ledger: entry {seq} is a second naming key"),
+                    &mut problems,
+                );
                 continue;
             }
             match world_entry(&inner, &table) {
@@ -92,7 +97,9 @@ pub fn town(node: &Arc<Node>, link: &Link, town: &TownId) -> Result<Vec<String>,
             Err(Opened::Invalid(reason)) => {
                 refuse(&mut state, *seq, format!("entry {seq} of {town}: {reason}"), &mut problems)
             }
-            Err(Opened::Doubtful(reason)) => doubt(&mut state, format!("entry {seq} of {town}: {reason}"), &mut problems),
+            Err(Opened::Doubtful(reason)) => {
+                doubt(&mut state, format!("entry {seq} of {town}: {reason}"), &mut problems)
+            }
         }
     }
     store.set_state(town, &state).map_err(|error| format!("{town}: {error}"))?;
@@ -126,7 +133,8 @@ fn check(
     naming: &ledger::NamingKey,
     town: &TownId,
 ) -> Result<ledger::Entry, Opened> {
-    let claimed: ledger::Entry = inner.claim().map_err(|error| Opened::Invalid(format!("it cannot be read: {error}")))?;
+    let claimed: ledger::Entry =
+        inner.claim().map_err(|error| Opened::Invalid(format!("it cannot be read: {error}")))?;
     table.author_key(&claimed.author, claimed.at).map_err(Opened::Doubtful)?;
     let opened = ledger::open(inner, world, table).map_err(Opened::Invalid)?;
     if ledger::town_id(naming, &opened.town) != *town {

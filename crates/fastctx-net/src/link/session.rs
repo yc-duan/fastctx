@@ -184,7 +184,12 @@ async fn open(inner: &Inner, endpoint: &Endpoint) -> Result<Opened, Ended> {
 }
 
 /// Everything that passes on a session once it is welcomed, until it ends.
-async fn connected(inner: &Arc<Inner>, online_since: &mut Option<Instant>, tried: &[Endpoint], opened: Opened) -> Ended {
+async fn connected(
+    inner: &Arc<Inner>,
+    online_since: &mut Option<Instant>,
+    tried: &[Endpoint],
+    opened: Opened,
+) -> Ended {
     let Opened { socket, address, route, taken, hub_letters } = opened;
     let endpoint = tried.last().expect("a session is opened through an upstream").clone();
 

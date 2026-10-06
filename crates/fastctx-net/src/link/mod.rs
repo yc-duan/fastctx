@@ -44,9 +44,9 @@ use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::tree::{self, Endpoint, RelayOffer, Route, Upstream};
 use crate::trust::{self, Endorsement, Kind, Member, Record, Revocation, Table};
 use crate::wire::{CallStatus, Presence, Question, Told};
+pub use ledger::{Page, PageItem};
 use sessions::Sessions;
 use state::{Counter, LettersFile, MembersFile, Taken};
-pub use ledger::{Page, PageItem};
 pub use state::{Membership, NetDir};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -95,8 +95,8 @@ pub enum Status {
 pub enum CallFailure {
     #[error("this machine is not connected to the hub ({reason}); nothing was sent")]
     NotConnected { reason: String },
-    #[error("no member of the World is named {0}")]
-    NotMember(MachineName),
+    #[error("no machine of the World is named {name}; its machines are {}", machines.iter().map(MachineName::as_str).collect::<Vec<_>>().join(", "))]
+    NotMember { name: MachineName, machines: Vec<MachineName> },
     #[error("{name} is offline{}", last_seen.map(|at| format!(", last seen {}", at.strftime("%Y-%m-%d %H:%M:%S UTC"))).unwrap_or_default())]
     Offline { name: MachineName, last_seen: Option<Timestamp> },
     #[error("{name} did not answer ({reason}); whether it did what was asked is not known")]
@@ -272,7 +272,12 @@ impl Link {
             taken,
             sessions: Sessions::default(),
             letters: Mutex::new(Letters { file: letters_file, next }),
-            members: Mutex::new(Members { file: members_file, table: Arc::new(table), presence: Vec::new(), latest: None }),
+            members: Mutex::new(Members {
+                file: members_file,
+                table: Arc::new(table),
+                presence: Vec::new(),
+                latest: None,
+            }),
             refreshing: tokio::sync::Mutex::new(()),
             status,
             connection: Mutex::new(None),
@@ -712,6 +717,12 @@ impl Inner {
             return None;
         }
         self.members().table.get(name).cloned()
+    }
+
+    /// A call to `name`, which is no member, refused with the machines there are.
+    fn not_member(&self, name: &MachineName) -> CallFailure {
+        let machines = self.members().table.machines().map(|member| member.name.clone()).collect();
+        CallFailure::NotMember { name: name.clone(), machines }
     }
 
     async fn key_of(&self, name: &MachineName) -> Option<PublicKey> {

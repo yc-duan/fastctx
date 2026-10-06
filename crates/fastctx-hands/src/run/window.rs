@@ -1,11 +1,10 @@
 //! The part of a job's output one answer shows.
 //!
-//! Output is shown faithfully from the top until the budget is reached
-//! (`world-view.md`, 一次给多少). When it does not all fit, the answer shows
-//! the start and the end and names the lines in between, which the resident
-//! reads back from the log with `fastctx view --lines`. The budget exists
-//! only so that one answer cannot break the resident's session; it is the
-//! same for every model.
+//! Files the resident asked to read with `fastctx view` are shown whole up
+//! to the answer's budget (`world-view.md`, 一次给多少). Any other output is
+//! shown in the window a host's own shell gives: when it does not all fit,
+//! the answer shows the start and the end and names the lines in between,
+//! which the resident reads back from the log with `fastctx view --lines`.
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -29,10 +28,31 @@ pub const IMAGE_COST: usize = 5_200;
 /// is about the most an answer can carry and still be read (`world-view.md`).
 pub const IMAGE_BYTES: usize = 400 * 1024 * 1024;
 
-/// The window onto the log at `log` for an answer of at most `budget`
-/// characters. The start gets a quarter of the budget, the end the rest:
-/// what went wrong usually shows last.
-pub fn window(log: &Path, budget: usize) -> io::Result<OutputWindow> {
+/// Characters a program's output may take in one answer: what Claude Code's
+/// own shell tool shows by default, and about the 10,000 tokens Codex gives a
+/// command's output, so either model reads it as it reads its host's shell.
+pub const OUTPUT_WINDOW: usize = 30_000;
+
+/// What `run`'s own notes can take beside a view's output: the first line,
+/// a machine name of at most 32 characters with the facts of how the script
+/// ended, and the note naming the log when processes it started go on.
+pub const RUN_NOTES: usize = 1_024;
+
+/// The part of the output at `log` one answer shows: what `fastctx view`
+/// wrote up to the whole budget, any other output in `OUTPUT_WINDOW`.
+pub fn window(log: &Path) -> io::Result<OutputWindow> {
+    let (whole, saw_view, cost) = window_within(log, BUDGET - RUN_NOTES)?;
+    if saw_view || cost <= OUTPUT_WINDOW {
+        return Ok(whole);
+    }
+    Ok(window_within(log, OUTPUT_WINDOW)?.0)
+}
+
+/// The window onto the log at `log` for at most `budget` characters, with
+/// whether `fastctx view` wrote any of it and what all of it would cost.
+/// The start gets a quarter of the budget, the end the rest: what went wrong
+/// usually shows last.
+fn window_within(log: &Path, budget: usize) -> io::Result<(OutputWindow, bool, usize)> {
     let file = File::open(log)?;
     let bytes = file.metadata()?.len();
     let head_budget = budget / 4;
@@ -48,9 +68,11 @@ pub fn window(log: &Path, budget: usize) -> io::Result<OutputWindow> {
     let mut tail_cost = 0;
     let mut overflowed = false;
     let mut total = 0;
+    let mut whole_cost = 0;
     while let Some(line) = lines.next_line()? {
         total = line.number;
         let line_cost = cost(&line);
+        whole_cost += line_cost;
         if !overflowed {
             if head_cost + line_cost <= budget {
                 head_cost += line_cost;
@@ -117,7 +139,7 @@ pub fn window(log: &Path, budget: usize) -> io::Result<OutputWindow> {
             assembly.end_of(line, tail_budget);
         }
     }
-    Ok(assembly.finish(log, bytes, total))
+    Ok((assembly.finish(log, bytes, total), lines.saw_view(), whole_cost))
 }
 
 /// What a line costs against the budget: its characters and its newline,

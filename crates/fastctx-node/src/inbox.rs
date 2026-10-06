@@ -280,6 +280,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         status: record.exit.map(|exit| exit.status),
         at: end.at,
         output: record.output.clone(),
+        last: fastctx_hands::run::last::last_lines(std::path::Path::new(&record.output)).unwrap_or(None),
     };
     let id = NoticeId::try_from(format!("{}-{}", record.machine, record.id)).expect("a machine and a job make an id");
     tell(node, owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;

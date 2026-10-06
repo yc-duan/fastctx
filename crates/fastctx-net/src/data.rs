@@ -12,8 +12,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::dial::{self, HubSocket};
 use crate::sign::{Digest, Domain, SecretKey, Signed, sha256};
-use crate::tree::Endpoint;
 use crate::stream_crypto::{Piece, Sealing, StreamKey};
+use crate::tree::Endpoint;
 use crate::wire::{self, Carried, Down, End, Intent, PROTOCOL, Ticket, Up};
 
 /// What the sink says when it has every byte and they check out. The

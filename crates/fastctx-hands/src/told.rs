@@ -15,7 +15,7 @@ use crate::run::present::{display_path, status_text};
 /// A notice as one block of text.
 pub fn told(notice: &Notice) -> String {
     match notice {
-        Notice::JobEnded { job, machine, how, status, at, output } => {
+        Notice::JobEnded { job, machine, how, status, at, output, last } => {
             let how = match (how, status) {
                 (EndedHow::Finished, Some(status)) => status_text(*status),
                 (EndedHow::Finished, None) => "finished".to_string(),
@@ -24,7 +24,13 @@ pub fn told(notice: &Notice) -> String {
                 (EndedHow::Failed { error }, _) => format!("could not run: {error}"),
             };
             let at = at.strftime("%Y-%m-%d %H:%M:%S UTC");
-            format!("=== {job} on {machine} ended ({how}) at {at}; its output is in {} ===", display_path(output))
+            let head =
+                format!("=== {job} on {machine} ended ({how}) at {at}; its output is in {} ===", display_path(output));
+            match last {
+                Some(last) if last.whole => format!("{head}\n{}", last.text),
+                Some(last) => format!("{head}\n=== its last lines ===\n{}", last.text),
+                None => head,
+            }
         }
         Notice::Answer { colleague, end, .. } => {
             let how = turn_end(end);

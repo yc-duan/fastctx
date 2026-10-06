@@ -484,8 +484,7 @@ fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
         revocation
     };
     hub.log.line(format_args!("{} revoked {}: {}", revoked.by, revoked.name, revoked.reason));
-    let refusal =
-        Refusal::Revoked { by: revoked.by.clone(), at: revoked.at, reason: revoked.reason.clone() };
+    let refusal = Refusal::Revoked { by: revoked.by.clone(), at: revoked.at, reason: revoked.reason.clone() };
     if let Some(relay) = hub.relays().get(&revoked.name) {
         let _ = relay.out.send(Out::End(refusal.clone()));
     }

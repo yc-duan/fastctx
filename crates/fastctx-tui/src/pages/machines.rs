@@ -211,10 +211,9 @@ impl MachinesPage {
                     ),
                     Role::Caution,
                 ),
-                LinkState::Online { since, hub, relay, route } => (
-                    words.link_online(hub, relay.as_ref(), route, &crate::words::clock(*since, ctx.now)),
-                    Role::Muted,
-                ),
+                LinkState::Online { since, hub, relay, route } => {
+                    (words.link_online(hub, relay.as_ref(), route, &crate::words::clock(*since, ctx.now)), Role::Muted)
+                }
                 LinkState::Stopped { reason } => (words.link_stopped(&text::first_line(reason)), Role::Wrong),
             };
             for line in text::wrap_plain(&line, look.text(role), width) {

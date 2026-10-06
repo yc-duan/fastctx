@@ -111,7 +111,9 @@ async fn open(shared: &Shared, endpoint: &Endpoint) -> Result<HubSocket, Ended> 
         Ok(Ok(Some(Down::Relaying { world, name }))) => {
             Err(Ended::Retry(format!("it knows this machine as {name} in {world}")))
         }
-        Ok(Ok(Some(Down::Refused { reason: reason @ Refusal::Revoked { .. } }))) => Err(Ended::Stop(reason.to_string())),
+        Ok(Ok(Some(Down::Refused { reason: reason @ Refusal::Revoked { .. } }))) => {
+            Err(Ended::Stop(reason.to_string()))
+        }
         Ok(Ok(Some(Down::Refused { reason }))) => Err(Ended::Retry(reason.to_string())),
         Ok(Ok(Some(_))) => Err(Ended::Retry("the first frame did not open a relay session".to_string())),
         Ok(Ok(None)) => Err(Ended::Retry("the connection was closed".to_string())),
@@ -129,7 +131,8 @@ async fn carry(shared: &Arc<Shared>, socket: HubSocket, tried: &[Endpoint]) -> E
 
     let (out, mut outgoing) = mpsc::unbounded_channel::<Up>();
     let generation = shared.next();
-    shared.state().up = Some(Upward { generation, out: out.clone(), endpoint: endpoint.clone(), tried: tried.to_vec() });
+    shared.state().up =
+        Some(Upward { generation, out: out.clone(), endpoint: endpoint.clone(), tried: tried.to_vec() });
     shared.machine.ready(true);
     shared.log(format!("the relay carries the machines below it through {}", endpoint.upstream));
 
@@ -198,7 +201,9 @@ async fn carry(shared: &Arc<Shared>, socket: HubSocket, tried: &[Endpoint]) -> E
             next = stream.next() => next,
         };
         let frame: Down = match next {
-            None | Some(Ok(WsMessage::Close(_))) => break Ended::Retry("the upstream closed the connection".to_string()),
+            None | Some(Ok(WsMessage::Close(_))) => {
+                break Ended::Retry("the upstream closed the connection".to_string());
+            }
             Some(Err(error)) => break Ended::Retry(dial::describe(&error)),
             Some(Ok(WsMessage::Binary(bytes))) => match serde_json::from_slice(&bytes) {
                 Ok(frame) => frame,

@@ -94,7 +94,9 @@ pub fn endpoints(table: &Table, membership: &Membership, name: &MachineName) -> 
             // route that makes a loop is not followed into it.
             Upstream::Relay { machine } if machine == name || table.carries(name, machine) => continue,
             Upstream::Relay { machine } => match table.get(machine).and_then(|member| member.relay.as_ref()) {
-                Some(offer) => Endpoint { upstream: upstream.clone(), addresses: offer.addresses.clone(), cert: offer.cert },
+                Some(offer) => {
+                    Endpoint { upstream: upstream.clone(), addresses: offer.addresses.clone(), cert: offer.cert }
+                }
                 None => continue,
             },
         };
@@ -130,10 +132,6 @@ pub fn place(table: &Table, name: &MachineName) -> Option<fastctx_types::world::
             Upstream::Relay { machine } => fastctx_types::world::Upstream::Relay { machine },
         })
         .collect();
-    let relays_at = member
-        .relay
-        .iter()
-        .flat_map(|offer| offer.addresses.iter().map(ToString::to_string))
-        .collect();
+    let relays_at = member.relay.iter().flat_map(|offer| offer.addresses.iter().map(ToString::to_string)).collect();
     Some(fastctx_types::world::Place { via, relays_at })
 }

@@ -61,7 +61,10 @@ pub struct Source {
 impl Source {
     pub fn for_answer(world: &WorldDir, answer: &Answer) -> Self {
         match &answer.source {
-            Some(source) => Self { note: format!("\n=== output not shown; full output: {source} ===\n"), file: None },
+            Some(source) => Self {
+                note: format!("\n=== the answer stops here, at its limit; all of the output: {source} ===\n"),
+                file: None,
+            },
             None => Self::text(
                 world,
                 &answer
@@ -80,8 +83,10 @@ impl Source {
     pub fn text(world: &WorldDir, text: &str) -> Self {
         let hash = fastctx_hands::files::content_hash(text.as_bytes());
         let path = world.path().join("out").join("answers").join(format!("{hash}.txt"));
-        let note =
-            format!("\n=== text not shown; full text on this machine: {} ===\n", display_path(&path.to_string_lossy()));
+        let note = format!(
+            "\n=== the answer stops here, at its limit; all of it: {} on this machine ===\n",
+            display_path(&path.to_string_lossy())
+        );
         Self { note, file: Some((path, text.to_string())) }
     }
 

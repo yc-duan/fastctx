@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use fastctx_types::project::*;
-use fastctx_types::scope::{Action as Act, Scope, Set};
 use fastctx_types::residents::*;
+use fastctx_types::scope::{Action as Act, Scope, Set};
 use fastctx_types::town::*;
 use fastctx_types::world::*;
 use fastctx_types::{Address, MachineName};

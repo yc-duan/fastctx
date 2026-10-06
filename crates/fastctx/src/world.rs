@@ -244,19 +244,17 @@ fn call(call: Call) -> anyhow::Result<Reply> {
 fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
     let link = match (&reply.world, &reply.link) {
         (_, LinkState::Alone) => "a World of one machine".to_string(),
-        (Some(world), LinkState::Online { since, hub, relay: None, route }) => {
-            format!("in {world}; connected to the hub at {hub}, {route}, since {}", clock(*since, now))
+        (Some(_), LinkState::Online { since, hub, relay: None, route }) => {
+            format!("connected to the hub at {hub}, {route}, since {}", clock(*since, now))
         }
-        (Some(world), LinkState::Online { since, hub, relay: Some(relay), route }) => {
-            format!("in {world}; connected through the relay {relay} at {hub}, {route}, since {}", clock(*since, now))
+        (Some(_), LinkState::Online { since, hub, relay: Some(relay), route }) => {
+            format!("connected through the relay {relay} at {hub}, {route}, since {}", clock(*since, now))
         }
-        (Some(world), LinkState::Connecting { last_error: None, .. }) => format!("in {world}; connecting to the hub"),
-        (Some(world), LinkState::Connecting { since, last_error: Some(error) }) => {
-            format!("in {world}; not connected to the hub since {}: {error}", clock(*since, now))
+        (Some(_), LinkState::Connecting { last_error: None, .. }) => "connecting to the hub".to_string(),
+        (Some(_), LinkState::Connecting { since, last_error: Some(error) }) => {
+            format!("not connected to the hub since {}: {error}", clock(*since, now))
         }
-        (Some(world), LinkState::Stopped { reason }) => {
-            format!("in {world}; the hub refused this machine: {reason}")
-        }
+        (Some(_), LinkState::Stopped { reason }) => format!("the hub refused this machine: {reason}"),
         (None, _) => "in a World".to_string(),
     };
     let mut text = format!("=== nodes: {} ({link}) ===\n", reply.machine);

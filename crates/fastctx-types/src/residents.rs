@@ -80,6 +80,14 @@ pub struct Delivery {
     pub notice: Notice,
 }
 
+/// The last lines of a job's output.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastLines {
+    pub text: String,
+    /// Whether the text is all of the output.
+    pub whole: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Notice {
@@ -93,6 +101,10 @@ pub enum Notice {
         at: Timestamp,
         /// The log holding all of its output, on that machine.
         output: String,
+        /// The end of that output as a terminal shows it, so the resident
+        /// knows how it went without reading the log.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last: Option<LastLines>,
     },
     /// A turn of a colleague ended, which the resident's words went into or
     /// which it asked for: its last message, verbatim.

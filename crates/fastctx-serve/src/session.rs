@@ -348,6 +348,20 @@ impl Session {
         }
     }
 
+    /// The machines this session works on, for its tools' descriptions; none
+    /// when the node is not running, which listing the tools does not start.
+    pub async fn machines(&self) -> Option<crate::tools::Machines> {
+        let host = self.host.get().cloned()?;
+        let mut client = Client::connect(&self.world, Peer::Session { host }).await.ok()?;
+        match client.call(Call::Machines).await {
+            Ok(Reply::Machines { here, others }) => Some(crate::tools::Machines {
+                here: here.to_string(),
+                others: others.iter().map(ToString::to_string).collect(),
+            }),
+            _ => None,
+        }
+    }
+
     async fn client(&self) -> Result<Client, String> {
         let host = self.host.get().cloned().ok_or("the session did not introduce itself with `initialize`")?;
         let _starting = self.starting.lock().await;

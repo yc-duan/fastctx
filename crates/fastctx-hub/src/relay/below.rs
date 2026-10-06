@@ -18,12 +18,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use super::{Path, Shared, Sub, calls};
 use crate::{Out, Socket, refuse, send};
 
-pub(super) async fn connection(
-    shared: Arc<Shared>,
-    tls: tokio_rustls::TlsAcceptor,
-    tcp: TcpStream,
-    peer: SocketAddr,
-) {
+pub(super) async fn connection(shared: Arc<Shared>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStream, peer: SocketAddr) {
     let opened = tokio::time::timeout(SILENCE, crate::open(&tls, tcp)).await;
     let (mut socket, path, binding, hello) = match opened {
         Ok(Ok(opened)) => opened,

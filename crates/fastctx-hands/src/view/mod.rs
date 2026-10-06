@@ -3,10 +3,10 @@
 //! Paths are shown in the order given, each under a head note saying what
 //! it is and how much of it is shown, until the answer's budget is spent;
 //! the files after that are named with their size and not shown. Nothing is
-//! cut silently: a file shown in part says where it stops. Text is shown as
-//! `number<TAB>line`. Images are written in the iTerm2 terminal protocol,
-//! which `run` turns back into images. The first line sums up what was and
-//! was not shown, because it survives any cut a host makes.
+//! cut silently: a file shown in part says where it stops, and when any file
+//! is not shown whole the first line sums up what was and was not. Text is
+//! shown as `number<TAB>line`. Images are written in the iTerm2 terminal
+//! protocol, which `run` turns back into images.
 
 mod text;
 
@@ -21,7 +21,8 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 use crate::image::sniff;
-use crate::run::window::{BUDGET, IMAGE_COST};
+use crate::run::terminal::VIEW_MARK;
+use crate::run::window::{BUDGET, IMAGE_COST, RUN_NOTES};
 
 /// How to look.
 #[derive(Clone, Debug, Default)]
@@ -32,6 +33,9 @@ pub struct Options {
     pub encoding: Option<String>,
     /// The machine's name, to say where each file is.
     pub machine: Option<String>,
+    /// Inside a World `run`, whose first line already names the machine and
+    /// whose answer holds the view beside its own notes.
+    pub in_run: bool,
 }
 
 /// Shows `paths` on `out` and returns what was seen of each file shown.
@@ -41,8 +45,9 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
     let files = plural(paths.len() as u64, "file", "files");
     let summary_at_longest = format!("=== view ({files}: {n} shown, {n} not shown) ===\n", n = paths.len());
     let notes: Vec<Section> = paths.iter().map(|path| not_shown(path, options)).collect();
+    let budget = if options.in_run { BUDGET - RUN_NOTES } else { BUDGET };
     let mut left =
-        BUDGET.saturating_sub(summary_at_longest.chars().count() + notes.iter().map(|note| note.cost).sum::<usize>());
+        budget.saturating_sub(summary_at_longest.chars().count() + notes.iter().map(|note| note.cost).sum::<usize>());
     let mut sections = Vec::new();
     let mut seen = Vec::new();
     let mut stopped = false;
@@ -62,7 +67,12 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
         sections.push(section);
     }
     let shown = sections.iter().filter(|section| section.shown).count();
-    writeln!(out, "=== view ({files}: {shown} shown, {} not shown) ===", paths.len() - shown)?;
+    if options.in_run {
+        out.write_all(VIEW_MARK.as_bytes())?;
+    }
+    if shown < paths.len() {
+        writeln!(out, "=== view ({files}: {shown} shown, {} not shown) ===", paths.len() - shown)?;
+    }
     for section in sections {
         out.write_all(section.text.as_bytes())?;
     }

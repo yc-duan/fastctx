@@ -178,11 +178,9 @@ fn attach(
         let table = store.table();
         match table.get(&name) {
             None => Err(match table.revoked(&name) {
-                Some(revocation) => Refusal::Revoked {
-                    by: revocation.by.clone(),
-                    at: revocation.at,
-                    reason: revocation.reason.clone(),
-                },
+                Some(revocation) => {
+                    Refusal::Revoked { by: revocation.by.clone(), at: revocation.at, reason: revocation.reason.clone() }
+                }
                 None => Refusal::NotMember,
             }),
             Some(_) if !table.carries(relay, &name) => {
