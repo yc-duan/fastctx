@@ -35,7 +35,8 @@ impl Releases {
         self.load(version).map_err(|error| {
             format!(
                 "fastctx {version} is not ready on the hub: {error}. Place {X86_64_ARCHIVE}, {AARCH64_ARCHIVE}, and {SUMS} as regular copied files in {}. Prepare all three in a staging directory and rename it to v{version} when complete",
-                self.files.root.join("releases").join(format!("v{version}")).display()
+                // A canonical Windows path is verbatim, `\\?\C:\…`; people write it without the prefix.
+                self.files.root.join("releases").join(format!("v{version}")).display().to_string().trim_start_matches(r"\\?\")
             )
         })
     }
