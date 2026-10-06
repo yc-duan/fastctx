@@ -320,6 +320,11 @@ impl fastctx_net::link::Node for Handler {
                     let from = path;
                     crate::copy::send(&node, &from, &to_machine, &to.path).await.map(RemoteReply::Copied)
                 }
+                RemoteCall::CopyFetch { from: path } => {
+                    let stream = stream
+                        .ok_or_else(|| Failure::new("a copy comes with a data connection, and this one had none"))?;
+                    crate::copy::give(&node, &path, stream).await.map(RemoteReply::Copied)
+                }
                 RemoteCall::CopyReceive { to, manifest_bytes, manifest_sha256 } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a copy comes with a data connection, and this one had none"))?;

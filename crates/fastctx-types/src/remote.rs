@@ -156,6 +156,14 @@ pub enum RemoteCall {
         manifest_bytes: u64,
         manifest_sha256: String,
     },
+    /// Send `from`, on this machine, to the calling machine over the call's
+    /// data connection: first how long the manifest is, then the manifest,
+    /// then the files the caller asks for. The caller is the destination of
+    /// a copy, so what leaves here goes only to a member whose scope reaches
+    /// this machine.
+    CopyFetch {
+        from: String,
+    },
     /// A device's call that asks of the whole World (who is in it, what
     /// happened since, its projects), made by this machine's node for the
     /// user holding the device, as for a user at this machine. `made` is a

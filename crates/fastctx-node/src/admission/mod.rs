@@ -54,7 +54,9 @@ fn asked(call: &RemoteCall) -> Asked<'_> {
     let (action, agent, town) = match call {
         RemoteCall::Run { town, .. } => (Action::Run, None, town.as_ref()),
         RemoteCall::Write { town, .. } => (Action::Write, None, town.as_ref()),
-        RemoteCall::CopySend { .. } | RemoteCall::CopyReceive { .. } => (Action::Copy, None, None),
+        RemoteCall::CopySend { .. } | RemoteCall::CopyReceive { .. } | RemoteCall::CopyFetch { .. } => {
+            (Action::Copy, None, None)
+        }
         // A colleague is a Codex resident.
         RemoteCall::Ask { town, .. } => (Action::AskColleague, Some(codex()), town.as_ref()),
         RemoteCall::Who { town, .. } | RemoteCall::Since { town, .. } => (Action::W, None, town.as_ref()),

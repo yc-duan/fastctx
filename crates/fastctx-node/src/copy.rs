@@ -1,11 +1,19 @@
 //! `fastctx copy`: files from one machine to another (`fastctx_types::copy`).
 //!
-//! The machine asked finds which machine holds the source and has it send:
-//! the source walks its path and calls the destination with a data
-//! connection. Over it go the manifest, which the call's signed digest
-//! pins, then the destination's answer of which files it needs, then those
-//! files' bytes, each checked against the manifest's hash before it is put
-//! in place.
+//! Whoever is asked to put files somewhere answers for it as itself, under
+//! its own scope, since that is all the machine written to can check. So
+//! the machine asked, when it holds the source, sends: it walks its path and
+//! calls the destination with a data connection, and the destination admits
+//! it by its scope. When it is the destination, it fetches: it calls the
+//! source, which admits it by its scope and sends back over the call's data
+//! connection. Asked to copy between two other machines, it has the source
+//! send, so the source's scope must reach the destination.
+//!
+//! Over the connection go the manifest, then the destination's answer of
+//! which files it needs, then those files' bytes, each checked against the
+//! manifest's hash before it is put in place. The connection is sealed with
+//! a key only the two ends hold; a sent manifest is pinned besides by the
+//! digest the signed call carries.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -49,6 +57,9 @@ pub async fn copy(node: &Arc<Node>, from: Place, to: Place) -> Result<CopyReport
     if from_machine == here {
         return send(node, &from.path, &to_machine, &to.path).await;
     }
+    if to_machine == here {
+        return fetch(node, &from_machine, &from.path, &to.path).await;
+    }
     let link = link(node)?;
     let call = RemoteCall::CopySend { from: from.path, to: Place { machine: Some(to_machine), path: to.path } };
     match link.call(&from_machine, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
@@ -62,9 +73,16 @@ fn link(node: &Node) -> Result<Arc<Link>, Failure> {
     node.link().ok_or_else(|| Failure::new(format!("{} is in no World with other machines", node.machine())))
 }
 
-/// The source's side: walks `from`, here, and sends it to `to` on `to_machine`.
-pub async fn send(node: &Arc<Node>, from: &str, to_machine: &MachineName, to: &str) -> Result<CopyReport, Failure> {
-    let link = link(node)?;
+/// What a source has to send: its manifest, the files behind it, and what
+/// it could not read.
+struct Walked {
+    manifest: Vec<u8>,
+    files: Vec<(PathBuf, Option<u64>)>,
+    problems: Vec<String>,
+}
+
+/// Walks `from`, on this machine, for sending.
+async fn walked(node: &Node, from: &str) -> Result<Walked, Failure> {
     let root = PathBuf::from(from);
     if !root.is_absolute() {
         return Err(Failure::new(format!("{from} is not an absolute path on {}", node.machine())));
@@ -74,12 +92,7 @@ pub async fn send(node: &Arc<Node>, from: &str, to_machine: &MachineName, to: &s
         .map_err(|error| Failure::new(format!("reading {from}: {error}")))?
         .map_err(|error| Failure::new(format!("{from} on {}: {error}", node.machine())))?;
     let manifest = serde_json::to_vec(&walked.manifest).expect("manifests serialize");
-    let call = RemoteCall::CopyReceive {
-        to: to.to_string(),
-        manifest_bytes: manifest.len() as u64,
-        manifest_sha256: format!("{:x}", Sha256::digest(&manifest)),
-    };
-    let files: Vec<(PathBuf, Option<u64>)> = walked
+    let files = walked
         .sources
         .iter()
         .zip(&walked.manifest.entries)
@@ -88,6 +101,87 @@ pub async fn send(node: &Arc<Node>, from: &str, to_machine: &MachineName, to: &s
             _ => (path.clone(), None),
         })
         .collect();
+    Ok(Walked { manifest, files, problems: walked.problems })
+}
+
+/// What a source that is fetched from says first: how long its manifest is.
+#[derive(Serialize, Deserialize)]
+struct Offer {
+    manifest_bytes: u64,
+}
+
+/// The source's side when it is fetched from: walks `from`, here, and sends
+/// it back over the caller's data connection.
+pub async fn give(node: &Arc<Node>, from: &str, mut stream: Stream) -> Result<CopyReport, Failure> {
+    let Walked { manifest, files, problems } = walked(node, from).await?;
+    stream.say(&Offer { manifest_bytes: manifest.len() as u64 }).await.map_err(Failure::new)?;
+    feed(stream, manifest, files).await.map_err(Failure::new)?;
+    Ok(CopyReport {
+        from: slashed(Path::new(from)),
+        from_machine: node.machine(),
+        to: String::new(),
+        to_machine: node.machine(),
+        files: 0,
+        bytes: 0,
+        directories: 0,
+        links: 0,
+        unchanged: 0,
+        problems,
+    })
+}
+
+/// The destination's side when it is the machine asked: calls `from_machine`
+/// for `from` and puts it at `to`, here.
+async fn fetch(node: &Arc<Node>, from_machine: &MachineName, from: &str, to: &str) -> Result<CopyReport, Failure> {
+    let link = link(node)?;
+    // The feed keeps what it took before it sends its receipt; the source
+    // answers only after the receipt, so the answer never comes first.
+    let taken: Arc<std::sync::Mutex<Option<CopyReport>>> = Arc::default();
+    let (here, to, kept) = (node.clone(), to.to_string(), taken.clone());
+    let feed: Feed = Box::new(move |mut stream| {
+        Box::pin(async move {
+            let offer: Offer = stream.hear().await?;
+            let report = take_files(&here, to, offer.manifest_bytes, None, &mut stream)
+                .await
+                .map_err(|failure| failure.message)?;
+            *kept.lock().expect("never poisoned") = Some(report);
+            stream.done().await
+        })
+    });
+    let call = RemoteCall::CopyFetch { from: from.to_string() };
+    let answer = link.call_with_stream(from_machine, call, feed).await.map_err(|failure| match failure {
+        CallFailure::Unknown { name, reason } if reason.starts_with("sending its data failed: ") => {
+            Failure::new(format!("the copy from {name} stopped: {}", &reason["sending its data failed: ".len()..]))
+        }
+        other => Failure::new(other.to_string()),
+    })?;
+    let sent = match answer {
+        Ok(RemoteReply::Copied(report)) => report,
+        Ok(_) => return Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
+        Err(failure) => return Err(failure),
+    };
+    let mut report = taken
+        .lock()
+        .expect("never poisoned")
+        .take()
+        .ok_or_else(|| Failure::new(format!("{from_machine} answered before the copy had arrived")))?;
+    report.from = sent.from;
+    report.from_machine = sent.from_machine;
+    let mut problems = sent.problems;
+    problems.append(&mut report.problems);
+    report.problems = problems;
+    Ok(report)
+}
+
+/// The source's side: walks `from`, here, and sends it to `to` on `to_machine`.
+pub async fn send(node: &Arc<Node>, from: &str, to_machine: &MachineName, to: &str) -> Result<CopyReport, Failure> {
+    let link = link(node)?;
+    let Walked { manifest, files, problems: walk_problems } = walked(node, from).await?;
+    let call = RemoteCall::CopyReceive {
+        to: to.to_string(),
+        manifest_bytes: manifest.len() as u64,
+        manifest_sha256: format!("{:x}", Sha256::digest(&manifest)),
+    };
     let feed: Feed = Box::new(move |stream| Box::pin(feed(stream, manifest, files)));
     let answer = link.call_with_stream(to_machine, call, feed).await.map_err(|failure| match failure {
         CallFailure::Unknown { name, reason } if reason.starts_with("sending its data failed: ") => {
@@ -102,7 +196,7 @@ pub async fn send(node: &Arc<Node>, from: &str, to_machine: &MachineName, to: &s
     };
     report.from = slashed(Path::new(from));
     report.from_machine = node.machine();
-    let mut problems = walked.problems;
+    let mut problems = walk_problems;
     problems.append(&mut report.problems);
     report.problems = problems;
     Ok(report)
@@ -159,14 +253,29 @@ async fn send_file(stream: &mut Stream, path: &Path, size: u64, buffer: &mut [u8
     Ok(())
 }
 
-/// The destination's side: takes the manifest, says which files it needs,
-/// and puts each in place as it comes.
+/// The destination's side when the source calls: takes the copy, and says
+/// it has everything.
 pub async fn receive(
     node: &Node,
     to: String,
     manifest_bytes: u64,
     manifest_sha256: String,
     mut stream: Stream,
+) -> Result<CopyReport, Failure> {
+    let report = take_files(node, to, manifest_bytes, Some(&manifest_sha256), &mut stream).await?;
+    stream.done().await.map_err(Failure::new)?;
+    Ok(report)
+}
+
+/// Takes the manifest, checked against `manifest_sha256` when the source
+/// signed for one, says which files it needs, and puts each in place as it
+/// comes; the receipt is the caller's to send.
+async fn take_files(
+    node: &Node,
+    to: String,
+    manifest_bytes: u64,
+    manifest_sha256: Option<&str>,
+    stream: &mut Stream,
 ) -> Result<CopyReport, Failure> {
     let failure = |reason: String| Failure::new(reason);
     let mut json = Vec::new();
@@ -177,7 +286,7 @@ pub async fn receive(
         })
         .await
         .map_err(failure)?;
-    if format!("{:x}", Sha256::digest(&json)) != manifest_sha256 {
+    if manifest_sha256.is_some_and(|signed| format!("{:x}", Sha256::digest(&json)) != signed) {
         return Err(Failure::new("the manifest is not the one the source signed for"));
     }
     let manifest: Manifest =
@@ -204,7 +313,6 @@ pub async fn receive(
         receiver.arrived(index, arriving);
     }
     receiver.link();
-    stream.done().await.map_err(failure)?;
     Ok(CopyReport {
         from: String::new(),
         from_machine: node.machine(),
