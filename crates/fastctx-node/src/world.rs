@@ -10,8 +10,9 @@ use std::io;
 use std::sync::{Arc, Weak};
 
 use fastctx_net::code::Code;
-use fastctx_net::link::{BoxFuture, Link, Membership, NetDir, Status};
+use fastctx_net::link::{BoxFuture, Keys, Link, Membership, NetDir, Status};
 use fastctx_net::message::LetterId;
+use fastctx_net::seal::SealKey;
 use fastctx_net::sign::SecretKey;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
@@ -25,22 +26,36 @@ use jiff::Timestamp;
 use crate::Node;
 use crate::speech::Owed;
 
-/// The membership and key this machine joined with, if it has joined.
-pub fn load(world: &WorldDir) -> io::Result<Option<(Membership, SecretKey)>> {
+/// The membership and keys this machine joined with, if it has joined.
+pub fn load(world: &WorldDir) -> io::Result<Option<(Membership, Keys)>> {
     let net = NetDir::new(world.net());
     let membership: Membership = match fastctx_net::link::state::read(&net.membership()) {
         Ok(membership) => membership,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let key = SecretKey::load(&world.device_key())?;
-    Ok(Some((membership, key)))
+    let sign = SecretKey::load(&world.device_key())?;
+    Ok(Some((membership, Keys { sign, seal: own_seal(world)? })))
+}
+
+/// This machine's sealing key, made now if it has none: a machine that
+/// joined before sealing makes it the first time it starts, and its link
+/// gives the hub the public half.
+pub fn own_seal(world: &WorldDir) -> io::Result<SealKey> {
+    match SealKey::load(&world.seal_key()) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let seal = SealKey::generate()?;
+            seal.create(&world.seal_key())?;
+            Ok(seal)
+        }
+        other => other,
+    }
 }
 
 /// Starts the link of a member.
-pub fn start(node: &Arc<Node>, membership: Membership, key: SecretKey) -> io::Result<Arc<Link>> {
+pub fn start(node: &Arc<Node>, membership: Membership, keys: Keys) -> io::Result<Arc<Link>> {
     let handler = Arc::new(Handler { node: Arc::downgrade(node) });
-    let link = Arc::new(Link::start(NetDir::new(node.world.net()), membership, key, handler)?);
+    let link = Arc::new(Link::start(NetDir::new(node.world.net()), membership, keys, handler)?);
     *node.link.write().expect("never poisoned") = Some(link.clone());
     Ok(link)
 }
@@ -57,11 +72,13 @@ pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Re
     let code = Code::parse(code).map_err(Failure::new)?;
     let name = name.unwrap_or_else(|| node.machine());
     let world = node.world.clone();
-    let key = tokio::task::spawn_blocking(move || crate::ledger::own_key(&world))
-        .await
-        .map_err(|error| Failure::new(format!("making this machine's key: {error}")))?
-        .map_err(|error| Failure::new(format!("making this machine's key: {error}")))?;
-    let membership = fastctx_net::join::join(&code, name.clone(), &key).await.map_err(Failure::new)?;
+    let keys = tokio::task::spawn_blocking(move || {
+        Ok::<_, io::Error>(Keys { sign: crate::ledger::own_key(&world)?, seal: own_seal(&world)? })
+    })
+    .await
+    .map_err(|error| Failure::new(format!("making this machine's keys: {error}")))?
+    .map_err(|error| Failure::new(format!("making this machine's keys: {error}")))?;
+    let membership = fastctx_net::join::join(&code, name.clone(), &keys).await.map_err(Failure::new)?;
     let net = NetDir::new(node.world.net());
     let recorded = net
         .prepare()
@@ -71,7 +88,7 @@ pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Re
         .map_err(|error| Failure::new(format!("the hub admitted this machine, but recording that failed: {error}")))?;
     node.set_machine(name.clone());
     let world = membership.world.to_string();
-    start(node, membership, key).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
+    start(node, membership, keys).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
     Ok((world, name))
 }
 

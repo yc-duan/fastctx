@@ -65,7 +65,14 @@ pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Res
             let mut records: Vec<Signed> =
                 store.members.records.iter().map(|admitted| admitted.record.clone()).collect();
             records.push(signed.clone());
-            let (table, _) = trust::check(&world, &founder, &records, &store.members.revocations, &Known::default());
+            let (table, _) = trust::check(
+                &world,
+                &founder,
+                &records,
+                &store.members.revocations,
+                &store.members.grants,
+                &Known::default(),
+            );
             if table.get(&record.name).is_none() {
                 let reason = table
                     .refused

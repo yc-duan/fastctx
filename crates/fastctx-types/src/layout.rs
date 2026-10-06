@@ -57,6 +57,12 @@ impl WorldDir {
         self.root.join("device.key")
     }
 
+    /// The key others seal what they send this machine to, made with the
+    /// device key, or the first time a machine of an older World starts.
+    pub fn seal_key(&self) -> PathBuf {
+        self.root.join("seal.key")
+    }
+
     /// The link to the hub: membership, letters, what was accepted.
     pub fn net(&self) -> PathBuf {
         self.root.join("net")

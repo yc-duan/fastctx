@@ -44,6 +44,8 @@ pub struct MembersFile {
     pub known: Known,
     pub records: Vec<Signed>,
     pub revocations: Vec<Signed>,
+    #[serde(default)]
+    pub grants: Vec<Signed>,
 }
 
 /// Where this machine's letters stand with the hub.

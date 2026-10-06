@@ -4,9 +4,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use fastctx_types::MachineName;
-use fastctx_types::ipc::Failure;
-use fastctx_types::remote::RemoteResult;
 use futures_util::{SinkExt as _, StreamExt as _};
 use jiff::Timestamp;
 use tokio::sync::{mpsc, oneshot};
@@ -18,9 +15,11 @@ use super::letters::{self, Outbox, Receipt};
 use super::outgoing::Outgoing;
 use super::{CallEvent, Connection, Inner, Status};
 use crate::dial;
-use crate::message::{Body, Message};
+use crate::envelope::{self, Kind};
+use crate::message::LetterBody;
+use crate::seal::Sealed;
 use crate::sign::{Domain, Signed, sha256};
-use crate::wire::{self, Carried, Down, HEARTBEAT, Intent, Letters, PROTOCOL, Refusal, SILENCE, Ticket, Up};
+use crate::wire::{self, Down, HEARTBEAT, Intent, Letters, PROTOCOL, Refusal, SILENCE, Up};
 
 /// A connection that stays up this long counts as healthy: the next failure
 /// is tried again at once.
@@ -209,6 +208,12 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
             if let Err(error) = inner.refresh().await {
                 inner.node.log(format!("asking the hub for the members: {error}"));
             }
+            // A member of a World older than sealing gives the hub its
+            // sealing key the first time it connects.
+            if let Err(error) = inner.republish().await {
+                inner.node.log(format!("giving the hub this machine's sealing key: {error}"));
+            }
+            inner.node.members_changed();
             // Whatever the towns' ledgers gained while this machine was away
             // is taken now; the entries checked against the members just
             // asked for.
@@ -262,14 +267,18 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
                 let _ = deliveries.send((seq, message));
             }
             Down::Incoming { call, message } => {
-                tokio::spawn(answer(inner.clone(), up.clone(), call, message));
+                tokio::spawn(super::answering::answer(inner.clone(), up.clone(), call, message));
             }
             Down::Status { id, status } => {
                 if let Some(waiter) = inner.calls.lock().expect("never poisoned").get(&id) {
                     let _ = waiter.events.send(CallEvent::Status(status));
                 }
             }
-            Down::Answered { id, message } => answered(inner, id, message),
+            Down::Answered { id, message } => {
+                if let Some(waiter) = inner.calls.lock().expect("never poisoned").get(&id) {
+                    let _ = waiter.events.send(CallEvent::Answered(message));
+                }
+            }
             Down::Told { id, answer } => {
                 if let Some(asker) = inner.asks.lock().expect("never poisoned").remove(&id) {
                     let _ = asker.send(answer);
@@ -281,6 +290,7 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
                     if let Err(error) = inner.refresh().await {
                         inner.node.log(format!("asking the hub for the members: {error}"));
                     }
+                    inner.node.members_changed();
                 });
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
@@ -459,7 +469,7 @@ async fn take_letter(inner: &Inner, message: &Signed) -> std::io::Result<()> {
         inner.node.log(format!("a letter was set aside: {reason}; kept in {}", path.display()));
         Ok(())
     };
-    let claimed: Message = match message.claim() {
+    let claimed = match envelope::claim(message) {
         Ok(claimed) => claimed,
         Err(error) => return set_aside(format!("it cannot be read: {error}")),
     };
@@ -469,12 +479,23 @@ async fn take_letter(inner: &Inner, message: &Signed) -> std::io::Result<()> {
     let Some(key) = inner.key_of(&claimed.from).await else {
         return set_aside(format!("{} is not a member this machine trusts", claimed.from));
     };
-    let opened: Message = match message.open(&key, Domain::Message) {
+    let opened = match envelope::open(message, &key) {
         Ok(opened) => opened,
         Err(error) => return set_aside(format!("from {}: {error}", claimed.from)),
     };
-    let Body::Letter { id, letter } = opened.body else {
+    if opened.kind != Kind::Letter {
         return set_aside(format!("from {}: it is not a letter", opened.from));
+    }
+    let info = super::calls::letter_info(&opened.world, &opened.from, &opened.to);
+    let plaintext = match Sealed::from_bytes(&opened.sealed.0)
+        .and_then(|sealed| inner.seal.open(&sealed, &info, &opened.header()))
+    {
+        Ok(plaintext) => plaintext,
+        Err(error) => return set_aside(format!("from {}: {error}", opened.from)),
+    };
+    let LetterBody { id, letter } = match serde_json::from_slice(&plaintext) {
+        Ok(body) => body,
+        Err(error) => return set_aside(format!("from {}: it cannot be read: {error}", opened.from)),
     };
     let digest = crate::sign::Digest(sha256(&serde_json::to_vec(&letter).expect("letters serialize")));
     match letters::receipt(&inner.dir, &opened.from, &id)? {
@@ -492,227 +513,4 @@ async fn take_letter(inner: &Inner, message: &Signed) -> std::io::Result<()> {
         set_aside(format!("from {}: {reason}", opened.from))?;
     }
     letters::keep_receipt(&inner.dir, &opened.from, &id, &Receipt { digest, at: Timestamp::now() })
-}
-
-/// Checks a call from another machine, has the node do it, and answers.
-async fn answer(inner: Arc<Inner>, up: Outgoing, call: u64, message: Signed) {
-    let claimed: Message = match message.claim() {
-        Ok(claimed) => claimed,
-        Err(error) => {
-            inner.node.log(format!("an unreadable call came through the hub: {error}"));
-            return;
-        }
-    };
-    let caller = claimed.from.clone();
-    let mut _answering = None;
-    let result: RemoteResult = match check_call(&inner, &message, &claimed).await {
-        Ok((remote, stream)) => match inner.node.answering(&remote) {
-            Ok(guard) => {
-                _answering = guard;
-                inner.node.call(caller.clone(), remote, stream).await
-            }
-            Err(failure) => Err(failure),
-        },
-        Err(reason) => {
-            inner.node.log(format!("refused a call from {caller}: {reason}"));
-            Err(Failure::new(format!("{} refused the call: {reason}", inner.membership.name)))
-        }
-    };
-    let n = match inner.counter.next() {
-        Ok(n) => n,
-        Err(error) => {
-            inner.node.log(format!("numbering an answer: {error}"));
-            return;
-        }
-    };
-    let sign = |body: Body| {
-        let message = Message {
-            world: inner.membership.world.clone(),
-            from: inner.membership.name.clone(),
-            to: caller.clone(),
-            n,
-            body,
-        };
-        Signed::new(&inner.key, Domain::Message, &message)
-    };
-    let small = sign(Body::Answer { call: claimed.n, result: result.clone() });
-    let frame = Up::Answer { call, message: small };
-    if wire::encode(&frame).len() <= wire::MAX_CONTROL_FRAME {
-        if let Err(error) = up.write(frame).await {
-            inner.node.log(format!("sending an answer to {caller}: {error}"));
-        }
-        return;
-    }
-    // Too large for the control connection: the answer says what follows
-    // over a data connection.
-    let bytes = serde_json::to_vec(&result).expect("answers serialize");
-    let stream = match crate::sign::random::<8>() {
-        Ok(random) => u64::from_le_bytes(random),
-        Err(error) => {
-            inner.node.log(format!("choosing a stream for a large answer: {error}"));
-            return;
-        }
-    };
-    let ticket = Ticket {
-        world: inner.membership.world.clone(),
-        stream,
-        source: inner.membership.name.clone(),
-        sink: caller.clone(),
-    };
-    let ticket = Signed::new(&inner.key, Domain::Ticket, &ticket);
-    let carried =
-        Carried { ticket: ticket.clone(), bytes: bytes.len() as u64, sha256: crate::sign::Digest(sha256(&bytes)) };
-    if let Err(error) =
-        up.write(Up::Answer { call, message: sign(Body::LargeAnswer { call: claimed.n, carried }) }).await
-    {
-        inner.node.log(format!("announcing a large answer to {caller}: {error}"));
-        return;
-    }
-    if let Err(error) = crate::data::source(&inner.membership, &inner.key, ticket, &bytes).await {
-        inner.node.log(format!("sending a large answer to {caller}: {error}"));
-    }
-}
-
-/// Checks a call, and fetches it or opens its data connection when it
-/// comes with one.
-async fn check_call(
-    inner: &Inner,
-    message: &Signed,
-    claimed: &Message,
-) -> Result<(fastctx_types::remote::RemoteCall, Option<crate::data::Stream>), String> {
-    if claimed.to != inner.membership.name || claimed.world != inner.membership.world {
-        return Err(format!("it is for {} in {}", claimed.to, claimed.world));
-    }
-    let key = inner
-        .key_of(&claimed.from)
-        .await
-        .ok_or_else(|| format!("{} is not a member this machine trusts", claimed.from))?;
-    let opened: Message = message.open(&key, Domain::Message).map_err(|error| error.to_string())?;
-    if !matches!(opened.body, Body::Call { .. } | Body::LargeCall { .. } | Body::StreamCall { .. }) {
-        return Err("it is not a call".to_string());
-    }
-    match inner.taken.take(&opened.from, opened.n) {
-        Ok(Ok(())) => {}
-        Ok(Err(reason)) => return Err(reason),
-        Err(error) => return Err(format!("recording the call: {error}")),
-    }
-    let from_the_caller = |ticket: &Ticket| {
-        if ticket.source != opened.from || ticket.sink != inner.membership.name {
-            return Err(format!("its ticket is for {} to {}", ticket.source, ticket.sink));
-        }
-        Ok(())
-    };
-    match opened.body {
-        Body::Call { call } => Ok((call, None)),
-        Body::StreamCall { call, ticket } => {
-            from_the_caller(&ticket.claim().map_err(|error| format!("the ticket: {error}"))?)?;
-            let stream = crate::data::Stream::open(&inner.membership, &inner.key, ticket, crate::wire::End::Sink)
-                .await
-                .map_err(|error| format!("opening its data connection: {error}"))?;
-            Ok((call, Some(stream)))
-        }
-        Body::LargeCall { carried } => {
-            from_the_caller(&carried.ticket.claim().map_err(|error| format!("the ticket: {error}"))?)?;
-            let bytes = crate::data::sink(&inner.membership, &inner.key, &carried)
-                .await
-                .map_err(|error| format!("fetching it, too large for a message: {error}"))?;
-            Ok((serde_json::from_slice(&bytes).map_err(|error| format!("it cannot be read: {error}"))?, None))
-        }
-        _ => unreachable!("checked above"),
-    }
-}
-
-/// An answer to one of this machine's calls.
-fn answered(inner: &Arc<Inner>, id: u64, message: Signed) {
-    let waiter = inner
-        .calls
-        .lock()
-        .expect("never poisoned")
-        .get(&id)
-        .map(|waiter| (waiter.to.clone(), waiter.n, waiter.events.clone()));
-    let claimed: Message = match message.claim() {
-        Ok(claimed) => claimed,
-        Err(error) => {
-            if let Some((_, _, events)) = waiter {
-                let _ = events.send(CallEvent::Broken(format!("its answer cannot be read: {error}")));
-            }
-            return;
-        }
-    };
-    let opened = check_answer(inner, &message, &claimed, waiter.as_ref().map(|(to, _, _)| to));
-    let (body, from) = match opened {
-        Ok(opened) => (opened.body, opened.from),
-        Err(reason) => {
-            if let Some((_, _, events)) = waiter {
-                let _ = events.send(CallEvent::Broken(reason));
-            }
-            return;
-        }
-    };
-    match body {
-        Body::Answer { call, result } => {
-            if let Some((_, n, events)) = waiter {
-                let _ = events.send(if call == n {
-                    CallEvent::Answer(result)
-                } else {
-                    CallEvent::Broken(format!("the answer is to call {call}, not {n}"))
-                });
-            }
-        }
-        Body::LargeAnswer { call, carried } => {
-            // The answer is fetched even when nobody waits for it any more,
-            // so the machine sending it is not left holding it.
-            let inner = inner.clone();
-            tokio::spawn(async move {
-                let fetched = fetch(&inner, &from, &carried).await;
-                if let Some((_, n, events)) = waiter {
-                    let event = match fetched {
-                        Ok(_) if call != n => CallEvent::Broken(format!("the answer is to call {call}, not {n}")),
-                        Ok(result) => CallEvent::Answer(result),
-                        Err(reason) => CallEvent::Broken(format!(
-                            "its answer was too large for a message, and fetching it failed: {reason}"
-                        )),
-                    };
-                    let _ = events.send(event);
-                }
-            });
-        }
-        Body::Call { .. } | Body::LargeCall { .. } | Body::StreamCall { .. } | Body::Letter { .. } => {
-            if let Some((_, _, events)) = waiter {
-                let _ = events.send(CallEvent::Broken("what came back is not an answer".to_string()));
-            }
-        }
-    }
-}
-
-fn check_answer(
-    inner: &Inner,
-    message: &Signed,
-    claimed: &Message,
-    expected: Option<&MachineName>,
-) -> Result<Message, String> {
-    if claimed.to != inner.membership.name || claimed.world != inner.membership.world {
-        return Err(format!("the answer is for {} in {}", claimed.to, claimed.world));
-    }
-    if let Some(expected) = expected
-        && claimed.from != *expected
-    {
-        return Err(format!("the answer is from {}, not {expected}", claimed.from));
-    }
-    let key = inner
-        .members()
-        .table
-        .get(&claimed.from)
-        .map(|member| member.key)
-        .ok_or_else(|| format!("{} is not a member this machine trusts", claimed.from))?;
-    message.open(&key, Domain::Message).map_err(|error| format!("the answer from {}: {error}", claimed.from))
-}
-
-async fn fetch(inner: &Inner, from: &MachineName, carried: &Carried) -> Result<RemoteResult, String> {
-    let ticket: Ticket = carried.ticket.claim().map_err(|error| format!("the ticket: {error}"))?;
-    if ticket.source != *from || ticket.sink != inner.membership.name {
-        return Err(format!("the ticket is for {} to {}", ticket.source, ticket.sink));
-    }
-    let bytes = crate::data::sink(&inner.membership, &inner.key, carried).await?;
-    serde_json::from_slice(&bytes).map_err(|error| format!("the answer cannot be read: {error}"))
 }

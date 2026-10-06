@@ -7,9 +7,10 @@
 //! JSON value in a binary WebSocket message; after a data connection is
 //! paired, the bytes it carries follow as raw binary messages.
 //!
-//! A frame here only carries what members say; what they say is signed by
-//! the member that says it (`message.rs`), so the hub can route it and read
-//! it but not change it or make one up.
+//! A frame here only carries what members say; what they say is an
+//! envelope signed by the member that says it, around a body sealed for the
+//! member it is for (`crate::envelope`), so the hub can route it but not
+//! read it, change it or make one up.
 
 use fastctx_types::{MachineName, TownName};
 use jiff::Timestamp;
@@ -19,7 +20,7 @@ use crate::sign::{Digest, PublicKey, Secret, Signature, Signed};
 use crate::trust::WorldId;
 
 /// Raised whenever a change would make one side misread the other.
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 8;
 
 pub const CONTROL_PATH: &str = "/fastctx/world/3";
 pub const DATA_PATH: &str = "/fastctx/world/3/data";
@@ -134,11 +135,13 @@ pub struct Ticket {
     pub sink: MachineName,
 }
 
-/// What a transfer carries, said in a signed message before the bytes
-/// flow, so the sink can check every byte it takes.
+/// What a transfer carries, said in a sealed call or answer before the
+/// bytes flow, so the sink can check every byte it takes; and the key the
+/// transfer is sealed with (`crate::stream_crypto`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Carried {
     pub ticket: Signed,
+    pub key: crate::stream_crypto::StreamKey,
     pub bytes: u64,
     pub sha256: Digest,
 }
@@ -253,6 +256,10 @@ pub enum Question {
     Invite { endorsement: Signed },
     /// A member revokes a key.
     Revoke { revocation: Signed },
+    /// A member's record again, with the same key: to add its sealing key.
+    Republish { record: Signed },
+    /// A member with management rights sets what a member may do.
+    Grant { grant: Signed },
     /// Keep this entry in its town's ledger (`crate::ledger`).
     LedgerWrite { entry: Signed },
     /// The towns this machine spans, each with the number of its latest
@@ -275,6 +282,7 @@ pub enum Told {
     Members {
         records: Vec<Signed>,
         revocations: Vec<Signed>,
+        grants: Vec<Signed>,
         presence: Vec<Presence>,
     },
     Done,

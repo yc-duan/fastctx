@@ -4,9 +4,10 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use fastctx_net::message::{Body, Message};
+use fastctx_net::envelope::{self, Envelope, Kind};
+use fastctx_net::scope::{Grant, Scope};
 use fastctx_net::sign::{Domain, PublicKey, Signature, Signed};
-use fastctx_net::trust::{Endorsement, Revocation};
+use fastctx_net::trust::{Endorsement, Record, Revocation};
 use fastctx_net::wire::{self, CallStatus, Down, Letters, Presence, Question, Refusal, SILENCE, Told, Up};
 use fastctx_types::MachineName;
 use futures_util::{SinkExt as _, StreamExt as _};
@@ -241,10 +242,10 @@ fn handle(
     Ok(())
 }
 
-/// Opens a member's signed message, checking it came from the member on
-/// this connection.
-fn open_message(hub: &Hub, name: &MachineName, message: &Signed) -> Result<Message, String> {
-    let claimed: Message = message.claim().map_err(|error| error.to_string())?;
+/// Opens a member's envelope, checking it came from the member on this
+/// connection. The hub reads only the envelope; the body is sealed.
+fn open_envelope(hub: &Hub, name: &MachineName, message: &Signed) -> Result<Envelope, String> {
+    let claimed = envelope::claim(message)?;
     if claimed.from != *name {
         return Err(format!("it says it is from {}, on the connection of {name}", claimed.from));
     }
@@ -253,7 +254,7 @@ fn open_message(hub: &Hub, name: &MachineName, message: &Signed) -> Result<Messa
         return Err(format!("it is for the World {}", claimed.world));
     }
     let key = store.table().get(name).map(|member| member.key).ok_or_else(|| format!("{name} is not a member"))?;
-    message.open(&key, Domain::Message).map_err(|error| error.to_string())
+    envelope::open(message, &key)
 }
 
 fn letter(hub: &Hub, name: &MachineName, seq: u64, message: &Signed, reply: &impl Fn(Down)) -> Result<(), Refusal> {
@@ -265,8 +266,8 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: &Signed, reply: &imp
         return Ok(());
     }
     drop(store);
-    let refused = match open_message(hub, name, message) {
-        Ok(Message { to, body: Body::Letter { .. }, .. }) => {
+    let refused = match open_envelope(hub, name, message) {
+        Ok(Envelope { to, kind: Kind::Letter, .. }) => {
             let mut store = hub.store();
             if to == *name {
                 Some("a machine's letters to itself do not go through the hub".to_string())
@@ -301,8 +302,8 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: &Signed, reply: &imp
 }
 
 fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: &Signed) -> CallStatus {
-    let to = match open_message(hub, name, message) {
-        Ok(Message { to, body: Body::Call { .. } | Body::LargeCall { .. } | Body::StreamCall { .. }, .. }) => to,
+    let to = match open_envelope(hub, name, message) {
+        Ok(Envelope { to, kind, .. }) if kind.is_call() => to,
         // A caller that sends something unreadable gets the plainest
         // answer: nobody by that description is there.
         Ok(_) | Err(_) => return CallStatus::NotMember,
@@ -343,8 +344,8 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: Si
     // The caller may have given up or left; an answer nobody waits for is
     // dropped, as a call does not outlive its caller.
     let Some(pending) = pending else { return };
-    match open_message(hub, name, &message) {
-        Ok(Message { to, body: Body::Answer { .. } | Body::LargeAnswer { .. }, .. }) if to == pending.caller => {
+    match open_envelope(hub, name, &message) {
+        Ok(Envelope { to, kind, .. }) if kind.is_answer() && to == pending.caller => {
             let sessions = hub.sessions();
             if let Some(caller) =
                 sessions.get(&pending.caller).filter(|session| session.generation == pending.caller_generation)
@@ -378,11 +379,14 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
             Ok(Told::Members {
                 records: store.members.records.iter().map(|admitted| admitted.record.clone()).collect(),
                 revocations: store.members.revocations.clone(),
+                grants: store.members.grants.clone(),
                 presence,
             })
         }
         Question::Invite { endorsement } => invite(hub, name, endorsement).map(|()| Told::Done),
         Question::Revoke { revocation } => revoke(hub, name, revocation).map(|()| Told::Done),
+        Question::Republish { record } => republish(hub, name, record).map(|()| Told::Done),
+        Question::Grant { grant: signed } => grant(hub, name, signed).map(|()| Told::Done),
         Question::LedgerWrite { entry } => {
             let (seq, town, tell) = {
                 let store = hub.store();
@@ -411,14 +415,12 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
 fn invite(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
     let mut store = hub.store();
     let member = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
-    // Every machine refuses whom a device invited; the hub keeps no such
-    // invitation to begin with.
-    if !member.kind.is_machine() {
-        return Err(format!("{name} is a device, and a device invites nobody"));
-    }
     let key = member.key;
     let endorsement: Endorsement =
         signed.open(&key, Domain::Endorsement).map_err(|error| format!("the endorsement: {error}"))?;
+    // Every machine refuses whom a member without the right invited; the
+    // hub keeps no such invitation to begin with.
+    store.table().may_invite(name, endorsement.scope.as_ref().unwrap_or(&Scope::all()))?;
     if endorsement.inviter != *name {
         return Err(format!("the endorsement is by {}, sent by {name}", endorsement.inviter));
     }
@@ -450,8 +452,8 @@ fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
         let key = signer.key;
         let revocation: Revocation =
             signed.open(&key, Domain::Revocation).map_err(|error| format!("the revocation: {error}"))?;
-        if !signer.kind.is_machine() && revocation.key != key {
-            return Err(format!("{name} is a device, and a device revokes no key but its own"));
+        if !store.table().may_revoke(name, &revocation.name) {
+            return Err(format!("{name} may not revoke {}", revocation.name));
         }
         if revocation.by != *name {
             return Err(format!("the revocation is by {}, sent by {name}", revocation.by));
@@ -482,6 +484,75 @@ fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
         }));
     }
     for session in sessions.values() {
+        let _ = session.out.send(Out::Frame(Down::MembersChanged));
+    }
+    Ok(())
+}
+
+/// A member's record again, with its sealing key: the hub keeps it in place
+/// of the one it had, when the name, key and credential are the same.
+fn republish(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
+    {
+        let mut store = hub.store();
+        let member = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
+        let record: Record =
+            signed.open(&member.key, Domain::Record).map_err(|error| format!("the record: {error}"))?;
+        if record.name != *name || record.key != member.key || record.world != store.hub.world {
+            return Err(format!("the record is of {} with another key or World", record.name));
+        }
+        if record.seal.is_none() {
+            return Err("the record carries no sealing key".to_string());
+        }
+        let admitted = store
+            .members
+            .records
+            .iter_mut()
+            .find(|admitted| admitted.name == *name)
+            .ok_or_else(|| format!("the hub keeps no record of {name}"))?;
+        let before: Record = admitted.record.claim().map_err(|error| format!("the record the hub keeps: {error}"))?;
+        if before.key != record.key || before.credential != record.credential {
+            return Err("the record names another key or credential than the one the hub keeps".to_string());
+        }
+        if before.seal.is_some_and(|seal| Some(seal) != record.seal) {
+            return Err(format!("{name} published another sealing key before; it must join again"));
+        }
+        admitted.record = signed;
+        store.save_members().map_err(|error| format!("the hub could not store the record: {error}"))?;
+    }
+    hub.log.line(format_args!("{name} published its sealing key"));
+    for session in hub.sessions().values() {
+        let _ = session.out.send(Out::Frame(Down::MembersChanged));
+    }
+    Ok(())
+}
+
+/// A grant from a member with management rights, kept when it is the next
+/// version for its member.
+fn grant(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
+    let (member, version) = {
+        let mut store = hub.store();
+        let signer = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
+        if !signer.manage {
+            return Err(format!("{name} does not hold management rights"));
+        }
+        let grant: Grant = signed.open(&signer.key, Domain::Grant).map_err(|error| format!("the grant: {error}"))?;
+        if grant.by != *name || grant.world != store.hub.world {
+            return Err(format!("the grant is by {} for the World {}", grant.by, grant.world));
+        }
+        let member =
+            store.table().get(&grant.member).cloned().ok_or_else(|| format!("{} is not a member", grant.member))?;
+        if member.key != grant.key {
+            return Err(format!("{} has another key", grant.member));
+        }
+        if store.table().grant(&grant.member).is_some_and(|latest| grant.version <= latest.version) {
+            return Err(format!("{} has a grant of this version or a later one already", grant.member));
+        }
+        store.members.grants.push(signed);
+        store.save_members().map_err(|error| format!("the hub could not store the grant: {error}"))?;
+        (grant.member, grant.version)
+    };
+    hub.log.line(format_args!("{name} granted {member} version {version}"));
+    for session in hub.sessions().values() {
         let _ = session.out.send(Out::Frame(Down::MembersChanged));
     }
     Ok(())

@@ -10,11 +10,17 @@ publish = false
 
 [dependencies]
 base64 = "0.22"
+chacha20poly1305 = "0.11"
 ed25519-dalek = "3.0.0"
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 getrandom = { version = "0.3", features = ["std"] }
+hkdf = "0.12"
+hmac = "0.12"
+# RFC 9180 sealing for letters and ledger entries: X25519, HKDF-SHA256 and
+# ChaCha20-Poly1305 only, without the post-quantum KEMs the defaults pull in.
+hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha", "hkdfsha2"] }
 jiff.workspace = true
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "crypto"] }
 # The ring provider throughout: aws-lc-rs needs cmake and NASM to build.
@@ -22,6 +28,9 @@ rustls = { version = "0.23.43", default-features = false, features = ["ring", "s
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+# The handshake of the sessions between members
+# (`Noise_IK_25519_ChaChaPoly_SHA256`); its split keys seal what follows.
+snow = { version = "0.10", default-features = false, features = ["std", "use-curve25519", "use-chacha20poly1305", "use-sha2", "use-getrandom", "risky-raw-split"] }
 socket2 = { version = "0.6.5", features = ["all"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }

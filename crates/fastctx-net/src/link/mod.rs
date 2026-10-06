@@ -6,13 +6,19 @@
 //! letters kept for it, and asks the hub who the members are. Everything
 //! another machine says is checked here before the node sees it: the
 //! signature, that the sender is a member this machine trusts, that the
-//! message is for this machine, and that a call is not one it took before.
+//! envelope is for this machine, and that a call is not one it took before.
+//! What two members say to each other is sealed for them alone: calls and
+//! answers on a session between the two (`sessions`), letters to the
+//! receiver's key; the hub routes what it cannot read.
 
+mod answering;
+mod calls;
 mod changes;
 mod ledger_query;
 mod letters;
 mod outgoing;
 mod session;
+mod sessions;
 pub mod state;
 
 use std::collections::HashMap;
@@ -30,10 +36,13 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::code::Code;
 use crate::data::Stream;
-use crate::message::{Body, LetterId, Message};
+use crate::message::LetterId;
+use crate::scope::{Grant, Scope};
+use crate::seal::SealKey;
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
-use crate::trust::{self, Endorsement, Kind, Revocation, Table};
-use crate::wire::{CallStatus, Presence, Question, Told, Up};
+use crate::trust::{self, Endorsement, Kind, Member, Record, Revocation, Table};
+use crate::wire::{CallStatus, Presence, Question, Told};
+use sessions::Sessions;
 use state::{Counter, LettersFile, MembersFile, Taken};
 pub use state::{Membership, NetDir};
 
@@ -59,6 +68,9 @@ pub trait Node: Send + Sync + 'static {
     /// The ledger of `town`, or of every town when `None`, may have entries
     /// this machine does not have yet.
     fn ledger_changed(&self, town: Option<TownName>);
+    /// The members, their scopes or who holds management rights may have
+    /// changed: the link has just asked the hub.
+    fn members_changed(&self) {}
     fn log(&self, line: String);
 }
 
@@ -90,6 +102,12 @@ pub enum CallFailure {
     Unreachable { name: MachineName, reason: String },
 }
 
+/// A machine's two keys: the one it signs with, and the one others seal to.
+pub struct Keys {
+    pub sign: SecretKey,
+    pub seal: SealKey,
+}
+
 pub struct Link {
     inner: Arc<Inner>,
 }
@@ -98,9 +116,11 @@ pub(crate) struct Inner {
     dir: NetDir,
     membership: Membership,
     key: SecretKey,
+    seal: SealKey,
     node: Arc<dyn Node>,
     counter: Counter,
     taken: Taken,
+    sessions: Sessions,
     letters: Mutex<Letters>,
     members: Mutex<Members>,
     /// One refresh of the members at a time; others wait for it.
@@ -137,18 +157,15 @@ pub(crate) struct Connection {
     up: outgoing::Outgoing,
 }
 
-/// A call waiting for its answer.
+/// A call waiting for what answers it.
 pub(crate) struct Waiter {
-    to: MachineName,
-    n: u64,
     events: mpsc::UnboundedSender<CallEvent>,
 }
 
 pub(crate) enum CallEvent {
     Status(CallStatus),
-    Answer(RemoteResult),
-    /// An answer came that does not check out, or could not be fetched.
-    Broken(String),
+    /// The envelope the hub says answers the call, not yet checked.
+    Answered(Signed),
     /// The connection the call went out on ended.
     Disconnected(String),
 }
@@ -156,22 +173,22 @@ pub(crate) enum CallEvent {
 impl Link {
     /// Starts the link of the machine `membership` describes. The node's
     /// device key signs everything it says.
-    pub fn start(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
+    pub fn start(dir: NetDir, membership: Membership, keys: Keys, node: Arc<dyn Node>) -> io::Result<Self> {
         let changes = changes::Changes::new(node.clone())?;
-        Self::start_with_changes(dir, membership, key, node, Some(changes))
+        Self::start_with_changes(dir, membership, keys, node, Some(changes))
     }
 
     /// Starts a link whose network and resume notifications are supplied by
     /// its application through [`Link::reconnect`]. Heartbeats and automatic
     /// retries still run here. Mobile applications own their OS callbacks.
-    pub fn start_managed(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
-        Self::start_with_changes(dir, membership, key, node, None)
+    pub fn start_managed(dir: NetDir, membership: Membership, keys: Keys, node: Arc<dyn Node>) -> io::Result<Self> {
+        Self::start_with_changes(dir, membership, keys, node, None)
     }
 
     fn start_with_changes(
         dir: NetDir,
         membership: Membership,
-        key: SecretKey,
+        keys: Keys,
         node: Arc<dyn Node>,
         changes: Option<changes::Changes>,
     ) -> io::Result<Self> {
@@ -195,16 +212,19 @@ impl Link {
             &membership.founder,
             &members_file.records,
             &members_file.revocations,
+            &members_file.grants,
             &members_file.known,
         );
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
         let inner = Arc::new(Inner {
             dir,
             membership,
-            key,
+            key: keys.sign,
+            seal: keys.seal,
             node,
             counter,
             taken,
+            sessions: Sessions::default(),
             letters: Mutex::new(Letters { file: letters_file, next }),
             members: Mutex::new(Members { file: members_file, table, presence: Vec::new() }),
             refreshing: tokio::sync::Mutex::new(()),
@@ -263,6 +283,11 @@ impl Link {
     pub fn members(&self) -> (Table, Vec<Presence>) {
         let members = self.inner.members();
         (members.table.clone(), members.presence.clone())
+    }
+
+    /// This machine as the members table has it.
+    pub fn me(&self) -> Option<Member> {
+        self.inner.members().table.get(&self.inner.membership.name).cloned()
     }
 
     /// Asks the hub who the members are now.
@@ -362,7 +387,7 @@ impl Link {
     }
 
     /// Signs `statement` as this machine, in `domain`.
-    pub fn seal(&self, domain: Domain, statement: &impl serde::Serialize) -> Signed {
+    pub fn sign(&self, domain: Domain, statement: &impl serde::Serialize) -> Signed {
         Signed::new(&self.inner.key, domain, statement)
     }
 
@@ -383,7 +408,7 @@ impl Link {
     }
 
     /// Calls `to` with a data connection, whose source end `feed` is given
-    /// while the call waits for its answer.
+    /// once the other end is there, while the call waits for its answer.
     pub async fn call_with_stream(
         &self,
         to: &MachineName,
@@ -403,21 +428,21 @@ impl Link {
     /// longest id and count it could carry: it can be sent when this is at
     /// most `wire::MAX_CONTROL_FRAME`.
     pub fn letter_size(&self, to: &MachineName, letter: &Letter) -> usize {
-        let message = Message {
-            world: self.inner.membership.world.clone(),
-            from: self.inner.membership.name.clone(),
-            to: to.clone(),
-            n: u64::MAX,
-            body: Body::Letter { id: LetterId::longest(), letter: letter.clone() },
-        };
-        let message = Signed::new(&self.inner.key, Domain::Message, &message);
-        crate::wire::encode(&Up::Send { seq: u64::MAX, message }).len()
+        self.inner.letter_size(to, letter)
     }
 
     /// An invitation for one more member, valid until `expires`: a machine,
     /// or a device such as a phone; `name` is the name it must take, if
-    /// given.
-    pub async fn invite(&self, name: Option<MachineName>, expires: Timestamp, kind: Kind) -> Result<Code, String> {
+    /// given; `scope` what it may do, when not everything.
+    pub async fn invite(
+        &self,
+        name: Option<MachineName>,
+        expires: Timestamp,
+        kind: Kind,
+        scope: Option<Scope>,
+    ) -> Result<Code, String> {
+        self.refresh().await?;
+        self.inner.members().table.may_invite(&self.inner.membership.name, scope.as_ref().unwrap_or(&Scope::all()))?;
         let invite = SecretKey::generate().map_err(|error| error.to_string())?;
         let membership = &self.inner.membership;
         let endorsement = Endorsement {
@@ -427,6 +452,8 @@ impl Link {
             expires,
             name,
             kind,
+            scope,
+            at: Some(Timestamp::now()),
         };
         let endorsement = Signed::new(&self.inner.key, Domain::Endorsement, &endorsement);
         self.inner.ask(Question::Invite { endorsement: endorsement.clone() }).await?;
@@ -443,11 +470,21 @@ impl Link {
     /// Revokes the member `name`'s key; this machine's own, to leave.
     pub async fn revoke(&self, name: &MachineName, reason: &str) -> Result<(), String> {
         self.refresh().await?;
-        let key = match self.inner.members().table.get(name) {
-            Some(member) => member.key,
-            None => return Err(format!("{name} is not a member this machine trusts")),
-        };
         let membership = &self.inner.membership;
+        let key = {
+            let members = self.inner.members();
+            let key = match members.table.get(name) {
+                Some(member) => member.key,
+                None => return Err(format!("{name} is not a member this machine trusts")),
+            };
+            if !members.table.may_revoke(&membership.name, name) {
+                return Err(format!(
+                    "{} may revoke only itself and the members of its own branch, unless it holds management rights",
+                    membership.name
+                ));
+            }
+            key
+        };
         let revocation = Revocation {
             world: membership.world.clone(),
             name: name.clone(),
@@ -463,6 +500,37 @@ impl Link {
         }
         answer?;
         Ok(())
+    }
+
+    /// Sets what the member `name` may do, and whether it holds management
+    /// rights, as this machine, which must hold them.
+    pub async fn grant(&self, name: &MachineName, scope: Scope, manage: bool) -> Result<(), String> {
+        self.refresh().await?;
+        let membership = &self.inner.membership;
+        let grant = {
+            let members = self.inner.members();
+            if !members.table.get(&membership.name).is_some_and(|me| me.manage) {
+                return Err(format!("{} does not hold management rights", membership.name));
+            }
+            let member =
+                members.table.get(name).ok_or_else(|| format!("{name} is not a member this machine trusts"))?;
+            if manage && !member.kind.is_machine() {
+                return Err(format!("{name} is a device, and a device holds no management rights"));
+            }
+            Grant {
+                world: membership.world.clone(),
+                member: name.clone(),
+                key: member.key,
+                scope,
+                manage,
+                version: members.table.grant(name).map(|grant| grant.version).unwrap_or(0) + 1,
+                by: membership.name.clone(),
+                at: Timestamp::now(),
+            }
+        };
+        let grant = Signed::new(&self.inner.key, Domain::Grant, &grant);
+        self.inner.ask(Question::Grant { grant }).await?;
+        self.refresh().await
     }
 }
 
@@ -506,40 +574,83 @@ impl Inner {
         }
     }
 
-    /// The key of the member `name`, asking the hub again when it is not
-    /// known here yet.
-    async fn key_of(&self, name: &MachineName) -> Option<PublicKey> {
+    /// The member `name`, asking the hub again when it is not known here
+    /// yet.
+    async fn member(&self, name: &MachineName) -> Option<Member> {
         if let Some(member) = self.members().table.get(name) {
-            return Some(member.key);
+            return Some(member.clone());
         }
         if self.refresh().await.is_err() {
             return None;
         }
-        self.members().table.get(name).map(|member| member.key)
+        self.members().table.get(name).cloned()
+    }
+
+    async fn key_of(&self, name: &MachineName) -> Option<PublicKey> {
+        self.member(name).await.map(|member| member.key)
     }
 
     async fn refresh(&self) -> Result<(), String> {
         let _one = self.refreshing.lock().await;
-        let Told::Members { records, revocations, presence } = self.ask(Question::Members).await? else {
+        let Told::Members { records, revocations, grants, presence } = self.ask(Question::Members).await? else {
             return Err("the hub answered something else".to_string());
         };
         let mut members = self.members();
-        let (table, known) =
-            trust::check(&self.membership.world, &self.membership.founder, &records, &revocations, &members.file.known);
-        let changed =
-            known != members.file.known || records != members.file.records || revocations != members.file.revocations;
+        let (table, known) = trust::check(
+            &self.membership.world,
+            &self.membership.founder,
+            &records,
+            &revocations,
+            &grants,
+            &members.file.known,
+        );
+        let changed = known != members.file.known
+            || records != members.file.records
+            || revocations != members.file.revocations
+            || grants != members.file.grants;
         if changed {
             let refused: Vec<String> = table.refused.iter().map(|(what, why)| format!("{what}: {why}")).collect();
             if !refused.is_empty() {
                 self.node.log(format!("refused from the hub's list of members: {}", refused.join("; ")));
             }
-            members.file = MembersFile { known, records, revocations };
+            members.file = MembersFile { known, records, revocations, grants };
             state::write(&self.dir.members(), &members.file)
                 .map_err(|error| format!("keeping the members: {error}"))?;
+        }
+        for (name, _) in table.revoked_members() {
+            self.sessions.drop_member(name);
         }
         members.table = table;
         members.presence = presence;
         Ok(())
+    }
+
+    /// Gives the hub this machine's record again with its sealing key, when
+    /// the hub's has none or another.
+    async fn republish(&self) -> Result<(), String> {
+        let record = {
+            let members = self.members();
+            let me = &self.membership.name;
+            if members.table.get(me).is_some_and(|member| member.seal == Some(self.seal.public())) {
+                return Ok(());
+            }
+            let ours = members
+                .file
+                .records
+                .iter()
+                .filter_map(|signed| signed.claim::<Record>().ok())
+                .find(|record| record.name == *me && record.key == self.key.public())
+                .ok_or_else(|| format!("the hub's list has no record of {me} with this machine's key"))?;
+            if ours.seal.is_some_and(|seal| seal != self.seal.public()) {
+                return Err(format!(
+                    "the hub's list has another sealing key for {me}: this machine lost the one it made, and must join the World again"
+                ));
+            }
+            Record { seal: Some(self.seal.public()), ..ours }
+        };
+        let record = Signed::new(&self.key, Domain::Record, &record);
+        self.ask(Question::Republish { record }).await?;
+        self.refresh().await
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {
@@ -555,7 +666,7 @@ impl Inner {
         let id = self.next_id();
         let (answer, answered) = oneshot::channel();
         self.asks.lock().expect("never poisoned").insert(id, answer);
-        if connection.up.send(Up::Ask { id, question }).is_err() {
+        if connection.up.send(crate::wire::Up::Ask { id, question }).is_err() {
             self.asks.lock().expect("never poisoned").remove(&id);
             return Ok(None);
         }
@@ -563,202 +674,6 @@ impl Inner {
         match answered.await {
             Ok(answer) => answer.map(Some),
             Err(_) => Ok(None),
-        }
-    }
-
-    async fn call(
-        self: &Arc<Self>,
-        to: &MachineName,
-        call: RemoteCall,
-        feed: Option<Feed>,
-    ) -> Result<RemoteResult, CallFailure> {
-        if *to == self.membership.name {
-            return Err(CallFailure::Unreachable { name: to.clone(), reason: "it is this machine".to_string() });
-        }
-        let Some(connection) = self.connected().await else {
-            return Err(CallFailure::NotConnected { reason: self.not_connected() });
-        };
-        if self.key_of(to).await.is_none() {
-            return Err(CallFailure::NotMember(to.clone()));
-        }
-        let n = self.counter.next().map_err(|error| CallFailure::Unreachable {
-            name: to.clone(),
-            reason: format!("numbering the call: {error}"),
-        })?;
-        let sign = |body: Body| {
-            let message = Message {
-                world: self.membership.world.clone(),
-                from: self.membership.name.clone(),
-                to: to.clone(),
-                n,
-                body,
-            };
-            Signed::new(&self.key, Domain::Message, &message)
-        };
-        let id = self.next_id();
-        let ticket = || -> Result<Signed, CallFailure> {
-            let stream = crate::sign::random::<8>().map(u64::from_le_bytes).map_err(|error| {
-                CallFailure::Unreachable { name: to.clone(), reason: format!("choosing a data connection: {error}") }
-            })?;
-            let ticket = crate::wire::Ticket {
-                world: self.membership.world.clone(),
-                stream,
-                source: self.membership.name.clone(),
-                sink: to.clone(),
-            };
-            Ok(Signed::new(&self.key, Domain::Ticket, &ticket))
-        };
-        let mut message = sign(Body::Call { call: call.clone() });
-        // The sending over a data connection ends with the call, so a
-        // refused call leaves nothing waiting.
-        let mut sending = None;
-        let mut fed = None;
-        if let Some(feed) = feed {
-            let ticket = ticket()?;
-            message = sign(Body::StreamCall { call, ticket: ticket.clone() });
-            let (done, finished) = oneshot::channel();
-            fed = Some(finished);
-            let inner = self.clone();
-            sending = Some(tokio::spawn(async move {
-                let result = match Stream::open(&inner.membership, &inner.key, ticket, crate::wire::End::Source).await {
-                    Ok(stream) => feed(stream).await,
-                    Err(error) => Err(error),
-                };
-                let _ = done.send(result);
-            }));
-        } else if crate::wire::encode(&Up::Call { id, message: message.clone() }).len() > crate::wire::MAX_CONTROL_FRAME
-        {
-            // A call too large for the control connection says what follows
-            // over a data connection, which this machine sends as the source.
-            let bytes = serde_json::to_vec(&call).expect("calls serialize");
-            let ticket = ticket()?;
-            let carried = crate::wire::Carried {
-                ticket: ticket.clone(),
-                bytes: bytes.len() as u64,
-                sha256: crate::sign::Digest(crate::sign::sha256(&bytes)),
-            };
-            message = sign(Body::LargeCall { carried });
-            let inner = self.clone();
-            let name = to.clone();
-            sending = Some(tokio::spawn(async move {
-                if let Err(error) = crate::data::source(&inner.membership, &inner.key, ticket, &bytes).await {
-                    inner.node.log(format!("sending a large call to {name}: {error}"));
-                }
-            }));
-        }
-        let (events, mut received) = mpsc::unbounded_channel();
-        self.calls.lock().expect("never poisoned").insert(id, Waiter { to: to.clone(), n, events });
-        let mut waiting = Waiting { inner: self.clone(), id, connection: connection.clone(), answered: false, sending };
-        if connection.up.send(Up::Call { id, message }).is_err() {
-            return Err(CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() });
-        }
-        let mut delivered = false;
-        let lost = |delivered: bool, reason: String| {
-            if delivered {
-                CallFailure::Unknown { name: to.clone(), reason }
-            } else {
-                CallFailure::Unreachable { name: to.clone(), reason }
-            }
-        };
-        let failed_feeding = async {
-            match fed {
-                Some(finished) => match finished.await {
-                    Ok(Err(error)) => error,
-                    // Fed in full; the answer decides.
-                    Ok(Ok(())) | Err(_) => std::future::pending().await,
-                },
-                None => std::future::pending().await,
-            }
-        };
-        tokio::pin!(failed_feeding);
-        loop {
-            let event = tokio::select! {
-                event = received.recv() => match event {
-                    Some(event) => event,
-                    None => break,
-                },
-                reason = &mut failed_feeding => {
-                    return Err(lost(delivered, format!("sending its data failed: {reason}")));
-                }
-            };
-            match event {
-                CallEvent::Status(CallStatus::Delivered) => delivered = true,
-                CallEvent::Status(CallStatus::Offline { last_seen }) => {
-                    waiting.answered = true;
-                    return Err(CallFailure::Offline { name: to.clone(), last_seen });
-                }
-                CallEvent::Status(CallStatus::NotMember) => {
-                    waiting.answered = true;
-                    return Err(CallFailure::NotMember(to.clone()));
-                }
-                CallEvent::Status(CallStatus::Lost) => {
-                    waiting.answered = true;
-                    return Err(lost(delivered, "its connection to the hub ended".to_string()));
-                }
-                CallEvent::Answer(result) => {
-                    waiting.answered = true;
-                    return Ok(result);
-                }
-                CallEvent::Broken(reason) => {
-                    waiting.answered = true;
-                    return Err(CallFailure::Unknown { name: to.clone(), reason });
-                }
-                CallEvent::Disconnected(reason) => {
-                    waiting.answered = true;
-                    return Err(lost(delivered, reason));
-                }
-            }
-        }
-        Err(lost(delivered, "the link stopped".to_string()))
-    }
-
-    fn send_letter(&self, to: &MachineName, id: LetterId, letter: Letter) -> io::Result<()> {
-        let n = self.counter.next()?;
-        let message = Message {
-            world: self.membership.world.clone(),
-            from: self.membership.name.clone(),
-            to: to.clone(),
-            n,
-            body: Body::Letter { id, letter },
-        };
-        let message = Signed::new(&self.key, Domain::Message, &message);
-        let frame = crate::wire::encode(&Up::Send { seq: u64::MAX, message: message.clone() });
-        if frame.len() > crate::wire::MAX_CONTROL_FRAME {
-            return Err(io::Error::other(format!(
-                "a letter of {} bytes is more than a control message holds ({} bytes)",
-                frame.len(),
-                crate::wire::MAX_CONTROL_FRAME
-            )));
-        }
-        {
-            let mut letters = self.letters.lock().expect("never poisoned");
-            letters::Outbox::new(&self.dir).put(letters.next, &message)?;
-            letters.next += 1;
-        }
-        self.outbox_changed.notify_one();
-        Ok(())
-    }
-}
-
-/// Removes a call's waiter when the call is over, and tells the hub the
-/// caller gave up when it ends without an answer.
-struct Waiting {
-    inner: Arc<Inner>,
-    id: u64,
-    connection: Connection,
-    answered: bool,
-    /// The data connection sending a large call.
-    sending: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl Drop for Waiting {
-    fn drop(&mut self) {
-        if let Some(sending) = &self.sending {
-            sending.abort();
-        }
-        self.inner.calls.lock().expect("never poisoned").remove(&self.id);
-        if !self.answered {
-            let _ = self.connection.up.send(Up::Cancel { id: self.id });
         }
     }
 }

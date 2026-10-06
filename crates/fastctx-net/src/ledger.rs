@@ -15,6 +15,56 @@ use serde::{Deserialize, Serialize};
 use crate::sign::{Bytes, Domain, Signed};
 use crate::trust::{Table, WorldId};
 
+/// A town as the hub and the wire know it: a name without meaning, so
+/// nothing on the way learns what a project is called.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct TownId(String);
+
+impl TownId {
+    /// The World's own ledger, which every member reads.
+    pub fn world() -> Self {
+        Self("t-0000000000000000".to_string())
+    }
+
+    pub fn from_bytes(bytes: [u8; 8]) -> Self {
+        Self(format!("t-{}", bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for TownId {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        let ok = text.len() == 18
+            && text.starts_with("t-")
+            && text[2..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if ok { Ok(Self(text)) } else { Err(format!("{text:?} is not a town id")) }
+    }
+}
+
+impl From<TownId> for String {
+    fn from(id: TownId) -> String {
+        id.0
+    }
+}
+
+impl std::fmt::Display for TownId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::fmt::Debug for TownId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
 /// One entry: the files it adds to a town's ledger.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {

@@ -424,7 +424,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             let link = member(node)?;
             let kind = if device { fastctx_net::trust::Kind::Device } else { fastctx_net::trust::Kind::Machine };
-            link.invite(name, expires, kind)
+            link.invite(name, expires, kind, None)
                 .await
                 .map(|code| Reply::Code { code: code.to_text() })
                 .map_err(Failure::new)

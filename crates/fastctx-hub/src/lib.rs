@@ -7,10 +7,11 @@
 //! pairs the two ends of each data transfer, and keeps the list of members
 //! (`world-network.md`).
 //!
-//! The hub is a trusted machine and sees what passes through it, but it
-//! cannot speak for any machine: what members say is signed by the member,
-//! and every machine checks the signature and the list of members itself
-//! before acting on anything (`fastctx_net::trust`).
+//! The hub reads only what it needs to route: what members say to each
+//! other is sealed for the member it is for, and signed by the member that
+//! says it, so the hub can neither read it nor speak for anyone; every
+//! machine checks the signature and the list of members itself before
+//! acting on anything (`fastctx_net::trust`).
 
 mod control;
 mod data;

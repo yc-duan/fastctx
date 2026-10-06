@@ -5,14 +5,14 @@ use fastctx_types::MachineName;
 
 use crate::code::Code;
 use crate::dial;
-use crate::link::Membership;
+use crate::link::{Keys, Membership};
 use crate::sign::{Domain, SecretKey, Signed};
 use crate::trust::{Admission, Credential, Record};
 use crate::wire::{self, Down, Intent, PROTOCOL, SILENCE, Up};
 
-/// Joins the World `code` is for as `name`, with this machine's `key`.
-pub async fn join(code: &Code, name: MachineName, key: &SecretKey) -> Result<Membership, String> {
-    attempt(code, name, key).await.map_err(|error| error.to_string())
+/// Joins the World `code` is for as `name`, with this machine's `keys`.
+pub async fn join(code: &Code, name: MachineName, keys: &Keys) -> Result<Membership, String> {
+    attempt(code, name, keys).await.map_err(|error| error.to_string())
 }
 
 /// A refusal is authoritative. A lost response leaves admission uncertain:
@@ -34,7 +34,8 @@ impl From<String> for JoinError {
 }
 
 /// As [`join`], distinguishing refusal from an admission whose reply was lost.
-pub async fn attempt(code: &Code, name: MachineName, key: &SecretKey) -> Result<Membership, JoinError> {
+pub async fn attempt(code: &Code, name: MachineName, keys: &Keys) -> Result<Membership, JoinError> {
+    let key = &keys.sign;
     let (credential, founding, founder) = match code {
         Code::Founding { secret, .. } => (Credential::Founder, Some(secret.clone()), key.public()),
         Code::Invitation { endorsement, seed, founder, .. } => {
@@ -44,7 +45,13 @@ pub async fn attempt(code: &Code, name: MachineName, key: &SecretKey) -> Result<
             (Credential::Invited { admission }, None, *founder)
         }
     };
-    let record = Record { world: code.world().clone(), name: name.clone(), key: key.public(), credential };
+    let record = Record {
+        world: code.world().clone(),
+        name: name.clone(),
+        key: key.public(),
+        credential,
+        seal: Some(keys.seal.public()),
+    };
     let record = Signed::new(key, Domain::Record, &record);
     let dialed = dial::dial(code.hub(), code.cert(), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
         .await

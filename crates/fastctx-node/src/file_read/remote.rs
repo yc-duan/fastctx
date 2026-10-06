@@ -28,7 +28,7 @@ pub(crate) async fn serve(
             }
             Part::Finished(result) => (Content::Finished { result: result.clone() }, None, Some(result)),
         };
-        let signed = link.seal(Domain::FileRead, &Piece { read, n, part: content });
+        let signed = link.sign(Domain::FileRead, &Piece { read, n, part: content });
         stream.say(&signed).await.map_err(Failure::new)?;
         if let Some(bytes) = bytes {
             stream.send(&bytes).await.map_err(Failure::new)?;

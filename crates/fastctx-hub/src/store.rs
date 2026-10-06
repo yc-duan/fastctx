@@ -43,6 +43,8 @@ pub struct Members {
     pub records: Vec<Admitted>,
     pub revocations: Vec<Signed>,
     pub invitations: Vec<Invitation>,
+    #[serde(default)]
+    pub grants: Vec<Signed>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -157,7 +159,15 @@ impl Store {
         });
         self.table = match &self.founder {
             Some(founder) => {
-                trust::check(&self.hub.world, founder, &records, &self.members.revocations, &Known::default()).0
+                trust::check(
+                    &self.hub.world,
+                    founder,
+                    &records,
+                    &self.members.revocations,
+                    &self.members.grants,
+                    &Known::default(),
+                )
+                .0
             }
             None => Table::default(),
         };

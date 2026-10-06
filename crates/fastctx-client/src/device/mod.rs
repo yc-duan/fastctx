@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use fastctx_net::code::Code;
-use fastctx_net::link::{BoxFuture, Link, Membership, Status};
-use fastctx_net::sign::{PublicKey, SecretKey};
+use fastctx_net::link::{BoxFuture, Keys, Link, Membership, Status};
+use fastctx_net::sign::PublicKey;
 use fastctx_net::trust::{Endorsement, Kind};
 pub use fastctx_types::device::DeviceState;
 use fastctx_types::ipc::Failure;
@@ -65,8 +65,8 @@ impl Device {
         let device =
             Arc::new(Self { store, session: RwLock::new(None), lifecycle: tokio::sync::Mutex::new(()), managed });
         if let Some(identity) = identity {
-            let key = device.store.key(&identity)?;
-            device.start(identity, key)?;
+            let keys = device.store.keys(&identity)?;
+            device.start(identity, keys)?;
         }
         Ok(device)
     }
@@ -130,7 +130,7 @@ impl Device {
         let existing = self.store.load()?;
         self.restore()?;
         let retrying = existing.is_some();
-        let (mut identity, key) = match existing {
+        let (mut identity, keys) = match existing {
             Some(identity) if !identity.pending && identity.membership == membership => {
                 self.connected()?.check_identity().await?;
                 return Ok((membership.world.to_string(), name));
@@ -144,13 +144,13 @@ impl Device {
                 }
                 session.link.stop();
                 *self.session.write().expect("device session") = None;
-                let key = self.store.key(&identity)?;
-                (identity, key)
+                let keys = self.store.keys(&identity)?;
+                (identity, keys)
             }
             Some(_) => return Err(failed("this device has a World identity already; leave it before joining another")),
             None => self.store.create(membership)?,
         };
-        let admission = fastctx_net::join::attempt(&code, name.clone(), &key).await;
+        let admission = fastctx_net::join::attempt(&code, name.clone(), &keys).await;
         match admission {
             Err(fastctx_net::join::JoinError::Refused(reason) | fastctx_net::join::JoinError::NotSent(reason))
                 if !retrying =>
@@ -164,7 +164,7 @@ impl Device {
                     identity.pending = false;
                     self.store.save(Some(&identity))?;
                 }
-                self.start(identity, key)?;
+                self.start(identity, keys)?;
                 result.map_err(failed)?;
                 // Check the inviter-signed kind from the actual member table,
                 // not just the unauthenticated claim parsed from the code.
@@ -195,11 +195,11 @@ impl Device {
         .map_err(failed)?
     }
 
-    fn start(&self, identity: Identity, key: SecretKey) -> io::Result<()> {
+    fn start(&self, identity: Identity, keys: Keys) -> io::Result<()> {
         let start = if self.managed { Link::start_managed } else { Link::start };
-        let public = key.public();
+        let public = keys.sign.public();
         let handler = Arc::new(Handler { _store: self.store.clone() });
-        let link = Arc::new(start(self.store.net(&identity), identity.membership, key, handler)?);
+        let link = Arc::new(start(self.store.net(&identity), identity.membership, keys, handler)?);
         *self.session.write().expect("device session") = Some(Arc::new(Session { link, key: public }));
         Ok(())
     }
@@ -211,8 +211,8 @@ impl Device {
         if self.session.read().expect("device session").is_none()
             && let Some(identity) = self.store.load()?
         {
-            let key = self.store.key(&identity)?;
-            self.start(identity, key)?;
+            let keys = self.store.keys(&identity)?;
+            self.start(identity, keys)?;
         }
         Ok(())
     }

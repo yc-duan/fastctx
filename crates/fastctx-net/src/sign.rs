@@ -25,8 +25,8 @@ pub enum Domain {
     /// A machine proving to the hub that it holds its key, bound to one TLS
     /// connection.
     Session,
-    /// A message from one machine to another.
-    Message,
+    /// An envelope from one member to another (`crate::envelope`).
+    Envelope,
     /// A machine's record of itself: its name and key.
     Record,
     /// A member vouching in advance for whoever holds an invitation.
@@ -42,15 +42,24 @@ pub enum Domain {
     Event,
     /// Metadata and byte-block digests belonging to one user's file read.
     FileRead,
-    /// An entry of a town's shared ledger.
+    /// An entry of a town's shared ledger, as its author wrote it.
     Ledger,
+    /// An item of a town's ledger as the hub keeps it: a sealed entry, or
+    /// an entry's key sealed again for another member (`crate::ledger`).
+    LedgerItem,
+    /// A member with management rights setting what another member may do
+    /// (`crate::scope`).
+    Grant,
+    /// A member with management rights saying which upstream a machine
+    /// connects to, or that a machine relays for others.
+    Route,
 }
 
 impl Domain {
     fn name(self) -> &'static str {
         match self {
             Domain::Session => "session",
-            Domain::Message => "message",
+            Domain::Envelope => "envelope",
             Domain::Record => "record",
             Domain::Endorsement => "endorsement",
             Domain::Admission => "admission",
@@ -59,6 +68,9 @@ impl Domain {
             Domain::Event => "event",
             Domain::FileRead => "file-read",
             Domain::Ledger => "ledger",
+            Domain::LedgerItem => "ledger-item",
+            Domain::Grant => "grant",
+            Domain::Route => "route",
         }
     }
 }

@@ -1,9 +1,9 @@
 //! Data connections: one per transfer, between a source and a sink, paired
-//! by the hub. Bytes travel as binary messages; the two ends may also say
-//! short things to each other, as JSON in text messages, such as which of
-//! the offered files the sink wants. Signed control messages or signed
-//! stream pieces describe the bytes, so the hub in between can neither
-//! change them unnoticed nor make them up.
+//! by the hub. Bytes travel as messages; the two ends may also say short
+//! things to each other, as JSON, such as which of the offered files the
+//! sink wants. Every message is sealed with the key the call or answer
+//! that asked for the transfer carried (`crate::stream_crypto`), so the hub
+//! and relays in between pass on what they cannot read, change or make up.
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Serialize;
@@ -13,7 +13,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use crate::dial::{self, HubSocket};
 use crate::link::Membership;
 use crate::sign::{Digest, Domain, SecretKey, Signed, sha256};
-use crate::wire::{self, Carried, Down, End, Intent, PROTOCOL, Up};
+use crate::stream_crypto::{Piece, Sealing, StreamKey};
+use crate::wire::{self, Carried, Down, End, Intent, PROTOCOL, Ticket, Up};
 
 /// What the sink says when it has every byte and they check out. The
 /// source waits for it before closing, since a close passes the hub as a
@@ -23,15 +24,23 @@ const DONE: &str = "\"done\"";
 /// One end of a paired data connection.
 pub struct Stream {
     socket: HubSocket,
+    sealing: Sealing,
     /// Bytes received and not yet taken.
     pending: Vec<u8>,
 }
 
 impl Stream {
-    /// Opens this machine's end of the transfer `ticket` names and waits
-    /// for the other end. The hub ends the wait if the other end's machine
-    /// leaves.
-    pub async fn open(membership: &Membership, key: &SecretKey, ticket: Signed, end: End) -> Result<Self, String> {
+    /// Opens this machine's end of the transfer `ticket` names, sealed with
+    /// `sealed_with`, and waits for the other end. The hub ends the wait if
+    /// the other end's machine leaves.
+    pub async fn open(
+        membership: &Membership,
+        key: &SecretKey,
+        ticket: Signed,
+        sealed_with: &StreamKey,
+        end: End,
+    ) -> Result<Self, String> {
+        let stream = ticket.claim::<Ticket>().map_err(|error| format!("the ticket: {error}"))?.stream;
         let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
         let dialed = dial::dial(&membership.hub, membership.cert, wire::DATA_PATH, limit).await?;
         let mut socket = dialed.socket;
@@ -43,7 +52,9 @@ impl Stream {
         };
         dial::send(&mut socket, &hello).await?;
         match dial::recv(&mut socket).await? {
-            Some(Down::Paired) => Ok(Self { socket, pending: Vec::new() }),
+            Some(Down::Paired) => {
+                Ok(Self { socket, sealing: Sealing::new(sealed_with, stream, end), pending: Vec::new() })
+            }
             Some(Down::Refused { reason }) => Err(reason.to_string()),
             Some(_) => Err("the hub answered something other than a pairing".to_string()),
             None => Err("the hub closed the connection".to_string()),
@@ -53,10 +64,7 @@ impl Stream {
     /// Sends bytes.
     pub async fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
         for chunk in bytes.chunks(wire::MAX_DATA_MESSAGE) {
-            self.socket
-                .send(WsMessage::Binary(chunk.to_vec().into()))
-                .await
-                .map_err(|error| format!("sending: {}", dial::describe(&error)))?;
+            self.put(&Piece::Bytes(chunk.to_vec())).await?;
         }
         Ok(())
     }
@@ -87,9 +95,13 @@ impl Stream {
 
     /// Says something to the other end.
     pub async fn say(&mut self, word: &impl Serialize) -> Result<(), String> {
-        let text = serde_json::to_string(word).expect("words serialize");
+        self.put(&Piece::Word(serde_json::to_string(word).expect("words serialize"))).await
+    }
+
+    async fn put(&mut self, piece: &Piece) -> Result<(), String> {
+        let sealed = self.sealing.seal(piece);
         self.socket
-            .send(WsMessage::Text(text.into()))
+            .send(WsMessage::Binary(sealed.into()))
             .await
             .map_err(|error| format!("sending: {}", dial::describe(&error)))
     }
@@ -132,10 +144,7 @@ impl Stream {
 
     /// As the sink: says everything arrived, and closes.
     pub async fn done(mut self) -> Result<(), String> {
-        self.socket
-            .send(WsMessage::Text(DONE.into()))
-            .await
-            .map_err(|error| format!("sending the receipt: {}", dial::describe(&error)))?;
+        self.put(&Piece::Word(DONE.to_string())).await.map_err(|error| format!("sending the receipt: {error}"))?;
         let _ = self.socket.close(None).await;
         Ok(())
     }
@@ -144,8 +153,15 @@ impl Stream {
         loop {
             match self.socket.next().await {
                 None | Some(Ok(WsMessage::Close(_))) => return Ok(None),
-                Some(Ok(WsMessage::Binary(bytes))) => return Ok(Some(Message::Bytes(bytes.to_vec()))),
-                Some(Ok(WsMessage::Text(text))) => return Ok(Some(Message::Word(text.to_string()))),
+                Some(Ok(WsMessage::Binary(sealed))) => {
+                    return match self.sealing.open(&sealed).map_err(|error| error.to_string())? {
+                        Piece::Bytes(bytes) => Ok(Some(Message::Bytes(bytes))),
+                        Piece::Word(word) => Ok(Some(Message::Word(word))),
+                    };
+                }
+                Some(Ok(WsMessage::Text(_))) => {
+                    return Err("an unsealed message came on the data connection".to_string());
+                }
                 Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Frame(_))) => {}
                 Some(Err(error)) => return Err(format!("receiving: {}", dial::describe(&error))),
             }
@@ -159,8 +175,14 @@ enum Message {
 }
 
 /// Sends `bytes` as the source of the transfer `ticket` names.
-pub async fn source(membership: &Membership, key: &SecretKey, ticket: Signed, bytes: &[u8]) -> Result<(), String> {
-    let mut stream = Stream::open(membership, key, ticket, End::Source).await?;
+pub async fn source(
+    membership: &Membership,
+    key: &SecretKey,
+    ticket: Signed,
+    sealed_with: &StreamKey,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let mut stream = Stream::open(membership, key, ticket, sealed_with, End::Source).await?;
     stream.send(bytes).await?;
     stream.finish().await
 }
@@ -168,7 +190,7 @@ pub async fn source(membership: &Membership, key: &SecretKey, ticket: Signed, by
 /// Takes the bytes `carried` promised, as the sink of its transfer, and
 /// checks them.
 pub async fn sink(membership: &Membership, key: &SecretKey, carried: &Carried) -> Result<Vec<u8>, String> {
-    let mut stream = Stream::open(membership, key, carried.ticket.clone(), End::Sink).await?;
+    let mut stream = Stream::open(membership, key, carried.ticket.clone(), &carried.key, End::Sink).await?;
     let mut bytes = Vec::new();
     stream
         .take(carried.bytes, |piece| {

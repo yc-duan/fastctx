@@ -344,7 +344,7 @@ pub async fn serve_watch(
     let mut next = Some(Watched::History { events: history });
     loop {
         if let Some(watched) = next.take() {
-            let signed = link.seal(Domain::Event, &Piece { watch, n, watched });
+            let signed = link.sign(Domain::Event, &Piece { watch, n, watched });
             if stream.say(&signed).await.is_err() {
                 return Ok(RemoteReply::Watched);
             }
