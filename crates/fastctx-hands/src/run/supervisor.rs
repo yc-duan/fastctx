@@ -38,6 +38,7 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
             town: record.town.as_ref(),
             fastctx_dir,
             fastctx_home: fastctx_home.as_deref(),
+            job: Some(&record.id),
         })?;
         Ok(shell::Prepared { program, args, environment })
     })

@@ -25,6 +25,9 @@ pub struct Context<'a> {
     /// Set when the World lives somewhere other than the default, so that
     /// commands in the shell reach the same World.
     pub fastctx_home: Option<&'a OsStr>,
+    /// The job the script is, so that a command in it can tell itself apart
+    /// from the other things running, as `fastctx w` does.
+    pub job: Option<&'a fastctx_types::JobId>,
 }
 
 /// A shell invocation, with its complete environment already resolved.
@@ -65,6 +68,10 @@ pub fn environment_from(mut env: Vec<(OsString, OsString)>, context: &Context<'_
     }
     if let Some(home) = context.fastctx_home {
         set(&mut env, "FASTCTX_HOME", home);
+    }
+    match context.job {
+        Some(job) => set(&mut env, "FASTCTX_JOB", job.as_str()),
+        None => unset(&mut env, "FASTCTX_JOB"),
     }
     // Programs that can draw images write them in one of these terminal
     // protocols; `run` turns them into images (`world-view.md`).

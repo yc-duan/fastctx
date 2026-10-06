@@ -46,6 +46,7 @@ fn main() -> anyhow::Result<()> {
                         town: job.town.as_ref(),
                         fastctx_dir: fastctx.parent().expect("program directory"),
                         fastctx_home: Some(root.as_os_str()),
+                        job: Some(&job.id),
                     },
                 );
                 Ok(shell::Prepared {

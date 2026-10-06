@@ -128,7 +128,7 @@ fn render(view: &TownView, you: Option<&Address>, now: Timestamp) -> String {
         let you_mark = if Some(&address(resident)) == you { "  (you)" } else { "" };
         text.push_str(&format!("{:width$}{you_mark}  {}\n", resident.about.id, who(resident, now)));
         let own = view.jobs_of(resident);
-        text.push_str(&format!("    {}\n", doing(resident, own.last().copied(), now)));
+        text.push_str(&format!("    {}\n", doing(resident, latest_other(&own), now)));
     }
 
     // What runs on with nobody here who started it.
@@ -251,7 +251,8 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
     if let Origin::Colleague { label, .. } = &about.origin {
         text.push_str(&format!("task     \"{label}\"   (the full request is in its records)\n"));
     }
-    let job = detail.jobs.last();
+    let jobs: Vec<&RunningJob> = detail.jobs.iter().collect();
+    let job = latest_other(&jobs);
     text.push_str(&format!("state    {}\n", doing(resident, job, now)));
     if let Some(job) = job {
         text.push_str(&format!("         output so far: {machine} {}\n", job.output.replace('\\', "/")));
@@ -348,6 +349,13 @@ fn host(host: &Host) -> String {
         _ => host.client.clone(),
     };
     if host.version.is_empty() { name } else { format!("{name} {}", host.version) }
+}
+
+/// The latest of `jobs` that is not this very command: a `fastctx w` run
+/// by `run` would otherwise show itself as what its resident is doing.
+fn latest_other<'a>(jobs: &[&'a RunningJob]) -> Option<&'a RunningJob> {
+    let this = std::env::var("FASTCTX_JOB").ok();
+    jobs.iter().rev().find(|job| Some(job.job.as_str()) != this.as_deref()).copied()
 }
 
 fn running(job: &RunningJob, now: Timestamp) -> String {
