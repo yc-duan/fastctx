@@ -20,6 +20,7 @@ use fastctx_types::{AgentName, MachineName, ResidentId, TownName};
 
 use crate::Node;
 
+pub mod letters;
 pub mod seen;
 
 /// What `call` does here, in the terms of a scope: the action, the agent
@@ -79,8 +80,7 @@ fn asked(call: &RemoteCall) -> Asked<'_> {
         RemoteCall::ReadFile { .. } | RemoteCall::Canon { .. } => (Action::Read, None, None),
         RemoteCall::ClaudeConsent { .. } => (Action::Consent, Some(claude()), None),
         RemoteCall::PageAction { source, .. } => (Action::Page, None, Some(&source.town)),
-        // A device's World-wide ask, made here as for this machine's user:
-        // what it may see is checked where it is answered.
+        // Checked by what it asks, in `devices::relay`.
         RemoteCall::Relay { .. } => (Action::W, None, None),
     };
     Asked { action, agent, town, resident: reaches }
@@ -105,6 +105,9 @@ pub fn member(node: &Node, from: &MachineName) -> Result<Member, Failure> {
 pub fn admit(node: &Arc<Node>, from: &MachineName, call: &RemoteCall) -> Result<Member, Failure> {
     let member = member(node, from)?;
     crate::devices::admit(&member, call)?;
+    if matches!(call, RemoteCall::Relay { .. }) {
+        return Ok(member);
+    }
     let asked = asked(call);
     let here = node.machine();
     let refuse = |denied: Denied| Failure::new(format!("{} refused {from}: {denied}", here));

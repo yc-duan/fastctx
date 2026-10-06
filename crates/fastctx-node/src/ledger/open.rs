@@ -1,11 +1,14 @@
 //! Opening the entries this machine keeps sealed, into their towns.
 //!
 //! An entry opens with a copy of its key sealed for this machine, in the
-//! entry itself or in a later item that seals it once more. What opens is
-//! the entry its author signed, checked as every machine checks it: its
-//! author a member when it wrote it, its town the one whose id it came
-//! under, and the member that sealed it its author, or one with management
-//! rights carrying it over from an earlier version of the network. The
+//! entry itself or in a later item that seals it once more; when none of
+//! the copies here opens it, it waits for one that does. What opens is the
+//! entry its author signed, checked as every machine checks it: its author
+//! a machine trusted when it wrote it, whose scope then covered the town;
+//! its town the one whose id it came under; and the tokens it showed the
+//! hub those of the paths it writes. Who sealed it does not matter: a
+//! member with management rights carries entries over from an earlier
+//! version of the network, and what is in them is the author's. The
 //! World's own ledger holds the naming key instead (`super::names`).
 
 use std::collections::BTreeMap;
@@ -13,9 +16,10 @@ use std::sync::Arc;
 
 use fastctx_net::ledger::{self, Item, Share, TownId, WorldEntry};
 use fastctx_net::link::Link;
-use fastctx_net::sign::Domain;
+use fastctx_net::sign::{Domain, Signed};
+use fastctx_net::trust::Table;
 
-use super::items::Items;
+use super::items::{Items, State};
 use crate::Node;
 
 /// Opens every entry of `town` kept here and not opened yet that this
@@ -28,12 +32,7 @@ pub fn town(node: &Arc<Node>, link: &Link, town: &TownId) -> Result<Vec<String>,
         return Ok(Vec::new());
     }
     let items = store.all(town).map_err(|error| format!("{town}: {error}"))?;
-    let mut shares: BTreeMap<u64, Vec<Share>> = BTreeMap::new();
-    for (_, item, _) in &items {
-        if let Item::Share(share) = item {
-            shares.entry(share.entry).or_default().push(share.clone());
-        }
-    }
+    let shares = shares(&items);
     let (table, _) = link.members();
     let world = link.membership().world.clone();
     let mut problems = Vec::new();
@@ -42,23 +41,21 @@ pub fn town(node: &Arc<Node>, link: &Link, town: &TownId) -> Result<Vec<String>,
         if !state.unopened.contains(seq) {
             continue;
         }
-        let key = match link.entry_key(entry, shares.get(seq).into_iter().flatten()) {
-            Ok(Some(key)) => key,
+        let inner = match link.open_sealed(entry, shares.get(seq).into_iter().flatten()) {
+            Ok(Some((_, inner))) => inner,
             Ok(None) => continue,
+            // A copy that opens may still come; the entry waits for it.
             Err(reason) => {
-                refuse(&mut state, *seq, format!("entry {seq} of {town}: {reason}"), &mut problems);
-                continue;
-            }
-        };
-        let inner = match ledger::sealed::open_entry(entry, &key) {
-            Ok(inner) => inner,
-            Err(reason) => {
-                refuse(&mut state, *seq, format!("entry {seq} of {town}: {reason}"), &mut problems);
+                problems.push(format!("entry {seq} of {town}: {reason}"));
                 continue;
             }
         };
         if *town == TownId::world() {
-            match world_entry(&inner, &table, &entry.author) {
+            if node.naming.read().expect("never poisoned").is_some() {
+                refuse(&mut state, *seq, format!("the World's own ledger: entry {seq} is a second naming key"), &mut problems);
+                continue;
+            }
+            match world_entry(&inner, &table) {
                 Ok(naming) => {
                     super::names::set(node, naming);
                     state.unopened.remove(seq);
@@ -74,8 +71,10 @@ pub fn town(node: &Arc<Node>, link: &Link, town: &TownId) -> Result<Vec<String>,
             if ledger::town_id(&naming, &opened.town) != *town {
                 return Err(format!("it is of the town {}, not the one it came under", opened.town));
             }
-            if opened.author != entry.author && !table.get(&entry.author).is_some_and(|member| member.manage) {
-                return Err(format!("{} sealed an entry {} wrote", entry.author, opened.author));
+            let paths: Vec<String> = opened.files.iter().map(|file| file.path.clone()).collect();
+            ledger::sealed::check_tokens(entry, &naming, &paths)?;
+            if !table.could_write(&opened.author, town, opened.at) {
+                return Err(format!("{}'s scope did not include {} when it wrote this", opened.author, opened.town));
             }
             Ok(opened)
         });
@@ -93,28 +92,31 @@ pub fn town(node: &Arc<Node>, link: &Link, town: &TownId) -> Result<Vec<String>,
     Ok(problems)
 }
 
-fn refuse(state: &mut super::items::State, seq: u64, reason: String, problems: &mut Vec<String>) {
+/// The copies of entries' keys sealed again, by the number of the entry.
+pub(super) fn shares(items: &[(u64, Item, Signed)]) -> BTreeMap<u64, Vec<Share>> {
+    let mut shares: BTreeMap<u64, Vec<Share>> = BTreeMap::new();
+    for (_, item, _) in items {
+        if let Item::Share(share) = item {
+            shares.entry(share.entry).or_default().push(share.clone());
+        }
+    }
+    shares
+}
+
+fn refuse(state: &mut State, seq: u64, reason: String, problems: &mut Vec<String>) {
     state.unopened.remove(&seq);
     state.refused.insert(seq, reason.clone());
     problems.push(reason);
 }
 
 /// The naming key the World's own ledger holds, if a member with
-/// management rights wrote it.
-fn world_entry(
-    inner: &fastctx_net::sign::Signed,
-    table: &fastctx_net::trust::Table,
-    sealed_by: &fastctx_types::MachineName,
-) -> Result<ledger::NamingKey, String> {
+/// management rights when it wrote it wrote it.
+pub(super) fn world_entry(inner: &Signed, table: &Table) -> Result<ledger::NamingKey, String> {
     let claimed: WorldEntry = inner.claim().map_err(|error| format!("it cannot be read: {error}"))?;
-    if claimed.author != *sealed_by {
-        return Err(format!("{sealed_by} sealed an entry {} wrote", claimed.author));
-    }
-    let key = match (table.get(&claimed.author), table.revoked(&claimed.author)) {
-        (Some(member), _) => member.key,
-        (None, Some(revocation)) if claimed.at < revocation.at => revocation.key,
-        _ => return Err(format!("{} is not a member", claimed.author)),
-    };
+    let key = table.author_key(&claimed.author, claimed.at)?;
     let opened: WorldEntry = inner.open(&key, Domain::Ledger).map_err(|error| error.to_string())?;
+    if !table.managed_at(&opened.author, opened.at) {
+        return Err(format!("{} did not hold management rights when it wrote it", opened.author));
+    }
     Ok(opened.naming)
 }

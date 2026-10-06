@@ -45,24 +45,14 @@ pub struct File {
 }
 
 /// The entry `signed` holds, if its author, a member of `world` now or
-/// before, signed it. An author revoked since is believed for entries it
-/// says it wrote before it was revoked: the hub took them only from members.
+/// before, signed it. An author revoked or cut off since is believed for
+/// entries it says it wrote before: the hub took them only from members.
 pub fn open(signed: &Signed, world: &WorldId, table: &Table) -> Result<Entry, String> {
     let claimed: Entry = signed.claim().map_err(|error| format!("an unreadable ledger entry: {error}"))?;
     if claimed.world != *world {
         return Err(format!("a ledger entry for the World {}", claimed.world));
     }
-    let key = match (table.get(&claimed.author), table.revoked(&claimed.author)) {
-        // A device writes nothing in the ledger: what the user writes from
-        // one, a machine's node writes for them.
-        (Some(member), _) if !member.kind.is_machine() => {
-            return Err(format!("{} is a device, and a device writes nothing in the ledger", claimed.author));
-        }
-        (Some(member), _) => member.key,
-        (None, Some(revocation)) if claimed.at < revocation.at => revocation.key,
-        (None, Some(_)) => return Err(format!("{} wrote this after it was revoked", claimed.author)),
-        (None, None) => return Err(format!("{} is not a member", claimed.author)),
-    };
+    let key = table.author_key(&claimed.author, claimed.at)?;
     let entry: Entry = signed.open(&key, Domain::Ledger).map_err(|error| format!("a ledger entry: {error}"))?;
     for file in &entry.files {
         check_path(&file.path)?;

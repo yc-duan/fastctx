@@ -13,7 +13,17 @@ use crate::sign::Signed;
 use crate::wire::{Question, Told};
 
 /// Items of a town, each with its number, and whether more follow.
-pub type Page = (Vec<(u64, Item, Signed)>, bool);
+pub type Page = (Vec<PageItem>, bool);
+
+/// One item of a page, in its place. One whose signer's signature does not
+/// check out is kept in its place with why, so what follows it can still
+/// be taken in order; it is never opened.
+pub struct PageItem {
+    pub seq: u64,
+    pub item: Item,
+    pub signed: Signed,
+    pub refused: Option<String>,
+}
 
 impl Link {
     /// Keeps an item in its town's ledger at the hub. Returns its number.
@@ -54,14 +64,14 @@ impl Link {
         crate::ledger::sign(&self.inner.key, entry)
     }
 
-    /// The key of `entry`, when a copy of it, in the entry or in `shares`,
-    /// is for this machine.
-    pub fn entry_key<'a>(
+    /// Opens `entry` with a copy of its key for this machine, in the entry
+    /// or in `shares` (`sealed::open_sealed`).
+    pub fn open_sealed<'a>(
         &self,
         entry: &SealedEntry,
         shares: impl IntoIterator<Item = &'a Share>,
-    ) -> Result<Option<EntryKey>, String> {
-        sealed::entry_key(entry, shares, &self.inner.membership.name, &self.inner.seal)
+    ) -> Result<Option<(EntryKey, Signed)>, String> {
+        sealed::open_sealed(entry, shares, &self.inner.membership.name, &self.inner.seal)
     }
 
     /// Seals the key of the entry numbered `seq` once more, for `to`.
@@ -122,9 +132,9 @@ impl Link {
 }
 
 impl Inner {
-    /// The items an answer holds, each checked against the members; one
-    /// that does not check out is an error, since what follows it cannot be
-    /// taken in order.
+    /// The items an answer holds, each checked against the members. One
+    /// that cannot even be read, or is of another town, is an error: the
+    /// hub that gave it is not keeping the ledger.
     async fn items(&self, town: &TownId, answer: Told) -> Result<Page, String> {
         let (entries, more) = match answer {
             Told::Entries { entries, more } => (entries, more),
@@ -134,9 +144,7 @@ impl Inner {
         // An item by a member that joined after the members were last asked
         // for: ask again, as for a call from it.
         let unknown = entries.iter().any(|(_, signed)| {
-            signed
-                .claim::<Item>()
-                .is_ok_and(|item| table.get(item.signer()).is_none() && table.revoked(item.signer()).is_none())
+            signed.claim::<Item>().is_ok_and(|item| table.key_ever(item.signer()).is_none())
         });
         if unknown {
             self.refresh().await?;
@@ -144,12 +152,15 @@ impl Inner {
         }
         let mut read = Vec::new();
         for (seq, signed) in entries {
-            let item = sealed::open_item(&signed, &self.membership.world, &table)
-                .map_err(|error| format!("item {seq} of {town}: {error}"))?;
-            if item.town() != town {
-                return Err(format!("item {seq} of {town} is for the town {}", item.town()));
+            let claimed: Item = signed.claim().map_err(|error| format!("item {seq} of {town}: {error}"))?;
+            if claimed.town() != town {
+                return Err(format!("item {seq} of {town} is for the town {}", claimed.town()));
             }
-            read.push((seq, item, signed));
+            let (item, refused) = match sealed::open_item(&signed, &self.membership.world, &table) {
+                Ok(item) => (item, None),
+                Err(error) => (claimed, Some(error)),
+            };
+            read.push(PageItem { seq, item, signed, refused });
         }
         Ok((read, more))
     }

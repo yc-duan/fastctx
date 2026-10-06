@@ -384,6 +384,7 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
                 revocations: store.members.revocations.clone(),
                 grants: store.members.grants.clone(),
                 presence,
+                latest: store.latest(),
             })
         }
         Question::Invite { endorsement } => invite(hub, name, endorsement).map(|()| Told::Done),
@@ -425,6 +426,7 @@ fn invite(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
     if endorsement.world != store.hub.world {
         return Err(format!("the endorsement is for the World {}", endorsement.world));
     }
+    made_now(endorsement.at, store.latest(), "invitation")?;
     if endorsement.expires <= Timestamp::now() {
         return Err("the invitation has expired already".to_string());
     }
@@ -459,6 +461,7 @@ fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
         if revocation.world != store.hub.world {
             return Err(format!("the revocation is for the World {}", revocation.world));
         }
+        made_now(Some(revocation.at), store.latest(), "revocation")?;
         let member = store.table().get(&revocation.name).cloned();
         match member {
             Some(member) if member.key == revocation.key => {}
@@ -483,6 +486,31 @@ fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
     }
     for session in sessions.values() {
         let _ = session.out.send(Out::Frame(Down::MembersChanged));
+    }
+    Ok(())
+}
+
+/// Every machine judges invitations, grants and revocations by the time
+/// they say they were made (`fastctx_net::trust`). So a member that no
+/// longer holds a right must not date one back to when it did, nor date one
+/// far ahead, which would hold up everyone's after it; and each must be
+/// dated after the latest the hub holds, so that the order they were made
+/// in is the order the hub took them in.
+fn made_now(at: Option<Timestamp>, latest: Option<Timestamp>, what: &str) -> Result<(), String> {
+    let at = at.ok_or_else(|| format!("the {what} says no time it was made; this fastctx is too old"))?;
+    let off = Timestamp::now().duration_since(at).abs();
+    if off > fastctx_net::trust::CLOCK_TOLERANCE {
+        return Err(format!(
+            "the {what} is dated {at}, {}s from the hub's clock; check this machine's clock",
+            off.as_secs()
+        ));
+    }
+    if let Some(latest) = latest
+        && at <= latest
+    {
+        return Err(format!(
+            "the {what} is dated {at}, not after the latest change to the members ({latest}); try again"
+        ));
     }
     Ok(())
 }
@@ -542,8 +570,10 @@ fn grant(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
         if member.key != grant.key {
             return Err(format!("{} has another key", grant.member));
         }
-        if store.table().grant(&grant.member).is_some_and(|latest| grant.version <= latest.version) {
-            return Err(format!("{} has a grant of this version or a later one already", grant.member));
+        made_now(Some(grant.at), store.latest(), "grant")?;
+        let next = store.table().grant(&grant.member).map(|latest| latest.version + 1).unwrap_or(1);
+        if grant.version != next {
+            return Err(format!("the next grant for {} is version {next}", grant.member));
         }
         store.members.grants.push(signed);
         store.save_members().map_err(|error| format!("the hub could not store the grant: {error}"))?;

@@ -41,6 +41,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::ops::Bound;
 
 use fastctx_types::MachineName;
 use jiff::Timestamp;
@@ -50,6 +51,13 @@ use crate::ledger::TownId;
 use crate::scope::{Grant, Scope};
 use crate::seal::SealPublic;
 use crate::sign::{Digest, Domain, PublicKey, Signed, sha256};
+
+/// How far apart the clocks of the members and the hub are taken to be:
+/// Kerberos's default tolerance for clocks kept by NTP. The hub takes an
+/// invitation, grant or revocation only when it is dated within this of its
+/// own clock; a ledger entry is judged by the standing its author had
+/// within this after the time it is dated.
+pub const CLOCK_TOLERANCE: jiff::SignedDuration = jiff::SignedDuration::from_mins(5);
 
 /// Which World: one hub and the machines that joined it.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -166,7 +174,8 @@ pub struct Endorsement {
     pub scope: Option<Scope>,
     /// When the inviter made it: whether the inviter held management
     /// rights then decides whether the member is the inviter's branch.
-    /// Left out, as before scopes, it is not.
+    /// Left out, as before scopes, it counts as made when the World began,
+    /// when only the founder held them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<Timestamp>,
 }
@@ -244,14 +253,29 @@ pub struct Member {
     pub delegated: bool,
 }
 
+/// A member that was trusted once and is not any more: revoked, or cut off
+/// with the branch it hung on. What it signed while it was trusted stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Former {
+    pub key: PublicKey,
+    pub kind: Kind,
+    /// When it stopped being trusted, when that is known: what it says it
+    /// signed after is not believed.
+    pub until: Option<Timestamp>,
+}
+
 /// The members this machine trusts, as checked from the hub's list.
 #[derive(Clone, Debug, Default)]
 pub struct Table {
     trusted: BTreeMap<MachineName, Member>,
     /// Names that were members and are revoked, with who revoked them.
     revoked: BTreeMap<MachineName, Revocation>,
+    /// Members that were trusted once, revoked or cut off.
+    former: BTreeMap<MachineName, Former>,
     /// The latest grant taken for each member.
     grants: BTreeMap<MachineName, Grant>,
+    /// What each member was granted when, for what it could do at a time.
+    history: History,
     /// Records in the hub's list that were refused, and why.
     pub refused: Vec<(String, String)>,
 }
@@ -287,6 +311,38 @@ impl Table {
         self.revoked.iter()
     }
 
+    /// The key of `name` for something it signed at `at`: a member now, or
+    /// one that was then.
+    pub fn key_at(&self, name: &MachineName, at: Timestamp) -> Option<PublicKey> {
+        match (self.trusted.get(name), self.former.get(name)) {
+            (Some(member), _) => Some(member.key),
+            (None, Some(former)) if former.until.is_none_or(|until| at < until) => Some(former.key),
+            _ => None,
+        }
+    }
+
+    /// The key of `name`, a member now or once: for what it signed with no
+    /// time of its own, which the hub took from it while it was a member.
+    pub fn key_ever(&self, name: &MachineName) -> Option<PublicKey> {
+        self.trusted.get(name).map(|member| member.key).or_else(|| self.former.get(name).map(|former| former.key))
+    }
+
+    /// The key of `name` for an entry it says it wrote at `at` in a
+    /// ledger: a machine, trusted then. A device writes nothing in a
+    /// ledger: what the user writes from one, a machine's node writes for
+    /// them.
+    pub fn author_key(&self, name: &MachineName, at: Timestamp) -> Result<PublicKey, String> {
+        let kind = match (self.trusted.get(name), self.former.get(name)) {
+            (Some(member), _) => member.kind,
+            (None, Some(former)) => former.kind,
+            (None, None) => return Err(format!("{name} is not a member, nor was it")),
+        };
+        if !kind.is_machine() {
+            return Err(format!("{name} is a device, and a device writes nothing in the ledger"));
+        }
+        self.key_at(name, at).ok_or_else(|| format!("{name} wrote this after it stopped being a member"))
+    }
+
     /// The latest grant taken for `name`.
     pub fn grant(&self, name: &MachineName) -> Option<&Grant> {
         self.grants.get(name)
@@ -297,6 +353,35 @@ impl Table {
     pub fn readers(&self, town: &TownId) -> impl Iterator<Item = &Member> {
         let world = *town == TownId::world();
         self.trusted.values().filter(move |member| world || member.manage || member.scope.projects.contains(town))
+    }
+
+    /// Whether `name` could write in `town` when it says it did, at `at`:
+    /// it held management rights then, or its scope then included the town.
+    pub fn could_write(&self, name: &MachineName, town: &TownId, at: Timestamp) -> bool {
+        self.around(at, |at| {
+            self.history.scope_at(name, at, 0).is_some_and(|(scope, manage)| manage || scope.projects.contains(town))
+        })
+    }
+
+    /// Whether `name` held management rights when it says it wrote
+    /// something, at `at`.
+    pub fn managed_at(&self, name: &MachineName, at: Timestamp) -> bool {
+        self.around(at, |at| self.history.held_at(name, at))
+    }
+
+    /// Whether `test` holds at `at`, or at a change to the members up to
+    /// `CLOCK_TOLERANCE` after it. What a member writes in a ledger is
+    /// dated by its own clock, which may be behind the clock of the member
+    /// that just changed its standing; the hub took it by the standing it
+    /// had. Being dated anywhere else is no help to a writer: it chooses
+    /// the date.
+    fn around(&self, at: Timestamp, test: impl Fn(Timestamp) -> bool) -> bool {
+        test(at)
+            || self
+                .history
+                .changes
+                .range((Bound::Excluded(at), Bound::Included(at.saturating_add(CLOCK_TOLERANCE).unwrap_or(at))))
+                .any(|change| test(*change))
     }
 
     /// Whether `by` may revoke `name`: a member with management rights may
@@ -328,6 +413,14 @@ impl Table {
             return Err(format!("{name} may invite only within its own scope"));
         }
         Ok(())
+    }
+
+    /// Whether `by` may seal an entry's key once more for `to`: a member
+    /// with management rights for anyone, an inviter for its own branch.
+    pub fn may_share(&self, by: &MachineName, to: &MachineName) -> bool {
+        let Some(signer) = self.trusted.get(by) else { return false };
+        signer.manage
+            || self.trusted.get(to).is_some_and(|member| member.delegated && member.invited_by.as_ref() == Some(by))
     }
 }
 
@@ -379,89 +472,61 @@ pub fn check(
     }
 
     let grants = open_grants(world, grants, &accepted, &mut table.refused);
-
-    // Revocations already accepted stand. New ones are taken in the hub's
-    // order when the member that signed them, whose key is not revoked
-    // before, may revoke that member as things stand with the revocations
-    // taken so far.
-    let mut revoked_keys: BTreeMap<PublicKey, Revocation> = BTreeMap::new();
-    for signed in &known.revocations {
-        if let Ok(revocation) = signed.claim::<Revocation>() {
-            revoked_keys.insert(revocation.key, revocation);
+    let revocations = open_revocations(world, revocations, &known, &accepted, &mut table.refused);
+    let standing = replay(&accepted, &grants, &revocations, &mut table.refused);
+    for (signed, _) in standing.revocations.values() {
+        if !known.revocations.contains(signed) {
+            known.revocations.push(signed.clone());
         }
     }
-    for signed in revocations {
-        if known.revocations.contains(signed) {
-            continue;
-        }
-        let revocation = match signed.claim::<Revocation>() {
-            Ok(revocation) => revocation,
-            Err(error) => {
-                table.refused.push(("a revocation".to_string(), error.to_string()));
-                continue;
-            }
-        };
-        let label = format!("the revocation of {} by {}", revocation.name, revocation.by);
-        let Some(signer) = accepted.get(&revocation.by) else {
-            table.refused.push((label, "its signer is not a member".to_string()));
-            continue;
-        };
-        if revoked_keys.contains_key(&signer.record.key) {
-            table.refused.push((label, "its signer's key was revoked before it".to_string()));
-            continue;
-        }
-        let revocation = match signed.open::<Revocation>(&signer.record.key, Domain::Revocation) {
-            Ok(revocation) if revocation.world == *world => revocation,
-            Ok(revocation) => {
-                table.refused.push((label, format!("it is for the World {}", revocation.world)));
-                continue;
-            }
-            Err(error) => {
-                table.refused.push((label, error.to_string()));
-                continue;
-            }
-        };
-        let standing = evaluate(&accepted, &grants, &revoked_keys);
-        if !standing.may_revoke(&accepted, &revocation) {
-            table.refused.push((label, format!("{} may not revoke {}", revocation.by, revocation.name)));
-            continue;
-        }
-        revoked_keys.insert(revocation.key, revocation);
-        known.revocations.push(signed.clone());
-    }
 
-    let standing = evaluate(&accepted, &grants, &revoked_keys);
     let mut scopes: BTreeMap<MachineName, Result<(Scope, bool), String>> = BTreeMap::new();
     for name in accepted.keys() {
-        if !revoked_keys.contains_key(&accepted[name].record.key) {
+        if !standing.revocations.contains_key(&accepted[name].record.key) {
             // Kept in `scopes`, with the branch it hangs on worked out first.
-            let _ = standing.scope(name, &accepted, &revoked_keys, &mut scopes);
+            let _ = standing.scope(name, &accepted, &mut scopes);
         }
     }
-    for (name, joined) in accepted {
-        if let Some(revocation) = revoked_keys.get(&joined.record.key) {
-            table.revoked.insert(name, revocation.clone());
+    for (name, joined) in &accepted {
+        if let Some((_, revocation)) = standing.revocations.get(&joined.record.key) {
+            table.revoked.insert(name.clone(), revocation.clone());
+            table.former.insert(
+                name.clone(),
+                Former { key: joined.record.key, kind: joined.kind, until: Some(revocation.at) },
+            );
             continue;
         }
-        match scopes.remove(&name) {
+        match scopes.remove(name) {
             Some(Ok((scope, delegated))) => {
                 let member = Member {
                     name: name.clone(),
                     key: joined.record.key,
                     seal: joined.record.seal,
-                    invited_by: joined.invited_by,
+                    invited_by: joined.invited_by.clone(),
                     kind: joined.kind,
-                    manage: standing.managers.contains(&name),
+                    manage: standing.history.managers.contains(name),
                     scope,
                     delegated,
                 };
-                table.trusted.insert(name, member);
+                table.trusted.insert(name.clone(), member);
             }
-            Some(Err(reason)) => table.refused.push((name.to_string(), reason)),
+            Some(Err(reason)) => {
+                // Cut off with its branch: trusted until its inviter was
+                // revoked, when that is when.
+                let until = joined
+                    .invited_by
+                    .as_ref()
+                    .and_then(|inviter| accepted.get(inviter))
+                    .and_then(|inviter| standing.revocations.get(&inviter.record.key))
+                    .map(|(_, revocation)| revocation.at);
+                table.former.insert(name.clone(), Former { key: joined.record.key, kind: joined.kind, until });
+                table.refused.push((name.to_string(), reason));
+            }
             None => {}
         }
     }
     table.grants = standing.latest.into_iter().filter(|(name, _)| table.trusted.contains_key(name)).collect();
+    table.history = standing.history;
     (table, known)
 }
 
@@ -618,12 +683,7 @@ enum Admitted {
     No(String),
 }
 
-fn admitted(
-    world: &WorldId,
-    record: &Record,
-    admission: &Signed,
-    accepted: &BTreeMap<MachineName, Joined>,
-) -> Admitted {
+fn admitted(world: &WorldId, record: &Record, admission: &Signed, accepted: &BTreeMap<MachineName, Joined>) -> Admitted {
     let claimed = match admission.claim::<Admission>() {
         Ok(admission) => admission,
         Err(error) => return Admitted::No(format!("its admission {error}")),
@@ -691,74 +751,85 @@ fn open_grants(
     opened
 }
 
-/// Who holds management rights and what each member was granted, from
-/// the grants and revocations taken in the order they were made.
-struct Standing {
-    managers: BTreeSet<MachineName>,
-    latest: BTreeMap<MachineName, Grant>,
-    /// When each member held management rights.
-    held: BTreeMap<MachineName, Vec<(Timestamp, Option<Timestamp>)>>,
+/// A revocation signed by the member it says it is by, of a member of this
+/// World by the key it names; whether this machine accepted it before.
+struct Opened {
+    revocation: Revocation,
+    signed: Signed,
+    accepted_before: bool,
 }
 
-enum Event<'a> {
-    Revoked(&'a Revocation),
-    Granted(&'a Grant),
-}
-
-fn evaluate(
+fn open_revocations(
+    world: &WorldId,
+    revocations: &[Signed],
+    known: &Known,
     accepted: &BTreeMap<MachineName, Joined>,
-    grants: &[(Grant, [u8; 32])],
-    revoked: &BTreeMap<PublicKey, Revocation>,
-) -> Standing {
-    let founder = accepted.values().find(|joined| joined.invited_by.is_none()).map(|joined| joined.record.name.clone());
-    let mut standing = Standing { managers: BTreeSet::new(), latest: BTreeMap::new(), held: BTreeMap::new() };
-    if let Some(founder) = founder {
-        standing.managers.insert(founder.clone());
-        standing.held.insert(founder, vec![(Timestamp::MIN, None)]);
-    }
-    // In the order they were made: a revocation before a grant made at the
-    // same instant, and grants made at one instant by the digest of their
-    // signed bytes, so every machine reaches the same answer.
-    let mut events: Vec<(Timestamp, u8, [u8; 32], Event)> = Vec::new();
-    for revocation in revoked.values() {
-        events.push((revocation.at, 0, [0; 32], Event::Revoked(revocation)));
-    }
-    for (grant, digest) in grants {
-        events.push((grant.at, 1, *digest, Event::Granted(grant)));
-    }
-    events.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
-    let mut gone: BTreeSet<MachineName> = BTreeSet::new();
-    for (at, _, _, event) in events {
-        match event {
-            Event::Revoked(revocation) => {
-                let Some(joined) = accepted.get(&revocation.name).filter(|joined| joined.record.key == revocation.key)
-                else {
-                    continue;
-                };
-                gone.insert(joined.record.name.clone());
-                standing.demote(&joined.record.name, at);
+    refused: &mut Vec<(String, String)>,
+) -> Vec<Opened> {
+    let mut opened = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (signed, accepted_before) in
+        known.revocations.iter().map(|signed| (signed, true)).chain(revocations.iter().map(|signed| (signed, false)))
+    {
+        if !seen.insert(signed.data.0.clone()) {
+            continue;
+        }
+        let claimed = match signed.claim::<Revocation>() {
+            Ok(revocation) => revocation,
+            Err(error) => {
+                refused.push(("a revocation".to_string(), error.to_string()));
+                continue;
             }
-            Event::Granted(grant) => {
-                if !standing.managers.contains(&grant.by) || gone.contains(&grant.member) {
-                    continue;
-                }
-                if standing.latest.get(&grant.member).is_some_and(|latest| grant.version <= latest.version) {
-                    continue;
-                }
-                let machine = accepted.get(&grant.member).is_some_and(|joined| joined.kind.is_machine());
-                if grant.manage && machine {
-                    standing.promote(&grant.member, at);
-                } else {
-                    standing.demote(&grant.member, at);
-                }
-                standing.latest.insert(grant.member.clone(), grant.clone());
+        };
+        let label = format!("the revocation of {} by {}", claimed.name, claimed.by);
+        let Some(signer) = accepted.get(&claimed.by) else {
+            // One accepted before stands even if its signer is no longer
+            // listed: it named a key, and that key stays revoked.
+            if accepted_before {
+                opened.push(Opened { revocation: claimed, signed: signed.clone(), accepted_before });
+            } else {
+                refused.push((label, "its signer is not a member".to_string()));
             }
+            continue;
+        };
+        match signed.open::<Revocation>(&signer.record.key, Domain::Revocation) {
+            Ok(revocation) if revocation.world == *world => {
+                opened.push(Opened { revocation, signed: signed.clone(), accepted_before })
+            }
+            Ok(revocation) => refused.push((label, format!("it is for the World {}", revocation.world))),
+            Err(error) if accepted_before => {
+                refused.push((label, error.to_string()));
+            }
+            Err(error) => refused.push((label, error.to_string())),
         }
     }
-    standing
+    opened
 }
 
-impl Standing {
+/// Who invited a member, the scope the invitation gave it, and when it was
+/// made.
+#[derive(Clone, Debug)]
+struct Invited {
+    by: Option<MachineName>,
+    scope: Option<Scope>,
+    at: Option<Timestamp>,
+}
+
+/// What each member was granted when, and when it held management rights.
+#[derive(Clone, Debug, Default)]
+struct History {
+    managers: BTreeSet<MachineName>,
+    /// When each member held management rights.
+    held: BTreeMap<MachineName, Vec<(Timestamp, Option<Timestamp>)>>,
+    /// Each member's grants taken, in order: from when, which scope.
+    scopes: BTreeMap<MachineName, Vec<(Timestamp, Scope)>>,
+    /// How each member was invited.
+    invited: BTreeMap<MachineName, Invited>,
+    /// When the grants and revocations taken were made.
+    changes: BTreeSet<Timestamp>,
+}
+
+impl History {
     fn promote(&mut self, name: &MachineName, at: Timestamp) {
         if self.managers.insert(name.clone()) {
             self.held.entry(name.clone()).or_default().push((at, None));
@@ -780,42 +851,174 @@ impl Standing {
             .is_some_and(|held| held.iter().any(|(from, until)| *from <= at && until.is_none_or(|until| at < until)))
     }
 
-    /// Whether `joined` is the branch of its inviter: it was invited, after
-    /// scopes, by a member that did not hold management rights then.
-    fn delegated(&self, joined: &Joined) -> bool {
-        match (&joined.invited_by, joined.endorsement.as_ref().and_then(|endorsement| endorsement.at)) {
-            (Some(inviter), Some(at)) => !self.held_at(inviter, at),
+    /// Whether `name` is the branch of its inviter: invited by a member
+    /// that did not hold management rights when it made the invitation.
+    /// An invitation from before scopes, which says no time, counts as made
+    /// when the World began, when only the founder held them.
+    fn delegated(&self, name: &MachineName) -> bool {
+        match self.invited.get(name) {
+            Some(Invited { by: Some(inviter), at, .. }) => !self.held_at(inviter, at.unwrap_or(Timestamp::MIN)),
             _ => false,
         }
     }
 
-    fn may_revoke(&self, accepted: &BTreeMap<MachineName, Joined>, revocation: &Revocation) -> bool {
-        let Some(signer) = accepted.get(&revocation.by) else { return false };
-        if self.managers.contains(&revocation.by) {
-            return true;
+    /// What `name` could do at `at`, and whether it managed then; `None`
+    /// when its branch did not allow it anything then. `depth` guards the
+    /// walk up a branch, which the one level of delegation keeps short.
+    fn scope_at(&self, name: &MachineName, at: Timestamp, depth: usize) -> Option<(Scope, bool)> {
+        if self.held_at(name, at) {
+            return Some((Scope::all(), true));
         }
-        let Some(target) = accepted.get(&revocation.name).filter(|joined| joined.record.key == revocation.key) else {
-            return false;
-        };
-        if revocation.by == revocation.name {
-            return true;
+        let Invited { by: inviter, scope: invited, .. } = self.invited.get(name)?;
+        let base = self
+            .scopes
+            .get(name)
+            .and_then(|scopes| scopes.iter().rev().find(|(from, _)| *from <= at))
+            .map(|(_, scope)| scope.clone())
+            .or_else(|| invited.clone())
+            .unwrap_or_else(Scope::all);
+        if !self.delegated(name) {
+            return Some((base, false));
         }
-        signer.kind.is_machine() && target.invited_by.as_ref() == Some(&revocation.by) && self.delegated(target)
+        let inviter = inviter.as_ref()?;
+        if depth > 2 {
+            return None;
+        }
+        let (theirs, _) = self.scope_at(inviter, at, depth + 1)?;
+        if !theirs.invite || self.delegated(inviter) {
+            return None;
+        }
+        let mut scope = base.intersect(&theirs);
+        scope.invite = false;
+        Some((scope, false))
     }
+}
 
-    /// Works out `name`'s scope, and whether it is a branch, into `scopes`.
+/// Who holds management rights, what each member was granted, and which
+/// revocations stand, from the grants and revocations taken in the order
+/// they were made.
+struct Standing {
+    history: History,
+    latest: BTreeMap<MachineName, Grant>,
+    /// The revocations that stand, by the key they revoke.
+    revocations: BTreeMap<PublicKey, (Signed, Revocation)>,
+}
+
+enum Event<'a> {
+    Revoked(&'a Opened),
+    Granted(&'a Grant),
+}
+
+/// Replays grants and revocations in the order they were made: a
+/// revocation before a grant made at the same instant, and grants made at
+/// one instant by the digest of their signed bytes, so every machine reaches
+/// the same answer whatever order the hub lists them in. A grant counts when
+/// its signer held management rights then and it is the next version for its
+/// member; a revocation counts when its signer could revoke that member then,
+/// or when this machine accepted it before.
+fn replay(
+    accepted: &BTreeMap<MachineName, Joined>,
+    grants: &[(Grant, [u8; 32])],
+    revocations: &[Opened],
+    refused: &mut Vec<(String, String)>,
+) -> Standing {
+    let mut history = History::default();
+    for (name, joined) in accepted {
+        let endorsement = joined.endorsement.as_ref();
+        history.invited.insert(
+            name.clone(),
+            Invited {
+                by: joined.invited_by.clone(),
+                scope: endorsement.and_then(|endorsement| endorsement.scope.clone()),
+                at: endorsement.and_then(|endorsement| endorsement.at),
+            },
+        );
+        if joined.invited_by.is_none() {
+            history.promote(name, Timestamp::MIN);
+        }
+    }
+    let mut standing = Standing { history, latest: BTreeMap::new(), revocations: BTreeMap::new() };
+    let mut events: Vec<(Timestamp, u8, [u8; 32], Event)> = Vec::new();
+    for opened in revocations {
+        events.push((opened.revocation.at, 0, sha256(&opened.signed.data.0), Event::Revoked(opened)));
+    }
+    for (grant, digest) in grants {
+        events.push((grant.at, 1, *digest, Event::Granted(grant)));
+    }
+    events.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    let key_of = |name: &MachineName| accepted.get(name).map(|joined| joined.record.key);
+    for (at, _, _, event) in events {
+        match event {
+            Event::Revoked(opened) => {
+                let revocation = &opened.revocation;
+                if standing.revocations.contains_key(&revocation.key) {
+                    continue;
+                }
+                let signer_revoked = key_of(&revocation.by).is_some_and(|key| standing.revocations.contains_key(&key));
+                let target = accepted.get(&revocation.name).filter(|joined| joined.record.key == revocation.key);
+                let may = opened.accepted_before
+                    || (!signer_revoked
+                        && target.is_some()
+                        && (standing.history.managers.contains(&revocation.by)
+                            || revocation.by == revocation.name
+                            || (target.is_some_and(|target| target.invited_by.as_ref() == Some(&revocation.by))
+                                && standing.history.delegated(&revocation.name)
+                                && accepted.get(&revocation.by).is_some_and(|signer| signer.kind.is_machine()))));
+                if !may {
+                    refused.push((
+                        format!("the revocation of {} by {}", revocation.name, revocation.by),
+                        format!("{} could not revoke {} then", revocation.by, revocation.name),
+                    ));
+                    continue;
+                }
+                standing.revocations.insert(revocation.key, (opened.signed.clone(), revocation.clone()));
+                if let Some(target) = target {
+                    standing.history.demote(&target.record.name, at);
+                }
+                standing.history.changes.insert(at);
+            }
+            Event::Granted(grant) => {
+                let signer_revoked = key_of(&grant.by).is_some_and(|key| standing.revocations.contains_key(&key));
+                let member_revoked = key_of(&grant.member).is_some_and(|key| standing.revocations.contains_key(&key));
+                let label = format!("the grant {} for {} by {}", grant.version, grant.member, grant.by);
+                if signer_revoked || member_revoked || !standing.history.managers.contains(&grant.by) {
+                    refused.push((label, format!("{} did not hold management rights then", grant.by)));
+                    continue;
+                }
+                let next = standing.latest.get(&grant.member).map(|latest| latest.version + 1).unwrap_or(1);
+                if grant.version != next {
+                    refused.push((label, format!("the next grant for {} was version {next}", grant.member)));
+                    continue;
+                }
+                let machine = accepted.get(&grant.member).is_some_and(|joined| joined.kind.is_machine());
+                if grant.manage && machine {
+                    standing.history.promote(&grant.member, at);
+                } else {
+                    standing.history.demote(&grant.member, at);
+                }
+                standing.history.scopes.entry(grant.member.clone()).or_default().push((at, grant.scope.clone()));
+                standing.history.changes.insert(at);
+                standing.latest.insert(grant.member.clone(), grant.clone());
+            }
+        }
+    }
+    standing
+}
+
+impl Standing {
+    /// Works out `name`'s scope now, and whether it is a branch, into
+    /// `scopes`.
     fn scope(
         &self,
         name: &MachineName,
         accepted: &BTreeMap<MachineName, Joined>,
-        revoked: &BTreeMap<PublicKey, Revocation>,
         scopes: &mut BTreeMap<MachineName, Result<(Scope, bool), String>>,
     ) -> Result<(Scope, bool), String> {
         if let Some(done) = scopes.get(name) {
             return done.clone();
         }
         let joined = &accepted[name];
-        let result = if self.managers.contains(name) {
+        let result = if self.history.managers.contains(name) {
             Ok((Scope::all(), false))
         } else {
             let base = match self.latest.get(name) {
@@ -827,22 +1030,24 @@ impl Standing {
                     .unwrap_or_else(Scope::all),
             };
             match &joined.invited_by {
-                Some(inviter) if self.delegated(joined) => {
-                    let inviter_joined = &accepted[inviter];
-                    if revoked.contains_key(&inviter_joined.record.key) {
+                Some(inviter) if self.history.delegated(name) => match accepted.get(inviter) {
+                    None => Err(format!("its inviter {inviter} is not trusted")),
+                    Some(theirs) if self.revocations.contains_key(&theirs.record.key) => {
                         Err(format!("it is in the branch of {inviter}, which was revoked"))
-                    } else {
-                        match self.scope(inviter, accepted, revoked, scopes) {
-                            Ok((theirs, _)) if theirs.invite => {
-                                let mut scope = base.intersect(&theirs);
-                                scope.invite = false;
-                                Ok((scope, true))
-                            }
-                            Ok(_) => Err(format!("it was invited by {inviter}, which may not invite")),
-                            Err(_) => Err(format!("it is in the branch of {inviter}, which is not trusted")),
-                        }
                     }
-                }
+                    Some(_) if self.history.delegated(inviter) => {
+                        Err(format!("it was invited by {inviter}, itself in a branch, which may not invite"))
+                    }
+                    Some(_) => match self.scope(inviter, accepted, scopes) {
+                        Ok((theirs, _)) if theirs.invite => {
+                            let mut scope = base.intersect(&theirs);
+                            scope.invite = false;
+                            Ok((scope, true))
+                        }
+                        Ok(_) => Err(format!("it was invited by {inviter}, which may not invite")),
+                        Err(_) => Err(format!("it is in the branch of {inviter}, which is not trusted")),
+                    },
+                },
                 _ => Ok((base, false)),
             }
         };

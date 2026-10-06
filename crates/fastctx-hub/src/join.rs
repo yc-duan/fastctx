@@ -2,7 +2,9 @@
 //! after with an invitation a member made.
 //!
 //! Admission happens under the store's lock, so one invitation, one name or
-//! the founding secret can never admit two machines racing for it.
+//! the founding secret can never admit two machines racing for it. The same
+//! machine admitted again, with the same name, key and invitation, is told
+//! it joined: the reply to its admission may never have reached it.
 
 use fastctx_net::sign::{Domain, PublicKey, Secret, Signature, Signed};
 use fastctx_net::trust::{self, Admission, Credential, Endorsement, Known, Record, WorldId};
@@ -14,7 +16,8 @@ use crate::store::{Admitted, Store};
 
 /// The invitation whose key `invite` is, for a machine that proved on this
 /// connection that it holds that key: one not used yet, not expired, made by
-/// a member still trusted.
+/// a member still trusted; or one used already, which only the machine it
+/// admitted can be admitted with again.
 pub(crate) fn endorsement(
     hub: &Hub,
     invite: &PublicKey,
@@ -24,7 +27,9 @@ pub(crate) fn endorsement(
     invite.verify(Domain::Session, binding, proof).map_err(|_| "the proof of the invitation's key does not verify")?;
     let store = hub.store();
     let invitation = store.invitation(invite).cloned().ok_or("the invitation is not known to the hub")?;
-    usable(&store, &invitation)?;
+    if invitation.used_by.is_none() {
+        usable(&store, &invitation)?;
+    }
     Ok(invitation.endorsement)
 }
 
@@ -50,12 +55,17 @@ pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Res
         return Err(format!("the code is for the World {}, and this hub keeps {world}", record.world));
     }
     if let Some(existing) = store.members.records.iter().find(|admitted| admitted.name == record.name) {
-        let same_key = existing.record.claim::<Record>().is_ok_and(|existing| existing.key == record.key);
-        return Err(if same_key {
-            format!("this machine is a member already, as {}", record.name)
-        } else {
-            format!("the World has a machine named {} already; join with another name", record.name)
-        });
+        let existing: Record = existing.record.claim().map_err(|error| format!("the record the hub keeps: {error}"))?;
+        if existing.key != record.key {
+            return Err(format!("the World has a machine named {} already; join with another name", record.name));
+        }
+        if invite_of(&existing) != invite_of(&record) {
+            return Err(format!("this machine is a member already, as {}", record.name));
+        }
+        if store.table().get(&record.name).is_none_or(|member| member.key != record.key) {
+            return Err(format!("{} was a member, and is not trusted any more", record.name));
+        }
+        return Ok((world, record.name));
     }
     if let Some(member) = store.table().by_key(&record.key) {
         return Err(format!("this machine's key is a member already, as {}", member.name));
@@ -116,6 +126,18 @@ pub(crate) fn join(hub: &Hub, signed: &Signed, founding: Option<&Secret>) -> Res
         }
     }
     Ok((world, record.name))
+}
+
+/// The key of the invitation that admits `record`; `None` for the founder.
+fn invite_of(record: &Record) -> Option<PublicKey> {
+    match &record.credential {
+        Credential::Founder => None,
+        Credential::Invited { admission } => admission
+            .claim::<Admission>()
+            .ok()
+            .and_then(|admission| admission.endorsement.claim::<Endorsement>().ok())
+            .map(|endorsement| endorsement.invite),
+    }
 }
 
 fn admit(store: &mut Store, record: &Record, signed: &Signed) -> Result<(), String> {

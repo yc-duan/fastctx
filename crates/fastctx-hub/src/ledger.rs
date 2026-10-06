@@ -8,20 +8,23 @@
 //! The hub keeps items it cannot open (`fastctx_net::ledger::sealed`): a
 //! town is a meaningless id, an entry's paths are tokens. It takes an entry
 //! from its author, a member now whose scope covers the town, only when no
-//! path it writes has been written in the town before, so nothing written
-//! is ever overwritten and of two machines writing the same version, the
-//! one that comes first wins. The first entry of a town says which machines
-//! it spans, and any later one may change that; the hub hands a town's
-//! items to the machines it spans, in the order it took them. The World's
-//! own ledger is every member's, and only a member with management rights
-//! writes its one entry. A sealed copy of an entry's key is taken from a
-//! member that may read the town, for any member.
+//! path it writes has been written in the town before, nor is a directory
+//! another entry's paths are in, nor is in a directory that is a path
+//! written: so nothing written is ever overwritten, and of two machines
+//! writing the same version, the one that comes first wins. The first entry
+//! of a town says which machines it spans, and any later one may change
+//! that; the hub hands a town's items to the machines it spans, in the
+//! order it took them. The World's own ledger is every member's, and its
+//! one entry, the naming key, is written by a member with management
+//! rights. A sealed copy of an entry's key is taken from a member that may
+//! seal one for that member (`Table::may_share`), for a member that may
+//! read the town.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fastctx_net::ledger::sealed::open_item;
+use fastctx_net::ledger::sealed::{naming_token, open_item};
 use fastctx_net::ledger::{Item, PathToken, TownId};
 use fastctx_net::sign::{Bytes, Signed};
 use fastctx_net::trust::{Table, WorldId};
@@ -36,6 +39,7 @@ pub struct TownLedger {
     pub next: u64,
     pub machines: Vec<MachineName>,
     paths: BTreeSet<PathToken>,
+    dirs: BTreeSet<PathToken>,
     /// Each entry's random id, by its number.
     entries: BTreeMap<u64, Bytes>,
 }
@@ -107,6 +111,9 @@ impl Ledgers {
                     if !member.manage {
                         return Err("only a member with management rights writes the World's own ledger".to_string());
                     }
+                    if entry.paths != [naming_token()] || !entry.dirs.is_empty() {
+                        return Err("the World's own ledger holds its naming key and nothing else".to_string());
+                    }
                 } else if !readers(&town) {
                     return Err(format!("{from}'s scope does not include that project"));
                 }
@@ -127,23 +134,34 @@ impl Ledgers {
                     if !seen.insert(path) {
                         return Err("the entry names one path twice".to_string());
                     }
+                    if entry.dirs.contains(path) {
+                        return Err("the entry writes a file where it puts a directory".to_string());
+                    }
                     if ledger.is_some_and(|ledger| ledger.paths.contains(path)) {
                         return Err(
                             "the town has one of its paths already; nothing in a ledger is written twice".to_string()
                         );
                     }
+                    if ledger.is_some_and(|ledger| ledger.dirs.contains(path)) {
+                        return Err("the town has a directory where the entry writes a file".to_string());
+                    }
+                }
+                if entry.dirs.iter().any(|dir| ledger.is_some_and(|ledger| ledger.paths.contains(dir))) {
+                    return Err("the town has a file where the entry puts a directory".to_string());
                 }
             }
             Item::Share(share) => {
-                if !readers(&town) {
-                    return Err(format!("{from}'s scope does not include that project"));
+                if !table.may_share(from, &share.to) {
+                    return Err(format!(
+                        "{from} may seal keys again only for its own branch, unless it holds management rights"
+                    ));
+                }
+                if !table.readers(&town).any(|reader| reader.name == share.to) {
+                    return Err(format!("{}'s scope does not include that project", share.to));
                 }
                 let known = self.towns.get(&town).and_then(|ledger| ledger.entries.get(&share.entry));
                 if known != Some(&share.id) {
                     return Err(format!("the town has no entry {} with that id", share.entry));
-                }
-                if table.get(&share.to).is_none() {
-                    return Err(format!("{} is not a member", share.to));
                 }
                 tell.push(share.to.clone());
             }
@@ -227,6 +245,7 @@ impl TownLedger {
                 self.machines = machines.clone();
             }
             self.paths.extend(entry.paths.iter().cloned());
+            self.dirs.extend(entry.dirs.iter().cloned());
             self.entries.insert(seq, entry.id.clone());
         }
     }

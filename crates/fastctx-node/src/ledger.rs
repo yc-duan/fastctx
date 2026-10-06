@@ -238,17 +238,23 @@ pub(crate) async fn take(
         if items.is_empty() {
             return Err(format!("the hub promised {latest} items of {town}, but stopped after {after}"));
         }
-        for (seq, item, signed) in items {
+        for taken in items {
+            let seq = taken.seq;
             if seq != after + 1 {
                 return Err(format!("the hub gave item {seq} of {town} after {after}"));
             }
-            store.keep(town, seq, &signed).map_err(|error| format!("keeping item {seq} of {town}: {error}"))?;
-            match &item {
-                Item::Entry(_) => {
+            store.keep(town, seq, &taken.signed).map_err(|error| format!("keeping item {seq} of {town}: {error}"))?;
+            match (&taken.item, taken.refused) {
+                (Item::Entry(_), Some(reason)) => {
+                    node.log.line(format_args!("refused from the ledger: item {seq} of {town}: {reason}"));
+                    state.refused.insert(seq, reason);
+                }
+                (Item::Entry(_), None) => {
                     state.unopened.insert(seq);
                 }
-                // A copy sealed for this machine may open an entry waiting.
-                Item::Share(_) => {}
+                // A copy sealed for this machine may open an entry waiting;
+                // one that does not open it is tried and passed over.
+                (Item::Share(_), _) => {}
             }
             after = seq;
         }
@@ -384,19 +390,18 @@ async fn carried_before(node: &Arc<Node>, link: &Link, town: &TownId, entry: &En
         let (items, more) = link.ledger_query(town, after).await?;
         let shares: Vec<_> = items
             .iter()
-            .filter_map(|(_, item, _)| match item {
+            .filter_map(|taken| match &taken.item {
                 Item::Share(share) => Some(share.clone()),
                 Item::Entry(_) => None,
             })
             .collect();
-        for (seq, item, _) in &items {
-            after = *seq;
-            let Item::Entry(sealed) = item else { continue };
-            if sealed.author != node.machine() {
+        for taken in &items {
+            after = taken.seq;
+            let Item::Entry(sealed) = &taken.item else { continue };
+            if sealed.author != node.machine() || taken.refused.is_some() {
                 continue;
             }
-            let Some(key) = link.entry_key(sealed, &shares)? else { continue };
-            let inner = ledger::sealed::open_entry(sealed, &key)?;
+            let Some((_, inner)) = link.open_sealed(sealed, &shares)? else { continue };
             if inner.claim::<Entry>().is_ok_and(|theirs| theirs.files == entry.files) {
                 return Ok(true);
             }

@@ -62,22 +62,24 @@ pub(super) fn set(node: &Node, key: NamingKey) {
     *node.naming.write().expect("never poisoned") = Some(key);
 }
 
-/// Opens the naming key from the copy of the World's own ledger kept here.
+/// Opens the naming key from the copy of the World's own ledger kept here:
+/// the first entry of it that opened and checked out (`super::open`).
 pub fn load(node: &Arc<Node>, link: &Link) {
     if node.naming.read().expect("never poisoned").is_some() {
         return;
     }
-    let Ok(items) = Items::new(&node.world).all(&TownId::world()) else { return };
-    for (_, item, _) in &items {
+    let store = Items::new(&node.world);
+    let (Ok(items), Ok(state)) = (store.all(&TownId::world()), store.state(&TownId::world())) else { return };
+    let shares = super::open::shares(&items);
+    let (table, _) = link.members();
+    for (seq, item, _) in &items {
         let Item::Entry(entry) = item else { continue };
-        let shares = items.iter().filter_map(|(_, item, _)| match item {
-            Item::Share(share) => Some(share),
-            Item::Entry(_) => None,
-        });
-        let Ok(Some(key)) = link.entry_key(entry, shares) else { continue };
-        let Ok(inner) = ledger::sealed::open_entry(entry, &key) else { continue };
-        if let Ok(world) = inner.claim::<WorldEntry>() {
-            set(node, world.naming);
+        if state.unopened.contains(seq) || state.refused.contains_key(seq) {
+            continue;
+        }
+        let Ok(Some((_, inner))) = link.open_sealed(entry, shares.get(seq).into_iter().flatten()) else { continue };
+        if let Ok(naming) = super::open::world_entry(&inner, &table) {
+            set(node, naming);
             return;
         }
     }

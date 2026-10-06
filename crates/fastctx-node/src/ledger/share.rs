@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use fastctx_net::ledger::{Item, TownId, sealed};
 use fastctx_net::link::Link;
+use fastctx_net::trust::Table;
 use fastctx_types::MachineName;
 
 use super::items::Items;
@@ -41,14 +42,20 @@ pub async fn reconcile(node: &Arc<Node>, link: &Link) -> Vec<String> {
         if readers.is_empty() {
             continue;
         }
-        if let Err(error) = town_shares(link, &store, &town, &readers).await {
+        if let Err(error) = town_shares(link, &table, &store, &town, &readers).await {
             problems.push(format!("sealing keys of {town} again: {error}"));
         }
     }
     problems
 }
 
-async fn town_shares(link: &Link, store: &Items, town: &TownId, readers: &[sealed::Reader]) -> Result<(), String> {
+async fn town_shares(
+    link: &Link,
+    table: &Table,
+    store: &Items,
+    town: &TownId,
+    readers: &[sealed::Reader],
+) -> Result<(), String> {
     let items = store.all(town).map_err(|error| error.to_string())?;
     let mut holders: BTreeMap<u64, BTreeSet<MachineName>> = BTreeMap::new();
     let mut shares: BTreeMap<u64, Vec<fastctx_net::ledger::Share>> = BTreeMap::new();
@@ -57,8 +64,12 @@ async fn town_shares(link: &Link, store: &Items, town: &TownId, readers: &[seale
             Item::Entry(entry) => {
                 holders.entry(*seq).or_default().extend(entry.keys.iter().map(|wrapped| wrapped.to.clone()));
             }
+            // A copy counts as held only when its sealer may seal one for
+            // that member; any other is no copy the member can count on.
             Item::Share(share) => {
-                holders.entry(share.entry).or_default().insert(share.to.clone());
+                if table.may_share(&share.by, &share.to) {
+                    holders.entry(share.entry).or_default().insert(share.to.clone());
+                }
                 shares.entry(share.entry).or_default().push(share.clone());
             }
         }
@@ -72,7 +83,7 @@ async fn town_shares(link: &Link, store: &Items, town: &TownId, readers: &[seale
             continue;
         }
         // Only what this machine can open, it can seal again.
-        let Some(key) = link.entry_key(entry, shares.get(seq).into_iter().flatten())? else { continue };
+        let Some((key, _)) = link.open_sealed(entry, shares.get(seq).into_iter().flatten())? else { continue };
         for reader in missing {
             let share = link.share(entry, *seq, &key, reader)?;
             link.ledger_write(share).await?;

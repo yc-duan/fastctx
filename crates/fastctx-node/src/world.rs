@@ -62,14 +62,19 @@ pub fn start(node: &Arc<Node>, membership: Membership, keys: Keys) -> io::Result
 
 /// Joins the World `code` is for.
 pub async fn join(node: &Arc<Node>, code: &str, name: Option<MachineName>) -> Result<(String, MachineName), Failure> {
+    let code = Code::parse(code).map_err(Failure::new)?;
     if let Some(link) = node.link() {
+        let membership = link.membership();
+        // Joined with this code before, though whoever asked may not have
+        // heard: it is joined.
+        if membership.world == *code.world() {
+            return Ok((membership.world.to_string(), membership.name.clone()));
+        }
         return Err(Failure::new(format!(
             "this machine is {} in the World {} already; `fastctx leave` first to join another",
-            link.membership().name,
-            link.membership().world
+            membership.name, membership.world
         )));
     }
-    let code = Code::parse(code).map_err(Failure::new)?;
     let world = node.world.clone();
     let keys = tokio::task::spawn_blocking(move || {
         Ok::<_, io::Error>(Keys { sign: crate::ledger::own_key(&world)?, seal: own_seal(&world)? })
@@ -192,10 +197,10 @@ impl fastctx_net::link::Node for Handler {
             let caller = crate::admission::admit(&node, &from, &call)?;
             let scope = &caller.scope;
             match call {
-                RemoteCall::PageAction { source, action } => crate::pages::actions::execute(&node, source, action)
+                RemoteCall::PageAction { source, action } => crate::pages::actions::answer(&node, source, action)
                     .await
                     .map(|result| RemoteReply::PageAction { result }),
-                RemoteCall::Relay { made } => crate::devices::relay(&node, &from, made).await,
+                RemoteCall::Relay { made } => crate::devices::relay(&node, &caller, made).await,
                 RemoteCall::Run { resident, town, request } => {
                     let owner = Address { machine: from, resident };
                     let (reply, _) = node.jobs.run(&node, owner.into(), town, request).await?;
@@ -286,8 +291,14 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&machine))),
-                RemoteCall::CopySend { from, to } => {
+                RemoteCall::CopySend { from: path, to } => {
                     let to_machine = to.machine.ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
+                    // This machine sends as itself: where it sends, the
+                    // caller's scope must reach too.
+                    scope.allows(&to_machine, fastctx_net::scope::Action::Copy, None).map_err(|denied| {
+                        Failure::new(format!("{machine} refused {from}: {denied}"))
+                    })?;
+                    let from = path;
                     crate::copy::send(&node, &from, &to_machine, &to.path).await.map(RemoteReply::Copied)
                 }
                 RemoteCall::CopyReceive { to, manifest_bytes, manifest_sha256 } => {
@@ -316,7 +327,11 @@ impl fastctx_net::link::Node for Handler {
                 return Err(io::Error::other("the node is stopping"));
             };
             let _answering = node.handoff.call().ok_or_else(|| io::Error::other("the node is handing over"))?;
-            if crate::devices::is_device(&node, &from) {
+            let member = match crate::admission::member(&node, &from) {
+                Ok(member) => member,
+                Err(failure) => return Ok(Err(failure.message)),
+            };
+            if !member.kind.is_machine() {
                 return Ok(Err(format!("{from} is a device, and a device sends no letters")));
             }
             let (letter, delivery_id) = match letter {
@@ -328,6 +343,9 @@ impl fastctx_net::link::Node for Handler {
                 }
                 letter => (letter, delivery_id),
             };
+            if let Err(refused) = crate::admission::letters::admit(&node, &member, &letter).await {
+                return Ok(Err(refused));
+            }
             match letter {
                 Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
                 Letter::Notice { to, notice } => {

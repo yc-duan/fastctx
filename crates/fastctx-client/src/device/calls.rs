@@ -1,5 +1,6 @@
-//! The local World contract carried either to a resident's machine or to
-//! one online machine that asks the World on the device's behalf.
+//! The local World contract carried to a resident's machine, asked of each
+//! machine (`around`), or, for the projects' ledgers, to one machine that
+//! answers from its own copy.
 
 use fastctx_net::link::CallFailure;
 use fastctx_types::pages::PageCall;
@@ -7,7 +8,7 @@ use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::town::Looked;
 use fastctx_types::{Address, Call, JournalCall, MachineName, ProjectCall, Reply, ResidentId};
 
-use super::{Device, Session, failed, link_state};
+use super::{Device, Session, failed};
 use crate::Error;
 
 impl Device {
@@ -23,6 +24,7 @@ impl Device {
             return Ok((Reply::Done, name));
         }
         session.check_identity().await?;
+        let here = session.link.membership().name.clone();
         let (machine, remote, resident) = match call {
             Call::FindFiles { machine, request } => {
                 let machine =
@@ -60,12 +62,16 @@ impl Device {
                 let machine = session.locate(&resident, machine).await?;
                 (machine, RemoteCall::Offers { resident: resident.clone() }, Some(resident))
             }
-            call @ (Call::Who { .. }
-            | Call::Since { .. }
-            | Call::Look { .. }
-            | Call::Agents { .. }
-            | Call::Nodes
-            | Call::Project(_)
+            // What asks of the whole World, the device asks of each machine
+            // itself (`around`).
+            Call::Who { all, town } => return Ok((Reply::Who(session.who(all, town).await?), here)),
+            Call::Since { since, town } => return Ok((Reply::Since(session.since(since, town).await?), here)),
+            Call::Look { ids } => return Ok((Reply::Looked { looked: session.look(ids).await? }, here)),
+            Call::Agents { machine } => return Ok((Reply::Agents(session.agents(machine).await?), here)),
+            Call::Nodes => return Ok((Reply::Nodes(session.nodes().await?), here)),
+            // What only the projects' ledgers hold, one machine answers from
+            // its own copy, for what this device's scope covers.
+            call @ (Call::Project(_)
             | Call::Journal(_)
             | Call::Page(
                 PageCall::Read { .. }
@@ -75,17 +81,7 @@ impl Device {
                 | PageCall::Act { .. }
                 | PageCall::Withdraw { .. }
                 | PageCall::Restore { .. },
-            )) => {
-                let (mut reply, machine) = session.relay(call).await?;
-                if let Reply::Nodes(nodes) = &mut reply {
-                    // The list comes from the relay; "here" and the link
-                    // describe the device displaying it, not that relay.
-                    nodes.machine = session.link.membership().name.clone();
-                    nodes.world = Some(session.link.membership().world.to_string());
-                    nodes.link = link_state(&session.link);
-                }
-                return Ok((reply, machine));
-            }
+            )) => return session.relay(call).await,
             _ => return Err(failed("this call belongs to a local node, not a device")),
         };
         let answer = session.link.call(&machine, remote.clone()).await.map_err(failed)?.map_err(failed)?;
@@ -141,10 +137,7 @@ impl Session {
             self.machine(&machine)?;
             return Ok(machine);
         }
-        let (reply, _) = self.relay(Call::Look { ids: vec![resident.to_string()] }).await?;
-        let Reply::Looked { looked } = reply else {
-            return Err(failed("the relay answered something other than a resident lookup"));
-        };
+        let looked = self.look(vec![resident.to_string()]).await?;
         let mut machines = std::collections::BTreeSet::new();
         let mut unasked = Vec::new();
         for item in looked {
@@ -174,7 +167,7 @@ impl Session {
         )))
     }
 
-    async fn relay(&self, call: Call) -> Result<(Reply, MachineName), Error> {
+    pub(super) async fn relay(&self, call: Call) -> Result<(Reply, MachineName), Error> {
         let (table, presence) = self.link.members();
         let machines: Vec<_> = table
             .machines()
@@ -186,12 +179,7 @@ impl Session {
         }
         let repeatable = matches!(
             call,
-            Call::Who { .. }
-                | Call::Since { .. }
-                | Call::Look { .. }
-                | Call::Agents { .. }
-                | Call::Nodes
-                | Call::Project(ProjectCall::List | ProjectCall::Show { .. } | ProjectCall::Map { .. })
+            Call::Project(ProjectCall::List | ProjectCall::Show { .. } | ProjectCall::Map { .. })
                 | Call::Journal(JournalCall::List { .. } | JournalCall::Read { .. })
                 | Call::Page(PageCall::Read { .. } | PageCall::List { .. } | PageCall::History { .. })
         );

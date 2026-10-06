@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use fastctx_types::project::*;
+use fastctx_types::scope::{Action as Act, Scope, Set};
 use fastctx_types::residents::*;
 use fastctx_types::town::*;
 use fastctx_types::world::*;
@@ -201,6 +202,19 @@ fn nodes() -> Vec<NodesReply> {
                     since: Some(at()),
                     revoked: None,
                     device: false,
+                    standing: Some(Standing {
+                        scope: Scope {
+                            machines: Set::All,
+                            agents: Set::All,
+                            projects: Set::All,
+                            actions: Set::All,
+                            invite: true,
+                        },
+                        manage: true,
+                        invited_by: None,
+                        delegated: false,
+                        sealing: true,
+                    }),
                     facts: Ok(MachineFacts {
                         name: machine(),
                         os: "windows".into(),
@@ -218,6 +232,19 @@ fn nodes() -> Vec<NodesReply> {
                     since: None,
                     revoked: None,
                     device: true,
+                    standing: Some(Standing {
+                        scope: Scope {
+                            machines: Set::Only([machine()].into()),
+                            agents: Set::Only(["codex".parse().unwrap()].into()),
+                            projects: Set::Only(["garden".to_string(), "t-0123456789abcdef".to_string()].into()),
+                            actions: Set::Only([Act::Talk, Act::W].into()),
+                            invite: false,
+                        },
+                        manage: false,
+                        invited_by: Some(machine()),
+                        delegated: true,
+                        sealing: false,
+                    }),
                     facts: Ok(MachineFacts {
                         name: "lab".parse().unwrap(),
                         os: "linux".into(),
@@ -236,8 +263,14 @@ fn nodes() -> Vec<NodesReply> {
                     facts: Err("offline".into()),
                     revoked: Some(Revoked { by: machine(), at: at(), reason: "retired".into() }),
                     device: false,
+                    standing: None,
                 },
             ],
+            joined: if i == 1 {
+                vec![Joined { name: "lab".parse().unwrap(), device: true, noticed_at: at() }]
+            } else {
+                Vec::new()
+            },
         })
         .collect()
 }

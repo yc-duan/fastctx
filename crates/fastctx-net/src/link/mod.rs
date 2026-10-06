@@ -45,6 +45,7 @@ use crate::trust::{self, Endorsement, Kind, Member, Record, Revocation, Table};
 use crate::wire::{CallStatus, Presence, Question, Told};
 use sessions::Sessions;
 use state::{Counter, LettersFile, MembersFile, Taken};
+pub use ledger::{Page, PageItem};
 pub use state::{Membership, NetDir};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -149,6 +150,8 @@ struct Members {
     file: MembersFile,
     table: Table,
     presence: Vec<Presence>,
+    /// When the latest invitation, grant or revocation the hub holds was made.
+    latest: Option<Timestamp>,
 }
 
 /// The current connection: where to put frames to send on it.
@@ -227,7 +230,7 @@ impl Link {
             taken,
             sessions: Sessions::default(),
             letters: Mutex::new(Letters { file: letters_file, next }),
-            members: Mutex::new(Members { file: members_file, table, presence: Vec::new() }),
+            members: Mutex::new(Members { file: members_file, table, presence: Vec::new(), latest: None }),
             refreshing: tokio::sync::Mutex::new(()),
             status,
             connection: Mutex::new(None),
@@ -364,7 +367,7 @@ impl Link {
             name,
             kind,
             scope,
-            at: Some(Timestamp::now()),
+            at: Some(self.inner.stamp()),
         };
         let endorsement = Signed::new(&self.inner.key, Domain::Endorsement, &endorsement);
         self.inner.ask(Question::Invite { endorsement }).await?;
@@ -400,7 +403,7 @@ impl Link {
             name: name.clone(),
             key,
             by: membership.name.clone(),
-            at: Timestamp::now(),
+            at: self.inner.stamp(),
             reason: reason.to_string(),
         };
         let revocation = Signed::new(&self.inner.key, Domain::Revocation, &revocation);
@@ -417,6 +420,7 @@ impl Link {
     pub async fn grant(&self, name: &MachineName, scope: Scope, manage: bool) -> Result<(), String> {
         self.refresh().await?;
         let membership = &self.inner.membership;
+        let at = self.inner.stamp();
         let grant = {
             let members = self.inner.members();
             if !members.table.get(&membership.name).is_some_and(|me| me.manage) {
@@ -435,7 +439,7 @@ impl Link {
                 manage,
                 version: members.table.grant(name).map(|grant| grant.version).unwrap_or(0) + 1,
                 by: membership.name.clone(),
-                at: Timestamp::now(),
+                at,
             }
         };
         let grant = Signed::new(&self.inner.key, Domain::Grant, &grant);
@@ -447,6 +451,17 @@ impl Link {
 impl Inner {
     fn members(&self) -> MutexGuard<'_, Members> {
         self.members.lock().expect("never poisoned")
+    }
+
+    /// The time to sign into a new invitation, grant or revocation: now, or
+    /// just after the latest the hub holds when this machine's clock is
+    /// behind it (`wire::Told::Members`).
+    fn stamp(&self) -> Timestamp {
+        let now = Timestamp::now();
+        match self.members().latest {
+            Some(latest) if latest >= now => latest + jiff::SignedDuration::from_micros(1),
+            _ => now,
+        }
     }
 
     fn connection(&self) -> Option<Connection> {
@@ -502,7 +517,8 @@ impl Inner {
 
     async fn refresh(&self) -> Result<(), String> {
         let _one = self.refreshing.lock().await;
-        let Told::Members { records, revocations, grants, presence } = self.ask(Question::Members).await? else {
+        let Told::Members { records, revocations, grants, presence, latest } = self.ask(Question::Members).await?
+        else {
             return Err("the hub answered something else".to_string());
         };
         let mut members = self.members();
@@ -532,6 +548,7 @@ impl Inner {
         }
         members.table = table;
         members.presence = presence;
+        members.latest = latest;
         Ok(())
     }
 

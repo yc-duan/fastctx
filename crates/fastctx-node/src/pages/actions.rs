@@ -1,5 +1,8 @@
 //! The only page action entrance. The user's relay is checked here against
-//! fresh publications and consent before any local or signed remote work.
+//! fresh publications and consent before any local or signed remote work,
+//! and the machine the action is for checks it once more against its own
+//! copy of the town's ledger before it does anything: what another machine
+//! says a page is, or that the user agreed to, is not taken on its word.
 
 use std::sync::Arc;
 
@@ -23,33 +26,7 @@ pub async fn relay(
     version: u32,
     action: PageInvocation,
 ) -> Result<PageResult, Failure> {
-    let _writing = node.writing.lock().await;
-    super::refresh(node, &town).await?;
-    let stored = super::stored(node, &town, &page)?;
-    super::check_base(&page, Some(version), stored.current().map(|v| v.version))?;
-    let publication = stored.current().expect("checked current version");
-    if publication.withdrawn {
-        return Err(Failure::new(format!("page {page} is withdrawn")));
-    }
-    let act = action.act();
-    if !publication.acts.contains(&act) {
-        return Err(Failure::new(format!("page {page} version {version} did not declare this action")));
-    }
-    if !stored.consent.as_ref().is_some_and(|consent| consent.acts.contains(&act)) {
-        return Err(Failure::new(format!("the user has not consented to this action by page {page}")));
-    }
-    let source = PageSource {
-        town,
-        page,
-        version,
-        by: Box::new(publication.by.clone()),
-        on: publication.on.clone(),
-        opened_on: opened_on.clone(),
-    };
-    // Consent and publication changes affect subsequent admissions. A run
-    // already admitted continues, and must not hold up revocation while
-    // its normal fifteen-second wait is in progress.
-    drop(_writing);
+    let source = admitted(node, town, page, version, &action, opened_on.clone()).await?;
     let target = match &action {
         PageInvocation::Run { machine, .. } => machine.clone(),
         PageInvocation::Say { to, .. } => to.machine.clone(),
@@ -71,9 +48,56 @@ pub async fn relay(
     }
 }
 
-/// Executes a request admitted by a node, locally or over that node's
-/// authenticated machine connection. No browser or device reaches this.
-pub async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -> Result<PageResult, Failure> {
+/// Checks, against this machine's copy of `town`'s ledger brought up to
+/// date, that `version` is `page`'s current publication, not withdrawn,
+/// that it declared `action` and that the user consented to it. Returns
+/// what the action runs as, from that publication.
+async fn admitted(
+    node: &Arc<Node>,
+    town: TownName,
+    page: PageName,
+    version: u32,
+    action: &PageInvocation,
+    opened_on: MachineName,
+) -> Result<PageSource, Failure> {
+    // Consent and publication changes affect subsequent admissions. A run
+    // already admitted continues, and must not hold up revocation while
+    // its normal fifteen-second wait is in progress.
+    let _writing = node.writing.lock().await;
+    super::refresh(node, &town).await?;
+    let stored = super::stored(node, &town, &page)?;
+    super::check_base(&page, Some(version), stored.current().map(|v| v.version))?;
+    let publication = stored.current().expect("checked current version");
+    if publication.withdrawn {
+        return Err(Failure::new(format!("page {page} is withdrawn")));
+    }
+    let act = action.act();
+    if !publication.acts.contains(&act) {
+        return Err(Failure::new(format!("page {page} version {version} did not declare this action")));
+    }
+    if !stored.consent.as_ref().is_some_and(|consent| consent.acts.contains(&act)) {
+        return Err(Failure::new(format!("the user has not consented to this action by page {page}")));
+    }
+    Ok(PageSource {
+        town,
+        page,
+        version,
+        by: Box::new(publication.by.clone()),
+        on: publication.on.clone(),
+        opened_on,
+    })
+}
+
+/// A page action another machine relayed here: done once this machine has
+/// admitted it itself.
+pub async fn answer(node: &Arc<Node>, source: PageSource, action: PageInvocation) -> Result<PageResult, Failure> {
+    let source = admitted(node, source.town, source.page, source.version, &action, source.opened_on).await?;
+    execute(node, source, action).await
+}
+
+/// Executes a request admitted by this node. No browser or device reaches
+/// this.
+async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -> Result<PageResult, Failure> {
     match action {
         PageInvocation::Run { machine, script } => {
             if machine != node.machine() {

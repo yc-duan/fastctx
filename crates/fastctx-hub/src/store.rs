@@ -242,6 +242,22 @@ impl Store {
         }
     }
 
+    /// When the latest invitation, grant or revocation held was made.
+    pub fn latest(&self) -> Option<Timestamp> {
+        let invitations = self.members.invitations.iter().filter_map(|invitation| {
+            invitation.endorsement.claim::<fastctx_net::trust::Endorsement>().ok().and_then(|endorsement| endorsement.at)
+        });
+        let grants =
+            self.members.grants.iter().filter_map(|signed| signed.claim::<fastctx_net::scope::Grant>().ok()).map(|grant| grant.at);
+        let revocations = self
+            .members
+            .revocations
+            .iter()
+            .filter_map(|signed| signed.claim::<fastctx_net::trust::Revocation>().ok())
+            .map(|revocation| revocation.at);
+        invitations.chain(grants).chain(revocations).max()
+    }
+
     pub fn invitation(&self, invite: &PublicKey) -> Option<&Invitation> {
         self.members.invitations.iter().find(|invitation| invitation.invite == *invite)
     }

@@ -1,6 +1,7 @@
 //! A user's device: its own identity and a persistent link, with no node,
 //! agent host, command runner or ledger replica.
 
+mod around;
 mod calls;
 mod connection_state;
 pub(crate) mod file_read;

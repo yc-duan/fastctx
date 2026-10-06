@@ -10,7 +10,15 @@
 //! copies, never a conflict. What stays in the clear is what the hub needs:
 //! the town's id, the author, the entry's random id, the machines a
 //! version of the town's record says it spans, the tokens of the paths it
-//! writes, and who each copy of the key is for.
+//! writes and of the directories they are in, and who each copy of the key
+//! is for. Every reader checks those tokens against the paths the entry
+//! really writes, so what the hub refuses by them is what a reader would.
+//!
+//! Anyone can seal some key to a member's public sealing key, so a copy
+//! that opens is not yet the entry's key: the key is the one that opens the
+//! entry, and a reader tries every copy for it until one does.
+
+use std::collections::BTreeSet;
 
 use chacha20poly1305::aead::{Aead as _, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit as _};
@@ -46,6 +54,10 @@ pub struct SealedEntry {
     pub machines: Option<Vec<MachineName>>,
     /// The tokens of the paths it writes (`super::naming`).
     pub paths: Vec<PathToken>,
+    /// The tokens of the directories those paths are in, so that no file
+    /// is written where another entry made a directory, nor the other way.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirs: Vec<PathToken>,
     /// The entry's key, sealed to each reader.
     pub keys: Vec<Wrapped>,
     /// The entry as its author signed it, sealed with its key.
@@ -181,9 +193,9 @@ pub fn seal_entry(
 ) -> Result<Signed, String> {
     let id = Bytes(crate::sign::random::<16>().map_err(|error| error.to_string())?.to_vec());
     let entry_key = EntryKey(Zeroizing::new(crate::sign::random::<32>().map_err(|error| error.to_string())?));
-    let paths = match naming {
-        Some(naming) => paths.iter().map(|path| path_token(naming, town, path)).collect(),
-        None if *town == TownId::world() => vec![naming_token()],
+    let (paths, dirs) = match naming {
+        Some(naming) => tokens(naming, town, paths),
+        None if *town == TownId::world() => (vec![naming_token()], Vec::new()),
         None => return Err("this machine does not have the World's naming key yet".to_string()),
     };
     let mut keys = Vec::new();
@@ -202,66 +214,77 @@ pub fn seal_entry(
         id,
         machines,
         paths,
+        dirs,
         keys,
         body: Bytes(body),
     });
     Ok(Signed::new(key, Domain::LedgerItem, &item))
 }
 
-/// The item in `signed`, if the member it names as its signer signed it:
-/// a member now, or one revoked since, as the hub took it from a member.
+/// The tokens of `paths` in `town`, and of the directories they are in.
+fn tokens(naming: &NamingKey, town: &TownId, paths: &[String]) -> (Vec<PathToken>, Vec<PathToken>) {
+    let files = paths.iter().map(|path| path_token(naming, town, path)).collect();
+    let mut dirs = BTreeSet::new();
+    for path in paths {
+        for (at, _) in path.match_indices('/') {
+            dirs.insert(path_token(naming, town, &path[..at]));
+        }
+    }
+    (files, dirs.into_iter().collect())
+}
+
+/// Whether the tokens `entry` shows the hub are those of `paths`, the
+/// paths the entry it holds writes.
+pub fn check_tokens(entry: &SealedEntry, naming: &NamingKey, paths: &[String]) -> Result<(), String> {
+    let (files, dirs) = tokens(naming, &entry.town, paths);
+    let set = |tokens: &[PathToken]| tokens.iter().cloned().collect::<BTreeSet<_>>();
+    if entry.paths.len() != files.len() || set(&entry.paths) != set(&files) || set(&entry.dirs) != set(&dirs) {
+        return Err("the paths it shows the hub are not the paths it writes".to_string());
+    }
+    Ok(())
+}
+
+/// The item in `signed`, if the member it names as its signer signed it: a
+/// member now or once, as the hub took it from a member.
 pub fn open_item(signed: &Signed, world: &WorldId, table: &Table) -> Result<Item, String> {
     let claimed: Item = signed.claim().map_err(|error| format!("an unreadable ledger item: {error}"))?;
     if claimed.world() != world {
         return Err(format!("a ledger item for the World {}", claimed.world()));
     }
     let signer = claimed.signer();
-    let key = match (table.get(signer), table.revoked(signer)) {
-        (Some(member), _) => member.key,
-        (None, Some(revocation)) => revocation.key,
-        (None, None) => return Err(format!("{signer} is not a member")),
-    };
+    let key = table.key_ever(signer).ok_or_else(|| format!("{signer} is not a member, nor was it"))?;
     signed.open(&key, Domain::LedgerItem).map_err(|error| format!("a ledger item: {error}"))
 }
 
-/// The key of `entry`, from its own copies or from `shares`, as `me` with
-/// `seal` opens it. `None` when no copy is for `me`.
-pub fn entry_key<'a>(
+/// Opens `entry` with a copy of its key for `me`, in the entry or in
+/// `shares`: the entry as its author signed it, and its key. `None` when no
+/// copy is for `me`; an error when copies are and none opens the entry,
+/// which a copy sealed later may still do.
+pub fn open_sealed<'a>(
     entry: &SealedEntry,
     shares: impl IntoIterator<Item = &'a Share>,
     me: &MachineName,
     seal: &SealKey,
-) -> Result<Option<EntryKey>, String> {
+) -> Result<Option<(EntryKey, Signed)>, String> {
     let info = key_info(&entry.world, &entry.town, &entry.id, me);
     let mut copies: Vec<&Bytes> =
         entry.keys.iter().filter(|wrapped| wrapped.to == *me).map(|wrapped| &wrapped.key).collect();
     copies.extend(shares.into_iter().filter(|share| share.to == *me && share.id == entry.id).map(|share| &share.key));
-    let mut failure = None;
-    for copy in copies {
-        match Sealed::from_bytes(&copy.0).and_then(|sealed| seal.open(&sealed, &info, &[])) {
-            Ok(bytes) if bytes.len() == 32 => {
-                return Ok(Some(EntryKey(Zeroizing::new(bytes.try_into().expect("32 bytes")))));
-            }
-            Ok(_) => failure = Some("a copy of its key is not a key".to_string()),
-            Err(error) => failure = Some(error.to_string()),
+    if copies.is_empty() {
+        return Ok(None);
+    }
+    let aad = body_aad(&entry.world, &entry.town, &entry.author, &entry.id);
+    for copy in &copies {
+        let Ok(bytes) = Sealed::from_bytes(&copy.0).and_then(|sealed| seal.open(&sealed, &info, &[])) else {
+            continue;
+        };
+        let Ok(bytes) = <[u8; 32]>::try_from(bytes.as_slice()) else { continue };
+        let key = EntryKey(Zeroizing::new(bytes));
+        if let Ok(plaintext) = key.cipher().decrypt(&[0_u8; 12].into(), Payload { msg: &entry.body.0, aad: &aad }) {
+            return Ok(Some((key, inner_from(&plaintext)?)));
         }
     }
-    match failure {
-        Some(reason) => Err(format!("no copy of its key for {me} opens: {reason}")),
-        None => Ok(None),
-    }
-}
-
-/// The entry `entry` holds, as its author signed it.
-pub fn open_entry(entry: &SealedEntry, key: &EntryKey) -> Result<Signed, String> {
-    let plaintext = key
-        .cipher()
-        .decrypt(
-            &[0_u8; 12].into(),
-            Payload { msg: &entry.body.0, aad: &body_aad(&entry.world, &entry.town, &entry.author, &entry.id) },
-        )
-        .map_err(|_| "the entry does not open with its key: it was changed on the way".to_string())?;
-    inner_from(&plaintext)
+    Err(format!("none of the {} copies of its key for {me} opens it", copies.len()))
 }
 
 /// Seals the key of the entry numbered `seq` once more, for `to`, as `by`.

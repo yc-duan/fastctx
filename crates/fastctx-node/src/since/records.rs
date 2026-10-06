@@ -24,18 +24,6 @@ pub(super) fn identity(kind: &str, parts: &[&str]) -> String {
     crate::speech::fixed_id(kind, parts).to_string()
 }
 
-pub(super) fn merge_town(prior: &mut SinceTown, other: &SinceTown) {
-    match (&mut *prior, other) {
-        (SinceTown::Unrecorded { recorded_in }, SinceTown::Unrecorded { recorded_in: more }) => {
-            recorded_in.extend_from_slice(more);
-            recorded_in.sort();
-            recorded_in.dedup();
-        }
-        (SinceTown::Unrecorded { .. }, SinceTown::Known { .. }) => *prior = other.clone(),
-        _ => {}
-    }
-}
-
 fn known(town: Option<&TownName>) -> SinceTown {
     SinceTown::Known { town: town.cloned() }
 }
@@ -145,7 +133,7 @@ pub(super) fn read(
                 || matches!(&event.what, SinceKind::ResidentMoved { to, .. } if town.is_some() && to.as_ref() == town))
     });
     scan.undated.retain(|fact| matches_town(&fact.town, town));
-    let events = super::merge(scan.events, &mut scan.issues);
+    let events = fastctx_types::since::merge_events(scan.events, &mut scan.issues);
     Ok(SinceReply {
         coverage: SinceCoverage {
             machine: machine.clone(),

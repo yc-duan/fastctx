@@ -2,7 +2,7 @@
 
 mod records;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use fastctx_net::link::CallFailure;
@@ -172,55 +172,7 @@ pub async fn query(node: &Arc<Node>, since: Timestamp, town: Option<TownName>) -
             Err(error) => answers.push(MachineSince::NoAnswer { machine: name, reason: format!("asking: {error}") }),
         }
     }
-    answers.sort_by(|a, b| name(a).cmp(name(b)));
-    let events = merge(events, &mut issues);
+    answers.sort_by(|a, b| a.machine().cmp(b.machine()));
+    let events = merge_events(events, &mut issues);
     Ok(WorldSince { machine, since, town, machines: answers, events, undated, issues, limitations: limitations() })
-}
-
-fn name(answer: &MachineSince) -> &MachineName {
-    match answer {
-        MachineSince::Answered { reply } => &reply.machine,
-        MachineSince::Offline { machine, .. } | MachineSince::NoAnswer { machine, .. } => machine,
-    }
-}
-
-fn merge(events: Vec<SinceEvent>, issues: &mut Vec<SinceIssue>) -> Vec<SinceEvent> {
-    let mut unique = BTreeMap::<String, SinceEvent>::new();
-    let mut conflicts = Vec::new();
-    for mut event in events {
-        match unique.get_mut(&event.id) {
-            None => {
-                unique.insert(event.id.clone(), event);
-            }
-            Some(prior) if prior.at == event.at && prior.machine == event.machine && prior.what == event.what => {
-                for source in event.sources.drain(..) {
-                    if !prior.sources.contains(&source) {
-                        prior.sources.push(source);
-                    }
-                }
-                records::merge_town(&mut prior.town, &event.town);
-            }
-            Some(_) => {
-                issues.push(SinceIssue {
-                    source: event.id.clone(),
-                    reason: "copies disagree; both recorded facts are returned".to_string(),
-                });
-                conflicts.push(event);
-            }
-        }
-    }
-    let mut events: Vec<_> = unique.into_values().chain(conflicts).collect();
-    events.sort_by(|a, b| (a.at, &a.id).cmp(&(b.at, &b.id)));
-    events
-}
-
-fn limitations() -> Vec<String> {
-    [
-        "Resident births are retained, but repeated arrivals and departures have no complete history. Current sleep and Claude closure markers have no reliable event time and are returned separately.",
-        "Returning to a town deletes its departure marker; leaving it again replaces the marker. Only surviving moves can be reported. Copied births and turns do not record their original town; uncertain town matches are marked unrecorded.",
-        "Turn timestamps are the node's first settlement, not the host's completion time. Host stop and interruption share an outcome; only a retained reason can distinguish them. Sessions whose turns the World never observes have no turn history.",
-        "Job elapsed time includes launch overhead. An interrupted or failed supervisor's final account does not establish when, or whether, its processes stopped.",
-        "The hub supplies only the current connection endpoint: connected since, or last observed offline. Earlier intervals are unavailable; after a hub restart an offline time can be unknown.",
-        "Each machine reads its existing records and ledger copies at query time. Clock readings are preserved without cross-machine correction; this is not a distributed snapshot. Timestamps retain their source precision, not a promise of nanosecond accuracy.",
-    ].into_iter().map(str::to_string).collect()
 }
