@@ -26,6 +26,7 @@ mod ledger;
 mod ledger_query;
 mod log;
 pub mod relay;
+mod releases;
 mod store;
 
 use std::collections::HashMap;
@@ -91,6 +92,7 @@ pub fn founding_code(dir: &Path) -> anyhow::Result<Code> {
 
 /// What every connection shares.
 pub(crate) struct Hub {
+    releases: Arc<releases::Releases>,
     store: Mutex<Store>,
     sessions: Mutex<HashMap<MachineName, Session>>,
     /// The relay sessions, by relay.
@@ -190,6 +192,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         ));
     }
     let hub = Arc::new(Hub {
+        releases: Arc::new(releases::Releases::new(dir, certificate.certificate.clone())?),
         store: Mutex::new(store),
         sessions: Mutex::new(HashMap::new()),
         relays: Mutex::new(HashMap::new()),
@@ -248,13 +251,17 @@ async fn shutdown_signal() {
 
 /// One TCP connection, from TLS to the end of what it was opened for.
 async fn connection(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStream, peer: SocketAddr) {
-    // Whoever connects must say who it is within the time the hub gives
-    // any silent peer; scanners and stalled clients hold nothing longer.
-    let opened = tokio::time::timeout(SILENCE, open(&tls, tcp)).await;
-    let (mut socket, path, binding, hello) = match opened {
-        Ok(Ok(opened)) => opened,
-        Ok(Err(_)) | Err(_) => return,
-    };
+    releases::http::serve(hub, tls, tcp, peer).await;
+}
+
+pub(crate) async fn connected(
+    hub: Arc<Hub>,
+    mut socket: Socket,
+    path: String,
+    binding: [u8; 32],
+    hello: Up,
+    peer: SocketAddr,
+) {
     let Up::Hello { protocol, version, intent } = hello else {
         refuse(&mut socket, Refusal::Broken { reason: "the first frame must be a hello".to_string() }).await;
         return;

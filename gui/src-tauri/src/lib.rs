@@ -45,6 +45,7 @@ mod binary_reading;
 mod desktop_presence;
 mod pages;
 mod reading;
+mod server_invitation;
 mod uploading;
 
 #[cfg(windows)]
@@ -851,6 +852,7 @@ pub fn run() {
             control,
             offers,
             invite,
+            server_invitation::invite_server,
             grant,
             route,
             set_relay,

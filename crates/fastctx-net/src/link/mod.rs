@@ -14,6 +14,7 @@
 mod answering;
 mod calls;
 mod changes;
+mod kernel;
 mod ledger;
 mod letters;
 mod outgoing;

@@ -439,6 +439,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|code| Reply::Code { code: code.to_text() })
                 .map_err(Failure::new)
         }
+        Call::InviteServer { name, expires, scope } => {
+            users_voice(node, peer)?;
+            crate::server_invitation::invite(node, name, expires, scope)
+                .await
+                .map(|command| Reply::ServerInvitation { command })
+        }
         Call::Grant { member: name, scope, manage } => {
             users_voice(node, peer)?;
             let link = member(node)?;

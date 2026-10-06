@@ -44,6 +44,7 @@ mod renewal_legacy;
 mod resident_storage;
 mod residents;
 mod server;
+mod server_invitation;
 mod session_live;
 mod session_options;
 mod session_record;

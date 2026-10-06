@@ -102,6 +102,7 @@ import {
   offers,
   grant,
   invite,
+  inviteServer,
   joinWorld,
   placeFastctx,
   setupState,
@@ -262,6 +263,8 @@ const devices = new Devices({
   // A specimen shows what a code looks like; it admits nobody.
   invite: (name, hours, device, scope) =>
     live ? invite(name, hours, device, scope) : Promise.resolve(`FX4${"0SPECIMENN0TAREAL1NVITAT10N".repeat(5)}${hours}`),
+  inviteServer: (name, hours, scope) =>
+    live ? inviteServer(name, hours, scope) : Promise.resolve("echo 'Specimen: no real server invitation or download'"),
   revoke: (name, reason) => (live ? revoke(name, reason) : notLive()),
   leave: () => (live ? leaveWorld() : notLive()),
   machines: () => (store.world.peek()?.nodes.machines ?? []).filter((node) => !node.device && !node.revoked).map((node) => node.name),
@@ -1276,4 +1279,3 @@ startPresence({
   someone: (r) => shellWords.someone(agentName(r.about.host.agent), r.about.machine),
   stop: (address) => stop(address),
 });
-
