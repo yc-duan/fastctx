@@ -202,7 +202,12 @@ fn explicit(label: &str, bytes: &[u8]) -> Result<TextEncoding, EncodingError> {
                 .ok_or_else(|| EncodingError::UnknownLabel(label.into()))?,
         )
     };
-    let bom_len = bom(bytes).filter(|enc| enc.codec == codec).map_or(0, |enc| enc.bom_len);
+    // UTF-16LE followed by NUL shares the UTF-32LE BOM prefix. An explicit
+    // codec must check its own signature before automatic BOM precedence.
+    let bom_len = BOMS
+        .iter()
+        .find(|(prefix, candidate)| *candidate == codec && bytes.starts_with(prefix))
+        .map_or(0, |(prefix, _)| prefix.len());
     Ok(TextEncoding { codec, bom_len })
 }
 
@@ -215,14 +220,16 @@ pub(crate) fn select(bytes: &[u8], label: Option<&str>) -> Result<TextEncoding, 
     }
 }
 
+const BOMS: &[(&[u8], Codec)] = &[
+    (b"\x00\x00\xfe\xff", Codec::Utf32Be),
+    (b"\xff\xfe\x00\x00", Codec::Utf32Le),
+    (b"\xef\xbb\xbf", Codec::Rs(UTF_8)),
+    (b"\xff\xfe", Codec::Rs(UTF_16LE)),
+    (b"\xfe\xff", Codec::Rs(UTF_16BE)),
+];
+
 fn bom(bytes: &[u8]) -> Option<TextEncoding> {
-    for (prefix, codec) in [
-        (&b"\x00\x00\xfe\xff"[..], Codec::Utf32Be),
-        (&b"\xff\xfe\x00\x00"[..], Codec::Utf32Le),
-        (&b"\xef\xbb\xbf"[..], Codec::Rs(UTF_8)),
-        (&b"\xff\xfe"[..], Codec::Rs(UTF_16LE)),
-        (&b"\xfe\xff"[..], Codec::Rs(UTF_16BE)),
-    ] {
+    for &(prefix, codec) in BOMS {
         if bytes.starts_with(prefix) {
             return Some(TextEncoding { codec, bom_len: prefix.len() });
         }
