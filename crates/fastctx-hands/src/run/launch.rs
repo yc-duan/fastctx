@@ -48,6 +48,7 @@ pub struct Launched {
 }
 
 pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
+    super::preread::check(&launch.request.script)?;
     let cwd = starting_directory(launch)?;
     let resident = launch.world.job_owner(launch.machine, launch.town, launch.owner);
     let (job, output) = reserve(&resident).map_err(|error| failure("could not reserve a job", &error))?;

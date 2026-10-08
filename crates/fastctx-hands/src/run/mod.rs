@@ -5,8 +5,10 @@
 //! the resident who started it is told when it ends. Every byte of output
 //! is kept in a log on the machine where it ran.
 
+mod heredoc;
 pub mod last;
 pub mod launch;
+pub mod preread;
 pub mod present;
 pub mod program;
 pub mod record;
