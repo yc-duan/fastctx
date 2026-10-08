@@ -3,7 +3,7 @@
 use super::*;
 use crate::content::graphics_state::Matrix;
 use crate::content::operators::Operator;
-use crate::extractors::{text::RawTextGlyph, TextExtractor};
+use crate::extractors::{TextExtractor, text::RawTextGlyph};
 
 impl PdfDocument {
     /// Open a read-only file without populating source_bytes for editing APIs.
@@ -15,7 +15,7 @@ impl PdfDocument {
     pub fn extract_raw_glyphs(&self, page_index: usize) -> Result<Vec<RawTextGlyph>> {
         let page = self.get_page(page_index)?;
         let dict = page.as_dict().ok_or_else(|| invalid("Page is not a dictionary"))?;
-        let content = self.get_page_content_data(page_index)?;
+        let content = self.cached_page_content(page_index)?;
         let mut extractor = TextExtractor::new();
         extractor.set_page_index(page_index as u32);
         extractor.set_document(self);
@@ -31,6 +31,21 @@ impl PdfDocument {
             }
         }
         Ok(glyphs)
+    }
+
+    /// Release page working data after a read, retaining metadata and fonts.
+    ///
+    /// Call only between extractions on this document. Font-set entries include
+    /// extractor-local inherited bindings; they must not survive into another
+    /// page's font environment. Individual parsed fonts remain reusable.
+    pub fn release_page_data(&self) {
+        self.page_content_cache.lock_or_recover().clear();
+        self.xobject_stream_cache.lock_or_recover().clear();
+        self.xobject_stream_cache_bytes.store(0, Ordering::Relaxed);
+        self.font_set_cache.lock_or_recover().clear();
+        self.font_fingerprint_cache.lock_or_recover().clear();
+        self.font_name_set_cache.lock_or_recover().clear();
+        self.object_cache.lock_or_recover().release_streams();
     }
 
     fn raw_dereference(&self, object: &Object) -> Result<Object> {
