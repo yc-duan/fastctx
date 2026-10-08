@@ -498,6 +498,24 @@ impl Words {
         }
     }
 
+    pub fn tool_standing(&self, host: &str, standing: Standing, verified: Option<bool>) -> String {
+        if standing != Standing::In {
+            return self.standing(host, standing);
+        }
+        match (self.lang, host, verified) {
+            (Lang::Zh, "Codex", Some(true)) => "Codex 已接管工具".into(),
+            (Lang::Zh, _, Some(true)) => format!("{host} 已设工具拒绝"),
+            (Lang::Zh, _, _) => format!("{host} 工具待核对"),
+            (Lang::En, "Codex", Some(true)) => "Codex: tools replaced".into(),
+            (Lang::En, _, Some(true)) => format!("{host}: deny rules set"),
+            (Lang::En, _, _) => format!("{host}: tools need checking"),
+        }
+    }
+
+    pub fn tools_unverified(&self) -> &'static str {
+        self.pick("配置已提交；工具接管检查未通过。", "Configuration committed; native tool verification did not pass.")
+    }
+
     /// On the World page, while an old fastctx's tools are still in Codex.
     pub fn old_tools(&self) -> &'static str {
         self.pick(

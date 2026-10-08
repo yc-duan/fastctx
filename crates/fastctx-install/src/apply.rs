@@ -34,6 +34,8 @@ use crate::transaction::{Created, FileChange, FileError, Snapshot, Transaction};
 use crate::{File, Notice, executable, guidance, legacy};
 
 mod recovery;
+mod tools;
+pub use tools::ToolCheck;
 
 /// Where the things an apply touches are, for this user on this machine.
 #[derive(Clone, Debug)]
@@ -128,16 +130,18 @@ pub enum Standing {
     Old,
 }
 
-/// How each host stands, as the record says.
+/// Ownership from the record, together with current native tool checks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub codex: Standing,
     pub claude: Standing,
+    pub codex_tools: Option<Box<ToolCheck>>,
+    pub claude_tools: Option<Box<ToolCheck>>,
     /// What has been done with what an old fastctx left here.
     pub legacy: Option<crate::upgrade::Summary>,
 }
 
-/// How each host stands now; reads the record and nothing of the hosts'.
+/// Reads ownership and checks native tool configuration for installed integrations.
 pub fn status(places: &Places) -> Result<Status, Error> {
     let record = Record::read(&Snapshot::read(places.record())?)?;
     let present = Hosts::present(places);
@@ -157,7 +161,16 @@ pub fn status(places: &Places) -> Result<Status, Error> {
             .is_some();
     Ok(Status {
         codex: if old { Standing::Old } else { standing(present.codex, record.codex.is_some()) },
-        claude: standing(present.claude, record.claude_md.is_some() || record.settings.is_some() || plugin),
+        claude: standing(
+            present.claude,
+            record.claude_md.is_some() || record.settings.is_some() || record.claude_tools.is_some() || plugin,
+        ),
+        codex_tools: record.codex.as_ref().map(|_| Box::new(tools::codex(places))),
+        claude_tools: (record.claude_md.is_some()
+            || record.settings.is_some()
+            || record.claude_tools.is_some()
+            || plugin)
+            .then(|| Box::new(tools::claude(places))),
         legacy: crate::upgrade::summary(places)?,
     })
 }
@@ -201,6 +214,8 @@ pub struct Report {
     /// of fastctx still running.
     pub leftovers: Vec<String>,
     pub preserved: Vec<PathBuf>,
+    /// Post-commit checks. A failed check does not undo a committed install.
+    pub tools: Vec<ToolCheck>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -234,6 +249,8 @@ struct Record {
     claude_md: Option<guidance::Receipt>,
     settings: Option<SettingsReceipt>,
     #[serde(default)]
+    claude_tools: Option<crate::claude::tools::Receipt>,
+    #[serde(default)]
     settings_created: bool,
     /// Files and directories an apply created, which an unapply may remove
     /// when they are empty or unchanged.
@@ -262,7 +279,7 @@ impl Record {
     }
 
     fn holds_nothing(&self) -> bool {
-        self.codex.is_none() && self.claude_md.is_none() && self.settings.is_none()
+        self.codex.is_none() && self.claude_md.is_none() && self.settings.is_none() && self.claude_tools.is_none()
     }
 }
 
@@ -353,6 +370,12 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         fastctx_hosts::claude::write_plugin(&places.world, &installed).map_err(io("writing the World's plugin"))?;
         let plan = ClaudePlan::new(&places.world);
         settings::apply(initial_settings.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
+        let settings_path = text(initial_settings.path());
+        crate::claude::tools::apply(
+            File { path: &settings_path, bytes: initial_settings.bytes() },
+            record.claude_tools.as_ref(),
+        )
+        .map_err(Error::Claude)?;
         let settings_created = record.settings_created
             || previous.as_ref().is_some_and(|r| r.settings_created)
             || !initial_settings.exists();
@@ -384,14 +407,22 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             let edit =
                 settings::apply(settings_file.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
             settings_notice(&mut report, settings_file.path(), &edit);
-            change(&mut changes, settings_file, edit.bytes.clone());
-            Ok::<_, Error>(edit)
+            let path = text(settings_file.path());
+            let tools = crate::claude::tools::apply(
+                File { path: &path, bytes: edit.bytes.as_deref() },
+                record.claude_tools.as_ref(),
+            )
+            .map_err(Error::Claude)?;
+            report.notices.extend(tools.notices);
+            change(&mut changes, settings_file, tools.bytes);
+            Ok::<_, Error>((edit, tools.receipt))
         })();
         let edit = match edit {
             Ok(edit) => edit,
             Err(error) => return Err(rollback_plugin(places, error, &planned, &added, &mut host)),
         };
-        record.settings = edit.receipt;
+        record.settings = edit.0.receipt;
+        record.claude_tools = Some(edit.1);
         record.settings_created = settings_created;
         change(&mut changes, claude_md, Some(applied.bytes));
         record.claude_md = Some(applied.receipt);
@@ -424,6 +455,12 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             if let Some((_, added, mut host)) = plugin {
                 host.operation = None;
                 host.checkpoint(&added).map_err(Error::Claude)?;
+            }
+            if hosts.codex {
+                report.tools.push(tools::codex(places));
+            }
+            if hosts.claude {
+                report.tools.push(tools::claude(places));
             }
             Ok(report)
         }
@@ -516,6 +553,13 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
         let mut settings_bytes =
             crate::claude::registration::remove(settings_file.bytes(), &ClaudePlan::new(&places.world), true, true)
                 .map_err(Error::Claude)?;
+        if let Some(receipt) = record.claude_tools.take() {
+            let path = text(settings_file.path());
+            let edit = crate::claude::tools::unapply(File { path: &path, bytes: settings_bytes.as_deref() }, &receipt)
+                .map_err(Error::Claude)?;
+            report.notices.extend(edit.notices);
+            settings_bytes = edit.bytes;
+        }
         if let Some(receipt) = record.settings.take() {
             let edit = settings::unapply(settings_bytes.as_deref(), Some(&receipt)).map_err(Error::Claude)?;
             settings_notice(&mut report, settings_file.path(), &edit);

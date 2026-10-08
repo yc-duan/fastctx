@@ -45,6 +45,11 @@ pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
         Err(error) => return Err(error.into()),
     };
     say(&report);
+    if report.tools.iter().any(|check| check.result.is_err()) {
+        bail!(
+            "Configuration was committed and recorded, but native tool verification did not pass; see the checks above"
+        );
+    }
     if report.changed.is_empty() && report.commands.is_empty() {
         println!("Already in place.");
     }
@@ -106,6 +111,12 @@ fn say(report: &Report) {
     }
     for leftover in &report.leftovers {
         println!("could not clear: {}", leftover.replace(r"\\?\", ""));
+    }
+    for check in &report.tools {
+        match &check.result {
+            Ok(()) => println!("{}: verified {}", check.host, check.scope),
+            Err(reason) => println!("{}: not verified ({}): {reason}", check.host, check.scope),
+        }
     }
 }
 

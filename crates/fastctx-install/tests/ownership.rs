@@ -82,3 +82,69 @@ fn file_existence_and_unowned_bytes_survive() {
     assert!(guidance::apply(file, "body", None).is_err());
     assert_eq!(guidance::unapply(file, None).unwrap().bytes.as_deref(), Some(foreign.as_slice()));
 }
+
+#[test]
+fn native_tools_migrate_old_receipts_and_keep_user_changes() {
+    let config = File { path: "config.toml", bytes: Some(b"features.view_image = false\n") };
+    let agents = File { path: "AGENTS.md", bytes: None };
+    let installed = codex::apply(config, agents, &plan(), "body", Ownership::None, Approval::Require).unwrap();
+    let mut old = serde_json::to_value(&installed.receipt).unwrap();
+    old.as_object_mut().unwrap().remove("tools");
+    let old = serde_json::from_value(old).unwrap();
+    let old_config = String::from_utf8(installed.config).unwrap().replace("features.shell_tool = false\n", "");
+    let installed = codex::apply(
+        File { bytes: Some(old_config.as_bytes()), ..config },
+        File { bytes: Some(&installed.agents), ..agents },
+        &plan(),
+        "body",
+        Ownership::Current(&old),
+        Approval::Require,
+    )
+    .unwrap();
+    let changed = String::from_utf8(installed.config)
+        .unwrap()
+        .replace("features.shell_tool = false", "features.shell_tool = true");
+    let reapplied = codex::apply(
+        File { bytes: Some(changed.as_bytes()), ..config },
+        File { bytes: Some(&installed.agents), ..agents },
+        &plan(),
+        "body",
+        Ownership::Current(&installed.receipt),
+        Approval::Require,
+    )
+    .unwrap();
+    assert_eq!(reapplied.config, changed.as_bytes());
+    assert_eq!(reapplied.notices.len(), 1);
+    let taken = codex::unapply(
+        File { bytes: Some(&reapplied.config), ..config },
+        File { bytes: Some(&reapplied.agents), ..agents },
+        Some(&reapplied.receipt),
+    )
+    .unwrap();
+    assert_eq!(taken.config.as_deref(), Some(b"features.shell_tool = true\nfeatures.view_image = false\n".as_slice()));
+    assert!(taken.receipt.is_none());
+}
+
+#[test]
+fn claude_native_deny_ownership_is_per_rule() {
+    use fastctx_install::claude::tools;
+    let original = br#"{"permissions":{"deny":["Bash"],"allow":["Edit","Write"]},"user":true}"#;
+    let file = File { path: "settings.json", bytes: Some(original) };
+    let applied = tools::apply(file, None).unwrap();
+    let deleted = tools::apply(File { bytes: None, ..file }, Some(&applied.receipt)).unwrap();
+    assert!(deleted.bytes.is_none());
+    assert_eq!(deleted.notices.len(), 3);
+    let value: serde_json::Value = serde_json::from_slice(applied.bytes.as_ref().unwrap()).unwrap();
+    assert_eq!(value["permissions"]["deny"], serde_json::json!(["Bash", "Grep", "Glob"]));
+    let restored = tools::unapply(File { bytes: applied.bytes.as_deref(), ..file }, &applied.receipt).unwrap();
+    assert_eq!(restored.bytes.as_deref(), Some(original.as_slice()));
+
+    let edited = String::from_utf8(applied.bytes.unwrap()).unwrap().replace("\"Grep\"", "\"Grep(project)\"");
+    let repeated = tools::apply(File { bytes: Some(edited.as_bytes()), ..file }, Some(&applied.receipt)).unwrap();
+    assert_eq!(repeated.bytes.as_deref(), Some(edited.as_bytes()));
+    assert_eq!(repeated.notices.len(), 1);
+    let taken = tools::unapply(File { bytes: repeated.bytes.as_deref(), ..file }, &repeated.receipt).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(taken.bytes.as_ref().unwrap()).unwrap();
+    assert_eq!(value["permissions"]["deny"], serde_json::json!(["Bash", "Grep(project)"]));
+    assert_eq!(value["permissions"]["allow"], serde_json::json!(["Edit", "Write"]));
+}
