@@ -74,6 +74,7 @@ pub async fn send(
 #[derive(Default)]
 struct Followed {
     job: Option<JobId>,
+    refused: Option<Failure>,
     out: u64,
     err: u64,
     ended: bool,
@@ -91,7 +92,15 @@ async fn here(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: 
     let _ = pieces.send(Ok(OnPiece::Started { machine: node.machine(), job: job.clone() }));
     let mut sink = Sink::Local(pieces);
     let handed = hand_over(node, &job, &record_path, 0, 0, &mut sink).await;
-    finish(node, &job, &record_path, handed).await
+    // A local follower has no network to lose: its departure is an
+    // intentional stop, just as it is for the sending side of a remote on.
+    let stopped = if pieces.is_closed() && !matches!(handed, Ok(true)) {
+        serve_stop(node, origin.clone(), job.clone()).await.map(|_| ())
+    } else {
+        Ok(())
+    };
+    let finished = finish(node, &job, &record_path, handed).await;
+    stopped.and(finished)
 }
 
 /// An `on` naming another machine.
@@ -113,7 +122,13 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
     let call = RemoteCall::On { origin: origin.clone(), sizes, writes_off: request.package.writes_off };
     let sending = feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone(), Some(started));
     let first = link.call_with_stream(&machine, call, sending).await;
-    let started = followed.lock().expect("never poisoned").job.clone();
+    let (started, refused) = {
+        let followed = followed.lock().expect("never poisoned");
+        (followed.job.clone(), followed.refused.clone())
+    };
+    if let Some(failure) = refused {
+        return Err(failure);
+    }
     let Some(job) = started else {
         return Err(match first {
             Ok(Err(failure)) => failure,
@@ -184,6 +199,10 @@ fn feed(
                     () = pieces.closed() => return Err("the on that sent it left".to_string()),
                 };
                 match word {
+                    OnWord::Refused { failure } => {
+                        followed.lock().expect("never poisoned").refused = Some(failure);
+                        return stream.say(&TAKEN).await;
+                    }
                     OnWord::Started { job } => {
                         followed.lock().expect("never poisoned").job = Some(job.clone());
                         if let Some(started) = &started {
@@ -352,8 +371,31 @@ pub async fn serve_on(
     writes_off: bool,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
-    let staged = Staged::receive(node, &origin, &sizes, &mut stream).await?;
-    let (job, record_path) = start(node, &origin, staged, writes_off).await?;
+    let starting = async {
+        let staged = Staged::receive(node, &origin, &sizes, &mut stream).await?;
+        start(node, &origin, staged, writes_off).await
+    }
+    .await;
+    let (job, record_path) = match starting {
+        Ok(started) => started,
+        Err(failure) => {
+            // Closing the data stream first races the control reply and
+            // turns a definite refusal into an unknown execution outcome.
+            // Hand over the refusal on the stream before answering the call.
+            stream
+                .say(&OnWord::Refused { failure: failure.clone() })
+                .await
+                .map_err(|error| Failure::new(format!("saying the job was not started: {error}")))?;
+            match tokio::time::timeout(SILENT_FOR, stream.hear::<String>()).await {
+                Ok(Ok(word)) if word == TAKEN => return Err(failure),
+                Ok(Ok(_)) => return Err(Failure::new("the sender did not acknowledge the refusal")),
+                Ok(Err(error)) => return Err(Failure::new(error)),
+                Err(_) => {
+                    return Err(Failure::new("the sender did not acknowledge the refusal before its line went silent"));
+                }
+            }
+        }
+    };
     stream
         .say(&OnWord::Started { job: job.clone() })
         .await
@@ -518,6 +560,24 @@ async fn finish(
     record_path: &Path,
     handed: Result<bool, String>,
 ) -> Result<(), Failure> {
+    // Keep the follower registered until its receipt has cleared the debt.
+    // Otherwise a concurrent JobChanged can send a completion letter in
+    // the interval between releasing the follower and deleting .owed.
+    let taken = if matches!(handed, Ok(true)) {
+        async {
+            let record = crate::jobs::read(record_path).await?;
+            let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
+            match tokio::fs::remove_file(&owed).await {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    Err(Failure::new(format!("{}: {error}", owed.display())))
+                }
+                _ => Ok(()),
+            }
+        }
+        .await
+    } else {
+        Ok(())
+    };
     {
         let mut following = node.following.lock().expect("never poisoned");
         if let Some(count) = following.get_mut(job) {
@@ -527,20 +587,15 @@ async fn finish(
             }
         }
     }
-    let record = crate::jobs::read(record_path).await?;
+    taken?;
     match handed {
-        Ok(true) => {
-            let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
-            match tokio::fs::remove_file(&owed).await {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                    Err(Failure::new(format!("{}: {error}", owed.display())))
-                }
-                _ => Ok(()),
-            }
+        Ok(true) => Ok(()),
+        Ok(false) | Err(_) => {
+            let record = crate::jobs::read(record_path).await?;
+            crate::inbox::tell_if_ended(node, &record)
+                .await
+                .map_err(|error| Failure::new(format!("telling the job's end: {error}")))
         }
-        Ok(false) | Err(_) => crate::inbox::tell_if_ended(node, &record)
-            .await
-            .map_err(|error| Failure::new(format!("telling the job's end: {error}"))),
     }
 }
 

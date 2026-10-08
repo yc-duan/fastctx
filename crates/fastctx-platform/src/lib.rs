@@ -22,6 +22,7 @@ pub mod ipc;
 pub mod legacy_text;
 pub mod local_path;
 pub mod lock;
+pub mod parent;
 pub mod private;
 #[cfg(target_os = "linux")]
 pub mod procfs;

@@ -50,6 +50,9 @@ pub struct OnSizes {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OnWord {
+    /// The complete package could not start a job. Its sender acknowledges
+    /// this before the control reply closes the accompanying data stream.
+    Refused { failure: crate::ipc::Failure },
     /// The job started, as `job`.
     Started { job: JobId },
     /// `bytes` bytes of standard output follow.
