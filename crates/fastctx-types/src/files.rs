@@ -18,7 +18,7 @@ pub enum SeenVersion {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SeenFile {
     pub version: SeenVersion,
-    /// The canonical label selected by the shared encoding implementation.
+    /// An explicit codec selection from view, never an automatically inferred label.
     pub encoding: Option<String>,
 }
 

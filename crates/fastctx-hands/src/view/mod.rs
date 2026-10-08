@@ -46,7 +46,7 @@ pub struct Options {
     pub range: Option<fastctx_office::CellRange>,
     /// Render PDF pages instead of extracting their text layer.
     pub image: bool,
-    /// The encoding to read text in, by its WHATWG label, such as `gbk`.
+    /// An explicit codec or ordered per-line codec list. Labels follow WHATWG; GBK uses GB18030.
     pub encoding: Option<String>,
     /// The machine's name, to say where each file is.
     pub machine: Option<String>,
@@ -239,6 +239,7 @@ fn image(
         size: bytes.len() as u64,
         modified: None,
         encoding: None,
+        encoding_selection: None,
     };
     let text = format!("{note}\x1b]1337;File=inline=1;size={}:{}\x07\n", bytes.len(), STANDARD.encode(&bytes));
     Ok((Section { text, cost, shown: true, partial: false }, Some(seen)))

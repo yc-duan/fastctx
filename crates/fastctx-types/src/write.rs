@@ -87,6 +87,9 @@ pub struct FileChange {
     /// The encoding actually used for the published bytes, absent for deletions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoding: Option<String>,
+    /// The explicit selection actually used for this revision, not an inferred label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding_selection: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

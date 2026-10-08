@@ -6,7 +6,7 @@ mod seek_sequence;
 mod streaming_parser;
 
 use super::document::Document;
-use super::storage::Target;
+use super::storage::{PublishedEncoding, Target};
 use super::{ApplyPatchRequest, FileChange, WriteError, WriteResult, Writer};
 use crate::files::content_hash;
 use fastctx_types::files::{SeenFile, SeenFiles, SeenVersion};
@@ -90,18 +90,26 @@ fn apply_hunk(
         Hunk::AddFile { path, contents } => {
             let target = Target::new(path, writer)?;
             let before = target.read()?;
+            let selection =
+                before.as_ref().map(|before| target.encoding(before, seen)).transpose()?.flatten().map(str::to_owned);
             let (after, label) = match &before {
                 Some(before) => {
                     target.whole_overwrite(before, seen)?;
-                    let doc = Document::decode(&before.bytes, target.encoding(before, seen)?)
+                    let doc = Document::decode(&before.bytes, selection.as_deref())
                         .map_err(|error| format!("{}: {error}", path.display()))?;
                     (doc.replace(contents)?, doc.label())
                 }
                 None => (contents.as_bytes().to_vec(), "UTF-8"),
             };
             target.create_parent(writer)?;
-            target.publish(before.as_ref(), &after, label, writer, changes)?;
-            remember(&target, &after, label, seen);
+            target.publish(
+                before.as_ref(),
+                &after,
+                PublishedEncoding { label: Some(label), selection: selection.as_deref() },
+                writer,
+                changes,
+            )?;
+            remember(&target, &after, selection.as_deref(), seen);
             Ok(())
         }
         Hunk::DeleteFile { path } => {
@@ -119,7 +127,8 @@ fn apply_hunk(
             if source.stale(&before, seen)? {
                 stale.push(path.clone());
             }
-            let document = Document::decode(&before.bytes, source.encoding(&before, seen)?)
+            let selection = source.encoding(&before, seen)?.map(str::to_owned);
+            let document = Document::decode(&before.bytes, selection.as_deref())
                 .map_err(|error| format!("{}: {error}", path.display()))?;
             let updated = matching::apply(&document.text, &path.to_string_lossy(), chunks, document.eol)?;
             let after = document.encode(&updated)?;
@@ -132,8 +141,14 @@ fn apply_hunk(
                 }
                 destination.create_parent(writer)?;
                 source.verify(Some(&before), writer)?;
-                destination.publish(overwritten.as_ref(), &after, document.label(), writer, changes)?;
-                remember(&destination, &after, document.label(), seen);
+                destination.publish(
+                    overwritten.as_ref(),
+                    &after,
+                    PublishedEncoding { label: Some(document.label()), selection: selection.as_deref() },
+                    writer,
+                    changes,
+                )?;
+                remember(&destination, &after, selection.as_deref(), seen);
                 // Codex writes the destination, then unlinks the source even for self moves.
                 if source.resolved == destination.resolved {
                     let current = source.required()?;
@@ -149,17 +164,23 @@ fn apply_hunk(
                 }
                 seen.remove(&source.resolved);
             } else {
-                source.publish(Some(&before), &after, document.label(), writer, changes)?;
-                remember(&source, &after, document.label(), seen);
+                source.publish(
+                    Some(&before),
+                    &after,
+                    PublishedEncoding { label: Some(document.label()), selection: selection.as_deref() },
+                    writer,
+                    changes,
+                )?;
+                remember(&source, &after, selection.as_deref(), seen);
             }
             Ok(())
         }
     }
 }
 
-fn remember(target: &Target, bytes: &[u8], label: &str, seen: &mut SeenFiles) {
+fn remember(target: &Target, bytes: &[u8], selection: Option<&str>, seen: &mut SeenFiles) {
     seen.insert(
         target.resolved.clone(),
-        SeenFile { version: SeenVersion::Full { sha256: content_hash(bytes) }, encoding: Some(label.into()) },
+        SeenFile { version: SeenVersion::Full { sha256: content_hash(bytes) }, encoding: selection.map(str::to_owned) },
     );
 }

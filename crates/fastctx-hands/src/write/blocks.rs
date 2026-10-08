@@ -10,7 +10,7 @@ pub(super) struct Block<'a> {
 }
 
 pub(super) fn contains_marker(text: &str) -> bool {
-    text.split(['\r', '\n']).any(|line| [SEARCH, SEPARATOR, REPLACE].contains(&line))
+    text.split_inclusive('\n').map(crate::text::line_content).any(|line| [SEARCH, SEPARATOR, REPLACE].contains(&line))
 }
 
 pub(super) fn parse(input: &str) -> Result<Vec<Block<'_>>, String> {
@@ -30,6 +30,7 @@ pub(super) fn parse(input: &str) -> Result<Vec<Block<'_>>, String> {
                 line_number + 1
             ));
         }
+        let terminator = if line.ends_with("\r\n") { "\r\n" } else { "\n" };
         let mut parts = Vec::new();
         for expected in [SEPARATOR, REPLACE] {
             let start = offset;
@@ -37,7 +38,7 @@ pub(super) fn parse(input: &str) -> Result<Vec<Block<'_>>, String> {
             for (line_number, line) in lines.by_ref() {
                 let line_start = offset;
                 offset += line.len();
-                let marker = without_newline(line);
+                let marker = line.strip_suffix(terminator).unwrap_or(line);
                 if marker == expected {
                     end = Some(line_start);
                     break;
@@ -51,7 +52,7 @@ pub(super) fn parse(input: &str) -> Result<Vec<Block<'_>>, String> {
             }
             let end =
                 end.ok_or_else(|| format!("Block {number}: missing {expected}; put each marker on a line by itself"))?;
-            parts.push(without_newline(&input[start..end]));
+            parts.push(input[start..end].strip_suffix(terminator).unwrap_or(&input[start..end]));
         }
         blocks.push(Block { old: parts[0], new: parts[1] });
     }

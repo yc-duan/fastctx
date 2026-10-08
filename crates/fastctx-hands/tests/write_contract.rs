@@ -199,6 +199,11 @@ fn strict_encoding_streams_and_roundtrips() {
         result.push_str(&decoder.feed(&[], true).unwrap());
         assert_eq!(result, text);
     }
+    // The UTF-16LE BOM stays metadata even when the first scalar is NUL.
+    let raw = b"\xff\xfe\x00\x00A\x00";
+    let codec = encoding::detect(raw, Some("utf-16le")).unwrap();
+    assert_eq!(codec.bom_len(), 2);
+    assert_eq!(codec.decode_for_write(raw).unwrap(), "\0A");
     assert!(encoding::detect(&[0xc3], Some("utf-8")).is_err());
     assert!(encoding::detect(&[0xff, 0xfe, 0, 0xd8], None).is_err());
     assert!(matches!(

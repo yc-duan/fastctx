@@ -71,7 +71,7 @@ fn load_seen(path: &Path) -> io::Result<SeenFiles> {
             (None, Some(modified)) => SeenVersion::Partial { size: seen.size, modified: modified.into() },
             (None, None) => continue,
         };
-        latest.insert(canonical, SeenFile { version, encoding: seen.encoding });
+        latest.insert(canonical, SeenFile { version, encoding: seen.encoding_selection });
     }
     Ok(latest)
 }
@@ -94,6 +94,7 @@ fn seen_after(change: &FileChange) -> io::Result<Option<Seen>> {
         size,
         modified: None,
         encoding: change.encoding.clone(),
+        encoding_selection: change.encoding_selection.clone(),
     }))
 }
 

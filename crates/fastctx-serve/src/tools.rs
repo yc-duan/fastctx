@@ -124,7 +124,7 @@ Files:
     fastctx view --pages 3-5 /srv/app/design.pdf
     fastctx view --image --pages 3 /srv/app/design.pdf
     fastctx view --sheet Sales --range B2:F40 C:/Users/me/q3.xlsx
-  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. `--encoding gbk` reads text in an encoding you name, when the one shown is wrong.
+  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. Text in any encoding is shown as text, its encoding named in the head line when it is not UTF-8; `--encoding gbk` reads it in an encoding you name, when the one shown is wrong.
 ";
 
 const RUN_WRITING: &str = "\
@@ -136,8 +136,8 @@ const RUN_WRITING: &str = "\
     port = 8081
     >>>>>>> REPLACE
     EOF
-  The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. The file keeps its encoding and line endings.
-- `write PATH` makes standard input the whole file (`-n`: no final newline).
+  The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. Only the text replaced changes: the file keeps its encoding, BOM and line endings.
+- `write PATH` makes standard input the whole file, in the file's encoding and line endings; a new file is UTF-8 (`-n`: no final newline).
 - `edit` and `write` take absolute paths. Quote the here-document delimiter, <<'EOF', so bash leaves the text as written.
 ";
 

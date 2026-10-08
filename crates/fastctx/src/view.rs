@@ -35,7 +35,7 @@ pub struct ViewArgs {
     /// Render PDF pages as images instead of showing their text layer.
     #[arg(long, conflicts_with_all = ["lines", "encoding"])]
     image: bool,
-    /// Read text in this encoding, such as gbk or shift_jis.
+    /// Read text in this encoding, such as gbk or shift_jis; a list such as utf-8,gbk is tried line by line, for a log that mixes them.
     #[arg(long, value_name = "NAME")]
     encoding: Option<String>,
     /// Also look at the NUL-separated paths in FILE (`-` for standard input).

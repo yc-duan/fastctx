@@ -1,73 +1,124 @@
-//! Showing a text file, read once from start to end.
+//! Streaming file text after a shared encoding-evidence pass.
 //!
-//! The file is decoded as it is read, never held whole: lines inside the
+//! At most one encoded line is decoded at a time: lines inside the
 //! window and the budget are kept, and every other line is only counted, so
 //! the head note can say `of N` for a file of any size. A line longer than
 //! what is left of the budget is shown up to there, and the note says which
 //! characters of it are shown.
 
 use std::fs::{File, Metadata};
-use std::io::{self, Read as _};
+use std::io::{self, Seek as _};
 use std::path::Path;
 
 use fastctx_types::residents::Seen;
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
-use super::decode::Decoder;
-use super::{Options, Section, describe_error, head, hex, plural};
-
-/// Bytes looked at to tell text from binary: a NUL among the first 8 KiB
-/// means the file is not text in any encoding without a byte order mark.
-pub(super) const SNIFF: usize = 8192;
+use super::decode::Hashed;
+use super::{Options, Section, head, hex, plural};
+use crate::encoding::file::{Plan, excerpt, visit};
+pub(crate) use crate::text::visible;
 
 pub fn look(
     path: &Path,
     options: &Options,
     budget: usize,
     mut file: File,
-    mut start: Vec<u8>,
+    start: Vec<u8>,
     metadata: &Metadata,
 ) -> io::Result<(Section, Option<Seen>)> {
-    // Widen the first look to what the binary test needs.
-    if start.len() < SNIFF {
-        let mut more = vec![0u8; SNIFF - start.len()];
-        let read = super::read_up_to(&mut file, &mut more)?;
-        start.extend_from_slice(&more[..read]);
-    }
-    let mut decoder = match Decoder::new(&start, options.encoding.as_deref()) {
-        Ok(chosen) => chosen,
-        Err(facts) => return Ok((Section::note(path, options, &format!("not shown: {facts}")), None)),
-    };
-    if options.encoding.is_none() && matches!(decoder, Decoder::Auto(_)) && start.contains(&0) {
-        let facts = format!("not shown: binary{}", kind(&start).map(|kind| format!(", {kind}")).unwrap_or_default());
-        return Ok((Section::note(path, options, &facts), None));
-    }
-    let mut reader = Reader::new(budget_for_body(path, options, budget, &decoder.longest_facts()), options.lines);
-    if let Err(facts) = decoder.feed(&start, false, &mut reader) {
-        return Ok((Section::note(path, options, &format!("not shown: {facts}")), None));
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(&start);
-    let mut buffer = vec![0u8; 64 * 1024];
-    loop {
-        let read = match file.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(read) => read,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
+    file.rewind()?;
+    let (plan, evidence_hash) = {
+        let mut scan = Hashed { reader: &mut file, hash: Sha256::new() };
+        let plan = match Plan::inspect(&mut scan, options.encoding.as_deref()) {
+            Ok(plan) => plan,
+            Err(facts) => {
+                let kind = kind(&start).map(|kind| format!("; {kind}")).unwrap_or_default();
+                return Ok((Section::note(path, options, &format!("not shown: {facts}{kind}")), None));
+            }
         };
-        hasher.update(&buffer[..read]);
-        if let Err(facts) = decoder.feed(&buffer[..read], false, &mut reader) {
-            return Ok((Section::note(path, options, &format!("not shown: {facts}")), None));
+        std::io::copy(&mut scan, &mut std::io::sink())?;
+        (plan, scan.hash.finalize())
+    };
+    file.rewind()?;
+    let mut stream = Hashed { reader: file, hash: Sha256::new() };
+    let mut reader = Reader::new(budget_for_body(path, options, budget), options.lines);
+    let mut labels = std::collections::BTreeSet::new();
+    let mut readonly = false;
+    let mut previous = None;
+    let mut first = None;
+    let mut first_shown = None;
+    if let Err(facts) = visit(&mut stream, &plan, |line| {
+        // A line of ASCII reads alike in every encoding that keeps ASCII,
+        // so only the others say which encoding a file uses.
+        let telling = line.codec.filter(|codec| !codec.ascii_compatible() || !line.text.is_ascii());
+        let label = telling.map(|codec| codec.label());
+        if let Some(label) = label {
+            labels.insert(label);
+            first.get_or_insert((label, line.basis));
         }
-    }
-    if let Err(facts) = decoder.feed(&[], true, &mut reader) {
+        if line.codec.is_none() {
+            readonly = true;
+        }
+        if reader.wanted() {
+            let beginning = first_shown.is_none();
+            if let Some(label) = label {
+                first_shown.get_or_insert((label, line.basis));
+            }
+            if let Some(issue) = &line.issue {
+                reader.note(&format!("[the next line is shown as bytes and cannot be edited: {issue}]"));
+            } else if let Some(label) = label
+                && !beginning
+                && previous != Some(label)
+            {
+                reader.note(&format!("[from here: {label}{}]", doubt(line.basis)));
+            }
+        }
+        if label.is_some() {
+            previous = label;
+        }
+        if line.issue.is_some() {
+            let ending = if line.text.ends_with("\r\n") {
+                "\r\n"
+            } else if line.text.ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            reader.take(&format!("{}{ending}", excerpt(crate::text::line_content(&line.text))));
+        } else {
+            reader.take(&line.text);
+        }
+        Ok(())
+    }) {
         return Ok((Section::note(path, options, &format!("not shown: {facts}")), None));
+    }
+    let read_hash = stream.hash.finalize();
+    if read_hash != evidence_hash {
+        return Ok((
+            Section::note(
+                path,
+                options,
+                "not shown: file bytes changed between encoding selection and decoding; view the file again",
+            ),
+            None,
+        ));
     }
     let read = reader.finish();
 
-    let mut facts = decoder.facts();
+    let mut facts = String::new();
+    if labels.len() > 1 {
+        if let Some((label, basis)) = first_shown.or(first) {
+            facts.push_str(&format!("mixed encodings, starting with {label}{}; ", doubt(basis)));
+        }
+    } else if let Some((label, basis)) = first
+        && label != "UTF-8"
+    {
+        facts.push_str(&format!("{label}{}; ", doubt(basis)));
+    }
+    if readonly {
+        facts.push_str("some lines shown as bytes; ");
+    }
     facts.push_str(&line_endings(read.crlf, read.lf));
     let total = read.total_lines;
     let whole = read.shown_lines == read.total_lines && read.cut.is_none();
@@ -93,10 +144,12 @@ pub fn look(
     let seen = Seen {
         path: path.to_string_lossy().into_owned(),
         at: Timestamp::now(),
-        sha256: (whole && options.lines.is_none()).then(|| hex(&hasher.finalize())),
+        // Selection was validated against every byte, including undisplayed lines.
+        sha256: Some(hex(&read_hash)),
         size: metadata.len(),
         modified: metadata.modified().ok().and_then(|time| Timestamp::try_from(time).ok()),
-        encoding: decoder.encoding(),
+        encoding: if readonly || labels.len() > 1 { None } else { labels.first().map(|label| (*label).into()) },
+        encoding_selection: options.encoding.clone(),
     };
     let shown = read.shown_lines > 0 || read.cut.is_some() || read.total_lines == 0;
     Ok((Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget }, shown.then_some(seen)))
@@ -118,10 +171,18 @@ fn kind(start: &[u8]) -> Option<&'static str> {
     kinds.iter().find(|(magic, _)| start.starts_with(magic)).map(|(_, kind)| *kind)
 }
 
+/// What a reader should know of how an encoding was chosen: only that it
+/// was guessed, when it was, since then the text may need `--encoding`.
+fn doubt(basis: &str) -> &'static str {
+    if crate::encoding::guessed(basis) { ", guessed from its bytes" } else { "" }
+}
+
 /// The budget left for the lines once the head note is paid for, the head
 /// at its longest: the path, the machine, and numbers of up to twenty
 /// digits in the longest form of the facts.
-fn budget_for_body(path: &Path, options: &Options, budget: usize, encoding: &str) -> usize {
+fn budget_for_body(path: &Path, options: &Options, budget: usize) -> usize {
+    // The longest encoding facts emitted, an encoding name at its longest.
+    let encoding = "mixed encodings, starting with x-mac-cyrillic, guessed from its bytes; some lines shown as bytes; ";
     let longest_facts = format!(
         "{encoding}{}lines {n}-{n} of {n} shown; line {n}: characters 1-{n} of {n} shown",
         line_endings(u64::MAX, u64::MAX),
@@ -166,8 +227,10 @@ pub(super) struct Reader {
     range: Option<(u64, u64)>,
     body: String,
     body_cost: usize,
+    pending_note: String,
     line: String,
     line_chars: u64,
+    visible_chars: u64,
     line_ends_with_cr: bool,
     number: u64,
     first_shown: u64,
@@ -185,8 +248,10 @@ impl Reader {
             range,
             body: String::new(),
             body_cost: 0,
+            pending_note: String::new(),
             line: String::new(),
             line_chars: 0,
+            visible_chars: 0,
             line_ends_with_cr: false,
             number: 1,
             first_shown: 0,
@@ -196,20 +261,6 @@ impl Reader {
             crlf: 0,
             lf: 0,
         }
-    }
-
-    pub(super) fn room(&self) -> usize {
-        if self.wanted() { self.budget.saturating_sub(self.body_cost) } else { 0 }
-    }
-
-    pub(super) fn line(&mut self, text: String, characters: u64, ends_with_cr: bool, newline: bool) {
-        self.line = text;
-        self.line_chars = characters;
-        self.line_ends_with_cr = ends_with_cr;
-        if newline {
-            self.count_ending();
-        }
-        self.end_line();
     }
 
     fn count_ending(&mut self) {
@@ -225,9 +276,19 @@ impl Reader {
             self.extend_line(content);
             if ends {
                 self.count_ending();
-                self.end_line();
+                self.end_line(true);
             }
         }
+    }
+
+    fn note(&mut self, note: &str) {
+        self.pending_note = format!("{note}\n");
+    }
+
+    fn show_note(&mut self) {
+        self.body_cost += self.pending_note.chars().count();
+        self.body.push_str(&self.pending_note);
+        self.pending_note.clear();
     }
 
     fn wanted(&self) -> bool {
@@ -251,30 +312,39 @@ impl Reader {
             self.line.extend(content.chars().take(take as usize));
         }
         self.line_chars += chars;
+        self.visible_chars += crate::text::visible_length(content) as u64;
     }
 
-    fn end_line(&mut self) {
+    fn end_line(&mut self, newline: bool) {
         if self.wanted() {
-            let content = visible(self.line.strip_suffix('\r').unwrap_or(&self.line));
+            let content =
+                visible(if newline { self.line.strip_suffix('\r').unwrap_or(&self.line) } else { &self.line });
             let length = content.chars().count() as u64;
             let complete = self.line_chars == self.line.chars().count() as u64;
             let entry_cost = self.number.to_string().len() + 1 + content.chars().count() + 1;
-            if complete && self.body_cost + entry_cost <= self.budget {
+            let note_cost = self.pending_note.chars().count();
+            if complete && self.body_cost + note_cost + entry_cost <= self.budget {
+                self.show_note();
                 self.show(&content, length as usize);
-            } else if self.shown_lines == 0 {
+            } else if self.shown_lines == 0
+                && self.body_cost + note_cost + self.number.to_string().len() + 3 < self.budget
+            {
+                self.show_note();
                 // Not even one whole line fits: show its start.
                 let prefix = self.number.to_string().len() + 1 + 1;
                 let room = self.budget.saturating_sub(self.body_cost + prefix);
                 let shown: String = content.chars().take(room).collect();
-                let total = self.line_chars - u64::from(self.line_ends_with_cr);
+                let total = self.visible_chars - 4 * u64::from(newline && self.line_ends_with_cr);
                 self.body.push_str(&format!("{}\t{shown}\n", self.number));
                 self.cut = Some(Cut { line: self.number, shown: shown.chars().count() as u64, length: total });
             } else {
                 self.out_of_budget = true;
             }
         }
+        self.pending_note.clear();
         self.line.clear();
         self.line_chars = 0;
+        self.visible_chars = 0;
         self.line_ends_with_cr = false;
         self.number += 1;
     }
@@ -291,7 +361,7 @@ impl Reader {
     fn finish(mut self) -> Read {
         // A last line without a newline is still a line.
         if self.line_chars > 0 || !self.line.is_empty() {
-            self.end_line();
+            self.end_line(false);
         }
         Read {
             body: self.body,
@@ -304,22 +374,4 @@ impl Reader {
             lf: self.lf,
         }
     }
-}
-
-/// A line's text with its control characters, tabs aside, written as
-/// `\xNN` per byte: a terminal, or the `run` that reads this output as one,
-/// would otherwise play them (a carriage return overwriting the line and its
-/// number) instead of showing what the file holds.
-pub(crate) fn visible(text: &str) -> String {
-    let mut shown = String::with_capacity(text.len());
-    for c in text.chars() {
-        if c.is_control() && c != '\t' {
-            for byte in c.encode_utf8(&mut [0; 4]).bytes() {
-                shown.push_str(&format!("\\x{byte:02X}"));
-            }
-        } else {
-            shown.push(c);
-        }
-    }
-    shown
 }

@@ -14,23 +14,18 @@ struct Replacement {
 pub(super) fn apply(text: &str, path: &str, chunks: &[UpdateFileChunk], eol: &str) -> Result<String, String> {
     let mut lines = Vec::new();
     let mut endings = Vec::new();
-    let mut start = 0;
-    let mut positions = text.char_indices().peekable();
-    while let Some((index, character)) = positions.next() {
-        if character == '\r' || character == '\n' {
-            let mut end = index + 1;
-            if character == '\r' && positions.peek().is_some_and(|(_, next)| *next == '\n') {
-                positions.next();
-                end += 1;
+    for line in text.split_inclusive('\n') {
+        lines.push(crate::text::line_content(line).to_string());
+        endings.push(
+            if line.ends_with("\r\n") {
+                "\r\n"
+            } else if line.ends_with('\n') {
+                "\n"
+            } else {
+                eol
             }
-            lines.push(text[start..index].to_string());
-            endings.push(text[index..end].to_string());
-            start = end;
-        }
-    }
-    if start < text.len() {
-        lines.push(text[start..].to_string());
-        endings.push(eol.to_string());
+            .into(),
+        );
     }
     let replacements = compute_replacements(&lines, path, chunks)?;
     let (lines, endings) = apply_replacements(lines, endings, &replacements, eol);

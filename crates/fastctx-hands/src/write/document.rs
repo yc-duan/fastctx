@@ -13,23 +13,18 @@ impl Document {
     }
 
     pub fn decode(raw: &[u8], label: Option<&str>) -> Result<Self, String> {
-        let encoding = encoding::detect(raw, label).map_err(|e| e.to_string())?;
+        let source = encoding::file::Source::decode(raw.to_vec(), label)?;
+        let label = source.label().ok_or_else(|| {
+            "apply_patch needs one resolved encoding; use edit within resolved segments of a mixed file".to_string()
+        })?;
+        let encoding = encoding::explicit(label, raw).map_err(|error| error.to_string())?;
         let text = encoding.decode_for_write(raw).map_err(|e| e.to_string())?;
-        let crlf = text.matches("\r\n").count();
-        let lf = text.matches('\n').count() - crlf;
-        let cr = text.matches('\r').count() - crlf;
-        let eol = if crlf > lf && crlf >= cr {
-            "\r\n"
-        } else if cr > lf {
-            "\r"
-        } else {
-            "\n"
-        };
+        let eol = crate::text::dominant_ending(&text);
         Ok(Self { text, encoding, bom: raw[..encoding.bom_len()].to_vec(), eol })
     }
 
     pub fn newlines(&self, text: &str) -> String {
-        text.replace("\r\n", "\n").replace('\r', "\n").replace('\n', self.eol)
+        crate::text::newlines(text, self.eol)
     }
 
     pub fn encode(&self, text: &str) -> Result<Vec<u8>, String> {

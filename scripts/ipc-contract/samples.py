@@ -31,6 +31,11 @@ def replies(fixtures):
     yield {"reply": "written", "outcome": {"Ok": {"text": "committed", "changes": changes,
                                                     "changed_since_seen": ["C:/data/example.txt"]}}}
     yield {"reply": "written", "outcome": {"Err": {"message": "later section failed", "changes": changes}}}
+    selected = deepcopy(changes)
+    for change in selected:
+        change["encoding_selection"] = "utf-8,gb18030"
+    yield {"reply": "written", "outcome": {"Ok": {"text": "committed", "changes": selected,
+                                                    "changed_since_seen": []}}}
     yield {"reply": "copied", "from": "C:/a", "from_machine": "desktop", "to": "C:/b", "to_machine": "laptop",
            "files": 1, "bytes": 9, "directories": 1, "links": 1, "unchanged": 1, "problems": ["missing file"]}
     pieces = [{"kind": "text", "first_line": 1, "text": "hello\n"},
@@ -128,6 +133,8 @@ def calls(fixtures):
     yield {"call": "who", "all": True, "town": None}, PEER, True
     yield {"call": "look", "ids": [ADDRESS["resident"], "j-abc123"]}, PEER, True
     yield {"call": "saw", "owner": ADDRESS, "town": None, "seen": [{"path": "C:/a", "at": AT, "sha256": None, "size": 1, "modified": None, "encoding": "UTF-8"}]}, PEER, True
+    yield {"call": "saw", "owner": ADDRESS, "town": None, "seen": [{"path": "C:/a", "at": AT, "sha256": None,
+           "size": 1, "modified": None, "encoding": None, "encoding_selection": "utf-8,gb18030"}]}, PEER, True
     for action in ["new", "edit", "list", "show", "map", "enter"]:
         yield {"call": "project", "do": action, "town": "project", "fields": {}}, PEER, True
     for action in ["add", "describe", "read", "list"]:

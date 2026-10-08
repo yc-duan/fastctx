@@ -243,11 +243,9 @@ pub enum Outcome {
     },
 }
 
-/// What a resident saw of a file through `fastctx view`: one line of its
-/// `seen` record. A file shown whole is remembered by its content's hash;
-/// one shown in part by its size and modification time, since hashing a
-/// file of several gigabytes for a glance at it would cost more than the
-/// glance (`world-view.md`).
+/// What a resident saw through view. Text decoding validates and hashes the
+/// complete byte stream even when only selected lines are displayed. Other
+/// partial views can record size and modification time without a full hash.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Seen {
     pub path: String,
@@ -257,6 +255,9 @@ pub struct Seen {
     pub modified: Option<Timestamp>,
     /// The encoding it was read in, for text.
     pub encoding: Option<String>,
+    /// The user's explicit codec or per-line codec order; inferred labels are not overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding_selection: Option<String>,
 }
 
 /// One thing the World saw a resident do: one line of its `actions`.

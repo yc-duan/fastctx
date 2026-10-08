@@ -14,6 +14,7 @@ harness = false
 
 [dependencies]
 base64 = "0.22"
+chardetng = { version = "=1.0.0", features = ["testing-only-no-semver-guarantees-do-not-use"] }
 encoding_rs = "0.8"
 fastctx-client = { path = "../fastctx-client" }
 fastctx-office = { path = "../fastctx-office" }
