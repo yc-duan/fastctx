@@ -30,6 +30,7 @@ sha2 = "0.10"
 stacker = "0.1"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
+unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

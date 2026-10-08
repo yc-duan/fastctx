@@ -1133,6 +1133,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "unicode-width",
 ]
 
 [[package]]

@@ -503,7 +503,7 @@
                 "text": "hello\n"
               }
             ],
-            "legacy": null,
+            "legacy": [],
             "escaped_lines": 0
           }
         }
@@ -603,7 +603,7 @@
                 "text": "hello\n"
               }
             ],
-            "legacy": null,
+            "legacy": [],
             "escaped_lines": 0
           }
         }

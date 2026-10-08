@@ -6,6 +6,7 @@
 //! is kept in a log on the machine where it ran.
 
 pub mod control;
+mod display;
 mod heredoc;
 pub mod last;
 pub mod launch;

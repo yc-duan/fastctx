@@ -97,7 +97,7 @@ pub struct OutputWindow {
     pub pieces: Vec<OutputPiece>,
     /// Shown lines that were not UTF-8 but decoded in the machine's legacy
     /// code page.
-    pub legacy: Option<LegacyLines>,
+    pub legacy: Vec<LegacyLines>,
     /// Shown lines holding bytes that decode in no known encoding; those
     /// bytes appear as `\xNN`.
     pub escaped_lines: u64,

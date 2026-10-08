@@ -226,7 +226,7 @@ impl Reader {
 
     fn end_line(&mut self) {
         if self.wanted() {
-            let content = self.line.strip_suffix('\r').unwrap_or(&self.line).to_string();
+            let content = visible(self.line.strip_suffix('\r').unwrap_or(&self.line));
             let length = content.chars().count() as u64;
             let complete = self.line_chars == self.line.chars().count() as u64;
             let entry_cost = self.number.to_string().len() + 1 + content.chars().count() + 1;
@@ -273,4 +273,22 @@ impl Reader {
             out_of_budget: self.out_of_budget,
         }
     }
+}
+
+/// A line's text with its control characters, tabs aside, written as
+/// `\xNN` per byte: a terminal, or the `run` that reads this output as one,
+/// would otherwise play them (a carriage return overwriting the line and its
+/// number) instead of showing what the file holds.
+fn visible(text: &str) -> String {
+    let mut shown = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() && c != '\t' {
+            for byte in c.encode_utf8(&mut [0; 4]).bytes() {
+                shown.push_str(&format!("\\x{byte:02X}"));
+            }
+        } else {
+            shown.push(c);
+        }
+    }
+    shown
 }

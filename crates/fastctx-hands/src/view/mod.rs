@@ -23,7 +23,7 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 use crate::image::sniff;
-use crate::run::terminal::VIEW_MARK;
+use crate::run::terminal::{VIEW_END, VIEW_MARK};
 use crate::run::window::{BUDGET, IMAGE_COST, RUN_NOTES};
 
 /// How to look.
@@ -81,6 +81,9 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
     }
     for section in sections {
         out.write_all(section.text.as_bytes())?;
+    }
+    if options.in_run {
+        out.write_all(VIEW_END.as_bytes())?;
     }
     Ok(seen)
 }

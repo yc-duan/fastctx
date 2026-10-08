@@ -115,7 +115,7 @@ pub fn fixtures() -> Fixtures {
                 bytes: 6,
                 lines: 1,
                 pieces: vec![OutputPiece::Text { first_line: 1, text: "hello\n".into() }],
-                legacy: None,
+                legacy: Vec::new(),
                 escaped_lines: 0,
             },
             visited: Vec::new(),

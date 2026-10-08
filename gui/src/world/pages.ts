@@ -102,7 +102,7 @@ export interface RunReply {
     pieces: OutputPiece[];
     /** Lines shown that were not UTF-8 but decoded in the machine's legacy
      *  code page. */
-    legacy: { encoding: string; lines: number } | null;
+    legacy: { encoding: string; lines: number }[];
     /** Lines holding bytes no known encoding decodes. */
     escaped_lines: number;
   };

@@ -62,10 +62,16 @@ pub fn code_pages() -> Vec<CodePage> {
 /// ANSI page and then the OEM page that console programs use. Returns the
 /// text and the encoding's name, or `None` if neither decodes every byte.
 pub fn decode_legacy(bytes: &[u8]) -> Option<(String, String)> {
+    decode_with_code_page(bytes).map(|(text, page)| (text, page.name()))
+}
+
+/// `decode_legacy`, with the code page that decoded, so that the rest of a
+/// line split around something else is decoded in the same one.
+pub fn decode_with_code_page(bytes: &[u8]) -> Option<(String, CodePage)> {
     if bytes.is_empty() {
         return None;
     }
-    code_pages().into_iter().find_map(|page| page.decode(bytes).map(|text| (text, page.name())))
+    code_pages().into_iter().find_map(|page| page.decode(bytes).map(|text| (text, page)))
 }
 
 #[cfg(windows)]
