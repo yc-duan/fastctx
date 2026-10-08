@@ -1,23 +1,44 @@
-//! What a session the user opens is told about the World, in its host's
-//! guidance file (`world-run.md`, 模型怎样知道): that the World's other
-//! machines are at hand by name through its shell, and the one rule a
-//! session needs before it touches anything, that it enters a project only
-//! when the user says.
+//! What a session the user opens is told about its working environment, in
+//! its host's guidance file (`world-run.md`, 模型怎样知道): the user's
+//! machines, that `run` is its shell on all of them and its way to look at
+//! and change files on this machine too, since the host's own shell and image
+//! viewer are off; and the one rule a session needs before it touches
+//! anything, that it enters a project only when the user says.
 //!
 //! A host may list a server's tools by name only until they are used, so
-//! these words alone must lead a model to the tools. What the shell's
-//! commands do is said once, in `run`'s own description.
+//! these words alone must lead a model to the tools and give the commands it
+//! reaches for most; `run`'s description gives them in full.
 
 /// The block of guidance for a host's sessions.
 pub fn guidance() -> String {
     "\
-## The World
+## Your machines and tools
 
-This machine belongs to a World: the user's machines, connected by fastctx, and the agents working on them. Each of them is at hand from this session by its name, with no address, login or key: in the bash of the `run` tool, `on MACHINE` followed by a command, or by a script as a here-document, runs it there; `fastctx nodes` lists the machines. When the user speaks of one of them, work on it this way.
+The user has several machines, connected by fastctx: this one, and others that `fastctx nodes` lists. You work on all of them through the `run` tool.
 
-`run` is this session's shell, on this machine and through `on` on the others: commands, reading files with `fastctx view`, searching with `rg`, and changing files on other machines with `edit` and `write`. Enter a town, the World's name for a project, with `fastctx project enter TOWN` only when the user tells you which project to work on.
+`run` is your shell: bash with the GNU tools and `rg` on every machine, Windows included. Do all shell work with it, and all work on files, on this machine too:
+- `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content.
+- `edit PATH` and `write PATH` change a file and keep its encoding and line endings.
+- `rg` searches.
 
-`ask_colleague` brings in a GPT colleague that works on its own while you go on. `run`'s description lists the World's commands, and each explains itself with `--help`.
+`run`'s description shows each of these in full.
+
+`run` starts on this machine. To work on another one, write `on MACHINE` before a command, or give it a script:
+
+```bash
+on server tail -n 50 /var/log/app.log
+on laptop <<'EOF'
+cd C:/work/app && cargo test
+EOF
+```
+
+When the user speaks of one of the machines, work on it this way.
+
+Inside a script, these commands are ordinary programs: give them several files, pipe into and out of them, loop over machines, as with any command. Calls to `run` share nothing: make several at once, or call `run` from your scripts and subagents, as with any tool.
+
+fastctx also keeps the user's ongoing work as projects. A fastctx project is not a folder or a repository: it is a named piece of work that can span several machines. Its record says what it is for and where its code and data are on each machine; its journals hold the history of the work. `fastctx project list` lists them. Enter one with `fastctx project enter NAME` only when the user tells you which project to work on; entering gives you its map.
+
+`ask_colleague` starts a GPT colleague that takes a part of the work and does it on its own while you go on.
 "
     .to_string()
 }

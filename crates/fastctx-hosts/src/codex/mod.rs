@@ -1279,7 +1279,10 @@ fn millis(value: Option<&Value>) -> Timestamp {
 /// any fastctx the user registered: `binary` serving them with the
 /// environment `env`, and the limits above. Codex's own shell and image
 /// viewer are off, as `run` does their work; its file editing goes with
-/// the thread's `environments: []`. A thread's settings
+/// the thread's `environments: []`. The tools are never deferred: a model
+/// whose tools are deferred sees only their names, and `run` takes the place
+/// of a shell whose description it always saw; in Code Mode they stay
+/// callable from its scripts. A thread's settings
 /// merge into the user's table by table, so every setting of the server
 /// that changes what it offers is given here, lists replacing the user's
 /// whole.
@@ -1305,7 +1308,7 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "enabled": true,
             "enabled_tools": tools,
             "disabled_tools": [],
-            "omit_tools_from": [],
+            "omit_tools_from": ["deferred"],
             "startup_timeout_sec": STARTUP_TIMEOUT.as_secs(),
             "tool_timeout_sec": TOOL_TIMEOUT.as_secs(),
             "tools": limits,

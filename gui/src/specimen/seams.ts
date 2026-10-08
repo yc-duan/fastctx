@@ -161,7 +161,7 @@ export function specimenUpload(
         id: `attachment-${Math.random().toString(16).slice(2, 10)}` as Attachment["id"],
         owner: { resident, machine } as Attachment["owner"],
         town: target.kind === "resident" ? null : target.town,
-        path: `/home/lenovo/.fastctx/world/attachments/${name}`,
+        path: `/home/me/.fastctx/world/attachments/${name}`,
         name,
         media_type: source.kind === "bytes" ? source.file.type || "application/octet-stream" : "application/octet-stream",
         size,

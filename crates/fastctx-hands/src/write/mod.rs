@@ -70,6 +70,14 @@ impl Writer {
         format!("=== {operation} on {} ({}) ===", self.node, counted(changes))
     }
 
+    /// The head note of one file written: the operation, the file as `view`
+    /// names it, the machine, and how it went.
+    fn file_head(&self, operation: &str, path: &std::path::Path, outcome: &str) -> String {
+        let path = path.to_string_lossy();
+        let path = if cfg!(windows) { path.replace('\\', "/") } else { path.into_owned() };
+        format!("=== {operation} {path} on {} ({outcome}) ===", self.node)
+    }
+
     fn failure(&self, operation: &str, mut error: WriteError) -> WriteError {
         let state = match error.changes.len() {
             0 => "failed; nothing changed".to_string(),

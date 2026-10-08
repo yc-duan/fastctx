@@ -72,7 +72,7 @@ pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
             (Some("ping"), Some(id)) => output.send(&response(&id, json!({}))),
             (Some("tools/list"), Some(id)) => {
                 let machines = session.machines().await;
-                let tools = tools::definitions(writes_off, session.colleague(), machines.as_ref());
+                let tools = tools::definitions(writes_off, session.colleague(), session.woken(), machines.as_ref());
                 output.send(&response(&id, json!({ "tools": tools })))
             }
             (Some("tools/call"), Some(id)) => {

@@ -139,7 +139,7 @@ async fn here(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: 
 /// An `on` naming another machine.
 async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: &Pieces) -> Result<(), Failure> {
     let link =
-        node.link().ok_or_else(|| Failure::new(format!("{} is in no World with other machines", node.machine())))?;
+        node.link().ok_or_else(|| Failure::new(format!("{} is not connected to any other machine", node.machine())))?;
     let machine = request.machine.clone();
     let sizes = sizes(&request.package).await?;
     let followed = Arc::new(Mutex::new(Followed::default()));
@@ -198,19 +198,22 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
             _ => Vec::new(),
         }
     };
-    // An end this `on` did not take still reaches the resident.
-    if !ended {
+    // An end this `on` did not take still reaches the resident, unless the
+    // `on` stopped the job on purpose: then nobody is owed its end.
+    let stopped = matches!(followed_through, Ok(true));
+    if !ended && !stopped {
         for (to, delivery) in parked {
             if let Err(failure) = crate::speech::tell_here(node, &to, delivery, crate::speech::Owed::Working).await {
                 node.log.line(format_args!("telling {to} of {job} on {machine}: {}", failure.message));
             }
         }
     }
-    followed_through
+    followed_through.map(|_| ())
 }
 
 /// Follows a job that started on `machine` until its end is taken, it is
-/// stopped, or the World says it cannot be followed.
+/// stopped, or the World says it cannot be followed. True when the `on`
+/// that sent it left, and so stopped it.
 async fn follow_there(
     node: &Arc<Node>,
     link: &fastctx_net::link::Link,
@@ -219,16 +222,16 @@ async fn follow_there(
     job: &JobId,
     followed: &Arc<Mutex<Followed>>,
     pieces: &Pieces,
-) -> Result<(), Failure> {
+) -> Result<bool, Failure> {
     let mut delay = Backoff::default();
     loop {
         if followed.lock().expect("never poisoned").ended {
-            return Ok(());
+            return Ok(false);
         }
         if pieces.is_closed() {
             // The `on` that sent it left: it was stopped on purpose.
             stop_there(node, machine, origin, job).await;
-            return Ok(());
+            return Ok(true);
         }
         tokio::select! {
             () = tokio::time::sleep(delay.next()) => {}
@@ -239,11 +242,13 @@ async fn follow_there(
             (followed.out, followed.err)
         };
         let call = RemoteCall::Follow { origin: origin.clone(), job: job.clone(), out_from, err_from };
-        let following = feed(&machine, None, followed.clone(), pieces.clone(), None);
-        match link.call_with_stream(&machine, call, following).await {
+        let following = feed(machine, None, followed.clone(), pieces.clone(), None);
+        match link.call_with_stream(machine, call, following).await {
             Ok(Err(failure)) => return Err(Failure::new(format!("following {job} on {machine}: {failure}"))),
             Err(CallFailure::NotMember { name, .. }) => {
-                return Err(Failure::new(format!("{name} is no longer a machine of the World; {job} was left there")));
+                return Err(Failure::new(format!(
+                    "{name} is no longer one of the user's machines; {job} was left there"
+                )));
             }
             Ok(Ok(_)) | Err(_) => {}
         }
@@ -401,17 +406,97 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(bytes)
 }
 
+/// A stop of a job on another machine that has not reached it yet.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingStop {
+    machine: MachineName,
+    job: JobId,
+    origin: OnOrigin,
+}
+
+/// Where stops not yet delivered wait, so that a node that restarts still
+/// sends them.
+fn pending_stops(node: &Node) -> PathBuf {
+    node.world.path().join("on-stops")
+}
+
 /// Asks `machine` to stop `job`, until it has or the job is gone: the stop
-/// was meant, so it is not dropped for a broken connection.
+/// was meant, so it is not dropped for a broken connection, nor for this
+/// node restarting before the connection came back.
 async fn stop_there(node: &Arc<Node>, machine: &MachineName, origin: &OnOrigin, job: &JobId) {
+    let pending = PendingStop { machine: machine.clone(), job: job.clone(), origin: origin.clone() };
+    let kept = keep_stop(node, &pending).await;
+    if let Err(error) = &kept {
+        node.log.line(format_args!("could not keep the stop of {job} on {machine} for after a restart: {error}"));
+    }
+    deliver_stop(node, &pending).await;
+    if let Ok(path) = kept
+        && let Err(error) = tokio::fs::remove_file(&path).await
+    {
+        node.log.line(format_args!("{}: {error}", path.display()));
+    }
+}
+
+async fn keep_stop(node: &Node, pending: &PendingStop) -> std::io::Result<PathBuf> {
+    let directory = pending_stops(node);
+    let path = directory.join(format!("{}.json", random_name()?));
+    let bytes = serde_json::to_vec(pending).map_err(std::io::Error::other)?;
+    let written = path.clone();
+    tokio::task::spawn_blocking(move || {
+        fastctx_platform::ensure_private_dir(&directory)?;
+        fastctx_platform::publish(&written, &bytes, fastctx_platform::Permissions::Private)
+    })
+    .await
+    .map_err(std::io::Error::other)??;
+    Ok(path)
+}
+
+async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) {
     let Some(link) = node.link() else { return };
     let mut delay = Backoff::default();
     loop {
-        let call = RemoteCall::StopOn { origin: origin.clone(), job: job.clone() };
-        match link.call(machine, call).await {
+        let call = RemoteCall::StopOn { origin: pending.origin.clone(), job: pending.job.clone() };
+        match link.call(&pending.machine, call).await {
             Ok(_) | Err(CallFailure::NotMember { .. }) => return,
             Err(_) => tokio::time::sleep(delay.next()).await,
         }
+    }
+}
+
+/// Sends again the stops a node that stopped had not delivered.
+pub async fn resume_stops(node: &Arc<Node>) {
+    let directory = pending_stops(node);
+    let mut entries = match tokio::fs::read_dir(&directory).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            node.log.line(format_args!("{}: {error}", directory.display()));
+            return;
+        }
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let read = tokio::fs::read(&path)
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| serde_json::from_slice::<PendingStop>(&bytes).map_err(|error| error.to_string()));
+        let pending = match read {
+            Ok(pending) => pending,
+            Err(error) => {
+                node.log.line(format_args!("{}: {error}", path.display()));
+                continue;
+            }
+        };
+        let node = node.clone();
+        tokio::spawn(async move {
+            deliver_stop(&node, &pending).await;
+            if let Err(error) = tokio::fs::remove_file(&path).await {
+                node.log.line(format_args!("{}: {error}", path.display()));
+            }
+        });
     }
 }
 
@@ -503,9 +588,19 @@ pub async fn serve_follow(
     Ok(RemoteReply::OnDone)
 }
 
-/// Stops an `on` job its sender stopped.
+/// Stops an `on` job its sender stopped. The script that sent it stopped
+/// it on purpose and learns of that from its own end, so no letter of this
+/// end is owed to the resident.
 pub async fn serve_stop(node: &Arc<Node>, origin: OnOrigin, job: JobId) -> Result<RemoteReply, Failure> {
     let record_path = on_job(node, &origin, &job)?;
+    let owner = JobOwner::Resident(origin.resident.clone());
+    let owed = node.world.job_owner(&node.machine(), origin.town.as_ref(), &owner).job_owed(&job);
+    match tokio::fs::remove_file(&owed).await {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(Failure::new(format!("{}: {error}", owed.display())));
+        }
+        _ => {}
+    }
     let by = format!("{} on {}", origin.resident.resident, origin.resident.machine);
     crate::jobs::stop(node, &record_path, &by, "the on that sent it stopped").await?;
     Ok(RemoteReply::OnDone)
@@ -808,12 +903,12 @@ fn through(record: &JobRecord) -> Option<OnEnd> {
     }
     if let Some(end) = &record.end {
         return Some(match (&end.how, status) {
-            (EndedHow::Finished, Some(status)) => OnEnd::Exited { status },
+            (EndedHow::Finished, Some(status)) => OnEnd::Exited { status, remaining: 0 },
             (how, status) => OnEnd::Otherwise { how: how.clone(), status },
         });
     }
     match (status, &record.output_ended_at) {
-        (Some(status), Some(_)) => Some(OnEnd::Exited { status }),
+        (Some(status), Some(_)) => Some(OnEnd::Exited { status, remaining: record.remaining.unwrap_or(0) }),
         _ => None,
     }
 }

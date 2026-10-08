@@ -8,37 +8,46 @@ use fastctx_types::{Call, MachineName, ProjectCall, Reply, TownName};
 
 use crate::ask;
 
-/// The towns: list, show, map and enter them; open one or write the next
-/// version of its record.
+/// The user's projects: list, show, map and enter them; open one or write
+/// the next version of its record.
 #[derive(Subcommand)]
 pub enum ProjectCommand {
-    /// The towns this machine is part of.
+    /// The projects this machine is part of.
     List,
-    /// A town's record: what it is, its machines, where things are.
+    /// A project's record: what it is, its machines, where things are.
     Show {
-        /// The town; without it, the one you live in.
+        /// The project; without it, the one you work in.
+        #[arg(value_name = "NAME")]
         town: Option<String>,
     },
-    /// A town's map: its record, then each journal and each document of its
-    /// canon in a line.
+    /// A project's map: its record, then each journal, page and decision
+    /// document in a line.
     Map {
-        /// The town; without it, the one you live in.
+        /// The project; without it, the one you work in.
+        #[arg(value_name = "NAME")]
         town: Option<String>,
     },
-    /// Live and work in a town from now on, and get its map. Only when the
-    /// user says which project to work on; do not change towns on your own.
-    Enter { town: String },
-    /// Open a town: the first version of its record.
+    /// Work in a project from now on, and get its map. Only when the user
+    /// says which project to work on; do not change projects on your own.
+    Enter {
+        /// The project's short name, as `fastctx project list` shows it.
+        #[arg(value_name = "NAME")]
+        town: String,
+    },
+    /// Open a project: the first version of its record. Only when the user
+    /// asks for a new project, or agrees to one.
     New {
         /// Its short name: lowercase letters, digits and hyphens.
+        #[arg(value_name = "NAME")]
         town: String,
         #[command(flatten)]
         fields: Fields,
     },
-    /// Write the next version of a town's record; what is not given stays
-    /// as it is.
+    /// Write the next version of a project's record; what is not given
+    /// stays as it is.
     Edit {
-        /// The town; without it, the one you live in.
+        /// The project; without it, the one you work in.
+        #[arg(value_name = "NAME")]
         town: Option<String>,
         #[command(flatten)]
         fields: Fields,
@@ -53,15 +62,16 @@ pub struct Fields {
     /// What it is for, in a sentence or two.
     #[arg(long)]
     what: Option<String>,
-    /// The machines the town spans, separated by commas; a new town spans
-    /// this machine when not given.
+    /// The machines the project spans, separated by commas; a new project
+    /// spans this machine when not given.
     #[arg(long, value_delimiter = ',')]
     machines: Option<Vec<String>>,
     /// One line of the address book: what is there, the machine, and the
     /// absolute path. Given once or more, it replaces the whole book.
     #[arg(long, num_args = 3, value_names = ["WHAT", "MACHINE", "PATH"], action = ArgAction::Append)]
     place: Vec<String>,
-    /// Where the town's canon is: the machine and its directory.
+    /// Where the documents of decisions settled with the user are: the
+    /// machine and its directory.
     #[arg(long, num_args = 2, value_names = ["MACHINE", "PATH"])]
     canon: Vec<String>,
 }
@@ -92,17 +102,17 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
         Reply::Towns { towns } => list(&here, &towns),
         Reply::Record { town, record, opened } => {
             let title = if opening {
-                format!("opened the town {town}")
+                format!("opened the project {town}")
             } else if editing {
                 format!("wrote version {} of {town}'s record", record.version)
             } else {
-                format!("town {town}, version {} of its record", record.version)
+                format!("project {town}, version {} of its record", record.version)
             };
             show(&title, &record, &opened)
         }
         Reply::Map { map: view } => map(&view),
         Reply::Entered { town, map: view } => {
-            format!("=== you live in the town {town} from now on ===\n{}", brief(&view))
+            format!("=== you work in the project {town} from now on ===\n{}", brief(&view))
         }
         other => anyhow::bail!("the node answered something else: {other:?}"),
     };
@@ -144,9 +154,9 @@ impl Fields {
 
 fn list(here: &MachineName, towns: &[TownSummary]) -> String {
     if towns.is_empty() {
-        return format!("=== towns on {here}: none; fastctx project new opens one ===\n");
+        return format!("=== projects on {here}: none ===\n");
     }
-    let mut text = format!("=== towns on {here} ({}) ===\n", towns.len());
+    let mut text = format!("=== projects on {here} ({}) ===\n", towns.len());
     for town in towns {
         let record = &town.record;
         let machines: Vec<&str> = record.machines.iter().map(|machine| machine.as_str()).collect();

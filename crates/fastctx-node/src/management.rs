@@ -195,7 +195,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 crate::town::project::spans_here(node, town).await?;
                 crate::town::map::brief(node, town).await?
             } else {
-                "You are outside every project. fastctx project list lists the projects.".into()
+                "You are in no project now. `fastctx project list` lists the projects.".into()
             };
             let changed = match node.residents.relocate(&node.world, id, town.as_ref()) {
                 Ok(changed) => changed,
@@ -234,10 +234,13 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     ),
                 }
             }
-            let text = format!(
-                "=== World: the user changed your project ===\nThe user set your project to {} through the World interface. This is a World notification, not words typed by the user. It supersedes earlier project instructions.\n\n{brief}",
-                town.as_ref().map_or("none", |town| town.as_str())
-            );
+            // Delivered as the World's words, under a line saying so: it is
+            // not repeated here.
+            let moved = match &town {
+                Some(town) => format!("The user moved you to the project {town}"),
+                None => "The user took you out of your project".to_string(),
+            };
+            let text = format!("{moved}; this replaces what you were told before of where you work.\n\n{brief}");
             let delivery = Delivery {
                 id: speech::new_id("project"),
                 at: Timestamp::now(),

@@ -1,0 +1,20 @@
+[package]
+name = "fastctx-office"
+description = "Addressable Office document content for the World's viewer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+num-bigint = "0.4.8"
+office_oxide = "0.1.13"
+quick-xml = "0.42"
+serde_json.workspace = true
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"

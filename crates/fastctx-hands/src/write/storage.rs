@@ -189,13 +189,13 @@ fn error(path: &Path, e: io::Error) -> String {
     format!("{}: {e}", path.display())
 }
 
-const LEDGER: &str = "A town's ledger files are read-only copies; journals are written through fastctx journal, the town's record through fastctx project edit";
+const LEDGER: &str = "A project's journal and record files are read-only copies; add to journals with `fastctx journal`, and change the record with `fastctx project edit`";
 
 fn check_policy(path: &Path, writer: &Writer) -> Result<(), String> {
     let towns = writer.world.join("towns");
     if relative_parts(path, &writer.world.join("write.lock")).is_some_and(|parts| parts.is_empty()) {
         // Replacing the lock inode would split cooperating writers into two groups.
-        return Err("The World's active write lock cannot be replaced".into());
+        return Err("fastctx's write lock is in use and cannot be replaced".into());
     }
     // A town's ledger, and the signed entries it is made of, change only by
     // taking entries. Check the lexical path even before a town has them,

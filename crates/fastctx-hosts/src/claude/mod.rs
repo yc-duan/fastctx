@@ -47,7 +47,9 @@ const MOD: &str = include_str!("world.js");
 
 /// How words the World says on its own account begin, as the model reads
 /// them; the mod frames them the same way (`world.js`).
-const FRAME: &str = "The fastctx plugin delivers a message from the World.";
+const FRAME: &str = "A message from fastctx, not typed by the user:";
+/// The frame written before 2026-10-09 (UTC); session histories still hold it.
+const FRAME_V1: &str = "The fastctx plugin delivers a message from the World.";
 
 /// Words the World says on its own account, as the model reads them.
 pub fn framed(text: &str) -> String {
@@ -58,7 +60,7 @@ pub fn framed(text: &str) -> String {
 /// session hears them inside Claude Code's own frame for what a plugin
 /// submits, which puts a line of its own before them (2.1.289).
 pub fn is_framed(text: &str) -> bool {
-    text.starts_with(FRAME) || text.contains(&format!("\n{FRAME}\n"))
+    [FRAME, FRAME_V1].iter().any(|frame| text.starts_with(frame) || text.contains(&format!("\n{frame}\n")))
 }
 
 /// The local marketplace: `<world>/claude-plugins`.

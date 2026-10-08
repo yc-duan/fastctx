@@ -224,19 +224,17 @@ pub(crate) async fn presence_for_who(
         .machines
         .iter()
         .any(|machine| matches!(machine, MachineWho::Answered { reply } if reply.machine == who.machine))
+        && let Some(town) = &history.town
     {
-        if let Some(town) = &history.town {
-            let (world, machine, town, since) = (node.world.clone(), node.machine(), town.clone(), history.since);
-            let membership = node.link().map(|link| link.membership().world.clone());
-            let _syncing = node.syncing.lock().await;
-            let (events, issues) = tokio::task::spawn_blocking(move || {
-                records::ledger(&world, &machine, since, &town, membership.as_ref())
-            })
-            .await
-            .map_err(|error| Failure::new(format!("reading town history: {error}")))?;
-            history.events.extend(events);
-            history.issues.extend(issues);
-        }
+        let (world, machine, town, since) = (node.world.clone(), node.machine(), town.clone(), history.since);
+        let membership = node.link().map(|link| link.membership().world.clone());
+        let _syncing = node.syncing.lock().await;
+        let (events, issues) =
+            tokio::task::spawn_blocking(move || records::ledger(&world, &machine, since, &town, membership.as_ref()))
+                .await
+                .map_err(|error| Failure::new(format!("reading town history: {error}")))?;
+        history.events.extend(events);
+        history.issues.extend(issues);
     }
     history.events = merge_events(std::mem::take(&mut history.events), &mut history.issues);
     Ok(())

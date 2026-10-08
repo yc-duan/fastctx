@@ -1279,6 +1279,7 @@ dependencies = [
  "base64 0.22.1",
  "encoding_rs",
  "fastctx-client",
+ "fastctx-office",
  "fastctx-pdf",
  "fastctx-platform",
  "fastctx-types",
@@ -1423,6 +1424,19 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+]
+
+[[package]]
+name = "fastctx-office"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "num-bigint",
+ "office_oxide",
+ "quick-xml",
+ "serde_json",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]

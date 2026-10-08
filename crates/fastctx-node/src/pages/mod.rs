@@ -230,7 +230,7 @@ async fn validate_acts(node: &Arc<Node>, town: &TownName, acts: &[PageAct]) -> R
                 if machine != &node.machine()
                     && !node.link().is_some_and(|link| link.members().0.machines().any(|m| &m.name == machine))
                 {
-                    return Err(Failure::new(format!("{machine} is not a machine in this World")));
+                    return Err(Failure::new(format!("there is no machine named {machine}")));
                 }
             }
             PageAct::Say { to } => actions::resident(node, town, to).await?,

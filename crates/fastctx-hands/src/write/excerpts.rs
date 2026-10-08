@@ -1,5 +1,9 @@
+use crate::view::visible;
 use std::fmt::Write as _;
 
+/// The changed lines with two neighbours on each side, numbered as
+/// `fastctx view` numbers them, `number<TAB>line`, with control characters
+/// shown the same way.
 pub(super) fn excerpts(text: &str, changes: &[std::ops::Range<usize>]) -> String {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = normalized.lines().collect();
@@ -38,7 +42,7 @@ pub(super) fn excerpts(text: &str, changes: &[std::ops::Range<usize>]) -> String
             result.push_str("\n...");
         }
         for line in window.clone() {
-            let _ = write!(result, "\n{}: {}", line + 1, lines[line]);
+            let _ = write!(result, "\n{}\t{}", line + 1, visible(lines[line]));
         }
     }
     if lines.is_empty() {

@@ -17,7 +17,7 @@ pub struct AttachArgs {
 
 pub fn run(args: AttachArgs) -> anyhow::Result<()> {
     if let Ok(resident) = std::env::var("FASTCTX_RESIDENT") {
-        bail!("{resident} runs this; fastctx attach is the user's own act");
+        bail!("fastctx attach is for the user, not for {resident}");
     }
     let resident = match args.resident.parse::<Address>() {
         Ok(address) => address.resident,

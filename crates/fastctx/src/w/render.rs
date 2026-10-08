@@ -22,7 +22,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
         match state {
             MachineState::Answered(_) => {}
             MachineState::Offline { machine, since: Some(since) } => {
-                machines.push(format!("{machine} offline since {}", clock(*since, now)))
+                machines.push(format!("{machine} offline for {}", ago(*since, now)))
             }
             MachineState::Offline { machine, since: None } => machines.push(format!("{machine} offline")),
             MachineState::NoAnswer { machine, reason } => machines.push(format!("{machine} did not answer ({reason})")),
@@ -30,7 +30,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     }
     let place = match &view.scope {
         Scope::Town { town, .. } => town.as_str(),
-        Scope::World { .. } => "the World",
+        Scope::World { .. } => "all projects",
     };
     let mut text = format!("=== w: {place} ({}) ===\n", machines.join("; "));
     if let Scope::Town { town, record: None } = &view.scope {
@@ -38,7 +38,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     }
     if let Scope::World { towns } = &view.scope {
         if !towns.is_empty() {
-            text.push_str("towns\n");
+            text.push_str("projects\n");
         }
         for town in towns {
             let description = town
@@ -79,7 +79,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                                 ago(moved.at, now)
                             )
                         } else {
-                            " (not here; departure time unrecorded)".into()
+                            " (left)".into()
                         }
                     }
                     None if !view.answered(&owner.machine) => " (owner's machine did not answer)".into(),
@@ -91,7 +91,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
         };
         running.push((
             job.machine.clone(),
-            format!("  {}  {}  {}  {owner}  {}\n", job.machine, job.job, ago(job.started_at, now), job.command),
+            format!("  {}  {}  {}  {owner}  {}\n", job.machine, job.job, ago(job.started_at, now), brief(&job.command)),
         ));
     }
     for resident in &view.residents {
@@ -119,17 +119,24 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     let mut working = String::new();
     let mut waiting = String::new();
     let mut resting = String::new();
+    let mut left = 0;
     for resident in &view.residents {
         if busy(resident) || (resident.here && resident.now.is_none()) {
             let mark = if Some(&address(resident)) == you { " (you)" } else { "" };
-            working.push_str(&format!(
-                "  {}{mark}  {}  {}{}  {}\n",
+            let line = format!(
+                "  {}{mark}  {}  {}{}  {}",
                 resident.about.id,
                 resident.about.machine,
                 host(&resident.about.host),
                 task(resident),
-                step(resident, now)
-            ));
+                brief(&step(resident, now))
+            );
+            working.push_str(line.trim_end());
+            working.push('\n');
+        } else if all && resident.now.is_none() && resident.removed.is_none() && resident.moved.is_none() {
+            // A session that has left cannot be woken or spoken to again;
+            // what it did is in the history, and `w ID` finds it.
+            left += 1;
         } else if all {
             let state = if let Some(at) = resident.removed {
                 format!("removed {} ago", ago(at, now))
@@ -137,20 +144,26 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 format!("moved to {} {} ago", moved.to.as_ref().map_or("outside", |t| t.as_str()), ago(moved.at, now))
             } else if let Some(state) = &resident.now {
                 match state.activity {
-                    Activity::Busy => step(resident, now),
-                    Activity::Idle if !resident.here => "not here; last reported idle".into(),
+                    Activity::Busy => brief(&step(resident, now)),
+                    Activity::Idle if !resident.here => "session not open; last reported idle".into(),
                     Activity::Idle => "idle".into(),
                     // Older now records did not consistently timestamp sleep.
                     Activity::Asleep => "asleep".into(),
                 }
             } else {
-                "left; departure time unrecorded".into()
+                unreachable!("residents that left are counted, not listed")
             };
             let last = resident
                 .last_action
                 .as_ref()
                 .map(|action| {
-                    format!("; {} {} ago: {} -> {}", action.hand, ago(action.at, now), action.what, action.result)
+                    format!(
+                        "; {} {} ago: {} -> {}",
+                        action.hand,
+                        ago(action.at, now),
+                        brief(&action.what),
+                        action.result
+                    )
                 })
                 .unwrap_or_default();
             resting.push_str(&format!(
@@ -186,12 +199,28 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             }
         }
     }
+    if left > 0 {
+        resting.push_str(&format!("  and {left} sessions that have left; `fastctx w ID` shows one\n"));
+    }
     for (label, body) in [("working", working), ("waiting", waiting), ("inactive", resting)] {
         if !body.is_empty() {
             text.push_str(&format!("{label}\n{body}"));
         }
     }
     text
+}
+
+/// A command or a resident's current step as one line of a list: its first
+/// line, no longer than a terminal line, marked where cut; `w ID` gives it
+/// whole.
+pub(super) fn brief(command: &str) -> String {
+    const WIDTH: usize = 100;
+    let first = first_line(command);
+    if first.chars().count() <= WIDTH {
+        first
+    } else {
+        format!("{} …", first.chars().take(WIDTH).collect::<String>())
+    }
 }
 
 pub(super) fn person(address: &Address, machine: &MachineName) -> String {
@@ -216,7 +245,7 @@ pub(super) fn step(resident: &ResidentNow, now: Timestamp) -> String {
     match &resident.now {
         Some(state) if state.activity == Activity::Busy => {
             if !resident.here {
-                return format!("not here; last recorded turn began {} ago", ago(state.since, now));
+                return format!("session not open; last recorded turn began {} ago", ago(state.since, now));
             }
             let tools = resident
                 .tools
@@ -239,7 +268,7 @@ pub(super) fn step(resident: &ResidentNow, now: Timestamp) -> String {
         None => resident
             .last_action
             .as_ref()
-            .map(|action| format!("last World action {} ago: {} {}", ago(action.at, now), action.hand, action.what))
+            .map(|action| format!("last fastctx action {} ago: {} {}", ago(action.at, now), action.hand, action.what))
             .unwrap_or_default(),
     }
 }

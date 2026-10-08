@@ -33,13 +33,12 @@ pub const USAGE: &str = "on MACHINE COMMAND [ARG...]
        ...the script...
        EOF";
 
-pub const AFTER_HELP: &str = "The command's words are sent exactly as this shell expanded them; without a command, standard input is the script, read only by that machine's bash.
-It acts as a subshell placed there: the script's own variables, functions and options go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused.
-If the connection drops, it goes on there and its end still reaches you. It exits 255 when the World could not carry it there.";
+pub const AFTER_HELP: &str = "The command's words are sent exactly as this shell expanded them. Without a command, standard input is the script, read only by that machine's bash.
+The part sent there sees your script's variables, functions and shell options; PATH, HOME, LANG and the machine's other settings are its own. Its output, exit code and standard input work like any command's, in pipelines and `if` too. A script quoted as one word is refused: use a here-document.
+If the connection drops, it goes on there and its end still reaches you. It exits 255 when it could not reach that machine.";
 
-/// Run part of a script on another machine of the World: `on MACHINE
-/// [COMMAND [ARG...]]` in the World's shell; without a command, standard
-/// input is the script.
+/// Run part of a script on another machine of the World, as the World's
+/// shell writes it (`USAGE`).
 #[derive(Args)]
 pub struct OnArgs {
     /// The shell running the `on` function, which this follower ends with:
@@ -52,10 +51,11 @@ pub struct OnArgs {
     /// The command line the shell function quoted from the command's words.
     #[arg(long, value_name = "FILE", hide = true)]
     command: Option<PathBuf>,
-    /// The machine, as `fastctx nodes` names it.
+    /// The machine, as `fastctx nodes` names it; the usage says it.
+    #[arg(hide = true)]
     machine: Option<String>,
     /// A command and its words; without them, standard input is the script.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
     words: Vec<String>,
 }
 
@@ -75,13 +75,12 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
     }
     let Some(machine) = args.machine else {
         bail!(
-            "usage: on MACHINE [COMMAND [ARG...]]; without a command, standard input is the script. `fastctx nodes` lists the machines"
+            "usage: on MACHINE COMMAND [ARG...], or on MACHINE with the script on standard input. `fastctx nodes` lists the machines"
         );
     };
     let machine = MachineName::try_from(machine.as_str())?;
-    let resident: Address = std::env::var("FASTCTX_RESIDENT")
-        .context("on runs part of a resident's script, in the World's shell (run)")?
-        .parse()?;
+    let resident: Address =
+        std::env::var("FASTCTX_RESIDENT").context("on works only inside a script run by the run tool")?.parse()?;
     let town = std::env::var("FASTCTX_TOWN").ok().map(TownName::try_from).transpose()?;
     let job = std::env::var("FASTCTX_JOB").ok().map(JobId::try_from).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
@@ -93,11 +92,11 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
         let client = Client::connect(&world, Peer::Command { resident: Some(resident), session: None }).await?;
         let mut stream = client.on(call).await?;
         let (mut out, mut err) = (std::io::stdout().lock(), std::io::stderr().lock());
-        let mut started = false;
+        let mut started = None;
         loop {
             match stream.next().await {
-                Ok(Some(OnPiece::Started { machine: there, .. })) => {
-                    started = true;
+                Ok(Some(OnPiece::Started { machine: there, job })) => {
+                    started = Some(job);
                     // What went to another machine is there now; what stays
                     // here is the job's own input.
                     if std::env::var("FASTCTX_MACHINE").ok().as_deref() != Some(there.as_str()) {
@@ -116,18 +115,31 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
                         return Ok(Ended::ReaderLeft);
                     }
                 }
-                Ok(Some(OnPiece::Ended { end })) => return Ok(Ended::Job(end)),
+                Ok(Some(OnPiece::Ended { end })) => return Ok(Ended::Job(end, started)),
                 Ok(None) => bail!("the node ended the on without the job's end"),
-                Err(CallError::Failed(failure)) if !started => return Ok(Ended::Refused(failure.message)),
+                Err(CallError::Failed(failure)) if started.is_none() => return Ok(Ended::Refused(failure.message)),
                 Err(CallError::Failed(failure)) => return Ok(Ended::Lost(failure.message)),
                 Err(error) => return Err(error.into()),
             }
         }
     })?;
     Ok(match ended {
-        Ended::Job(end) => {
-            if let OnEnd::Otherwise { how, .. } = &end {
-                eprintln!("on: on {machine}, {}", how_ended(how));
+        Ended::Job(end, job) => {
+            match &end {
+                OnEnd::Otherwise { how, .. } => eprintln!("on: on {machine}, {}", how_ended(how)),
+                // A subshell's background processes are its caller's to
+                // know about: the command ended, they did not.
+                OnEnd::Exited { remaining, .. } if *remaining > 0 => {
+                    let processes = if *remaining == 1 {
+                        "1 process it started".to_string()
+                    } else {
+                        format!("{remaining} processes it started")
+                    };
+                    let stop =
+                        job.map(|job| format!("; `fastctx stop {job}@{machine}` stops them")).unwrap_or_default();
+                    eprintln!("on: on {machine}, the command exited, but {processes} still run there{stop}");
+                }
+                OnEnd::Exited { .. } => {}
             }
             ExitCode::from(end.code() as u8)
         }
@@ -145,7 +157,8 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
 }
 
 enum Ended {
-    Job(OnEnd),
+    /// It ended there, as the job that started.
+    Job(OnEnd, Option<JobId>),
     ReaderLeft,
     /// It never started there.
     Refused(String),

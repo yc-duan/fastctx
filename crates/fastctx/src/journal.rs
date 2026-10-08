@@ -33,36 +33,39 @@ pub enum JournalCommand {
         /// absolute path; once for each.
         #[arg(long = "attach-from", num_args = 2, value_names = ["MACHINE", "PATH"], action = ArgAction::Append)]
         attach_from: Vec<String>,
-        /// Your model, when the World does not know it; stamped as said by you.
+        /// Your model, when fastctx does not know it; stamped as said by you.
         #[arg(long)]
         model: Option<String>,
-        /// The town; without it, the one you live in.
-        #[arg(long)]
+        /// The project; without it, the one you work in.
+        #[arg(long = "project", alias = "town", value_name = "NAME")]
         town: Option<String>,
     },
     /// Write the next version of what a journal covers.
     Describe {
         journal: String,
         description: String,
-        #[arg(long)]
+        /// The project; without it, the one you work in.
+        #[arg(long = "project", alias = "town", value_name = "NAME")]
         town: Option<String>,
     },
     /// Read a journal: its latest entries that fit in one answer, oldest
-    /// first, with the World's stamp on each.
+    /// first, each stamped with who wrote it, where and when.
     Read {
         journal: String,
         /// Read the entries before this one.
         #[arg(long)]
         before: Option<String>,
-        #[arg(long)]
+        /// The project; without it, the one you work in.
+        #[arg(long = "project", alias = "town", value_name = "NAME")]
         town: Option<String>,
         /// The entries as JSON, for scripts.
         #[arg(long)]
         json: bool,
     },
-    /// The journals of a town, the latest written first.
+    /// The journals of a project, the latest written first.
     List {
-        #[arg(long)]
+        /// The project; without it, the one you work in.
+        #[arg(long = "project", alias = "town", value_name = "NAME")]
         town: Option<String>,
         #[arg(long)]
         json: bool,
@@ -135,7 +138,7 @@ pub fn run(command: JournalCommand) -> anyhow::Result<()> {
             format!("{}\n", serde_json::to_string_pretty(&serde_json::json!({ "town": town, "journals": journals }))?)
         }
         Reply::Journals { town, journals } if journals.is_empty() => {
-            format!("=== journals of {town}: none; fastctx journal add --description starts one ===\n")
+            format!("=== journals of {town}: none; `fastctx journal add --description` starts one ===\n")
         }
         Reply::Journals { town, journals } => {
             let mut text = format!("=== journals of {town} ({}, the latest written first) ===\n", journals.len());

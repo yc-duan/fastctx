@@ -35,7 +35,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return writer.drain().await;
     }
     let hello: Hello = parse(&hello)?;
-    let legacy = matches!(hello.protocol, 5 | 6) && crate::renewal_legacy::peer(&hello.peer);
+    let legacy = crate::renewal_legacy::enabled(hello.protocol, &hello.peer);
     if hello.protocol != PROTOCOL && !legacy {
         let reason = format!(
             "this node is fastctx {} and speaks protocol {PROTOCOL}; the client is fastctx {} and speaks protocol {}",
@@ -59,8 +59,20 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     // is free to be handed over again then.
     let mut arrived = Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new() };
     while let Some(frame) = reader.recv().await? {
-        let ClientFrame::Call { id, call } = parse(&frame)?;
-        if legacy && !crate::renewal_legacy::call(&hello.peer, &call) {
+        let ClientFrame::Call { id, call } = match parse(&frame) {
+            Ok(call) => call,
+            Err(error) => {
+                let envelope: serde_json::Value = parse(&frame)?;
+                let Some(id) = envelope.get("id").and_then(serde_json::Value::as_u64) else {
+                    return Err(error);
+                };
+                let reply = Err(Failure::new(format!("the request was not executed: {error}")));
+                writer.send(&crate::renewal_legacy::frame(hello.protocol, id, &reply)).await?;
+                writer.drain().await?;
+                continue;
+            }
+        };
+        if legacy && !crate::renewal_legacy::call(hello.protocol, &hello.peer, &call) {
             writer
                 .send(&json(&NodeFrame::Reply {
                     id,
@@ -111,7 +123,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                         },
                     }
                 }
-                _ => Err(Failure::new("on is for the World's shell, as the resident whose script it is")),
+                _ => Err(Failure::new("on works only inside a script run by the run tool")),
             };
             writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
             continue;
@@ -159,12 +171,12 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             call => handle(node, &hello.peer, call).await,
         };
         if legacy && let Ok(reply) = &mut reply {
-            crate::renewal_legacy::reply(reply);
+            crate::renewal_legacy::reply(hello.protocol, reply);
         }
         if arriving && let Ok(Reply::Arrived(whereabouts)) = &reply {
             arrived.residents.push(whereabouts.resident.clone());
         }
-        writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
+        writer.send(&crate::renewal_legacy::frame(hello.protocol, id, &reply)).await?;
         writer.drain().await?;
     }
     Ok(())
@@ -601,9 +613,7 @@ fn town_of(node: &Node, resident: &ResidentId) -> Result<Option<TownName>, Failu
 }
 
 fn member(node: &Node) -> Result<Arc<fastctx_net::link::Link>, Failure> {
-    node.link().ok_or_else(|| {
-        Failure::new(format!("{} is in no World with other machines; `fastctx join` joins one", node.machine()))
-    })
+    node.link().ok_or_else(|| Failure::new(format!("{} is not connected to any other machine", node.machine())))
 }
 
 /// Runs a script for a resident of this machine, here or on `target`, and
@@ -626,7 +636,7 @@ async fn run(
         }
         Some(target) => {
             let link = node.link().ok_or_else(|| {
-                Failure::new(format!("there is no machine {target}: {here} is in no World with other machines"))
+                Failure::new(format!("there is no machine {target}: {here} is not connected to any other machine"))
             })?;
             // Held until the run is recorded: a job that ends at once is told
             // of before.
@@ -672,7 +682,7 @@ async fn write(
         }
         Some(target) => {
             let link = node.link().ok_or_else(|| {
-                Failure::new(format!("there is no machine {target}: {here} is in no World with other machines"))
+                Failure::new(format!("there is no machine {target}: {here} is not connected to any other machine"))
             })?;
             let call = RemoteCall::Write { resident: resident.clone(), town: town.clone(), op: op.clone() };
             match link.call(&target, call).await.map_err(|failure| Failure::new(called(&failure)))? {

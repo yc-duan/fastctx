@@ -16,6 +16,7 @@ harness = false
 base64 = "0.22"
 encoding_rs = "0.8"
 fastctx-client = { path = "../fastctx-client" }
+fastctx-office = { path = "../fastctx-office" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-pdf = { path = "../fastctx-pdf" }
 fastctx-types = { path = "../fastctx-types" }

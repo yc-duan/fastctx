@@ -76,8 +76,14 @@ pub enum OnWord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OnEnd {
-    /// The shell exited; nothing it started runs any more.
-    Exited { status: ExitStatus },
+    /// The shell exited and its output ended; `remaining` processes it
+    /// started still run there, as a background job's do after a script
+    /// exits. Older nodes do not say, which reads as none.
+    Exited {
+        status: ExitStatus,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        remaining: u32,
+    },
     /// It ended otherwise: stopped, interrupted, or never started properly.
     Otherwise { how: EndedHow, status: Option<ExitStatus> },
 }
@@ -88,10 +94,14 @@ impl OnEnd {
     /// could not carry the command through (`world-run.md`).
     pub fn code(&self) -> i32 {
         match self {
-            OnEnd::Exited { status } | OnEnd::Otherwise { status: Some(status), .. } => code(*status),
+            OnEnd::Exited { status, .. } | OnEnd::Otherwise { status: Some(status), .. } => code(*status),
             OnEnd::Otherwise { status: None, .. } => 255,
         }
     }
+}
+
+fn is_zero(count: &u32) -> bool {
+    *count == 0
 }
 
 fn code(status: ExitStatus) -> i32 {

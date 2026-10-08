@@ -22,7 +22,9 @@ pub(super) fn detail(looked: &LookedUp, now: Timestamp) -> String {
             }
         }
     }
-    if !looked.unasked.is_empty() {
+    // Only when nothing answered with it can it be on a machine that did not
+    // answer; a random id found once does not need the rest of the World.
+    if looked.found.is_empty() && !looked.unasked.is_empty() {
         text.push_str(&format!("not answered: {}\n", looked.unasked.join(", ")));
     }
     for job in &looked.jobs {
@@ -34,18 +36,23 @@ pub(super) fn detail(looked: &LookedUp, now: Timestamp) -> String {
             job.owner,
             job.command,
             job.machine,
-            job.output
+            shown(&job.output)
         ));
         if let Some(stderr) = &job.stderr {
-            text.push_str(&format!("         stderr: {} {stderr}\n", job.machine));
+            text.push_str(&format!("         stderr: {} {}\n", job.machine, shown(stderr)));
         }
     }
     text
 }
 
+/// A path on any machine, written as the World writes paths, `C:/…` on
+/// Windows; World directories hold no other backslashes.
+fn shown(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
 fn record_path(base: &str, file: &str) -> String {
-    let separator = if base.contains('\\') { '\\' } else { '/' };
-    format!("{base}{separator}{file}")
+    format!("{}/{file}", shown(base))
 }
 
 fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
@@ -81,7 +88,7 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
         }
     }
     if !resident.here {
-        text.push_str("presence not here\n");
+        text.push_str("session  not open now\n");
     }
     let step = render::step(resident, now);
     if !step.is_empty() {
@@ -95,10 +102,10 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
             ago(job.started_at, now),
             job.command,
             job.machine,
-            job.output
+            shown(&job.output)
         ));
         if let Some(stderr) = &job.stderr {
-            text.push_str(&format!("         stderr: {} {stderr}\n", job.machine));
+            text.push_str(&format!("         stderr: {} {}\n", job.machine, shown(stderr)));
         }
     }
     if detail.actions_total > 0 {
@@ -112,7 +119,7 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
             let elsewhere = if action.machine == *machine { String::new() } else { format!("  {}", action.machine) };
             text.push_str(&format!(
                 "  {}{elsewhere}  {}  {} -> {}\n",
-                clock(action.at, now),
+                when(action.at, now),
                 action.hand,
                 action.what,
                 action.result
@@ -131,7 +138,7 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
                         .as_ref()
                         .map(|message| format!(": {}", first_line(message)))
                         .unwrap_or_default();
-                    text.push_str(&format!("  {} {}{message}\n", clock(line.at, now), turn_end(end)));
+                    text.push_str(&format!("  {} {}{message}\n", when(line.at, now), turn_end(end)));
                 }
             }
         }
@@ -140,11 +147,14 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
 }
 
 fn job_detail(record: &JobRecord, now: Timestamp) -> String {
+    let owner = match record.owner.resident() {
+        Some(address) => render::person(address, &record.machine),
+        None => record.owner.to_string(),
+    };
     let mut text = format!(
-        "=== w {}: on {}, started by {} {} ago ===\n",
+        "=== w {}: on {}, started by {owner} {} ago ===\n",
         record.id,
         record.machine,
-        record.owner,
         ago(record.started_at, now)
     );
     let state = match (&record.end, &record.exit) {
@@ -166,9 +176,9 @@ fn job_detail(record: &JobRecord, now: Timestamp) -> String {
     };
     text.push_str(&format!("state    {state}\n"));
     text.push_str(&format!("command  {}\n", first_line(&record.script)));
-    text.push_str(&format!("output   {} {}\n", record.machine, record.output));
+    text.push_str(&format!("output   {} {}\n", record.machine, shown(&record.output)));
     if let Some(stderr) = &record.stderr {
-        text.push_str(&format!("stderr   {} {stderr}\n", record.machine));
+        text.push_str(&format!("stderr   {} {}\n", record.machine, shown(stderr)));
     }
     text
 }

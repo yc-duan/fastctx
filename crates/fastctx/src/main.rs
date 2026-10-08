@@ -29,7 +29,7 @@ mod world;
 mod writers;
 
 #[derive(Parser)]
-#[command(name = "fastctx", version, about = "One world, many machines.")]
+#[command(name = "fastctx", bin_name = "fastctx", version, about = "One world, many machines.")]
 struct Cli {
     /// Without a command, in a terminal, the TUI opens.
     #[command(subcommand)]
@@ -109,7 +109,8 @@ enum Command {
         #[arg(long, default_value = "on", value_parser = ["on", "off"])]
         writes: String,
     },
-    /// Look at files: text with line numbers, images as images.
+    /// Look at files: text with line numbers, images as images, a PDF's text
+    /// by page or its pages as images, Word, PowerPoint and Excel content.
     View(view::ViewArgs),
     /// Edit a file using SEARCH/REPLACE blocks from standard input.
     Edit(writers::EditArgs),
@@ -119,33 +120,47 @@ enum Command {
     /// writes one: `*** Begin Patch` … `*** End Patch`; paths are absolute.
     #[command(hide = true)]
     ApplyPatch,
-    /// See who is here and what each is doing.
+    /// See what runs and who works now, and what happened since your last
+    /// turn; with ids, those sessions or jobs.
     W(w::WArgs),
-    /// Run part of a script on another machine; the World's shell calls it
-    /// as `on`.
+    /// Run part of a script on another of the user's machines.
     #[command(override_usage = on::USAGE, after_help = on::AFTER_HELP)]
     On(on::OnArgs),
-    /// Stop a job and everything it started, on whichever machine it runs.
+    /// Stop jobs and everything they started, on whichever machine each runs.
     Stop(stop::StopArgs),
-    /// See the World's machines: which are online and what each is like.
+    /// List the user's machines: which are online and what each is like.
     Nodes,
-    /// Copy a file or a directory from one machine to another.
+    /// Copy files and directories from one of the user's machines to another.
+    ///
+    /// Each end is MACHINE:PATH, or a path on this machine; the last is the
+    /// destination. The destination path is what the copy becomes; ending it
+    /// with / copies into that directory instead, as several sources must. Files already there with the same contents are not
+    /// sent again, so running the same copy again sends only what changed.
+    /// Links are copied as links. The bytes go between the machines, never
+    /// through the terminal.
     Copy(copy::CopyArgs),
     /// Talk to a resident on any machine, or open a session to talk to.
     Talk(talk::TalkArgs),
     /// Open a resident of this machine in its agent's own interface, in
     /// this terminal.
     Attach(attach::AttachArgs),
-    /// The towns: list, show, map and enter them; open one or write the
-    /// next version of its record.
+    /// The user's projects: list, show, map and enter them; open one or
+    /// write the next version of its record.
+    ///
+    /// A fastctx project is not a folder or a repository: it is a named
+    /// piece of the user's work that can span several machines. Its record
+    /// says what it is for, which machines it spans, and where its code and
+    /// data are on each; its journals hold the history of the work, and its
+    /// pages show live facts to the user. Its map puts all of that in one
+    /// answer.
     #[command(subcommand)]
     Project(project::ProjectCommand),
-    /// A town's journals: history, not verdicts. Add an entry, describe a
-    /// journal, read or list them.
+    /// A project's journals: history, not verdicts. Add an entry, describe
+    /// a journal, read or list them.
     #[command(subcommand, after_long_help = fastctx_hands::town::JOURNALS)]
     Journal(journal::JournalCommand),
-    /// A town's pages: HTML the user opens in World's interface, live
-    /// with the World's facts. Publish, read or list them.
+    /// A project's pages: HTML the user opens in the World app, showing
+    /// live facts of the machines and sessions. Publish, read or list them.
     #[command(subcommand, after_long_help = page::PAGE_HELP)]
     Page(page::PageCommand),
     /// Join a World with a code.
@@ -191,7 +206,10 @@ fn main() -> ExitCode {
         eprintln!("fastctx: {error:#}");
         return ExitCode::FAILURE;
     }
-    let cli = Cli::parse();
+    let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&command_line().get_matches()) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
+    };
     let Some(command) = cli.command else {
         // The TUI needs a terminal on both sides; anything else asked for
         // help, as a command without arguments does.
@@ -199,7 +217,7 @@ fn main() -> ExitCode {
         if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
             return finish(fastctx_tui::run().map(|()| ExitCode::SUCCESS));
         }
-        let _ = <Cli as clap::CommandFactory>::command().print_help();
+        let _ = command_line().print_help();
         return ExitCode::from(2);
     };
     let result = match command {
@@ -259,6 +277,26 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The commands a person runs on a machine: its node, joining and managing
+/// the World, talking to residents, the TUI.
+const PEOPLE_ONLY: [&str; 18] = [
+    "ui", "node", "renew", "service", "server", "serve", "talk", "attach", "join", "invite", "grant", "route", "relay",
+    "revoke", "leave", "hub", "apply", "unapply",
+];
+
+/// The command line; in a resident's shell its help lists what a resident
+/// works with, the others staying callable.
+fn command_line() -> clap::Command {
+    let mut command = <Cli as clap::CommandFactory>::command();
+    if std::env::var_os("FASTCTX_RESIDENT").is_some() {
+        command = command.about("Commands for working on this machine and the user's other machines.");
+        for name in PEOPLE_ONLY {
+            command = command.mut_subcommand(name, |subcommand| subcommand.hide(true));
+        }
+    }
+    command
 }
 
 /// A command that sets its own exit code, or fails.

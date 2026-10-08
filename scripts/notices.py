@@ -28,6 +28,7 @@ def main():
     patch_notice = (ROOT/'crates/fastctx-hands/src/write/patch/NOTICE').read_text(encoding='utf-8')
     pdf_notice = (ROOT/'crates/fastctx-pdf/src/NOTICE').read_text(encoding='utf-8')
     oxide_notice = (ROOT/'vendor/pdf_oxide/NOTICE').read_text(encoding='utf-8')
+    office_notice = (ROOT/'crates/fastctx-office/NOTICE').read_text(encoding='utf-8')
     with args.output.open('a', encoding='utf-8', newline='\n') as output:
         output.write(ripgrep.notices())
         output.write('\n'+args.syntax_notices.read_text(encoding='utf-8'))
@@ -36,6 +37,7 @@ def main():
         output.write('\n## PDFOxide upstream NOTICE\n\n'+oxide_notice)
         output.write('\nLocal modifications to pdf_oxide 0.3.78 are described in '
                      'vendor/pdf_oxide/FASTCTX-PATCH.md in the fastctx source distribution.\n')
+        output.write('\n## Office formula function metadata\n\n'+office_notice+'\n')
         output.write('\n## Rust standard library\n\n'+copyright_text+'\n')
         output.write('\n## Rust toolchain and bundled native runtime notices\n\n'+native_copyright+'\n')
         # MPL dependencies need a source location, not just a license text.

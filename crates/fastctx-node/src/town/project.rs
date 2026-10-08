@@ -45,10 +45,12 @@ async fn new(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFi
     let _writing = node.writing.lock().await;
     crate::ledger::query(node, Some(&town)).await.map_err(Failure::new)?;
     if blocking(node, &town, read::latest).await?.is_some() {
-        return Err(Failure::new(format!("the town {town} exists already; fastctx project edit {town} changes it")));
+        return Err(Failure::new(format!(
+            "the project {town} exists already; `fastctx project edit {town}` changes it"
+        )));
     }
-    let name = fields.name.ok_or_else(|| Failure::new("a new town needs its name (--name)"))?;
-    let what = fields.what.ok_or_else(|| Failure::new("a new town needs to say what it is (--what)"))?;
+    let name = fields.name.ok_or_else(|| Failure::new("a new project needs its name (--name)"))?;
+    let what = fields.what.ok_or_else(|| Failure::new("a new project needs to say what it is (--what)"))?;
     let record = Record {
         version: 1,
         name,
@@ -63,7 +65,7 @@ async fn new(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFi
     let record = checked(node, record).await?;
     write(node, &town, &record).await.map_err(|failure| {
         if failure.message.contains("already") {
-            Failure::new(format!("a town named {town} is in the World already ({failure})"))
+            Failure::new(format!("a project named {town} exists already ({failure})"))
         } else {
             failure
         }
@@ -99,7 +101,7 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
     write(node, &town, &record).await.map_err(|failure| {
         if failure.message.contains("already") {
             Failure::new(format!(
-                "another version {} of {town}'s record was written first; see it with fastctx project show {town} and edit from there",
+                "another version {} of {town}'s record was written first; see it with `fastctx project show {town}` and edit from there",
                 record.version
             ))
         } else {
@@ -114,7 +116,7 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
 /// written the way their machines write them.
 async fn checked(node: &Arc<Node>, mut record: Record) -> Result<Record, Failure> {
     if record.machines.is_empty() {
-        return Err(Failure::new("a town spans at least one machine"));
+        return Err(Failure::new("a project spans at least one machine"));
     }
     let known = machines(node).await;
     let unknown = |machine: &MachineName| !known.contains(machine);
@@ -125,7 +127,7 @@ async fn checked(node: &Arc<Node>, mut record: Record) -> Result<Record, Failure
         .chain(record.canon.iter().map(|canon| &canon.machine));
     if let Some(stranger) = named.into_iter().find(|machine| unknown(machine)) {
         return Err(Failure::new(format!(
-            "{stranger} is not a machine of this World; its machines are {}",
+            "there is no machine named {stranger}; the machines are {}",
             known.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
         )));
     }

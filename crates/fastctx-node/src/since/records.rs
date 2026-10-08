@@ -425,7 +425,9 @@ impl Scan<'_> {
             files.turns.insert(id, incoming);
             return;
         };
-        if prior.at != incoming.at || prior.end != incoming.end {
+        // The records of one turn's end are written moments apart, so their
+        // times differ by design; only a different outcome is a disagreement.
+        if prior.end != incoming.end {
             self.issues.push(SinceIssue { source: incoming.sources[0].path.clone(), reason: format!("records of turn {id} disagree; the terminal record takes precedence over message rows and session events") });
         }
         if let Some(readers) = &mut prior.readers

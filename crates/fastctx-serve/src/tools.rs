@@ -1,4 +1,9 @@
 //! The World's tools as a session sees them.
+//!
+//! Everything here is read by a model. It says what the model's working
+//! environment is and how to act in it, in words the model already knows:
+//! the user's machines, projects, sessions, colleagues, jobs. The design's
+//! own words (World, resident, town) stay out.
 
 use fastctx_hands::run::{Content, window};
 use serde_json::{Value, json};
@@ -10,20 +15,28 @@ pub struct Machines {
     pub others: Vec<String>,
 }
 
-/// The tools this session lists: the World's shell, and the colleague tools,
-/// which a colleague has none of: the World is one level deep
+/// The tools this session lists: the shell, and the colleague tools, which a
+/// colleague has none of: the World is one level deep
 /// (`world-colleagues.md`). Writing files and going to other machines are
-/// commands in the shell (`world-run.md`, `world-write.md`).
-pub fn definitions(writes_off: bool, colleague: bool, machines: Option<&Machines>) -> Value {
-    let mut tools = vec![run_definition(writes_off, machines)];
+/// commands in the shell (`world-run.md`, `world-write.md`). `woken` says
+/// whether the World can start a turn here when a job ends or an answer
+/// comes; elsewhere they come with the answer of the next tool call.
+pub fn definitions(writes_off: bool, colleague: bool, woken: bool, machines: Option<&Machines>) -> Value {
+    let mut tools = vec![run_definition(writes_off, woken, machines)];
     if !colleague {
-        tools.push(ask_colleague_definition(machines));
+        tools.push(ask_colleague_definition(woken, machines));
         tools.push(message_colleague_definition());
     }
     for tool in &mut tools {
         // Claude Code counts UTF-16 code units here. One Unicode scalar
         // uses at most two, including every supplementary-plane character.
-        tool["_meta"] = json!({ "anthropic/maxResultSizeChars": 2 * window::BUDGET });
+        // Its tool search would otherwise show the model only these tools'
+        // names, and `run` stands in for a shell whose description it
+        // always saw.
+        tool["_meta"] = json!({
+            "anthropic/maxResultSizeChars": 2 * window::BUDGET,
+            "anthropic/alwaysLoad": true,
+        });
     }
     Value::Array(tools)
 }
@@ -35,33 +48,41 @@ fn machine_names(machines: Option<&Machines>) -> String {
         Some(machines) => {
             let mut names = vec![format!("{} (this one)", machines.here)];
             names.extend(machines.others.iter().cloned());
-            format!("The World's machines when this session began: {}.", names.join(", "))
+            format!("The user's machines, connected by fastctx: {}.", names.join(", "))
         }
-        None => "`fastctx nodes` lists the World's machines.".to_string(),
+        None => "The user's machines are connected by fastctx; `fastctx nodes` lists them.".to_string(),
     }
 }
 
-/// The `node` parameter of the colleague tool.
-fn node(subject: &str, machines: Option<&Machines>) -> Value {
-    let description = format!("{subject}, by name; without it, this machine. {}", machine_names(machines));
-    json!({ "type": "string", "description": description })
+/// `run`'s `cwd`: weaker models reach for it to work on another machine's
+/// files, which only `on` does.
+fn cwd_description(machines: Option<&Machines>) -> String {
+    let here = machines.map(|machines| format!(" ({})", machines.here)).unwrap_or_default();
+    format!(
+        "Absolute path of a directory on this machine{here} to start in; without it, the home directory. For a directory on another machine, write `on MACHINE` in the script and `cd` there."
+    )
 }
 
-fn run_definition(writes_off: bool, machines: Option<&Machines>) -> Value {
+fn run_definition(writes_off: bool, woken: bool, machines: Option<&Machines>) -> Value {
     let writing = if writes_off { "" } else { RUN_WRITING };
+    let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
     json!({
         "name": "run",
-        "description": format!("{RUN_START}{}\n\n{RUN_REST}{writing}{RUN_COMMANDS}", machine_names(machines)),
+        "description": format!(
+            "{} {RUN_START}\n\n{RUN_SHELL}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{}\n\n{RUN_COMMANDS}",
+            machine_names(machines),
+            run_together(writes_off)
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The bash script to run, exactly as bash should read it."
+                    "description": "The bash script to run."
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "The absolute path of the directory to start in, on this machine. Without it the script starts in the home directory."
+                    "description": cwd_description(machines)
                 }
             },
             "required": ["command"],
@@ -78,54 +99,103 @@ fn run_definition(writes_off: bool, machines: Option<&Machines>) -> Value {
 }
 
 const RUN_START: &str = "\
-Run a bash script on this machine and read what it prints. Inside it, `on MACHINE` runs a part of it on another machine of the World, with no address, login or key. ";
+This tool is your shell on all of them: it runs a bash script on this machine, and inside the script `on MACHINE` runs a part of it on another machine, with no address, login or key.";
 
-const RUN_REST: &str = "\
-`on` takes a command and its words, sent exactly as this shell expanded them, or a script on standard input, read only by that machine's bash:
-  on laptop cargo test --release
-  on hangzhou <<'EOF'
-  cd /srv/app && tail -n 200 app.log | grep ERROR
-  EOF
-It acts as a subshell placed there: the script's own variables and functions go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused. If the connection drops, it goes on there and its end still reaches you.
+const RUN_SHELL: &str = "\
+Shell:
+- Every machine runs bash with the GNU tools and `rg`, Windows ones too (Git Bash). Write Windows paths like C:/Users/me, and use `ls`, `find`, `du` and `df` rather than PowerShell.
+- Git Bash rewrites arguments that look like Unix paths, such as /FI, before a Windows program sees them. Put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
+- Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together.
+- Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other. The steps of one piece of work belong in one script; separate pieces of work can go in separate calls.
+- Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
+- A call waits up to 15 seconds. A script still running then goes on in the background, and the answer names the file its output continues in. ";
 
-Every machine runs bash with the GNU tools and ripgrep (`rg`), Windows ones too (Git Bash), where paths are written like C:/Users/me and `df`, `du`, `ls` and `find` answer what PowerShell would. Git Bash rewrites arguments shaped like Unix paths, such as /FI, before a Windows program sees them: put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
+const RUN_ENDS_WOKEN: &str = "You are told when it ends; meanwhile you can do other work, or end your turn.";
 
-Each call is a fresh login shell, starting in the home directory unless `cwd` names another; nothing carries over between calls, and standard input is empty. Standard output and standard error arrive together. Images a program draws with the kitty or iTerm2 terminal protocols come back as images. A call waits up to 15 seconds; a script still running then goes on in the background, the answer names the file its output continues in, and you are told when it ends.
+const RUN_ENDS_ASKED: &str = "\
+When it has ended, the answer of your next call to this tool says so, with its last lines; until then `fastctx w ID` says whether it still runs.";
 
-The World's commands in this shell; each explains itself with --help:
+const RUN_FILES: &str = "\
+Files:
+- `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. Use it for any file you need to look at:
+    fastctx view /srv/app/src/main.rs /srv/app/README.md
+    fastctx view --lines 120-180 /srv/app/src/main.rs
+    fastctx view C:/Users/me/Pictures/chart.png
+    fastctx view --pages 3-5 /srv/app/design.pdf
+    fastctx view --image --pages 3 /srv/app/design.pdf
+    fastctx view --sheet Sales --range B2:F40 C:/Users/me/q3.xlsx
+  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. `--encoding gbk` reads text in an encoding you name, when the one shown is wrong.
 ";
 
 const RUN_WRITING: &str = "\
-- `edit PATH` changes a file by the blocks on its standard input: `<<<<<<< SEARCH`, the exact text now in the file, `=======`, what replaces it, `>>>>>>> REPLACE`. The text must be there exactly once (`--all` replaces every one); all blocks apply, or none.
-- `write PATH` makes standard input the whole file (`-n` leaves off the final newline).
-  Give their text as a quoted here-document, <<'EOF', so bash changes nothing in it; paths are absolute.
+- `edit PATH` changes a file with SEARCH/REPLACE blocks on standard input:
+    edit /srv/app/app.ini <<'EOF'
+    <<<<<<< SEARCH
+    port = 8080
+    =======
+    port = 8081
+    >>>>>>> REPLACE
+    EOF
+  The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. The file keeps its encoding and line endings.
+- `write PATH` makes standard input the whole file (`-n`: no final newline).
+- `edit` and `write` take absolute paths. Quote the here-document delimiter, <<'EOF', so bash leaves the text as written.
 ";
 
-const RUN_COMMANDS: &str = "\
-- `fastctx view PATH...` shows files with line numbers, several at once, images as images; a PDF as its text by page, `--pages 3-5` to choose, `--image` to see them.
-- `fastctx w` shows what is happening in your town now and what happened since your last turn; `fastctx w ID` shows one resident or job.
-- `fastctx nodes` lists the machines, which are online and what each runs.
-- `fastctx copy MACHINE:PATH MACHINE:PATH` copies files and directories between machines.
-- `fastctx stop JOB` stops a job and everything it started.
-- `fastctx project` lists the towns, each a project, and shows their maps; `fastctx project enter TOWN` moves you into one, only when the user says which project to work on.
-- `fastctx journal` reads and adds to your town's journals; `fastctx page` publishes a page, HTML the user opens in the World's app.";
+const RUN_COPY: &str = "\
+- `fastctx copy SOURCE... DEST` copies files and directories between machines, each end MACHINE:PATH or a path on this machine. DEST is what the copy becomes; end it with / to copy into that directory, as several sources need.";
 
-fn ask_colleague_definition(machines: Option<&Machines>) -> Value {
+const RUN_ON: &str = "\
+Other machines: write `on MACHINE` before a command, or give it a script on standard input:
+    on laptop cargo test --release
+    on server <<'EOF'
+    cd /srv/app && tail -n 200 app.log | grep ERROR
+    EOF
+- The part sent there sees your script's variables, functions and shell options; PATH, HOME, LANG and the machine's other settings are its own.
+- Its output, exit code and standard input work like any command's, in pipelines and `if` too.
+- A script quoted as one word, such as `on server 'cd /srv && ls'`, is refused: use a here-document.
+- If the connection drops, it goes on there, and its end still reaches you.
+- Every command here works there too, such as `on server fastctx view /srv/app/app.ini`.";
+
+/// The commands as programs a script combines; the example of piping into
+/// `write` goes when the World's write commands are off.
+fn run_together(writes_off: bool) -> String {
+    let write = if writes_off { "" } else { "\n    python3 render.py | write /srv/app/config.json" };
+    format!(
+        "\
+Putting commands together: every command here, `on` and the fastctx ones included, is an ordinary program in your script. Its arguments, standard input and output, and exit code work as any command's, so combine them as you would `cat` or `grep`: pipelines, loops, `$( )`, `&&`, `xargs`, `&` with `wait`. For example:
+    fastctx view /srv/app/src/*.rs
+    rg -l0 'TODO' /srv/app | fastctx view --files0-from -{write}
+    for m in laptop server; do on \"$m\" df -h / & done; wait
+    diff <(on laptop cat C:/work/app.ini) <(on server cat /srv/app/app.ini)"
+    )
+}
+
+const RUN_COMMANDS: &str = "\
+More commands (`--help` on each gives all its options):
+- `fastctx nodes` lists the machines, which are online, and what each runs.
+- `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID...` shows those sessions or jobs.
+- `fastctx stop JOB...` stops background jobs and everything they started.
+- `fastctx project` lists the user's projects and shows their maps. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its map says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
+- `fastctx journal` reads and adds to the project's journals, the history of its work. `fastctx page` publishes an HTML page the user opens in the World app.";
+
+fn ask_colleague_definition(woken: bool, machines: Option<&Machines>) -> Value {
+    let delivered = if woken { "" } else { " with the answer of your next call to a fastctx tool" };
+    let node = format!("The machine the colleague works on; without it, this one. {}", machine_names(machines));
     json!({
         "name": "ask_colleague",
-        "description": ASK_COLLEAGUE_DESCRIPTION,
+        "description": ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "What you need from the colleague, in your own words. It is delivered word for word as its first message."
+                    "description": "What you need from the colleague, in your own words. It becomes the colleague's first message, word for word, under a line naming you."
                 },
                 "description": {
                     "type": "string",
-                    "description": "A label for the task in three to eight words, shown beside the colleague in fastctx w."
+                    "description": "A label for the task in three to eight words, shown beside the colleague in `fastctx w`."
                 },
-                "node": node("The machine the colleague works on", machines)
+                "node": { "type": "string", "description": node }
             },
             "required": ["prompt", "description"],
             "additionalProperties": false
@@ -141,18 +211,25 @@ fn ask_colleague_definition(machines: Option<&Machines>) -> Value {
 }
 
 const ASK_COLLEAGUE_DESCRIPTION: &str = "\
-Ask a colleague to take on a part of the work: a GPT resident of the World, started through Codex, which works on its own while you go on.
+Start a colleague on a part of the work: a GPT agent, run by Codex, that works on its own while you go on. The call returns its id at once.
 
-Unlike a subagent of your own, which lives inside this conversation, a colleague lives in the World: it works on whichever machine `node` names, it keeps working if you stop, and everyone in the town can see it with `fastctx w`. The call returns at once with the colleague's id. Each time the colleague ends a turn, its last message is delivered to you, under a line saying how the turn ended; that message is its answer, or its question to you. Reply, or give it more, with message_colleague. See what it is doing at any time with `fastctx w <id>`.
+A colleague is not a subagent inside this conversation. It works on whichever of the user's machines `node` names, it keeps working if you stop, and `fastctx w ID` shows what it is doing. Each time it ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended: that message is its answer, or its question to you. Reply, or give it more, with message_colleague.
 
-Working with a colleague:
-- GPT is strong on a part and weak on the whole. Within one part it reads all of the material before acting, works a hard point for hours, changes its approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not yet taken shape, or to build a whole thing from nothing, it returns pieces that are careful one by one and have no idea holding them together.
-- Build the whole yourself, and hand out the parts as they appear: a piece of code whose need can be stated and whose result facts can judge, something that must be airtight, a behaviour nobody understands yet, a detail that must be exactly right, an exhaustive check of an outside fact such as an interface or a program's real behaviour, a counterexample to make, an experiment or a measurement that answers a definite question. The moment you are about to read through a pile of material, try a set of cases or make something airtight is the moment to ask. That you could do it in a few minutes is no reason to keep it: done in minutes, it is often done shallowly.
-- Do not use it mainly to review what you made; that is its weakest use. Give it things to build, find out or measure.
-- Say what this part needs and why, and where things stand. Point at the material rather than summarizing it. Do not fence it in with which files it may touch or which checks it must pass, and do not tell it how to work: that is where it is strongest. Tell it the rules it must keep: what must not be broken, and the limits of anything shared it will touch, such as a server's memory.
-- To learn a fact, ask a question that facts answer, not for its opinion of a plan.
-- When it reports, check the claims you will build on. If it answers a different question than the one you asked, ask again: does it hold, yes or no, and what is the evidence.
-- One part, one colleague; several can work at once. Colleagues that might touch the same files each work on their own copy, such as their own git worktree, and you merge.";
+When to ask one:
+- GPT is strong on a part and weak on the whole. Within one part it reads all the material before acting, works a hard point for hours, changes approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not taken shape, or to build a whole thing from nothing, it returns pieces that are each careful and have no idea holding them together.
+- So keep the whole yourself, and hand out parts as they come up: code whose need you can state and whose result facts can judge; something that must be airtight; a behavior nobody understands yet; a detail that must be exactly right; an exhaustive check of an outside fact, such as an interface or a program's real behavior; a counterexample to construct; an experiment or measurement that answers a definite question.
+- Ask when you are about to read through a pile of material, try a set of cases, or make something airtight. Being able to do it in a few minutes is no reason to keep it: done in minutes, it is often done shallowly.
+- Do not use it mainly to review your work; that is its weakest use. Give it things to build, find out or measure.
+
+Writing the prompt:
+- Say what this part needs, why, and where things stand. Point to the material rather than summarizing it.
+- Do not limit which files it may touch or which checks it must pass, and do not tell it how to work: that is where it is strongest.
+- State the rules it must keep: what must not break, and the limits of anything shared it will use, such as a server's memory.
+- To learn a fact, ask a question facts can answer, not for its opinion of a plan.
+
+When it reports:
+- Check the claims you will build on. If it answered a different question, ask again: does it hold, yes or no, and what is the evidence?
+- One part, one colleague; several can work at once. Colleagues that might touch the same files each work in their own copy, such as a git worktree, and you merge.";
 
 fn message_colleague_definition() -> Value {
     json!({
@@ -163,7 +240,7 @@ fn message_colleague_definition() -> Value {
             "properties": {
                 "to": {
                     "type": "string",
-                    "description": "The colleague's id as ask_colleague or fastctx w gave it, such as codex-7f3a. Write codex-7f3a@laptop to name the machine it lives on."
+                    "description": "The colleague's id, as ask_colleague or `fastctx w` gave it, such as codex-7f3a. Write codex-7f3a@laptop to name the machine it is on."
                 },
                 "message": {
                     "type": "string",
@@ -184,9 +261,10 @@ fn message_colleague_definition() -> Value {
 }
 
 const MESSAGE_COLLEAGUE_DESCRIPTION: &str = "\
-Send words to a colleague: one you asked for, or any other in the town, including one that has gone to sleep.
-
-If it is working, the words join its current turn at its next tool call; if it is idle or asleep, they start a new turn. Either way, the last message of the turn they go into is delivered to you. A colleague on another machine gets them as soon as its machine is reachable.";
+Send a message to a colleague: one you started, or any other that `fastctx w` shows, including one that is idle or asleep.
+- If it is working, the message joins its current turn at its next tool call; otherwise it starts a new turn.
+- The last message of the turn it goes into is delivered to you.
+- A colleague on a machine that is offline gets it when the machine is back.";
 
 /// A tool's answer as MCP carries it.
 pub fn result(content: &[Content], is_error: bool) -> Value {

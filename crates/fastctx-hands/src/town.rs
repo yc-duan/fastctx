@@ -15,7 +15,7 @@ pub const JOURNALS: &str = "\
 This project keeps journals. They are history, not verdicts. Write only
 sentences that will still be true a year from now, whatever is found later.
 
-Add an entry when something happened that the next resident here needs and
+Add an entry when something happened that whoever works here next needs and
 cannot recover from the specs, the code, or git:
   - you tried something and it did not go as you meant, or you turned to
     another path;
@@ -43,14 +43,14 @@ it found. Earlier entries record what someone saw under their conditions.
 Do not defer to them because they are older or because another model wrote
 them: test them, and add what you see. When your entry answers an earlier
 one, cite that entry's id. Never change an entry, yours included; add a new
-one. Journal files are read-only copies; write only through fastctx journal.";
+one. Journal files are read-only copies; write only through `fastctx journal`.";
 
 /// The town's map: its record, then each journal and each document of its
 /// canon in a line.
 pub fn map(view: &MapView) -> String {
     let record = &view.record;
     let mut text =
-        format!("=== the town {} ({}), version {} of its record ===\n", view.town, record.name, record.version);
+        format!("=== project {} ({}), version {} of its record ===\n", view.town, record.name, record.version);
     text.push_str(&format!("What it is: {}\n", record.what));
     text.push_str(&format!("Machines: {}\n", names(&record.machines)));
     if record.places.is_empty() {
@@ -76,12 +76,12 @@ pub fn map(view: &MapView) -> String {
 
     if view.journals.is_empty() {
         text.push_str(&format!(
-            "Journals: none yet. They are files in {}/journals; start one with fastctx journal add.\n",
+            "Journals: none yet. They are files in {}/journals; start one with `fastctx journal add`.\n",
             view.ledger
         ));
     } else {
         text.push_str(&format!(
-            "Journals ({}, the latest written first; files in {}/journals; read one with fastctx journal read <journal>):\n",
+            "Journals ({}, the latest written first; files in {}/journals; read one with `fastctx journal read JOURNAL`):\n",
             view.journals.len(),
             view.ledger
         ));
@@ -90,27 +90,34 @@ pub fn map(view: &MapView) -> String {
         }
     }
 
-    text.push_str(&format!("\nPages ({}; read one with fastctx page read <page>):\n", view.pages.len()));
+    text.push_str(&format!("\nPages ({}; read one with `fastctx page read PAGE`):\n", view.pages.len()));
     for page in &view.pages {
         text.push_str(&format!("  {}\n", crate::pages::line(page)));
     }
 
     match (&record.canon, &view.canon) {
-        (None, _) => text.push_str("\nCanon: none listed.\n"),
-        (Some(canon), Some(Ok(heads))) if heads.is_empty() => {
-            text.push_str(&format!("\nCanon: {} {}, which holds no documents.\n", canon.machine, canon.path))
-        }
+        (None, _) => text.push_str("\nDecisions settled with the user: none listed.\n"),
+        (Some(canon), Some(Ok(heads))) if heads.is_empty() => text.push_str(&format!(
+            "\nDecisions settled with the user: {} {}, which holds no documents.\n",
+            canon.machine, canon.path
+        )),
         (Some(canon), Some(Ok(heads))) => {
-            text.push_str(&format!("\nCanon, one document a line ({} {}):\n", canon.machine, canon.path));
+            text.push_str(&format!(
+                "\nDecisions settled with the user, one document a line ({} {}):\n",
+                canon.machine, canon.path
+            ));
             for head in heads {
                 let scope = if head.scope.is_empty() { String::new() } else { format!(" {}", head.scope) };
                 text.push_str(&format!("  {}: {}.{scope}\n", head.file, head.title.trim_end_matches('.')));
             }
         }
-        (Some(canon), Some(Err(why))) => {
-            text.push_str(&format!("\nCanon: {} {}, not readable now: {why}\n", canon.machine, canon.path))
+        (Some(canon), Some(Err(why))) => text.push_str(&format!(
+            "\nDecisions settled with the user: {} {}, not readable now: {why}\n",
+            canon.machine, canon.path
+        )),
+        (Some(canon), None) => {
+            text.push_str(&format!("\nDecisions settled with the user: {} {}\n", canon.machine, canon.path))
         }
-        (Some(canon), None) => text.push_str(&format!("\nCanon: {} {}\n", canon.machine, canon.path)),
     }
     text
 }
@@ -249,7 +256,7 @@ pub fn entry_writer(stamp: &EntryStamp) -> String {
             });
         }
         Writer::Session { agent } => {
-            parts.push(format!("a {} session the World does not know, on {}", program(agent, "", ""), stamp.machine));
+            parts.push(format!("a {} session fastctx does not know, on {}", program(agent, "", ""), stamp.machine));
             if let Some(model) = &stamp.model {
                 parts.push(format!("model {} (self-reported)", model.name));
             }
@@ -265,7 +272,7 @@ pub fn writer(by: &Writer, on: &MachineName) -> String {
         Writer::User => "the user".to_string(),
         Writer::Resident { address } if address.machine == *on => address.resident.to_string(),
         Writer::Resident { address } => address.tag(),
-        Writer::Session { agent } => format!("a {} session the World does not know", program(agent, "", "")),
+        Writer::Session { agent } => format!("a {} session fastctx does not know", program(agent, "", "")),
     }
 }
 
