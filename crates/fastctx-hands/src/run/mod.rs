@@ -5,8 +5,10 @@
 //! the resident who started it is told when it ends. Every byte of output
 //! is kept in a log on the machine where it ran.
 
+pub mod control;
 pub mod last;
 pub mod launch;
+mod output;
 pub mod present;
 pub mod program;
 pub mod record;
@@ -17,7 +19,8 @@ pub mod window;
 
 use std::time::Duration;
 
-pub use launch::{Launch, Launched, launch};
+pub use control::stop;
+pub use launch::{Launch, Launched, launch, launch_with_io};
 pub use present::{Content, present};
 
 /// How long a `run` call waits before its job goes on in the background
