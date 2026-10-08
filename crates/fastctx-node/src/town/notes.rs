@@ -40,7 +40,9 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
 
 fn introduction(id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> String {
     match town {
-        Some(town) => format!("=== you are {id} on {here}, working in the project {town}; its map: `fastctx project map` ==="),
+        Some(town) => {
+            format!("=== you are {id} on {here}, working in the project {town}; its map: `fastctx project map` ===")
+        }
         // When to enter a project is said once, in the session's guidance.
         None => format!("=== you are {id} on {here}, in no project ==="),
     }

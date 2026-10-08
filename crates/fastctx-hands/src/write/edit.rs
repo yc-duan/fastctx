@@ -91,7 +91,9 @@ fn replace(
     let plain = Plain::of(&document.text);
     let old = block.old.replace("\r\n", "\n");
     let Some(first) = plain.text.find(&old) else {
-        return Err("SEARCH was not found; view the current file and copy its text exactly, including whitespace".into());
+        return Err(
+            "SEARCH was not found; view the current file and copy its text exactly, including whitespace".into()
+        );
     };
     // Count overlapping occurrences too: "aa" occurs twice in "aaa".
     let next = first + old.chars().next().expect("nonempty pattern").len_utf8();

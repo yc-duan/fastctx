@@ -613,9 +613,7 @@ fn town_of(node: &Node, resident: &ResidentId) -> Result<Option<TownName>, Failu
 }
 
 fn member(node: &Node) -> Result<Arc<fastctx_net::link::Link>, Failure> {
-    node.link().ok_or_else(|| {
-        Failure::new(format!("{} is not connected to any other machine", node.machine()))
-    })
+    node.link().ok_or_else(|| Failure::new(format!("{} is not connected to any other machine", node.machine())))
 }
 
 /// Runs a script for a resident of this machine, here or on `target`, and

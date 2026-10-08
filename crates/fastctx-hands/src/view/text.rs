@@ -122,12 +122,11 @@ fn kind(start: &[u8]) -> Option<&'static str> {
 /// at its longest: the path, the machine, and numbers of up to twenty
 /// digits in the longest form of the facts.
 fn budget_for_body(path: &Path, options: &Options, budget: usize, encoding: &str) -> usize {
-    let longest_facts =
-        format!(
-            "{encoding}{}lines {n}-{n} of {n} shown; line {n}: characters 1-{n} of {n} shown",
-            line_endings(u64::MAX, u64::MAX),
-            n = u64::MAX
-        );
+    let longest_facts = format!(
+        "{encoding}{}lines {n}-{n} of {n} shown; line {n}: characters 1-{n} of {n} shown",
+        line_endings(u64::MAX, u64::MAX),
+        n = u64::MAX
+    );
     let head = head(path, options, &longest_facts).chars().count() + 1;
     budget.saturating_sub(head)
 }

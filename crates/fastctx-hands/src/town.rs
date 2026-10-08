@@ -97,20 +97,27 @@ pub fn map(view: &MapView) -> String {
 
     match (&record.canon, &view.canon) {
         (None, _) => text.push_str("\nDecisions settled with the user: none listed.\n"),
-        (Some(canon), Some(Ok(heads))) if heads.is_empty() => {
-            text.push_str(&format!("\nDecisions settled with the user: {} {}, which holds no documents.\n", canon.machine, canon.path))
-        }
+        (Some(canon), Some(Ok(heads))) if heads.is_empty() => text.push_str(&format!(
+            "\nDecisions settled with the user: {} {}, which holds no documents.\n",
+            canon.machine, canon.path
+        )),
         (Some(canon), Some(Ok(heads))) => {
-            text.push_str(&format!("\nDecisions settled with the user, one document a line ({} {}):\n", canon.machine, canon.path));
+            text.push_str(&format!(
+                "\nDecisions settled with the user, one document a line ({} {}):\n",
+                canon.machine, canon.path
+            ));
             for head in heads {
                 let scope = if head.scope.is_empty() { String::new() } else { format!(" {}", head.scope) };
                 text.push_str(&format!("  {}: {}.{scope}\n", head.file, head.title.trim_end_matches('.')));
             }
         }
-        (Some(canon), Some(Err(why))) => {
-            text.push_str(&format!("\nDecisions settled with the user: {} {}, not readable now: {why}\n", canon.machine, canon.path))
+        (Some(canon), Some(Err(why))) => text.push_str(&format!(
+            "\nDecisions settled with the user: {} {}, not readable now: {why}\n",
+            canon.machine, canon.path
+        )),
+        (Some(canon), None) => {
+            text.push_str(&format!("\nDecisions settled with the user: {} {}\n", canon.machine, canon.path))
         }
-        (Some(canon), None) => text.push_str(&format!("\nDecisions settled with the user: {} {}\n", canon.machine, canon.path)),
     }
     text
 }

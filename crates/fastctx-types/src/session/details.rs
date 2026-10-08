@@ -37,7 +37,8 @@ impl SessionChange {
                 // The use and the reason OpenAI gives, such as cyber and
                 // probes, say what the person who asked may want to change.
                 let listed = |key: &str| {
-                    let words: Vec<&str> = buffering[key].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    let words: Vec<&str> =
+                        buffering[key].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
                     if words.is_empty() { "unspecified".to_string() } else { words.join(", ") }
                 };
                 let text = format!(

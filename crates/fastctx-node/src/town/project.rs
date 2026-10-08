@@ -45,7 +45,9 @@ async fn new(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFi
     let _writing = node.writing.lock().await;
     crate::ledger::query(node, Some(&town)).await.map_err(Failure::new)?;
     if blocking(node, &town, read::latest).await?.is_some() {
-        return Err(Failure::new(format!("the project {town} exists already; `fastctx project edit {town}` changes it")));
+        return Err(Failure::new(format!(
+            "the project {town} exists already; `fastctx project edit {town}` changes it"
+        )));
     }
     let name = fields.name.ok_or_else(|| Failure::new("a new project needs its name (--name)"))?;
     let what = fields.what.ok_or_else(|| Failure::new("a new project needs to say what it is (--what)"))?;

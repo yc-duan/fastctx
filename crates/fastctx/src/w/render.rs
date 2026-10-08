@@ -157,7 +157,13 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 .last_action
                 .as_ref()
                 .map(|action| {
-                    format!("; {} {} ago: {} -> {}", action.hand, ago(action.at, now), brief(&action.what), action.result)
+                    format!(
+                        "; {} {} ago: {} -> {}",
+                        action.hand,
+                        ago(action.at, now),
+                        brief(&action.what),
+                        action.result
+                    )
                 })
                 .unwrap_or_default();
             resting.push_str(&format!(
@@ -210,7 +216,11 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
 pub(super) fn brief(command: &str) -> String {
     const WIDTH: usize = 100;
     let first = first_line(command);
-    if first.chars().count() <= WIDTH { first } else { format!("{} …", first.chars().take(WIDTH).collect::<String>()) }
+    if first.chars().count() <= WIDTH {
+        first
+    } else {
+        format!("{} …", first.chars().take(WIDTH).collect::<String>())
+    }
 }
 
 pub(super) fn person(address: &Address, machine: &MachineName) -> String {

@@ -18,14 +18,11 @@ encoding_rs = "0.8"
 fastctx-client = { path = "../fastctx-client" }
 fastctx-office = { path = "../fastctx-office" }
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-pdf = { path = "../fastctx-pdf" }
 fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
-hayro = "0.8"
 jiff.workspace = true
-memmap2 = "0.9"
 memchr = "2"
-miniz_oxide = "0.8"
-png = "0.18"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

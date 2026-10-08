@@ -79,9 +79,8 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
         );
     };
     let machine = MachineName::try_from(machine.as_str())?;
-    let resident: Address = std::env::var("FASTCTX_RESIDENT")
-        .context("on works only inside a script run by the run tool")?
-        .parse()?;
+    let resident: Address =
+        std::env::var("FASTCTX_RESIDENT").context("on works only inside a script run by the run tool")?.parse()?;
     let town = std::env::var("FASTCTX_TOWN").ok().map(TownName::try_from).transpose()?;
     let job = std::env::var("FASTCTX_JOB").ok().map(JobId::try_from).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
@@ -131,9 +130,13 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
                 // A subshell's background processes are its caller's to
                 // know about: the command ended, they did not.
                 OnEnd::Exited { remaining, .. } if *remaining > 0 => {
-                    let processes =
-                        if *remaining == 1 { "1 process it started".to_string() } else { format!("{remaining} processes it started") };
-                    let stop = job.map(|job| format!("; `fastctx stop {job}@{machine}` stops them")).unwrap_or_default();
+                    let processes = if *remaining == 1 {
+                        "1 process it started".to_string()
+                    } else {
+                        format!("{remaining} processes it started")
+                    };
+                    let stop =
+                        job.map(|job| format!("; `fastctx stop {job}@{machine}` stops them")).unwrap_or_default();
                     eprintln!("on: on {machine}, the command exited, but {processes} still run there{stop}");
                 }
                 OnEnd::Exited { .. } => {}

@@ -109,8 +109,8 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
         looked.iter().map(|one| detail::detail(one, now)).collect()
     };
     if client.is_none() {
-        print!(
-            "{text}node not running: local records only; current activity is unverified and other machines were not asked.\n"
+        println!(
+            "{text}node not running: local records only; current activity is unverified and other machines were not asked."
         );
     } else {
         print!("{text}");

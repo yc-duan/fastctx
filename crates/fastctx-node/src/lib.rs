@@ -121,9 +121,8 @@ pub(crate) struct Node {
     following: std::sync::Mutex<std::collections::HashMap<fastctx_types::JobId, usize>>,
     /// The jobs `on` sent from here to other machines, by machine and id,
     /// as a letter telling one's end finds them (`on`).
-    awaited: std::sync::Mutex<
-        std::collections::HashMap<(fastctx_types::MachineName, fastctx_types::JobId), on::Awaited>,
-    >,
+    awaited:
+        std::sync::Mutex<std::collections::HashMap<(fastctx_types::MachineName, fastctx_types::JobId), on::Awaited>>,
     effects_ready: std::sync::atomic::AtomicBool,
     effects_changed: tokio::sync::Notify,
     /// Whether turns may start, while a guardian may ask for the World to

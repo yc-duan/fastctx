@@ -242,11 +242,13 @@ async fn follow_there(
             (followed.out, followed.err)
         };
         let call = RemoteCall::Follow { origin: origin.clone(), job: job.clone(), out_from, err_from };
-        let following = feed(&machine, None, followed.clone(), pieces.clone(), None);
-        match link.call_with_stream(&machine, call, following).await {
+        let following = feed(machine, None, followed.clone(), pieces.clone(), None);
+        match link.call_with_stream(machine, call, following).await {
             Ok(Err(failure)) => return Err(Failure::new(format!("following {job} on {machine}: {failure}"))),
             Err(CallFailure::NotMember { name, .. }) => {
-                return Err(Failure::new(format!("{name} is no longer one of the user's machines; {job} was left there")));
+                return Err(Failure::new(format!(
+                    "{name} is no longer one of the user's machines; {job} was left there"
+                )));
             }
             Ok(Ok(_)) | Err(_) => {}
         }
@@ -477,9 +479,10 @@ pub async fn resume_stops(node: &Arc<Node>) {
         if path.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
-        let read = tokio::fs::read(&path).await.map_err(|error| error.to_string()).and_then(|bytes| {
-            serde_json::from_slice::<PendingStop>(&bytes).map_err(|error| error.to_string())
-        });
+        let read = tokio::fs::read(&path)
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| serde_json::from_slice::<PendingStop>(&bytes).map_err(|error| error.to_string()));
         let pending = match read {
             Ok(pending) => pending,
             Err(error) => {

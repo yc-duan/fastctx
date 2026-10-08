@@ -1,0 +1,24 @@
+[package]
+name = "fastctx-pdf"
+description = "Page text extraction and rendering with an embedded PDF engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+pdf_oxide = { version = "=0.3.78", default-features = false, features = ["legacy-crypto"] }
+fontdb = "0.24"
+hayro = "0.8"
+memmap2 = "0.9"
+miniz_oxide = "0.8"
+png = "0.18"
+skrifa = "0.46.2"
+unicode-bidi = "0.3.18"
+unicode-bidi-mirroring = "0.4"
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
