@@ -88,10 +88,10 @@ enum Command {
     ServiceCheck { name: String },
     /// Serve the World's tools to an agent session over MCP's stdio.
     Serve {
-        /// How the session writes files: `edit` lists edit and write,
-        /// `apply_patch` lists apply_patch.
-        #[arg(long, default_value = "edit", value_parser = ["edit", "apply_patch"])]
-        writer: String,
+        /// Accepted from configurations written when files were written with
+        /// tools of their own; files are written in the World's shell now.
+        #[arg(long, hide = true)]
+        writer: Option<String>,
         /// `off` turns the World's write commands off in this session's
         /// shell: they refuse and point at the host's own.
         #[arg(long, default_value = "on", value_parser = ["on", "off"])]
@@ -197,7 +197,7 @@ fn main() -> ExitCode {
         Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
         #[cfg(windows)]
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
-        Command::Serve { writer, writes } => serve(&writer, writes == "off"),
+        Command::Serve { writer: _, writes } => serve(writes == "off"),
         Command::View(args) => view::run(args),
         Command::W(args) => w::run(args),
         Command::On(args) => return on::run(args),
@@ -282,13 +282,9 @@ fn node(
     ))
 }
 
-fn serve(writer: &str, writes_off: bool) -> anyhow::Result<()> {
+fn serve(writes_off: bool) -> anyhow::Result<()> {
     let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let writer = if writer == "apply_patch" { fastctx_serve::Writer::ApplyPatch } else { fastctx_serve::Writer::Edit };
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?
-        .block_on(fastctx_serve::serve(world, writer, writes_off))
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_serve::serve(world, writes_off))
 }
 
 /// A supervisor has no terminal: what it would print about its own failure

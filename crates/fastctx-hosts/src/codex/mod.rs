@@ -1297,7 +1297,7 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {
             "command": binary,
-            "args": ["serve", "--writer", "apply_patch"],
+            "args": ["serve"],
             "env": env,
             "env_vars": [],
             "enabled": true,
