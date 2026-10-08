@@ -123,7 +123,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                         },
                     }
                 }
-                _ => Err(Failure::new("on is for the World's shell, as the resident whose script it is")),
+                _ => Err(Failure::new("on works only inside a script run by the run tool")),
             };
             writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
             continue;
@@ -614,7 +614,7 @@ fn town_of(node: &Node, resident: &ResidentId) -> Result<Option<TownName>, Failu
 
 fn member(node: &Node) -> Result<Arc<fastctx_net::link::Link>, Failure> {
     node.link().ok_or_else(|| {
-        Failure::new(format!("{} is in no World with other machines; `fastctx join` joins one", node.machine()))
+        Failure::new(format!("{} is not connected to any other machine", node.machine()))
     })
 }
 
@@ -638,7 +638,7 @@ async fn run(
         }
         Some(target) => {
             let link = node.link().ok_or_else(|| {
-                Failure::new(format!("there is no machine {target}: {here} is in no World with other machines"))
+                Failure::new(format!("there is no machine {target}: {here} is not connected to any other machine"))
             })?;
             // Held until the run is recorded: a job that ends at once is told
             // of before.
@@ -684,7 +684,7 @@ async fn write(
         }
         Some(target) => {
             let link = node.link().ok_or_else(|| {
-                Failure::new(format!("there is no machine {target}: {here} is in no World with other machines"))
+                Failure::new(format!("there is no machine {target}: {here} is not connected to any other machine"))
             })?;
             let call = RemoteCall::Write { resident: resident.clone(), town: town.clone(), op: op.clone() };
             match link.call(&target, call).await.map_err(|failure| Failure::new(called(&failure)))? {

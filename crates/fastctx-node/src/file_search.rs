@@ -39,7 +39,7 @@ pub(crate) async fn call(
     let Some(target) = machine.filter(|machine| *machine != local) else {
         return here(node, local, request).await;
     };
-    let link = node.link().ok_or_else(|| Failure::new(format!("{local} is in no World with other machines")))?;
+    let link = node.link().ok_or_else(|| Failure::new(format!("{local} is not connected to any other machine")))?;
     match link.call(&target, RemoteCall::FindFiles { request }).await.map_err(failed)?? {
         RemoteReply::FilesFound(reply) => Ok(reply),
         _ => Err(Failure::new(format!("{target} answered something other than a file search"))),

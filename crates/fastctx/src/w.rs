@@ -17,7 +17,7 @@ use jiff::Timestamp;
 /// See current work and what happened while you were away.
 #[derive(Args)]
 pub struct WArgs {
-    /// Include residents who are idle or asleep, which words can still reach, with their last action.
+    /// Also list sessions that are idle or asleep but can still be messaged, with their last action.
     #[arg(short = 'a', long = "all")]
     all: bool,
     /// Read history after this time: 2h, 14:00, or an RFC 3339 timestamp.
@@ -26,7 +26,7 @@ pub struct WArgs {
     /// Show every matching history entry instead of the most recent forty.
     #[arg(long)]
     full: bool,
-    /// A town, or resident/job ids. Qualify an id with @machine when ambiguous.
+    /// A project, or session and job ids. Add @MACHINE to an id when several machines have it.
     names: Vec<String>,
 }
 

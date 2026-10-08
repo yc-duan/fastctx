@@ -13,7 +13,7 @@ pub(crate) async fn write(
     op: WriteOp,
 ) -> Result<WriteOutcome, Failure> {
     let Caller::Resident(owner) = caller::of(node, peer)? else {
-        return Err(Failure::new("write commands need a resident identity; invoke them through the World's run tool"));
+        return Err(Failure::new("edit and write work only inside a script run by the run tool"));
     };
     let here = node.machine();
     let town = if owner.machine == here {

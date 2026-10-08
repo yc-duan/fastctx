@@ -195,7 +195,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 crate::town::project::spans_here(node, town).await?;
                 crate::town::map::brief(node, town).await?
             } else {
-                "You are in no town now. `fastctx project list` lists the towns.".into()
+                "You are in no project now. `fastctx project list` lists the projects.".into()
             };
             let changed = match node.residents.relocate(&node.world, id, town.as_ref()) {
                 Ok(changed) => changed,
@@ -237,8 +237,8 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             // Delivered as the World's words, under a line saying so: it is
             // not repeated here.
             let moved = match &town {
-                Some(town) => format!("The user moved you to the town {town}"),
-                None => "The user took you out of your town".to_string(),
+                Some(town) => format!("The user moved you to the project {town}"),
+                None => "The user took you out of your project".to_string(),
             };
             let text = format!("{moved}; this replaces what you were told before of where you work.\n\n{brief}");
             let delivery = Delivery {

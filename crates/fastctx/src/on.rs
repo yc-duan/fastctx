@@ -33,9 +33,9 @@ pub const USAGE: &str = "on MACHINE COMMAND [ARG...]
        ...the script...
        EOF";
 
-pub const AFTER_HELP: &str = "The command's words are sent exactly as this shell expanded them; without a command, standard input is the script, read only by that machine's bash.
-It acts as a subshell placed there: the script's own variables, functions and options go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused.
-If the connection drops, it goes on there and its end still reaches you. It exits 255 when the World could not carry it there.";
+pub const AFTER_HELP: &str = "The command's words are sent exactly as this shell expanded them. Without a command, standard input is the script, read only by that machine's bash.
+The part sent there sees your script's variables, functions and shell options; PATH, HOME, LANG and the machine's other settings are its own. Its output, exit code and standard input work like any command's, in pipelines and `if` too. A script quoted as one word is refused: use a here-document.
+If the connection drops, it goes on there and its end still reaches you. It exits 255 when it could not reach that machine.";
 
 /// Run part of a script on another machine of the World, as the World's
 /// shell writes it (`USAGE`).
@@ -80,7 +80,7 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
     };
     let machine = MachineName::try_from(machine.as_str())?;
     let resident: Address = std::env::var("FASTCTX_RESIDENT")
-        .context("on runs part of a resident's script, in the World's shell (run)")?
+        .context("on works only inside a script run by the run tool")?
         .parse()?;
     let town = std::env::var("FASTCTX_TOWN").ok().map(TownName::try_from).transpose()?;
     let job = std::env::var("FASTCTX_JOB").ok().map(JobId::try_from).transpose()?;

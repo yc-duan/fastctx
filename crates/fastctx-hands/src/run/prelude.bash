@@ -106,7 +106,7 @@ on() {
         printf '%s\n' "on: '$2' is one word, the name of a program to run on $1. For a script, give it on standard input: on $1 <<'EOF' ... EOF" >&2
         return 255
     fi
-    local __fastctx_file="${FASTCTX_SCRATCH:?the World did not start this shell}/on-$BASHPID-$RANDOM$RANDOM"
+    local __fastctx_file="${FASTCTX_SCRATCH:?on works only inside a script run by the run tool}/on-$BASHPID-$RANDOM$RANDOM"
     # The follower ends with this shell. Git Bash names the shell's native
     # Windows process, which a native follower can wait on, in /proc.
     local __fastctx_shell=$BASHPID

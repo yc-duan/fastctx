@@ -56,7 +56,7 @@ pub fn apply_patch() -> anyhow::Result<ExitCode> {
 
 fn enabled() -> anyhow::Result<()> {
     if std::env::var_os("FASTCTX_WRITES").as_deref() == Some(std::ffi::OsStr::new("off")) {
-        bail!("World write commands are disabled on this machine; use your host's own writing tools");
+        bail!("edit and write are turned off on this machine; use your own file-writing tool");
     }
     Ok(())
 }

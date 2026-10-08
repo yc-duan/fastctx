@@ -94,16 +94,35 @@ pub enum Status {
 /// Why a call got no answer.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CallFailure {
-    #[error("this machine is not connected to the hub ({reason}); nothing was sent")]
+    #[error("this machine is not connected to the other machines now ({reason}); nothing was sent")]
     NotConnected { reason: String },
-    #[error("no machine of the World is named {name}; its machines are {}", machines.iter().map(MachineName::as_str).collect::<Vec<_>>().join(", "))]
+    #[error("there is no machine named {name}; the machines are {}", machines.iter().map(MachineName::as_str).collect::<Vec<_>>().join(", "))]
     NotMember { name: MachineName, machines: Vec<MachineName> },
-    #[error("{name} is offline{}", last_seen.map(|at| format!(", last seen {}", at.strftime("%Y-%m-%d %H:%M:%S UTC"))).unwrap_or_default())]
+    #[error("{name} is offline{}", last_seen.map(offline_for).unwrap_or_default())]
     Offline { name: MachineName, last_seen: Option<Timestamp> },
     #[error("{name} did not answer ({reason}); whether it did what was asked is not known")]
     Unknown { name: MachineName, reason: String },
     #[error("the call did not reach {name} ({reason}); nothing ran there")]
     Unreachable { name: MachineName, reason: String },
+}
+
+/// How long a machine has been offline, as `fastctx nodes` writes it: its
+/// reader knows no machine's clock or zone.
+fn offline_for(last_seen: Timestamp) -> String {
+    let seconds = Timestamp::now().as_second().saturating_sub(last_seen.as_second()).max(0);
+    let span = match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m", seconds / 60),
+        3600..86_400 => match seconds % 3600 / 60 {
+            0 => format!("{}h", seconds / 3600),
+            minutes => format!("{}h{minutes}m", seconds / 3600),
+        },
+        _ => match seconds % 86_400 / 3600 {
+            0 => format!("{}d", seconds / 86_400),
+            hours => format!("{}d{hours}h", seconds / 86_400),
+        },
+    };
+    format!(" for {span}")
 }
 
 /// A machine's two keys: the one it signs with, and the one others seal to.

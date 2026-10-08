@@ -38,7 +38,7 @@ pub struct TalkArgs {
 pub fn run(args: TalkArgs) -> anyhow::Result<()> {
     if let Ok(resident) = std::env::var("FASTCTX_RESIDENT") {
         bail!(
-            "{resident} runs this; fastctx talk is the user's own voice. Residents speak to each other with message_colleague"
+            "fastctx talk is for the user to speak with, not for {resident}; to message a colleague, use message_colleague"
         );
     }
     let world = World::here()?;

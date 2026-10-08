@@ -60,7 +60,7 @@ pub fn words(from: &Speaker, text: &str) -> String {
         Speaker::Page { page } => page.to_string(),
         Speaker::User { machine } => format!("the user, on {machine}"),
         Speaker::Resident { address } => format!("{} on {}", address.resident, address.machine),
-        Speaker::World => "the World".to_string(),
+        Speaker::World => "fastctx".to_string(),
     };
     format!("=== from {from} ===\n{text}")
 }

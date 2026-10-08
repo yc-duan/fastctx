@@ -120,17 +120,17 @@ enum Command {
     /// writes one: `*** Begin Patch` … `*** End Patch`; paths are absolute.
     #[command(hide = true)]
     ApplyPatch,
-    /// See what is happening now and what happened since your last turn;
-    /// with ids, one resident or job.
+    /// See what runs and who works now, and what happened since your last
+    /// turn; with ids, one session or job.
     W(w::WArgs),
-    /// Run part of a script on another machine of the World.
+    /// Run part of a script on another of the user's machines.
     #[command(override_usage = on::USAGE, after_help = on::AFTER_HELP)]
     On(on::OnArgs),
     /// Stop a job and everything it started, on whichever machine it runs.
     Stop(stop::StopArgs),
-    /// See the World's machines: which are online and what each is like.
+    /// List the user's machines: which are online and what each is like.
     Nodes,
-    /// Copy a file or a directory from one machine of the World to another.
+    /// Copy a file or a directory from one of the user's machines to another.
     ///
     /// Each end is MACHINE:PATH, or a path on this machine. The destination
     /// path is what the copy becomes; ending it with / copies into that
@@ -144,16 +144,23 @@ enum Command {
     /// Open a resident of this machine in its agent's own interface, in
     /// this terminal.
     Attach(attach::AttachArgs),
-    /// The towns: list, show, map and enter them; open one or write the
-    /// next version of its record.
+    /// The user's projects: list, show, map and enter them; open one or
+    /// write the next version of its record.
+    ///
+    /// A fastctx project is not a folder or a repository: it is a named
+    /// piece of the user's work that can span several machines. Its record
+    /// says what it is for, which machines it spans, and where its code and
+    /// data are on each; its journals hold the history of the work, and its
+    /// pages show live facts to the user. Its map puts all of that in one
+    /// answer.
     #[command(subcommand)]
     Project(project::ProjectCommand),
-    /// A town's journals: history, not verdicts. Add an entry, describe a
-    /// journal, read or list them.
+    /// A project's journals: history, not verdicts. Add an entry, describe
+    /// a journal, read or list them.
     #[command(subcommand, after_long_help = fastctx_hands::town::JOURNALS)]
     Journal(journal::JournalCommand),
-    /// A town's pages: HTML the user opens in World's interface, live
-    /// with the World's facts. Publish, read or list them.
+    /// A project's pages: HTML the user opens in the World app, showing
+    /// live facts of the machines and sessions. Publish, read or list them.
     #[command(subcommand, after_long_help = page::PAGE_HELP)]
     Page(page::PageCommand),
     /// Join a World with a code.
@@ -284,6 +291,7 @@ const PEOPLE_ONLY: [&str; 18] = [
 fn command_line() -> clap::Command {
     let mut command = <Cli as clap::CommandFactory>::command();
     if std::env::var_os("FASTCTX_RESIDENT").is_some() {
+        command = command.about("Commands for working on this machine and the user's other machines.");
         for name in PEOPLE_ONLY {
             command = command.mut_subcommand(name, |subcommand| subcommand.hide(true));
         }

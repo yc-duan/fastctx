@@ -75,7 +75,7 @@ pub fn used(node: &Arc<Node>, resident: &ResidentId, turn: &str, used: Use) {
                             "{other} is using this machine's Computer Use in its turn; you will be told when that turn ends and the desk is free."
                         )
                     }
-                    None => "This machine's Computer Use is held by a session outside the World, such as the user's own; when it will be free cannot be known.".to_string(),
+                    None => "This machine's Computer Use is held by a session fastctx does not know, such as the user's own; when it will be free cannot be known.".to_string(),
                 };
                 tell.push((resident.clone(), text));
             }

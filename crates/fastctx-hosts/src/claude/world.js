@@ -221,7 +221,7 @@ async function settle($, context) {
 // What the model reads when the World speaks on its own account. The user's
 // own words go in as they are, as the user's.
 function framed(delivery) {
-  return 'The fastctx plugin delivers a message from the World.\n\n' + delivery.text
+  return 'A message from fastctx, not typed by the user:\n\n' + delivery.text
 }
 
 // Says which turn took what was handed over.
@@ -682,7 +682,7 @@ export function register(on) {
       try {
         await proveCall($, context, e.tool_use_id)
       } catch (error) {
-        return { deny: 'The fastctx plugin could not identify this MCP call to the World: ' + error }
+        return { deny: 'The fastctx plugin could not tell fastctx which session made this call, so it did not run: ' + error }
       }
     }
     return context.shown.call(reports($, context), e, (input) => controlCall($, input, next))
@@ -722,7 +722,7 @@ export function register(on) {
 // The file is whole before the call leaves the host, so the node reads it
 // whole. Its name spells each UTF-16 unit of the id in four hex digits.
 async function proveCall($, context, id) {
-  if (typeof id !== 'string' || id.length === 0) throw new Error('the MCP call has no tool_use_id to pair with the World')
+  if (typeof id !== 'string' || id.length === 0) throw new Error('the call has no tool_use_id to identify it by')
   let name = ''
   for (let i = 0; i < id.length; i++) name += id.charCodeAt(i).toString(16).padStart(4, '0')
   await $.fs.write(WORLD + '/claude-calls/' + name + '.json', JSON.stringify({ tool_use_id: id, registration: context.registration }))

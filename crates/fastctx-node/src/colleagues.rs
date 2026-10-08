@@ -256,21 +256,21 @@ pub(crate) async fn instructions(
 
 fn words(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin: &Origin) -> String {
     let place = match (town, origin) {
-        (Some(town), _) => format!("You live on the machine {machine}, in the town {town}; its map follows."),
-        (None, Origin::User) => format!(
-            "You live on the machine {machine}, in no town yet. When the user names the project to work on, enter its town with `fastctx project enter TOWN` (`fastctx project list` lists them)."
+        (Some(town), _) => format!(
+            " You work in the user's project {town}: a fastctx project, which is not a folder or a repository but a named piece of work that can span several machines. Its map follows: what it is for, its machines, where its code and data are on each, and its journals."
         ),
-        (None, Origin::Colleague { .. }) => format!("You live on the machine {machine}, in no town."),
+        (None, Origin::User) => " When the user names the project to work on, enter it with `fastctx project enter NAME` (`fastctx project list` lists them).".to_string(),
+        (None, Origin::Colleague { .. }) => String::new(),
     };
     let working = match origin {
         Origin::Colleague { asked_by, .. } => format!(
-            "{} on {} asked for you, and you work for it. What it asked comes next, under a line naming it. Words from anyone else arrive the same way. At the end of each turn, your last message goes word for word to whoever's words went into that turn, and to no one else: nothing you write before it reaches anyone. So put what you found, or what you need to ask, in that last message.",
+            "{} on {} started you, and you work for it. Its request comes next, under a line naming it; messages from anyone else arrive the same way. At the end of each turn, your last message goes word for word to whoever's messages went into that turn, and to no one else; nothing you write before it reaches anyone. Put what you found, or what you need to ask, in that last message.",
             asked_by.resident, asked_by.machine
         ),
-        Origin::User => "The user opened this session through the World and speaks to you here.".to_string(),
+        Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };
     format!(
-        "You are {id}, a resident of the World: the user's machines working as one place. {place}\n\n{working}\n\nYour hands are the World's shell, the `run` tool: a bash script on this machine, in which `on MACHINE` runs a command or a here-document script on another machine of the World, `fastctx view` shows files, images and documents, and `edit` and `write` change files; its description says how. There is no other shell, editor or image viewer here. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running after 15 seconds goes on in the background; you are told when it ends, so you can end your turn and you will be woken with the news."
+        "You are {id}, an agent session on {machine}, one of the user's machines connected by fastctx.{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. It runs bash on this machine, and `on MACHINE` in the script runs a part of it on another machine; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running after 15 seconds goes on in the background; you are told when it ends, so you can end your turn and be woken with the news."
     )
 }
 

@@ -40,9 +40,9 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
 
 fn introduction(id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> String {
     match town {
-        Some(town) => format!("=== you are {id} on {here}, in the town {town}; its map: fastctx project map ==="),
-        // When to enter a town is said once, in the session's guidance.
-        None => format!("=== you are {id} on {here}, in no town ==="),
+        Some(town) => format!("=== you are {id} on {here}, working in the project {town}; its map: `fastctx project map` ==="),
+        // When to enter a project is said once, in the session's guidance.
+        None => format!("=== you are {id} on {here}, in no project ==="),
     }
 }
 
@@ -106,7 +106,7 @@ fn news(world: &WorldDir, town: &TownName, after: u64, me: &Address) -> io::Resu
         return Ok(None);
     }
     Ok(Some(format!(
-        "=== the town {town} changed since you last heard: {}; its map: fastctx project map ===",
+        "=== the project {town} changed since you last heard: {}; its map: `fastctx project map` ===",
         said.join("; ")
     )))
 }

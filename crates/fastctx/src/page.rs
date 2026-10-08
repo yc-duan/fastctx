@@ -15,25 +15,31 @@ pub const PAGE_HELP: &str = include_str!("page_guide.txt");
 pub enum PageCommand {
     /// Publish a complete HTML page version.
     Publish {
+        /// The page's name: lowercase words joined by hyphens.
         name: String,
+        /// The HTML file to publish.
         #[arg(long)]
         file: PathBuf,
+        /// The title shown above the page.
         #[arg(long)]
         title: Option<String>,
+        /// One sentence saying what the page shows.
         #[arg(long)]
         description: Option<String>,
         /// Run this exact command on this machine; repeat for each command.
         #[arg(long, num_args = 2, value_names = ["MACHINE", "COMMAND"], action = ArgAction::Append)]
         run: Vec<String>,
-        /// Speak to this resident on this machine; repeat for each resident.
-        #[arg(long, num_args = 2, value_names = ["MACHINE", "RESIDENT"], action = ArgAction::Append)]
+        /// Speak to this session on this machine; repeat for each session.
+        #[arg(long, num_args = 2, value_names = ["MACHINE", "SESSION"], action = ArgAction::Append)]
         say: Vec<String>,
         /// Write to this journal; repeat for each journal.
         #[arg(long, value_name = "JOURNAL", action = ArgAction::Append)]
         write: Vec<String>,
+        /// The version you started from, when changing a page.
         #[arg(long)]
         base: Option<u32>,
-        #[arg(long)]
+        /// The project; without it, the one you work in.
+        #[arg(long = "project", alias = "town", value_name = "NAME")]
         town: Option<String>,
     },
     /// Read a page, optionally writing its exact HTML to a file.
@@ -43,12 +49,14 @@ pub enum PageCommand {
         version: Option<u32>,
         #[arg(long)]
         out: Option<PathBuf>,
-        #[arg(long)]
+        /// The project; without it, the one you work in.
+        #[arg(long = "project", alias = "town", value_name = "NAME")]
         town: Option<String>,
     },
     /// List a project's pages.
     List {
-        #[arg(long)]
+        /// The project; without it, the one you work in.
+        #[arg(long = "project", alias = "town", value_name = "NAME")]
         town: Option<String>,
     },
 }

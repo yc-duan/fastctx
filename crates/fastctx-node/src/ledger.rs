@@ -120,12 +120,12 @@ fn write_alone(
     let directory = world.town(town);
     let entries = read_all(&directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
     if entries.is_empty() && machines.is_none() {
-        return Err(format!("the town {town} has no ledger yet; its first entry says which machines it spans"));
+        return Err(format!("the project {town} has no record yet; its first version says which machines it spans"));
     }
     if let Some(machines) = &machines
         && let Some(stranger) = machines.iter().find(|machine| *machine != here)
     {
-        return Err(format!("{stranger} is not a machine of this World; it has only {here}"));
+        return Err(format!("there is no machine named {stranger}; this machine, {here}, is not connected to others"));
     }
     let known: Vec<&str> =
         entries.iter().flat_map(|(_, entry, _)| entry.files.iter().map(|file| file.path.as_str())).collect();

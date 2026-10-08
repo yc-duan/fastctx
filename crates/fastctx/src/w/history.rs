@@ -58,7 +58,7 @@ pub(super) fn render(history: &WorldSince, previous: bool, full: bool, now: Time
             if history.town.is_some()
                 && matches!(&event.town, SinceTown::Unrecorded { recorded_in } if !recorded_in.is_empty())
             {
-                " (original town unrecorded)"
+                " (original project unrecorded)"
             } else {
                 ""
             }

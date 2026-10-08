@@ -30,7 +30,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     }
     let place = match &view.scope {
         Scope::Town { town, .. } => town.as_str(),
-        Scope::World { .. } => "the World",
+        Scope::World { .. } => "all projects",
     };
     let mut text = format!("=== w: {place} ({}) ===\n", machines.join("; "));
     if let Scope::Town { town, record: None } = &view.scope {
@@ -38,7 +38,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     }
     if let Scope::World { towns } = &view.scope {
         if !towns.is_empty() {
-            text.push_str("towns\n");
+            text.push_str("projects\n");
         }
         for town in towns {
             let description = town
@@ -258,7 +258,7 @@ pub(super) fn step(resident: &ResidentNow, now: Timestamp) -> String {
         None => resident
             .last_action
             .as_ref()
-            .map(|action| format!("last World action {} ago: {} {}", ago(action.at, now), action.hand, action.what))
+            .map(|action| format!("last fastctx action {} ago: {} {}", ago(action.at, now), action.hand, action.what))
             .unwrap_or_default(),
     }
 }

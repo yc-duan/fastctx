@@ -139,7 +139,7 @@ async fn here(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: 
 /// An `on` naming another machine.
 async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: &Pieces) -> Result<(), Failure> {
     let link =
-        node.link().ok_or_else(|| Failure::new(format!("{} is in no World with other machines", node.machine())))?;
+        node.link().ok_or_else(|| Failure::new(format!("{} is not connected to any other machine", node.machine())))?;
     let machine = request.machine.clone();
     let sizes = sizes(&request.package).await?;
     let followed = Arc::new(Mutex::new(Followed::default()));
@@ -246,7 +246,7 @@ async fn follow_there(
         match link.call_with_stream(&machine, call, following).await {
             Ok(Err(failure)) => return Err(Failure::new(format!("following {job} on {machine}: {failure}"))),
             Err(CallFailure::NotMember { name, .. }) => {
-                return Err(Failure::new(format!("{name} is no longer a machine of the World; {job} was left there")));
+                return Err(Failure::new(format!("{name} is no longer one of the user's machines; {job} was left there")));
             }
             Ok(Ok(_)) | Err(_) => {}
         }
