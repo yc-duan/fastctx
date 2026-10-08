@@ -22,7 +22,11 @@ API preserves the ingredients required by a caller that owns text layout.
 - `document.rs`, `document/raw.rs`: file-backed reader and
   `PdfDocument::open_readonly`; `extract_raw_glyphs` visits page content and
   normal annotation appearances, including selected appearance states and
-  their placement matrices.
+  their placement matrices. Raw extraction borrows the shared content buffer.
+- `document/raw.rs`, `document/raw_cache.rs`: `release_page_data` discards
+  decoded page/Form streams, raw stream cache entries and extractor-local font
+  bindings between page reads. Parsed fonts, page metadata and recovered
+  non-stream objects remain available. Callers serialize extraction and cleanup.
 - `extractors/text.rs`, `extractors/text/raw.rs`: original emission order,
   complete Unicode clusters, original character/font identity, normalized
   font advances, actual cursor advances, WMode, glyph frame and origin,

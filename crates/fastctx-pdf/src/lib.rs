@@ -7,6 +7,7 @@ mod marks;
 mod page_tree;
 mod paragraphs;
 mod pen;
+mod reader;
 
 mod text;
 mod validate;
@@ -24,6 +25,8 @@ use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf, PdfData};
 /// The source file must not be truncated while this document is open.
 pub struct Document {
     data: PdfData,
+    syntax: Pdf,
+    text_reader: reader::TextReader,
     pages: usize,
     path: std::path::PathBuf,
     fonts: fonts::Database,
@@ -67,7 +70,14 @@ impl Document {
         engine(|| {
             let pdf = open(data.clone())?;
             page_tree::check(&pdf)?;
-            Ok(Self { data, pages: pdf.pages().len(), path, fonts: fonts::Database::new() })
+            Ok(Self {
+                data,
+                pages: pdf.pages().len(),
+                syntax: pdf,
+                text_reader: reader::TextReader::default(),
+                path,
+                fonts: fonts::Database::new(),
+            })
         })
     }
 
@@ -76,13 +86,17 @@ impl Document {
     }
 
     /// Extract one page, including invisible OCR text. This does not perform OCR.
+    /// Calls on the same document share parsed fonts and serialize extraction;
+    /// decoded page content is released before returning.
     pub fn text(&self, index: usize) -> Result<TextPage, String> {
         engine(|| {
-            let pdf = self.page_document(index)?;
-            let page = &pdf.pages()[index];
+            let page = self
+                .syntax
+                .pages()
+                .get(index)
+                .ok_or_else(|| format!("page index {index} is outside {} pages", self.pages))?;
             validate::contents(page, |_| {})?;
-            let document = pdf_oxide::PdfDocument::open_readonly(&self.path).map_err(|error| error.to_string())?;
-            text::read(&document, index, page)
+            self.text_reader.read(&self.path, index, page)
         })
     }
 

@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use hayro::hayro_syntax::content::{TypedIter, UntypedIter, ops::TypedInstruction};
-use hayro::hayro_syntax::object::{Dict, MaybeRef, Name, Object, Stream};
+use hayro::hayro_syntax::object::{Array, Dict, MaybeRef, Name, Object, Stream};
 use hayro::hayro_syntax::page::{Page, Resources};
 use hayro::hayro_syntax::xref::XRef;
 
@@ -25,7 +25,7 @@ pub(super) fn contents(page: &Page<'_>, mut visit: impl FnMut(&Resources<'_>)) -
         }
         _ => Err("damaged PDF page: Contents is not a stream or array".into()),
     }?;
-    let mut pending = vec![(page.page_stream().unwrap_or_default().to_vec(), page.resources().clone(), HashSet::new())];
+    let mut pending = vec![(page_bytes(page), page.resources().clone(), HashSet::new())];
     while let Some((bytes, resources, ancestors)) = pending.pop() {
         visit(&resources);
         let mut operators = TypedIter::new(&bytes);
@@ -63,6 +63,26 @@ pub(super) fn contents(page: &Page<'_>, mut visit: impl FnMut(&Resources<'_>)) -
         }
     }
     Ok(())
+}
+
+// Page::page_stream retains its decoded buffer for the lifetime of the syntax
+// document. Validation needs it only until this page has been checked. Preserve
+// Hayro's separator rule and its handling of a failed tolerant decode; the
+// strict stream checks above still run before these bytes are interpreted.
+fn page_bytes(page: &Page<'_>) -> Vec<u8> {
+    if let Some(stream) = page.raw().get::<Stream<'_>>(b"Contents".as_slice()) {
+        return stream.decoded().map(|data| data.into_owned()).unwrap_or_default();
+    }
+    let mut bytes = Vec::new();
+    if let Some(streams) = page.raw().get::<Array<'_>>(b"Contents".as_slice()) {
+        for stream in streams.iter::<Stream<'_>>() {
+            if let Ok(data) = stream.decoded() {
+                bytes.extend_from_slice(&data);
+                bytes.push(b' ');
+            }
+        }
+    }
+    bytes
 }
 
 fn resolve<'a>(object: MaybeRef<Object<'a>>, xref: &'a XRef) -> Result<Object<'a>, String> {

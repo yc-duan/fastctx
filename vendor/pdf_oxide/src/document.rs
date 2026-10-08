@@ -66,6 +66,7 @@ pub enum ReadingOrder {
 /// sites.
 // Modified by fastctx: raw extraction and positioned annotation appearances.
 mod raw;
+mod raw_cache;
 
 enum PdfReader {
     Memory(BufReader<Cursor<Vec<u8>>>),

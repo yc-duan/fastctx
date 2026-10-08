@@ -21,8 +21,12 @@ Encrypted files requiring a password return an error; owner-only encryption
 that permits opening with an empty user password is supported.
 
 The source is memory-mapped for Hayro; PDFOxide reads through a file-backed
-reader. Each page call releases the engines' decoded caches when it returns.
-One selected page is decoded as a unit. The source must remain unchanged while
+reader. Text calls reuse the page index, parsed fonts and Unicode maps. Decoded
+page and Form streams, encoded stream cache entries, and page-local font
+bindings are released after each extraction. Rendering uses a fresh page
+interpreter. Text extractions on one document are serialized; different
+Documents can be read independently. One selected page is decoded as a unit.
+The source must remain unchanged while
 the document is open. Paths are ordinary native `Path` values; shell path
 conventions and output budgets belong to the caller.
 
