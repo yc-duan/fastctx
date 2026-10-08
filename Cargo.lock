@@ -970,6 +970,7 @@ name = "fastctx"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "fastctx-client",
  "fastctx-hands",
@@ -980,6 +981,7 @@ dependencies = [
  "fastctx-serve",
  "fastctx-tui",
  "fastctx-types",
+ "getrandom 0.3.4",
  "jiff",
  "serde",
  "serde_json",
@@ -1142,6 +1144,7 @@ name = "fastctx-node"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "base64",
  "fastctx-file-search",
  "fastctx-hands",
  "fastctx-hosts",
