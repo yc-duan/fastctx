@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use hayro::hayro_syntax::content::{TypedIter, UntypedIter, ops::TypedInstruction};
-use hayro::hayro_syntax::object::{Array, Dict, MaybeRef, Name, Object, Stream};
+use hayro::hayro_syntax::object::{Dict, MaybeRef, Name, Object, Stream};
 use hayro::hayro_syntax::page::{Page, Resources};
 use hayro::hayro_syntax::xref::XRef;
 
@@ -75,21 +75,24 @@ fn resolve<'a>(object: MaybeRef<Object<'a>>, xref: &'a XRef) -> Result<Object<'a
 
 fn check_stream<'a>(stream: Stream<'a>, xref: &'a XRef) -> Result<(), String> {
     let dictionary = stream.dict();
-    let filters: Vec<_> = if let Some(name) = dictionary.get::<Name<'_>>(b"Filter".as_slice()) {
-        vec![name]
-    } else if let Some(array) = dictionary.get::<Array<'_>>(b"Filter".as_slice()) {
-        let mut names = Vec::new();
-        for item in array.raw_iter() {
-            match resolve(item, xref)? {
-                Object::Name(name) => names.push(name),
-                _ => return Err("damaged PDF content: Filter contains a non-name object".into()),
+    let filters = match dictionary.get::<Object<'_>>(b"Filter".as_slice()) {
+        Some(Object::Name(name)) => vec![name],
+        Some(Object::Array(array)) => {
+            let mut names = Vec::new();
+            for item in array.raw_iter() {
+                match resolve(item, xref)? {
+                    Object::Name(name) => names.push(name),
+                    _ => return Err("damaged PDF content: Filter contains a non-name object".into()),
+                }
             }
+            names
         }
-        names
-    } else if dictionary.contains_key(b"Filter") {
-        return Err("damaged PDF content: Filter could not be read".into());
-    } else {
-        Vec::new()
+        None if dictionary.contains_key(b"Filter") => {
+            return Err("damaged PDF content: Filter could not be read".into());
+        }
+        // ISO 32000-1, 7.3.9: a null dictionary value is an absent entry.
+        None | Some(Object::Null(_)) => Vec::new(),
+        _ => return Err("damaged PDF content: Filter is not a name or array".into()),
     };
     let mut data = stream.raw_data();
     for filter in &filters {

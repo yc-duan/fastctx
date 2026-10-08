@@ -27,7 +27,9 @@ pub(super) fn check(pdf: &Pdf) -> Result<(), String> {
                 continue;
             }
         };
-        let has_media_box = if node.contains_key(b"MediaBox") {
+        let has_media_box = if node.contains_key(b"MediaBox")
+            && !matches!(node.get::<Object<'_>>(b"MediaBox".as_slice()), Some(Object::Null(_)))
+        {
             node.get::<Rect>(b"MediaBox".as_slice()).ok_or("damaged PDF page tree: invalid MediaBox")?;
             true
         } else {
