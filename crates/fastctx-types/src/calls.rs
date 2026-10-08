@@ -36,12 +36,14 @@ pub enum Call {
         request: RunRequest,
         node: Option<MachineName>,
     },
-    /// Writes files for a resident of this machine, on this machine or on
-    /// the machine `node` names.
+    /// Writes for an MCP resident, or for the command's peer when `resident`
+    /// is absent. Commands write here; their shell supplies a visitor's town.
     Write {
-        resident: ResidentId,
+        resident: Option<ResidentId>,
         op: WriteOp,
         node: Option<MachineName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        town: Option<TownName>,
     },
     /// Copies files or a directory from one machine to another.
     Copy {

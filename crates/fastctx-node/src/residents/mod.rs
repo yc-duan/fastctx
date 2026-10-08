@@ -31,7 +31,7 @@ use fastctx_types::residents::{About, Activity, Hints, Host, Moved, Now, Origin,
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
-pub use records::{append_message, last_action, read_about, read_now, record_action, record_seen};
+pub use records::{append_message, last_action, read_about, read_now, record_action, record_owned_action, record_seen};
 
 pub struct Residents {
     state: Mutex<State>,

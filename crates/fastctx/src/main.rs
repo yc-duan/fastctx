@@ -23,6 +23,7 @@ mod update;
 mod view;
 mod w;
 mod world;
+mod writers;
 
 #[derive(Parser)]
 #[command(name = "fastctx", version, about = "One world, many machines.")]
@@ -94,6 +95,12 @@ enum Command {
     },
     /// Look at files: text with line numbers, images as images.
     View(view::ViewArgs),
+    /// Edit a file using SEARCH/REPLACE blocks from standard input.
+    Edit(writers::EditArgs),
+    /// Create or replace a file with the text from standard input.
+    Write(writers::WriteArgs),
+    #[command(hide = true)]
+    ApplyPatch,
     /// See who is here and what each is doing.
     W(w::WArgs),
     /// See the World's machines: which are online and what each is like.
@@ -191,6 +198,9 @@ fn main() -> ExitCode {
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
         Command::Serve { writer } => serve(&writer),
         Command::View(args) => view::run(args),
+        Command::Edit(args) => return finish(writers::edit(args)),
+        Command::Write(args) => return finish(writers::write(args)),
+        Command::ApplyPatch => return finish(writers::apply_patch()),
         Command::W(args) => w::run(args),
         Command::Nodes => world::nodes(),
         Command::Copy(args) => return finish(copy::run(args)),

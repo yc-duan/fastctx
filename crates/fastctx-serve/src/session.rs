@@ -145,7 +145,7 @@ impl Session {
         };
         let reply = async {
             let mut client = self.client().await?;
-            let call = Call::Write { resident: whereabouts.resident.clone(), op, node };
+            let call = Call::Write { resident: Some(whereabouts.resident.clone()), op, node, town: None };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;

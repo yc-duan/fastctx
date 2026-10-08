@@ -58,6 +58,7 @@ mod watchdog;
 mod who;
 mod world;
 mod write;
+mod write_command;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};

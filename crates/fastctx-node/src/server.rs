@@ -35,7 +35,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return writer.drain().await;
     }
     let hello: Hello = parse(&hello)?;
-    let legacy = hello.protocol == 5 && crate::renewal_legacy::peer(&hello.peer);
+    let legacy = matches!(hello.protocol, 5 | 6) && crate::renewal_legacy::peer(&hello.peer);
     if hello.protocol != PROTOCOL && !legacy {
         let reason = format!(
             "this node is fastctx {} and speaks protocol {PROTOCOL}; the client is fastctx {} and speaks protocol {}",
@@ -64,7 +64,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer
                 .send(&json(&NodeFrame::Reply {
                     id,
-                    reply: Err(Failure::new("this call is outside the frozen protocol-5 tool and job contract")),
+                    reply: Err(Failure::new("this call is outside the frozen protocol-5/6 tool and job contract")),
                 }))
                 .await?;
             return writer.drain().await;
@@ -319,9 +319,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let town = town_of(node, &resident)?;
             run(node, resident, town, request, target).await.map(Reply::Run)
         }
-        Call::Write { resident, op, node: target } => {
+        Call::Write { resident: Some(resident), op, node: target, .. } => {
             let town = town_of(node, &resident)?;
             write(node, resident, town, op, target).await.map(|outcome| Reply::Written { outcome })
+        }
+        Call::Write { resident: None, op, node: target, town } => {
+            if target.is_some() {
+                return Err(Failure::new(
+                    "write commands run on this machine; run the command on the destination machine",
+                ));
+            }
+            crate::write_command::write(node, peer, town, op).await.map(|outcome| Reply::Written { outcome })
         }
         Call::JobChanged { job, owner, town } => node.jobs.changed(node, job, owner, town).await.map(|()| Reply::Done),
         Call::Saw { owner, town, seen } => {

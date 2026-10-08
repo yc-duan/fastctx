@@ -146,6 +146,20 @@ pub fn record_seen(
     append_lines(&directory.seen(), seen)
 }
 
+/// Records a shell write where it happened, including a visiting resident.
+pub fn record_owned_action(
+    world: &WorldDir,
+    here: &MachineName,
+    owner: &Address,
+    town: Option<&TownName>,
+    action: &Action,
+) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    let directory = world.owner(here, town, owner);
+    ensure_private_dir(directory.path())?;
+    append_lines(&directory.actions(), std::slice::from_ref(action))
+}
+
 /// A resident's latest action: the last line of its `actions`, read from
 /// the end, so a record of any length costs the same.
 pub fn last_action(world: &WorldDir, resident: &ResidentId, town: Option<&TownName>) -> io::Result<Option<Action>> {

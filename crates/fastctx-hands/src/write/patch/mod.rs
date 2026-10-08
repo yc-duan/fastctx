@@ -34,17 +34,19 @@ pub(super) fn apply_patch(
     // Commits from earlier sections are current knowledge within this request,
     // not evidence that the resident viewed the file. Nothing is written to seen.
     let mut known = seen.clone();
-    for hunk in &hunks {
-        if let Err(mut message) = apply_hunk(hunk, writer, &mut known, &mut changes, &mut stale) {
+    for mut hunk in hunks.iter().cloned() {
+        let applied =
+            normalize_paths(&mut hunk).and_then(|()| apply_hunk(&hunk, writer, &mut known, &mut changes, &mut stale));
+        if let Err(mut message) = applied {
             for path in &stale {
                 message.push_str(&format!("\n{} changed since you last viewed it.", path.display()));
             }
             return Err(WriteError { message, changes });
         }
         match hunk {
-            Hunk::AddFile { .. } => added.push(hunk.path()),
-            Hunk::UpdateFile { .. } => modified.push(hunk.path()),
-            Hunk::DeleteFile { .. } => deleted.push(hunk.path()),
+            Hunk::AddFile { .. } => added.push(hunk.path().to_path_buf()),
+            Hunk::UpdateFile { .. } => modified.push(hunk.path().to_path_buf()),
+            Hunk::DeleteFile { .. } => deleted.push(hunk.path().to_path_buf()),
         }
     }
     let mut text = writer.head("apply_patch", hunks.len());
@@ -61,6 +63,20 @@ pub(super) fn apply_patch(
         ));
     }
     Ok(WriteResult { text, changes, changed_since_seen: stale })
+}
+
+fn normalize_paths(hunk: &mut Hunk) -> Result<(), String> {
+    let path = match hunk {
+        Hunk::AddFile { path, .. } | Hunk::DeleteFile { path } => path,
+        Hunk::UpdateFile { path, move_path, .. } => {
+            if let Some(destination) = move_path {
+                *destination = super::absolute_path(destination)?;
+            }
+            path
+        }
+    };
+    *path = super::absolute_path(path)?;
+    Ok(())
 }
 
 fn apply_hunk(
@@ -84,7 +100,7 @@ fn apply_hunk(
                 None => (contents.as_bytes().to_vec(), "UTF-8"),
             };
             target.create_parent(writer)?;
-            target.publish(before.as_ref(), &after, writer, changes)?;
+            target.publish(before.as_ref(), &after, label, writer, changes)?;
             remember(&target, &after, label, seen);
             Ok(())
         }
@@ -116,7 +132,7 @@ fn apply_hunk(
                 }
                 destination.create_parent(writer)?;
                 source.verify(Some(&before), writer)?;
-                destination.publish(overwritten.as_ref(), &after, writer, changes)?;
+                destination.publish(overwritten.as_ref(), &after, document.label(), writer, changes)?;
                 remember(&destination, &after, document.label(), seen);
                 // Codex writes the destination, then unlinks the source even for self moves.
                 if source.resolved == destination.resolved {
@@ -133,7 +149,7 @@ fn apply_hunk(
                 }
                 seen.remove(&source.resolved);
             } else {
-                source.publish(Some(&before), &after, writer, changes)?;
+                source.publish(Some(&before), &after, document.label(), writer, changes)?;
                 remember(&source, &after, document.label(), seen);
             }
             Ok(())
