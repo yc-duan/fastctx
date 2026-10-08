@@ -119,6 +119,21 @@ jobs:
           else
             cargo test --locked --release -p fastctx-node --test own_lifetime --target '${{ matrix.target }}'
           fi
+      - name: Verify job control and byte streams
+        if: runner.os == 'Windows' || runner.os == 'Linux'
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            export FASTCTX_TEST_BASH="$(cygpath -m /usr/bin/bash.exe)"
+            cargo test --locked --release -j 2 -p fastctx-hands --test job_lifecycle --target '${{ matrix.target }}'
+          else
+            export FASTCTX_TEST_BASH=/bin/bash
+            build_target='${{ matrix.target }}'
+            build_target="${build_target/-gnu/-musl}"
+            cargo zigbuild --locked --release -j 2 -p fastctx-hands --test job_lifecycle --target "$build_target"
+            mapfile -t tests < <(find "target/$build_target/release/deps" -maxdepth 1 -name 'job_lifecycle-*' ! -name '*.d' -type f -executable)
+            test "${#tests[@]}" = 1
+            "${tests[0]}"
+          fi
       - name: Verify version and package the native program
         run: |
           build_target='${{ matrix.target }}'

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use fastctx_platform::{Permissions, current_identity, ensure_private_dir, publish_new, spawn_detached};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::{ResidentDir, WorldDir};
-use fastctx_types::run::{JobProgram, JobRecord, RunRequest};
+use fastctx_types::run::{JobProgram, JobRecord, OutputMode, RunRequest};
 use fastctx_types::{JobId, MachineName, ProcessIdentity, TownName};
 
 use super::record;
@@ -42,16 +42,45 @@ pub struct Launched {
     pub job: JobId,
     pub record: PathBuf,
     pub output: PathBuf,
+    pub stderr: Option<PathBuf>,
     /// `None` when the supervisor had already exited by the time it was
     /// looked at.
     pub supervisor: Option<ProcessIdentity>,
 }
 
 pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
+    launch_with_io(launch, OutputMode::Merged, None)
+}
+
+/// Starts a job with merged terminal output or separate byte streams.
+/// The latter is intended for `on`, whose stdout must remain pipeline data.
+/// `stdin` names an already complete, verified local file. The caller keeps
+/// it unchanged and present until the job ends. None connects null input.
+pub fn launch_with_io(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Launched, Failure> {
     super::preread::check(&launch.request.script)?;
+    if let Some(path) = stdin {
+        if !path.is_absolute() {
+            return Err(Failure::new(format!("stdin must name an absolute path: {}", path.display())));
+        }
+        let metadata = std::fs::metadata(path).map_err(|error| failure("reading the stdin file", &error))?;
+        if !metadata.is_file() {
+            return Err(Failure::new(format!("stdin must name a regular file: {}", path.display())));
+        }
+    }
     let cwd = starting_directory(launch)?;
     let resident = launch.world.job_owner(launch.machine, launch.town, launch.owner);
     let (job, output) = reserve(&resident).map_err(|error| failure("could not reserve a job", &error))?;
+    let stderr = if mode == OutputMode::Separate {
+        let path = output.with_extension("stderr.log");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| failure("could not create the stderr log", &error))?;
+        Some(path)
+    } else {
+        None
+    };
     let record_path = resident.job_record(&job);
     let script = resident.job_script(&job);
     publish_new(&script, launch.request.script.as_bytes(), Permissions::Private)
@@ -63,7 +92,9 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
         town: launch.town.cloned(),
         script: launch.request.script.clone(),
         cwd: cwd.to_string_lossy().into_owned(),
+        stdin: stdin.map(|path| path.to_string_lossy().into_owned()),
         output: output.to_string_lossy().into_owned(),
+        stderr: stderr.as_ref().map(|path| path.to_string_lossy().into_owned()),
         started_at: jiff::Timestamp::now(),
         program: Some(JobProgram {
             executable: launch.executable.to_string_lossy().into_owned(),
@@ -75,15 +106,12 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
         output_ended_at: None,
         remaining: None,
         output_lost: None,
+        stderr_lost: None,
+        stop: None,
         end: None,
         ends_with_node: false,
         writes_off: launch.request.writes_off,
-        // Standard error apart from the output, for `on` to hand back on its
-        // own (`world-run.md`).
-        on: launch.on.clone().map(|on| fastctx_types::run::OnJob {
-            errors: resident.out().join(format!("{job}.err")).to_string_lossy().into_owned(),
-            ..on
-        }),
+        on: launch.on.clone(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
     let started = spawn_detached(
@@ -93,7 +121,7 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
         launch.environment,
     )
     .map_err(|error| failure("could not start the job's supervisor", &error))?;
-    Ok(Launched { job, record: record_path, output, supervisor: started.identity })
+    Ok(Launched { job, record: record_path, output, stderr, supervisor: started.identity })
 }
 
 /// The directory the script starts in: the one asked for, which must be an

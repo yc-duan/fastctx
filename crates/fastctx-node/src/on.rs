@@ -389,7 +389,8 @@ pub async fn serve_follow(
 /// Stops an `on` job its sender stopped.
 pub async fn serve_stop(node: &Arc<Node>, origin: OnOrigin, job: JobId) -> Result<RemoteReply, Failure> {
     let record_path = on_job(node, &origin, &job)?;
-    crate::jobs::stop(node, &record_path, &format!("the on on {} that sent it", origin.resident.machine)).await?;
+    let by = format!("{} on {}", origin.resident.resident, origin.resident.machine);
+    crate::jobs::stop(node, &record_path, &by, "the on that sent it stopped").await?;
     Ok(RemoteReply::OnDone)
 }
 
@@ -502,14 +503,10 @@ async fn start(
     writes_off: bool,
 ) -> Result<(JobId, PathBuf), Failure> {
     let script = staged.script.unwrap_or_else(|| RUN_ARGV.to_string());
-    let on = OnJob {
-        state: staged.state.to_string_lossy().into_owned(),
-        input: staged.input.map(|path| path.to_string_lossy().into_owned()),
-        errors: String::new(),
-    };
+    let on = OnJob { state: staged.state.to_string_lossy().into_owned() };
     let request = RunRequest { script, cwd: None, writes_off };
     let owner = JobOwner::Resident(origin.resident.clone());
-    let launched = node.jobs.launch(node, owner, origin.town.clone(), request, Some(on)).await?;
+    let launched = node.jobs.launch(node, owner, origin.town.clone(), request, Some((on, staged.input))).await?;
     // Followed before its end is owed, so an end that comes first goes to
     // the follower rather than in a letter too.
     follow(node, &launched.job);
@@ -636,7 +633,7 @@ async fn hand_over(
         // The record first: whatever it says has ended had written its
         // last byte before, so reading the logs after it misses nothing.
         let record = crate::jobs::read(record_path).await.map_err(|failure| failure.message)?;
-        let errors = record.on.as_ref().map(|on| on.errors.clone()).filter(|path| !path.is_empty());
+        let errors = record.stderr.clone();
         let mut sent = false;
         if let Some(bytes) = read_from(&record.output, out).await? {
             out += bytes.len() as u64;
@@ -677,6 +674,14 @@ async fn hand_over(
 /// has ended, or it ended otherwise: an `on` ends as a subshell does.
 fn through(record: &JobRecord) -> Option<OnEnd> {
     let status = record.exit.map(|exit| exit.status);
+    // Output the log could not take was never handed over: the `on` did not
+    // carry the job through, whatever its code.
+    if let Some(lost) = record.output_lost.as_ref().or(record.stderr_lost.as_ref())
+        && (record.end.is_some() || record.output_ended_at.is_some())
+    {
+        let error = format!("its output there stopped being kept after {} bytes: {}", lost.kept_bytes, lost.error);
+        return Some(OnEnd::Otherwise { how: EndedHow::Failed { error }, status });
+    }
     if let Some(end) = &record.end {
         return Some(match (&end.how, status) {
             (EndedHow::Finished, Some(status)) => OnEnd::Exited { status },

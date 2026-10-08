@@ -24,6 +24,32 @@ pub struct RunRequest {
     pub writes_off: bool,
 }
 
+/// How a job retains its two output streams. Ordinary `run` uses Merged;
+/// a remote subshell uses Separate to preserve stdout as pipeline data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputMode {
+    #[default]
+    Merged,
+    Separate,
+}
+
+/// An intentional stop, attributed by the local node after authenticating
+/// its caller. The supervisor authenticates the OS user, not this label.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StopRequest {
+    pub by: String,
+    pub reason: String,
+}
+
+/// The first stop the supervisor accepted. Present even if stopping later
+/// failed; only EndedHow::Stopped establishes successful termination.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StopRequested {
+    pub at: Timestamp,
+    pub request: StopRequest,
+}
+
 /// What `run` answers: where it ran, how things stood when the wait ended,
 /// and a window onto its output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,8 +192,15 @@ pub struct JobRecord {
     pub town: Option<TownName>,
     pub script: String,
     pub cwd: String,
-    /// The file holding every byte of its output, on this machine.
+    /// A complete local input file, or null input when absent. Its producer
+    /// must finish and verify it before launch and retain it until job end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdin: Option<String>,
+    /// The merged log, or stdout alone when `stderr` is present.
     pub output: String,
+    /// Separate stderr; absent for ordinary merged `run` jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
     pub started_at: Timestamp,
     /// The program put on this job's PATH, reserved before its supervisor
     /// starts. Older records did not identify their program.
@@ -179,16 +212,21 @@ pub struct JobRecord {
     pub pid: Option<u32>,
     /// Set when the shell itself exits; processes it started may still run.
     pub exit: Option<Exited>,
-    /// Set when no process holds the output open any more: everything the
-    /// job will ever print is in the log.
+    /// Set after every output writer closed and both streams were drained.
+    /// Check the loss fields before treating the logs as complete.
     pub output_ended_at: Option<Timestamp>,
-    /// How many processes the shell left running, counted when the shell
-    /// had exited and the output had ended.
+    /// The last observed count after the shell and its output ended; zero
+    /// in a successfully finished or stopped record.
     pub remaining: Option<u32>,
     /// Set when the log could not take more output, as when the disk is
     /// full: what failed, and how many bytes the log had kept by then. The
     /// rest of the output was read and dropped, so the job ran on.
     pub output_lost: Option<OutputLost>,
+    /// Loss from the separate stderr log, with its own byte count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_lost: Option<OutputLost>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<StopRequested>,
     /// The supervisor's final account. Finished and Stopped establish that
     /// the tree ended; Interrupted and a failure after spawn may not.
     pub end: Option<Ended>,
@@ -203,16 +241,12 @@ pub struct JobRecord {
     pub on: Option<OnJob>,
 }
 
-/// What a job an `on` sent here has besides a script (`world-run.md`).
+/// What a job an `on` sent here has besides a script (`world-run.md`); its
+/// standard input and standard error are the record's `stdin` and `stderr`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnJob {
     /// The sending script's own state, which the prelude restores first.
     pub state: String,
-    /// The file its standard input is read from, whole; none for none.
-    pub input: Option<String>,
-    /// The file its standard error goes to, apart from its output, which
-    /// `on` hands back separately.
-    pub errors: String,
 }
 
 /// A resident or an open page that started a job. The resident wire shape
