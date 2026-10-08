@@ -129,7 +129,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 resident.about.machine,
                 host(&resident.about.host),
                 task(resident),
-                step(resident, now)
+                brief(&step(resident, now))
             );
             working.push_str(line.trim_end());
             working.push('\n');
@@ -144,7 +144,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 format!("moved to {} {} ago", moved.to.as_ref().map_or("outside", |t| t.as_str()), ago(moved.at, now))
             } else if let Some(state) = &resident.now {
                 match state.activity {
-                    Activity::Busy => step(resident, now),
+                    Activity::Busy => brief(&step(resident, now)),
                     Activity::Idle if !resident.here => "not here; last reported idle".into(),
                     Activity::Idle => "idle".into(),
                     // Older now records did not consistently timestamp sleep.
@@ -204,8 +204,9 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     text
 }
 
-/// A command as one line of a list: its first line, no longer than a
-/// terminal line, marked where cut; `w ID` gives it whole.
+/// A command or a resident's current step as one line of a list: its first
+/// line, no longer than a terminal line, marked where cut; `w ID` gives it
+/// whole.
 pub(super) fn brief(command: &str) -> String {
     const WIDTH: usize = 100;
     let first = first_line(command);
