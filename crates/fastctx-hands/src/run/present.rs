@@ -21,11 +21,12 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
     answer.line(&format!("=== run on {} ({}) ===", reply.machine, facts(reply)));
     let output = &reply.output;
     let log = display_path(&output.log);
+    let quoted_log = format!("'{}'", log.replace('\'', "'\"'\"'"));
     for piece in &output.pieces {
         match piece {
             OutputPiece::Text { text, .. } => answer.text(text),
             OutputPiece::PartOfLine { line, from, to, of, text } => {
-                answer.line(&format!("=== line {line}: characters {from}-{to} of {of} ==="));
+                answer.line(&format!("=== line {line}: characters {from}-{to} of {of}; read with: fastctx view --lines {line}-{line} -- {quoted_log} ==="));
                 answer.text(text);
             }
             OutputPiece::Omitted { first_line, last_line } => {
@@ -35,12 +36,17 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
                     format!("lines {first_line}-{last_line}")
                 };
                 answer.line(&format!(
-                    "=== {lines} of {} not shown; read them with: fastctx view --lines {first_line}-{last_line} -- {log} ===",
+                    "=== output from {lines} of {} not shown; read with: fastctx view --lines {first_line}-{last_line} -- {quoted_log} ===",
                     output.lines
                 ));
             }
             OutputPiece::Image { mime, width, height, base64 } => {
-                answer.line(&format!("=== image ({mime}, {width}x{height}) ==="));
+                let caption = format!("(image {width}x{height}, {mime}) ===");
+                if !answer.blocks.last().is_some_and(
+                    |block| matches!(block, Content::Text(text) if text.trim_end_matches('\n').ends_with(&caption)),
+                ) {
+                    answer.line(&format!("=== image ({mime}, {width}x{height}) ==="));
+                }
                 answer.image(mime, base64);
             }
             OutputPiece::Unreadable { line, reason } => answer.line(&format!("=== line {line}: {reason} ===")),
@@ -85,10 +91,7 @@ fn facts(reply: &RunReply) -> String {
 
 fn output_facts(output: &OutputWindow) -> Vec<String> {
     let mut facts = Vec::new();
-    if output.bytes == 0 {
-        facts.push("no output".to_string());
-    }
-    if let Some(legacy) = &output.legacy {
+    for legacy in &output.legacy {
         let lines = if legacy.lines == 1 { "1 line".to_string() } else { format!("{} lines", legacy.lines) };
         facts.push(format!("{lines} decoded as {}", legacy.encoding));
     }
@@ -98,7 +101,7 @@ fn output_facts(output: &OutputWindow) -> Vec<String> {
         } else {
             format!("{} lines have", output.escaped_lines)
         };
-        facts.push(format!("{lines} bytes that decode in no known encoding, shown as \\xNN"));
+        facts.push(format!("{lines} undecodable bytes shown as \\xNN"));
     }
     facts
 }
@@ -141,12 +144,7 @@ impl Answer {
         self.blocks.push(Content::Image { mime: mime.to_string(), base64: base64.to_string() });
     }
 
-    fn finish(mut self) -> Vec<Content> {
-        if let Some(Content::Text(last)) = self.blocks.last_mut() {
-            while last.ends_with('\n') {
-                last.pop();
-            }
-        }
+    fn finish(self) -> Vec<Content> {
         self.blocks
     }
 }

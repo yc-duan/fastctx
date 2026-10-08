@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
+unicode-width = "0.2"
 tokio = { workspace = true, features = ["rt"] }
 
 [target.'cfg(unix)'.dependencies]

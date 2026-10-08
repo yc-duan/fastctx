@@ -39,19 +39,29 @@ pub fn last_lines(log: &Path) -> io::Result<Option<LastLines>> {
     let mut kept: VecDeque<String> = VecDeque::new();
     let mut cost = 0;
     let mut read = 0;
+    let mut previous = None;
     while let Some(line) = lines.next_line()? {
-        read += 1;
         let text: String = line
             .parts
             .iter()
             .map(|part| match part {
                 Part::Text(text) => text.clone(),
+                // Only a suffix can survive the preview budget. One extra
+                // column makes the existing shortening notice mandatory.
+                Part::Spaces(count) => " ".repeat((*count).min(CHARACTERS + 1)),
                 Part::Image(image) => format!("[an image, {}x{}]", image.width, image.height),
                 Part::Unreadable(why) => format!("[{why}]"),
             })
             .collect();
-        cost += text.chars().count() + 1;
-        kept.push_back(text);
+        cost += text.chars().count();
+        if previous == Some(line.number) {
+            kept.back_mut().expect("previous fragment").push_str(&text);
+        } else {
+            read += 1;
+            cost += 1;
+            kept.push_back(text);
+        }
+        previous = Some(line.number);
         while kept.len() > LINES || (cost > CHARACTERS && kept.len() > 1) {
             cost -= kept.pop_front().expect("more than one").chars().count() + 1;
         }
@@ -60,7 +70,7 @@ pub fn last_lines(log: &Path) -> io::Result<Option<LastLines>> {
     let mut text = kept.into_iter().collect::<Vec<_>>().join("\n");
     if text.chars().count() > CHARACTERS {
         // One last line longer than all that is told: its end.
-        let skip = text.chars().count() - CHARACTERS;
+        let skip = text.chars().count() - (CHARACTERS - 1);
         text = format!("…{}", text.chars().skip(skip).collect::<String>());
         return Ok(Some(LastLines { text, whole: false }));
     }
