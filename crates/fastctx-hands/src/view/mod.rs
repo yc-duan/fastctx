@@ -36,6 +36,8 @@ pub struct Options {
     pub lines: Option<(u64, u64)>,
     /// PDF pages or PowerPoint slides `first..=last`, counting from 1.
     pub pages: Option<(u64, u64)>,
+    /// Only the master and layout text of a PowerPoint presentation.
+    pub master: bool,
     /// Excel worksheet name.
     pub sheet: Option<String>,
     /// Excel worksheet index, counting from one.
@@ -179,6 +181,9 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
             return Ok((note, None));
         }
         return Ok(result);
+    }
+    if options.master {
+        return Ok((Section::note(path, options, "--master applies to PowerPoint presentations"), None));
     }
     if options.sheet.is_some() || options.sheet_index.is_some() || options.range.is_some() {
         return Ok((Section::note(path, options, "--sheet and --range apply to Excel workbooks"), None));

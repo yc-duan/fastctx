@@ -29,11 +29,19 @@ struct Cell {
     formula_range: Option<String>,
 }
 
+impl Cell {
+    fn has_content(&self) -> bool {
+        self.formula.is_some()
+            || self.cached && (!self.value.is_empty() || matches!(self.kind.as_str(), "inlineStr" | "str"))
+    }
+}
+
 #[derive(Default)]
 struct SheetFacts {
     merges: Vec<String>,
     masters: HashMap<u32, (CellRef, String)>,
-    cells: usize,
+    metrics: crate::spreadsheet::Metrics,
+    arrays: crate::arrays::Arrays,
 }
 
 pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<Content> {
@@ -49,9 +57,8 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
     let strings = match rels.first_by_type(rel_types::SHARED_STRINGS) {
         Some(rel) => {
             let bytes = package::bytes(&mut zip, &package::target(&workbook_path, rel)?)?;
-            // XML 1.0 normalizes literal CR/CRLF before entity expansion.
-            // oxide's SST reader retains those bytes; doing this on its
-            // resulting text would also change intentional &#13; values.
+            // Normalize literal XML newlines before entity expansion, so
+            // an intentional &#13; remains distinct from a literal CR.
             let text = std::str::from_utf8(&bytes)?.replace("\r\n", "\n").replace('\r', "\n");
             SharedStringTable::parse(text.as_bytes())?
         }
@@ -63,13 +70,8 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
     };
     let selected = selected_sheet(&workbook.sheets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), selection)?;
     let mut out = Output::new(budget);
-    if !out.line(
-        "",
-        &format!("=== Excel ({} sheets; formula values are saved caches) ===", workbook.sheets.len()),
-        "use --sheet-index 1",
-    ) {
-        return Ok(out.finish());
-    }
+    out.reserve_facts(crate::spreadsheet::workbook_reserve());
+    let (mut first, mut last) = (0, 0);
     for (index, sheet) in workbook.sheets.iter().enumerate() {
         if selected.is_some_and(|wanted| index != wanted) {
             continue;
@@ -88,23 +90,37 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
             ) {
                 break;
             }
+            if first == 0 {
+                first = index + 1;
+            }
+            last = index + 1;
             continue;
         }
         let part = package::target(&workbook_path, rel)?;
         let mut facts = SheetFacts::default();
+        let mut previous = None;
+        let mut ordered = true;
         scan(
             &mut zip,
             &part,
             |cell| {
-                if cell.cached || cell.formula.is_some() {
-                    facts.cells += 1;
+                let address = CellRef::parse(&cell.address).context("invalid cell address")?;
+                let position = (address.row, address.col);
+                ordered &= previous.is_none_or(|p| p < position);
+                previous = Some(position);
+                if cell.has_content() {
+                    facts.metrics.include(&address);
                 }
                 if cell.formula_kind == "shared" && cell.formula.as_ref().is_some_and(|f| !f.is_empty()) {
                     let id = cell.shared.context("shared formula has no index")?;
                     let address = CellRef::parse(&cell.address).context("invalid formula address")?;
-                    if facts.masters.insert(id, (address, cell.formula.unwrap())).is_some() {
+                    if facts.masters.insert(id, (address, cell.formula.clone().unwrap())).is_some() {
                         bail!("duplicate shared formula index {id}");
                     }
+                }
+                if cell.formula_kind == "array" {
+                    let range = cell.formula_range.as_deref().context("array formula has no range")?.parse()?;
+                    facts.arrays.groups.push((range, cell.formula.unwrap_or_default()));
                 }
                 Ok(true)
             },
@@ -113,66 +129,169 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
                 Ok(())
             },
         )?;
-        let state = match sheet.state {
-            SheetState::Visible => "",
-            SheetState::Hidden => "; hidden",
-            SheetState::VeryHidden => "; very hidden",
-        };
-        if !out.line(
-            "",
-            &format!("=== sheet {} {} ({} stored cells{state}) ===", index + 1, quoted(&sheet.name), facts.cells),
-            &format!("use --sheet-index {}", index + 1),
-        ) {
-            break;
+        if !facts.arrays.groups.is_empty() {
+            anyhow::ensure!(ordered, "array formula expansion requires cells in row and column order");
+            // Array members exist even when the package omits their cell
+            // records. Count their union without expanding a rectangular grid.
+            facts.arrays.lookup().get(&CellRef { row: 1_048_575, col: 16_383 })?;
+            for (range, _) in &facts.arrays.groups {
+                facts.metrics.cells +=
+                    u64::from(range.last.row - range.first.row + 1) * u64::from(range.last.col - range.first.col + 1);
+                facts.metrics.extend(&range.first);
+                facts.metrics.extend(&range.last);
+            }
+            let mut lookup = facts.arrays.lookup();
+            scan(
+                &mut zip,
+                &part,
+                |cell| {
+                    let address = CellRef::parse(&cell.address).context("invalid cell address")?;
+                    if lookup.get(&address)? && cell.has_content() {
+                        facts.metrics.cells -= 1;
+                    }
+                    Ok(true)
+                },
+                |_| Ok(()),
+            )?;
         }
         for merge in &facts.merges {
-            let merged: CellRange = merge.parse().context("invalid merged cell range")?;
+            let range: CellRange = merge.parse()?;
+            facts.metrics.extend(&range.first);
+            facts.metrics.extend(&range.last);
+        }
+        let Some(header) = out.header(
+            &format!("sheet {} {}", index + 1, quoted(&sheet.name)),
+            &crate::spreadsheet::sheet_reserve(),
+            &format!("use --sheet-index {}", index + 1),
+        ) else {
+            break;
+        };
+        if first == 0 {
+            first = index + 1;
+        }
+        last = index + 1;
+        for merge in &facts.merges {
+            let merged: CellRange = merge.parse()?;
             if selection.range.as_ref().is_none_or(|range| range.intersects(&merged))
-                && !out.line("", &format!("merge {merge}"), &format!("use --sheet-index {} --range {merge}", index + 1))
+                && !out.line(
+                    "",
+                    &format!("merged {merge}"),
+                    &format!("use --sheet-index {} --range {merge}", index + 1),
+                )
             {
-                return Ok(out.finish());
+                break;
             }
         }
-        let completed = scan(
-            &mut zip,
-            &part,
-            |cell| {
-                let address = CellRef::parse(&cell.address).context("invalid cell address")?;
-                if selection.range.as_ref().is_some_and(|range| !range.contains(&address)) {
-                    return Ok(true);
+        for (range, _) in &facts.arrays.groups {
+            if selection.range.as_ref().is_none_or(|r| r.intersects(range))
+                && !out.line(
+                    "",
+                    &format!("array {}:{}", range.first, range.last),
+                    &format!("use --sheet-index {} --range {}:{}", index + 1, range.first, range.last),
+                )
+            {
+                break;
+            }
+        }
+        let (mut shown, mut through) = (0, None);
+        if !out.stopped() {
+            let mut array_cells = facts.arrays.cells(selection.range.as_ref());
+            let mut emit = |address: CellRef, value: &str| {
+                if !out.cell(
+                    address.row,
+                    &address.to_string(),
+                    value,
+                    &resume(index, &address, selection.range.as_ref()),
+                ) {
+                    return false;
                 }
-                if !cell.cached && cell.formula.is_none() {
-                    return Ok(true);
-                }
-                let mut value = value(&cell, &strings, styles.as_ref(), workbook.date1904)?;
-                if let Some(formula) = &cell.formula {
-                    let formula = if cell.formula_kind == "shared" && formula.is_empty() {
-                        let id = cell.shared.context("shared formula has no index")?;
-                        let (from, master) =
-                            facts.masters.get(&id).with_context(|| format!("missing shared formula master {id}"))?;
-                        translate(master, from, &address)
-                    } else {
-                        formula.clone()
-                    };
-                    let annotation = match cell.formula_kind.as_str() {
-                        "array" => {
-                            format!(" [array {}]", cell.formula_range.as_deref().context("array formula has no range")?)
+                shown += 1;
+                through = Some(address);
+                true
+            };
+            let completed = scan(
+                &mut zip,
+                &part,
+                |cell| {
+                    let address = CellRef::parse(&cell.address).context("invalid cell address")?;
+                    if selection.range.as_ref().is_some_and(|range| !range.contains(&address)) {
+                        return Ok(true);
+                    }
+                    let position = (address.row, address.col);
+                    while array_cells.peek().is_some_and(|next| next < position) {
+                        let (address, formula) = array_cells.next().unwrap();
+                        if !emit(address, &formula_value(Ok(formula.to_owned()), "(no cached value)")) {
+                            return Ok(false);
                         }
-                        "dataTable" => bail!("{address}: data-table formula parameters are not supported"),
-                        "" | "normal" | "shared" => String::new(),
-                        other => bail!("{address}: unsupported formula type {other}"),
+                    }
+                    let array = (array_cells.peek() == Some(position)).then(|| array_cells.next().unwrap().1);
+                    if !cell.has_content() && array.is_none() {
+                        return Ok(true);
+                    }
+                    let cache = value(&cell, &strings, styles.as_ref(), workbook.date1904)?;
+                    let value = if let Some(formula) = &cell.formula {
+                        let decoded = (|| -> Result<String> {
+                            match cell.formula_kind.as_str() {
+                                "dataTable" => bail!("data-table formula parameters are not decoded"),
+                                "" | "normal" | "shared" | "array" => {}
+                                other => bail!("unsupported formula type {other}"),
+                            }
+                            if cell.formula_kind == "shared" && formula.is_empty() {
+                                let id = cell.shared.context("shared formula has no index")?;
+                                let (from, master) = facts.masters.get(&id).context("missing shared formula master")?;
+                                crate::xlsx_formula::translate(master, from, &address)
+                            } else {
+                                Ok(formula.clone())
+                            }
+                        })();
+                        formula_value(decoded, &cache)
+                    } else if let Some(formula) = array {
+                        formula_value(Ok(formula.to_owned()), &cache)
+                    } else {
+                        cache
                     };
-                    value = format!("={formula}{annotation}\t=> {value}");
+                    Ok(emit(address, &value))
+                },
+                |_| Ok(()),
+            )?;
+            if completed {
+                for (address, formula) in array_cells {
+                    if !emit(address, &formula_value(Ok(formula.to_owned()), "(no cached value)")) {
+                        break;
+                    }
                 }
-                Ok(out.line(&format!("{address}\t"), &value, &resume(index, &address, selection.range.as_ref())))
-            },
-            |_| Ok(()),
-        )?;
-        if !completed {
+            }
+        }
+        let mut metric =
+            facts.metrics.facts(selection.range.as_ref(), shown, if out.stopped() { through.as_ref() } else { None });
+        match sheet.state {
+            SheetState::Visible => {}
+            SheetState::Hidden => metric.push_str("; hidden"),
+            SheetState::VeryHidden => metric.push_str("; very hidden"),
+        }
+        out.update_header(header, &metric);
+        if out.stopped() {
             break;
         }
     }
+    out.facts(crate::spreadsheet::workbook_facts(
+        workbook.sheets.len(),
+        first,
+        last,
+        selected.is_some() || out.stopped(),
+    ));
     Ok(out.finish())
+}
+
+fn formula_value(formula: Result<String>, cache: &str) -> String {
+    let formula = formula.and_then(|text| {
+        anyhow::ensure!(!text.trim().is_empty(), "empty formula expression");
+        Ok(text)
+    });
+    match formula {
+        Ok(formula) => format!("{} → {cache}", crate::output::formula(&formula)),
+        Err(error) => format!("(formula unavailable: {}) → {cache}", quoted(&format!("{error:#}"))),
+    }
 }
 
 fn value(cell: &Cell, strings: &SharedStringTable, styles: Option<&StyleSheet>, date1904: bool) -> Result<String> {
@@ -190,23 +309,17 @@ fn value(cell: &Cell, strings: &SharedStringTable, styles: Option<&StyleSheet>, 
             _ => bail!("invalid Boolean at {}", cell.address),
         },
         "e" => Ok(format!("error {}", cell.value)),
-        "d" => Ok(format!("date {}", quoted(&cell.value))),
+        "d" => Ok(cell.value.replace('T', " ")),
         "" | "n" => {
             if cell.value.is_empty() {
                 return Ok("(no cached value)".into());
             }
-            let _: f64 = cell.value.parse().context("invalid numeric cell")?;
-            let mut out = cell.value.clone();
-            if let (Some(styles), Some(index)) = (styles, cell.style)
-                && let Some(format) = styles.number_format_for(index)
-                && format != "General"
-            {
-                out.push_str(&format!("; format={}", quoted(format)));
-                if office_oxide::xlsx::date::is_date_cell(cell.style, Some(styles)) {
-                    out.push_str(if date1904 { "; date-system=1904" } else { "; date-system=1900" });
-                }
-            }
-            Ok(out)
+            let number: f64 = cell.value.parse().context("invalid numeric cell")?;
+            // An omitted s attribute denotes XF zero.
+            let index = cell.style.unwrap_or(0);
+            let format = styles.and_then(|s| s.number_format_for(index));
+            let id = styles.and_then(|s| s.number_format_id_for(index));
+            Ok(crate::number::saved(&cell.value, number, format, id, date1904))
         }
         other => bail!("{}: unsupported cell type {other}", cell.address),
     }
@@ -308,33 +421,4 @@ fn append(current: &mut Option<Cell>, field: &str, text: &str) {
             cell.value.push_str(text);
         }
     }
-}
-
-/// Quoted UTF-8 is copied bytewise by oxide 0.1.13's shared-formula
-/// translator. Translate only the unquoted spans and retain literals exactly.
-fn translate(formula: &str, from: &CellRef, to: &CellRef) -> String {
-    let mut out = String::new();
-    let mut start = 0;
-    let mut chars = formula.char_indices().peekable();
-    while let Some((at, quote)) = chars.next() {
-        if quote != '\'' && quote != '"' {
-            continue;
-        }
-        out.push_str(&office_oxide::xlsx::shared_formula::translate(&formula[start..at], from, to));
-        let mut end = formula.len();
-        while let Some((i, c)) = chars.next() {
-            if c == quote {
-                if chars.peek().is_some_and(|(_, c)| *c == quote) {
-                    chars.next();
-                } else {
-                    end = i + c.len_utf8();
-                    break;
-                }
-            }
-        }
-        out.push_str(&formula[at..end]);
-        start = end;
-    }
-    out.push_str(&office_oxide::xlsx::shared_formula::translate(&formula[start..], from, to));
-    out
 }

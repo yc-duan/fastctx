@@ -27,20 +27,21 @@ pub(super) fn look(
             None,
         ));
     }
-    let mut section = Section::note(path, options, &format!("{format:?}"));
+    let overhead = Section::note(path, options, "").cost;
     let selection = fastctx_office::Selection {
         lines: options.lines,
         pages: options.pages,
         sheet: options.sheet.clone(),
         sheet_index: options.sheet_index,
         range: options.range.clone(),
+        master: options.master,
     };
-    if section.cost >= budget {
+    if overhead >= budget {
         let mut note = super::not_shown(path, options);
         note.partial = true;
         return Ok((note, None));
     }
-    let content = match fastctx_office::read(file, format, &selection, budget - section.cost) {
+    let content = match fastctx_office::read(file, format, &selection, budget - overhead) {
         Ok(content) => content,
         Err(error) => {
             return Ok((
@@ -58,6 +59,7 @@ pub(super) fn look(
         note.partial = true;
         return Ok((note, None));
     }
+    let mut section = Section::note(path, options, &content.facts);
     section.text.push_str(&content.text);
     section.cost = section.text.chars().count();
     section.shown = true;

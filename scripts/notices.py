@@ -27,11 +27,13 @@ def main():
     packages = tomllib.loads((ROOT/'Cargo.lock').read_text(encoding='utf-8'))['package']
     patch_notice = (ROOT/'crates/fastctx-hands/src/write/patch/NOTICE').read_text(encoding='utf-8')
     pdf_notice = (ROOT/'crates/fastctx-hands/src/view/pdf/NOTICE').read_text(encoding='utf-8')
+    office_notice = (ROOT/'crates/fastctx-office/NOTICE').read_text(encoding='utf-8')
     with args.output.open('a', encoding='utf-8', newline='\n') as output:
         output.write(ripgrep.notices())
         output.write('\n'+args.syntax_notices.read_text(encoding='utf-8'))
         output.write('\n## OpenAI Codex portions\n\n'+patch_notice)
         output.write('\n'+pdf_notice)
+        output.write('\n## Office formula function metadata\n\n'+office_notice+'\n')
         output.write('\n## Rust standard library\n\n'+copyright_text+'\n')
         output.write('\n## Rust toolchain and bundled native runtime notices\n\n'+native_copyright+'\n')
         # MPL dependencies need a source location, not just a license text.

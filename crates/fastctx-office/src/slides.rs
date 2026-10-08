@@ -1,7 +1,9 @@
+use crate::{
+    Selection,
+    output::{Output, count, line_reserve},
+};
 use anyhow::{Result, bail};
 use office_oxide::Document;
-
-use crate::{Selection, output::Output};
 
 pub(crate) fn read(
     document: &Document,
@@ -23,52 +25,79 @@ pub(crate) fn read(
         document.as_pptx().map(|d| d.slides.len()).or_else(|| document.as_ppt().map(|d| d.slides.len())).unwrap();
     let mut sections = std::mem::take(&mut ir.sections);
     if sections.len() < total {
-        bail!("PowerPoint parser returned fewer slides than the presentation declares");
+        bail!("PowerPoint parser returned fewer slides than declared");
     }
     ir.sections = sections.split_off(total);
-    let master_text = ir.plain_text();
-    if !out.line("", &format!("=== PowerPoint ({total} slides) ==="), "use --pages 1") {
-        return Ok(());
-    }
+    let master = ir.plain_text();
+    out.reserve_facts(format!("slides {n}-{n} of {n}; master and layout text only", n = u64::MAX).len());
     let (first, last) = selection.pages.unwrap_or((1, total as u64));
-    if first > total as u64 {
-        out.line("", "no slides in the range asked", "use --pages 1");
-        return Ok(());
-    }
-    for (i, mut section) in sections.into_iter().enumerate() {
-        let number = i as u64 + 1;
-        if number < first || number > last {
-            continue;
+    let (mut shown_first, mut shown_last) = (0, 0);
+    if !selection.master {
+        for (i, mut section) in sections.into_iter().enumerate() {
+            let page = i as u64 + 1;
+            if page < first || page > last {
+                continue;
+            }
+            section.title = None;
+            let extra_notes = if let (Some(notes), Some(pptx)) = (&mut notes, document.as_pptx()) {
+                section.speaker_notes = None;
+                notes.slide(&pptx.presentation.slides[i].rel_id)?
+            } else {
+                String::new()
+            };
+            let hidden = section.hidden;
+            ir.sections = vec![section];
+            let mut text = ir.plain_text();
+            if !extra_notes.trim().is_empty() {
+                text.push_str("\n\n[Notes]\n");
+                text.push_str(extra_notes.trim_end_matches('\n'));
+            }
+            let Some(header) = out.header(
+                &format!("slide {page}"),
+                &format!("{}; hidden", line_reserve()),
+                &format!("use --pages {page}"),
+            ) else {
+                break;
+            };
+            if shown_first == 0 {
+                shown_first = page;
+            }
+            shown_last = page;
+            let lines =
+                out.numbered(&text, selection.lines, |n, total| format!("use --pages {page} --lines {n}-{total}"));
+            let mut facts = lines.facts(selection.lines.is_some());
+            if hidden {
+                facts.push_str("; hidden");
+            }
+            out.update_header(header, &facts);
+            if out.stopped() {
+                break;
+            }
         }
-        // Slide titles are already elements; section titles repeat them.
-        section.title = None;
-        let extra_notes = if let (Some(notes), Some(pptx)) = (&mut notes, document.as_pptx()) {
-            section.speaker_notes = None;
-            notes.slide(&pptx.presentation.slides[i].rel_id)?
+    }
+    if !out.stopped()
+        && (selection.master || selection.pages.is_none() || (first <= total as u64 && last >= total as u64))
+        && (!master.is_empty() || selection.master)
+        && let Some(header) = out.header("master and layout text", &line_reserve(), "use --master")
+    {
+        let lines = out.numbered(&master, selection.lines, |n, total| format!("use --master --lines {n}-{total}"));
+        out.update_header(header, &lines.facts(selection.lines.is_some()));
+    }
+    let facts = if selection.master {
+        format!("{}; master and layout text only", count(total as u64, "slide"))
+    } else if total == 0 {
+        count(0, "slide")
+    } else if shown_first == 0 {
+        format!("no slides shown of {total}")
+    } else if selection.pages.is_some() || shown_last != total as u64 {
+        if shown_first == shown_last {
+            format!("slide {shown_first} of {total}")
         } else {
-            String::new()
-        };
-        let hidden = section.hidden;
-        ir.sections = vec![section];
-        let mut text = ir.plain_text();
-        if !extra_notes.trim().is_empty() {
-            text.push_str("\n\n[Notes]\n");
-            text.push_str(extra_notes.trim_end_matches('\n'));
+            format!("slides {shown_first}-{shown_last} of {total}")
         }
-        // File-wide master text belongs to the final slide's line space,
-        // so every continuation remains reachable with --pages/--lines.
-        if i + 1 == total && !master_text.is_empty() {
-            text.push_str("\n\n[Master text]\n");
-            text.push_str(&master_text);
-        }
-        let label = format!("slide {number} of {total}");
-        let state = if hidden { "; hidden" } else { "" };
-        let resume = format!("use --pages {number}");
-        if !out.line("", &format!("=== {label} ({} lines{state}) ===", text.lines().count()), &resume)
-            || !out.numbered(&text, selection.lines, Some(number))
-        {
-            break;
-        }
-    }
+    } else {
+        count(total as u64, "slide")
+    };
+    out.facts(facts);
     Ok(())
 }
