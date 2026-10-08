@@ -34,7 +34,7 @@ pub struct Launch<'a> {
     pub environment: &'a [(OsString, OsString)],
     /// What an `on` sent with the script; the files are in the resident's
     /// directory already.
-    pub on: Option<fastctx_types::run::OnJob>,
+    pub on: Option<&'a fastctx_types::run::OnJob>,
 }
 
 /// A job whose supervisor has been started.
@@ -111,7 +111,7 @@ pub fn launch_with_io(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path
         end: None,
         ends_with_node: false,
         writes_off: launch.request.writes_off,
-        on: launch.on.clone(),
+        on: launch.on.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
     let started = spawn_detached(

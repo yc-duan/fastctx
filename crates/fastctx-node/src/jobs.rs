@@ -79,7 +79,7 @@ impl Jobs {
                 home: &home,
                 executable: &executable,
                 environment: &environment,
-                on,
+                on: on.as_ref(),
             };
             run::launch_with_io(&launch, mode, input.as_deref())
         })

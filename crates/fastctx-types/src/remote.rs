@@ -56,6 +56,12 @@ pub enum RemoteCall {
         out_from: u64,
         err_from: u64,
     },
+    /// Stop a job there and everything it started, for `by` on the calling
+    /// machine (`fastctx stop`).
+    StopJob {
+        job: JobId,
+        by: String,
+    },
     /// Stop an `on` job: its sender stopped it on purpose.
     StopOn {
         origin: crate::on::OnOrigin,
@@ -225,6 +231,11 @@ pub enum RemoteReply {
     Run(RunReply),
     /// An `on` job's end was handed over, or it was stopped.
     OnDone,
+    /// The job's record once stopped, or as it was when it had ended already;
+    /// `None` when this machine has no job with that id.
+    JobStopped {
+        record: Option<Box<crate::run::JobRecord>>,
+    },
     Written {
         outcome: WriteOutcome,
     },

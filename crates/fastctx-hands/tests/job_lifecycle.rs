@@ -62,7 +62,7 @@ fn exercise() -> Result {
     let machine: MachineName = "job-test".parse()?;
     let owner = Address { machine: machine.clone(), resident: "lab-cafe".parse()? }.into();
     let environment = environment(&root, &bash);
-    let request = RunRequest { script: String::new(), cwd: Some(display(&root)) };
+    let request = RunRequest { script: String::new(), cwd: Some(display(&root)), writes_off: false };
     let launch = run::Launch {
         world: &world,
         machine: &machine,
@@ -72,6 +72,7 @@ fn exercise() -> Result {
         home: &root,
         executable: &executable,
         environment: &environment,
+        on: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let notified = Arc::new(Mutex::new(Vec::<JobRecord>::new()));
@@ -86,7 +87,7 @@ fn exercise() -> Result {
         fs::write(&input, &bytes)?;
         let (gate, address) = new_gate()?;
         let script = format!("exec 3<&0\n{} child {address} <&3 &\nexit 17\n", quote(&executable));
-        let request = RunRequest { script, cwd: Some(display(&root)) };
+        let request = RunRequest { script, cwd: Some(display(&root)), writes_off: false };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch_with_io(&launch, OutputMode::Separate, Some(&input))?;
         let (mut child, identity) = arrived(&gate, &job).await?;
@@ -105,7 +106,11 @@ fn exercise() -> Result {
         assert_notified(&notified, &ended);
         println!("separate stdout/stderr, binary stdin and post-main output: passed");
 
-        let request = RunRequest { script: "printf out; printf err >&2; cat\n".into(), cwd: Some(display(&root)) };
+        let request = RunRequest {
+            script: "printf out; printf err >&2; cat\n".into(),
+            cwd: Some(display(&root)),
+            writes_off: false,
+        };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch(&launch)?;
         let ended = until(&job, |r| r.end.is_some()).await?;
@@ -119,7 +124,7 @@ fn exercise() -> Result {
         for separate in [false, true] {
             let (gate, address) = new_gate()?;
             let script = format!("(exec {} child {address}) &\nexit 23\n", quote(&executable));
-            let request = RunRequest { script, cwd: Some(display(&root)) };
+            let request = RunRequest { script, cwd: Some(display(&root)), writes_off: false };
             let launch = run::Launch { request: &request, ..launch };
             let mode = if separate { OutputMode::Separate } else { OutputMode::Merged };
             let job = run::launch_with_io(&launch, mode, None)?;
@@ -153,8 +158,11 @@ fn exercise() -> Result {
         }
 
         let (gate, address) = new_gate()?;
-        let request =
-            RunRequest { script: format!("exec {} child {address}\n", quote(&executable)), cwd: Some(display(&root)) };
+        let request = RunRequest {
+            script: format!("exec {} child {address}\n", quote(&executable)),
+            cwd: Some(display(&root)),
+            writes_off: false,
+        };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch(&launch)?;
         let ended = run::stop(

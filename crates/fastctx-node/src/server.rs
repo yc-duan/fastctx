@@ -373,6 +373,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Since { since, town } => crate::since::query(node, since, town).await.map(Reply::Since),
         Call::Look { ids } => Ok(Reply::Looked { looked: crate::look::look(node, ids).await }),
+        Call::StopJob { job, machine } => {
+            let by = match caller::of(node, peer)? {
+                Caller::Resident(address) => address.tag(),
+                Caller::User => "the user".to_string(),
+                Caller::Session(agent) => format!("a {agent} session"),
+                Caller::Page(page) => format!("the page {}", page.page),
+            };
+            crate::stop::stop(node, by, job, machine).await
+        }
         Call::Talk { to, machine, text, attachments } => {
             users_voice(node, peer)?;
             crate::talk::talk(node, to, machine, text, attachments)

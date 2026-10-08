@@ -34,9 +34,9 @@ pub struct OnArgs {
     /// The state the shell function wrote; this command takes it over.
     #[arg(long, value_name = "FILE")]
     state: Option<PathBuf>,
-    /// The state also holds the command's words, as `__fastctx_argv`.
-    #[arg(long)]
-    command: bool,
+    /// The command line the shell function quoted from the command's words.
+    #[arg(long, value_name = "FILE")]
+    command: Option<PathBuf>,
     /// The machine, as `fastctx nodes` names it.
     machine: Option<String>,
     /// A command and its words, when `fastctx on` is called directly.
@@ -67,7 +67,7 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
     let town = std::env::var("FASTCTX_TOWN").ok().map(TownName::try_from).transpose()?;
     let job = std::env::var("FASTCTX_JOB").ok().map(JobId::try_from).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let package = collect(&args.state, args.command, &args.words)?;
+    let package = collect(&args.state, args.command.as_deref(), &args.words)?;
     let request = OnRequest { machine: machine.clone(), job, package: package.clone() };
     let call = Call::On { resident: resident.clone(), town, request };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
@@ -134,7 +134,7 @@ fn how_ended(how: &EndedHow) -> String {
 
 /// Writes the package beside the state: the state, the command's words or
 /// the script, and standard input read to its end.
-fn collect(state: &Option<PathBuf>, command: bool, words: &[String]) -> anyhow::Result<OnPackage> {
+fn collect(state: &Option<PathBuf>, command: Option<&Path>, words: &[String]) -> anyhow::Result<OnPackage> {
     let scratch = match std::env::var_os("FASTCTX_SCRATCH") {
         Some(scratch) => PathBuf::from(scratch),
         None => std::env::temp_dir(),
@@ -151,29 +151,34 @@ fn collect(state: &Option<PathBuf>, command: bool, words: &[String]) -> anyhow::
         }
         None => std::fs::write(&state_path, b"")?,
     }
-    if !words.is_empty() {
-        let mut file = std::fs::OpenOptions::new().append(true).open(&state_path)?;
-        writeln!(
-            file,
-            "declare -a __fastctx_argv=({})",
-            words.iter().map(|word| quoted(word)).collect::<Vec<_>>().join(" ")
-        )?;
-    }
-    let sends_words = command || !words.is_empty();
+    // A command's words become one command line that bash there reads back
+    // into exactly these words: quoted by the sending bash (`%q`), or here.
+    let command_line = match command {
+        Some(path) => {
+            let line = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+            let _ = std::fs::remove_file(path);
+            Some(line)
+        }
+        None if !words.is_empty() => Some(words.iter().map(|word| quoted(word)).collect::<Vec<_>>().join(" ")),
+        None => None,
+    };
     let stdin = std::io::stdin();
     let read = |path: &Path| -> anyhow::Result<u64> {
         let mut file = std::fs::File::create(path)?;
         Ok(std::io::copy(&mut stdin.lock(), &mut file)?)
     };
-    let (script, input) = if sends_words {
+    let (script, input) = if let Some(line) = command_line {
+        let script = directory.join("script");
+        std::fs::write(&script, format!("{}\n", line.trim_end()))?;
         // A terminal's input has no end to read to; the command gets none.
-        if stdin.is_terminal() {
-            (None, None)
+        let input = if stdin.is_terminal() {
+            None
         } else {
             let path = directory.join("input");
             let size = read(&path)?;
-            (None, (size > 0).then(|| path.to_string_lossy().into_owned()))
-        }
+            (size > 0).then(|| path.to_string_lossy().into_owned())
+        };
+        (script.to_string_lossy().into_owned(), input)
     } else {
         if stdin.is_terminal() {
             bail!(
@@ -184,7 +189,7 @@ fn collect(state: &Option<PathBuf>, command: bool, words: &[String]) -> anyhow::
         if read(&path)? == 0 {
             bail!("no command, and the script on standard input is empty");
         }
-        (Some(path.to_string_lossy().into_owned()), None)
+        (path.to_string_lossy().into_owned(), None)
     };
     Ok(OnPackage {
         state: state_path.to_string_lossy().into_owned(),

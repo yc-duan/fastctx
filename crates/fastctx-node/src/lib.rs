@@ -51,6 +51,7 @@ mod session_options;
 mod session_record;
 mod since;
 mod speech;
+mod stop;
 mod talk;
 mod town;
 mod turns;

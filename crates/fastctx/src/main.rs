@@ -19,6 +19,7 @@ mod renew;
 mod scope_args;
 mod server_install;
 mod service;
+mod stop;
 mod talk;
 mod update;
 mod view;
@@ -111,6 +112,8 @@ enum Command {
     /// Run part of a script on another machine; the World's shell calls it
     /// as `on`.
     On(on::OnArgs),
+    /// Stop a job and everything it started, on whichever machine it runs.
+    Stop(stop::StopArgs),
     /// See the World's machines: which are online and what each is like.
     Nodes,
     /// Copy a file or a directory from one machine to another.
@@ -211,6 +214,7 @@ fn main() -> ExitCode {
         Command::ApplyPatch => return finish(writers::apply_patch()),
         Command::W(args) => w::run(args),
         Command::On(args) => return on::run(args),
+        Command::Stop(args) => return finish(stop::run(args)),
         Command::Nodes => world::nodes(),
         Command::Copy(args) => return finish(copy::run(args)),
         Command::Talk(args) => talk::run(args),

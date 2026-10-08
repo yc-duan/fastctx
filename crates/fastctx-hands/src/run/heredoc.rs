@@ -88,45 +88,44 @@ pub(super) fn check(source: &str) -> Result<(), Failure> {
         &sources,
         kinds.iter().enumerate().filter_map(|(index, kind)| (*kind == Kind::Writer).then_some(index)),
     );
-    let risky = input_sources(
-        &sources,
-        kinds.iter().enumerate().filter_map(|(index, kind)| {
-            (*kind == Kind::Writer || *kind == Kind::Unknown && !scanner.commands[index].words.is_empty())
-                .then_some(index)
-        }),
-    );
     let mut markers = std::collections::HashMap::new();
     for document in &scanner.documents {
         markers.entry(&document.delimiter.text).or_insert(document);
     }
     for (index, command) in scanner.commands.iter().enumerate() {
-        let (kind, name) = command_kind(&command.words, &uncertain);
+        let (_, name) = command_kind(&command.words, &uncertain);
         if let Some(name) = name
             && let Some(document) = markers.get(&name.text)
             && document.end < name.offset
         {
+            // Where bash ended it: the first line of the body that is the
+            // delimiter, which the writer meant as part of the body.
+            let ended = 1 + scanner.source[..document.end.min(scanner.source.len())]
+                .iter()
+                .filter(|&&byte| byte == b'\n')
+                .count();
             return Err(refuse(
-                name.line,
+                ended,
                 format!(
-                    "{marker:?} is a command here, but already ended the here-document from line {start}; it may have ended early. Use a different quoted delimiter that occurs nowhere in the body",
+                    "the here-document from line {start} ends here, where its body has a line that is only {marker:?}, so the lines after it run as commands, up to line {line}. Use a different quoted delimiter that occurs nowhere in the body",
                     marker = std::str::from_utf8(&name.text).expect("quote removal preserves UTF-8"),
                     start = document.delimiter.line,
+                    line = name.line,
                 ),
             ));
         }
-        if risky[index] || kind == Kind::Unknown {
+        // Only a here-document that a write command receives is refused for
+        // expanding: anywhere else, expansion is how bash is meant to be
+        // used, and a command the source does not name is not presumed to
+        // write.
+        if writers[index] {
             for &id in &command.documents {
                 let document = &scanner.documents[id];
                 if let Some(line) = document.expansion {
-                    let reason = if writers[index] {
-                        "bash would expand a here-document passed to a file-writing command"
-                    } else {
-                        "the command receiving this expanding here-document cannot be determined from literal source"
-                    };
                     return Err(refuse(
                         line,
                         format!(
-                            "{reason} (delimiter on line {}). Quote the delimiter, for example <<'CONTENT', to preserve the body; use printf ... | write ... if expansion is intentional",
+                            "bash would expand a here-document passed to a file-writing command (delimiter on line {}). Quote the delimiter, for example <<'CONTENT', to keep the body as written; use printf ... | write ... if expansion is intended",
                             document.delimiter.line,
                         ),
                     ));

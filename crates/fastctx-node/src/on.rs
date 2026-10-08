@@ -42,10 +42,6 @@ const CHUNK: usize = 1024 * 1024;
 /// is below what a reader notices, and a look at a file's end costs little.
 const LOOK_AGAIN: Duration = Duration::from_millis(100);
 
-/// What a job's command is when `on` sent a command's words: they are in
-/// the restored state, as an array, and run as one command.
-const RUN_ARGV: &str = "\"${__fastctx_argv[@]}\"\n";
-
 type Pieces = mpsc::UnboundedSender<Result<OnPiece, Failure>>;
 
 // The sending side.
@@ -230,7 +226,7 @@ fn feed(
 
 /// Sends the package's parts in the order `OnSizes` lists them.
 async fn send_package(stream: &mut Stream, package: &OnPackage) -> Result<(), String> {
-    for path in [Some(&package.state), package.script.as_ref(), package.input.as_ref()].into_iter().flatten() {
+    for path in [Some(&package.state), Some(&package.script), package.input.as_ref()].into_iter().flatten() {
         let mut file = tokio::fs::File::open(path).await.map_err(|error| format!("reading {path}: {error}"))?;
         let mut buffer = vec![0u8; CHUNK];
         loop {
@@ -266,7 +262,7 @@ async fn sizes(package: &OnPackage) -> Result<OnSizes, Failure> {
             }
         };
         let state = size(Some(&package.state))?.expect("given");
-        let script = size(package.script.as_ref())?;
+        let script = size(Some(&package.script))?.expect("given");
         let input = size(package.input.as_ref())?.unwrap_or(0);
         Ok(OnSizes { state, script, input, sha256: hex(&digest.finalize()) })
     })
@@ -410,21 +406,16 @@ fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result<PathBuf, F
 /// A package on this machine, ready to become a job.
 struct Staged {
     state: PathBuf,
-    script: Option<String>,
+    script: String,
     input: Option<PathBuf>,
 }
 
 impl Staged {
     /// The package `fastctx on` wrote here.
     async fn local(package: &OnPackage) -> Result<Self, Failure> {
-        let script = match &package.script {
-            Some(path) => Some(
-                tokio::fs::read_to_string(path)
-                    .await
-                    .map_err(|error| Failure::new(format!("reading the script {path}: {error}")))?,
-            ),
-            None => None,
-        };
+        let script = tokio::fs::read_to_string(&package.script)
+            .await
+            .map_err(|error| Failure::new(format!("reading the script {}: {error}", package.script)))?;
         Ok(Self { state: PathBuf::from(&package.state), script, input: package.input.as_ref().map(PathBuf::from) })
     }
 
@@ -447,21 +438,16 @@ impl Staged {
         let mut digest = Sha256::new();
         let state = directory.join(format!("on-{name}.state"));
         take_to(stream, sizes.state, &state, &mut digest).await?;
-        let script = match sizes.script {
-            Some(size) => {
-                let mut bytes = Vec::new();
-                stream
-                    .take(size, |chunk| {
-                        digest.update(chunk);
-                        bytes.extend_from_slice(chunk);
-                        Ok(())
-                    })
-                    .await
-                    .map_err(|error| Failure::new(format!("receiving the script: {error}")))?;
-                Some(String::from_utf8(bytes).map_err(|_| Failure::new("the script is not UTF-8"))?)
-            }
-            None => None,
-        };
+        let mut bytes = Vec::new();
+        stream
+            .take(sizes.script, |chunk| {
+                digest.update(chunk);
+                bytes.extend_from_slice(chunk);
+                Ok(())
+            })
+            .await
+            .map_err(|error| Failure::new(format!("receiving the script: {error}")))?;
+        let script = String::from_utf8(bytes).map_err(|_| Failure::new("the script is not UTF-8"))?;
         let input = if sizes.input > 0 {
             let path = directory.join(format!("on-{name}.in"));
             take_to(stream, sizes.input, &path, &mut digest).await?;
@@ -502,7 +488,7 @@ async fn start(
     staged: Staged,
     writes_off: bool,
 ) -> Result<(JobId, PathBuf), Failure> {
-    let script = staged.script.unwrap_or_else(|| RUN_ARGV.to_string());
+    let script = staged.script;
     let on = OnJob { state: staged.state.to_string_lossy().into_owned() };
     let request = RunRequest { script, cwd: None, writes_off };
     let owner = JobOwner::Resident(origin.resident.clone());

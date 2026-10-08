@@ -22,10 +22,11 @@ pub struct OnRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnPackage {
     /// The script's own variables, functions and changed options, as bash
-    /// writes them; with a command, also its words as `__fastctx_argv`.
+    /// writes them.
     pub state: String,
-    /// The script to run there; `None` when a command's words are sent.
-    pub script: Option<String>,
+    /// The script to run there: the one given on standard input, or the
+    /// command line bash quoted from a command's words.
+    pub script: String,
     /// The command's standard input, read to its end; `None` for none.
     pub input: Option<String>,
     /// The World's write commands are off in the shell this came from, so
@@ -39,7 +40,7 @@ pub struct OnPackage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnSizes {
     pub state: u64,
-    pub script: Option<u64>,
+    pub script: u64,
     pub input: u64,
     pub sha256: String,
 }
