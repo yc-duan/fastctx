@@ -46,18 +46,7 @@ pub(super) fn read(
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
     let mut residents = BTreeMap::<ResidentId, ResidentFiles>::new();
     for parent in world.job_parents()? {
-        let home = parent.parent().expect("a resident parent belongs to a place");
-        let place = if home.file_name().is_some_and(|name| name == "outside") {
-            None
-        } else {
-            Some(
-                home.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .parse()
-                    .map_err(io::Error::other)?,
-            )
-        };
+        let place = crate::residents::town_of(world, &parent);
         for directory in scan.dirs(&parent) {
             scan.jobs(&directory.join("jobs"));
             let original_directory = directory;
@@ -283,7 +272,7 @@ impl Scan<'_> {
                     files,
                     finished.turn,
                     Turn {
-                        at: finished.at,
+                        at: finished.ended_at.unwrap_or(finished.at),
                         end: finished.end,
                         readers: Some(finished.readers),
                         rank: 3,
@@ -369,6 +358,25 @@ impl Scan<'_> {
         });
         let path = directory.join("actions");
         self.lines::<Action>(&path, |scan, action, number| {
+            if matches!(action.hand.as_str(), "write" | "edit" | "apply_patch") {
+                scan.events.push(SinceEvent {
+                    id: identity(
+                        "write",
+                        &[&address.tag(), &original.join("actions").to_string_lossy(), &number.to_string()],
+                    ),
+                    at: action.at,
+                    machine: action.machine,
+                    town: known(town),
+                    sources: vec![scan.location(&path)],
+                    what: SinceKind::FileAction {
+                        resident: address.clone(),
+                        hand: action.hand,
+                        paths: action.what,
+                        result: action.result,
+                    },
+                });
+                return;
+            }
             if action.hand != "ask_colleague" {
                 return;
             }

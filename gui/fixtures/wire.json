@@ -3925,334 +3925,9 @@
             }
           ]
         },
-        "machines": [
-          {
-            "kind": "answered",
-            "reply": {
-              "machine": "desktop",
-              "residents": [
-                {
-                  "about": {
-                    "id": "codex-ab10",
-                    "host": {
-                      "agent": "codex",
-                      "client": "codex-mcp-client",
-                      "version": "fixture-version"
-                    },
-                    "machine": "desktop",
-                    "born_at": "2026-10-04T12:06:07Z",
-                    "origin": {
-                      "kind": "user"
-                    },
-                    "session": null,
-                    "world_started": false,
-                    "model": null
-                  },
-                  "town": null,
-                  "here": true,
-                  "now": {
-                    "activity": "busy",
-                    "since": "2026-10-04T12:06:07Z",
-                    "turn": "turn-1",
-                    "owed": {
-                      "turn-1": [
-                        {
-                          "machine": "desktop",
-                          "resident": "codex-ab12"
-                        }
-                      ]
-                    },
-                    "answering": [
-                      {
-                        "machine": "desktop",
-                        "resident": "codex-ab12"
-                      }
-                    ],
-                    "trouble": null,
-                    "desk": true,
-                    "waiting_for_user": true,
-                    "title": "端口对拍"
-                  },
-                  "last_action": {
-                    "at": "2026-10-04T12:06:07Z",
-                    "machine": "desktop",
-                    "hand": "run",
-                    "what": "pwd",
-                    "result": "exit 0"
-                  },
-                  "moved": null,
-                  "removed": null
-                },
-                {
-                  "about": {
-                    "id": "codex-ab11",
-                    "host": {
-                      "agent": "codex",
-                      "client": "codex-mcp-client",
-                      "version": "fixture-version"
-                    },
-                    "machine": "desktop",
-                    "born_at": "2026-10-04T12:06:07Z",
-                    "origin": {
-                      "kind": "colleague",
-                      "asked_by": {
-                        "machine": "desktop",
-                        "resident": "codex-ab12"
-                      },
-                      "label": "Check JSON"
-                    },
-                    "session": "thread-1",
-                    "world_started": true,
-                    "model": "model-a"
-                  },
-                  "town": "project-0",
-                  "here": true,
-                  "now": {
-                    "activity": "idle",
-                    "since": "2026-10-04T12:06:07Z",
-                    "turn": null,
-                    "owed": {},
-                    "answering": [],
-                    "trouble": null,
-                    "desk": false,
-                    "waiting_for_user": false,
-                    "title": null
-                  },
-                  "last_action": null,
-                  "moved": {
-                    "to": "project-2",
-                    "at": "2026-10-04T12:06:07Z"
-                  },
-                  "removed": null
-                },
-                {
-                  "about": {
-                    "id": "codex-ab12",
-                    "host": {
-                      "agent": "codex",
-                      "client": "codex-mcp-client",
-                      "version": "fixture-version"
-                    },
-                    "machine": "desktop",
-                    "born_at": "2026-10-04T12:06:07Z",
-                    "origin": {
-                      "kind": "colleague",
-                      "asked_by": {
-                        "machine": "desktop",
-                        "resident": "codex-ab12"
-                      },
-                      "label": "Check JSON"
-                    },
-                    "session": "thread-1",
-                    "world_started": true,
-                    "model": "model-a"
-                  },
-                  "town": "project-0",
-                  "here": false,
-                  "now": {
-                    "activity": "asleep",
-                    "since": "2026-10-04T12:06:07Z",
-                    "turn": null,
-                    "owed": {},
-                    "answering": [],
-                    "trouble": {
-                      "at": "2026-10-04T12:06:07Z",
-                      "text": "host disconnected"
-                    },
-                    "desk": false,
-                    "waiting_for_user": false,
-                    "title": null
-                  },
-                  "last_action": null,
-                  "moved": {
-                    "to": null,
-                    "at": "2026-10-04T12:06:07Z"
-                  },
-                  "removed": null
-                },
-                {
-                  "about": {
-                    "id": "claude-ab12",
-                    "host": {
-                      "agent": "codex",
-                      "client": "codex-mcp-client",
-                      "version": "fixture-version"
-                    },
-                    "machine": "desktop",
-                    "born_at": "2026-10-04T12:06:07Z",
-                    "origin": {
-                      "kind": "user"
-                    },
-                    "session": null,
-                    "world_started": false,
-                    "model": null
-                  },
-                  "town": null,
-                  "here": false,
-                  "now": null,
-                  "last_action": null,
-                  "moved": null,
-                  "removed": null
-                },
-                {
-                  "about": {
-                    "id": "claude-ab12",
-                    "host": {
-                      "agent": "codex",
-                      "client": "codex-mcp-client",
-                      "version": "fixture-version"
-                    },
-                    "machine": "desktop",
-                    "born_at": "2026-10-04T12:06:07Z",
-                    "origin": {
-                      "kind": "user"
-                    },
-                    "session": null,
-                    "world_started": false,
-                    "model": null
-                  },
-                  "town": null,
-                  "here": false,
-                  "now": {
-                    "activity": "idle",
-                    "since": "2026-10-04T12:06:07Z",
-                    "turn": null,
-                    "owed": {},
-                    "answering": [],
-                    "trouble": null,
-                    "desk": false,
-                    "waiting_for_user": false,
-                    "title": null
-                  },
-                  "last_action": null,
-                  "moved": null,
-                  "removed": null
-                },
-                {
-                  "about": {
-                    "id": "codex-ab10",
-                    "host": {
-                      "agent": "codex",
-                      "client": "codex-mcp-client",
-                      "version": "fixture-version"
-                    },
-                    "machine": "desktop",
-                    "born_at": "2026-10-04T12:06:07Z",
-                    "origin": {
-                      "kind": "user"
-                    },
-                    "session": null,
-                    "world_started": false,
-                    "model": null
-                  },
-                  "town": null,
-                  "here": false,
-                  "now": {
-                    "activity": "busy",
-                    "since": "2026-10-04T12:06:07Z",
-                    "turn": "turn-1",
-                    "owed": {
-                      "turn-1": [
-                        {
-                          "machine": "desktop",
-                          "resident": "codex-ab12"
-                        }
-                      ]
-                    },
-                    "answering": [
-                      {
-                        "machine": "desktop",
-                        "resident": "codex-ab12"
-                      }
-                    ],
-                    "trouble": null,
-                    "desk": true,
-                    "waiting_for_user": true,
-                    "title": "端口对拍"
-                  },
-                  "last_action": {
-                    "at": "2026-10-04T12:06:07Z",
-                    "machine": "desktop",
-                    "hand": "run",
-                    "what": "pwd",
-                    "result": "exit 0"
-                  },
-                  "moved": null,
-                  "removed": "2026-10-04T12:06:07Z"
-                }
-              ],
-              "jobs": [
-                {
-                  "job": "j-abc123",
-                  "machine": "desktop",
-                  "owner": {
-                    "machine": "desktop",
-                    "resident": "codex-ab12"
-                  },
-                  "started_at": "2026-10-04T12:06:07Z",
-                  "pid": null,
-                  "command": "echo fixture",
-                  "output": "C:/example/job.log"
-                },
-                {
-                  "job": "j-abc123",
-                  "machine": "desktop",
-                  "owner": {
-                    "machine": "desktop",
-                    "resident": "codex-ab12"
-                  },
-                  "started_at": "2026-10-04T12:06:07Z",
-                  "pid": 4294967295,
-                  "command": "echo fixture",
-                  "output": "C:/example/job.log"
-                }
-              ]
-            }
-          },
-          {
-            "kind": "offline",
-            "machine": "laptop",
-            "since": "2026-10-04T12:06:07Z"
-          },
-          {
-            "kind": "offline",
-            "machine": "unknown",
-            "since": null
-          },
-          {
-            "kind": "no_answer",
-            "machine": "lab",
-            "reason": "node disconnected"
-          }
-        ]
-      },
-      {
-        "machine": "desktop",
-        "scope": {
-          "kind": "town",
-          "town": "project-0",
-          "record": {
-            "version": 1,
-            "name": "Example project 世界",
-            "what": "Exercise the ledger contract",
-            "machines": [
-              "desktop",
-              "laptop"
-            ],
-            "places": [
-              {
-                "what": "checkout",
-                "machine": "desktop",
-                "path": "C:/work/project"
-              }
-            ],
-            "canon": null,
-            "by": {
-              "kind": "user"
-            },
-            "on": "desktop",
-            "at": "2026-10-04T12:06:07Z"
-          }
+        "you": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
         },
         "machines": [
           {
@@ -4299,8 +3974,11 @@
                     ],
                     "trouble": null,
                     "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
                     "waiting_for_user": true,
-                    "title": "端口对拍"
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4309,6 +3987,16 @@
                     "what": "pwd",
                     "result": "exit 0"
                   },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
                   "moved": null,
                   "removed": null
                 },
@@ -4344,10 +4032,23 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
+                    "desk_since": "2026-10-04T12:06:07Z",
                     "waiting_for_user": false,
-                    "title": null
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": null,
+                    "last_tool_at": "2026-10-04T12:06:07Z"
                   },
                   "last_action": null,
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
                   "moved": {
                     "to": "project-2",
                     "at": "2026-10-04T12:06:07Z"
@@ -4389,10 +4090,23 @@
                       "text": "host disconnected"
                     },
                     "desk": false,
+                    "desk_since": "2026-10-04T12:06:07Z",
                     "waiting_for_user": false,
-                    "title": null
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": null,
+                    "last_tool_at": "2026-10-04T12:06:07Z"
                   },
                   "last_action": null,
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
                   "moved": {
                     "to": null,
                     "at": "2026-10-04T12:06:07Z"
@@ -4450,8 +4164,11 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
+                    "desk_since": null,
                     "waiting_for_user": false,
-                    "title": null
+                    "waiting_since": null,
+                    "title": null,
+                    "last_tool_at": null
                   },
                   "last_action": null,
                   "moved": null,
@@ -4496,8 +4213,11 @@
                     ],
                     "trouble": null,
                     "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
                     "waiting_for_user": true,
-                    "title": "端口对拍"
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4506,6 +4226,16 @@
                     "what": "pwd",
                     "result": "exit 0"
                   },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
                   "moved": null,
                   "removed": "2026-10-04T12:06:07Z"
                 }
@@ -4513,6 +4243,7 @@
               "jobs": [
                 {
                   "job": "j-abc123",
+                  "town": null,
                   "machine": "desktop",
                   "owner": {
                     "machine": "desktop",
@@ -4525,6 +4256,1377 @@
                 },
                 {
                   "job": "j-abc123",
+                  "town": null,
+                  "machine": "desktop",
+                  "owner": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  },
+                  "started_at": "2026-10-04T12:06:07Z",
+                  "pid": 4294967295,
+                  "command": "echo fixture",
+                  "output": "C:/example/job.log"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "offline",
+            "machine": "laptop",
+            "since": "2026-10-04T12:06:07Z"
+          },
+          {
+            "kind": "offline",
+            "machine": "unknown",
+            "since": null
+          },
+          {
+            "kind": "no_answer",
+            "machine": "lab",
+            "reason": "node disconnected"
+          }
+        ],
+        "history": {
+          "machine": "desktop",
+          "since": "2026-10-04T12:06:07.123456Z",
+          "town": "project-0",
+          "machines": [
+            {
+              "kind": "answered",
+              "reply": {
+                "machine": "desktop",
+                "read_started_at": "2026-10-04T12:06:07.123456Z",
+                "read_finished_at": "2026-10-04T12:06:07.123456Z",
+                "issues": [
+                  {
+                    "source": "C:/world/record.json",
+                    "reason": "unreadable record"
+                  }
+                ]
+              }
+            },
+            {
+              "kind": "offline",
+              "machine": "laptop",
+              "since": "2026-10-04T12:06:07.123456Z"
+            },
+            {
+              "kind": "offline",
+              "machine": "server",
+              "since": null
+            },
+            {
+              "kind": "no_answer",
+              "machine": "workstation",
+              "reason": "the connection broke"
+            }
+          ],
+          "events": [
+            {
+              "id": "event-0",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "file_action",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "hand": "edit",
+              "paths": "src/pid.rs",
+              "result": "1 change"
+            },
+            {
+              "id": "event-1",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "resident_born",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "host": {
+                "agent": "codex",
+                "client": "codex app-server",
+                "version": "fixture"
+              },
+              "origin": {
+                "kind": "user"
+              }
+            },
+            {
+              "id": "event-2",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "resident_born",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "host": {
+                "agent": "codex",
+                "client": "codex app-server",
+                "version": "fixture"
+              },
+              "origin": {
+                "kind": "colleague",
+                "asked_by": {
+                  "machine": "laptop",
+                  "resident": "claude-cd34"
+                },
+                "label": "Check 世界 records"
+              }
+            },
+            {
+              "id": "event-3",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "colleague_asked",
+              "asker": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "colleague": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "label": "Check 世界 records"
+            },
+            {
+              "id": "event-4",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "resident_moved",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "from": null,
+              "to": "project-0"
+            },
+            {
+              "id": "event-5",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "claude_registered",
+              "resident": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "session": "session-1",
+              "instance": "activation-1"
+            },
+            {
+              "id": "event-6",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "machine_connected"
+            },
+            {
+              "id": "event-7",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "machine_offline"
+            },
+            {
+              "id": "event-8",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "submission_uncertain",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "delivery": "n-ab12",
+              "why": "host stopped before receipt",
+              "end": null,
+              "readers": [
+                {
+                  "machine": "laptop",
+                  "resident": "claude-cd34"
+                }
+              ]
+            },
+            {
+              "id": "event-9",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "turn_ended",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "turn": "turn-1",
+              "end": {
+                "how": "completed",
+                "reason": "Host's exact reason 世界",
+                "duration_ms": 1234,
+                "last_message": "Answer, verbatim."
+              },
+              "readers": [
+                {
+                  "machine": "laptop",
+                  "resident": "claude-cd34"
+                }
+              ]
+            },
+            {
+              "id": "event-10",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "turn_ended",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "turn": "turn-1",
+              "end": {
+                "how": "failed",
+                "reason": "Host's exact reason 世界",
+                "duration_ms": 1234,
+                "last_message": "Answer, verbatim."
+              },
+              "readers": [
+                {
+                  "machine": "laptop",
+                  "resident": "claude-cd34"
+                }
+              ]
+            },
+            {
+              "id": "event-11",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "turn_ended",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "turn": "turn-1",
+              "end": {
+                "how": "interrupted",
+                "reason": "Host's exact reason 世界",
+                "duration_ms": 1234,
+                "last_message": "Answer, verbatim."
+              },
+              "readers": [
+                {
+                  "machine": "laptop",
+                  "resident": "claude-cd34"
+                }
+              ]
+            },
+            {
+              "id": "event-12",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "turn_ended",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "turn": "turn-1",
+              "end": {
+                "how": "future-outcome",
+                "reason": "Host's exact reason 世界",
+                "duration_ms": 1234,
+                "last_message": "Answer, verbatim."
+              },
+              "readers": [
+                {
+                  "machine": "laptop",
+                  "resident": "claude-cd34"
+                }
+              ]
+            },
+            {
+              "id": "event-13",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "turn_ended",
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "turn": "",
+              "end": {
+                "how": "failed",
+                "reason": null,
+                "duration_ms": null,
+                "last_message": null
+              },
+              "readers": null
+            },
+            {
+              "id": "event-14",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "job_ended",
+              "job": "j-ab12cd",
+              "owner": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "started_at": "2026-10-04T12:06:07.123456Z",
+              "elapsed_ms": 0,
+              "how": {
+                "kind": "finished"
+              },
+              "exit": {
+                "status": {
+                  "code": 7
+                },
+                "at": "2026-10-04T12:06:07.123456Z"
+              },
+              "script": "exit 7",
+              "output": "C:/world/output.log"
+            },
+            {
+              "id": "event-15",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "job_ended",
+              "job": "j-ab12cd",
+              "owner": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "started_at": "2026-10-04T12:06:07.123456Z",
+              "elapsed_ms": 0,
+              "how": {
+                "kind": "stopped"
+              },
+              "exit": {
+                "status": {
+                  "code": 7
+                },
+                "at": "2026-10-04T12:06:07.123456Z"
+              },
+              "script": "exit 7",
+              "output": "C:/world/output.log"
+            },
+            {
+              "id": "event-16",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "job_ended",
+              "job": "j-ab12cd",
+              "owner": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "started_at": "2026-10-04T12:06:07.123456Z",
+              "elapsed_ms": 0,
+              "how": {
+                "kind": "interrupted",
+                "reason": "supervisor disappeared"
+              },
+              "exit": {
+                "status": {
+                  "code": 7
+                },
+                "at": "2026-10-04T12:06:07.123456Z"
+              },
+              "script": "exit 7",
+              "output": "C:/world/output.log"
+            },
+            {
+              "id": "event-17",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "job_ended",
+              "job": "j-ab12cd",
+              "owner": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "started_at": "2026-10-04T12:06:07.123456Z",
+              "elapsed_ms": 0,
+              "how": {
+                "kind": "failed",
+                "error": "spawn failed"
+              },
+              "exit": {
+                "status": {
+                  "code": 7
+                },
+                "at": "2026-10-04T12:06:07.123456Z"
+              },
+              "script": "exit 7",
+              "output": "C:/world/output.log"
+            },
+            {
+              "id": "event-18",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "answer_delivery",
+              "colleague": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "to": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "turn": "turn-1",
+              "outcome": {
+                "kind": "delivered"
+              }
+            },
+            {
+              "id": "event-19",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "answer_delivery",
+              "colleague": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "to": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "turn": "turn-1",
+              "outcome": {
+                "kind": "waiting",
+                "why": null
+              }
+            },
+            {
+              "id": "event-20",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "answer_delivery",
+              "colleague": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "to": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "turn": "turn-1",
+              "outcome": {
+                "kind": "sent"
+              }
+            },
+            {
+              "id": "event-21",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "answer_delivery",
+              "colleague": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "to": {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              },
+              "turn": "turn-1",
+              "outcome": {
+                "kind": "failed",
+                "reason": "offline"
+              }
+            },
+            {
+              "id": "event-22",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "journal_entry",
+              "journal": "measurements",
+              "entry": "20261004T120607Z-desktop",
+              "by": {
+                "kind": "user"
+              }
+            },
+            {
+              "id": "event-23",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "journal_description",
+              "journal": "measurements",
+              "version": 2,
+              "by": {
+                "kind": "user"
+              }
+            },
+            {
+              "id": "event-24",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "project_version",
+              "version": 2,
+              "name": "Example 世界",
+              "by": {
+                "kind": "user"
+              }
+            },
+            {
+              "id": "event-25",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "journal_entry",
+              "journal": "measurements",
+              "entry": "20261004T120607Z-desktop",
+              "by": {
+                "kind": "resident",
+                "address": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                }
+              }
+            },
+            {
+              "id": "event-26",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "journal_description",
+              "journal": "measurements",
+              "version": 2,
+              "by": {
+                "kind": "resident",
+                "address": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                }
+              }
+            },
+            {
+              "id": "event-27",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "project_version",
+              "version": 2,
+              "name": "Example 世界",
+              "by": {
+                "kind": "resident",
+                "address": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                }
+              }
+            },
+            {
+              "id": "event-28",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": null
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "journal_entry",
+              "journal": "measurements",
+              "entry": "20261004T120607Z-desktop",
+              "by": {
+                "kind": "session",
+                "agent": "claude"
+              }
+            },
+            {
+              "id": "event-29",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  null,
+                  "project-0"
+                ]
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "journal_description",
+              "journal": "measurements",
+              "version": 2,
+              "by": {
+                "kind": "session",
+                "agent": "claude"
+              }
+            },
+            {
+              "id": "event-30",
+              "at": "2026-10-04T12:06:07.123456Z",
+              "machine": "desktop",
+              "town": {
+                "kind": "known",
+                "town": "project-0"
+              },
+              "sources": [
+                {
+                  "machine": "desktop",
+                  "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+                }
+              ],
+              "kind": "project_version",
+              "version": 2,
+              "name": "Example 世界",
+              "by": {
+                "kind": "session",
+                "agent": "claude"
+              }
+            }
+          ],
+          "undated": [
+            {
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  "project-0"
+                ]
+              },
+              "source": {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              },
+              "kind": "asleep"
+            },
+            {
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  "project-0"
+                ]
+              },
+              "source": {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              },
+              "kind": "claude_closed",
+              "session": "session-1",
+              "instance": "activation-1"
+            },
+            {
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  "project-0"
+                ]
+              },
+              "source": {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              },
+              "kind": "claude_registered",
+              "session": "legacy-session",
+              "instance": null
+            },
+            {
+              "resident": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              },
+              "town": {
+                "kind": "unrecorded",
+                "recorded_in": [
+                  "project-0"
+                ]
+              },
+              "source": {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              },
+              "kind": "submission_uncertain",
+              "delivery": "n-ab12",
+              "why": "host stopped before receipt",
+              "end": null,
+              "readers": null
+            }
+          ],
+          "issues": [],
+          "limitations": [
+            "No earlier presence intervals are retained."
+          ]
+        }
+      },
+      {
+        "machine": "desktop",
+        "scope": {
+          "kind": "town",
+          "town": "project-0",
+          "record": {
+            "version": 1,
+            "name": "Example project 世界",
+            "what": "Exercise the ledger contract",
+            "machines": [
+              "desktop",
+              "laptop"
+            ],
+            "places": [
+              {
+                "what": "checkout",
+                "machine": "desktop",
+                "path": "C:/work/project"
+              }
+            ],
+            "canon": null,
+            "by": {
+              "kind": "user"
+            },
+            "on": "desktop",
+            "at": "2026-10-04T12:06:07Z"
+          }
+        },
+        "you": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "machines": [
+          {
+            "kind": "answered",
+            "reply": {
+              "machine": "desktop",
+              "residents": [
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": true,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
+                    "waiting_for_user": true,
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z"
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
+                  "moved": null,
+                  "removed": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab11",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "colleague",
+                      "asked_by": {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      },
+                      "label": "Check JSON"
+                    },
+                    "session": "thread-1",
+                    "world_started": true,
+                    "model": "model-a"
+                  },
+                  "town": "project-0",
+                  "here": true,
+                  "now": {
+                    "activity": "idle",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": null,
+                    "desk": false,
+                    "desk_since": "2026-10-04T12:06:07Z",
+                    "waiting_for_user": false,
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": null,
+                    "last_tool_at": "2026-10-04T12:06:07Z"
+                  },
+                  "last_action": null,
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
+                  "moved": {
+                    "to": "project-2",
+                    "at": "2026-10-04T12:06:07Z"
+                  },
+                  "removed": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "colleague",
+                      "asked_by": {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      },
+                      "label": "Check JSON"
+                    },
+                    "session": "thread-1",
+                    "world_started": true,
+                    "model": "model-a"
+                  },
+                  "town": "project-0",
+                  "here": false,
+                  "now": {
+                    "activity": "asleep",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": {
+                      "at": "2026-10-04T12:06:07Z",
+                      "text": "host disconnected"
+                    },
+                    "desk": false,
+                    "desk_since": "2026-10-04T12:06:07Z",
+                    "waiting_for_user": false,
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": null,
+                    "last_tool_at": "2026-10-04T12:06:07Z"
+                  },
+                  "last_action": null,
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
+                  "moved": {
+                    "to": null,
+                    "at": "2026-10-04T12:06:07Z"
+                  },
+                  "removed": null
+                },
+                {
+                  "about": {
+                    "id": "claude-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": null,
+                  "last_action": null,
+                  "moved": null,
+                  "removed": null
+                },
+                {
+                  "about": {
+                    "id": "claude-ab12",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": {
+                    "activity": "idle",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": null,
+                    "owed": {},
+                    "answering": [],
+                    "trouble": null,
+                    "desk": false,
+                    "desk_since": null,
+                    "waiting_for_user": false,
+                    "waiting_since": null,
+                    "title": null,
+                    "last_tool_at": null
+                  },
+                  "last_action": null,
+                  "moved": null,
+                  "removed": null
+                },
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null
+                  },
+                  "town": null,
+                  "here": false,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
+                    "waiting_for_user": true,
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z"
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
+                  "moved": null,
+                  "removed": "2026-10-04T12:06:07Z"
+                }
+              ],
+              "jobs": [
+                {
+                  "job": "j-abc123",
+                  "town": null,
+                  "machine": "desktop",
+                  "owner": {
+                    "machine": "desktop",
+                    "resident": "codex-ab12"
+                  },
+                  "started_at": "2026-10-04T12:06:07Z",
+                  "pid": null,
+                  "command": "echo fixture",
+                  "output": "C:/example/job.log"
+                },
+                {
+                  "job": "j-abc123",
+                  "town": null,
                   "machine": "desktop",
                   "owner": {
                     "machine": "desktop",
@@ -4562,6 +5664,10 @@
           "town": "project-unknown",
           "record": null
         },
+        "you": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
         "machines": [
           {
             "kind": "answered",
@@ -4607,8 +5713,11 @@
                     ],
                     "trouble": null,
                     "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
                     "waiting_for_user": true,
-                    "title": "端口对拍"
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4617,6 +5726,16 @@
                     "what": "pwd",
                     "result": "exit 0"
                   },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
                   "moved": null,
                   "removed": null
                 },
@@ -4652,10 +5771,23 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
+                    "desk_since": "2026-10-04T12:06:07Z",
                     "waiting_for_user": false,
-                    "title": null
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": null,
+                    "last_tool_at": "2026-10-04T12:06:07Z"
                   },
                   "last_action": null,
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
                   "moved": {
                     "to": "project-2",
                     "at": "2026-10-04T12:06:07Z"
@@ -4697,10 +5829,23 @@
                       "text": "host disconnected"
                     },
                     "desk": false,
+                    "desk_since": "2026-10-04T12:06:07Z",
                     "waiting_for_user": false,
-                    "title": null
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": null,
+                    "last_tool_at": "2026-10-04T12:06:07Z"
                   },
                   "last_action": null,
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
                   "moved": {
                     "to": null,
                     "at": "2026-10-04T12:06:07Z"
@@ -4758,8 +5903,11 @@
                     "answering": [],
                     "trouble": null,
                     "desk": false,
+                    "desk_since": null,
                     "waiting_for_user": false,
-                    "title": null
+                    "waiting_since": null,
+                    "title": null,
+                    "last_tool_at": null
                   },
                   "last_action": null,
                   "moved": null,
@@ -4804,8 +5952,11 @@
                     ],
                     "trouble": null,
                     "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
                     "waiting_for_user": true,
-                    "title": "端口对拍"
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z"
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4814,6 +5965,16 @@
                     "what": "pwd",
                     "result": "exit 0"
                   },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
                   "moved": null,
                   "removed": "2026-10-04T12:06:07Z"
                 }
@@ -4821,6 +5982,7 @@
               "jobs": [
                 {
                   "job": "j-abc123",
+                  "town": null,
                   "machine": "desktop",
                   "owner": {
                     "machine": "desktop",
@@ -4833,6 +5995,7 @@
                 },
                 {
                   "job": "j-abc123",
+                  "town": null,
                   "machine": "desktop",
                   "owner": {
                     "machine": "desktop",
@@ -4885,7 +6048,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -4925,7 +6089,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5001,7 +6166,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5041,7 +6207,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5124,7 +6291,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5164,7 +6332,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5239,7 +6408,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5279,7 +6449,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5358,7 +6529,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5398,7 +6570,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5478,7 +6651,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5518,7 +6692,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5598,7 +6773,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5638,7 +6814,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5717,7 +6894,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5757,7 +6935,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5837,7 +7016,8 @@
                 "temp": "C:/Temp",
                 "path_separator": "\\",
                 "case_sensitive": false,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -5877,7 +7057,8 @@
                 "temp": "/tmp",
                 "path_separator": "/",
                 "case_sensitive": true,
-                "version": "fixture-version"
+                "version": "fixture-version",
+                "shell": ""
               }
             },
             "revoked": null,
@@ -6344,6 +7525,29 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
+            "kind": "file_action",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "hand": "edit",
+            "paths": "src/pid.rs",
+            "result": "1 change"
+          },
+          {
+            "id": "event-1",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
             "kind": "resident_born",
             "resident": {
               "machine": "desktop",
@@ -6359,12 +7563,15 @@
             }
           },
           {
-            "id": "event-1",
+            "id": "event-2",
             "at": "2026-10-04T12:06:07.123456Z",
             "machine": "desktop",
             "town": {
-              "kind": "known",
-              "town": null
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
             },
             "sources": [
               {
@@ -6392,15 +7599,12 @@
             }
           },
           {
-            "id": "event-2",
+            "id": "event-3",
             "at": "2026-10-04T12:06:07.123456Z",
             "machine": "desktop",
             "town": {
-              "kind": "unrecorded",
-              "recorded_in": [
-                null,
-                "project-0"
-              ]
+              "kind": "known",
+              "town": "project-0"
             },
             "sources": [
               {
@@ -6420,12 +7624,12 @@
             "label": "Check 世界 records"
           },
           {
-            "id": "event-3",
+            "id": "event-4",
             "at": "2026-10-04T12:06:07.123456Z",
             "machine": "desktop",
             "town": {
               "kind": "known",
-              "town": "project-0"
+              "town": null
             },
             "sources": [
               {
@@ -6440,28 +7644,6 @@
             },
             "from": null,
             "to": "project-0"
-          },
-          {
-            "id": "event-4",
-            "at": "2026-10-04T12:06:07.123456Z",
-            "machine": "desktop",
-            "town": {
-              "kind": "known",
-              "town": null
-            },
-            "sources": [
-              {
-                "machine": "desktop",
-                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
-              }
-            ],
-            "kind": "claude_registered",
-            "resident": {
-              "machine": "laptop",
-              "resident": "claude-cd34"
-            },
-            "session": "session-1",
-            "instance": "activation-1"
           },
           {
             "id": "event-5",
@@ -6480,7 +7662,13 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "machine_connected"
+            "kind": "claude_registered",
+            "resident": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "session": "session-1",
+            "instance": "activation-1"
           },
           {
             "id": "event-6",
@@ -6496,7 +7684,7 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "machine_offline"
+            "kind": "machine_connected"
           },
           {
             "id": "event-7",
@@ -6512,20 +7700,7 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "submission_uncertain",
-            "resident": {
-              "machine": "desktop",
-              "resident": "codex-ab12"
-            },
-            "delivery": "n-ab12",
-            "why": "host stopped before receipt",
-            "end": null,
-            "readers": [
-              {
-                "machine": "laptop",
-                "resident": "claude-cd34"
-              }
-            ]
+            "kind": "machine_offline"
           },
           {
             "id": "event-8",
@@ -6544,18 +7719,14 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "turn_ended",
+            "kind": "submission_uncertain",
             "resident": {
               "machine": "desktop",
               "resident": "codex-ab12"
             },
-            "turn": "turn-1",
-            "end": {
-              "how": "completed",
-              "reason": "Host's exact reason 世界",
-              "duration_ms": 1234,
-              "last_message": "Answer, verbatim."
-            },
+            "delivery": "n-ab12",
+            "why": "host stopped before receipt",
+            "end": null,
             "readers": [
               {
                 "machine": "laptop",
@@ -6584,7 +7755,7 @@
             },
             "turn": "turn-1",
             "end": {
-              "how": "failed",
+              "how": "completed",
               "reason": "Host's exact reason 世界",
               "duration_ms": 1234,
               "last_message": "Answer, verbatim."
@@ -6617,7 +7788,7 @@
             },
             "turn": "turn-1",
             "end": {
-              "how": "interrupted",
+              "how": "failed",
               "reason": "Host's exact reason 世界",
               "duration_ms": 1234,
               "last_message": "Answer, verbatim."
@@ -6653,7 +7824,7 @@
             },
             "turn": "turn-1",
             "end": {
-              "how": "future-outcome",
+              "how": "interrupted",
               "reason": "Host's exact reason 世界",
               "duration_ms": 1234,
               "last_message": "Answer, verbatim."
@@ -6684,14 +7855,19 @@
               "machine": "desktop",
               "resident": "codex-ab12"
             },
-            "turn": "",
+            "turn": "turn-1",
             "end": {
-              "how": "failed",
-              "reason": null,
-              "duration_ms": null,
-              "last_message": null
+              "how": "future-outcome",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
             },
-            "readers": null
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
           },
           {
             "id": "event-13",
@@ -6707,25 +7883,19 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "job_ended",
-            "job": "j-ab12cd",
-            "owner": {
-              "machine": "laptop",
-              "resident": "claude-cd34"
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
             },
-            "started_at": "2026-10-04T12:06:07.123456Z",
-            "elapsed_ms": 0,
-            "how": {
-              "kind": "finished"
+            "turn": "",
+            "end": {
+              "how": "failed",
+              "reason": null,
+              "duration_ms": null,
+              "last_message": null
             },
-            "exit": {
-              "status": {
-                "code": 7
-              },
-              "at": "2026-10-04T12:06:07.123456Z"
-            },
-            "script": "exit 7",
-            "output": "C:/world/output.log"
+            "readers": null
           },
           {
             "id": "event-14",
@@ -6753,7 +7923,7 @@
             "started_at": "2026-10-04T12:06:07.123456Z",
             "elapsed_ms": 0,
             "how": {
-              "kind": "stopped"
+              "kind": "finished"
             },
             "exit": {
               "status": {
@@ -6787,8 +7957,7 @@
             "started_at": "2026-10-04T12:06:07.123456Z",
             "elapsed_ms": 0,
             "how": {
-              "kind": "interrupted",
-              "reason": "supervisor disappeared"
+              "kind": "stopped"
             },
             "exit": {
               "status": {
@@ -6822,8 +7991,8 @@
             "started_at": "2026-10-04T12:06:07.123456Z",
             "elapsed_ms": 0,
             "how": {
-              "kind": "failed",
-              "error": "spawn failed"
+              "kind": "interrupted",
+              "reason": "supervisor disappeared"
             },
             "exit": {
               "status": {
@@ -6851,19 +8020,26 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "answer_delivery",
-            "colleague": {
-              "machine": "desktop",
-              "resident": "codex-ab12"
-            },
-            "to": {
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
               "machine": "laptop",
               "resident": "claude-cd34"
             },
-            "turn": "turn-1",
-            "outcome": {
-              "kind": "delivered"
-            }
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "failed",
+              "error": "spawn failed"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
           },
           {
             "id": "event-18",
@@ -6890,8 +8066,7 @@
             },
             "turn": "turn-1",
             "outcome": {
-              "kind": "waiting",
-              "why": null
+              "kind": "delivered"
             }
           },
           {
@@ -6919,7 +8094,8 @@
             },
             "turn": "turn-1",
             "outcome": {
-              "kind": "sent"
+              "kind": "waiting",
+              "why": null
             }
           },
           {
@@ -6950,8 +8126,7 @@
             },
             "turn": "turn-1",
             "outcome": {
-              "kind": "failed",
-              "reason": "offline"
+              "kind": "sent"
             }
           },
           {
@@ -6968,11 +8143,19 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_entry",
-            "journal": "measurements",
-            "entry": "20261004T120607Z-desktop",
-            "by": {
-              "kind": "user"
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "failed",
+              "reason": "offline"
             }
           },
           {
@@ -6989,9 +8172,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_description",
+            "kind": "journal_entry",
             "journal": "measurements",
-            "version": 2,
+            "entry": "20261004T120607Z-desktop",
             "by": {
               "kind": "user"
             }
@@ -7013,9 +8196,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "project_version",
+            "kind": "journal_description",
+            "journal": "measurements",
             "version": 2,
-            "name": "Example 世界",
             "by": {
               "kind": "user"
             }
@@ -7034,15 +8217,11 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_entry",
-            "journal": "measurements",
-            "entry": "20261004T120607Z-desktop",
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
             "by": {
-              "kind": "resident",
-              "address": {
-                "machine": "desktop",
-                "resident": "codex-ab12"
-              }
+              "kind": "user"
             }
           },
           {
@@ -7059,9 +8238,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_description",
+            "kind": "journal_entry",
             "journal": "measurements",
-            "version": 2,
+            "entry": "20261004T120607Z-desktop",
             "by": {
               "kind": "resident",
               "address": {
@@ -7087,9 +8266,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "project_version",
+            "kind": "journal_description",
+            "journal": "measurements",
             "version": 2,
-            "name": "Example 世界",
             "by": {
               "kind": "resident",
               "address": {
@@ -7112,12 +8291,15 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_entry",
-            "journal": "measurements",
-            "entry": "20261004T120607Z-desktop",
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
             "by": {
-              "kind": "session",
-              "agent": "claude"
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              }
             }
           },
           {
@@ -7134,9 +8316,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_description",
+            "kind": "journal_entry",
             "journal": "measurements",
-            "version": 2,
+            "entry": "20261004T120607Z-desktop",
             "by": {
               "kind": "session",
               "agent": "claude"
@@ -7152,6 +8334,28 @@
                 null,
                 "project-0"
               ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_description",
+            "journal": "measurements",
+            "version": 2,
+            "by": {
+              "kind": "session",
+              "agent": "claude"
+            }
+          },
+          {
+            "id": "event-30",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
             },
             "sources": [
               {
@@ -7286,6 +8490,29 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
+            "kind": "file_action",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "hand": "edit",
+            "paths": "src/pid.rs",
+            "result": "1 change"
+          },
+          {
+            "id": "event-1",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": null
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
             "kind": "resident_born",
             "resident": {
               "machine": "desktop",
@@ -7301,12 +8528,15 @@
             }
           },
           {
-            "id": "event-1",
+            "id": "event-2",
             "at": "2026-10-04T12:06:07.123456Z",
             "machine": "desktop",
             "town": {
-              "kind": "known",
-              "town": null
+              "kind": "unrecorded",
+              "recorded_in": [
+                null,
+                "project-0"
+              ]
             },
             "sources": [
               {
@@ -7334,15 +8564,12 @@
             }
           },
           {
-            "id": "event-2",
+            "id": "event-3",
             "at": "2026-10-04T12:06:07.123456Z",
             "machine": "desktop",
             "town": {
-              "kind": "unrecorded",
-              "recorded_in": [
-                null,
-                "project-0"
-              ]
+              "kind": "known",
+              "town": "project-0"
             },
             "sources": [
               {
@@ -7362,12 +8589,12 @@
             "label": "Check 世界 records"
           },
           {
-            "id": "event-3",
+            "id": "event-4",
             "at": "2026-10-04T12:06:07.123456Z",
             "machine": "desktop",
             "town": {
               "kind": "known",
-              "town": "project-0"
+              "town": null
             },
             "sources": [
               {
@@ -7382,28 +8609,6 @@
             },
             "from": null,
             "to": "project-0"
-          },
-          {
-            "id": "event-4",
-            "at": "2026-10-04T12:06:07.123456Z",
-            "machine": "desktop",
-            "town": {
-              "kind": "known",
-              "town": null
-            },
-            "sources": [
-              {
-                "machine": "desktop",
-                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
-              }
-            ],
-            "kind": "claude_registered",
-            "resident": {
-              "machine": "laptop",
-              "resident": "claude-cd34"
-            },
-            "session": "session-1",
-            "instance": "activation-1"
           },
           {
             "id": "event-5",
@@ -7422,7 +8627,13 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "machine_connected"
+            "kind": "claude_registered",
+            "resident": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "session": "session-1",
+            "instance": "activation-1"
           },
           {
             "id": "event-6",
@@ -7438,7 +8649,7 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "machine_offline"
+            "kind": "machine_connected"
           },
           {
             "id": "event-7",
@@ -7454,20 +8665,7 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "submission_uncertain",
-            "resident": {
-              "machine": "desktop",
-              "resident": "codex-ab12"
-            },
-            "delivery": "n-ab12",
-            "why": "host stopped before receipt",
-            "end": null,
-            "readers": [
-              {
-                "machine": "laptop",
-                "resident": "claude-cd34"
-              }
-            ]
+            "kind": "machine_offline"
           },
           {
             "id": "event-8",
@@ -7486,18 +8684,14 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "turn_ended",
+            "kind": "submission_uncertain",
             "resident": {
               "machine": "desktop",
               "resident": "codex-ab12"
             },
-            "turn": "turn-1",
-            "end": {
-              "how": "completed",
-              "reason": "Host's exact reason 世界",
-              "duration_ms": 1234,
-              "last_message": "Answer, verbatim."
-            },
+            "delivery": "n-ab12",
+            "why": "host stopped before receipt",
+            "end": null,
             "readers": [
               {
                 "machine": "laptop",
@@ -7526,7 +8720,7 @@
             },
             "turn": "turn-1",
             "end": {
-              "how": "failed",
+              "how": "completed",
               "reason": "Host's exact reason 世界",
               "duration_ms": 1234,
               "last_message": "Answer, verbatim."
@@ -7559,7 +8753,7 @@
             },
             "turn": "turn-1",
             "end": {
-              "how": "interrupted",
+              "how": "failed",
               "reason": "Host's exact reason 世界",
               "duration_ms": 1234,
               "last_message": "Answer, verbatim."
@@ -7595,7 +8789,7 @@
             },
             "turn": "turn-1",
             "end": {
-              "how": "future-outcome",
+              "how": "interrupted",
               "reason": "Host's exact reason 世界",
               "duration_ms": 1234,
               "last_message": "Answer, verbatim."
@@ -7626,14 +8820,19 @@
               "machine": "desktop",
               "resident": "codex-ab12"
             },
-            "turn": "",
+            "turn": "turn-1",
             "end": {
-              "how": "failed",
-              "reason": null,
-              "duration_ms": null,
-              "last_message": null
+              "how": "future-outcome",
+              "reason": "Host's exact reason 世界",
+              "duration_ms": 1234,
+              "last_message": "Answer, verbatim."
             },
-            "readers": null
+            "readers": [
+              {
+                "machine": "laptop",
+                "resident": "claude-cd34"
+              }
+            ]
           },
           {
             "id": "event-13",
@@ -7649,25 +8848,19 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "job_ended",
-            "job": "j-ab12cd",
-            "owner": {
-              "machine": "laptop",
-              "resident": "claude-cd34"
+            "kind": "turn_ended",
+            "resident": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
             },
-            "started_at": "2026-10-04T12:06:07.123456Z",
-            "elapsed_ms": 0,
-            "how": {
-              "kind": "finished"
+            "turn": "",
+            "end": {
+              "how": "failed",
+              "reason": null,
+              "duration_ms": null,
+              "last_message": null
             },
-            "exit": {
-              "status": {
-                "code": 7
-              },
-              "at": "2026-10-04T12:06:07.123456Z"
-            },
-            "script": "exit 7",
-            "output": "C:/world/output.log"
+            "readers": null
           },
           {
             "id": "event-14",
@@ -7695,7 +8888,7 @@
             "started_at": "2026-10-04T12:06:07.123456Z",
             "elapsed_ms": 0,
             "how": {
-              "kind": "stopped"
+              "kind": "finished"
             },
             "exit": {
               "status": {
@@ -7729,8 +8922,7 @@
             "started_at": "2026-10-04T12:06:07.123456Z",
             "elapsed_ms": 0,
             "how": {
-              "kind": "interrupted",
-              "reason": "supervisor disappeared"
+              "kind": "stopped"
             },
             "exit": {
               "status": {
@@ -7764,8 +8956,8 @@
             "started_at": "2026-10-04T12:06:07.123456Z",
             "elapsed_ms": 0,
             "how": {
-              "kind": "failed",
-              "error": "spawn failed"
+              "kind": "interrupted",
+              "reason": "supervisor disappeared"
             },
             "exit": {
               "status": {
@@ -7793,19 +8985,26 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "answer_delivery",
-            "colleague": {
-              "machine": "desktop",
-              "resident": "codex-ab12"
-            },
-            "to": {
+            "kind": "job_ended",
+            "job": "j-ab12cd",
+            "owner": {
               "machine": "laptop",
               "resident": "claude-cd34"
             },
-            "turn": "turn-1",
-            "outcome": {
-              "kind": "delivered"
-            }
+            "started_at": "2026-10-04T12:06:07.123456Z",
+            "elapsed_ms": 0,
+            "how": {
+              "kind": "failed",
+              "error": "spawn failed"
+            },
+            "exit": {
+              "status": {
+                "code": 7
+              },
+              "at": "2026-10-04T12:06:07.123456Z"
+            },
+            "script": "exit 7",
+            "output": "C:/world/output.log"
           },
           {
             "id": "event-18",
@@ -7832,8 +9031,7 @@
             },
             "turn": "turn-1",
             "outcome": {
-              "kind": "waiting",
-              "why": null
+              "kind": "delivered"
             }
           },
           {
@@ -7861,7 +9059,8 @@
             },
             "turn": "turn-1",
             "outcome": {
-              "kind": "sent"
+              "kind": "waiting",
+              "why": null
             }
           },
           {
@@ -7892,8 +9091,7 @@
             },
             "turn": "turn-1",
             "outcome": {
-              "kind": "failed",
-              "reason": "offline"
+              "kind": "sent"
             }
           },
           {
@@ -7910,11 +9108,19 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_entry",
-            "journal": "measurements",
-            "entry": "20261004T120607Z-desktop",
-            "by": {
-              "kind": "user"
+            "kind": "answer_delivery",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "to": {
+              "machine": "laptop",
+              "resident": "claude-cd34"
+            },
+            "turn": "turn-1",
+            "outcome": {
+              "kind": "failed",
+              "reason": "offline"
             }
           },
           {
@@ -7931,9 +9137,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_description",
+            "kind": "journal_entry",
             "journal": "measurements",
-            "version": 2,
+            "entry": "20261004T120607Z-desktop",
             "by": {
               "kind": "user"
             }
@@ -7955,9 +9161,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "project_version",
+            "kind": "journal_description",
+            "journal": "measurements",
             "version": 2,
-            "name": "Example 世界",
             "by": {
               "kind": "user"
             }
@@ -7976,15 +9182,11 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_entry",
-            "journal": "measurements",
-            "entry": "20261004T120607Z-desktop",
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
             "by": {
-              "kind": "resident",
-              "address": {
-                "machine": "desktop",
-                "resident": "codex-ab12"
-              }
+              "kind": "user"
             }
           },
           {
@@ -8001,9 +9203,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_description",
+            "kind": "journal_entry",
             "journal": "measurements",
-            "version": 2,
+            "entry": "20261004T120607Z-desktop",
             "by": {
               "kind": "resident",
               "address": {
@@ -8029,9 +9231,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "project_version",
+            "kind": "journal_description",
+            "journal": "measurements",
             "version": 2,
-            "name": "Example 世界",
             "by": {
               "kind": "resident",
               "address": {
@@ -8054,12 +9256,15 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_entry",
-            "journal": "measurements",
-            "entry": "20261004T120607Z-desktop",
+            "kind": "project_version",
+            "version": 2,
+            "name": "Example 世界",
             "by": {
-              "kind": "session",
-              "agent": "claude"
+              "kind": "resident",
+              "address": {
+                "machine": "desktop",
+                "resident": "codex-ab12"
+              }
             }
           },
           {
@@ -8076,9 +9281,9 @@
                 "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
               }
             ],
-            "kind": "journal_description",
+            "kind": "journal_entry",
             "journal": "measurements",
-            "version": 2,
+            "entry": "20261004T120607Z-desktop",
             "by": {
               "kind": "session",
               "agent": "claude"
@@ -8094,6 +9299,28 @@
                 null,
                 "project-0"
               ]
+            },
+            "sources": [
+              {
+                "machine": "desktop",
+                "path": "C:/world/outside/residents/codex-ab12/turns/example.json"
+              }
+            ],
+            "kind": "journal_description",
+            "journal": "measurements",
+            "version": 2,
+            "by": {
+              "kind": "session",
+              "agent": "claude"
+            }
+          },
+          {
+            "id": "event-30",
+            "at": "2026-10-04T12:06:07.123456Z",
+            "machine": "desktop",
+            "town": {
+              "kind": "known",
+              "town": "project-0"
             },
             "sources": [
               {

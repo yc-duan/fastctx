@@ -172,12 +172,20 @@ pub struct Now {
     /// It sits at this machine's Computer Use desk until its turn ends.
     #[serde(default)]
     pub desk: bool,
+    /// When the World first confirmed this turn holds the desk.
+    #[serde(default)]
+    pub desk_since: Option<Timestamp>,
     /// The running turn cannot continue until a user answers its host.
     #[serde(default)]
     pub waiting_for_user: bool,
+    #[serde(default)]
+    pub waiting_since: Option<Timestamp>,
     /// The conversation's name, as its host last gave it.
     #[serde(default)]
     pub title: Option<String>,
+    /// Latest tool start observed from the host, even when it is not a World tool.
+    #[serde(default)]
+    pub last_tool_at: Option<Timestamp>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -69,6 +69,14 @@ fn residents() -> Vec<ResidentNow> {
         .into_iter()
         .enumerate()
         .map(|(i, activity)| ResidentNow {
+            tools: vec![CurrentTool {
+                turn: "turn-1".into(),
+                id: "call-1".into(),
+                started_at: Some(at()),
+                name: "run".into(),
+                machine: Some(machine()),
+                detail: "cargo test".into(),
+            }],
             about: About {
                 id: format!("codex-ab1{i}").parse().unwrap(),
                 host: host(),
@@ -93,8 +101,11 @@ fn residents() -> Vec<ResidentNow> {
                 answering: if i == 0 { vec![address()] } else { vec![] },
                 trouble: (i == 2).then(|| Trouble { at: at(), text: "host disconnected".into() }),
                 desk: i == 0,
+                desk_since: Some(at()),
                 waiting_for_user: i == 0,
+                waiting_since: Some(at()),
                 title: (i == 0).then(|| "端口对拍".to_string()),
+                last_tool_at: Some(at()),
             }),
             last_action: (i == 0).then(|| Action {
                 at: at(),
@@ -144,16 +155,27 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
     scopes
         .into_iter()
         .map(|scope| WorldWho {
+            history: if matches!(&scope, WhoScope::World { .. }) {
+                super::since::fixtures().replies.into_iter().find_map(|reply| match reply {
+                    fastctx_types::Reply::Since(history) => Some(history),
+                    _ => None,
+                })
+            } else {
+                None
+            },
+            you: Some(address()),
             machine: machine(),
             scope,
             machines: vec![
                 MachineWho::Answered {
                     reply: WhoReply {
+                        history: None,
                         machine: machine(),
                         residents: residents(),
                         jobs: [None, Some(u32::MAX)]
                             .into_iter()
                             .map(|pid| RunningJob {
+                                town: None,
                                 job: "j-abc123".parse().unwrap(),
                                 machine: machine(),
                                 owner: address().into(),
@@ -161,6 +183,7 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                                 pid,
                                 command: "echo fixture".into(),
                                 output: "C:/example/job.log".into(),
+                                stderr: None,
                             })
                             .collect(),
                     },

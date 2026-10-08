@@ -95,13 +95,22 @@ pub struct SinceEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum SinceKind {
+    /// A World write action, including its exact recorded result. The action
+    /// timestamp is when the call began, not a filesystem modification time.
+    FileAction {
+        resident: Address,
+        hand: String,
+        paths: String,
+        result: String,
+    },
     /// First resident creation, not every reconnection. `at` is `born_at`.
     ResidentBorn {
         resident: Address,
         host: Host,
         origin: Origin,
     },
-    /// `at` is the node's first settlement, including discovery after a restart.
+    /// `at` is the host's reported end when retained, otherwise the node's
+    /// first settlement, including discovery after a restart.
     /// `end` preserves the retained outcome, reason, error and last message.
     /// A colleague's answer is that last message; this is not a delivery receipt.
     /// An empty turn id means no host turn id was ever known. `None` readers
@@ -259,7 +268,7 @@ pub fn limitations() -> Vec<String> {
     [
         "Resident births are retained, but repeated arrivals and departures have no complete history. Current sleep and Claude closure markers have no reliable event time and are returned separately.",
         "Returning to a town deletes its departure marker; leaving it again replaces the marker. Only surviving moves can be reported. Copied births and turns do not record their original town; uncertain town matches are marked unrecorded.",
-        "Turn timestamps are the node's first settlement, not the host's completion time. Host stop and interruption share an outcome; only a retained reason can distinguish them. Sessions whose turns the World never observes have no turn history.",
+        "Turn timestamps use the host-reported end when retained, otherwise the node's first settlement. Host stop and interruption share an outcome; only a retained reason can distinguish them. Sessions whose turns the World never observes have no turn history.",
         "Job elapsed time includes launch overhead. An interrupted or failed supervisor's final account does not establish when, or whether, its processes stopped.",
         "The hub supplies only the current connection endpoint: connected since, or last observed offline. Earlier intervals are unavailable; after a hub restart an offline time can be unknown.",
         "Each machine reads its existing records and ledger copies at query time. Clock readings are preserved without cross-machine correction; this is not a distributed snapshot. Timestamps retain their source precision, not a promise of nanosecond accuracy.",

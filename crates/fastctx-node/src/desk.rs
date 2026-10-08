@@ -26,6 +26,12 @@ pub struct Desk {
     state: Mutex<State>,
 }
 
+impl Desk {
+    pub fn held_by(&self, resident: &ResidentId) -> bool {
+        self.state.lock().expect("never poisoned").holder.as_ref().is_some_and(|(holder, _)| holder == resident)
+    }
+}
+
 #[derive(Default)]
 struct State {
     /// Who sits at the desk, and the turn it sits there for.
@@ -102,7 +108,10 @@ pub fn turn_ended(node: &Arc<Node>, resident: &ResidentId, turn: &str) {
 
 /// Marks in the resident's `now` whether it sits at the desk.
 fn sit(node: &Node, resident: &ResidentId, sits: bool) {
-    if let Err(error) = node.residents.change_now(&node.world, resident, |now| now.desk = sits) {
+    if let Err(error) = node.residents.change_now(&node.world, resident, |now| {
+        now.desk = sits;
+        now.desk_since = if sits { Some(jiff::Timestamp::now()) } else { None };
+    }) {
         node.log.line(format_args!("recording {resident} at the desk: {error}"));
     }
 }

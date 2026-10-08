@@ -187,7 +187,7 @@ pub(super) async fn resident(node: &Arc<Node>, town: &TownName, to: &Address) ->
             .await
             .map_err(|e| Failure::new(e.to_string()))??
         {
-            RemoteReply::Looked { looked: Some(Looked::Resident(detail)) } => {
+            RemoteReply::Looked { looked: Some(Looked::Resident(detail)), .. } => {
                 detail.resident.removed.is_none() && detail.resident.town.as_ref() == Some(town)
             }
             RemoteReply::Looked { .. } => false,

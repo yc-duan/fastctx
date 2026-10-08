@@ -68,7 +68,7 @@ impl Device {
             }
             // What asks of the whole World, the device asks of each machine
             // itself (`around`).
-            Call::Who { all, town } => return Ok((Reply::Who(session.who(all, town).await?), here)),
+            Call::Who { all, town, since } => return Ok((Reply::Who(session.who(all, town, since).await?), here)),
             Call::Since { since, town } => return Ok((Reply::Since(session.since(since, town).await?), here)),
             Call::Look { ids } => return Ok((Reply::Looked { looked: session.look(ids).await? }, here)),
             Call::Agents { machine } => return Ok((Reply::Agents(session.agents(machine).await?), here)),

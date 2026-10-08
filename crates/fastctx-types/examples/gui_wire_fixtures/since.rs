@@ -11,7 +11,7 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub struct Fixtures {
     calls: Vec<Call>,
-    replies: Vec<Reply>,
+    pub(super) replies: Vec<Reply>,
     remote_calls: Vec<RemoteCall>,
     remote_replies: Vec<RemoteReply>,
 }
@@ -27,6 +27,12 @@ pub fn fixtures() -> Fixtures {
     };
     let host = Host { agent: "codex".parse().unwrap(), client: "codex app-server".into(), version: "fixture".into() };
     let mut kinds = vec![
+        SinceKind::FileAction {
+            resident: resident.clone(),
+            hand: "edit".into(),
+            paths: "src/pid.rs".into(),
+            result: "1 change".into(),
+        },
         SinceKind::ResidentBorn { resident: resident.clone(), host: host.clone(), origin: Origin::User },
         SinceKind::ResidentBorn {
             resident: resident.clone(),

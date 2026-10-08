@@ -25,6 +25,9 @@ pub struct Handover {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Finished {
     pub turn: String,
+    /// The host-reported end, when supplied; `at` remains the settlement time.
+    #[serde(default)]
+    pub ended_at: Option<Timestamp>,
     pub at: Timestamp,
     pub end: TurnEnd,
     pub readers: Vec<Address>,
@@ -147,12 +150,27 @@ fn terminal_here(directory: &ResidentDir, turn: &str) -> io::Result<Option<Finis
 /// The first terminal outcome is authoritative. Later readers can be added
 /// when acceptance was reported after completion, without changing the end.
 pub fn finish(directory: &ResidentDir, turn: &str, end: TurnEnd, readers: &[Address]) -> io::Result<(Finished, bool)> {
+    finish_at(directory, turn, end, readers, None)
+}
+
+pub fn finish_at(
+    directory: &ResidentDir,
+    turn: &str,
+    end: TurnEnd,
+    readers: &[Address],
+    ended_at: Option<Timestamp>,
+) -> io::Result<(Finished, bool)> {
     let (_transaction, current) = crate::resident_storage::current(directory)?;
     let directory = &current;
     let prior = terminal_here(directory, turn)?;
     let first = prior.is_none();
-    let mut finished =
-        prior.unwrap_or_else(|| Finished { turn: turn.to_string(), at: Timestamp::now(), end, readers: Vec::new() });
+    let mut finished = prior.unwrap_or_else(|| Finished {
+        turn: turn.to_string(),
+        at: Timestamp::now(),
+        ended_at,
+        end,
+        readers: Vec::new(),
+    });
     let before = finished.readers.clone();
     finished.readers.extend_from_slice(readers);
     finished.readers.sort();

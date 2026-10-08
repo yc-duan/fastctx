@@ -538,9 +538,10 @@ impl Residents {
 
     /// The session runs `turn`: what was told about an earlier one is not
     /// told about it.
-    pub fn turn_started(&self, world: &WorldDir, id: &ResidentId, turn: &str) -> io::Result<()> {
+    pub fn turn_started(&self, world: &WorldDir, id: &ResidentId, turn: &str, at: Timestamp) -> io::Result<()> {
         self.with_live(world, id, |_live, now| {
             enter(now, turn);
+            now.since = at;
         })
     }
 
@@ -609,6 +610,9 @@ impl Residents {
             if current {
                 now.turn = None;
                 now.waiting_for_user = false;
+                now.waiting_since = None;
+                now.desk = false;
+                now.desk_since = None;
                 now.activity = if requester_here { Activity::Idle } else { Activity::Asleep };
                 now.since = Timestamp::now();
             }
@@ -683,6 +687,7 @@ fn enter(now: &mut Now, turn: &str) {
     if now.turn.as_deref() != Some(turn) || now.activity != Activity::Busy {
         now.since = Timestamp::now();
         now.waiting_for_user = false;
+        now.waiting_since = None;
     }
     now.turn = Some(turn.to_string());
     now.activity = Activity::Busy;
@@ -706,8 +711,11 @@ pub fn idle(since: Timestamp) -> Now {
         answering: Vec::new(),
         trouble: None,
         desk: false,
+        desk_since: None,
         waiting_for_user: false,
+        waiting_since: None,
         title: None,
+        last_tool_at: None,
     }
 }
 
@@ -755,7 +763,7 @@ fn live_town(world: &WorldDir, id: &ResidentId, homes: &Homes) -> io::Result<Opt
 }
 
 /// The town a directory of residents belongs to, from where it lies.
-fn town_of(world: &WorldDir, parent: &std::path::Path) -> Option<TownName> {
+pub(crate) fn town_of(world: &WorldDir, parent: &std::path::Path) -> Option<TownName> {
     let towns = world.path().join("towns");
     let town = parent.parent()?.strip_prefix(&towns).ok()?;
     TownName::try_from(town.to_str()?).ok()

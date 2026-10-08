@@ -3,7 +3,7 @@
 //! answered and which could not be asked, and what runs on with nobody here
 //! who started it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fastctx_types::project::{Record, TownSummary};
 use fastctx_types::residents::{Activity, Origin};
@@ -26,6 +26,7 @@ pub struct TownView {
     pub jobs: Vec<RunningJob>,
     /// Everyone here on the machines that answered, shown or not.
     present: BTreeSet<Address>,
+    known: BTreeMap<Address, ResidentNow>,
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +48,7 @@ pub struct TownCount {
     pub summary: Option<TownSummary>,
     pub here: usize,
     pub busy: usize,
+    pub running: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,7 +85,8 @@ impl TownView {
                 MachineWho::NoAnswer { machine, reason } => machines.push(MachineState::NoAnswer { machine, reason }),
             }
         }
-        jobs.sort_by_key(|job| job.started_at);
+        jobs.sort_by_key(|job| (job.machine.clone(), job.started_at));
+        let known = residents.iter().map(|r| (address(r), r.clone())).collect();
         let present = residents.iter().filter(|resident| resident.here).map(address).collect();
         let scope = match who.scope {
             WhoScope::Town { town, record } => Scope::Town { town, record },
@@ -99,17 +102,24 @@ impl TownView {
                             summary: towns.iter().find(|town| town.town == name).cloned(),
                             here: living.iter().filter(|resident| resident.here).count(),
                             busy: living.iter().filter(|resident| busy(resident)).count(),
+                            running: jobs.iter().filter(|job| job.town.as_ref() == Some(&name)).count()
+                                + living.iter().filter(|r| r.now.as_ref().is_some_and(|now| now.desk)).count(),
                             town: name,
                         }
                     })
                     .collect();
                 // Across the World, those in a town are counted with it.
                 residents.retain(|resident| resident.town.is_none());
+                jobs.retain(|job| job.town.is_none());
                 Scope::World { towns: counts }
             }
         };
         residents.sort_by_key(|resident| (Some(&address(resident)) != you, std::cmp::Reverse(latest(resident))));
-        Self { machine: who.machine, scope, machines, residents, jobs, present }
+        Self { machine: who.machine, scope, machines, residents, jobs, present, known }
+    }
+
+    pub fn known(&self, address: &Address) -> Option<&ResidentNow> {
+        self.known.get(address)
     }
 
     /// How many of those shown are here, and how many busy.
@@ -156,12 +166,20 @@ pub fn address(resident: &ResidentNow) -> Address {
 }
 
 pub fn busy(resident: &ResidentNow) -> bool {
-    resident.removed.is_none() && resident.now.as_ref().is_some_and(|now| now.activity == Activity::Busy)
+    resident.here
+        && resident.moved.is_none()
+        && resident.removed.is_none()
+        && resident.now.as_ref().is_some_and(|now| now.activity == Activity::Busy)
 }
 
 /// When it last did anything the World saw.
 pub fn latest(resident: &ResidentNow) -> Timestamp {
     let action = resident.last_action.as_ref().map(|action| action.at);
-    let state = resident.now.as_ref().map(|now| now.since);
-    action.into_iter().chain(state).max().unwrap_or(resident.about.born_at)
+    let state = resident.now.as_ref().map(|now| now.last_tool_at.map_or(now.since, |tool| tool.max(now.since)));
+    action
+        .into_iter()
+        .chain(state)
+        .chain(resident.tools.iter().filter_map(|tool| tool.started_at))
+        .max()
+        .unwrap_or(resident.about.born_at)
 }

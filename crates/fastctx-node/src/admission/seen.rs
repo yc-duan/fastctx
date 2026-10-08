@@ -36,13 +36,8 @@ pub fn who(node: &Node, scope: &Scope, mut reply: WhoReply) -> WhoReply {
         let address = Address { machine: machine.clone(), resident: now.about.id.clone() };
         resident(node, scope, &address, now.town.as_ref())
     });
-    reply.jobs.retain(|job| {
-        let town = match &job.owner {
-            JobOwner::Resident(address) => node.residents.town_of(&address.resident).flatten(),
-            JobOwner::Page { page } => Some(page.town.clone()),
-        };
-        owner(node, scope, &job.owner, town.as_ref())
-    });
+    reply.jobs.retain(|job| owner(node, scope, &job.owner, job.town.as_ref()));
+    reply.history = reply.history.map(|history| since(node, scope, history));
     reply
 }
 
@@ -60,7 +55,8 @@ pub fn since(node: &Node, scope: &Scope, mut reply: SinceReply) -> SinceReply {
     reply.events.retain(|event| {
         town_seen(&event.town)
             && match &event.what {
-                SinceKind::ResidentBorn { resident, .. }
+                SinceKind::FileAction { resident, .. }
+                | SinceKind::ResidentBorn { resident, .. }
                 | SinceKind::TurnEnded { resident, .. }
                 | SinceKind::ResidentMoved { resident, .. }
                 | SinceKind::ClaudeRegistered { resident, .. }
@@ -96,4 +92,8 @@ pub fn looked(node: &Node, scope: &Scope, looked: Option<Looked>) -> Option<Look
         Some(Looked::Job { record }) => owner(node, scope, &record.owner, record.town.as_ref()),
     };
     if seen { looked } else { None }
+}
+
+pub fn job(node: &Node, scope: &Scope, job: &fastctx_types::town::RunningJob) -> bool {
+    owner(node, scope, &job.owner, job.town.as_ref())
 }

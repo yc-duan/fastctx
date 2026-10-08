@@ -321,8 +321,9 @@ impl fastctx_net::link::Node for Handler {
                     .await
                     .map(|offers| RemoteReply::Offers(Box::new(offers))),
                 RemoteCall::Look { id } => {
-                    let looked = crate::look::look_here(&node, &id).await;
-                    Ok(RemoteReply::Looked { looked: crate::admission::seen::looked(&node, scope, looked) })
+                    let (looked, mut jobs) = crate::look::look_here(&node, &id).await?;
+                    jobs.retain(|job| crate::admission::seen::job(&node, scope, job));
+                    Ok(RemoteReply::Looked { looked: crate::admission::seen::looked(&node, scope, looked), jobs })
                 }
                 RemoteCall::Find { resident } => {
                     let lives_here = match node.residents.town_of(&resident) {
@@ -342,7 +343,7 @@ impl fastctx_net::link::Node for Handler {
                     .map_err(|error| Failure::new(format!("writing: {error}")))?;
                     Ok(RemoteReply::Written { outcome })
                 }
-                RemoteCall::Who { all, town } => crate::server::who_here(&node, all, town)
+                RemoteCall::Who { all, town, since } => crate::server::who_here(&node, all, town, since)
                     .await
                     .map(|reply| RemoteReply::Who(crate::admission::seen::who(&node, scope, reply))),
                 RemoteCall::Since { since, town } => crate::since::here(&node, since, town)

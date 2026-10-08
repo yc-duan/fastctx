@@ -111,12 +111,17 @@ impl Session {
         }
     }
 
-    pub(super) async fn who(&self, all: bool, town: Option<TownName>) -> Result<WorldWho, Error> {
+    pub(super) async fn who(
+        &self,
+        all: bool,
+        town: Option<TownName>,
+        since: Option<Timestamp>,
+    ) -> Result<WorldWho, Error> {
         let scope = match &town {
             Some(town) => self.town(town).await?,
             None => WhoScope::World { towns: self.towns().await? },
         };
-        let heard = self.ask_each(self.asked(&scope), |_| RemoteCall::Who { all, town: town.clone() }).await;
+        let heard = self.ask_each(self.asked(&scope), |_| RemoteCall::Who { all, town: town.clone(), since }).await;
         let machines = heard
             .into_iter()
             .map(|(machine, heard)| match heard {
@@ -128,7 +133,12 @@ impl Session {
                 Heard::NoAnswer(reason) => MachineWho::NoAnswer { machine, reason },
             })
             .collect();
-        Ok(WorldWho { machine: self.link.membership().name.clone(), scope, machines })
+        let mut reply =
+            WorldWho { machine: self.link.membership().name.clone(), scope, machines, you: None, history: None };
+        if let Some(since) = since {
+            reply.collect_history(since, town);
+        }
+        Ok(reply)
     }
 
     pub(super) async fn since(&self, since: Timestamp, town: Option<TownName>) -> Result<WorldSince, Error> {
@@ -195,16 +205,22 @@ impl Session {
         for id in ids {
             let heard = self.ask_each(self.reachable(), |_| RemoteCall::Look { id: id.clone() }).await;
             let mut found = Vec::new();
+            let mut jobs = Vec::new();
             let mut unasked = Vec::new();
             for (machine, heard) in heard {
                 match heard {
-                    Heard::Answered(RemoteReply::Looked { looked: Some(there) }) => found.push(there),
+                    Heard::Answered(RemoteReply::Looked { looked, jobs: work }) => {
+                        found.extend(looked);
+                        jobs.extend(work);
+                    }
                     Heard::Answered(_) => {}
                     Heard::Offline(_) => unasked.push(format!("{machine} (offline)")),
                     Heard::NoAnswer(reason) => unasked.push(format!("{machine} ({reason})")),
                 }
             }
-            looked.push(LookedUp { id, found, unasked });
+            let mut one = LookedUp { id, found, unasked, jobs };
+            one.attach_jobs();
+            looked.push(one);
         }
         Ok(looked)
     }

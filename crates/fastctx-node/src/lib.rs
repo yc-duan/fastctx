@@ -9,6 +9,7 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+pub mod activity;
 mod admission;
 mod admitted;
 mod agents;

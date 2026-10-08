@@ -6,7 +6,7 @@ use std::path::Path;
 
 use fastctx_hands::run::record;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::residents::Moved;
+use fastctx_types::residents::{Activity, Moved};
 use fastctx_types::town::{ResidentNow, RunningJob, WhoReply};
 use fastctx_types::{MachineName, TownName};
 
@@ -23,16 +23,42 @@ pub fn who(
 ) -> io::Result<WhoReply> {
     let mut residents = Vec::new();
     for resident in everyone {
-        if (!resident.here && !all) || town.is_some_and(|town| resident.town.as_ref() != Some(town)) {
+        if town.is_some_and(|town| resident.town.as_ref() != Some(town)) {
             continue;
         }
-        let last_action = last_action(world, &resident.id, resident.town.as_ref())?;
+        let mut last = last_action(world, &resident.id, resident.town.as_ref())?;
+        let mut participated = last.is_some()
+            || matches!(resident.about.origin, fastctx_types::residents::Origin::Colleague { .. })
+            || resident.now.as_ref().is_some_and(|now| now.last_tool_at.is_some() || now.desk || !now.owed.is_empty());
+        for parent in world.resident_parents()? {
+            let place = crate::residents::town_of(world, &parent);
+            if let Some(action) = last_action(world, &resident.id, place.as_ref())? {
+                participated = true;
+                if last.as_ref().is_none_or(|prior| action.at > prior.at) {
+                    last = Some(action);
+                }
+            }
+            // A first World run is already work before it has an action result.
+            if read_dir(&parent.join(resident.id.as_str()).join("jobs"))?
+                .iter()
+                .any(|path| path.extension().is_some_and(|ext| ext == "json"))
+            {
+                participated = true;
+            }
+        }
+        let last_action = last;
+        if !participated
+            || (!all && (!resident.here || resident.now.as_ref().is_some_and(|now| now.activity != Activity::Busy)))
+        {
+            continue;
+        }
         residents.push(ResidentNow {
             about: resident.about,
             town: resident.town,
             here: resident.here,
             now: resident.now,
             last_action,
+            tools: Vec::new(),
             moved: None,
             removed: resident.removed,
         });
@@ -41,12 +67,22 @@ pub fn who(
     if all && let Some(town) = town {
         for former in former.into_iter().filter(|former| former.town.as_ref() == Some(town)) {
             let directory = world.resident(Some(town), &former.id);
+            let last_action = last_action(world, &former.id, Some(town))?;
+            let about = crate::residents::read_about(&directory)?;
+            let now = crate::residents::read_now(&directory)?;
+            if last_action.is_none()
+                && !matches!(about.origin, fastctx_types::residents::Origin::Colleague { .. })
+                && now.as_ref().is_none_or(|now| now.last_tool_at.is_none())
+            {
+                continue;
+            }
             residents.push(ResidentNow {
-                about: crate::residents::read_about(&directory)?,
+                about,
                 town: former.town,
                 here: false,
                 now: None,
-                last_action: last_action(world, &former.id, Some(town))?,
+                last_action,
+                tools: Vec::new(),
                 removed: crate::residents::removal(world, &former.id)?,
                 moved: Some(Moved { to: former.to, at: former.at }),
             });
@@ -63,7 +99,7 @@ pub fn who(
         }
     }
     jobs.sort_by_key(|job| job.started_at);
-    Ok(WhoReply { machine: machine.clone(), residents, jobs })
+    Ok(WhoReply { machine: machine.clone(), residents, jobs, history: None })
 }
 
 /// The jobs in one resident's `jobs` directory that have not ended.
@@ -76,12 +112,14 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
         if job.end.is_none() {
             running.push(RunningJob {
                 job: job.id,
+                town: job.town,
                 machine: job.machine,
                 owner: job.owner,
                 started_at: job.started_at,
                 pid: job.pid,
                 command: first_line(&job.script),
                 output: job.output,
+                stderr: job.stderr,
             });
         }
     }

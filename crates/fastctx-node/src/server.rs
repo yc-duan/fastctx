@@ -367,9 +367,31 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             .await
             .map(|()| Reply::Done)
         }
-        Call::Who { all, town } => {
-            let town = town.or_else(|| caller::of(node, peer).ok().and_then(|caller| caller.town(node)));
-            who(node, all, town).await.map(Reply::Who)
+        Call::Who { all, town, since } => {
+            let caller = caller::of(node, peer)?;
+            let town = town.or_else(|| caller.town(node));
+            let you = match caller {
+                caller::Caller::Resident(address) => Some(address),
+                _ => None,
+            };
+            let since = match since {
+                Some(at) => Some(at),
+                None => match &you {
+                    Some(address) if address.machine == node.machine() => {
+                        let world = node.world.clone();
+                        let id = address.resident.clone();
+                        let town = node.residents.town_of(&id).flatten();
+                        blocking("reading the previous turn", move || {
+                            crate::activity::last_turn(&world.resident(town.as_ref(), &id))
+                        })
+                        .await?
+                    }
+                    _ => None,
+                },
+            };
+            let mut reply = who(node, all, town, since).await?;
+            reply.you = you;
+            Ok(Reply::Who(reply))
         }
         Call::Since { since, town } => crate::since::query(node, since, town).await.map(Reply::Since),
         Call::Look { ids } => Ok(Reply::Looked { looked: crate::look::look(node, ids).await }),
@@ -676,16 +698,44 @@ fn called(failure: &CallFailure) -> String {
 
 /// This machine's own answer to `fastctx w`: in `town`, or in every town
 /// and none.
-pub async fn who_here(node: &Node, all: bool, town: Option<TownName>) -> Result<WhoReply, Failure> {
+pub async fn who_here(
+    node: &Node,
+    all: bool,
+    town: Option<TownName>,
+    since: Option<jiff::Timestamp>,
+) -> Result<WhoReply, Failure> {
     let everyone = node.residents.everyone();
     let former = node.residents.former();
     let (world, machine) = (node.world.clone(), node.machine());
-    blocking("looking around", move || crate::who::who(&world, &machine, everyone, former, all, town.as_ref())).await
+    let place = town.clone();
+    let mut reply =
+        blocking("looking around", move || crate::who::who(&world, &machine, everyone, former, all, place.as_ref()))
+            .await?;
+    for resident in &mut reply.residents {
+        resident.tools = node.watchers.tools(&resident.about.id);
+        if let Some(now) = &mut resident.now {
+            // Persisted occupancy predates a restarted node. Only the desk's
+            // current host observations establish who holds it now.
+            now.desk = node.desk.held_by(&resident.about.id);
+            if !now.desk {
+                now.desk_since = None;
+            }
+        }
+    }
+    if let Some(since) = since {
+        reply.history = Some(crate::since::here(node, since, town).await?);
+    }
+    Ok(reply)
 }
 
 /// `fastctx w` in `town`, asking each machine its record names, or across
 /// the World, asking every member; the connected ones are asked at once.
-async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<WorldWho, Failure> {
+async fn who(
+    node: &Arc<Node>,
+    all: bool,
+    town: Option<TownName>,
+    since: Option<jiff::Timestamp>,
+) -> Result<WorldWho, Failure> {
     let here = node.machine();
     let (scope, asked) = match &town {
         Some(name) => {
@@ -700,11 +750,16 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
     let asks_for = |machine: &MachineName| asked.as_ref().is_none_or(|asked| asked.contains(machine));
     let mut machines = Vec::new();
     if asks_for(&here) {
-        machines.push(MachineWho::Answered { reply: who_here(node, all, town.clone()).await? });
+        machines.push(match who_here(node, all, town.clone(), since).await {
+            Ok(reply) => MachineWho::Answered { reply },
+            Err(error) => MachineWho::NoAnswer { machine: here.clone(), reason: error.message },
+        });
     }
+    let mut presence_known = false;
     if let Some(link) = node.link() {
         // The list of members and who is connected, as the hub has it now.
         let refreshed = link.refresh().await;
+        presence_known = refreshed.is_ok();
         let (table, presence) = link.members();
         let me = link.membership().name.clone();
         let mut asks = Vec::new();
@@ -722,19 +777,25 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
             match seen {
                 Some(presence) if presence.online => {
                     let (link, name, town) = (link.clone(), member.name.clone(), town.clone());
-                    asks.push(tokio::spawn(async move {
-                        match link.call(&name, RemoteCall::Who { all, town }).await {
-                            Ok(Ok(RemoteReply::Who(reply))) => MachineWho::Answered { reply },
-                            Ok(Ok(_)) => {
-                                MachineWho::NoAnswer { machine: name, reason: "it answered something else".to_string() }
+                    asks.push((
+                        name.clone(),
+                        tokio::spawn(async move {
+                            match link.call(&name, RemoteCall::Who { all, town, since }).await {
+                                Ok(Ok(RemoteReply::Who(reply))) if reply.machine == name => {
+                                    MachineWho::Answered { reply }
+                                }
+                                Ok(Ok(_)) => MachineWho::NoAnswer {
+                                    machine: name,
+                                    reason: "it answered something else".to_string(),
+                                },
+                                Ok(Err(failure)) => MachineWho::NoAnswer { machine: name, reason: failure.message },
+                                Err(CallFailure::Offline { name, last_seen }) => {
+                                    MachineWho::Offline { machine: name, since: last_seen }
+                                }
+                                Err(failure) => MachineWho::NoAnswer { machine: name, reason: failure.to_string() },
                             }
-                            Ok(Err(failure)) => MachineWho::NoAnswer { machine: name, reason: failure.message },
-                            Err(CallFailure::Offline { name, last_seen }) => {
-                                MachineWho::Offline { machine: name, since: last_seen }
-                            }
-                            Err(failure) => MachineWho::NoAnswer { machine: name, reason: failure.to_string() },
-                        }
-                    }));
+                        }),
+                    ));
                 }
                 Some(presence) => {
                     machines.push(MachineWho::Offline { machine: member.name.clone(), since: presence.since })
@@ -745,11 +806,32 @@ async fn who(node: &Arc<Node>, all: bool, town: Option<TownName>) -> Result<Worl
                 }),
             }
         }
-        for ask in asks {
-            machines.push(ask.await.map_err(|error| Failure::new(format!("asking around: {error}")))?);
+        for (name, ask) in asks {
+            machines.push(match ask.await {
+                Ok(answer) => answer,
+                Err(error) => MachineWho::NoAnswer { machine: name, reason: format!("asking around: {error}") },
+            });
         }
     }
-    Ok(WorldWho { machine: here, scope, machines })
+    if let Some(asked) = asked {
+        for name in asked {
+            if !machines.iter().any(|answer| match answer {
+                MachineWho::Answered { reply } => reply.machine == name,
+                MachineWho::Offline { machine, .. } | MachineWho::NoAnswer { machine, .. } => *machine == name,
+            }) {
+                machines.push(MachineWho::NoAnswer {
+                    machine: name,
+                    reason: "the town names this machine, but it could not be reached through this node".into(),
+                });
+            }
+        }
+    }
+    let mut reply = WorldWho { machine: here, scope, machines, you: None, history: None };
+    if let Some(since) = since {
+        reply.collect_history(since, town.clone());
+        crate::since::presence_for_who(node, &mut reply, presence_known).await?;
+    }
+    Ok(reply)
 }
 
 /// `fastctx nodes`: this machine's link, and each member of the World its
