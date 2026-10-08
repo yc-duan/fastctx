@@ -6,7 +6,8 @@
 //! anything, that it enters a project only when the user says.
 //!
 //! A host may list a server's tools by name only until they are used, so
-//! these words alone must lead a model to the tools.
+//! these words alone must lead a model to the tools and give the commands it
+//! reaches for most; `run`'s description gives them in full.
 
 /// The block of guidance for a host's sessions.
 pub fn guidance() -> String {
@@ -15,12 +16,12 @@ pub fn guidance() -> String {
 
 The user has several machines, connected by fastctx: this one, and others that `fastctx nodes` lists. You work on all of them through the `run` tool.
 
-`run` is your shell: bash with the GNU tools and `rg` on every machine, Windows included. Do all shell work with it, and use it for files:
-- `fastctx view PATH` shows a file: text with line numbers, images, PDFs, Word, PowerPoint and Excel.
-- `edit PATH` and `write PATH` change a file and keep its encoding and line endings; `run`'s description shows how.
+`run` is your shell: bash with the GNU tools and `rg` on every machine, Windows included. Do all shell work with it, and all work on files, on this machine too:
+- `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content.
+- `edit PATH` and `write PATH` change a file and keep its encoding and line endings.
 - `rg` searches.
 
-Images on these machines are yours to see: `fastctx view` returns them to you as images, so look at one yourself rather than asking the user to upload it.
+`run`'s description shows each of these in full.
 
 `run` starts on this machine. To work on another one, write `on MACHINE` before a command, or give it a script:
 
@@ -32,6 +33,8 @@ EOF
 ```
 
 When the user speaks of one of the machines, work on it this way.
+
+Calls to `run` share nothing, so you can make several at once, and call it from your scripts and subagents like any other tool.
 
 fastctx also keeps the user's ongoing work as projects. A fastctx project is not a folder or a repository: it is a named piece of work that can span several machines. Its record says what it is for and where its code and data are on each machine; its journals hold the history of the work. `fastctx project list` lists them. Enter one with `fastctx project enter NAME` only when the user tells you which project to work on; entering gives you its map.
 

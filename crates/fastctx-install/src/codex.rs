@@ -278,17 +278,21 @@ fn validate_plan(plan: &CodexPlan) -> Result<(), Error> {
     Ok(())
 }
 
+/// The server entry. Its tools are never deferred: a model whose tools are
+/// deferred sees only their names, and `run` takes the place of a shell whose
+/// description it always saw. In Code Mode they stay callable from scripts.
 fn server_body(plan: &CodexPlan, inline: bool, nl: &str) -> Vec<u8> {
     let command = toml_edit::Value::from(plan.command.to_str().expect("validated path")).to_string();
     let args = toml_edit::Array::from_iter(plan.args.iter().cloned()).to_string();
     let tools = ["run", "apply_patch", "ask_colleague", "message_colleague"];
+    let omit = r#"omit_tools_from = ["deferred"]"#;
     if inline {
         let limits = tools
             .iter()
             .map(|name| format!("{name} = {{ output_token_limit = {} }}", plan.output_token_limit))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("fastctx = {{ command = {command}, args = {args}, startup_timeout_sec = {}, tool_timeout_sec = {}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
+        format!("fastctx = {{ command = {command}, args = {args}, startup_timeout_sec = {}, tool_timeout_sec = {}, {omit}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     } else {
         let limits = tools
             .iter()
@@ -299,7 +303,7 @@ fn server_body(plan: &CodexPlan, inline: bool, nl: &str) -> Vec<u8> {
                 )
             })
             .collect::<String>();
-        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
+        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}{omit}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     }
 }
 

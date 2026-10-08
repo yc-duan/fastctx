@@ -30,7 +30,13 @@ pub fn definitions(writes_off: bool, colleague: bool, woken: bool, machines: Opt
     for tool in &mut tools {
         // Claude Code counts UTF-16 code units here. One Unicode scalar
         // uses at most two, including every supplementary-plane character.
-        tool["_meta"] = json!({ "anthropic/maxResultSizeChars": 2 * window::BUDGET });
+        // Its tool search would otherwise show the model only these tools'
+        // names, and `run` stands in for a shell whose description it
+        // always saw.
+        tool["_meta"] = json!({
+            "anthropic/maxResultSizeChars": 2 * window::BUDGET,
+            "anthropic/alwaysLoad": true,
+        });
     }
     Value::Array(tools)
 }
@@ -99,6 +105,7 @@ Shell:
 - Every machine runs bash with the GNU tools and `rg`, Windows ones too (Git Bash). Write Windows paths like C:/Users/me, and use `ls`, `find`, `du` and `df` rather than PowerShell.
 - Git Bash rewrites arguments that look like Unix paths, such as /FI, before a Windows program sees them. Put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
 - Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together.
+- Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other.
 - Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
 - A call waits up to 15 seconds. A script still running then goes on in the background, and the answer names the file its output continues in. ";
 
@@ -109,7 +116,14 @@ When it has ended, the answer of your next call to this tool says so, with its l
 
 const RUN_FILES: &str = "\
 Files:
-- `fastctx view PATH...` shows files: text with line numbers, several at once; images as images; a PDF's text by page (`--pages 3-5`; `--image` to see the pages); Word, PowerPoint and Excel content, Excel cells by address. Use it for any file you need to look at.
+- `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. Use it for any file you need to look at:
+    fastctx view /srv/app/src/main.rs /srv/app/README.md
+    fastctx view --lines 120-180 /srv/app/src/main.rs
+    fastctx view C:/Users/me/Pictures/chart.png
+    fastctx view --pages 3-5 /srv/app/design.pdf
+    fastctx view --image --pages 3 /srv/app/design.pdf
+    fastctx view --sheet Sales --range B2:F40 C:/Users/me/q3.xlsx
+  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. `--encoding gbk` reads text in an encoding you name, when the one shown is wrong.
 ";
 
 const RUN_WRITING: &str = "\
@@ -142,7 +156,7 @@ Other machines: write `on MACHINE` before a command, or give it a script on stan
 - Every command here works there too, such as `on server fastctx view /srv/app/app.ini`.";
 
 const RUN_COMMANDS: &str = "\
-More commands (each explains itself with --help):
+More commands (`--help` on each gives all its options):
 - `fastctx nodes` lists the machines, which are online, and what each runs.
 - `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID` shows one session or job.
 - `fastctx stop JOB` stops a background job and everything it started.
