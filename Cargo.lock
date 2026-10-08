@@ -1149,6 +1149,7 @@ dependencies = [
  "fastctx-install",
  "fastctx-net",
  "fastctx-platform",
+ "fastctx-ripgrep",
  "fastctx-types",
  "getrandom 0.3.4",
  "jiff",
@@ -1170,6 +1171,17 @@ dependencies = [
  "tokio-util",
  "uds_windows",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "fastctx-ripgrep"
+version = "1.0.0"
+dependencies = [
+ "fastctx-platform",
+ "flate2",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]

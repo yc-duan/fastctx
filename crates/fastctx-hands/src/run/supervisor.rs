@@ -32,7 +32,7 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
         let resident = world.job_owner(&record.machine, record.town.as_ref(), &record.owner);
         let (program, args) = shell::command(&resident.job_script(&record.id))?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
-        let environment = shell::environment(&shell::Context {
+        let mut environment = shell::environment(&shell::Context {
             machine: &record.machine,
             owner: &record.owner,
             town: record.town.as_ref(),
@@ -40,6 +40,13 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
             fastctx_home: fastctx_home.as_deref(),
             job: Some(&record.id),
         })?;
+        let prelude = super::prelude::write(&resident.job_script(&record.id), fastctx_dir)?;
+        environment.retain(
+            |(name, _)| {
+                if cfg!(windows) { !name.eq_ignore_ascii_case("BASH_ENV") } else { name != "BASH_ENV" }
+            },
+        );
+        environment.push(("BASH_ENV".into(), super::prelude::environment_value(&prelude)?));
         Ok(shell::Prepared { program, args, environment })
     })
 }

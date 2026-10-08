@@ -3,6 +3,32 @@
 No script here publishes a release. Build with Rust 1.92.0. Linux also needs
 cargo-zigbuild 0.23.0 and Zig 0.14.1; install the Rust musl target first.
 
+Every fastctx build embeds ripgrep 15.2.0 for its
+target. The six compressed images are committed under
+`crates/fastctx-ripgrep/vendor`; Cargo decompresses and verifies the selected
+image's pinned SHA-256 without a network request. Both GNU and musl Linux
+builds carry the official static musl image. macOS and Windows x64 use
+their matching official release images. Windows ARM64 is built from the
+same unmodified official source with a static CRT: the upstream ARM64
+release otherwise requires `VCRUNTIME140.dll`.
+
+`python scripts/ripgrep.py verify` checks all six images, including Linux's
+absence of an interpreter and shared dependencies, and Windows's absence
+of dynamic CRT imports. `fetch` restores the five upstream release images
+from fixed URLs after checking each archive and image against
+`vendor/manifest.json`, and verifies the vendored ARM64 source build. The
+source build's recipe is in `crates/fastctx-ripgrep/README.md`. These are
+maintainer operations, never build or installation steps. Updating ripgrep
+requires reviewing the manifest, licenses and six images together.
+
+When a node pins fastctx under `<world>/bin/<fingerprint>/`, it atomically
+places `rg[.exe]` beside that copy. A copied executable therefore retains rg
+through npm cache deletion, GUI sidecar placement, server installation and
+`apply`'s stable copy. No extra Release archive member or npm dependency is
+needed. The login shell restores this directory to the front of PATH after
+profiles run. Packaging rejects a fastctx without the exact pinned image
+and rejects notices that omit ripgrep's license texts.
+
 ```sh
 rustup target add --toolchain 1.92.0 x86_64-unknown-linux-musl
 node scripts/kernel.mjs x86_64-unknown-linux-gnu

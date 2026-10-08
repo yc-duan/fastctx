@@ -37,6 +37,7 @@ pub fn pin(world: &WorldDir) -> io::Result<(PathBuf, Vec<(PathBuf, io::Error)>)>
     if cfg!(windows) && fs::read(directory.join("fastctx")).ok().is_none_or(|held| held != GIT_BASH_SHIM.as_bytes()) {
         publish(&directory.join("fastctx"), GIT_BASH_SHIM.as_bytes(), Permissions::Private)?;
     }
+    fastctx_ripgrep::place(&directory)?;
     Ok((copy, remove_others(world, &programs, &name)))
 }
 

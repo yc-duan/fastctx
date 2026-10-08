@@ -7,6 +7,7 @@
 
 pub mod last;
 pub mod launch;
+pub mod prelude;
 pub mod present;
 pub mod program;
 pub mod record;

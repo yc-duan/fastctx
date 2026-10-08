@@ -1,0 +1,66 @@
+{
+  "version": "15.2.0",
+  "repository": "https://github.com/BurntSushi/ripgrep",
+  "targets": {
+    "x86_64-pc-windows-msvc": {
+      "archive": "ripgrep-15.2.0-x86_64-pc-windows-msvc.zip",
+      "archive_sha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
+      "sha256": "14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680",
+      "size": 4218880
+    },
+    "aarch64-pc-windows-msvc": {
+      "source_build": {
+        "source": {
+          "url": "https://codeload.github.com/BurntSushi/ripgrep/tar.gz/refs/tags/15.2.0",
+          "sha256": "7605249d3eb0d5f170e3414498e3344e26b1e7a147aec518b57090b80036a562"
+        },
+        "cargo_lock_sha256": "7a7d39cda8a03930e578f1dbb724e055771901842eca239e03b01e19da946a64",
+        "rust": "1.92.0",
+        "clang_lld": "18.1.8",
+        "cargo_xwin": "0.23.1",
+        "crt": "14.44.17.14 (35220)",
+        "windows_sdk": "10.0.26100",
+        "profile": "release-lto",
+        "features": [
+          "pcre2"
+        ],
+        "PCRE2_SYS_STATIC": "1",
+        "RUSTFLAGS": "-C target-feature=+crt-static -C link-arg=/DEBUG:NONE -C link-arg=/Brepro"
+      },
+      "sha256": "2fd3072e47ff39857038b8a033d3eddab81469ff4677cb22f3c689b9b3dfaafb",
+      "size": 4138496
+    },
+    "x86_64-apple-darwin": {
+      "archive": "ripgrep-15.2.0-x86_64-apple-darwin.tar.gz",
+      "archive_sha256": "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1",
+      "sha256": "0c9a0066db0d26b640777db88045b0ccdd58509a746700e43e1c4ff8707a5ed0",
+      "size": 4387000
+    },
+    "aarch64-apple-darwin": {
+      "archive": "ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+      "archive_sha256": "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
+      "sha256": "a326a1fb48074202e9ad41e4cd1e389eeea372c8c6f7d7e80da81176d5d9430e",
+      "size": 4014576
+    },
+    "x86_64-unknown-linux-musl": {
+      "archive": "ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+      "archive_sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+      "sha256": "e62198eb19b136b88c330af83647b5a962cb99b6b1f066758568f12de1974849",
+      "size": 5408904
+    },
+    "aarch64-unknown-linux-musl": {
+      "archive": "ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+      "archive_sha256": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+      "sha256": "c14cdb389f34e504d69e386cfc67d5c5d9a730a990de03ca6910b2a15e30386a",
+      "size": 4466000
+    }
+  },
+  "source": {
+    "url": "https://codeload.github.com/BurntSushi/ripgrep/tar.gz/refs/tags/15.2.0",
+    "sha256": "7605249d3eb0d5f170e3414498e3344e26b1e7a147aec518b57090b80036a562"
+  },
+  "pcre2_license": {
+    "url": "https://raw.githubusercontent.com/PCRE2Project/pcre2/pcre2-10.45/LICENCE.md",
+    "sha256": "9cf7ac6976099a1d856826d3ef1b093bd6b84489dc6100628ac79e740cf9885a"
+  }
+}
