@@ -42,8 +42,8 @@ If the connection drops, it goes on there and its end still reaches you. It exit
 /// input is the script.
 #[derive(Args)]
 pub struct OnArgs {
-    /// The shell function's process, whose deliberate termination ends
-    /// this follower on Linux. MSYS process ids are not native Windows ids.
+    /// The shell running the `on` function, which this follower ends with:
+    /// its process id, or on Windows its native one.
     #[arg(long, hide = true)]
     shell_parent: Option<u32>,
     /// The state the shell function wrote; this command takes it over.

@@ -2,12 +2,15 @@
 
 use std::io;
 
-/// On Linux, terminates this process when its shell parent terminates.
-/// The supplied PID also detects a parent that exited before registration.
-/// This must be called on the process's main thread before following a job.
+/// Ends this process when the shell that runs the `on` function ends, as
+/// when the script kills it: leaving is how an `on` is stopped.
 ///
-/// MSYS PIDs are not Windows process identifiers. Windows retains its
-/// existing process ownership; this Linux mechanism is not applied there.
+/// On Linux `parent` is the shell's process id, this process's parent: it
+/// is checked, then the kernel ends this process when the parent ends. On
+/// Windows it is the shell's native process id (Git Bash gives it in
+/// `/proc/PID/winpid`): Git Bash starts native programs through stubs that
+/// outlive the shell, so its end is waited for directly. This must be called
+/// before following a job.
 pub fn follow_shell(parent: u32) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -22,7 +25,66 @@ pub fn follow_shell(parent: u32) -> io::Result<()> {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    windows::follow(parent)?;
+    #[cfg(not(any(target_os = "linux", windows)))]
     let _ = parent;
     Ok(())
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::io;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetProcessTimes, INFINITE, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+
+    /// A process handle that may be moved to the thread waiting on it.
+    struct Shell(HANDLE);
+    // SAFETY: a process handle may be waited on from any thread.
+    unsafe impl Send for Shell {}
+
+    pub fn follow(pid: u32) -> io::Result<()> {
+        let gone = || io::Error::other("the on shell stopped before its follower started");
+        // SAFETY: the handle is owned here; it is closed on every early
+        // return and otherwise kept open by the waiting thread.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, pid);
+            if handle.is_null() {
+                return Err(gone());
+            }
+            // The id may already name another process: the shell started
+            // this one, so it was created first.
+            let checked = match (created(handle), created(GetCurrentProcess())) {
+                (Ok(shell), Ok(this)) if shell <= this && WaitForSingleObject(handle, 0) != WAIT_OBJECT_0 => Ok(()),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+                _ => Err(gone()),
+            };
+            if let Err(error) = checked {
+                CloseHandle(handle);
+                return Err(error);
+            }
+            let shell = Shell(handle);
+            std::thread::spawn(move || {
+                let shell = shell;
+                WaitForSingleObject(shell.0, INFINITE);
+                // Nobody reads this code: the shell that would is gone.
+                std::process::exit(1);
+            });
+        }
+        Ok(())
+    }
+
+    fn created(handle: HANDLE) -> io::Result<u64> {
+        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let (mut creation, mut exit, mut kernel, mut user) = (zero, zero, zero, zero);
+        // SAFETY: a process handle with query access and four out-parameters.
+        if unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(u64::from(creation.dwHighDateTime) << 32 | u64::from(creation.dwLowDateTime))
+    }
 }

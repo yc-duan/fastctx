@@ -24,9 +24,9 @@ use fastctx_types::on::{
     OnEnd, OnOrigin, OnPackage, OnPiece, OnRequest, OnSizes, OnWord, SILENT_FOR, STILL_EVERY, TAKEN,
 };
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::residents::Action;
+use fastctx_types::residents::{Action, Delivery, Notice};
 use fastctx_types::run::{EndedHow, JobOwner, JobRecord, OnJob, RunRequest};
-use fastctx_types::{JobId, MachineName};
+use fastctx_types::{JobId, MachineName, ResidentId};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -69,6 +69,37 @@ pub async fn send(
     Ok(receiver)
 }
 
+/// A job this machine's `on` sent elsewhere, as a letter of its end finds
+/// it here: the letter goes when nobody follows the job at its end, and the
+/// follower may come back and take the end too (`on`).
+pub(crate) enum Awaited {
+    /// Still followed: a letter of its end waits until the follower knows
+    /// whether it took the end.
+    Following(Vec<(ResidentId, Delivery)>),
+    /// The follower took the end, which had gone in a letter too: that
+    /// letter, when it comes, is set aside.
+    Lettered,
+}
+
+/// Whether a letter for `to`, `delivery`, is the end of a job this machine
+/// follows or has taken, and so is kept back or set aside.
+pub(crate) fn set_aside(node: &Node, to: &ResidentId, delivery: &Delivery) -> bool {
+    let Notice::JobEnded { job, machine, .. } = &delivery.notice else { return false };
+    let key = (machine.clone(), job.clone());
+    let mut awaited = node.awaited.lock().expect("never poisoned");
+    match awaited.get_mut(&key) {
+        Some(Awaited::Following(parked)) => {
+            parked.push((to.clone(), delivery.clone()));
+            true
+        }
+        Some(Awaited::Lettered) => {
+            awaited.remove(&key);
+            true
+        }
+        None => false,
+    }
+}
+
 /// What the sender knows of a job it sent, kept across the connections
 /// that follow it.
 #[derive(Default)]
@@ -78,6 +109,8 @@ struct Followed {
     out: u64,
     err: u64,
     ended: bool,
+    /// The end came, and a letter of it was sent before it did.
+    lettered: bool,
 }
 
 /// What the sender does with a job's id once the machine says it started,
@@ -145,6 +178,48 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
             )),
         });
     };
+    let key = (machine.clone(), job.clone());
+    node.awaited.lock().expect("never poisoned").insert(key.clone(), Awaited::Following(Vec::new()));
+    let followed_through = follow_there(node, &link, origin, &machine, &job, &followed, pieces).await;
+    let (ended, lettered) = {
+        let followed = followed.lock().expect("never poisoned");
+        (followed.ended, followed.lettered)
+    };
+    let parked = {
+        let mut awaited = node.awaited.lock().expect("never poisoned");
+        match awaited.remove(&key) {
+            Some(Awaited::Following(parked)) => {
+                // Its letter already here is the one set aside.
+                if ended && lettered && parked.is_empty() {
+                    awaited.insert(key, Awaited::Lettered);
+                }
+                parked
+            }
+            _ => Vec::new(),
+        }
+    };
+    // An end this `on` did not take still reaches the resident.
+    if !ended {
+        for (to, delivery) in parked {
+            if let Err(failure) = crate::speech::tell_here(node, &to, delivery, crate::speech::Owed::Working).await {
+                node.log.line(format_args!("telling {to} of {job} on {machine}: {}", failure.message));
+            }
+        }
+    }
+    followed_through
+}
+
+/// Follows a job that started on `machine` until its end is taken, it is
+/// stopped, or the World says it cannot be followed.
+async fn follow_there(
+    node: &Arc<Node>,
+    link: &fastctx_net::link::Link,
+    origin: &OnOrigin,
+    machine: &MachineName,
+    job: &JobId,
+    followed: &Arc<Mutex<Followed>>,
+    pieces: &Pieces,
+) -> Result<(), Failure> {
     let mut delay = Backoff::default();
     loop {
         if followed.lock().expect("never poisoned").ended {
@@ -152,7 +227,7 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
         }
         if pieces.is_closed() {
             // The `on` that sent it left: it was stopped on purpose.
-            stop_there(node, &machine, origin, &job).await;
+            stop_there(node, machine, origin, job).await;
             return Ok(());
         }
         tokio::select! {
@@ -230,11 +305,15 @@ fn feed(
                         }
                     }
                     OnWord::Still => {}
-                    OnWord::Ended { end } => {
+                    OnWord::Ended { end, lettered } => {
                         if pieces.send(Ok(OnPiece::Ended { end })).is_err() {
                             return Err("the on that sent it left".to_string());
                         }
-                        followed.lock().expect("never poisoned").ended = true;
+                        {
+                            let mut followed = followed.lock().expect("never poisoned");
+                            followed.ended = true;
+                            followed.lettered = lettered;
+                        }
                         return stream.say(&TAKEN).await;
                     }
                 }
@@ -635,10 +714,10 @@ impl Sink<'_> {
     }
 
     /// Hands over the end; true when the other side says it has it.
-    async fn ended(&mut self, end: OnEnd) -> Result<bool, String> {
+    async fn ended(&mut self, end: OnEnd, lettered: bool) -> Result<bool, String> {
         match self {
             Sink::Stream(stream) => {
-                stream.say(&OnWord::Ended { end }).await?;
+                stream.say(&OnWord::Ended { end, lettered }).await?;
                 match tokio::time::timeout(SILENT_FOR, stream.hear::<String>()).await {
                     Ok(Ok(word)) => Ok(word == TAKEN),
                     Ok(Err(error)) => Err(error),
@@ -693,7 +772,11 @@ async fn hand_over(
             continue;
         }
         if let Some(end) = through(&record) {
-            return sink.ended(end).await;
+            // A letter goes only for an end nobody followed, and takes the
+            // marker that it is owed: without one, the letter went.
+            let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
+            let lettered = record.end.is_some() && matches!(tokio::fs::try_exists(&owed).await, Ok(false));
+            return sink.ended(end, lettered).await;
         }
         if quiet_since.elapsed() >= STILL_EVERY {
             sink.still().await?;

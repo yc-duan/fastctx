@@ -63,7 +63,13 @@ pub enum OnWord {
     /// `STILL_EVERY` while the job is quiet.
     Still,
     /// Everything it will write has been sent, and this is how it ended.
-    Ended { end: OnEnd },
+    /// `lettered`: it had ended while nobody followed, so its end already
+    /// went to the resident in a letter, which the sender sets aside.
+    Ended {
+        end: OnEnd,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        lettered: bool,
+    },
 }
 
 /// How an `on` job ended, as `on` answers it.

@@ -22,6 +22,7 @@ getrandom = { version = "0.3", features = ["std"] }
 hayro = "0.8"
 jiff.workspace = true
 memmap2 = "0.9"
+memchr = "2"
 miniz_oxide = "0.8"
 png = "0.18"
 serde.workspace = true

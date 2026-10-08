@@ -107,6 +107,12 @@ on() {
         return 255
     fi
     local __fastctx_file="${FASTCTX_SCRATCH:?the World did not start this shell}/on-$BASHPID-$RANDOM$RANDOM"
+    # The follower ends with this shell. Git Bash names the shell's native
+    # Windows process, which a native follower can wait on, in /proc.
+    local __fastctx_shell=$BASHPID
+    if [ -r "/proc/$BASHPID/winpid" ]; then
+        read -r __fastctx_shell <"/proc/$BASHPID/winpid" || return 255
+    fi
     # A bash the script started has no prelude, and so no record of the
     # login environment: there it carries nothing rather than too much.
     if declare -F __fastctx_state >/dev/null; then
@@ -118,9 +124,9 @@ on() {
         # The words, quoted by bash itself, become the command line bash
         # reads there: it reads back exactly these words.
         printf '%q ' "${@:2}" >"$__fastctx_file.command" || return 255
-        fastctx on --shell-parent "$BASHPID" --state "$__fastctx_file.state" --command "$__fastctx_file.command" -- "$1"
+        fastctx on --shell-parent "$__fastctx_shell" --state "$__fastctx_file.state" --command "$__fastctx_file.command" -- "$1"
     else
-        fastctx on --shell-parent "$BASHPID" --state "$__fastctx_file.state" -- "$1"
+        fastctx on --shell-parent "$__fastctx_shell" --state "$__fastctx_file.state" -- "$1"
     fi
     # Keep the shell alive as the follower's parent, even when this is the
     # script's last command. On Linux the follower dies with this shell.

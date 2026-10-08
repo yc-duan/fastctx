@@ -428,6 +428,9 @@ impl fastctx_net::link::Node for Handler {
                         )));
                     }
                     let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
+                    if crate::on::set_aside(&node, &to, &delivery) {
+                        return Ok(Ok(()));
+                    }
                     match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {
                         Ok(_) => Ok(Ok(())),
                         Err(failure) => Err(io::Error::other(failure.message)),

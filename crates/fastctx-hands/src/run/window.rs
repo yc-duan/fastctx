@@ -15,7 +15,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use fastctx_types::run::{LegacyLines, OutputPiece, OutputWindow};
 
-use super::terminal::{Line, Lines, Part};
+use super::terminal::{Line, Lines, Part, VIEW_MARK};
 
 /// Characters the complete answer may hold, including head notes and
 /// delivered words, with each image counted as 5,200 (`world-view.md`).
@@ -44,9 +44,16 @@ pub fn window(log: &Path) -> io::Result<OutputWindow> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = File::open(log)?;
     let bytes = file.metadata()?.len();
-    let mut scan = Lines::new((&mut file).take(bytes));
-    while scan.next_line()?.is_some() {}
-    let closed_views = scan.closed_views().clone();
+    // Which regions `fastctx view` wrote and closed, read in a pass of its
+    // own; output that never ran it, nearly all, skips that pass.
+    let closed_views = if holds_view_mark(&mut file)? {
+        file.seek(SeekFrom::Start(0))?;
+        let mut scan = Lines::new((&mut file).take(bytes));
+        while scan.next_line()?.is_some() {}
+        scan.closed_views().clone()
+    } else {
+        Default::default()
+    };
     file.seek(SeekFrom::Start(0))?;
     let mut regular = Selection::new(OUTPUT_WINDOW);
     let mut lines = Lines::new((&mut file).take(bytes));
@@ -100,6 +107,28 @@ pub fn window(log: &Path) -> io::Result<OutputWindow> {
         assembly.omitted(first, last);
     }
     Ok(assembly.finish(log, bytes, lines.raw_lines()))
+}
+
+/// Whether the log holds the mark `fastctx view` writes first, read in
+/// chunks that overlap by the mark's length less one.
+fn holds_view_mark(file: &mut File) -> io::Result<bool> {
+    use std::io::Read;
+    let mark = &VIEW_MARK.as_bytes()[..VIEW_MARK.len() - 1];
+    let finder = memchr::memmem::Finder::new(mark);
+    let mut buffer = vec![0u8; 1 << 20];
+    let mut kept = 0;
+    loop {
+        let read = file.read(&mut buffer[kept..])?;
+        if read == 0 {
+            return Ok(false);
+        }
+        let filled = kept + read;
+        if finder.find(&buffer[..filled]).is_some() {
+            return Ok(true);
+        }
+        kept = (mark.len() - 1).min(filled);
+        buffer.copy_within(filled - kept..filled, 0);
+    }
 }
 
 #[derive(Clone)]

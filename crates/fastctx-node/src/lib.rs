@@ -118,6 +118,11 @@ pub(crate) struct Node {
     /// The `on` jobs here whose sender is following them now: their end
     /// goes to it, not in a letter, unless it leaves first (`on`).
     following: std::sync::Mutex<std::collections::HashMap<fastctx_types::JobId, usize>>,
+    /// The jobs `on` sent from here to other machines, by machine and id,
+    /// as a letter telling one's end finds them (`on`).
+    awaited: std::sync::Mutex<
+        std::collections::HashMap<(fastctx_types::MachineName, fastctx_types::JobId), on::Awaited>,
+    >,
     effects_ready: std::sync::atomic::AtomicBool,
     effects_changed: tokio::sync::Notify,
     /// Whether turns may start, while a guardian may ask for the World to
@@ -301,6 +306,7 @@ pub async fn run_replacing(
         taking: Default::default(),
         reaching: Default::default(),
         following: Default::default(),
+        awaited: Default::default(),
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),
         handoff: Arc::new(handoff::Handoff::default()),
