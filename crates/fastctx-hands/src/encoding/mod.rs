@@ -1,11 +1,15 @@
-//! One strict text interpretation for viewing and writing.
+//! Strict streaming codecs shared by file readers and writers.
 //!
-//! Explicit labels win, then a BOM, then UTF-8. Legacy decoders supply candidates,
-//! not proof: even a single successful codec in a finite list cannot establish
-//! that the file was written in it. Such input requires an explicit label.
-//! Errors include candidate labels and the first invalid UTF-8 byte offset.
-//! Detection accepts a prefix for streaming views; it never certifies unseen bytes.
+//! The file module owns whole-file evidence and per-segment selection. The
+//! lower-level detect helpers validate a codec or a supplied prefix only;
+//! successful prefix decoding makes no claim about unseen bytes.
 
+mod encode;
+mod evidence;
+pub(crate) mod file;
+mod iso2022;
+mod line;
+mod mapping;
 mod stream;
 pub use stream::TextDecoder;
 
@@ -76,29 +80,8 @@ impl TextEncoding {
             Codec::Rs(enc) if enc == UTF_8 => text.as_bytes().to_vec(),
             Codec::Rs(enc) if enc == UTF_16LE => text.encode_utf16().flat_map(u16::to_le_bytes).collect(),
             Codec::Rs(enc) if enc == UTF_16BE => text.encode_utf16().flat_map(u16::to_be_bytes).collect(),
-            Codec::Rs(enc) => {
-                let mut encoder = enc.new_encoder();
-                let mut bytes = Vec::new();
-                let mut offset = 0;
-                loop {
-                    // An encoder's bound is derived from the remaining UTF-8 input, including state.
-                    let capacity = encoder
-                        .max_buffer_length_from_utf8_without_replacement(text.len() - offset)
-                        .expect("encoding buffer length overflow");
-                    bytes.reserve(capacity);
-                    let (result, read) =
-                        encoder.encode_from_utf8_to_vec_without_replacement(&text[offset..], &mut bytes, true);
-                    offset += read;
-                    match result {
-                        encoding_rs::EncoderResult::InputEmpty => break,
-                        encoding_rs::EncoderResult::OutputFull => continue,
-                        encoding_rs::EncoderResult::Unmappable(character) => {
-                            return Err(EncodingError::Unrepresentable { encoding: self.label().into(), character });
-                        }
-                    }
-                }
-                bytes
-            }
+            Codec::Rs(enc) if enc == encoding_rs::ISO_2022_JP => iso2022::encode(text)?,
+            Codec::Rs(enc) => encode::legacy(enc, text)?,
         };
         let decoded = Self { bom_len: 0, ..self }.decode(&bytes)?;
         if decoded != text {
@@ -190,17 +173,16 @@ fn legacy_text_character(c: char) -> bool {
         && (c as u32 & 0xffff) < 0xfffe
 }
 
-fn explicit(label: &str, bytes: &[u8]) -> Result<TextEncoding, EncodingError> {
+pub(crate) fn explicit(label: &str, bytes: &[u8]) -> Result<TextEncoding, EncodingError> {
     let label = label.trim();
     let codec = if label.eq_ignore_ascii_case("utf-32le") {
         Codec::Utf32Le
     } else if label.eq_ignore_ascii_case("utf-32be") {
         Codec::Utf32Be
     } else {
-        Codec::Rs(
-            Encoding::for_label_no_replacement(label.as_bytes())
-                .ok_or_else(|| EncodingError::UnknownLabel(label.into()))?,
-        )
+        let encoding = Encoding::for_label_no_replacement(label.as_bytes())
+            .ok_or_else(|| EncodingError::UnknownLabel(label.into()))?;
+        Codec::Rs(if encoding == GBK { encoding_rs::GB18030 } else { encoding })
     };
     // UTF-16LE followed by NUL shares the UTF-32LE BOM prefix. An explicit
     // codec must check its own signature before automatic BOM precedence.
@@ -209,15 +191,6 @@ fn explicit(label: &str, bytes: &[u8]) -> Result<TextEncoding, EncodingError> {
         .find(|(prefix, candidate)| *candidate == codec && bytes.starts_with(prefix))
         .map_or(0, |(prefix, _)| prefix.len());
     Ok(TextEncoding { codec, bom_len })
-}
-
-/// Selects an explicit or BOM-marked encoding without validating a possibly
-/// split character in the prefix. The caller must validate with `TextDecoder`.
-pub(crate) fn select(bytes: &[u8], label: Option<&str>) -> Result<TextEncoding, EncodingError> {
-    match label {
-        Some(label) => explicit(label, bytes),
-        None => Ok(bom(bytes).unwrap_or_else(TextEncoding::utf8)),
-    }
 }
 
 const BOMS: &[(&[u8], Codec)] = &[

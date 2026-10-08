@@ -6,6 +6,11 @@ use std::fs::{self, Metadata, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+pub(super) struct PublishedEncoding<'a> {
+    pub label: Option<&'a str>,
+    pub selection: Option<&'a str>,
+}
+
 pub(super) struct Target {
     pub requested: PathBuf,
     pub resolved: PathBuf,
@@ -139,7 +144,7 @@ impl Target {
         &self,
         before: Option<&Snapshot>,
         after: &[u8],
-        encoding: &str,
+        encoding: PublishedEncoding<'_>,
         writer: &Writer,
         changes: &mut Vec<FileChange>,
     ) -> Result<(), String> {
@@ -152,7 +157,8 @@ impl Target {
                 kind: if before.is_some() { ChangeKind::Modified } else { ChangeKind::Added },
                 before_hash: before.map(|s| content_hash(&s.bytes)),
                 after_hash: Some(content_hash(after)),
-                encoding: Some(encoding.to_string()),
+                encoding: encoding.label.map(str::to_owned),
+                encoding_selection: encoding.selection.map(str::to_owned),
             });
         }
         result.map_err(|failure| {
@@ -173,6 +179,7 @@ impl Target {
             before_hash: Some(content_hash(&before.bytes)),
             after_hash: None,
             encoding: None,
+            encoding_selection: None,
         });
         #[cfg(unix)]
         {

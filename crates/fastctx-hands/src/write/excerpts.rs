@@ -5,23 +5,9 @@ use std::fmt::Write as _;
 /// `fastctx view` numbers them, `number<TAB>line`, with control characters
 /// shown the same way.
 pub(super) fn excerpts(text: &str, changes: &[std::ops::Range<usize>]) -> String {
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    let lines: Vec<&str> = normalized.lines().collect();
+    let lines: Vec<&str> = text.split_inclusive('\n').map(crate::text::line_content).collect();
     let mut starts = vec![0];
-    let mut index = 0;
-    while index < text.len() {
-        match text.as_bytes()[index] {
-            b'\r' if text.as_bytes().get(index + 1) == Some(&b'\n') => {
-                index += 2;
-                starts.push(index);
-            }
-            b'\r' | b'\n' => {
-                index += 1;
-                starts.push(index);
-            }
-            _ => index += 1,
-        }
-    }
+    starts.extend(text.match_indices('\n').map(|(at, _)| at + 1));
     let mut windows: Vec<std::ops::Range<usize>> = Vec::new();
     for changed in changes {
         let start = starts.partition_point(|offset| *offset <= changed.start) - 1;

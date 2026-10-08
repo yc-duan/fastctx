@@ -59,6 +59,7 @@ pub(super) fn look(
         size: metadata.len(),
         modified: metadata.modified().ok().and_then(|time| Timestamp::try_from(time).ok()),
         encoding: None,
+        encoding_selection: None,
     });
     Ok((section, seen))
 }

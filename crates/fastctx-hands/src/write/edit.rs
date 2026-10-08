@@ -1,8 +1,8 @@
 use super::blocks::{self, Block};
-use super::document::Document;
 use super::excerpts::excerpts;
-use super::storage::Target;
+use super::storage::{PublishedEncoding, Target};
 use super::{EditBlocksRequest, EditRequest, WriteError, WriteRequest, WriteResult, Writer};
+use crate::encoding::file::{Replacement, Source};
 use fastctx_types::files::SeenFiles;
 use std::ops::Range;
 use std::path::Path;
@@ -38,7 +38,8 @@ fn edit_file(
     let target = Target::new(path, writer)?;
     let before = target.required()?;
     let stale = target.stale(&before, seen)?;
-    let mut document = Document::decode(&before.bytes, target.encoding(&before, seen)?)?;
+    let selection = target.encoding(&before, seen)?;
+    let mut document = Source::decode(before.bytes.clone(), selection)?;
     // Literal markers can form a syntactically valid second block. Parsing the
     // input alone cannot distinguish that collision from an intended batch.
     if numbered && blocks::contains_marker(&document.text) {
@@ -47,6 +48,7 @@ fn edit_file(
             path.display()
         ).into());
     }
+    let original_text_hash = crate::files::content_hash(document.text.as_bytes());
     let mut ranges = Vec::new();
     let all_option = if numbered { "--all" } else { "replace_all: true" };
     for (index, block) in blocks.iter().enumerate() {
@@ -58,12 +60,23 @@ fn edit_file(
             }
         })?;
     }
-    let after = document.encode(&document.text)?;
+    let after = &document.raw;
     let mut changes = Vec::new();
-    target
-        .publish(Some(&before), &after, document.label(), writer, &mut changes)
-        .map_err(|message| WriteError { message, changes: changes.clone() })?;
-    let mut text = writer.file_head("edit", path, &super::counted(ranges.len()));
+    if *after != before.bytes && crate::files::content_hash(document.text.as_bytes()) != original_text_hash {
+        target
+            .publish(
+                Some(&before),
+                after,
+                PublishedEncoding { label: document.label(), selection },
+                writer,
+                &mut changes,
+            )
+            .map_err(|message| WriteError { message, changes: changes.clone() })?;
+    } else {
+        ranges.clear();
+    }
+    let outcome = if changes.is_empty() { "no changes".into() } else { super::counted(ranges.len()) };
+    let mut text = writer.file_head("edit", path, &outcome);
     if stale {
         text.push_str("\nThe file changed since you last viewed it; the edit matched its current contents.");
     }
@@ -73,7 +86,7 @@ fn edit_file(
 }
 
 fn replace(
-    document: &mut Document,
+    document: &mut Source,
     block: &Block<'_>,
     replace_all: bool,
     all_option: &str,
@@ -82,16 +95,19 @@ fn replace(
     if block.old.is_empty() {
         return Err("SEARCH is empty; use write to create or replace a whole file".into());
     }
-    if block.old == block.new {
-        return Err("SEARCH and REPLACE are identical; supply a different replacement".into());
-    }
     // A SEARCH written in a here-document has LF line endings whatever the
     // file has, so both are matched with each CRLF read as LF; the matches
     // are mapped back to the file's own text, whose line endings stay.
     let plain = Plain::of(&document.text);
     let old = block.old.replace("\r\n", "\n");
     let Some(first) = plain.text.find(&old) else {
-        return Err("SEARCH was not found; view the current file and copy its text exactly, including whitespace".into());
+        if let Some(issue) = document.issue() {
+            return Err(format!("SEARCH was not found; the file contains read-only text: {issue}"));
+        }
+        return Err(format!(
+            "SEARCH was not found in decoded bytes 0..{}; check the segment notes from fastctx view, or select the known encoding with fastctx view --encoding <label> -- <path>",
+            document.raw.len()
+        ));
     };
     // Count overlapping occurrences too: "aa" occurs twice in "aaa".
     let next = first + old.chars().next().expect("nonempty pattern").len_utf8();
@@ -103,19 +119,37 @@ fn replace(
         .match_indices(&old)
         .map(|(start, text)| plain.original(start)..plain.original(start + text.len()))
         .collect();
-    let replacement = document.newlines(block.new);
-    document.encode(&replacement)?;
-    let mut updated = String::new();
-    let mut applied = Vec::new();
-    let mut offset = 0;
+    let dominant = crate::text::dominant_ending(&document.text);
+    let mut replacements = Vec::new();
     for matched in matches {
-        updated.push_str(&document.text[offset..matched.start]);
-        let start = updated.len();
-        updated.push_str(&replacement);
-        offset = matched.end;
-        applied.push((matched, start..updated.len()));
+        let original = &document.text[matched.clone()];
+        if Plain::of(original).text == Plain::of(block.new).text {
+            continue;
+        }
+        let ending = crate::text::replacement_ending(original, dominant);
+        let replacement = crate::text::newlines(block.new, ending);
+        let prefix = original
+            .chars()
+            .zip(replacement.chars())
+            .take_while(|(a, b)| a == b)
+            .map(|(c, _)| c.len_utf8())
+            .sum::<usize>();
+        let suffix = original[prefix..]
+            .chars()
+            .rev()
+            .zip(replacement[prefix..].chars().rev())
+            .take_while(|(a, b)| a == b)
+            .map(|(c, _)| c.len_utf8())
+            .sum::<usize>();
+        // Stateful context may contain switches needed to express the change.
+        let (prefix, suffix) = if document.stateful_at(matched.start) { (0, 0) } else { (prefix, suffix) };
+        replacements.push(Replacement {
+            text: matched.start + prefix..matched.end - suffix,
+            content: replacement[prefix..replacement.len() - suffix].into(),
+            context: matched,
+        });
     }
-    updated.push_str(&document.text[offset..]);
+    let applied = document.replace(&replacements)?;
     // Remap earlier excerpts once per block. Remapping after every occurrence
     // would make --all quadratic in the number of matches.
     for range in ranges.iter_mut() {
@@ -123,7 +157,6 @@ fn replace(
         range.end = relocated(range.end, &applied, true);
     }
     ranges.extend(applied.into_iter().map(|(_, after)| after));
-    document.text = updated;
     Ok(())
 }
 
@@ -173,18 +206,19 @@ fn relocated(offset: usize, edits: &[(Range<usize>, Range<usize>)], right: bool)
 pub(super) fn write(writer: &Writer, request: WriteRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
     let target = Target::new(&request.file_path, writer)?;
     let before = target.read()?;
+    let selection = before.as_ref().map(|before| target.encoding(before, seen)).transpose()?.flatten();
     let (after, encoding) = match &before {
         Some(before) => {
             target.whole_overwrite(before, seen)?;
-            let document = Document::decode(&before.bytes, target.encoding(before, seen)?)?;
-            (document.replace(&request.content)?, document.label())
+            let document = Source::decode(before.bytes.clone(), target.encoding(before, seen)?)?;
+            (document.whole(&request.content)?, document.label())
         }
-        None => (request.content.into_bytes(), "UTF-8"),
+        None => (request.content.into_bytes(), Some("UTF-8")),
     };
     target.create_parent(writer)?;
     let mut changes = Vec::new();
     target
-        .publish(before.as_ref(), &after, encoding, writer, &mut changes)
+        .publish(before.as_ref(), &after, PublishedEncoding { label: encoding, selection }, writer, &mut changes)
         .map_err(|message| WriteError { message, changes: changes.clone() })?;
     let outcome = if before.is_some() { "replaced" } else { "created" };
     Ok(WriteResult {

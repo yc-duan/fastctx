@@ -25,7 +25,7 @@ pub struct EditArgs {
 pub struct WriteArgs {
     /// Absolute path of the file to create or replace.
     path: PathBuf,
-    /// Remove one final newline supplied by the here-doc.
+    /// Remove the final LF supplied by the here-doc, preserving a preceding CR.
     #[arg(short = 'n')]
     no_newline: bool,
 }
@@ -42,9 +42,6 @@ pub fn write(args: WriteArgs) -> anyhow::Result<ExitCode> {
     let mut content = input()?;
     if args.no_newline && content.ends_with('\n') {
         content.pop();
-        if content.ends_with('\r') {
-            content.pop();
-        }
     }
     execute(WriteOp::Write(WriteRequest { file_path, content }))
 }

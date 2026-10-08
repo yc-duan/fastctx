@@ -18,7 +18,7 @@ The user has several machines, connected by fastctx: this one, and others that `
 
 `run` is your shell: bash with the GNU tools and `rg` on every machine, Windows included. Do all shell work with it, and all work on files, on this machine too:
 - `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content.
-- `edit PATH` and `write PATH` change a file and keep its encoding and line endings.
+- `edit PATH` preserves bytes outside the replacement. `write PATH` replaces the whole file in its original encoding, with its BOM and dominant line ending.
 - `rg` searches.
 
 `run`'s description shows each of these in full.

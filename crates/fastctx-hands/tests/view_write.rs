@@ -26,8 +26,8 @@ fn relative_view_prevents_stale_absolute_overwrite() {
             Some(sha256) => SeenVersion::Full { sha256: sha256.clone() },
             None => SeenVersion::Partial { size: observed.size, modified: observed.modified.unwrap().into() },
         };
-        assert_eq!(observed.sha256.is_some(), lines.is_none());
-        let seen = SeenFiles::from([(key, SeenFile { version, encoding: observed.encoding.clone() })]);
+        assert!(observed.sha256.is_some());
+        let seen = SeenFiles::from([(key, SeenFile { version, encoding: observed.encoding_selection.clone() })]);
         fs::write(&file, "someone else's new contents\n").unwrap();
         let error =
             writer.write(WriteRequest { file_path: file.clone(), content: "overwrite\n".into() }, &seen).unwrap_err();

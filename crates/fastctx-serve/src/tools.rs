@@ -124,7 +124,7 @@ Files:
     fastctx view --pages 3-5 /srv/app/design.pdf
     fastctx view --image --pages 3 /srv/app/design.pdf
     fastctx view --sheet Sales --range B2:F40 C:/Users/me/q3.xlsx
-  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. `--encoding gbk` reads text in an encoding you name, when the one shown is wrong.
+  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. `--encoding gbk` selects GB18030 for reading and writing. For a known mixed log, `--encoding utf-8,gb18030` tries those encodings in that order for each complete line. Segment notes give the actual encoding and its basis; unresolved lines are read-only byte previews.
 ";
 
 const RUN_WRITING: &str = "\
@@ -136,8 +136,8 @@ const RUN_WRITING: &str = "\
     port = 8081
     >>>>>>> REPLACE
     EOF
-  The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. The file keeps its encoding and line endings.
-- `write PATH` makes standard input the whole file (`-n`: no final newline).
+  The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. Only replaced bytes are encoded, using the matched segment's encoding. Other bytes stay unchanged. SEARCH treats CRLF and LF as equal; replacement newlines use the matched text's uniform ending, or the file's dominant ending if the match has mixed endings or none. A bare CR is data. Read-only or unresolved encoding boundaries require separate edits or an explicit encoding selection through `fastctx view`.
+- `write PATH` makes standard input the whole file, preserving its original encoding and BOM and using its dominant line ending. A mixed-encoding file requires local `edit` blocks instead. New files use UTF-8. `-n` removes the final LF supplied by a here-document and preserves a preceding CR.
 - `edit` and `write` take absolute paths. Quote the here-document delimiter, <<'EOF', so bash leaves the text as written.
 ";
 

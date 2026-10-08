@@ -32,7 +32,7 @@ pub struct ViewArgs {
     /// Render PDF pages as images instead of showing their text layer.
     #[arg(long, conflicts_with_all = ["lines", "encoding"])]
     image: bool,
-    /// Read text in this encoding, such as gbk or shift_jis.
+    /// Select a codec or an ordered per-line list, such as utf-8,gb18030.
     #[arg(long, value_name = "NAME")]
     encoding: Option<String>,
     /// Also look at the NUL-separated paths in FILE (`-` for standard input).

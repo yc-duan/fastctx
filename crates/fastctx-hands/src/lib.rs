@@ -9,6 +9,7 @@ pub mod files;
 pub mod image;
 pub mod pages;
 pub mod run;
+mod text;
 pub mod told;
 pub mod town;
 pub mod view;
