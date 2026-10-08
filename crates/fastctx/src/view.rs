@@ -11,15 +11,24 @@ use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::{Address, Call, TownName};
 
-/// Look at files: numbered text, images, and PDF text or page images.
+/// Look at files: numbered text, images, PDF pages, and Office content.
 #[derive(Args)]
 pub struct ViewArgs {
     /// Only lines FIRST-LAST (or one line), counting from 1, of every file.
     #[arg(long, value_name = "FIRST-LAST")]
     lines: Option<String>,
-    /// Only PDF pages FIRST-LAST (or one page), counting from 1.
-    #[arg(long, value_name = "FIRST-LAST", conflicts_with = "lines")]
+    /// Only PDF pages or PowerPoint slides FIRST-LAST, counting from 1.
+    #[arg(long, value_name = "FIRST-LAST")]
     pages: Option<String>,
+    /// Excel sheet name, matched literally (including numeric names).
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["sheet_index", "lines", "pages", "image", "encoding"])]
+    sheet: Option<String>,
+    /// Excel sheet index, counting from 1; useful for continuing a workbook.
+    #[arg(long, value_name = "NUMBER", conflicts_with_all = ["sheet", "lines", "pages", "image", "encoding"])]
+    sheet_index: Option<usize>,
+    /// Excel cells in an inclusive A1 rectangle, such as B2:F40 or C7.
+    #[arg(long, value_name = "A1:D20", conflicts_with_all = ["lines", "pages", "image", "encoding"])]
+    range: Option<String>,
     /// Render PDF pages as images instead of showing their text layer.
     #[arg(long, conflicts_with_all = ["lines", "encoding"])]
     image: bool,
@@ -59,6 +68,9 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
     let options = Options {
         lines,
         pages,
+        sheet: args.sheet,
+        sheet_index: args.sheet_index,
+        range: args.range.as_deref().map(str::parse).transpose()?,
         image: args.image,
         encoding: args.encoding,
         machine: if in_run { None } else { machine(&world) },
