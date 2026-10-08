@@ -1,15 +1,11 @@
-use std::collections::BTreeSet;
-use std::fs::File;
-use std::io::{Seek, SeekFrom};
 use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
-use calamine::Reader;
 use office_oxide::xlsx::CellRef;
 
 use crate::{
     Selection,
-    output::{Output, quoted},
+    output::{count, quoted},
 };
 
 /// An inclusive A1 rectangle within Excel's grid. Single cells are valid.
@@ -78,137 +74,66 @@ pub(crate) fn resume(sheet: usize, cell: &CellRef, range: Option<&CellRange>) ->
     hint
 }
 
-pub(crate) fn read_xls(
-    document: &office_oxide::Document,
-    mut file: File,
-    selection: &Selection,
-    out: &mut Output,
-) -> Result<()> {
-    use office_oxide::xls::CellValue;
-    let workbook = document.as_xls().unwrap();
-    if workbook.truncated() {
-        bail!("XLS content truncated: {}", workbook.notices().join("; "));
+#[derive(Default)]
+pub(crate) struct Metrics {
+    pub cells: u64,
+    pub bounds: Option<CellRange>,
+}
+impl Metrics {
+    pub fn include(&mut self, cell: &CellRef) {
+        self.cells += 1;
+        self.extend(cell);
     }
-    let selected = selected_sheet(&workbook.sheets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), selection)?;
-    // office_oxide 0.1.13 reads the FORMULA record's cached value but
-    // discards its tokens. Calamine decodes that external BIFF contract.
-    let formula_cells = crate::biff::formula_cells(file.try_clone()?)?;
-    if formula_cells.len() != workbook.sheets.len() {
-        bail!("XLS sheet count differs between the directory and the parsed workbook");
-    }
-    let mut needs_formulas = false;
-    for (index, cells) in formula_cells.iter().enumerate() {
-        if selected.is_some_and(|wanted| index != wanted) {
-            continue;
-        }
-        for cell in cells {
-            let address = CellRef { row: cell.row as u32, col: cell.col as u32 };
-            if selection.range.as_ref().is_some_and(|range| !range.contains(&address)) {
-                continue;
-            }
-            if cell.shared_or_array {
-                bail!(
-                    "sheet {} {address}: XLS shared/array formulas are unsupported",
-                    quoted(&workbook.sheets[index].name)
-                );
-            }
-            needs_formulas = true;
-        }
-    }
-    file.seek(SeekFrom::Start(0))?;
-    let mut formulas =
-        if needs_formulas { Some(calamine::Xls::new(file).context("reading XLS formula records")?) } else { None };
-    if !out.line(
-        "",
-        &format!("=== Excel ({} sheets; formula values are saved caches) ===", workbook.sheets.len()),
-        "use --sheet-index 1",
-    ) {
-        return Ok(());
-    }
-    for (index, sheet) in workbook.sheets.iter().enumerate() {
-        if selected.is_some_and(|wanted| index != wanted) {
-            continue;
-        }
-        let state = if sheet.hidden { "; hidden" } else { "" };
-        if !out.line(
-            "",
-            &format!("=== sheet {} {}{state} ===", index + 1, quoted(&sheet.name)),
-            &format!("use --sheet-index {}", index + 1),
-        ) {
-            break;
-        }
-        for &(r1, r2, c1, c2) in &sheet.merged_cells {
-            let first = CellRef { row: r1.into(), col: c1.into() };
-            let last = CellRef { row: r2.into(), col: c2.into() };
-            if selection
-                .range
-                .as_ref()
-                .is_none_or(|r| r.intersects(&CellRange { first: first.clone(), last: last.clone() }))
-                && !out.line(
-                    "",
-                    &format!("merge {first}:{last}"),
-                    &format!("use --sheet-index {} --range {first}:{last}", index + 1),
-                )
-            {
-                return Ok(());
+    pub fn extend(&mut self, cell: &CellRef) {
+        match &mut self.bounds {
+            None => self.bounds = Some(CellRange { first: cell.clone(), last: cell.clone() }),
+            Some(r) => {
+                r.first.row = r.first.row.min(cell.row);
+                r.first.col = r.first.col.min(cell.col);
+                r.last.row = r.last.row.max(cell.row);
+                r.last.col = r.last.col.max(cell.col);
             }
         }
-        let sheet_formulas = match &mut formulas {
-            Some(formulas) => formulas.worksheet_formula(&sheet.name).context("decoding XLS formulas")?,
-            None => calamine::Range::empty(),
+    }
+    pub fn facts(&self, range: Option<&CellRange>, shown: u64, through: Option<&CellRef>) -> String {
+        let extent = self.bounds.as_ref().map(|r| format!("{}:{}", r.first, r.last));
+        let area = match (range, extent) {
+            (Some(r), Some(all)) => format!("{}:{} of {all}, ", r.first, r.last),
+            (Some(r), None) => format!("{}:{}, ", r.first, r.last),
+            (None, Some(all)) => format!("{all}, "),
+            _ => String::new(),
         };
-        let mut addresses = BTreeSet::new();
-        for cell in &formula_cells[index] {
-            let (row, col) = (cell.row, cell.col);
-            let address = CellRef { row: row as u32, col: col as u32 };
-            if selection.range.as_ref().is_some_and(|range| !range.contains(&address)) {
-                continue;
-            }
-            match sheet_formulas.get_value((row as u32, col as u32)) {
-                Some(formula) if !formula.is_empty() && !formula.starts_with("Unrecognised formula ") => {}
-                _ => bail!(
-                    "sheet {} {address}: XLS formula expression could not be decoded (shared/array formulas are unsupported)",
-                    quoted(&sheet.name)
-                ),
-            }
-            addresses.insert((row, col));
-        }
-        for (row, cells) in sheet.rows.iter().enumerate() {
-            for (col, value) in cells.iter().enumerate() {
-                if !matches!(value, CellValue::Empty) {
-                    addresses.insert((row, col));
-                }
-            }
-        }
-        if let Some((r, c)) = sheet_formulas.start() {
-            for (row, col, _) in sheet_formulas.used_cells() {
-                addresses.insert((row + r as usize, col + c as usize));
-            }
-        }
-        for (row, col) in addresses {
-            let value = sheet.rows.get(row).and_then(|cells| cells.get(col)).unwrap_or(&CellValue::Empty);
-            let address = CellRef { row: row as u32, col: col as u32 };
-            if selection.range.as_ref().is_some_and(|r| !r.contains(&address)) {
-                continue;
-            }
-            let formula = sheet_formulas.get_value((row as u32, col as u32)).filter(|s| !s.is_empty());
-            if matches!(value, CellValue::Empty) && formula.is_none() {
-                continue;
-            }
-            let mut text = match value {
-                CellValue::String(s) => quoted(s),
-                CellValue::Empty => "(no cached value)".to_owned(),
-                CellValue::Bool(value) => value.to_string(),
-                CellValue::Error(_) => format!("error {}", value.as_text()),
-                _ => value.as_text(),
-            };
-            if let Some(formula) = formula {
-                text = format!("={formula}\t=> {text}");
-            }
-            if !out.line(&format!("{address}\t"), &text, &resume(index, &address, selection.range.as_ref())) {
-                return Ok(());
-            }
+        let cells = if range.is_none() && shown == self.cells {
+            count(shown, "cell")
+        } else {
+            format!("{shown} of {}", count(self.cells, "cell"))
+        };
+        match through {
+            Some(cell) => format!("{area}{cells}; through {cell}"),
+            None => format!("{area}{cells}"),
         }
     }
-    Ok(())
+}
+pub(crate) fn sheet_reserve() -> String {
+    format!(
+        "XFD1048576:XFD1048576 of XFD1048576:XFD1048576, {n} of {n} cells; through XFD1048576; very hidden",
+        n = u64::MAX
+    )
+}
+pub(crate) fn workbook_reserve() -> usize {
+    format!("sheets {n}-{n} of {n}; formula values as last saved", n = u64::MAX).len()
+}
+pub(crate) fn workbook_facts(total: usize, first: usize, last: usize, selected: bool) -> String {
+    let sheets = if total == 0 {
+        count(0, "sheet")
+    } else if first == 0 {
+        format!("no sheets shown of {total}")
+    } else if !selected && first == 1 && last == total {
+        count(total as u64, "sheet")
+    } else if first == last {
+        format!("sheet {first} of {total}")
+    } else {
+        format!("sheets {first}-{last} of {total}")
+    };
+    format!("{sheets}; formula values as last saved")
 }

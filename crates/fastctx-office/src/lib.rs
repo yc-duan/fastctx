@@ -1,14 +1,20 @@
 //! Office content, with document locations and an explicit output budget.
 //! This crate performs no rendering, subprocess execution, or file writes.
 
+mod arrays;
 mod biff;
+mod biff_string;
+mod formula;
 mod notes;
+mod number;
 mod output;
 mod package;
 mod slides;
 mod spreadsheet;
 mod word;
+mod xls;
 mod xlsx;
+mod xlsx_formula;
 mod xstring;
 
 use std::fs::File;
@@ -27,11 +33,15 @@ pub struct Selection {
     pub sheet: Option<String>,
     pub sheet_index: Option<usize>,
     pub range: Option<CellRange>,
+    /// Select only the presentation's master and layout text.
+    pub master: bool,
 }
 
 /// A bounded view. `stopped` means the budget ended selected content;
 /// explicit selections alone do not set it. Parse failures are errors.
 pub struct Content {
+    /// Facts for the caller's single file head note; counted in the budget.
+    pub facts: String,
     pub text: String,
     pub stopped: bool,
 }
@@ -50,8 +60,11 @@ pub fn format(path: &Path) -> Option<Format> {
 }
 
 /// Read from the already opened file. The budget includes every character
-/// in `Content::text`, including stopping locations and continuation hints.
+/// in both facts and text, including stopping locations and continuation hints.
 pub fn read(file: File, format: Format, selection: &Selection, budget: usize) -> Result<Content> {
+    if selection.master && !matches!(format, Format::Ppt | Format::Pptx) {
+        bail!("--master applies to PowerPoint presentations");
+    }
     match format {
         Format::Xlsx | Format::Xls => {
             if selection.lines.is_some() || selection.pages.is_some() {
@@ -76,7 +89,7 @@ pub fn read(file: File, format: Format, selection: &Selection, budget: usize) ->
     match format {
         Format::Doc | Format::Docx => word::read(&document, selection, &mut out)?,
         Format::Ppt | Format::Pptx => slides::read(&document, notes, selection, &mut out)?,
-        Format::Xls => spreadsheet::read_xls(&document, formulas.unwrap(), selection, &mut out)?,
+        Format::Xls => xls::read(&document, formulas.unwrap(), selection, &mut out)?,
         _ => unreachable!(),
     }
     Ok(out.finish())

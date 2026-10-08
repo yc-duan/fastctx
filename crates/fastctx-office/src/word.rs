@@ -1,8 +1,9 @@
+use crate::{
+    Selection,
+    output::{Output, line_reserve},
+};
 use anyhow::{Result, bail};
 use office_oxide::Document;
-
-use crate::{Selection, output::Output};
-
 pub(crate) fn read(document: &Document, selection: &Selection, out: &mut Output) -> Result<()> {
     if let Some(docx) = document.as_docx()
         && !docx.unreadable_parts.is_empty()
@@ -15,8 +16,8 @@ pub(crate) fn read(document: &Document, selection: &Selection, out: &mut Output)
         bail!("Word text is incomplete: {}", doc.warnings().join("; "));
     }
     let text = document.to_markdown();
-    if out.line("", &format!("=== Word ({} lines) ===", text.lines().count()), "use --lines 1") {
-        out.numbered(&text, selection.lines, None);
-    }
+    out.reserve_facts(line_reserve().len());
+    let lines = out.numbered(&text, selection.lines, |n, total| format!("use --lines {n}-{total}"));
+    out.facts(lines.facts(selection.lines.is_some()));
     Ok(())
 }

@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-calamine = { version = "0.36.1", default-features = false }
+num-bigint = "0.4.8"
 office_oxide = "0.1.13"
 quick-xml = "0.42"
 serde_json.workspace = true

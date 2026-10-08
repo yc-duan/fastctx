@@ -20,6 +20,9 @@ pub struct ViewArgs {
     /// Only PDF pages or PowerPoint slides FIRST-LAST, counting from 1.
     #[arg(long, value_name = "FIRST-LAST")]
     pages: Option<String>,
+    /// Only PowerPoint master and layout text; --lines selects within it.
+    #[arg(long, conflicts_with_all = ["pages", "sheet", "sheet_index", "range", "image", "encoding"])]
+    master: bool,
     /// Excel sheet name, matched literally (including numeric names).
     #[arg(long, value_name = "NAME", conflicts_with_all = ["sheet_index", "lines", "pages", "image", "encoding"])]
     sheet: Option<String>,
@@ -68,6 +71,7 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
     let options = Options {
         lines,
         pages,
+        master: args.master,
         sheet: args.sheet,
         sheet_index: args.sheet_index,
         range: args.range.as_deref().map(str::parse).transpose()?,
