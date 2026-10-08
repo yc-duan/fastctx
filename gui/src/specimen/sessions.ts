@@ -130,18 +130,18 @@ function claude(): Specimen {
   s.tool(
     "t1",
     run(
-      "rg -n 'fn step' /home/lenovo/mark50/src/ctrl",
+      "rg -n 'fn step' /home/me/mark50/src/ctrl",
       "=== run on laptop (exited 0) ===",
-      "/home/lenovo/mark50/src/ctrl/pid.rs:41:    pub fn step(&mut self, error: f32, dt: f32) -> f32 {\n/home/lenovo/mark50/src/ctrl/fixed.rs:58:    pub fn step(&mut self, error: Q16, dt: Q16) -> Q16 {",
+      "/home/me/mark50/src/ctrl/pid.rs:41:    pub fn step(&mut self, error: f32, dt: f32) -> f32 {\n/home/me/mark50/src/ctrl/fixed.rs:58:    pub fn step(&mut self, error: Q16, dt: Q16) -> Q16 {",
       { duration_ms: 84 },
     ),
   );
   s.tool(
     "t1",
     run(
-      "fastctx view -- /home/lenovo/mark50/src/ctrl/fixed.rs /home/lenovo/mark50/src/ctrl/pid.rs",
+      "fastctx view -- /home/me/mark50/src/ctrl/fixed.rs /home/me/mark50/src/ctrl/pid.rs",
       "=== run on laptop (exited 0) ===",
-      "=== view (2 files: 2 shown) ===\n=== laptop:/home/lenovo/mark50/src/ctrl/fixed.rs (lines 1-112 of 112) ===\n1\t//! Fixed-point PID for the joint controllers.\n2\t\n3\tuse crate::q16::Q16;\n…",
+      "=== view (2 files: 2 shown) ===\n=== laptop:/home/me/mark50/src/ctrl/fixed.rs (lines 1-112 of 112) ===\n1\t//! Fixed-point PID for the joint controllers.\n2\t\n3\tuse crate::q16::Q16;\n…",
       { duration_ms: 120 },
     ),
   );
@@ -172,7 +172,7 @@ function claude(): Specimen {
   s.tool(
     "t1",
     edit(
-      "/home/lenovo/mark50/src/ctrl/fixed.rs",
+      "/home/me/mark50/src/ctrl/fixed.rs",
       [
         "    pub fn step(&mut self, error: Q16, dt: Q16) -> Q16 {",
         "        let p = self.kp * error;",
@@ -193,7 +193,7 @@ function claude(): Specimen {
   s.tool(
     "t1",
     edit(
-      "/home/lenovo/mark50/src/ctrl/fixed.rs",
+      "/home/me/mark50/src/ctrl/fixed.rs",
       "    integral: Q16,",
       "    integral: Q32,",
     ),
@@ -204,7 +204,7 @@ function claude(): Specimen {
     run(
       "cd /srv/mark50 && cargo test --workspace",
       "=== run on lab (still running after 15s; j-k3x9a2) ===",
-      "   Compiling ctrl v0.4.1 (/srv/mark50/ctrl)\n   Compiling joints v0.4.1 (/srv/mark50/joints)\n=== output continues in lab /home/lenovo/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log; you'll be told when it ends ===",
+      "   Compiling ctrl v0.4.1 (/srv/mark50/ctrl)\n   Compiling joints v0.4.1 (/srv/mark50/joints)\n=== output continues in lab /home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log; you'll be told when it ends ===",
       { duration_ms: 15000 },
       "lab",
     ),
@@ -246,7 +246,7 @@ let i = (self.ki.widen() * self.integral).narrow();
   s.heard(
     "t2",
     { kind: "world" },
-    "=== j-k3x9a2 on lab ended (exited 0) at 2026-10-04 13:09:12 UTC; its output is in /home/lenovo/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log ===",
+    "=== j-k3x9a2 on lab ended (exited 0) at 2026-10-04 13:09:12 UTC; its output is in /home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log ===",
     190,
   );
   s.started("t2");
@@ -254,7 +254,7 @@ let i = (self.ki.widen() * self.integral).narrow();
   s.tool(
     "t2",
     run(
-      "tail -4 /home/lenovo/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log",
+      "tail -4 /home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log",
       "=== run on lab (exited 0) ===",
       "test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.12s\n\n   Doc-tests ctrl\ntest result: ok. 3 passed; 0 failed; 0 ignored",
       { duration_ms: 60 },
@@ -267,7 +267,7 @@ let i = (self.ki.widen() * self.integral).narrow();
     input: {
       description: "造出让 Q32 积分溢出的输入",
       prompt:
-        "We moved the PID integral in /home/lenovo/mark50/src/ctrl/fixed.rs to Q32 with saturating_add. Make it fail: find inputs where the integral or the narrowed output wraps instead of saturating, with a test that reproduces it.",
+        "We moved the PID integral in /home/me/mark50/src/ctrl/fixed.rs to Q32 with saturating_add. Make it fail: find inputs where the integral or the narrowed output wraps instead of saturating, with a test that reproduces it.",
     },
     output: text(
       "=== colleague codex-91c0 on laptop (started) ===\nIts last message of each turn will be delivered to you. See what it is doing: fastctx w codex-91c0",
@@ -285,7 +285,7 @@ let i = (self.ki.widen() * self.integral).narrow();
   s.heard(
     "t3",
     { kind: "resident", address: { machine: "laptop", resident: "codex-91c0" } },
-    "=== colleague codex-91c0 on laptop (turn completed, 14m) ===\nFound one. With `ki = 0x7FFF_0000` and a constant error of 32767 at `dt = 1`, the integral saturates after 65 538 steps as meant, but `narrow()` then **wraps** instead of saturating: the output jumps from 32767 to −32768.\n\nRepro: `cargo test -p ctrl overflow_repro` on branch `colleague/q16-edge` (laptop, `/home/lenovo/wt/q16-edge`).\n=== what it did: fastctx w codex-91c0 ===",
+    "=== colleague codex-91c0 on laptop (turn completed, 14m) ===\nFound one. With `ki = 0x7FFF_0000` and a constant error of 32767 at `dt = 1`, the integral saturates after 65 538 steps as meant, but `narrow()` then **wraps** instead of saturating: the output jumps from 32767 to −32768.\n\nRepro: `cargo test -p ctrl overflow_repro` on branch `colleague/q16-edge` (laptop, `/home/me/wt/q16-edge`).\n=== what it did: fastctx w codex-91c0 ===",
     840,
   );
   s.started("t3");
@@ -293,7 +293,7 @@ let i = (self.ki.widen() * self.integral).narrow();
   s.tool(
     "t3",
     edit(
-      "/home/lenovo/mark50/src/ctrl/q16.rs",
+      "/home/me/mark50/src/ctrl/q16.rs",
       "    pub fn narrow(self) -> Q16 {\n        Q16((self.0 >> 16) as i32)\n    }",
       "    pub fn narrow(self) -> Q16 {\n        Q16((self.0 >> 16).clamp(i32::MIN as i64, i32::MAX as i64) as i32)\n    }",
     ),
@@ -610,7 +610,7 @@ function asking(): Specimen {
                 options: [
                   { label: "laptop", description: "Windows，本地 Postgres" },
                   { label: "lab", description: "Linux，跑整套集成测试" },
-                  { label: "hangzhou", description: "线上的副本" },
+                  { label: "server", description: "线上的副本" },
                 ],
               },
             ],

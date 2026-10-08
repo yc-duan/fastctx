@@ -599,7 +599,7 @@ function specimenTalk(address: Address): Page {
       known
         ? {
             resident: known,
-            records: `/home/lenovo/.fastctx/world/towns/${known.town ?? "outside"}/residents/${known.about.id}`,
+            records: `/home/me/.fastctx/world/towns/${known.town ?? "outside"}/residents/${known.about.id}`,
             actions: known.last_action ? [known.last_action] : [],
             actions_total: known.last_action ? 41 : 0,
             asked: known.about.origin.kind === "colleague" ? known.about.origin.label : null,
@@ -1144,7 +1144,7 @@ function specimenPlace(): Place | null {
     case "decision":
       return { kind: "file", machine: "desktop", path: "D:/work/mark50/specs/控制环.md", tail: false };
     case "log":
-      return { kind: "file", machine: "lab", path: "/home/lenovo/.fastctx/world/towns/mark50/residents/codex-3c77/out/j-p0q1r2.log", tail: true };
+      return { kind: "file", machine: "lab", path: "/home/me/.fastctx/world/towns/mark50/residents/codex-3c77/out/j-p0q1r2.log", tail: true };
     case "about":
       // On this machine, so the card offers its own interface too.
       return { kind: "talk", address: { resident: "codex-5e2a", machine: "desktop" } };

@@ -239,7 +239,7 @@ for (const session of sessions) {
       }
       if (session === "route" || session === "relay") {
         // Where a member connects, and a machine made a relay.
-        const button = session === "route" ? '[data-route="lab"]' : '[data-relay="hangzhou"]';
+        const button = session === "route" ? '[data-route="lab"]' : '[data-relay="server"]';
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('${button}')?.click())` });
       }
       if (session === "invite") {

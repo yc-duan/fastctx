@@ -98,7 +98,7 @@ Run a bash script on this machine and read what it prints. Inside it, `on MACHIN
 const RUN_REST: &str = "\
 `on` takes a command and its words, sent exactly as this shell expanded them, or a script on standard input, read only by that machine's bash:
   on laptop cargo test --release
-  on hangzhou <<'EOF'
+  on server <<'EOF'
   cd /srv/app && tail -n 200 app.log | grep ERROR
   EOF
 It acts as a subshell placed there: the script's own variables, functions and options go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused. If the connection drops, it goes on there and its end still reaches you.

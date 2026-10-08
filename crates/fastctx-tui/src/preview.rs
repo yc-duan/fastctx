@@ -129,7 +129,7 @@ fn record(now: Timestamp, name: &str, what: &str, machines: &[&str], version: u3
             },
             Listing {
                 what: "持续集成".into(),
-                location: Location { machine: machine("hangzhou"), path: "/srv/mark50-ci".into() },
+                location: Location { machine: machine("server"), path: "/srv/mark50-ci".into() },
             },
         ],
         canon: Some(Location { machine: machine("desktop"), path: "D:/work/mark50/specs".into() }),
@@ -219,7 +219,7 @@ fn towns(now: Timestamp) -> Vec<TownSummary> {
                 now,
                 "Mark 50 研发",
                 "为 Mark 50 战衣研发纳米单元的控制固件，并在真机上验证。",
-                &["desktop", "laptop", "hangzhou"],
+                &["desktop", "laptop", "server"],
                 3,
             ),
             journals: 12,
@@ -258,7 +258,7 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
             MachineWho::Answered {
                 reply: WhoReply { history: None, machine: machine("laptop"), residents: laptop, jobs: laptop_jobs },
             },
-            MachineWho::Offline { machine: machine("hangzhou"), since: Some(ago(now, 95)) },
+            MachineWho::Offline { machine: machine("server"), since: Some(ago(now, 95)) },
         ],
     }
 }
@@ -281,9 +281,9 @@ fn nodes(now: Timestamp) -> NodesReply {
         joined: Vec::new(),
         link: LinkState::Online {
             since: ago(now, 300),
-            hub: "121.40.82.28:7443".into(),
+            hub: "203.0.113.10:7443".into(),
             relay: None,
-            route: Route::Card { name: "以太网 2".into() },
+            route: Route::Card { name: "Ethernet".into() },
         },
         machines: vec![
             Node {
@@ -307,7 +307,7 @@ fn nodes(now: Timestamp) -> NodesReply {
                 revoked: None,
             },
             Node {
-                name: machine("hangzhou"),
+                name: machine("server"),
                 device: false,
                 standing: None,
                 place: None,

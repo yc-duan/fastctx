@@ -14,12 +14,12 @@ const record: ProjectRecord = {
   what: "为 Mark 50 战衣研发纳米单元的控制固件，并在真机上验证。",
   machines: ["desktop", "laptop", "lab"],
   places: [
-    { what: "固件源码（git 仓库）", machine: "laptop", path: "/home/lenovo/mark50" },
-    { what: "定论", machine: "laptop", path: "/home/lenovo/mark50/specs" },
+    { what: "固件源码（git 仓库）", machine: "laptop", path: "/home/me/mark50" },
+    { what: "定论", machine: "laptop", path: "/home/me/mark50/specs" },
     { what: "仿真与训练数据", machine: "lab", path: "/data/mark50-sim" },
     { what: "持续集成", machine: "lab", path: "/srv/mark50-ci" },
   ],
-  canon: { machine: "laptop", path: "/home/lenovo/mark50/specs" },
+  canon: { machine: "laptop", path: "/home/me/mark50/specs" },
   by: { kind: "user" },
   on: "desktop",
   at: at("01T09:12:00"),
@@ -43,7 +43,7 @@ function stamp(id: string, time: string, by: Writer, agent: "claude" | "codex", 
 export function specimenMap(): MapView {
   return {
     town: "mark50",
-    ledger: "/home/lenovo/.fastctx/world/towns/mark50/ledger",
+    ledger: "/home/me/.fastctx/world/towns/mark50/ledger",
     record,
     opened: { by: { kind: "user" }, on: "desktop", at: at("01T09:12:00") },
     pages: specimenPages(),
@@ -84,7 +84,7 @@ export function specimenJournal(): JournalView {
   return {
     town: "mark50",
     journal: "q16-fixed-point",
-    directory: "/home/lenovo/.fastctx/world/towns/mark50/ledger/journals/q16-fixed-point",
+    directory: "/home/me/.fastctx/world/towns/mark50/ledger/journals/q16-fixed-point",
     description: { version: 1, text: "Fixed-point arithmetic in the joint controllers: precision, saturation and where it was measured.", by: claude, on: "laptop", at: at("04T13:10:00") },
     first: 1,
     total: 3,
