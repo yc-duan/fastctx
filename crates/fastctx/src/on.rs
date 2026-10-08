@@ -42,6 +42,10 @@ If the connection drops, it goes on there and its end still reaches you. It exit
 /// input is the script.
 #[derive(Args)]
 pub struct OnArgs {
+    /// The shell function's process, whose deliberate termination ends
+    /// this follower on Linux. MSYS process ids are not native Windows ids.
+    #[arg(long, hide = true)]
+    shell_parent: Option<u32>,
     /// The state the shell function wrote; this command takes it over.
     #[arg(long, value_name = "FILE", hide = true)]
     state: Option<PathBuf>,
@@ -66,6 +70,9 @@ pub fn run(args: OnArgs) -> ExitCode {
 }
 
 fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
+    if let Some(parent) = args.shell_parent {
+        fastctx_platform::parent::follow_shell(parent)?;
+    }
     let Some(machine) = args.machine else {
         bail!(
             "usage: on MACHINE [COMMAND [ARG...]]; without a command, standard input is the script. `fastctx nodes` lists the machines"
@@ -105,7 +112,9 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
                     }
                 }
                 Ok(Some(OnPiece::Err { base64 })) => {
-                    let _ = err.write_all(&STANDARD.decode(base64)?).and_then(|()| err.flush());
+                    if err.write_all(&STANDARD.decode(base64)?).and_then(|()| err.flush()).is_err() {
+                        return Ok(Ended::ReaderLeft);
+                    }
                 }
                 Ok(Some(OnPiece::Ended { end })) => return Ok(Ended::Job(end)),
                 Ok(None) => bail!("the node ended the on without the job's end"),
@@ -190,7 +199,9 @@ fn collect(state: &Option<PathBuf>, command: Option<&Path>, words: &[String]) ->
     };
     let (script, input) = if let Some(line) = command_line {
         let script = directory.join("script");
-        std::fs::write(&script, format!("{}\n", line.trim_end()))?;
+        // Bash's %q can end in an escaped space. Whitespace here belongs
+        // to the quoted arguments and must survive byte for byte.
+        std::fs::write(&script, format!("{line}\n"))?;
         // A terminal's input has no end to read to; the command gets none.
         let input = if stdin.is_terminal() {
             None

@@ -14,25 +14,34 @@ unset FASTCTX_BIN
 
 # What the login environment already holds, so that `on` carries only what
 # the script itself makes (world-run.md, 心智随行).
-__fastctx_login=$(compgen -v; printf '\036'; compgen -A function; printf '\036'; shopt -p; set +o)
-
-# State `on` brought from the machine that sent this script: restored after
-# the snapshot, so a further `on` carries it on.
-if [ -n "${FASTCTX_ON_STATE-}" ]; then
-    . "$FASTCTX_ON_STATE"
-    unset FASTCTX_ON_STATE
-fi
+__fastctx_flags=$-
+__fastctx_login=$(
+    compgen -v; printf '\036'; compgen -A function; printf '\036'; shopt -p
+    # Command substitution normally clears errexit. Read the caller's
+    # setting, not that implementation detail of the snapshot.
+    case $__fastctx_flags in *e*) set -e ;; esac
+    set +o
+)
 
 # Writes the script's own variables, functions and changed options, as bash
 # reads them back.
 __fastctx_state() {
-    local IFS=$'\n' __fastctx_n __fastctx_attrs
+    local IFS=$'\n' __fastctx_n __fastctx_attrs __fastctx_flags=$-
     local __fastctx_vars=${__fastctx_login%%$'\036'*}
     local __fastctx_rest=${__fastctx_login#*$'\036'}
     local __fastctx_funcs=${__fastctx_rest%%$'\036'*}
     local __fastctx_opts=${__fastctx_rest#*$'\036'}
+    local __fastctx_vars_sent= __fastctx_funcs_sent= __fastctx_opts_sent= __fastctx_changes=
+    # Function definitions may contain extended patterns. They must be
+    # parsed with extglob enabled even when the script turned it off again.
+    printf 'shopt -s extglob || return 255\n'
     for __fastctx_n in $(compgen -v); do
-        case $'\n'"$__fastctx_vars"$'\n' in *$'\n'"$__fastctx_n"$'\n'*) continue ;; esac
+        # A name brought by a previous hop belongs to the script even if
+        # this machine's login environment happened to have the same name.
+        case $'\n'"${__fastctx_carried_vars-}"$'\n' in
+            *$'\n'"$__fastctx_n"$'\n'*) ;;
+            *) case $'\n'"$__fastctx_vars"$'\n' in *$'\n'"$__fastctx_n"$'\n'*) continue ;; esac ;;
+        esac
         case $__fastctx_n in
             __fastctx_* | BASH | BASH_* | BASHOPTS | BASHPID | COLUMNS | COMP_* | DIRSTACK | EPOCHREALTIME | \
             EPOCHSECONDS | EUID | FUNCNAME | GROUPS | HISTCMD | HOSTNAME | HOSTTYPE | IFS | LINENO | LINES | \
@@ -40,19 +49,47 @@ __fastctx_state() {
             READLINE_* | REPLY | SECONDS | SHELLOPTS | SHLVL | SRANDOM | UID | _ | FASTCTX_*)
                 continue ;;
         esac
-        declare -p -- "$__fastctx_n" 2>/dev/null
+        __fastctx_vars_sent+="$__fastctx_n"$'\n'
+        # Discard target-side attributes as well as the old value. Removing
+        # a nameref must not unset the variable it points to.
+        printf 'if [[ $(declare -p -- %q 2>/dev/null) == "declare -n"* ]]; then unset -n -- %q || return 255; fi\n' "$__fastctx_n" "$__fastctx_n"
+        printf 'unset -v -- %q || return 255\n' "$__fastctx_n"
+        printf '%s || return 255\n' "$(declare -p -- "$__fastctx_n")"
     done
     for __fastctx_n in $(compgen -A function); do
-        case $'\n'"$__fastctx_funcs"$'\n' in *$'\n'"$__fastctx_n"$'\n'*) continue ;; esac
+        case $'\n'"${__fastctx_carried_funcs-}"$'\n' in
+            *$'\n'"$__fastctx_n"$'\n'*) ;;
+            *) case $'\n'"$__fastctx_funcs"$'\n' in *$'\n'"$__fastctx_n"$'\n'*) continue ;; esac ;;
+        esac
         case $__fastctx_n in __fastctx_* | on | edit | write | apply_patch) continue ;; esac
+        __fastctx_funcs_sent+="$__fastctx_n"$'\n'
+        printf 'unset -f -- %q || return 255\n' "$__fastctx_n"
         declare -f -- "$__fastctx_n"
         __fastctx_attrs=$(declare -F -p -- "$__fastctx_n" 2>/dev/null)
-        case $__fastctx_attrs in "declare -fx "*) printf 'declare -fx -- %s\n' "$__fastctx_n" ;; esac
+        __fastctx_attrs=${__fastctx_attrs#declare -}
+        __fastctx_attrs=${__fastctx_attrs%% *}
+        if [ "$__fastctx_attrs" != f ]; then
+            printf 'declare -%s -- %q || return 255\n' "$__fastctx_attrs" "$__fastctx_n"
+        fi
     done
-    for __fastctx_n in $(shopt -p; set +o); do
-        case $'\n'"$__fastctx_opts"$'\n' in *$'\n'"$__fastctx_n"$'\n'*) continue ;; esac
-        printf '%s\n' "$__fastctx_n"
+    for __fastctx_n in $(shopt -p; case $__fastctx_flags in *e*) set -e ;; esac; set +o); do
+        case $'\n'"${__fastctx_carried_opts-}"$'\n' in
+            *$'\n'"${__fastctx_n##* }"$'\n'*) ;;
+            *) case $'\n'"$__fastctx_opts"$'\n' in
+                *$'\n'"$__fastctx_n"$'\n'*)
+                    # Undo the parser setting above even when it was not
+                    # a script change. It must not become a carried option.
+                    case $__fastctx_n in 'shopt -u extglob') __fastctx_changes+="$__fastctx_n || return 255"$'\n' ;; esac
+                    continue ;;
+            esac ;;
+        esac
+        __fastctx_opts_sent+="${__fastctx_n##* }"$'\n'
+        __fastctx_changes+="$__fastctx_n || return 255"$'\n'
     done
+    printf '__fastctx_carried_vars=%q\n__fastctx_carried_funcs=%q\n__fastctx_carried_opts=%q\n' \
+        "$__fastctx_vars_sent" "$__fastctx_funcs_sent" "$__fastctx_opts_sent"
+    printf '%s' "$__fastctx_changes"
+    printf 'return 0\n'
 }
 
 # on MACHINE [COMMAND [ARGUMENT...]]: this part of the script, run on
@@ -81,10 +118,13 @@ on() {
         # The words, quoted by bash itself, become the command line bash
         # reads there: it reads back exactly these words.
         printf '%q ' "${@:2}" >"$__fastctx_file.command" || return 255
-        fastctx on --state "$__fastctx_file.state" --command "$__fastctx_file.command" -- "$1"
+        fastctx on --shell-parent "$BASHPID" --state "$__fastctx_file.state" --command "$__fastctx_file.command" -- "$1"
     else
-        fastctx on --state "$__fastctx_file.state" -- "$1"
+        fastctx on --shell-parent "$BASHPID" --state "$__fastctx_file.state" -- "$1"
     fi
+    # Keep the shell alive as the follower's parent, even when this is the
+    # script's last command. On Linux the follower dies with this shell.
+    return $?
 }
 
 # The World's ways of writing files (world-write.md). Functions, because
@@ -95,3 +135,12 @@ write() { fastctx write "$@"; }
 apply_patch() { fastctx apply-patch "$@"; }
 
 export -f on edit write apply_patch
+
+# Restore last: options such as verbose and nounset govern the requested
+# script, not the implementation of the World's prelude. A failed restore
+# must never execute a script with only part of its state.
+__fastctx_incoming=${FASTCTX_ON_STATE-}
+unset FASTCTX_ON_STATE
+if [ -n "$__fastctx_incoming" ]; then
+    . "$__fastctx_incoming" || exit 255
+fi
