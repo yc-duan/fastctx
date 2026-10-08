@@ -88,7 +88,7 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
         }
     }
     if !resident.here {
-        text.push_str("presence not here\n");
+        text.push_str("session  not open now\n");
     }
     let step = render::step(resident, now);
     if !step.is_empty() {

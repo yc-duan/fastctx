@@ -145,7 +145,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             } else if let Some(state) = &resident.now {
                 match state.activity {
                     Activity::Busy => brief(&step(resident, now)),
-                    Activity::Idle if !resident.here => "not here; last reported idle".into(),
+                    Activity::Idle if !resident.here => "session not open; last reported idle".into(),
                     Activity::Idle => "idle".into(),
                     // Older now records did not consistently timestamp sleep.
                     Activity::Asleep => "asleep".into(),
@@ -235,7 +235,7 @@ pub(super) fn step(resident: &ResidentNow, now: Timestamp) -> String {
     match &resident.now {
         Some(state) if state.activity == Activity::Busy => {
             if !resident.here {
-                return format!("not here; last recorded turn began {} ago", ago(state.since, now));
+                return format!("session not open; last recorded turn began {} ago", ago(state.since, now));
             }
             let tools = resident
                 .tools
