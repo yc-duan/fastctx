@@ -75,9 +75,11 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
         let client = Client::connect(&world, Peer::Command { resident: Some(resident), session: None }).await?;
         let mut stream = client.on(call).await?;
         let (mut out, mut err) = (std::io::stdout().lock(), std::io::stderr().lock());
+        let mut started = false;
         loop {
             match stream.next().await {
                 Ok(Some(OnPiece::Started { machine: there, .. })) => {
+                    started = true;
                     // What went to another machine is there now; what stays
                     // here is the job's own input.
                     if std::env::var("FASTCTX_MACHINE").ok().as_deref() != Some(there.as_str()) {
@@ -96,7 +98,8 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
                 }
                 Ok(Some(OnPiece::Ended { end })) => return Ok(Ended::Job(end)),
                 Ok(None) => bail!("the node ended the on without the job's end"),
-                Err(CallError::Failed(failure)) => return Ok(Ended::Refused(failure.message)),
+                Err(CallError::Failed(failure)) if !started => return Ok(Ended::Refused(failure.message)),
+                Err(CallError::Failed(failure)) => return Ok(Ended::Lost(failure.message)),
                 Err(error) => return Err(error.into()),
             }
         }
@@ -111,6 +114,10 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
         // As bash reports a pipeline stage that SIGPIPE ended.
         Ended::ReaderLeft => ExitCode::from(141),
         Ended::Refused(why) => {
+            eprintln!("on: not run on {machine}: {why}");
+            ExitCode::from(NOT_CARRIED)
+        }
+        Ended::Lost(why) => {
             eprintln!("on: {why}");
             ExitCode::from(NOT_CARRIED)
         }
@@ -120,7 +127,10 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
 enum Ended {
     Job(OnEnd),
     ReaderLeft,
+    /// It never started there.
     Refused(String),
+    /// It started there, and then its end could not be had.
+    Lost(String),
 }
 
 fn how_ended(how: &EndedHow) -> String {

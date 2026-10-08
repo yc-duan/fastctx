@@ -259,14 +259,14 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
     let link = match (&reply.world, &reply.link) {
         (_, LinkState::Alone) => "a World of one machine".to_string(),
         (Some(_), LinkState::Online { since, hub, relay: None, route }) => {
-            format!("connected to the hub at {hub}, {route}, since {}", clock(*since, now))
+            format!("connected to the hub at {hub}, {route}, for {}", age(*since, now))
         }
         (Some(_), LinkState::Online { since, hub, relay: Some(relay), route }) => {
-            format!("connected through the relay {relay} at {hub}, {route}, since {}", clock(*since, now))
+            format!("connected through the relay {relay} at {hub}, {route}, for {}", age(*since, now))
         }
         (Some(_), LinkState::Connecting { last_error: None, .. }) => "connecting to the hub".to_string(),
         (Some(_), LinkState::Connecting { since, last_error: Some(error) }) => {
-            format!("not connected to the hub since {}: {error}", clock(*since, now))
+            format!("not connected to the hub for {}: {error}", age(*since, now))
         }
         (Some(_), LinkState::Stopped { reason }) => format!("the hub refused this machine: {reason}"),
         (None, _) => "in a World".to_string(),
@@ -278,14 +278,14 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
             _ if node.name == reply.machine => "this machine".to_string(),
             _ if node.revoked.is_some() => {
                 let revoked = node.revoked.as_ref().expect("checked");
-                format!("revoked by {} at {}: {}", revoked.by, clock(revoked.at, now), revoked.reason)
+                format!("revoked by {} {} ago: {}", revoked.by, age(revoked.at, now), revoked.reason)
             }
             Some(true) => match node.since {
-                Some(since) => format!("online since {}", clock(since, now)),
+                Some(since) => format!("online for {}", age(since, now)),
                 None => "online".to_string(),
             },
             Some(false) => match node.since {
-                Some(since) => format!("offline since {}", clock(since, now)),
+                Some(since) => format!("offline for {}", age(since, now)),
                 None => "offline".to_string(),
             },
             None => "not known".to_string(),
@@ -338,9 +338,15 @@ fn place(place: &fastctx_types::world::Place) -> String {
     said
 }
 
-/// A moment as the local clock reads it: the time today, the date before.
-fn clock(at: Timestamp, now: Timestamp) -> String {
-    let zone = jiff::tz::TimeZone::system();
-    let (at, now) = (at.to_zoned(zone.clone()), now.to_zoned(zone));
-    if at.date() == now.date() { at.strftime("%H:%M").to_string() } else { at.strftime("%Y-%m-%d %H:%M").to_string() }
+/// How long ago a moment was, to two units: the machines of a World keep
+/// different clocks and zones, and a reader may know none of them.
+fn age(at: Timestamp, now: Timestamp) -> String {
+    let seconds = now.as_second().saturating_sub(at.as_second()).max(0);
+    let (days, hours, minutes) = (seconds / 86_400, seconds % 86_400 / 3_600, seconds % 3_600 / 60);
+    match () {
+        _ if days > 0 => format!("{days}d {hours}h"),
+        _ if hours > 0 => format!("{hours}h {minutes}m"),
+        _ if minutes > 0 => format!("{minutes}m"),
+        _ => format!("{seconds}s"),
+    }
 }

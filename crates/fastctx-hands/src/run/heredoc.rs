@@ -49,7 +49,7 @@ enum Case {
 }
 
 pub(super) fn refuse(line: usize, reason: impl std::fmt::Display) -> Failure {
-    Failure::new(format!("run refused before execution: line {line}: {reason}."))
+    Failure::new(format!("line {line}: {reason}."))
 }
 
 pub(super) fn check(source: &str) -> Result<(), Failure> {

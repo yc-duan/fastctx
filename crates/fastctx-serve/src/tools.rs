@@ -88,7 +88,7 @@ const RUN_REST: &str = "\
   EOF
 It acts as a subshell placed there: the script's own variables and functions go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused. If the connection drops, it goes on there and its end still reaches you.
 
-Every machine runs bash with the GNU tools, Windows ones too (Git Bash), where paths are written like C:/Users/me and `df`, `du`, `ls` and `find` answer what PowerShell would. Git Bash rewrites arguments shaped like Unix paths, such as /FI, before a Windows program sees them: put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
+Every machine runs bash with the GNU tools and ripgrep (`rg`), Windows ones too (Git Bash), where paths are written like C:/Users/me and `df`, `du`, `ls` and `find` answer what PowerShell would. Git Bash rewrites arguments shaped like Unix paths, such as /FI, before a Windows program sees them: put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
 
 Each call is a fresh login shell, starting in the home directory unless `cwd` names another; nothing carries over between calls, and standard input is empty. Standard output and standard error arrive together. Images a program draws with the kitty or iTerm2 terminal protocols come back as images. A call waits up to 15 seconds; a script still running then goes on in the background, the answer names the file its output continues in, and you are told when it ends.
 

@@ -185,8 +185,12 @@ fn outcome(reply: &RunReply) -> String {
 
 /// Whether the call can answer now: the job ended, or its shell exited
 /// and its output is complete.
+/// Whether the answer can be given now. With no process left, the end is
+/// moments away and the answer waits for it, so the resident is not also
+/// told by letter of an end it has already read.
 fn settled(record: &JobRecord) -> bool {
-    record.end.is_some() || (record.exit.is_some() && record.output_ended_at.is_some())
+    record.end.is_some()
+        || (record.exit.is_some() && record.output_ended_at.is_some() && record.remaining.is_some_and(|n| n > 0))
 }
 
 fn state(record: &JobRecord) -> RunState {

@@ -120,7 +120,7 @@ impl Session {
                 )),
             },
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
-            Err(error) => Answer::error(format!("=== run (not run: {error}) ===")),
+            Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
         };
         self.add_waiting_words(&whereabouts, &mut answer).await;
         answer

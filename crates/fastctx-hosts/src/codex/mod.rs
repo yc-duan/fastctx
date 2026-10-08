@@ -1276,8 +1276,9 @@ fn millis(value: Option<&Value>) -> Timestamp {
 }
 
 /// The settings that give a thread the World's tools, `tools`, in place of
-/// any fastctx the user registered: `binary` serving with `apply_patch`,
-/// with the environment `env`, and the limits above. A thread's settings
+/// any fastctx the user registered: `binary` serving them with the
+/// environment `env`, and the limits above. Codex's own shell and image
+/// viewer are off, as `run` does their work; its `apply_patch` stays. A thread's settings
 /// merge into the user's table by table, so every setting of the server
 /// that changes what it offers is given here, lists replacing the user's
 /// whole.

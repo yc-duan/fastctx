@@ -50,14 +50,13 @@ pub fn check(script: &str) -> Result<(), Failure> {
             .map_err(|error| failure("bash returned non-UTF-8 syntax output", error))?;
         if stderr.is_empty() && stdout.is_empty() {
             return Err(Failure::new(format!(
-                "run refused before execution: bash's syntax check terminated without diagnostics ({}). The source could not be checked; simplify nested expressions or split the script, then retry.",
+                "bash's syntax check ended without saying why ({}), so the script could not be checked; simplify nested expressions or split the script.",
                 output.status,
             )));
         }
         return Err(Failure::new(format!(
-            "run refused before execution: bash could not read the complete script cleanly ({status}).\n{stderr}{stdout}\nFix the reported syntax or close the here-document, then send the complete script again.",
-            status = output.status,
-            stderr = stderr.trim_end(),
+            "bash could not read the whole script:\n{}",
+            format!("{stderr}{stdout}").trim_end(),
         )));
     }
     written.map_err(|error| failure("could not send the complete script to bash", error))?;
@@ -65,5 +64,5 @@ pub fn check(script: &str) -> Result<(), Failure> {
 }
 
 fn failure(what: &str, error: impl std::fmt::Display) -> Failure {
-    Failure::new(format!("run refused before execution: {what}: {error}"))
+    Failure::new(format!("{what}: {error}"))
 }
