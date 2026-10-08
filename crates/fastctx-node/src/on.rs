@@ -198,19 +198,22 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
             _ => Vec::new(),
         }
     };
-    // An end this `on` did not take still reaches the resident.
-    if !ended {
+    // An end this `on` did not take still reaches the resident, unless the
+    // `on` stopped the job on purpose: then nobody is owed its end.
+    let stopped = matches!(followed_through, Ok(true));
+    if !ended && !stopped {
         for (to, delivery) in parked {
             if let Err(failure) = crate::speech::tell_here(node, &to, delivery, crate::speech::Owed::Working).await {
                 node.log.line(format_args!("telling {to} of {job} on {machine}: {}", failure.message));
             }
         }
     }
-    followed_through
+    followed_through.map(|_| ())
 }
 
 /// Follows a job that started on `machine` until its end is taken, it is
-/// stopped, or the World says it cannot be followed.
+/// stopped, or the World says it cannot be followed. True when the `on`
+/// that sent it left, and so stopped it.
 async fn follow_there(
     node: &Arc<Node>,
     link: &fastctx_net::link::Link,
@@ -219,16 +222,16 @@ async fn follow_there(
     job: &JobId,
     followed: &Arc<Mutex<Followed>>,
     pieces: &Pieces,
-) -> Result<(), Failure> {
+) -> Result<bool, Failure> {
     let mut delay = Backoff::default();
     loop {
         if followed.lock().expect("never poisoned").ended {
-            return Ok(());
+            return Ok(false);
         }
         if pieces.is_closed() {
             // The `on` that sent it left: it was stopped on purpose.
             stop_there(node, machine, origin, job).await;
-            return Ok(());
+            return Ok(true);
         }
         tokio::select! {
             () = tokio::time::sleep(delay.next()) => {}
@@ -503,9 +506,19 @@ pub async fn serve_follow(
     Ok(RemoteReply::OnDone)
 }
 
-/// Stops an `on` job its sender stopped.
+/// Stops an `on` job its sender stopped. The script that sent it stopped
+/// it on purpose and learns of that from its own end, so no letter of this
+/// end is owed to the resident.
 pub async fn serve_stop(node: &Arc<Node>, origin: OnOrigin, job: JobId) -> Result<RemoteReply, Failure> {
     let record_path = on_job(node, &origin, &job)?;
+    let owner = JobOwner::Resident(origin.resident.clone());
+    let owed = node.world.job_owner(&node.machine(), origin.town.as_ref(), &owner).job_owed(&job);
+    match tokio::fs::remove_file(&owed).await {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(Failure::new(format!("{}: {error}", owed.display())));
+        }
+        _ => {}
+    }
     let by = format!("{} on {}", origin.resident.resident, origin.resident.machine);
     crate::jobs::stop(node, &record_path, &by, "the on that sent it stopped").await?;
     Ok(RemoteReply::OnDone)
