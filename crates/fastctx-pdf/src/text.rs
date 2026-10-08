@@ -49,7 +49,7 @@ pub(super) fn read(document: &pdf_oxide::PdfDocument, index: usize, page: &Page<
         }
         previous.push(letters.len());
         letters.push(Letter {
-            text: event.text,
+            text: event.text.map(unligated),
             transform,
             advance: Vec2::new(f64::from(event.advance[0]), f64::from(event.advance[1])),
             cursor: frame * Point::new(f64::from(event.rendered_advance[0]), f64::from(event.rendered_advance[1]))
@@ -75,4 +75,24 @@ pub(super) fn read(document: &pdf_oxide::PdfDocument, index: usize, page: &Page<
         notes.push("no extractable text".into());
     }
     Ok(TextPage { lines, notes })
+}
+
+/// The letters of a typographic ligature (U+FB00–FB06), which exist only for
+/// layout: text searched for "find" must match a page that drew "ﬁnd".
+fn unligated(text: String) -> String {
+    if !text.chars().any(|c| ('\u{FB00}'..='\u{FB06}').contains(&c)) {
+        return text;
+    }
+    text.chars()
+        .map(|c| match c {
+            '\u{FB00}' => "ff".to_string(),
+            '\u{FB01}' => "fi".to_string(),
+            '\u{FB02}' => "fl".to_string(),
+            '\u{FB03}' => "ffi".to_string(),
+            '\u{FB04}' => "ffl".to_string(),
+            '\u{FB05}' => "\u{17F}t".to_string(),
+            '\u{FB06}' => "st".to_string(),
+            other => other.to_string(),
+        })
+        .collect()
 }
