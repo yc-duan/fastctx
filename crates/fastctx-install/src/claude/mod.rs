@@ -1,4 +1,4 @@
-//! Claude's public plugin commands and a reversible edit of its output limit.
+//! Claude's public plugin commands and reversible output-limit and deny-rule edits.
 //!
 //! The caller supplies command execution and fresh file bytes, and owns locking,
 //! durable receipts and atomic file publication. Run plugin commands first, then
@@ -25,6 +25,7 @@ pub mod plugins;
 pub(crate) mod process;
 pub(crate) mod registration;
 pub mod settings;
+pub mod tools;
 
 /// Finds the public CLI on an explicitly supplied PATH, including npm's
 /// `claude.cmd` on Windows. No command or host configuration is opened.
