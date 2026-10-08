@@ -19,6 +19,7 @@ jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+stacker = "0.1"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 
