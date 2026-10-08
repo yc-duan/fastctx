@@ -99,6 +99,10 @@ jobs:
           python -m pip install ziglang==0.14.1
           cargo install --locked cargo-zigbuild --version 0.23.0
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
+      - name: Verify bundled ripgrep offline
+        run: |
+          python scripts/ripgrep.py verify
+          cargo test --locked -p fastctx-ripgrep --target '${{ matrix.target }}'
       - name: Verify executable lifetime across node replacement
         if: runner.os == 'Windows' || runner.os == 'Linux'
         run: |

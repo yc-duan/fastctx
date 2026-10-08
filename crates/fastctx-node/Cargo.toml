@@ -22,6 +22,7 @@ fastctx-hub = { path = "../fastctx-hub" }
 fastctx-install = { path = "../fastctx-install" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-ripgrep = { path = "../fastctx-ripgrep" }
 fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
 jiff.workspace = true
