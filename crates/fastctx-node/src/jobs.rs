@@ -57,14 +57,20 @@ impl Jobs {
         owner: fastctx_types::run::JobOwner,
         town: Option<TownName>,
         request: RunRequest,
-        on: Option<fastctx_types::run::OnJob>,
+        on: Option<(fastctx_types::run::OnJob, Option<PathBuf>)>,
     ) -> Result<run::Launched, Failure> {
         let (world, machine, executable) = (node.world.clone(), node.machine(), node.fastctx.clone());
         tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let home = user_home().map_err(|error| failure("finding the home directory", error))?;
             let environment =
                 world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
-            run::launch(&Launch {
+            // An `on` job hands its standard error back apart from its output,
+            // and reads the input that came with it (`world-run.md`).
+            let (on, mode, input) = match on {
+                Some((on, input)) => (Some(on), fastctx_types::run::OutputMode::Separate, input),
+                None => (None, fastctx_types::run::OutputMode::Merged, None),
+            };
+            let launch = Launch {
                 world: &world,
                 machine: &machine,
                 owner: &owner,
@@ -73,8 +79,9 @@ impl Jobs {
                 home: &home,
                 executable: &executable,
                 environment: &environment,
-                on,
-            })
+                on: on.as_ref(),
+            };
+            run::launch_with_io(&launch, mode, input.as_deref())
         })
         .await
         .map_err(|error| Failure::new(format!("starting the job: {error}")))?
@@ -178,8 +185,12 @@ fn outcome(reply: &RunReply) -> String {
 
 /// Whether the call can answer now: the job ended, or its shell exited
 /// and its output is complete.
+/// Whether the answer can be given now. With no process left, the end is
+/// moments away and the answer waits for it, so the resident is not also
+/// told by letter of an end it has already read.
 fn settled(record: &JobRecord) -> bool {
-    record.end.is_some() || (record.exit.is_some() && record.output_ended_at.is_some())
+    record.end.is_some()
+        || (record.exit.is_some() && record.output_ended_at.is_some() && record.remaining.is_some_and(|n| n > 0))
 }
 
 fn state(record: &JobRecord) -> RunState {
@@ -303,7 +314,9 @@ fn failure(what: &str, error: std::io::Error) -> Failure {
 }
 
 /// Stops the job at `record_path`: its supervisor ends everything it
-/// started and records who stopped it.
-pub async fn stop(_node: &Arc<Node>, record_path: &Path, by: &str) -> Result<(), Failure> {
-    Err(Failure::new(format!("stopping {} for {by} is not wired yet", record_path.display())))
+/// started and records who stopped it. Returns the job's final record; one
+/// that had already ended is returned as it was.
+pub async fn stop(node: &Arc<Node>, record_path: &Path, by: &str, reason: &str) -> Result<JobRecord, Failure> {
+    let request = fastctx_types::run::StopRequest { by: by.to_string(), reason: reason.to_string() };
+    run::stop(&node.world, record_path, None, request).await
 }

@@ -23,7 +23,7 @@ pub enum Refused {
 pub async fn status() -> Result<Status, String> {
     blocking(|| {
         let places = Places::here().map_err(|error| error.to_string())?;
-        apply::status(&places).map_err(|error| error.to_string())
+        apply::status_checked(&places).map_err(|error| error.to_string())
     })
     .await
 }

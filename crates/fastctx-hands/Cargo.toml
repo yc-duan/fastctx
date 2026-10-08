@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[test]]
+name = "job_lifecycle"
+harness = false
+
 [dependencies]
 base64 = "0.22"
 encoding_rs = "0.8"
@@ -19,8 +23,9 @@ jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+stacker = "0.1"
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

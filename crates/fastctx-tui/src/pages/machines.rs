@@ -130,20 +130,45 @@ impl MachinesPage {
             None => quiet(ctx, words.asking()),
             Some(Err(why)) => wrong(ctx, text::first_line(why)),
             Some(Ok(status)) => {
-                let role = |standing: Standing| match standing {
+                let role = |standing: Standing, verified: Option<bool>| match standing {
+                    Standing::In if verified != Some(true) => Role::Caution,
                     Standing::In => Role::Alive,
                     Standing::Old => Role::Caution,
                     Standing::Out => Role::Muted,
                     Standing::Absent => Role::Faint,
                 };
+                let codex = status.codex_tools.as_ref().map(|check| check.result.is_ok());
+                let claude = status.claude_tools.as_ref().map(|check| check.result.is_ok());
                 Line::from(vec![
-                    Span::styled(words.standing("Codex", status.codex), look.text(role(status.codex))),
+                    Span::styled(
+                        words.tool_standing("Codex", status.codex, codex),
+                        look.text(role(status.codex, codex)),
+                    ),
                     Span::styled("  ·  ", look.text(Role::Faint)),
-                    Span::styled(words.standing("Claude Code", status.claude), look.text(role(status.claude))),
+                    Span::styled(
+                        words.tool_standing("Claude Code", status.claude, claude),
+                        look.text(role(status.claude, claude)),
+                    ),
                 ])
             }
         };
-        rows.push(Row::new(Span::styled(words.own_sessions(), look.text(Role::Muted))).right(standing));
+        let label = Line::from(Span::styled(words.own_sessions(), look.text(Role::Muted)));
+        if text::line_width(&label) + text::line_width(&standing) + 2 <= width {
+            rows.push(Row::new(label).right(standing));
+        } else {
+            rows.push(Row::new(label));
+            rows.extend(text::wrap(&standing.spans, width).into_iter().map(Row::new));
+        }
+        if let Some(Ok(status)) = &self.sessions {
+            for check in [&status.codex_tools, &status.claude_tools].into_iter().flatten() {
+                if let Err(reason) = &check.result {
+                    for line in text::wrap_plain(&format!("{}: {reason}", check.host), look.text(Role::Caution), width)
+                    {
+                        rows.push(Row::new(line));
+                    }
+                }
+            }
+        }
         // What an old fastctx left here, and where it went: the user decides
         // whether to delete it (`world-upgrade.md`).
         if let Some(Ok(status)) = &self.sessions
@@ -160,6 +185,9 @@ impl MachinesPage {
             None => return rows,
             Some(Outcome::Applying) => (words.applying().to_string(), Role::Faint),
             Some(Outcome::Unapplying) => (words.unapplying().to_string(), Role::Faint),
+            Some(Outcome::Applied(report)) if report.tools.iter().any(|check| check.result.is_err()) => {
+                (words.tools_unverified().into(), Role::Caution)
+            }
             Some(Outcome::Applied(report)) => (words.applied(report.changed.len(), report.commands.len()), Role::Muted),
             Some(Outcome::Unapplied(report)) => {
                 (words.unapplied(report.changed.len(), report.commands.len()), Role::Muted)
@@ -173,6 +201,15 @@ impl MachinesPage {
             rows.push(Row::new(line));
         }
         if let Some(Outcome::Applied(report) | Outcome::Unapplied(report)) = &self.outcome {
+            for check in &report.tools {
+                let (said, role) = match &check.result {
+                    Ok(()) => (format!("{}: {}", check.host, check.scope), Role::Faint),
+                    Err(reason) => (format!("{}: {}: {reason}", check.host, check.scope), Role::Caution),
+                };
+                for line in text::wrap_plain(&said, look.text(role), width) {
+                    rows.push(Row::new(line));
+                }
+            }
             for notice in &report.notices {
                 for line in text::wrap_plain(
                     &words.left_alone(&notice.location, &notice.reason),

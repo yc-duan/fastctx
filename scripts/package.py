@@ -10,6 +10,8 @@ import tomllib
 import zipfile
 from pathlib import Path
 
+import ripgrep
+
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = {
     'x86_64-pc-windows-msvc': ('win32', 'x64'),
@@ -88,6 +90,8 @@ def manifest(name):
 
 
 def legal_files(notices):
+    if ripgrep.notices().strip() not in notices.read_text(encoding='utf-8'):
+        raise ValueError('THIRD_PARTY_LICENSES.md is missing the bundled ripgrep notices')
     return {name: ((notices if name == 'THIRD_PARTY_LICENSES.md' else ROOT/name).read_bytes(), 0o644)
             for name in LEGAL}
 
@@ -115,6 +119,7 @@ def platform(args):
     executable = 'fastctx.exe' if os == 'win32' else 'fastctx'
     binary = args.binary.read_bytes()
     verify_machine(binary, args.target)
+    ripgrep.verify_embedded(binary, args.target)
     legal = legal_files(args.notices)
     files = {**legal, executable: (binary, 0o755)}
     extension = '.zip' if os == 'win32' else '.tar.gz'
@@ -159,6 +164,8 @@ def verify(args):
         assert len(names) == 4 and set(names) == {*LEGAL, executable}, names
         assert {n: digest(data) for n, data in files.items()} == evidence['members']
         verify_machine(files[executable], target)
+        ripgrep.verify_embedded(files[executable], target)
+        assert ripgrep.notices().strip() in files['THIRD_PARTY_LICENSES.md'].decode('utf-8').replace('\r\n', '\n')
         path = args.output/'npm'/f'fastctx-{os}-{arch}-{VERSION}.tgz'
         with tarfile.open(path) as source:
             assert source.extractfile('package/bin/'+executable).read() == files[executable]

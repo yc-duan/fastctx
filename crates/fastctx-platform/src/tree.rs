@@ -3,9 +3,8 @@
 //! The World's `run` starts a shell and answers for everything that shell
 //! starts: it must know when the shell exits, when the last process it left
 //! behind is gone and how many are still running, and it must be able to
-//! stop them all. The tree's output is one stream, standard output and
-//! standard error together in the order they were written, as a terminal
-//! would show them; nothing reads standard input.
+//! stop them all. Output is either one merged terminal stream or separate
+//! stdout and stderr streams; stdin is either null or an already complete local file.
 //!
 //! On Linux the process holding the tree becomes a child subreaper: a
 //! process whose parent exits is handed to it instead of to init, so the
@@ -29,6 +28,12 @@ use std::process::ExitStatus;
 /// A started program and everything it starts.
 pub struct ProcessTree(imp::Tree);
 
+/// Reading ends owned by the caller; EOF means every writer has closed.
+pub struct TreeOutput {
+    pub stdout: io::PipeReader,
+    pub stderr: Option<io::PipeReader>,
+}
+
 impl ProcessTree {
     /// Starts `program` with `args` in `cwd` with exactly the environment
     /// `env`. Returns the tree and the reading end of its output.
@@ -38,7 +43,31 @@ impl ProcessTree {
         cwd: &Path,
         env: &[(OsString, OsString)],
     ) -> io::Result<(Self, io::PipeReader)> {
-        imp::Tree::spawn(program, args, cwd, env).map(|(tree, output)| (Self(tree), output))
+        let (tree, output) =
+            Self::spawn_with_io(program, args, cwd, env, fastctx_types::run::OutputMode::Merged, None)?;
+        Ok((tree, output.stdout))
+    }
+
+    /// Starts a tree with the requested output layout. Both readers must be
+    /// drained concurrently, through EOF, including after the main exits.
+    pub fn spawn_with_io(
+        program: &Path,
+        args: &[&OsStr],
+        cwd: &Path,
+        env: &[(OsString, OsString)],
+        mode: fastctx_types::run::OutputMode,
+        stdin: Option<&Path>,
+    ) -> io::Result<(Self, TreeOutput)> {
+        let (stdout, writer) = io::pipe()?;
+        let (stderr, error) = match mode {
+            fastctx_types::run::OutputMode::Merged => (None, writer.try_clone()?),
+            fastctx_types::run::OutputMode::Separate => {
+                let (reader, writer) = io::pipe()?;
+                (Some(reader), writer)
+            }
+        };
+        let tree = imp::Tree::spawn(program, args, cwd, env, writer, error, stdin)?;
+        Ok((Self(tree), TreeOutput { stdout, stderr }))
     }
 
     /// The PID of the program itself.
@@ -62,8 +91,9 @@ impl ProcessTree {
         self.0.count()
     }
 
-    /// Ends every process of the tree. Safe to call while another thread
-    /// waits.
+    /// Ends every process of the tree. On Linux another thread must drive
+    /// wait_main followed by wait_empty: its reaping lets the kernel prove
+    /// that no child remains, without discarding the main program's status.
     pub fn kill(&self) -> io::Result<()> {
         self.0.kill()
     }
@@ -94,7 +124,10 @@ mod imp {
             args: &[&OsStr],
             cwd: &Path,
             env: &[(OsString, OsString)],
-        ) -> io::Result<(Self, io::PipeReader)> {
+            stdout: io::PipeWriter,
+            stderr: io::PipeWriter,
+            stdin: Option<&Path>,
+        ) -> io::Result<Self> {
             // Waiting for any child is how the tree is waited for, so a
             // second tree in the same process would steal the first's.
             if HOLDS_A_TREE.swap(true, Ordering::SeqCst) {
@@ -104,20 +137,29 @@ mod imp {
             if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } == -1 {
                 return Err(io::Error::last_os_error());
             }
-            let (reader, writer) = io::pipe()?;
             let mut command = Command::new(program);
             command
                 .args(args)
                 .current_dir(cwd)
                 .env_clear()
                 .envs(env.iter().map(|(name, value)| (name, value)))
-                .stdin(Stdio::null())
-                .stdout(writer.try_clone()?)
-                .stderr(writer);
+                .stdin(match stdin {
+                    Some(path) => Stdio::from(std::fs::File::open(path)?),
+                    None => Stdio::null(),
+                })
+                .stdout(stdout)
+                .stderr(stderr);
             // SAFETY: setsid and the descriptor marking are async-signal-safe.
             unsafe {
                 command.pre_exec(|| {
                     if libc::setsid() == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    // exec preserves the parent's signal mask. Supervision
+                    // blocks stop signals, but the program must receive them.
+                    let mut empty: libc::sigset_t = std::mem::zeroed();
+                    libc::sigemptyset(&mut empty);
+                    if libc::sigprocmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut()) == -1 {
                         return Err(io::Error::last_os_error());
                     }
                     close_on_exec_from(3)
@@ -127,7 +169,7 @@ mod imp {
             // The command keeps copies of the pipe's writing end; the reader
             // sees the end of the output only once they are gone.
             drop(command);
-            Ok((Self { main }, reader))
+            Ok(Self { main })
         }
 
         pub fn main_pid(&self) -> u32 {
@@ -160,7 +202,10 @@ mod imp {
             // a process not yet killed is found in the next round.
             loop {
                 let processes = descendants()?;
-                if processes.is_empty() {
+                // /proc is a sequence of observations: reparenting can
+                // disconnect a live descendant in that sampled graph. Only
+                // the kernel's ECHILD proves that the subreaper is empty.
+                if no_children()? {
                     return Ok(());
                 }
                 for process in processes {
@@ -170,6 +215,23 @@ mod imp {
                 // the next round should not spin on it.
                 std::thread::sleep(Duration::from_millis(1));
             }
+        }
+    }
+
+    fn no_children() -> io::Result<bool> {
+        // WNOWAIT leaves every status for the thread calling wait_main and
+        // wait_empty, including the main program's status.
+        // SAFETY: a zeroed siginfo_t is a valid waitid output buffer.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: the buffer is valid, and WNOWAIT does not consume status.
+        let result = unsafe { libc::waitid(libc::P_ALL, 0, &mut info, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT) };
+        if result == 0 {
+            return Ok(false);
+        }
+        match io::Error::last_os_error().raw_os_error() {
+            Some(libc::ECHILD) => Ok(true),
+            Some(libc::EINTR) => Ok(false),
+            _ => Err(io::Error::last_os_error()),
         }
     }
 
@@ -274,17 +336,22 @@ mod imp {
             args: &[&OsStr],
             cwd: &Path,
             env: &[(OsString, OsString)],
-        ) -> io::Result<(Self, io::PipeReader)> {
+            stdout: io::PipeWriter,
+            stderr: io::PipeWriter,
+            stdin: Option<&Path>,
+        ) -> io::Result<Self> {
             let job = new_job()?;
-            let (reader, writer) = io::pipe()?;
-            let stdin = open_null_for_reading()?;
+            let stdin = match stdin {
+                Some(path) => OwnedHandle::from(std::fs::File::open(path)?),
+                None => open_null_for_reading()?,
+            };
             let stdio =
-                Stdio { input: stdin.as_raw_handle(), output: writer.as_raw_handle(), error: writer.as_raw_handle() };
+                Stdio { input: stdin.as_raw_handle(), output: stdout.as_raw_handle(), error: stderr.as_raw_handle() };
             let (main, main_pid) = create_in_job(&job, program, args, cwd, env, &stdio)?;
             // The reader sees the end of the output only once this copy of
             // the writing end is gone too.
-            drop(writer);
-            Ok((Self { job, main, main_pid }, reader))
+            drop((stdout, stderr));
+            Ok(Self { job, main, main_pid })
         }
 
         pub fn main_pid(&self) -> u32 {

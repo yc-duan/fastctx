@@ -265,6 +265,9 @@ impl fastctx_net::link::Node for Handler {
                     crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
                 }
                 RemoteCall::StopOn { origin, job } => crate::on::serve_stop(&node, origin, job).await,
+                RemoteCall::StopJob { job, by } => crate::stop::here_(&node, &job, &format!("{by} on {from}"))
+                    .await
+                    .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) }),
                 RemoteCall::Ask { asker, town, label, prompt } => {
                     let asker = Address { machine: from, resident: asker };
                     let colleague = crate::colleagues::ask_here(&node, asker, town, label, prompt).await?;

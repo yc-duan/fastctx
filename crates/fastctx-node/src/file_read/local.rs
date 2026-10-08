@@ -10,7 +10,11 @@ use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 
 use super::{Part, Sender};
 
-pub async fn read(machine: MachineName, request: ReadFileRequest, sender: &Sender) -> FileReadResult {
+pub async fn read(machine: MachineName, mut request: ReadFileRequest, sender: &Sender) -> FileReadResult {
+    request.path = fastctx_platform::local_path(&request.path)
+        .map_err(|e| error(FileReadErrorKind::InvalidInput, e.to_string(), 0))?
+        .to_string_lossy()
+        .into_owned();
     let path = request.path.clone();
     let opened = tokio::task::spawn_blocking(move || {
         let path = Path::new(&path);

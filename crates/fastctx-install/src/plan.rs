@@ -27,7 +27,7 @@ impl CodexPlan {
     pub fn new(fastctx: &Path) -> Self {
         Self {
             command: fastctx.to_path_buf(),
-            args: vec!["serve".into(), "--writer".into(), "apply_patch".into()],
+            args: vec!["serve".into()],
             startup_timeout_sec: STARTUP_TIMEOUT.as_secs(),
             tool_timeout_sec: TOOL_TIMEOUT.as_secs(),
             output_token_limit: output_limit(BUDGET),

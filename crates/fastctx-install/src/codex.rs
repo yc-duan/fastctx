@@ -11,6 +11,8 @@ use crate::plan::CodexPlan;
 use crate::source::{Source, comma_in, newline, splice};
 use crate::{Error, File, Notice, check_path, finish};
 
+pub(crate) mod tools;
+
 const SERVER: &[&str] = &["mcp_servers", "fastctx"];
 const LIMIT: &[&str] = &["tool_output_token_limit"];
 
@@ -43,6 +45,8 @@ pub struct Receipt {
     server: Option<Server>,
     pub(crate) limit: Option<Limit>,
     guidance: Option<guidance::Receipt>,
+    #[serde(default)]
+    tools: Option<tools::Receipt>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +106,7 @@ pub fn apply(
         server: None,
         limit: None,
         guidance: None,
+        tools: None,
     };
     match ownership {
         Ownership::None => {}
@@ -160,6 +165,10 @@ pub fn apply(
         applied.receipt.original_existed = existed;
     }
     receipt.guidance = Some(applied.receipt);
+    let (config, tools, tool_notices) = tools::apply(&bytes, config.path, receipt.tools.as_ref())?;
+    bytes = config;
+    receipt.tools = Some(tools);
+    notices.extend(tool_notices);
     Ok(Applied { config: bytes, agents: applied.bytes, receipt, notices })
 }
 
@@ -179,6 +188,11 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
     let mut retained = vec![];
     let mut bytes = config.bytes.map(<[u8]>::to_vec);
     if let Some(current) = &mut bytes {
+        if let Some(tools) = remaining.tools.take() {
+            let (next, notices) = tools::unapply(current, config.path, &tools)?;
+            *current = next;
+            retained.extend(notices);
+        }
         if let Some(server) = &receipt.server {
             match remove_server(current, config.path, server) {
                 Ok(next) => {
@@ -206,6 +220,7 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
     } else {
         remaining.server = None;
         remaining.limit = None;
+        remaining.tools = None;
     }
     let guidance = guidance::unapply(agents, receipt.guidance.as_ref())?;
     remaining.guidance = guidance.receipt;
@@ -226,6 +241,7 @@ pub fn unapply_legacy(config: File<'_>, agents: File<'_>, old: &legacy::Receipt)
         server: None,
         limit: migrated.limit,
         guidance: migrated.guidance,
+        tools: None,
     };
     let mut result = unapply(
         File { path: config.path, bytes: Some(&migrated.config) },

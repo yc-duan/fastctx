@@ -59,32 +59,31 @@ __fastctx_state() {
 # another machine (world-run.md, 去别的机器). With a command, its words are
 # sent as they are; without one, standard input is the script.
 on() {
-    if [ $# -eq 0 ]; then
-        fastctx on
-        return
-    fi
+    case $#:${1-} in
+        0:) fastctx on; return ;;
+        1:-h | 1:--help) fastctx on --help; return ;;
+    esac
     # A whole script as one word is how ssh is written; here one word is the
     # name of a program to run, so it is refused before anything is sent.
     if [ $# -eq 2 ] && [[ $2 == *[[:space:]\;\|\&\<\>\$\`\(\)]* ]]; then
         printf '%s\n' "on: '$2' is one word, the name of a program to run on $1. For a script, give it on standard input: on $1 <<'EOF' ... EOF" >&2
         return 255
     fi
-    local __fastctx_file="${FASTCTX_SCRATCH:?the World did not start this shell}/on-$BASHPID-$RANDOM$RANDOM.state"
-    {
-        # A bash the script started has no prelude, and so no record of the
-        # login environment: there it carries nothing rather than too much.
-        if declare -F __fastctx_state >/dev/null; then
-            __fastctx_state
-        fi
-        if [ $# -gt 1 ]; then
-            local -a __fastctx_argv=("${@:2}")
-            declare -p __fastctx_argv
-        fi
-    } >"$__fastctx_file" || return 255
-    if [ $# -gt 1 ]; then
-        fastctx on --state "$__fastctx_file" --command -- "$1"
+    local __fastctx_file="${FASTCTX_SCRATCH:?the World did not start this shell}/on-$BASHPID-$RANDOM$RANDOM"
+    # A bash the script started has no prelude, and so no record of the
+    # login environment: there it carries nothing rather than too much.
+    if declare -F __fastctx_state >/dev/null; then
+        __fastctx_state >"$__fastctx_file.state" || return 255
     else
-        fastctx on --state "$__fastctx_file" -- "$1"
+        : >"$__fastctx_file.state" || return 255
+    fi
+    if [ $# -gt 1 ]; then
+        # The words, quoted by bash itself, become the command line bash
+        # reads there: it reads back exactly these words.
+        printf '%q ' "${@:2}" >"$__fastctx_file.command" || return 255
+        fastctx on --state "$__fastctx_file.state" --command "$__fastctx_file.command" -- "$1"
+    else
+        fastctx on --state "$__fastctx_file.state" -- "$1"
     fi
 }
 

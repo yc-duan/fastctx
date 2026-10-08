@@ -83,7 +83,7 @@ struct Walked {
 
 /// Walks `from`, on this machine, for sending.
 async fn walked(node: &Node, from: &str) -> Result<Walked, Failure> {
-    let root = PathBuf::from(from);
+    let root = fastctx_platform::local_path(from).map_err(|error| Failure::new(error.to_string()))?;
     if !root.is_absolute() {
         return Err(Failure::new(format!("{from} is not an absolute path on {}", node.machine())));
     }

@@ -108,6 +108,7 @@ async fn canon(node: &Arc<Node>, location: &Location) -> Result<Vec<CanonHead>, 
 /// Each Markdown document directly in `directory`, by name: its title, the
 /// first heading, and the paragraph after it, which says what it covers.
 pub fn heads(directory: &Path) -> io::Result<Vec<CanonHead>> {
+    let directory = fastctx_platform::local_path(directory)?;
     let mut files: Vec<_> = std::fs::read_dir(directory)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<io::Result<Vec<_>>>()?

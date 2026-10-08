@@ -14,16 +14,19 @@ mod journal;
 mod keep;
 mod on;
 mod page;
+mod paths;
 mod project;
 mod renew;
 mod scope_args;
 mod server_install;
 mod service;
+mod stop;
 mod talk;
 mod update;
 mod view;
 mod w;
 mod world;
+mod writers;
 
 #[derive(Parser)]
 #[command(name = "fastctx", version, about = "One world, many machines.")]
@@ -43,20 +46,29 @@ enum Command {
     ParentProcess,
     /// Wait for the person answering one public Claude mod request.
     #[command(hide = true)]
-    ClaudeRequest { directory: PathBuf },
+    ClaudeRequest {
+        #[arg(value_parser = paths::parser())]
+        directory: PathBuf,
+    },
     /// The official plugin's MCP elicitation command hook.
     #[command(hide = true)]
-    ClaudeElicitation { world: PathBuf },
+    ClaudeElicitation {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+    },
     /// Identifies the node lifetime that may issue queued Claude controls.
     #[command(hide = true)]
-    ClaudeControlOwner { world: PathBuf },
+    ClaudeControlOwner {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+    },
     /// A lifetime witness for a Claude mod activation.
     #[command(hide = true)]
     ClaudeControlGuard,
     /// Run this machine's node in the foreground.
     Node {
         /// The fastctx root to serve; defaults to this user's fastctx root.
-        #[arg(long)]
+        #[arg(long, value_parser = paths::parser())]
         dir: Option<PathBuf>,
         /// A guardian keeps this node; with the two below, the channel it
         /// handed down (`fastctx_node::handoff`).
@@ -88,10 +100,10 @@ enum Command {
     ServiceCheck { name: String },
     /// Serve the World's tools to an agent session over MCP's stdio.
     Serve {
-        /// How the session writes files: `edit` lists edit and write,
-        /// `apply_patch` lists apply_patch.
-        #[arg(long, default_value = "edit", value_parser = ["edit", "apply_patch"])]
-        writer: String,
+        /// Accepted from configurations written when files were written with
+        /// tools of their own; files are written in the World's shell now.
+        #[arg(long, hide = true)]
+        writer: Option<String>,
         /// `off` turns the World's write commands off in this session's
         /// shell: they refuse and point at the host's own.
         #[arg(long, default_value = "on", value_parser = ["on", "off"])]
@@ -99,11 +111,22 @@ enum Command {
     },
     /// Look at files: text with line numbers, images as images.
     View(view::ViewArgs),
+    /// Edit a file using SEARCH/REPLACE blocks from standard input.
+    Edit(writers::EditArgs),
+    /// Create or replace a file with the text from standard input.
+    Write(writers::WriteArgs),
+    /// Apply a patch from standard input, written as Codex's apply_patch
+    /// writes one: `*** Begin Patch` … `*** End Patch`; paths are absolute.
+    #[command(hide = true)]
+    ApplyPatch,
     /// See who is here and what each is doing.
     W(w::WArgs),
     /// Run part of a script on another machine; the World's shell calls it
     /// as `on`.
+    #[command(override_usage = on::USAGE, after_help = on::AFTER_HELP)]
     On(on::OnArgs),
+    /// Stop a job and everything it started, on whichever machine it runs.
+    Stop(stop::StopArgs),
     /// See the World's machines: which are online and what each is like.
     Nodes,
     /// Copy a file or a directory from one machine to another.
@@ -153,7 +176,12 @@ enum Command {
     Unapply(apply::UnapplyArgs),
     /// Supervise one job; started by the node, not by people.
     #[command(hide = true)]
-    Supervise { world: PathBuf, record: PathBuf },
+    Supervise {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+        #[arg(value_parser = paths::parser())]
+        record: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -197,10 +225,14 @@ fn main() -> ExitCode {
         Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
         #[cfg(windows)]
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
-        Command::Serve { writer, writes } => serve(&writer, writes == "off"),
+        Command::Serve { writer: _, writes } => serve(writes == "off"),
         Command::View(args) => view::run(args),
+        Command::Edit(args) => return finish(writers::edit(args)),
+        Command::Write(args) => return finish(writers::write(args)),
+        Command::ApplyPatch => return finish(writers::apply_patch()),
         Command::W(args) => w::run(args),
         Command::On(args) => return on::run(args),
+        Command::Stop(args) => return finish(stop::run(args)),
         Command::Nodes => world::nodes(),
         Command::Copy(args) => return finish(copy::run(args)),
         Command::Talk(args) => talk::run(args),
@@ -282,13 +314,9 @@ fn node(
     ))
 }
 
-fn serve(writer: &str, writes_off: bool) -> anyhow::Result<()> {
+fn serve(writes_off: bool) -> anyhow::Result<()> {
     let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let writer = if writer == "apply_patch" { fastctx_serve::Writer::ApplyPatch } else { fastctx_serve::Writer::Edit };
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?
-        .block_on(fastctx_serve::serve(world, writer, writes_off))
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_serve::serve(world, writes_off))
 }
 
 /// A supervisor has no terminal: what it would print about its own failure

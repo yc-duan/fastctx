@@ -42,10 +42,6 @@ const CHUNK: usize = 1024 * 1024;
 /// is below what a reader notices, and a look at a file's end costs little.
 const LOOK_AGAIN: Duration = Duration::from_millis(100);
 
-/// What a job's command is when `on` sent a command's words: they are in
-/// the restored state, as an array, and run as one command.
-const RUN_ARGV: &str = "\"${__fastctx_argv[@]}\"\n";
-
 type Pieces = mpsc::UnboundedSender<Result<OnPiece, Failure>>;
 
 // The sending side.
@@ -83,6 +79,10 @@ struct Followed {
     ended: bool,
 }
 
+/// What the sender does with a job's id once the machine says it started,
+/// before any of its output is handed on.
+type OnStarted = Arc<dyn Fn(JobId) -> fastctx_net::link::BoxFuture<()> + Send + Sync>;
+
 /// An `on` naming this machine: the same job, without the network.
 async fn here(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: &Pieces) -> Result<(), Failure> {
     let staged = Staged::local(&request.package).await?;
@@ -101,8 +101,17 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
     let machine = request.machine.clone();
     let sizes = sizes(&request.package).await?;
     let followed = Arc::new(Mutex::new(Followed::default()));
+    // Noted when the machine says the job started, before its output is
+    // handed on: the script's answer may be read as soon as the job is through.
+    let started: OnStarted = {
+        let (node, origin, request) = (node.clone(), origin.clone(), request.clone());
+        Arc::new(move |job| {
+            let (node, origin, request) = (node.clone(), origin.clone(), request.clone());
+            Box::pin(async move { noted(&node, &origin, &request, &job).await })
+        })
+    };
     let call = RemoteCall::On { origin: origin.clone(), sizes, writes_off: request.package.writes_off };
-    let sending = feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone());
+    let sending = feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone(), Some(started));
     let first = link.call_with_stream(&machine, call, sending).await;
     let started = followed.lock().expect("never poisoned").job.clone();
     let Some(job) = started else {
@@ -121,7 +130,6 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
             )),
         });
     };
-    noted(node, origin, request, &job).await;
     let mut delay = Backoff::default();
     loop {
         if followed.lock().expect("never poisoned").ended {
@@ -141,7 +149,7 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
             (followed.out, followed.err)
         };
         let call = RemoteCall::Follow { origin: origin.clone(), job: job.clone(), out_from, err_from };
-        let following = feed(&machine, None, followed.clone(), pieces.clone());
+        let following = feed(&machine, None, followed.clone(), pieces.clone(), None);
         match link.call_with_stream(&machine, call, following).await {
             Ok(Err(failure)) => return Err(Failure::new(format!("following {job} on {machine}: {failure}"))),
             Err(CallFailure::NotMember { name, .. }) => {
@@ -154,7 +162,13 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
 
 /// The source end of an `On` or `Follow` connection: the package first, if
 /// any, then what the job writes, until its end.
-fn feed(machine: &MachineName, package: Option<OnPackage>, followed: Arc<Mutex<Followed>>, pieces: Pieces) -> Feed {
+fn feed(
+    machine: &MachineName,
+    package: Option<OnPackage>,
+    followed: Arc<Mutex<Followed>>,
+    pieces: Pieces,
+    started: Option<OnStarted>,
+) -> Feed {
     let machine = machine.clone();
     Box::new(move |mut stream: Stream| {
         Box::pin(async move {
@@ -172,6 +186,9 @@ fn feed(machine: &MachineName, package: Option<OnPackage>, followed: Arc<Mutex<F
                 match word {
                     OnWord::Started { job } => {
                         followed.lock().expect("never poisoned").job = Some(job.clone());
+                        if let Some(started) = &started {
+                            started(job.clone()).await;
+                        }
                         let _ = pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job }));
                     }
                     OnWord::Out { bytes } | OnWord::Err { bytes } => {
@@ -209,7 +226,7 @@ fn feed(machine: &MachineName, package: Option<OnPackage>, followed: Arc<Mutex<F
 
 /// Sends the package's parts in the order `OnSizes` lists them.
 async fn send_package(stream: &mut Stream, package: &OnPackage) -> Result<(), String> {
-    for path in [Some(&package.state), package.script.as_ref(), package.input.as_ref()].into_iter().flatten() {
+    for path in [Some(&package.state), Some(&package.script), package.input.as_ref()].into_iter().flatten() {
         let mut file = tokio::fs::File::open(path).await.map_err(|error| format!("reading {path}: {error}"))?;
         let mut buffer = vec![0u8; CHUNK];
         loop {
@@ -245,7 +262,7 @@ async fn sizes(package: &OnPackage) -> Result<OnSizes, Failure> {
             }
         };
         let state = size(Some(&package.state))?.expect("given");
-        let script = size(package.script.as_ref())?;
+        let script = size(Some(&package.script))?.expect("given");
         let input = size(package.input.as_ref())?.unwrap_or(0);
         Ok(OnSizes { state, script, input, sha256: hex(&digest.finalize()) })
     })
@@ -368,7 +385,8 @@ pub async fn serve_follow(
 /// Stops an `on` job its sender stopped.
 pub async fn serve_stop(node: &Arc<Node>, origin: OnOrigin, job: JobId) -> Result<RemoteReply, Failure> {
     let record_path = on_job(node, &origin, &job)?;
-    crate::jobs::stop(node, &record_path, &format!("the on on {} that sent it", origin.resident.machine)).await?;
+    let by = format!("{} on {}", origin.resident.resident, origin.resident.machine);
+    crate::jobs::stop(node, &record_path, &by, "the on that sent it stopped").await?;
     Ok(RemoteReply::OnDone)
 }
 
@@ -388,21 +406,16 @@ fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result<PathBuf, F
 /// A package on this machine, ready to become a job.
 struct Staged {
     state: PathBuf,
-    script: Option<String>,
+    script: String,
     input: Option<PathBuf>,
 }
 
 impl Staged {
     /// The package `fastctx on` wrote here.
     async fn local(package: &OnPackage) -> Result<Self, Failure> {
-        let script = match &package.script {
-            Some(path) => Some(
-                tokio::fs::read_to_string(path)
-                    .await
-                    .map_err(|error| Failure::new(format!("reading the script {path}: {error}")))?,
-            ),
-            None => None,
-        };
+        let script = tokio::fs::read_to_string(&package.script)
+            .await
+            .map_err(|error| Failure::new(format!("reading the script {}: {error}", package.script)))?;
         Ok(Self { state: PathBuf::from(&package.state), script, input: package.input.as_ref().map(PathBuf::from) })
     }
 
@@ -425,21 +438,16 @@ impl Staged {
         let mut digest = Sha256::new();
         let state = directory.join(format!("on-{name}.state"));
         take_to(stream, sizes.state, &state, &mut digest).await?;
-        let script = match sizes.script {
-            Some(size) => {
-                let mut bytes = Vec::new();
-                stream
-                    .take(size, |chunk| {
-                        digest.update(chunk);
-                        bytes.extend_from_slice(chunk);
-                        Ok(())
-                    })
-                    .await
-                    .map_err(|error| Failure::new(format!("receiving the script: {error}")))?;
-                Some(String::from_utf8(bytes).map_err(|_| Failure::new("the script is not UTF-8"))?)
-            }
-            None => None,
-        };
+        let mut bytes = Vec::new();
+        stream
+            .take(sizes.script, |chunk| {
+                digest.update(chunk);
+                bytes.extend_from_slice(chunk);
+                Ok(())
+            })
+            .await
+            .map_err(|error| Failure::new(format!("receiving the script: {error}")))?;
+        let script = String::from_utf8(bytes).map_err(|_| Failure::new("the script is not UTF-8"))?;
         let input = if sizes.input > 0 {
             let path = directory.join(format!("on-{name}.in"));
             take_to(stream, sizes.input, &path, &mut digest).await?;
@@ -480,15 +488,11 @@ async fn start(
     staged: Staged,
     writes_off: bool,
 ) -> Result<(JobId, PathBuf), Failure> {
-    let script = staged.script.unwrap_or_else(|| RUN_ARGV.to_string());
-    let on = OnJob {
-        state: staged.state.to_string_lossy().into_owned(),
-        input: staged.input.map(|path| path.to_string_lossy().into_owned()),
-        errors: String::new(),
-    };
+    let script = staged.script;
+    let on = OnJob { state: staged.state.to_string_lossy().into_owned() };
     let request = RunRequest { script, cwd: None, writes_off };
     let owner = JobOwner::Resident(origin.resident.clone());
-    let launched = node.jobs.launch(node, owner, origin.town.clone(), request, Some(on)).await?;
+    let launched = node.jobs.launch(node, owner, origin.town.clone(), request, Some((on, staged.input))).await?;
     // Followed before its end is owed, so an end that comes first goes to
     // the follower rather than in a letter too.
     follow(node, &launched.job);
@@ -615,7 +619,7 @@ async fn hand_over(
         // The record first: whatever it says has ended had written its
         // last byte before, so reading the logs after it misses nothing.
         let record = crate::jobs::read(record_path).await.map_err(|failure| failure.message)?;
-        let errors = record.on.as_ref().map(|on| on.errors.clone()).filter(|path| !path.is_empty());
+        let errors = record.stderr.clone();
         let mut sent = false;
         if let Some(bytes) = read_from(&record.output, out).await? {
             out += bytes.len() as u64;
@@ -656,6 +660,14 @@ async fn hand_over(
 /// has ended, or it ended otherwise: an `on` ends as a subshell does.
 fn through(record: &JobRecord) -> Option<OnEnd> {
     let status = record.exit.map(|exit| exit.status);
+    // Output the log could not take was never handed over: the `on` did not
+    // carry the job through, whatever its code.
+    if let Some(lost) = record.output_lost.as_ref().or(record.stderr_lost.as_ref())
+        && (record.end.is_some() || record.output_ended_at.is_some())
+    {
+        let error = format!("its output there stopped being kept after {} bytes: {}", lost.kept_bytes, lost.error);
+        return Some(OnEnd::Otherwise { how: EndedHow::Failed { error }, status });
+    }
     if let Some(end) = &record.end {
         return Some(match (&end.how, status) {
             (EndedHow::Finished, Some(status)) => OnEnd::Exited { status },

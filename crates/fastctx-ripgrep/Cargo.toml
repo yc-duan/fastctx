@@ -1,0 +1,20 @@
+[package]
+name = "fastctx-ripgrep"
+description = "The pinned official ripgrep executable carried by the World"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+fastctx-platform = { path = "../fastctx-platform" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+flate2 = "1"
+serde_json.workspace = true
+sha2 = "0.10"

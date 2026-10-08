@@ -52,6 +52,7 @@ mod session_options;
 mod session_record;
 mod since;
 mod speech;
+mod stop;
 mod talk;
 mod town;
 mod turns;
@@ -60,6 +61,7 @@ mod watchdog;
 mod who;
 mod world;
 mod write;
+mod write_command;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};

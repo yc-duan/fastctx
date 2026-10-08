@@ -9,11 +9,15 @@
 //! staging and before rename, but that is not a kernel compare-and-swap against
 //! programs that write outside the World; such a program can race the final rename.
 
+mod blocks;
 mod document;
 mod edit;
 mod excerpts;
 mod patch;
+mod path;
 mod storage;
+
+pub use path::absolute_path;
 
 use crate::files::canonical_path;
 use fastctx_platform::lock::FileLock;
@@ -41,6 +45,11 @@ impl Writer {
     pub fn edit(&self, request: EditRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
         let _lock = self.lock().map_err(|error| self.failure("edit", error))?;
         edit::edit(self, request, seen).map_err(|error| self.failure("edit", error))
+    }
+
+    pub fn edit_blocks(&self, request: EditBlocksRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
+        let _lock = self.lock().map_err(|error| self.failure("edit", error))?;
+        edit::edit_blocks(self, request, seen).map_err(|error| self.failure("edit", error))
     }
 
     pub fn write(&self, request: WriteRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
