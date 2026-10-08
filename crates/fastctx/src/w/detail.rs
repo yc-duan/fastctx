@@ -142,13 +142,12 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
 }
 
 fn job_detail(record: &JobRecord, now: Timestamp) -> String {
-    let mut text = format!(
-        "=== w {}: on {}, started by {} {} ago ===\n",
-        record.id,
-        record.machine,
-        record.owner,
-        ago(record.started_at, now)
-    );
+    let owner = match record.owner.resident() {
+        Some(address) => render::person(address, &record.machine),
+        None => record.owner.to_string(),
+    };
+    let mut text =
+        format!("=== w {}: on {}, started by {owner} {} ago ===\n", record.id, record.machine, ago(record.started_at, now));
     let state = match (&record.end, &record.exit) {
         (Some(end), exit) => {
             let how = match (&end.how, exit) {

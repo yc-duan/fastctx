@@ -12,6 +12,8 @@ mod decode;
 mod pdf;
 mod text;
 
+pub(crate) use text::visible;
+
 use std::fs::File;
 use std::io::{self, Read as _, Write};
 use std::path::{Path, PathBuf};

@@ -63,12 +63,12 @@ fn edit_file(
     target
         .publish(Some(&before), &after, document.label(), writer, &mut changes)
         .map_err(|message| WriteError { message, changes: changes.clone() })?;
-    let mut text = writer.head("edit", ranges.len());
+    let mut text = writer.file_head("edit", path, &super::counted(ranges.len()));
     if stale {
         text.push_str("\nThe file changed since you last viewed it; the edit matched its current contents.");
     }
     ranges.sort_unstable_by_key(|range| (range.start, range.end));
-    text.push_str(&format!("\n{}{}", path.display(), excerpts(&document.text, &ranges)));
+    text.push_str(&excerpts(&document.text, &ranges));
     Ok(WriteResult { text, changes, changed_since_seen: if stale { vec![path.to_path_buf()] } else { Vec::new() } })
 }
 
@@ -155,9 +155,9 @@ pub(super) fn write(writer: &Writer, request: WriteRequest, seen: &SeenFiles) ->
     target
         .publish(before.as_ref(), &after, encoding, writer, &mut changes)
         .map_err(|message| WriteError { message, changes: changes.clone() })?;
-    let action = if before.is_some() { "Updated" } else { "Created" };
+    let outcome = if before.is_some() { "replaced" } else { "created" };
     Ok(WriteResult {
-        text: format!("{}\n{action} {}", writer.head("write", 1), request.file_path.display()),
+        text: writer.file_head("write", &request.file_path, outcome),
         changes,
         changed_since_seen: Vec::new(),
     })

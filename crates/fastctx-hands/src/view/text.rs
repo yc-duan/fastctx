@@ -68,6 +68,7 @@ pub fn look(
     let read = reader.finish();
 
     let mut facts = decoder.facts();
+    facts.push_str(&line_endings(read.crlf, read.lf));
     let total = read.total_lines;
     let whole = read.shown_lines == read.total_lines && read.cut.is_none();
     match (&read.cut, read.shown_lines) {
@@ -122,9 +123,23 @@ fn kind(start: &[u8]) -> Option<&'static str> {
 /// digits in the longest form of the facts.
 fn budget_for_body(path: &Path, options: &Options, budget: usize, encoding: &str) -> usize {
     let longest_facts =
-        format!("{encoding}lines {n}-{n} of {n} shown; line {n}: characters 1-{n} of {n} shown", n = u64::MAX);
+        format!(
+            "{encoding}{}lines {n}-{n} of {n} shown; line {n}: characters 1-{n} of {n} shown",
+            line_endings(u64::MAX, u64::MAX),
+            n = u64::MAX
+        );
     let head = head(path, options, &longest_facts).chars().count() + 1;
     budget.saturating_sub(head)
+}
+
+/// How the lines read end, when that is not plain LF: what a program that
+/// writes the file back, or a model choosing how to change it, must keep.
+fn line_endings(crlf: u64, lf: u64) -> String {
+    match (crlf, lf) {
+        (0, _) => String::new(),
+        (_, 0) => "CRLF line endings; ".into(),
+        (crlf, lf) => format!("mixed line endings, {crlf} CRLF and {lf} LF; "),
+    }
 }
 
 struct Cut {
@@ -141,6 +156,9 @@ struct Read {
     cut: Option<Cut>,
     /// The budget ran out before the range did, at a line boundary.
     out_of_budget: bool,
+    /// Lines read that end in CRLF, and in a bare LF.
+    crlf: u64,
+    lf: u64,
 }
 
 /// Keeps decoded lines inside the requested range and character budget.
@@ -157,6 +175,8 @@ pub(super) struct Reader {
     shown_lines: u64,
     cut: Option<Cut>,
     out_of_budget: bool,
+    crlf: u64,
+    lf: u64,
 }
 
 impl Reader {
@@ -174,6 +194,8 @@ impl Reader {
             shown_lines: 0,
             cut: None,
             out_of_budget: false,
+            crlf: 0,
+            lf: 0,
         }
     }
 
@@ -181,11 +203,18 @@ impl Reader {
         if self.wanted() { self.budget.saturating_sub(self.body_cost) } else { 0 }
     }
 
-    pub(super) fn line(&mut self, text: String, characters: u64, ends_with_cr: bool) {
+    pub(super) fn line(&mut self, text: String, characters: u64, ends_with_cr: bool, newline: bool) {
         self.line = text;
         self.line_chars = characters;
         self.line_ends_with_cr = ends_with_cr;
+        if newline {
+            self.count_ending();
+        }
         self.end_line();
+    }
+
+    fn count_ending(&mut self) {
+        if self.line_ends_with_cr { self.crlf += 1 } else { self.lf += 1 }
     }
 
     pub(super) fn take(&mut self, text: &str) {
@@ -196,6 +225,7 @@ impl Reader {
             };
             self.extend_line(content);
             if ends {
+                self.count_ending();
                 self.end_line();
             }
         }
@@ -271,6 +301,8 @@ impl Reader {
             total_lines: self.number - 1,
             cut: self.cut,
             out_of_budget: self.out_of_budget,
+            crlf: self.crlf,
+            lf: self.lf,
         }
     }
 }
@@ -279,7 +311,7 @@ impl Reader {
 /// `\xNN` per byte: a terminal, or the `run` that reads this output as one,
 /// would otherwise play them (a carriage return overwriting the line and its
 /// number) instead of showing what the file holds.
-fn visible(text: &str) -> String {
+pub(crate) fn visible(text: &str) -> String {
     let mut shown = String::with_capacity(text.len());
     for c in text.chars() {
         if c.is_control() && c != '\t' {

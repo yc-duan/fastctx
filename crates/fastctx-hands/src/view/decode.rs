@@ -172,7 +172,7 @@ impl Auto {
             *self.used.entry(page.name()).or_default() += 1;
             self.legacy_label = page.label().map(str::to_owned);
         }
-        reader.line(std::mem::take(&mut selected.text), selected.characters, selected.ends_with_cr);
+        reader.line(std::mem::take(&mut selected.text), selected.characters, selected.ends_with_cr, newline);
         self.offset += self.bytes_in_line;
         self.bytes_in_line = 0;
         self.prefix.clear();

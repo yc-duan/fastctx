@@ -13,11 +13,13 @@ pub struct Machines {
 /// The tools this session lists: the World's shell, and the colleague tools,
 /// which a colleague has none of: the World is one level deep
 /// (`world-colleagues.md`). Writing files and going to other machines are
-/// commands in the shell (`world-run.md`, `world-write.md`).
-pub fn definitions(writes_off: bool, colleague: bool, machines: Option<&Machines>) -> Value {
-    let mut tools = vec![run_definition(writes_off, machines)];
+/// commands in the shell (`world-run.md`, `world-write.md`). `woken` says
+/// whether the World can start a turn here when a job ends or an answer
+/// comes; elsewhere they come with the answer of the next World tool call.
+pub fn definitions(writes_off: bool, colleague: bool, woken: bool, machines: Option<&Machines>) -> Value {
+    let mut tools = vec![run_definition(writes_off, woken, machines)];
     if !colleague {
-        tools.push(ask_colleague_definition(machines));
+        tools.push(ask_colleague_definition(woken, machines));
         tools.push(message_colleague_definition());
     }
     for tool in &mut tools {
@@ -47,11 +49,15 @@ fn node(subject: &str, machines: Option<&Machines>) -> Value {
     json!({ "type": "string", "description": description })
 }
 
-fn run_definition(writes_off: bool, machines: Option<&Machines>) -> Value {
+fn run_definition(writes_off: bool, woken: bool, machines: Option<&Machines>) -> Value {
     let writing = if writes_off { "" } else { RUN_WRITING };
+    let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
     json!({
         "name": "run",
-        "description": format!("{RUN_START}{}\n\n{RUN_REST}{writing}{RUN_COMMANDS}", machine_names(machines)),
+        "description": format!(
+            "{RUN_START}{}\n\n{RUN_REST}{ends}\n\n{RUN_COMMANDS_HEAD}{writing}{RUN_COMMANDS}",
+            machine_names(machines)
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -90,13 +96,17 @@ It acts as a subshell placed there: the script's own variables and functions go 
 
 Every machine runs bash with the GNU tools and ripgrep (`rg`), Windows ones too (Git Bash), where paths are written like C:/Users/me and `df`, `du`, `ls` and `find` answer what PowerShell would. Git Bash rewrites arguments shaped like Unix paths, such as /FI, before a Windows program sees them: put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
 
-Each call is a fresh login shell, starting in the home directory unless `cwd` names another; nothing carries over between calls, and standard input is empty. Standard output and standard error arrive together. Images a program draws with the kitty or iTerm2 terminal protocols come back as images. A call waits up to 15 seconds; a script still running then goes on in the background, the answer names the file its output continues in, and you are told when it ends.
+Each call is a fresh login shell, starting in the home directory unless `cwd` names another; nothing carries over between calls, and standard input is empty. Standard output and standard error arrive together. Images a program draws with the kitty or iTerm2 terminal protocols come back as images. A call waits up to 15 seconds; a script still running then goes on in the background, and the answer names the file its output continues in. ";
 
-The World's commands in this shell; each explains itself with --help:
-";
+const RUN_ENDS_WOKEN: &str = "You are told when it ends.";
+
+const RUN_ENDS_ASKED: &str = "\
+After it ends, the answer of your next World tool call says so, with its last lines; until then `fastctx w ID` says whether it still runs.";
+
+const RUN_COMMANDS_HEAD: &str = "The World's commands in this shell; each explains itself with --help:\n";
 
 const RUN_WRITING: &str = "\
-- `edit PATH` changes a file by the blocks on its standard input: `<<<<<<< SEARCH`, the exact text now in the file, `=======`, what replaces it, `>>>>>>> REPLACE`. The text must be there exactly once (`--all` replaces every one); all blocks apply, or none.
+- `edit PATH` changes a file by the blocks on its standard input: `<<<<<<< SEARCH`, the exact text now in the file, `=======`, what replaces it, `>>>>>>> REPLACE`. The text must be there exactly once (`--all` replaces every one); all blocks apply, or none. The file keeps its encoding and line endings.
 - `write PATH` makes standard input the whole file (`-n` leaves off the final newline).
   Give their text as a quoted here-document, <<'EOF', so bash changes nothing in it; paths are absolute.
 ";
@@ -110,10 +120,11 @@ const RUN_COMMANDS: &str = "\
 - `fastctx project` lists the towns, each a project, and shows their maps; `fastctx project enter TOWN` moves you into one, only when the user says which project to work on.
 - `fastctx journal` reads and adds to your town's journals; `fastctx page` publishes a page, HTML the user opens in the World's app.";
 
-fn ask_colleague_definition(machines: Option<&Machines>) -> Value {
+fn ask_colleague_definition(woken: bool, machines: Option<&Machines>) -> Value {
+    let delivered = if woken { "" } else { " with the answer of your next World tool call" };
     json!({
         "name": "ask_colleague",
-        "description": ASK_COLLEAGUE_DESCRIPTION,
+        "description": ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -143,7 +154,7 @@ fn ask_colleague_definition(machines: Option<&Machines>) -> Value {
 const ASK_COLLEAGUE_DESCRIPTION: &str = "\
 Ask a colleague to take on a part of the work: a GPT resident of the World, started through Codex, which works on its own while you go on.
 
-Unlike a subagent of your own, which lives inside this conversation, a colleague lives in the World: it works on whichever machine `node` names, it keeps working if you stop, and everyone in the town can see it with `fastctx w`. The call returns at once with the colleague's id. Each time the colleague ends a turn, its last message is delivered to you, under a line saying how the turn ended; that message is its answer, or its question to you. Reply, or give it more, with message_colleague. See what it is doing at any time with `fastctx w <id>`.
+Unlike a subagent of your own, which lives inside this conversation, a colleague lives in the World: it works on whichever machine `node` names, it keeps working if you stop, and everyone in the town can see it with `fastctx w`. The call returns at once with the colleague's id. Each time the colleague ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended; that message is its answer, or its question to you. Reply, or give it more, with message_colleague. See what it is doing at any time with `fastctx w <id>`.
 
 Working with a colleague:
 - GPT is strong on a part and weak on the whole. Within one part it reads all of the material before acting, works a hard point for hours, changes its approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not yet taken shape, or to build a whole thing from nothing, it returns pieces that are careful one by one and have no idea holding them together.
