@@ -43,6 +43,15 @@ fn machine_names(machines: Option<&Machines>) -> String {
     }
 }
 
+/// `run`'s `cwd`: weaker models reach for it to work on another machine's
+/// files, which only `on` does.
+fn cwd_description(machines: Option<&Machines>) -> String {
+    let here = machines.map(|machines| format!(" ({})", machines.here)).unwrap_or_default();
+    format!(
+        "The absolute path of a directory on this machine{here} to start in; without it, the home directory. Another machine's directories are not reached through cwd: write `on MACHINE` in the script."
+    )
+}
+
 /// The `node` parameter of the colleague tool.
 fn node(subject: &str, machines: Option<&Machines>) -> Value {
     let description = format!("{subject}, by name; without it, this machine. {}", machine_names(machines));
@@ -67,7 +76,7 @@ fn run_definition(writes_off: bool, woken: bool, machines: Option<&Machines>) ->
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "The absolute path of the directory to start in, on this machine. Without it the script starts in the home directory."
+                    "description": cwd_description(machines)
                 }
             },
             "required": ["command"],
