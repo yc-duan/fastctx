@@ -18,6 +18,10 @@ pub struct RunRequest {
     /// Where it starts: an absolute path on the machine it runs on. Without
     /// one it starts in that machine's home (`world-run.md`).
     pub cwd: Option<String>,
+    /// The session asking has the World's write commands turned off, so
+    /// they refuse and point at the host's own (`world-write.md`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub writes_off: bool,
 }
 
 /// What `run` answers: where it ran, how things stood when the wait ended,
@@ -187,6 +191,9 @@ pub struct JobRecord {
     /// On Windows the supervisor could not leave the node's job object, so
     /// the job ends when the node ends.
     pub ends_with_node: bool,
+    /// The World's write commands refuse in this job (`RunRequest`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub writes_off: bool,
 }
 
 /// A resident or an open page that started a job. The resident wire shape

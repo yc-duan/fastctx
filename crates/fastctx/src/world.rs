@@ -291,16 +291,18 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
             None => "not known".to_string(),
         };
         let facts = match &node.facts {
-            Ok(facts) => format!(
-                "{} {} · home {} · temp {} · PATH separator {} · file names {} · fastctx {}",
-                facts.os,
-                facts.arch,
-                facts.home,
-                facts.temp,
-                facts.path_separator,
-                if facts.case_sensitive { "case-sensitive" } else { "ignore case" },
-                facts.version
-            ),
+            Ok(facts) => {
+                let shell = if facts.shell.is_empty() { String::new() } else { format!(" · {}", facts.shell) };
+                format!(
+                    "{} {}{shell} · home {} · temp {} · file names {} · fastctx {}",
+                    facts.os,
+                    facts.arch,
+                    facts.home,
+                    facts.temp,
+                    if facts.case_sensitive { "case-sensitive" } else { "ignore case" },
+                    facts.version
+                )
+            }
             Err(_) if node.online == Some(false) || node.revoked.is_some() => String::new(),
             Err(error) => format!("not known: {error}"),
         };

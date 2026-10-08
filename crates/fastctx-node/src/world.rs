@@ -154,7 +154,34 @@ pub fn facts(machine: &MachineName) -> MachineFacts {
         path_separator: if cfg!(windows) { ';' } else { ':' },
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        shell: shell().clone(),
     }
+}
+
+/// The bash `run` starts here and its version, asked once: the answer only
+/// changes when the machine's bash is reinstalled, which a node restart
+/// follows.
+fn shell() -> &'static String {
+    static SHELL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SHELL.get_or_init(|| {
+        let bash = match fastctx_hands::run::shell::bash() {
+            Ok(bash) => bash,
+            Err(error) => return format!("no bash: {error}"),
+        };
+        let version = std::process::Command::new(&bash)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()
+            .and_then(|output| {
+                // "GNU bash, version 5.2.37(1)-release (x86_64-pc-msys)"
+                let text = String::from_utf8_lossy(&output.stdout).into_owned();
+                let rest = text.lines().next()?.split("version ").nth(1)?.to_string();
+                Some(rest.split(['(', ' ']).next()?.to_string())
+            });
+        let version = version.map(|version| format!("bash {version}")).unwrap_or_else(|| "bash".to_string());
+        if cfg!(windows) { format!("{version} (Git for Windows, MSYS)") } else { version }
+    })
 }
 
 /// A path as the World writes it: in full, with no trailing slash, and on

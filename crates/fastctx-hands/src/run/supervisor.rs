@@ -31,7 +31,9 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
     supervise_with(world, record_path, |world, record| {
         let resident = world.job_owner(&record.machine, record.town.as_ref(), &record.owner);
         let (program, args) = shell::command(&resident.job_script(&record.id))?;
+        shell::ensure_prelude(fastctx_dir)?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
+        let scratch = resident.out();
         let environment = shell::environment(&shell::Context {
             machine: &record.machine,
             owner: &record.owner,
@@ -39,6 +41,8 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
             fastctx_dir,
             fastctx_home: fastctx_home.as_deref(),
             job: Some(&record.id),
+            scratch: Some(&scratch),
+            writes_off: record.writes_off,
         })?;
         Ok(shell::Prepared { program, args, environment })
     })

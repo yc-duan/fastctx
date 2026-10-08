@@ -91,6 +91,10 @@ enum Command {
         /// `apply_patch` lists apply_patch.
         #[arg(long, default_value = "edit", value_parser = ["edit", "apply_patch"])]
         writer: String,
+        /// `off` turns the World's write commands off in this session's
+        /// shell: they refuse and point at the host's own.
+        #[arg(long, default_value = "on", value_parser = ["on", "off"])]
+        writes: String,
     },
     /// Look at files: text with line numbers, images as images.
     View(view::ViewArgs),
@@ -189,7 +193,7 @@ fn main() -> ExitCode {
         Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
         #[cfg(windows)]
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
-        Command::Serve { writer } => serve(&writer),
+        Command::Serve { writer, writes } => serve(&writer, writes == "off"),
         Command::View(args) => view::run(args),
         Command::W(args) => w::run(args),
         Command::Nodes => world::nodes(),
@@ -273,10 +277,13 @@ fn node(
     ))
 }
 
-fn serve(writer: &str) -> anyhow::Result<()> {
+fn serve(writer: &str, writes_off: bool) -> anyhow::Result<()> {
     let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
     let writer = if writer == "apply_patch" { fastctx_serve::Writer::ApplyPatch } else { fastctx_serve::Writer::Edit };
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_serve::serve(world, writer))
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(fastctx_serve::serve(world, writer, writes_off))
 }
 
 /// A supervisor has no terminal: what it would print about its own failure

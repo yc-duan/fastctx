@@ -73,6 +73,7 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
         output_lost: None,
         end: None,
         ends_with_node: false,
+        writes_off: launch.request.writes_off,
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
     let started = spawn_detached(

@@ -231,6 +231,7 @@ fn nodes() -> Vec<NodesReply> {
                         path_separator: '\\',
                         case_sensitive: false,
                         version: "fixture-version".into(),
+                        shell: String::new(),
                     }),
                 },
                 Node {
@@ -265,6 +266,7 @@ fn nodes() -> Vec<NodesReply> {
                         path_separator: '/',
                         case_sensitive: true,
                         version: "fixture-version".into(),
+                        shell: String::new(),
                     }),
                 },
                 Node {

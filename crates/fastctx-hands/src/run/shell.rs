@@ -27,6 +27,11 @@ pub struct Context<'a> {
     /// The job the script is, so that a command in it can tell itself apart
     /// from the other things running, as `fastctx w` does.
     pub job: Option<&'a fastctx_types::JobId>,
+    /// A directory of the job's resident where the World's shell functions
+    /// may leave files for the commands they call, such as `on`'s state.
+    pub scratch: Option<&'a Path>,
+    /// The World's write commands refuse in this shell (`world-write.md`).
+    pub writes_off: bool,
 }
 
 /// A shell invocation, with its complete environment already resolved.
@@ -75,12 +80,88 @@ pub fn environment_from(mut env: Vec<(OsString, OsString)>, context: &Context<'_
     // Programs that can draw images write them in one of these terminal
     // protocols; `run` turns them into images (`world-view.md`).
     set(&mut env, "AGENT_GRAPHICS", "kitty,iterm2");
+    // Python writes to a pipe in the system's code page, cp1252 on the
+    // user's Windows machines, and fails on the first Chinese character.
+    // UTF-8 mode is Python's own default from 3.15 (PEP 686).
+    set(&mut env, "PYTHONUTF8", "1");
     prepend_path(&mut env, context.fastctx_dir);
+    // Bash reads the prelude after the login profile, which may rewrite
+    // PATH; the prelude puts this directory first again, in bash's form.
+    set(&mut env, "FASTCTX_BIN", shell_path(context.fastctx_dir));
+    set(&mut env, "BASH_ENV", forward_slashes(&prelude_path(context.fastctx_dir)));
+    match context.scratch {
+        Some(scratch) => set(&mut env, "FASTCTX_SCRATCH", forward_slashes(scratch)),
+        None => unset(&mut env, "FASTCTX_SCRATCH"),
+    }
+    if context.writes_off {
+        set(&mut env, "FASTCTX_WRITES", "off");
+    } else {
+        unset(&mut env, "FASTCTX_WRITES");
+    }
     if cfg!(windows) {
-        // What Git Bash itself sets: the MinGW tools come first on the PATH.
-        set(&mut env, "MSYSTEM", "MINGW64");
+        // What Git Bash itself sets: the tools of its environment come first
+        // on the PATH. Which environment an installation has depends on its
+        // version, so it is read from the installation.
+        match bash().ok().as_deref().and_then(msystem) {
+            Some(msystem) => set(&mut env, "MSYSTEM", msystem),
+            None => unset(&mut env, "MSYSTEM"),
+        }
     }
     env
+}
+
+/// The World's prelude, which bash reads through `BASH_ENV` (`world-run.md`).
+pub const PRELUDE: &str = include_str!("prelude.bash");
+
+/// Where the prelude for the World's programs in `fastctx_dir` lives.
+pub fn prelude_path(fastctx_dir: &Path) -> PathBuf {
+    fastctx_dir.join("prelude.bash")
+}
+
+/// Writes the prelude beside the World's programs unless it is there as this
+/// version has it.
+pub fn ensure_prelude(fastctx_dir: &Path) -> io::Result<()> {
+    let path = prelude_path(fastctx_dir);
+    if std::fs::read(&path).ok().as_deref() == Some(PRELUDE.as_bytes()) {
+        return Ok(());
+    }
+    fastctx_platform::publish(&path, PRELUDE.as_bytes(), fastctx_platform::Permissions::Private)
+}
+
+/// A path as bash's own PATH holds it: unchanged on Unix; on Windows in
+/// MSYS's form, a drive as a top directory (`C:/x` is `/c/x`), since a colon
+/// separates PATH entries. A path without a drive is left as it is.
+pub fn shell_path(path: &Path) -> OsString {
+    if !cfg!(windows) {
+        return path.as_os_str().to_owned();
+    }
+    let text = forward_slashes(path).to_string_lossy().into_owned();
+    let text = text.strip_prefix("//?/").unwrap_or(&text);
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        let drive = char::from(bytes[0]).to_ascii_lowercase();
+        return format!("/{drive}{}", &text[2..]).into();
+    }
+    text.into()
+}
+
+/// A path with forward slashes on Windows, which bash and Windows both read.
+fn forward_slashes(path: &Path) -> OsString {
+    if cfg!(windows) { path.to_string_lossy().replace('\\', "/").into() } else { path.as_os_str().to_owned() }
+}
+
+/// The MSYS environment a Git for Windows installation was built for, by the
+/// directory it has beside `usr`: the one holding `git.exe`, else the only
+/// one there is.
+fn msystem(bash: &Path) -> Option<&'static str> {
+    let root = bash.parent()?.parent()?.parent()?;
+    let environments = [("ucrt64", "UCRT64"), ("mingw64", "MINGW64"), ("clangarm64", "CLANGARM64")];
+    let present: Vec<_> = environments.iter().filter(|(dir, _)| root.join(dir).is_dir()).collect();
+    present
+        .iter()
+        .find(|(dir, _)| root.join(dir).join("bin").join("git.exe").is_file())
+        .or(present.first())
+        .map(|(_, name)| *name)
 }
 
 fn same_name(a: &OsStr, b: &str) -> bool {
@@ -151,7 +232,11 @@ pub fn bash() -> io::Result<PathBuf> {
 }
 
 /// The script's path as bash reads it: forward slashes, which MSYS takes
-/// as they are.
+/// as they are. MSYS splits a native program's command line by its own
+/// rules, stripping single quotes and expanding braces and wildcards outside
+/// double quotes; the command line quotes such an argument
+/// (`fastctx_platform`'s Windows command line), and a Windows path can hold
+/// neither a double quote nor, here, a backslash.
 #[cfg(windows)]
 fn script_argument(script: &Path) -> io::Result<OsString> {
     let text = script.to_str().ok_or_else(|| {

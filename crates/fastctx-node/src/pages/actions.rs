@@ -134,7 +134,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             }
             let town = Some(source.town.clone());
             let owner = fastctx_types::run::JobOwner::Page { page: source };
-            let request = fastctx_types::run::RunRequest { script, cwd: None };
+            let request = fastctx_types::run::RunRequest { script, cwd: None, writes_off: false };
             let (reply, _) = node.jobs.run(node, owner, town, request).await?;
             Ok(PageResult::Run(reply))
         }

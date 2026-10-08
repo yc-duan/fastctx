@@ -47,6 +47,8 @@ fn main() -> anyhow::Result<()> {
                         fastctx_dir: fastctx.parent().expect("program directory"),
                         fastctx_home: Some(root.as_os_str()),
                         job: Some(&job.id),
+                        scratch: None,
+                        writes_off: false,
                     },
                 );
                 Ok(shell::Prepared {
@@ -126,7 +128,7 @@ fn exercise() -> anyhow::Result<()> {
             machine: &machine,
             owner: &owner.clone().into(),
             town: None,
-            request: &RunRequest { script, cwd: Some(display(&root)) },
+            request: &RunRequest { script, cwd: Some(display(&root)), writes_off: false },
             home: &root,
             executable: &old_program,
             environment: &environment,

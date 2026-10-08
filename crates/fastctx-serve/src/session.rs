@@ -32,10 +32,12 @@ pub struct Session {
     were: Mutex<HashMap<Option<String>, ResidentId>>,
     /// Starting the node is done by one call at a time.
     starting: tokio::sync::Mutex<()>,
+    /// The World's write commands refuse in this session's shell.
+    writes_off: bool,
 }
 
 impl Session {
-    pub fn new(world: WorldDir) -> anyhow::Result<Self> {
+    pub fn new(world: WorldDir, writes_off: bool) -> anyhow::Result<Self> {
         // Set, as `<id>@<machine>`, when the World started this session.
         let resident = match std::env::var("FASTCTX_RESIDENT") {
             Ok(address) => Some(address),
@@ -51,6 +53,7 @@ impl Session {
             residents: Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
             starting: tokio::sync::Mutex::new(()),
+            writes_off,
         })
     }
 
@@ -99,7 +102,7 @@ impl Session {
             let mut client = self.client().await?;
             let call = Call::Run {
                 resident: whereabouts.resident.clone(),
-                request: RunRequest { script: command, cwd },
+                request: RunRequest { script: command, cwd, writes_off: self.writes_off },
                 node,
             };
             client.call(call).await.map_err(|error| error.to_string())

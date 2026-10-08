@@ -29,8 +29,8 @@ const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", 
 /// Serves one session until its host closes standard input, then lets the
 /// calls in flight answer. Each call ends within the `run` wait, so this
 /// ends too.
-pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
-    let session = Arc::new(Session::new(world)?);
+pub async fn serve(world: WorldDir, writer: Writer, writes_off: bool) -> anyhow::Result<()> {
+    let session = Arc::new(Session::new(world, writes_off)?);
     let mut input = stdio::input();
     let (output, printing) = Output::start();
     let mut calls = JoinSet::new();
