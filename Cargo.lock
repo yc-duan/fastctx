@@ -1005,6 +1005,7 @@ dependencies = [
 name = "fastctx-file-search"
 version = "1.0.0"
 dependencies = [
+ "fastctx-platform",
  "fastctx-types",
  "ignore",
  "notify",

@@ -39,7 +39,23 @@ pub fn write_here(
         Ok(result) => &result.changes,
         Err(error) => &error.changes,
     };
-    let written: Vec<Seen> = changes.iter().filter_map(|change| seen_after(change, &seen)).collect();
+    let stale = match &outcome {
+        Ok(result) => Some(
+            result
+                .changed_since_seen
+                .iter()
+                .map(|path| fastctx_platform::local_path(path).and_then(|path| canonical_path(&path)))
+                .collect::<io::Result<Vec<_>>>()?,
+        ),
+        Err(_) => None,
+    };
+    let written: Vec<Seen> = changes
+        .iter()
+        .map(|change| seen_after(change, &seen, stale.as_deref()))
+        .collect::<io::Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect();
     if !written.is_empty() {
         crate::residents::record_seen(world, here, owner, town, &written)?;
     }
@@ -76,17 +92,34 @@ fn load_seen(path: &Path) -> io::Result<SeenFiles> {
 
 /// What the resident knows of a file after writing it: its new contents,
 /// in the encoding it was seen in.
-fn seen_after(change: &FileChange, seen: &SeenFiles) -> Option<Seen> {
-    let sha256 = change.after_hash.clone()?;
-    let size = std::fs::metadata(&change.path).map(|metadata| metadata.len()).unwrap_or(0);
-    Some(Seen {
-        path: change.path.to_string_lossy().into_owned(),
+fn seen_after(change: &FileChange, seen: &SeenFiles, stale: Option<&[PathBuf]>) -> io::Result<Option<Seen>> {
+    let Some(sha256) = change.after_hash.clone() else { return Ok(None) };
+    let path = canonical_path(&change.path)?;
+    let size = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata.len(),
+        // A later part of the same patch may have deleted this path.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(Some(Seen {
+        path: path.to_string_lossy().into_owned(),
         at: Timestamp::now(),
         sha256: Some(sha256),
         size,
         modified: None,
-        encoding: seen.get(&change.path).and_then(|file| file.encoding.clone()),
-    })
+        // A stale edit may have decoded the current revision differently.
+        // A failed patch has no stale list; only its before hash can prove
+        // that an old encoding choice still describes the committed edit.
+        encoding: seen
+            .get(&path)
+            .filter(|file| match stale {
+                Some(stale) => !stale.contains(&path),
+                None => {
+                    matches!(&file.version, SeenVersion::Full { sha256 } if change.before_hash.as_ref() == Some(sha256))
+                }
+            })
+            .and_then(|file| file.encoding.clone()),
+    }))
 }
 
 /// A write as the resident's actions record it.

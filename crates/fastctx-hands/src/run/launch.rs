@@ -91,7 +91,7 @@ fn starting_directory(launch: &Launch<'_>) -> Result<PathBuf, Failure> {
     let Some(cwd) = &launch.request.cwd else {
         return Ok(launch.home.to_path_buf());
     };
-    let path = PathBuf::from(cwd);
+    let path = fastctx_platform::local_path(cwd).map_err(|error| failure("cwd", &error))?;
     if !path.is_absolute() {
         let example = if cfg!(windows) { "C:/Users/me/project" } else { "/home/me/project" };
         return Err(Failure::new(format!(

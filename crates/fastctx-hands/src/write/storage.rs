@@ -28,6 +28,8 @@ impl Snapshot {
 
 impl Target {
     pub fn new(path: &Path, writer: &Writer) -> Result<Self, String> {
+        let native = fastctx_platform::local_path(path).map_err(|e| e.to_string())?;
+        let path = native.as_path();
         if !path.is_absolute() {
             return Err(format!("Use an absolute path, not a relative path: {}", path.display()));
         }

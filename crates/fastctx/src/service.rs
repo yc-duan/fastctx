@@ -26,10 +26,10 @@ pub struct ServiceArgs {
     #[arg(value_enum)]
     action: Action,
     /// The node's fastctx root or the hub's data directory.
-    #[arg(long)]
+    #[arg(long, value_parser = crate::paths::parser())]
     dir: Option<PathBuf>,
     /// The stable installed fastctx executable; defaults to this executable.
-    #[arg(long)]
+    #[arg(long, value_parser = crate::paths::parser())]
     executable: Option<PathBuf>,
     /// Linux: run the system service as this UID. Install/uninstall as root.
     #[cfg(target_os = "linux")]

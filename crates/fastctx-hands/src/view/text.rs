@@ -10,16 +10,16 @@ use std::fs::{File, Metadata};
 use std::io::{self, Read as _};
 use std::path::Path;
 
-use encoding_rs::{DecoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
 use fastctx_types::residents::Seen;
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
+use super::decode::Decoder;
 use super::{Options, Section, describe_error, head, hex, plural};
 
 /// Bytes looked at to tell text from binary: a NUL among the first 8 KiB
 /// means the file is not text in any encoding without a byte order mark.
-const SNIFF: usize = 8192;
+pub(super) const SNIFF: usize = 8192;
 
 pub fn look(
     path: &Path,
@@ -35,13 +35,18 @@ pub fn look(
         let read = super::read_up_to(&mut file, &mut more)?;
         start.extend_from_slice(&more[..read]);
     }
-    let whole = start.len() as u64 == metadata.len();
-    let (encoding, bom) = match choose_encoding(&start, whole, options) {
+    let mut decoder = match Decoder::new(&start, options.encoding.as_deref()) {
         Ok(chosen) => chosen,
-        Err(facts) => return Ok((Section::note(path, options, &facts), None)),
+        Err(facts) => return Ok((Section::note(path, options, &format!("not shown: {facts}")), None)),
     };
-    let mut reader = Reader::new(encoding, bom, budget_for_body(path, options, budget), options.lines);
-    reader.feed(&start[bom..], false);
+    if options.encoding.is_none() && matches!(decoder, Decoder::Auto(_)) && start.contains(&0) {
+        let facts = format!("not shown: binary{}", kind(&start).map(|kind| format!(", {kind}")).unwrap_or_default());
+        return Ok((Section::note(path, options, &facts), None));
+    }
+    let mut reader = Reader::new(budget_for_body(path, options, budget, &decoder.longest_facts()), options.lines);
+    if let Err(facts) = decoder.feed(&start, false, &mut reader) {
+        return Ok((Section::note(path, options, &format!("not shown: {facts}")), None));
+    }
     let mut hasher = Sha256::new();
     hasher.update(&start);
     let mut buffer = vec![0u8; 64 * 1024];
@@ -53,21 +58,20 @@ pub fn look(
             Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
         };
         hasher.update(&buffer[..read]);
-        reader.feed(&buffer[..read], false);
+        if let Err(facts) = decoder.feed(&buffer[..read], false, &mut reader) {
+            return Ok((Section::note(path, options, &format!("not shown: {facts}")), None));
+        }
     }
-    reader.feed(&[], true);
+    if let Err(facts) = decoder.feed(&[], true, &mut reader) {
+        return Ok((Section::note(path, options, &format!("not shown: {facts}")), None));
+    }
     let read = reader.finish();
 
-    let encoding_fact = match (encoding == UTF_8, bom > 0) {
-        (true, false) => String::new(),
-        (true, true) => "UTF-8 with BOM; ".to_string(),
-        (false, _) => format!("decoded from {}; ", encoding.name()),
-    };
-    let mut facts = encoding_fact;
-    let total = if read.total_known { read.total_lines.to_string() } else { format!("at least {}", read.total_lines) };
-    let whole = read.total_known && read.shown_lines == read.total_lines && read.cut.is_none() && read.total_lines > 0;
+    let mut facts = decoder.facts();
+    let total = read.total_lines;
+    let whole = read.shown_lines == read.total_lines && read.cut.is_none();
     match (&read.cut, read.shown_lines) {
-        (None, 0) if read.total_lines == 0 && read.total_known => facts.push_str("empty"),
+        (None, 0) if read.total_lines == 0 => facts.push_str("empty"),
         (None, _) if whole => facts.push_str(&plural(read.total_lines, "line", "lines")),
         (None, 0) => facts.push_str(&format!("no lines in the range asked; the file has {total} lines")),
         (None, shown) => {
@@ -82,73 +86,19 @@ pub fn look(
             facts.push_str(&format!("line {}: characters 1-{} of {} shown", cut.line, cut.shown, cut.length));
         }
     }
-    if let Some(at) = read.malformed_at {
-        let note = format!(
-            "; not valid {} from byte {at}, which is not shown; name its encoding with --encoding",
-            encoding.name()
-        );
-        facts.push_str(&note);
-    }
     let mut text = format!("{}\n", head(path, options, &facts));
     text.push_str(&read.body);
     let cost = text.chars().count();
     let seen = Seen {
         path: path.to_string_lossy().into_owned(),
         at: Timestamp::now(),
-        sha256: (whole && read.malformed_at.is_none() && options.lines.is_none()).then(|| hex(&hasher.finalize())),
+        sha256: (whole && options.lines.is_none()).then(|| hex(&hasher.finalize())),
         size: metadata.len(),
         modified: metadata.modified().ok().and_then(|time| Timestamp::try_from(time).ok()),
-        encoding: Some(encoding.name().to_string()),
+        encoding: decoder.encoding(),
     };
-    let shown = read.shown_lines > 0 || read.cut.is_some();
+    let shown = read.shown_lines > 0 || read.cut.is_some() || read.total_lines == 0;
     Ok((Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget }, shown.then_some(seen)))
-}
-
-/// The encoding to read with, and how many bytes of byte order mark to
-/// skip; or, when the file is not text that can be read without being
-/// told its encoding, the facts to say instead.
-/// `whole` says whether `start` is the whole file.
-fn choose_encoding(start: &[u8], whole: bool, options: &Options) -> Result<(&'static Encoding, usize), String> {
-    if let Some(label) = &options.encoding {
-        let encoding = Encoding::for_label_no_replacement(label.trim().as_bytes())
-            .ok_or_else(|| format!("not shown: {label:?} names no encoding this build knows"))?;
-        let bom = match Encoding::for_bom(start) {
-            Some((found, length)) if found == encoding => length,
-            _ => 0,
-        };
-        return Ok((encoding, bom));
-    }
-    if start.starts_with(&[0xff, 0xfe, 0, 0]) || start.starts_with(&[0, 0, 0xfe, 0xff]) {
-        return Err("not shown: UTF-32 text, which this build does not read".to_string());
-    }
-    if let Some((encoding, length)) = Encoding::for_bom(start) {
-        return Ok((encoding, length));
-    }
-    if start.contains(&0) {
-        return Err(format!("not shown: binary{}", kind(start).map(|kind| format!(", {kind}")).unwrap_or_default()));
-    }
-    if std::str::from_utf8(start).is_err_and(|error| error.error_len().is_some()) {
-        // The encodings its first bytes decode in are candidates, not
-        // proof: which one it is, the one who looks says.
-        return Err(match crate::encoding::detect_prefix(start, whole, None) {
-            Err(crate::encoding::EncodingError::Ambiguous { candidates, .. }) if !candidates.is_empty() => format!(
-                "not shown: not UTF-8, and its encoding is not named; its first bytes read as {}; if it is text, name its encoding with --encoding, such as --encoding {}",
-                or_list(&candidates),
-                candidates[0].to_ascii_lowercase()
-            ),
-            _ => "not shown: not UTF-8, and no encoding this build knows reads its first bytes; look at its bytes with xxd, or name its encoding with --encoding".to_string(),
-        });
-    }
-    Ok((UTF_8, 0))
-}
-
-/// `a`, `a or b`, `a, b or c`.
-fn or_list(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
-    }
 }
 
 /// What a file's first bytes say it is, for a binary file.
@@ -170,13 +120,9 @@ fn kind(start: &[u8]) -> Option<&'static str> {
 /// The budget left for the lines once the head note is paid for, the head
 /// at its longest: the path, the machine, and numbers of up to twenty
 /// digits in the longest form of the facts.
-fn budget_for_body(path: &Path, options: &Options, budget: usize) -> usize {
-    let longest_facts = format!(
-        "decoded from {}; lines {n}-{n} of {n} shown; line {n}: characters 1-{n} of {n} shown; not valid {} from byte {n}, which is not shown; name its encoding with --encoding",
-        "x-mac-cyrillic",
-        "x-mac-cyrillic",
-        n = u64::MAX
-    );
+fn budget_for_body(path: &Path, options: &Options, budget: usize, encoding: &str) -> usize {
+    let longest_facts =
+        format!("{encoding}lines {n}-{n} of {n} shown; line {n}: characters 1-{n} of {n} shown", n = u64::MAX);
     let head = head(path, options, &longest_facts).chars().count() + 1;
     budget.saturating_sub(head)
 }
@@ -192,19 +138,13 @@ struct Read {
     first_shown: u64,
     shown_lines: u64,
     total_lines: u64,
-    /// False when undecodable bytes in an encoding whose newlines are not
-    /// plain bytes leave the count a lower bound.
-    total_known: bool,
     cut: Option<Cut>,
     /// The budget ran out before the range did, at a line boundary.
     out_of_budget: bool,
-    malformed_at: Option<u64>,
 }
 
-/// Decodes as bytes arrive, keeping the lines in the window.
-struct Reader {
-    decoder: encoding_rs::Decoder,
-    ascii_compatible: bool,
+/// Keeps decoded lines inside the requested range and character budget.
+pub(super) struct Reader {
     budget: usize,
     range: Option<(u64, u64)>,
     body: String,
@@ -217,19 +157,11 @@ struct Reader {
     shown_lines: u64,
     cut: Option<Cut>,
     out_of_budget: bool,
-    malformed_at: Option<u64>,
-    consumed: u64,
-    /// After a malformed sequence, lines are counted from the raw bytes.
-    raw_newlines: u64,
-    saw_bytes_after_last_newline: bool,
 }
 
 impl Reader {
-    /// `skipped` bytes, a byte order mark, come before what is fed.
-    fn new(encoding: &'static Encoding, skipped: usize, budget: usize, range: Option<(u64, u64)>) -> Self {
+    fn new(budget: usize, range: Option<(u64, u64)>) -> Self {
         Self {
-            decoder: encoding.new_decoder_without_bom_handling(),
-            ascii_compatible: encoding != UTF_16LE && encoding != UTF_16BE,
             budget,
             range,
             body: String::new(),
@@ -242,60 +174,21 @@ impl Reader {
             shown_lines: 0,
             cut: None,
             out_of_budget: false,
-            malformed_at: None,
-            consumed: skipped as u64,
-            raw_newlines: 0,
-            saw_bytes_after_last_newline: false,
         }
     }
 
-    fn feed(&mut self, bytes: &[u8], last: bool) {
-        if self.malformed_at.is_some() {
-            self.count_raw(bytes);
-            return;
-        }
-        let mut input = bytes;
-        let mut piece = String::with_capacity(input.len() + 16);
-        loop {
-            piece.clear();
-            piece.reserve(
-                self.decoder.max_utf8_buffer_length_without_replacement(input.len()).unwrap_or(input.len() * 3),
-            );
-            let (result, read) = self.decoder.decode_to_string_without_replacement(input, &mut piece, last);
-            self.take(&piece);
-            match result {
-                DecoderResult::InputEmpty => {
-                    self.consumed += read as u64;
-                    return;
-                }
-                DecoderResult::OutputFull => {
-                    self.consumed += read as u64;
-                    input = &input[read..];
-                }
-                DecoderResult::Malformed(bad, after) => {
-                    let at = self.consumed + read as u64 - u64::from(bad) - u64::from(after);
-                    self.malformed_at = Some(at);
-                    // The bad bytes belong to the line they are in; the bytes
-                    // read past them are counted with the rest.
-                    self.saw_bytes_after_last_newline = true;
-                    self.count_raw(&input[read - usize::from(after)..]);
-                    return;
-                }
-            }
-        }
+    pub(super) fn room(&self) -> usize {
+        if self.wanted() { self.budget.saturating_sub(self.body_cost) } else { 0 }
     }
 
-    /// Counts lines in bytes that will not be decoded, by their newlines,
-    /// as every ASCII-compatible encoding writes them.
-    fn count_raw(&mut self, bytes: &[u8]) {
-        if !self.ascii_compatible || bytes.is_empty() {
-            return;
-        }
-        self.raw_newlines += bytes.iter().filter(|&&b| b == b'\n').count() as u64;
-        self.saw_bytes_after_last_newline = bytes.last() != Some(&b'\n');
+    pub(super) fn line(&mut self, text: String, characters: u64, ends_with_cr: bool) {
+        self.line = text;
+        self.line_chars = characters;
+        self.line_ends_with_cr = ends_with_cr;
+        self.end_line();
     }
 
-    fn take(&mut self, text: &str) {
+    pub(super) fn take(&mut self, text: &str) {
         for part in text.split_inclusive('\n') {
             let (content, ends) = match part.strip_suffix('\n') {
                 Some(content) => (content, true),
@@ -368,22 +261,16 @@ impl Reader {
 
     fn finish(mut self) -> Read {
         // A last line without a newline is still a line.
-        if self.malformed_at.is_none() && (self.line_chars > 0 || !self.line.is_empty()) {
+        if self.line_chars > 0 || !self.line.is_empty() {
             self.end_line();
-        }
-        let mut total = self.number - 1;
-        if self.malformed_at.is_some() {
-            total = self.number - 1 + self.raw_newlines + u64::from(self.saw_bytes_after_last_newline);
         }
         Read {
             body: self.body,
             first_shown: self.first_shown,
             shown_lines: self.shown_lines,
-            total_lines: total,
-            total_known: self.malformed_at.is_none() || self.ascii_compatible,
+            total_lines: self.number - 1,
             cut: self.cut,
             out_of_budget: self.out_of_budget,
-            malformed_at: self.malformed_at,
         }
     }
 }

@@ -13,6 +13,7 @@ mod copy;
 mod journal;
 mod keep;
 mod page;
+mod paths;
 mod project;
 mod renew;
 mod scope_args;
@@ -42,20 +43,29 @@ enum Command {
     ParentProcess,
     /// Wait for the person answering one public Claude mod request.
     #[command(hide = true)]
-    ClaudeRequest { directory: PathBuf },
+    ClaudeRequest {
+        #[arg(value_parser = paths::parser())]
+        directory: PathBuf,
+    },
     /// The official plugin's MCP elicitation command hook.
     #[command(hide = true)]
-    ClaudeElicitation { world: PathBuf },
+    ClaudeElicitation {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+    },
     /// Identifies the node lifetime that may issue queued Claude controls.
     #[command(hide = true)]
-    ClaudeControlOwner { world: PathBuf },
+    ClaudeControlOwner {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+    },
     /// A lifetime witness for a Claude mod activation.
     #[command(hide = true)]
     ClaudeControlGuard,
     /// Run this machine's node in the foreground.
     Node {
         /// The fastctx root to serve; defaults to this user's fastctx root.
-        #[arg(long)]
+        #[arg(long, value_parser = paths::parser())]
         dir: Option<PathBuf>,
         /// A guardian keeps this node; with the two below, the channel it
         /// handed down (`fastctx_node::handoff`).
@@ -145,7 +155,12 @@ enum Command {
     Unapply(apply::UnapplyArgs),
     /// Supervise one job; started by the node, not by people.
     #[command(hide = true)]
-    Supervise { world: PathBuf, record: PathBuf },
+    Supervise {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+        #[arg(value_parser = paths::parser())]
+        record: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {

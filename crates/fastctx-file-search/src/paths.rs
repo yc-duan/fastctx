@@ -18,7 +18,7 @@ pub(crate) fn linked(metadata: &fs::Metadata) -> bool {
 pub(crate) fn roots(paths: Vec<String>) -> io::Result<Vec<PathBuf>> {
     let mut roots = Vec::new();
     for text in paths {
-        let path = PathBuf::from(text);
+        let path = fastctx_platform::local_path(text)?;
         if !path.is_absolute() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "file search roots must be absolute"));
         }

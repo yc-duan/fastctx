@@ -206,6 +206,15 @@ fn explicit(label: &str, bytes: &[u8]) -> Result<TextEncoding, EncodingError> {
     Ok(TextEncoding { codec, bom_len })
 }
 
+/// Selects an explicit or BOM-marked encoding without validating a possibly
+/// split character in the prefix. The caller must validate with `TextDecoder`.
+pub(crate) fn select(bytes: &[u8], label: Option<&str>) -> Result<TextEncoding, EncodingError> {
+    match label {
+        Some(label) => explicit(label, bytes),
+        None => Ok(bom(bytes).unwrap_or_else(TextEncoding::utf8)),
+    }
+}
+
 fn bom(bytes: &[u8]) -> Option<TextEncoding> {
     for (prefix, codec) in [
         (&b"\x00\x00\xfe\xff"[..], Codec::Utf32Be),

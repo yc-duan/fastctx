@@ -34,7 +34,8 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
         if list.as_os_str() == "-" {
             std::io::stdin().read_to_end(&mut bytes)?;
         } else {
-            bytes = std::fs::read(list).with_context(|| format!("reading {}", list.display()))?;
+            let list = fastctx_platform::local_path(list)?;
+            bytes = std::fs::read(&list).with_context(|| format!("reading {}", list.display()))?;
         }
         for name in bytes.split(|&b| b == 0).filter(|name| !name.is_empty()) {
             let name = std::str::from_utf8(name).context("a path in the list is not UTF-8")?;
