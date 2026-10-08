@@ -6,25 +6,42 @@ use clap::Args;
 use fastctx_types::copy::{CopyReport, Place};
 use fastctx_types::{Call, MachineName, Reply};
 
-/// The two ends of a copy; what a copy does is said on the `copy` command.
+/// The ends of a copy; what a copy does is said on the `copy` command.
 #[derive(Args)]
 pub struct CopyArgs {
-    /// What to copy: MACHINE:PATH, or a path on this machine.
-    from: String,
-    /// Where to: MACHINE:PATH, or a path on this machine.
-    to: String,
+    /// What to copy, then where to, each MACHINE:PATH or a path on this
+    /// machine.
+    #[arg(value_name = "SOURCE... DEST", num_args = 2.., required = true)]
+    ends: Vec<String>,
 }
 
+/// Each source is copied on its own, as `cp` does: one that fails is said
+/// and the rest still go, and the command fails if any did.
 pub fn run(args: CopyArgs) -> anyhow::Result<ExitCode> {
-    let (from, to) = (place(&args.from)?, place(&args.to)?);
-    let (reply, _) = crate::ask::call(Call::Copy { from, to })?;
-    match reply {
-        Reply::Copied(report) => {
-            print!("{}", render(&report));
-            Ok(if report.problems.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
-        }
-        other => anyhow::bail!("the node answered something else: {other:?}"),
+    let (to, sources) = args.ends.split_last().expect("clap requires two ends");
+    if sources.len() > 1 && !(to.ends_with('/') || (cfg!(windows) && to.ends_with('\\'))) {
+        anyhow::bail!("with several sources, end the destination with / to copy them into that directory");
     }
+    let to = place(to)?;
+    let mut failed = false;
+    for source in sources {
+        let copied = place(source).and_then(|from| crate::ask::call(Call::Copy { from, to: to.clone() }));
+        match copied {
+            Ok((Reply::Copied(report), _)) => {
+                print!("{}", render(&report));
+                failed |= !report.problems.is_empty();
+            }
+            Ok((other, _)) => anyhow::bail!("the node answered something else: {other:?}"),
+            Err(error) => {
+                // Most failures already name the path they were about.
+                let error = format!("{error:#}");
+                let named = if error.contains(source.trim_end_matches(['/', '\\'])) { "" } else { source };
+                eprintln!("fastctx copy: {named}{}{error}", if named.is_empty() { "" } else { ": " });
+                failed = true;
+            }
+        }
+    }
+    Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }
 
 /// `MACHINE:PATH`, or a path on this machine made absolute. A one-letter

@@ -1,5 +1,5 @@
-//! `fastctx stop`: a job and everything it started, on whichever machine it
-//! runs (`world-run.md`).
+//! `fastctx stop`: jobs and everything they started, on whichever machine
+//! each runs (`world-run.md`).
 
 use std::process::ExitCode;
 
@@ -10,30 +10,56 @@ use fastctx_types::layout::WorldDir;
 use fastctx_types::run::EndedHow;
 use fastctx_types::{Call, JobId, MachineName, Reply};
 
-/// Stop a job and everything it started, on whichever machine it runs.
+/// Stop jobs and everything they started, on whichever machine each runs.
 #[derive(Args)]
 pub struct StopArgs {
-    /// The job, as `fastctx w` shows it, such as j-k3x9a2; j-k3x9a2@laptop
+    /// The jobs, as `fastctx w` shows them, such as j-k3x9a2; j-k3x9a2@laptop
     /// names the machine it runs on, when jobs on several have this id.
-    job: String,
+    #[arg(value_name = "JOB", required = true)]
+    jobs: Vec<String>,
     /// The machine, written the older way.
     #[arg(long, hide = true)]
     machine: Option<String>,
 }
 
+/// Each job is stopped on its own, as `kill` does: one that cannot be is said
+/// and the rest are still stopped, and the command fails if any could not.
 pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
-    let (job, named) = match args.job.split_once('@') {
-        Some((job, machine)) => (job, Some(machine)),
-        None => (args.job.as_str(), None),
-    };
-    let job = JobId::try_from(job)?;
-    let machine = named.or(args.machine.as_deref()).map(MachineName::try_from).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let reply = runtime.block_on(async {
-        let mut client = Client::connect(&world, command_peer()).await.context("reaching this machine's node")?;
-        anyhow::Ok(client.call(Call::StopJob { job: job.clone(), machine }).await)
-    })?;
+    let mut client =
+        runtime.block_on(Client::connect(&world, command_peer())).context("reaching this machine's node")?;
+    let mut failed = false;
+    for named in &args.jobs {
+        let stopped = match target(named, args.machine.as_deref()) {
+            Ok((job, machine)) => stop(&runtime, &mut client, job, machine)?,
+            Err(error) => {
+                eprintln!("fastctx stop: {named}: {error:#}");
+                false
+            }
+        };
+        failed |= !stopped;
+    }
+    Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
+}
+
+fn target(named: &str, machine: Option<&str>) -> anyhow::Result<(JobId, Option<MachineName>)> {
+    let (job, named) = match named.split_once('@') {
+        Some((job, machine)) => (job, Some(machine)),
+        None => (named, None),
+    };
+    let machine = named.or(machine).map(MachineName::try_from).transpose()?;
+    Ok((JobId::try_from(job)?, machine))
+}
+
+/// Whether the job is no longer running, said in one line either way.
+fn stop(
+    runtime: &tokio::runtime::Runtime,
+    client: &mut Client,
+    job: JobId,
+    machine: Option<MachineName>,
+) -> anyhow::Result<bool> {
+    let reply = runtime.block_on(client.call(Call::StopJob { job: job.clone(), machine }));
     match reply {
         Ok(Reply::JobStopped { machine, record }) => {
             let how = match record.end.as_ref().map(|end| &end.how) {
@@ -48,16 +74,12 @@ pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
                 None => "still running".to_string(),
             };
             println!("=== stop {job} on {machine} ({how}) ===");
-            Ok(if matches!(record.end.as_ref().map(|end| &end.how), Some(EndedHow::Failed { .. }) | None) {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
-            })
+            Ok(!matches!(record.end.as_ref().map(|end| &end.how), Some(EndedHow::Failed { .. }) | None))
         }
         Ok(other) => anyhow::bail!("the node answered something else: {other:?}"),
         Err(CallError::Failed(failure)) => {
-            eprintln!("fastctx stop: {}", failure.message);
-            Ok(ExitCode::FAILURE)
+            eprintln!("fastctx stop: {job}: {}", failure.message);
+            Ok(false)
         }
         Err(error) => Err(error.into()),
     }

@@ -121,20 +121,20 @@ enum Command {
     #[command(hide = true)]
     ApplyPatch,
     /// See what runs and who works now, and what happened since your last
-    /// turn; with ids, one session or job.
+    /// turn; with ids, those sessions or jobs.
     W(w::WArgs),
     /// Run part of a script on another of the user's machines.
     #[command(override_usage = on::USAGE, after_help = on::AFTER_HELP)]
     On(on::OnArgs),
-    /// Stop a job and everything it started, on whichever machine it runs.
+    /// Stop jobs and everything they started, on whichever machine each runs.
     Stop(stop::StopArgs),
     /// List the user's machines: which are online and what each is like.
     Nodes,
-    /// Copy a file or a directory from one of the user's machines to another.
+    /// Copy files and directories from one of the user's machines to another.
     ///
-    /// Each end is MACHINE:PATH, or a path on this machine. The destination
-    /// path is what the copy becomes; ending it with / copies into that
-    /// directory instead. Files already there with the same contents are not
+    /// Each end is MACHINE:PATH, or a path on this machine; the last is the
+    /// destination. The destination path is what the copy becomes; ending it
+    /// with / copies into that directory instead, as several sources must. Files already there with the same contents are not
     /// sent again, so running the same copy again sends only what changed.
     /// Links are copied as links. The bytes go between the machines, never
     /// through the terminal.

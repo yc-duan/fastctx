@@ -69,8 +69,9 @@ fn run_definition(writes_off: bool, woken: bool, machines: Option<&Machines>) ->
     json!({
         "name": "run",
         "description": format!(
-            "{} {RUN_START}\n\n{RUN_SHELL}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{RUN_COMMANDS}",
-            machine_names(machines)
+            "{} {RUN_START}\n\n{RUN_SHELL}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{}\n\n{RUN_COMMANDS}",
+            machine_names(machines),
+            run_together(writes_off)
         ),
         "inputSchema": {
             "type": "object",
@@ -105,7 +106,7 @@ Shell:
 - Every machine runs bash with the GNU tools and `rg`, Windows ones too (Git Bash). Write Windows paths like C:/Users/me, and use `ls`, `find`, `du` and `df` rather than PowerShell.
 - Git Bash rewrites arguments that look like Unix paths, such as /FI, before a Windows program sees them. Put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
 - Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together.
-- Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other.
+- Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other. The steps of one piece of work belong in one script; separate pieces of work can go in separate calls.
 - Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
 - A call waits up to 15 seconds. A script still running then goes on in the background, and the answer names the file its output continues in. ";
 
@@ -141,7 +142,7 @@ const RUN_WRITING: &str = "\
 ";
 
 const RUN_COPY: &str = "\
-- `fastctx copy MACHINE:PATH MACHINE:PATH` copies files and directories between machines. The destination path is what the copy becomes; end it with / to copy into that directory.";
+- `fastctx copy SOURCE... DEST` copies files and directories between machines, each end MACHINE:PATH or a path on this machine. DEST is what the copy becomes; end it with / to copy into that directory, as several sources need.";
 
 const RUN_ON: &str = "\
 Other machines: write `on MACHINE` before a command, or give it a script on standard input:
@@ -155,11 +156,25 @@ Other machines: write `on MACHINE` before a command, or give it a script on stan
 - If the connection drops, it goes on there, and its end still reaches you.
 - Every command here works there too, such as `on server fastctx view /srv/app/app.ini`.";
 
+/// The commands as programs a script combines; the example of piping into
+/// `write` goes when the World's write commands are off.
+fn run_together(writes_off: bool) -> String {
+    let write = if writes_off { "" } else { "\n    python3 render.py | write /srv/app/config.json" };
+    format!(
+        "\
+Putting commands together: every command here, `on` and the fastctx ones included, is an ordinary program in your script. Its arguments, standard input and output, and exit code work as any command's, so combine them as you would `cat` or `grep`: pipelines, loops, `$( )`, `&&`, `xargs`, `&` with `wait`. For example:
+    fastctx view /srv/app/src/*.rs
+    rg -l0 'TODO' /srv/app | fastctx view --files0-from -{write}
+    for m in laptop server; do on \"$m\" df -h / & done; wait
+    diff <(on laptop cat C:/work/app.ini) <(on server cat /srv/app/app.ini)"
+    )
+}
+
 const RUN_COMMANDS: &str = "\
 More commands (`--help` on each gives all its options):
 - `fastctx nodes` lists the machines, which are online, and what each runs.
-- `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID` shows one session or job.
-- `fastctx stop JOB` stops a background job and everything it started.
+- `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID...` shows those sessions or jobs.
+- `fastctx stop JOB...` stops background jobs and everything they started.
 - `fastctx project` lists the user's projects and shows their maps. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its map says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx journal` reads and adds to the project's journals, the history of its work. `fastctx page` publishes an HTML page the user opens in the World app.";
 

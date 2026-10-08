@@ -34,7 +34,7 @@ EOF
 
 When the user speaks of one of the machines, work on it this way.
 
-Calls to `run` share nothing, so you can make several at once, and call it from your scripts and subagents like any other tool.
+Inside a script, these commands are ordinary programs: give them several files, pipe into and out of them, loop over machines, as with any command. Calls to `run` share nothing: make several at once, or call `run` from your scripts and subagents, as with any tool.
 
 fastctx also keeps the user's ongoing work as projects. A fastctx project is not a folder or a repository: it is a named piece of work that can span several machines. Its record says what it is for and where its code and data are on each machine; its journals hold the history of the work. `fastctx project list` lists them. Enter one with `fastctx project enter NAME` only when the user tells you which project to work on; entering gives you its map.
 
