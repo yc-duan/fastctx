@@ -52,7 +52,12 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                     )
                 })
                 .unwrap_or_default();
-            text.push_str(&format!("  {}{description}  {} working, {} running\n", town.town, town.busy, town.running));
+            let activity = if local_only {
+                "current activity unverified".into()
+            } else {
+                format!("{} working, {} running", town.busy, town.running)
+            };
+            text.push_str(&format!("  {}{description}  {activity}\n", town.town));
         }
     }
     let this = std::env::var("FASTCTX_JOB").ok();
@@ -64,10 +69,19 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
         let owner = match job.owner.resident() {
             Some(owner) => {
                 let absence = match view.known(owner) {
-                    Some(r) if !r.here => match r.removed.or(r.moved.as_ref().map(|m| m.at)) {
-                        Some(at) => format!(" (left {} ago)", ago(at, now)),
-                        None => " (not here; departure time unrecorded)".into(),
-                    },
+                    Some(r) if !r.here => {
+                        if let Some(at) = r.removed {
+                            format!(" (removed {} ago)", ago(at, now))
+                        } else if let Some(moved) = &r.moved {
+                            format!(
+                                " (moved to {} {} ago)",
+                                moved.to.as_ref().map_or("outside", |t| t.as_str()),
+                                ago(moved.at, now)
+                            )
+                        } else {
+                            " (not here; departure time unrecorded)".into()
+                        }
+                    }
                     None if !view.answered(&owner.machine) => " (owner's machine did not answer)".into(),
                     _ => String::new(),
                 };
@@ -122,16 +136,13 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             } else if let Some(moved) = &resident.moved {
                 format!("moved to {} {} ago", moved.to.as_ref().map_or("outside", |t| t.as_str()), ago(moved.at, now))
             } else if let Some(state) = &resident.now {
-                format!(
-                    "{} {}",
-                    match state.activity {
-                        Activity::Busy if !resident.here => "not here; last recorded turn",
-                        Activity::Busy => "turn",
-                        Activity::Idle => "idle",
-                        Activity::Asleep => "asleep",
-                    },
-                    ago(state.since, now)
-                )
+                match state.activity {
+                    Activity::Busy => step(resident, now),
+                    Activity::Idle if !resident.here => "not here; last reported idle".into(),
+                    Activity::Idle => "idle".into(),
+                    // Older now records did not consistently timestamp sleep.
+                    Activity::Asleep => "asleep".into(),
+                }
             } else {
                 "left; departure time unrecorded".into()
             };
@@ -204,6 +215,9 @@ pub(super) fn task(resident: &ResidentNow) -> String {
 pub(super) fn step(resident: &ResidentNow, now: Timestamp) -> String {
     match &resident.now {
         Some(state) if state.activity == Activity::Busy => {
+            if !resident.here {
+                return format!("not here; last recorded turn began {} ago", ago(state.since, now));
+            }
             let tools = resident
                 .tools
                 .iter()
@@ -211,17 +225,17 @@ pub(super) fn step(resident: &ResidentNow, now: Timestamp) -> String {
                 .map(tool)
                 .collect::<Vec<_>>();
             let doing = if tools.is_empty() { String::new() } else { format!(": {}", tools.join("; ")) };
-            format!("turn {}{doing}", ago(state.since, now))
+            if state.turn.is_some() {
+                format!("turn {}{doing}", ago(state.since, now))
+            } else {
+                format!("turn not yet identified{doing}")
+            }
         }
-        Some(state) => format!(
-            "{} {}",
-            match state.activity {
-                Activity::Idle => "idle",
-                Activity::Asleep => "asleep",
-                Activity::Busy => unreachable!(),
-            },
-            ago(state.since, now)
-        ),
+        Some(state) => match state.activity {
+            Activity::Idle => "idle".into(),
+            Activity::Asleep => "asleep".into(),
+            Activity::Busy => unreachable!(),
+        },
         None => resident
             .last_action
             .as_ref()
