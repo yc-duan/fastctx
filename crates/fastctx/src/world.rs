@@ -338,15 +338,8 @@ fn place(place: &fastctx_types::world::Place) -> String {
     said
 }
 
-/// How long ago a moment was, to two units: the machines of a World keep
-/// different clocks and zones, and a reader may know none of them.
+/// How long ago a moment was, written as `w` writes it: the machines of a
+/// World keep different clocks and zones, and a reader may know none of them.
 fn age(at: Timestamp, now: Timestamp) -> String {
-    let seconds = now.as_second().saturating_sub(at.as_second()).max(0);
-    let (days, hours, minutes) = (seconds / 86_400, seconds % 86_400 / 3_600, seconds % 3_600 / 60);
-    match () {
-        _ if days > 0 => format!("{days}d {hours}h"),
-        _ if hours > 0 => format!("{hours}h {minutes}m"),
-        _ if minutes > 0 => format!("{minutes}m"),
-        _ => format!("{seconds}s"),
-    }
+    fastctx_hands::told::duration(now.as_second().saturating_sub(at.as_second()).max(0) as u64)
 }
