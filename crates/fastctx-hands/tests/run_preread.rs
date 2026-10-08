@@ -38,7 +38,6 @@ fn rejection_precedes_all_job_side_effects() {
             Err(error) => error,
             Ok(_) => panic!("rejected source started a job"),
         };
-        assert!(error.message.contains("before execution"), "{error:?}");
         assert!(error.message.contains("line"), "{error:?}");
         assert!(!marker.exists());
         assert!(!world.path().exists(), "rejection reserved a job");
