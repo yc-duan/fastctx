@@ -23,9 +23,13 @@ pub fn told(notice: &Notice) -> String {
                 (EndedHow::Interrupted { reason }, _) => format!("interrupted: {reason}"),
                 (EndedHow::Failed { error }, _) => format!("could not run: {error}"),
             };
-            let at = at.strftime("%Y-%m-%d %H:%M:%S UTC");
+            // A notice is written as it is delivered. Its reader knows no
+            // machine's clock, so a late one says how long ago, as `w` does;
+            // within a minute the age changes nothing it would do.
+            let waited = jiff::Timestamp::now().as_second().saturating_sub(at.as_second());
+            let ago = if waited >= 60 { format!(" {} ago", duration(waited as u64)) } else { String::new() };
             let head =
-                format!("=== {job} on {machine} ended ({how}) at {at}; its output is in {} ===", display_path(output));
+                format!("=== {job} on {machine} ended ({how}){ago}; its output is in {} ===", display_path(output));
             match last {
                 Some(last) if last.whole => format!("{head}\n{}", last.text),
                 Some(last) => format!("{head}\n=== its last lines ===\n{}", last.text),
