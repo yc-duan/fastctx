@@ -8,6 +8,7 @@
 //! shown as `number<TAB>line`. Images are written in the iTerm2 terminal
 //! protocol, which `run` turns back into images.
 
+mod decode;
 mod text;
 
 use std::fs::File;
@@ -106,15 +107,35 @@ fn head(path: &Path, options: &Options, facts: &str) -> String {
 }
 
 fn not_shown(path: &Path, options: &Options) -> Section {
-    let facts = match std::fs::metadata(path) {
+    let native = match fastctx_platform::local_path(path) {
+        Ok(path) => path,
+        Err(error) => return Section::note(path, options, &describe_error(&error)),
+    };
+    let facts = match std::fs::metadata(&native) {
         Ok(metadata) => format!("not shown: {}", size(metadata.len())),
         Err(error) => describe_error(&error),
     };
-    Section::note(path, options, &facts)
+    Section::note(&native, options, &facts)
 }
 
 fn look(path: &Path, options: &Options, budget: usize) -> io::Result<(Section, Option<Seen>)> {
-    let metadata = match std::fs::metadata(path) {
+    let native = match fastctx_platform::local_path(path) {
+        Ok(path) => path,
+        Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
+    };
+    let resolved = match std::path::absolute(&native).and_then(|path| crate::files::canonical_path(&path)) {
+        Ok(path) => path,
+        Err(error) => return Ok((Section::note(&native, options, &describe_error(&error)), None)),
+    };
+    let (section, mut seen) = look_file(&native, &resolved, options, budget)?;
+    if let Some(seen) = &mut seen {
+        seen.path = resolved.to_string_lossy().into_owned();
+    }
+    Ok((section, seen))
+}
+
+fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> io::Result<(Section, Option<Seen>)> {
+    let metadata = match std::fs::metadata(resolved) {
         Ok(metadata) => metadata,
         Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
     };
@@ -125,7 +146,7 @@ fn look(path: &Path, options: &Options, budget: usize) -> io::Result<(Section, O
         // A device, a FIFO or a socket could make looking wait forever.
         return Ok((Section::note(path, options, "a special file, not shown"), None));
     }
-    let mut file = match File::open(path) {
+    let mut file = match File::open(resolved) {
         Ok(file) => file,
         Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
     };

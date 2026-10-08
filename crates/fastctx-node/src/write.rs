@@ -40,7 +40,13 @@ pub fn write_here(
         Ok(result) => &result.changes,
         Err(error) => &error.changes,
     };
-    let written: Vec<Seen> = changes.iter().filter_map(seen_after).collect();
+    let written: Vec<Seen> = changes
+        .iter()
+        .map(seen_after)
+        .collect::<io::Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect();
     if !written.is_empty() {
         crate::residents::record_seen(world, here, owner, town, &written)?;
     }
@@ -77,17 +83,23 @@ fn load_seen(path: &Path) -> io::Result<SeenFiles> {
 
 /// What the resident knows of a file after writing it: its new contents,
 /// in the encoding the writer used, even if an external write changed it.
-fn seen_after(change: &FileChange) -> Option<Seen> {
-    let sha256 = change.after_hash.clone()?;
-    let size = std::fs::metadata(&change.path).map(|metadata| metadata.len()).unwrap_or(0);
-    Some(Seen {
-        path: change.path.to_string_lossy().into_owned(),
+fn seen_after(change: &FileChange) -> io::Result<Option<Seen>> {
+    let Some(sha256) = change.after_hash.clone() else { return Ok(None) };
+    let path = canonical_path(&change.path)?;
+    let size = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata.len(),
+        // A later part of the same patch may have deleted this path.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(Some(Seen {
+        path: path.to_string_lossy().into_owned(),
         at: Timestamp::now(),
         sha256: Some(sha256),
         size,
         modified: None,
         encoding: change.encoding.clone(),
-    })
+    }))
 }
 
 /// A write as the resident's actions record it.

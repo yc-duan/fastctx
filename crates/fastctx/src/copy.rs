@@ -43,7 +43,7 @@ fn place(text: &str) -> anyhow::Result<Place> {
     {
         return Ok(Place { machine: Some(machine), path: path.to_string() });
     }
-    let mut path = std::path::absolute(text)?.to_string_lossy().into_owned();
+    let mut path = std::path::absolute(fastctx_platform::local_path(text)?)?.to_string_lossy().into_owned();
     if cfg!(windows) {
         path = path.replace('\\', "/");
     }

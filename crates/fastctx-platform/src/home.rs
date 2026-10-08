@@ -23,7 +23,7 @@ pub fn user_home() -> io::Result<PathBuf> {
 }
 
 fn absolute(what: &str, path: OsString) -> io::Result<PathBuf> {
-    let path = PathBuf::from(path);
+    let path = crate::local_path(PathBuf::from(path))?;
     if path.is_absolute() {
         Ok(path)
     } else {

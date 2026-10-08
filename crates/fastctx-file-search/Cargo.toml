@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 ignore = "0.4.28"
 notify = "8"

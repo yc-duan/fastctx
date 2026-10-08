@@ -95,17 +95,17 @@ pub enum HubCommand {
         #[arg(long)]
         listen: Option<std::net::SocketAddr>,
         /// Where the hub keeps its files.
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
     /// Run the hub in the foreground.
     Serve {
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
     /// Print the founding code again, until a machine has used it.
     Code {
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
 }

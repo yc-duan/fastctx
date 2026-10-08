@@ -23,36 +23,36 @@ enum RenewalAction {
     Identify,
     /// Put a local executable in place and request an idle handover.
     Stage {
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: PathBuf,
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         source: PathBuf,
     },
     /// Inspect local versions and renewal progress, even across IPC versions.
     Status {
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: PathBuf,
     },
     /// Request progress now, still waiting for every active turn and call.
     Now {
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: PathBuf,
     },
     #[command(hide = true)]
     Run {
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: PathBuf,
         #[arg(long)]
         retry: bool,
     },
     /// Update the protected guardian, requesting administrator rights once.
     Guardian {
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: PathBuf,
     },
     #[command(hide = true)]
     GuardianApply {
-        #[arg(long)]
+        #[arg(long, value_parser = crate::paths::parser())]
         dir: PathBuf,
         #[arg(long)]
         user_sid: Option<String>,

@@ -176,7 +176,7 @@ impl Receiver {
     /// ends in a separator, the source's name inside it.
     pub fn new(to: &str, manifest: Manifest) -> Result<Self, String> {
         let into = to.ends_with('/') || (cfg!(windows) && to.ends_with('\\'));
-        let base = PathBuf::from(to);
+        let base = fastctx_platform::local_path(to).map_err(|error| error.to_string())?;
         if !base.is_absolute() {
             return Err(format!("{to} is not an absolute path"));
         }
