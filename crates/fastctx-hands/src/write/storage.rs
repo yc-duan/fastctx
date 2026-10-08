@@ -137,6 +137,7 @@ impl Target {
         &self,
         before: Option<&Snapshot>,
         after: &[u8],
+        encoding: &str,
         writer: &Writer,
         changes: &mut Vec<FileChange>,
     ) -> Result<(), String> {
@@ -149,6 +150,7 @@ impl Target {
                 kind: if before.is_some() { ChangeKind::Modified } else { ChangeKind::Added },
                 before_hash: before.map(|s| content_hash(&s.bytes)),
                 after_hash: Some(content_hash(after)),
+                encoding: Some(encoding.to_string()),
             });
         }
         result.map_err(|failure| {
@@ -168,6 +170,7 @@ impl Target {
             kind: ChangeKind::Deleted,
             before_hash: Some(content_hash(&before.bytes)),
             after_hash: None,
+            encoding: None,
         });
         #[cfg(unix)]
         {
