@@ -123,14 +123,16 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     for resident in &view.residents {
         if busy(resident) || (resident.here && resident.now.is_none()) {
             let mark = if Some(&address(resident)) == you { " (you)" } else { "" };
-            working.push_str(&format!(
-                "  {}{mark}  {}  {}{}  {}\n",
+            let line = format!(
+                "  {}{mark}  {}  {}{}  {}",
                 resident.about.id,
                 resident.about.machine,
                 host(&resident.about.host),
                 task(resident),
                 step(resident, now)
-            ));
+            );
+            working.push_str(line.trim_end());
+            working.push('\n');
         } else if all && resident.now.is_none() && resident.removed.is_none() && resident.moved.is_none() {
             // A session that has left cannot be woken or spoken to again;
             // what it did is in the history, and `w ID` finds it.
