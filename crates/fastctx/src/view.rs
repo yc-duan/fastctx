@@ -11,12 +11,18 @@ use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::{Address, Call, TownName};
 
-/// Look at files: text with line numbers, images as images.
+/// Look at files: numbered text, images, and PDF text or page images.
 #[derive(Args)]
 pub struct ViewArgs {
     /// Only lines FIRST-LAST (or one line), counting from 1, of every file.
     #[arg(long, value_name = "FIRST-LAST")]
     lines: Option<String>,
+    /// Only PDF pages FIRST-LAST (or one page), counting from 1.
+    #[arg(long, value_name = "FIRST-LAST", conflicts_with = "lines")]
+    pages: Option<String>,
+    /// Render PDF pages as images instead of showing their text layer.
+    #[arg(long, conflicts_with_all = ["lines", "encoding"])]
+    image: bool,
     /// Read text in this encoding, such as gbk or shift_jis.
     #[arg(long, value_name = "NAME")]
     encoding: Option<String>,
@@ -45,12 +51,19 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
     if paths.is_empty() {
         bail!("name the files to look at, such as: fastctx view -- /path/to/file");
     }
-    let lines = args.lines.as_deref().map(parse_lines).transpose()?;
+    let lines = args.lines.as_deref().map(|text| parse_range(text, "lines")).transpose()?;
+    let pages = args.pages.as_deref().map(|text| parse_range(text, "pages")).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     // Inside a World `run` the answer's first line already names the machine.
     let in_run = std::env::var_os("FASTCTX_MACHINE").is_some();
-    let options =
-        Options { lines, encoding: args.encoding, machine: if in_run { None } else { machine(&world) }, in_run };
+    let options = Options {
+        lines,
+        pages,
+        image: args.image,
+        encoding: args.encoding,
+        machine: if in_run { None } else { machine(&world) },
+        in_run,
+    };
     let mut out = std::io::stdout().lock();
     let seen = view(&paths, &options, &mut out)?;
     out.flush()?;
@@ -59,12 +72,12 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
 }
 
 /// `FIRST-LAST` or `LINE`, counting from 1.
-fn parse_lines(text: &str) -> anyhow::Result<(u64, u64)> {
+fn parse_range(text: &str, option: &str) -> anyhow::Result<(u64, u64)> {
     let (first, last) = text.split_once('-').unwrap_or((text, text));
-    let first: u64 = first.trim().parse().with_context(|| format!("--lines {text}: FIRST is not a number"))?;
-    let last: u64 = last.trim().parse().with_context(|| format!("--lines {text}: LAST is not a number"))?;
+    let first: u64 = first.trim().parse().with_context(|| format!("--{option} {text}: FIRST is not a number"))?;
+    let last: u64 = last.trim().parse().with_context(|| format!("--{option} {text}: LAST is not a number"))?;
     if first == 0 || last < first {
-        bail!("--lines {text}: lines count from 1 and LAST is not before FIRST");
+        bail!("--{option} {text}: {option} count from 1 and LAST is not before FIRST");
     }
     Ok((first, last))
 }

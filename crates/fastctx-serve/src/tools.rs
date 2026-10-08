@@ -102,7 +102,7 @@ const RUN_WRITING: &str = "\
 ";
 
 const RUN_COMMANDS: &str = "\
-- `fastctx view PATH...` shows files with line numbers, several at once, images as images.
+- `fastctx view PATH...` shows files with line numbers, several at once, images as images; a PDF as its text by page, `--pages 3-5` to choose, `--image` to see them.
 - `fastctx w` shows what is happening in your town now and what happened since your last turn; `fastctx w ID` shows one resident or job.
 - `fastctx nodes` lists the machines, which are online and what each runs.
 - `fastctx copy MACHINE:PATH MACHINE:PATH` copies files and directories between machines.

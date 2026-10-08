@@ -9,6 +9,7 @@
 //! protocol, which `run` turns back into images.
 
 mod decode;
+mod pdf;
 mod text;
 
 use std::fs::File;
@@ -30,6 +31,10 @@ use crate::run::window::{BUDGET, IMAGE_COST, RUN_NOTES};
 pub struct Options {
     /// Lines `first..=last`, counting from 1, of every text file.
     pub lines: Option<(u64, u64)>,
+    /// PDF pages `first..=last`, counting from 1.
+    pub pages: Option<(u64, u64)>,
+    /// Render PDF pages instead of extracting their text layer.
+    pub image: bool,
     /// The encoding to read text in, by its WHATWG label, such as `gbk`.
     pub encoding: Option<String>,
     /// The machine's name, to say where each file is.
@@ -153,18 +158,23 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
     let mut start = vec![0u8; 512];
     let read = read_up_to(&mut file, &mut start)?;
     start.truncate(read);
-    if let Some((mime, width, height)) = sniff(&start) {
-        return image(path, options, budget, file, start, mime, width, height, metadata.len());
+    let detected_image = sniff(&start);
+    if start.starts_with(b"%PDF-")
+        || (detected_image.is_none() && path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("pdf")))
+    {
+        let result = pdf::look(path, options, budget, file, &metadata)?;
+        if result.0.cost > budget {
+            let mut note = not_shown(path, options);
+            note.partial = true;
+            return Ok((note, None));
+        }
+        return Ok(result);
     }
-    if start.starts_with(b"%PDF-") {
-        return Ok((
-            Section::note(
-                path,
-                options,
-                &format!("a PDF, {}; reading PDFs is not in this build yet", size(metadata.len())),
-            ),
-            None,
-        ));
+    if options.pages.is_some() || options.image {
+        return Ok((Section::note(path, options, "not a PDF; --pages and --image select PDF pages"), None));
+    }
+    if let Some((mime, width, height)) = detected_image {
+        return image(path, options, budget, file, start, mime, width, height, metadata.len());
     }
     text::look(path, options, budget, file, start, &metadata)
 }

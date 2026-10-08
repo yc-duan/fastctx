@@ -40,13 +40,8 @@ pub fn write_here(
         Ok(result) => &result.changes,
         Err(error) => &error.changes,
     };
-    let written: Vec<Seen> = changes
-        .iter()
-        .map(seen_after)
-        .collect::<io::Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
-        .collect();
+    let written: Vec<Seen> =
+        changes.iter().map(seen_after).collect::<io::Result<Vec<_>>>()?.into_iter().flatten().collect();
     if !written.is_empty() {
         crate::residents::record_seen(world, here, owner, town, &written)?;
     }
