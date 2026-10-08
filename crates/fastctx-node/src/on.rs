@@ -83,6 +83,10 @@ struct Followed {
     ended: bool,
 }
 
+/// What the sender does with a job's id once the machine says it started,
+/// before any of its output is handed on.
+type OnStarted = Arc<dyn Fn(JobId) -> fastctx_net::link::BoxFuture<()> + Send + Sync>;
+
 /// An `on` naming this machine: the same job, without the network.
 async fn here(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: &Pieces) -> Result<(), Failure> {
     let staged = Staged::local(&request.package).await?;
@@ -101,8 +105,17 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
     let machine = request.machine.clone();
     let sizes = sizes(&request.package).await?;
     let followed = Arc::new(Mutex::new(Followed::default()));
+    // Noted when the machine says the job started, before its output is
+    // handed on: the script's answer may be read as soon as the job is through.
+    let started: OnStarted = {
+        let (node, origin, request) = (node.clone(), origin.clone(), request.clone());
+        Arc::new(move |job| {
+            let (node, origin, request) = (node.clone(), origin.clone(), request.clone());
+            Box::pin(async move { noted(&node, &origin, &request, &job).await })
+        })
+    };
     let call = RemoteCall::On { origin: origin.clone(), sizes, writes_off: request.package.writes_off };
-    let sending = feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone());
+    let sending = feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone(), Some(started));
     let first = link.call_with_stream(&machine, call, sending).await;
     let started = followed.lock().expect("never poisoned").job.clone();
     let Some(job) = started else {
@@ -121,7 +134,6 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
             )),
         });
     };
-    noted(node, origin, request, &job).await;
     let mut delay = Backoff::default();
     loop {
         if followed.lock().expect("never poisoned").ended {
@@ -141,7 +153,7 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
             (followed.out, followed.err)
         };
         let call = RemoteCall::Follow { origin: origin.clone(), job: job.clone(), out_from, err_from };
-        let following = feed(&machine, None, followed.clone(), pieces.clone());
+        let following = feed(&machine, None, followed.clone(), pieces.clone(), None);
         match link.call_with_stream(&machine, call, following).await {
             Ok(Err(failure)) => return Err(Failure::new(format!("following {job} on {machine}: {failure}"))),
             Err(CallFailure::NotMember { name, .. }) => {
@@ -154,7 +166,13 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
 
 /// The source end of an `On` or `Follow` connection: the package first, if
 /// any, then what the job writes, until its end.
-fn feed(machine: &MachineName, package: Option<OnPackage>, followed: Arc<Mutex<Followed>>, pieces: Pieces) -> Feed {
+fn feed(
+    machine: &MachineName,
+    package: Option<OnPackage>,
+    followed: Arc<Mutex<Followed>>,
+    pieces: Pieces,
+    started: Option<OnStarted>,
+) -> Feed {
     let machine = machine.clone();
     Box::new(move |mut stream: Stream| {
         Box::pin(async move {
@@ -172,6 +190,9 @@ fn feed(machine: &MachineName, package: Option<OnPackage>, followed: Arc<Mutex<F
                 match word {
                     OnWord::Started { job } => {
                         followed.lock().expect("never poisoned").job = Some(job.clone());
+                        if let Some(started) = &started {
+                            started(job.clone()).await;
+                        }
                         let _ = pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job }));
                     }
                     OnWord::Out { bytes } | OnWord::Err { bytes } => {
