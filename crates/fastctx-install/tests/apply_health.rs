@@ -8,6 +8,10 @@ use sha2::{Digest, Sha256};
 
 #[test]
 fn released_ownership_is_bound_and_retired_with_the_host_files() {
+    // Apply ends by asking the machine's Codex about its tools, and a Codex
+    // that starts writes into its home; this test's homes must stay its own.
+    // SAFETY: the only test in this binary, before it starts any thread.
+    unsafe { std::env::set_var("PATH", "") };
     let temp = tempfile::tempdir().unwrap();
     let mut places = Places {
         root: temp.path().join("fastctx"),

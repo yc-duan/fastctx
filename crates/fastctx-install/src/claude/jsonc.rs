@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::ops::Range;
 
-use jsonc_parser::ast::{Object, ObjectProp, Value};
+use jsonc_parser::ast::{Array, Object, ObjectProp, Value};
 use jsonc_parser::common::Ranged;
 use jsonc_parser::tokens::{Token, TokenAndRange};
 use jsonc_parser::{CollectOptions, CommentCollectionStrategy, ParseOptions, parse_to_ast};
@@ -94,6 +94,46 @@ impl<'a> Document<'a> {
 
     pub fn has_comments(&self, range: Range<usize>) -> bool {
         self.tokens.iter().any(|t| t.range.start >= range.start && t.range.end <= range.end && is_comment(t))
+    }
+
+    pub fn remove_element(&self, array: &Array<'_>, index: usize, prefix: &str) -> Result<Vec<u8>, String> {
+        let value = array.elements[index].range();
+        if let Some(start) = value.start.checked_sub(prefix.len())
+            && self.source.get(start..value.start) == Some(prefix)
+        {
+            let mut next = self.source.to_owned();
+            next.replace_range(start..value.end, "");
+            if Self::validate_bytes(next.as_bytes()).is_ok() {
+                return Ok(self.encode(next));
+            }
+        }
+        let next = array.elements.get(index + 1).map_or(array.range.end - 1, |item| item.range().start);
+        let previous = index.checked_sub(1).map(|i| array.elements[i].range().end);
+        let comma = self
+            .tokens
+            .iter()
+            .find(|token| {
+                matches!(token.token, Token::Comma) && token.range.start >= value.end && token.range.end <= next
+            })
+            .or_else(|| {
+                previous.and_then(|previous| {
+                    self.tokens.iter().find(|token| {
+                        matches!(token.token, Token::Comma)
+                            && token.range.start >= previous
+                            && token.range.end <= value.start
+                    })
+                })
+            });
+        let mut next = self.source.to_owned();
+        if let Some(comma) = comma.filter(|token| token.range.start >= value.end) {
+            next.replace_range(comma.range.start..comma.range.end, "");
+        }
+        next.replace_range(value.start..value.end, "");
+        if let Some(comma) = comma.filter(|token| token.range.end <= value.start) {
+            next.replace_range(comma.range.start..comma.range.end, "");
+        }
+        Self::validate_bytes(next.as_bytes())?;
+        Ok(self.encode(next))
     }
 
     pub(super) fn comments(&self) -> Vec<String> {

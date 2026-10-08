@@ -1,0 +1,81 @@
+//! Verify the host's resulting configuration without creating an agent session.
+
+use std::path::Path;
+
+use super::Places;
+use crate::transaction::Snapshot;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolCheck {
+    pub host: &'static str,
+    /// The observation's scope, not a promise about already-open sessions.
+    pub scope: String,
+    pub result: Result<(), String>,
+}
+
+pub(super) fn codex(places: &Places) -> ToolCheck {
+    let cwd = std::env::current_dir();
+    let scope = match &cwd {
+        Ok(cwd) => {
+            format!(
+                "effective Codex features in {}; without explicit --profile or session/CLI overrides",
+                cwd.display()
+            )
+        }
+        Err(_) => "effective Codex features".into(),
+    };
+    let result = cwd.map_err(|error| error.to_string()).and_then(|cwd| codex_in(&places.codex_home, &cwd));
+    ToolCheck { host: "Codex", scope, result }
+}
+
+fn codex_in(home: &Path, cwd: &Path) -> Result<(), String> {
+    let launch = fastctx_hosts::codex::launch::resolve(home, std::env::var_os("PATH").as_ref())?;
+    let mut environment: Vec<_> =
+        std::env::vars_os().filter(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME")).collect();
+    environment.push(("CODEX_HOME".into(), home.as_os_str().to_owned()));
+    // Use the host's configuration loader: reading two TOML leaves misses
+    // project and managed configuration precedence.
+    let answer = fastctx_hosts::agents::output(&launch.binary, &["features", "list"], cwd, &environment)?;
+    if !answer.status.success() {
+        // Host diagnostics can quote arbitrary settings. Do not expose them.
+        return Err(format!("codex features list exited {}; inspect the configuration with Codex", answer.status));
+    }
+    let text = std::str::from_utf8(&answer.stdout).map_err(|_| "codex features list returned non-UTF-8 output")?;
+    let mut enabled = Vec::new();
+    for feature in crate::codex::tools::FEATURES {
+        let rows: Vec<_> = text
+            .lines()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>())
+            .filter(|row| row.first() == Some(&feature))
+            .collect();
+        match rows.as_slice() {
+            [row] if row.len() >= 3 && row.last() == Some(&"false") => {}
+            [row] if row.len() >= 3 && row.last() == Some(&"true") => enabled.push(feature),
+            _ => return Err(format!("codex features list did not report a unique boolean for {feature}")),
+        }
+    }
+    if enabled.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "still enabled: {}; check the active profile, project configuration and managed requirements",
+            enabled.join(", ")
+        ))
+    }
+}
+
+pub(super) fn claude(places: &Places) -> ToolCheck {
+    let path = places.claude_home.join("settings.json");
+    let result = Snapshot::read(&path).map_err(|error| error.to_string()).and_then(|file| {
+        if crate::claude::tools::configured(file.bytes())? {
+            Ok(())
+        } else {
+            Err("permissions.deny does not contain all of Bash, Grep and Glob".into())
+        }
+    });
+    ToolCheck {
+        host: "Claude Code",
+        scope: format!("user deny rules in {}; managed policy and session overrides are not checked", path.display()),
+        result,
+    }
+}

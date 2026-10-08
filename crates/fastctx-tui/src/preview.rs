@@ -268,6 +268,7 @@ fn nodes(now: Timestamp) -> NodesReply {
     NodesReply {
         machine: machine("desktop"),
         world: Some("w-4f1c".into()),
+        joined: Vec::new(),
         link: LinkState::Online {
             since: ago(now, 300),
             hub: "121.40.82.28:7443".into(),
@@ -277,6 +278,9 @@ fn nodes(now: Timestamp) -> NodesReply {
         machines: vec![
             Node {
                 name: machine("desktop"),
+                device: false,
+                standing: None,
+                place: None,
                 online: Some(true),
                 since: Some(ago(now, 300)),
                 facts: Ok(facts("desktop", "windows", "C:/Users/me")),
@@ -284,6 +288,9 @@ fn nodes(now: Timestamp) -> NodesReply {
             },
             Node {
                 name: machine("laptop"),
+                device: false,
+                standing: None,
+                place: None,
                 online: Some(true),
                 since: Some(ago(now, 180)),
                 facts: Ok(facts("laptop", "windows", "C:/Users/me")),
@@ -291,6 +298,9 @@ fn nodes(now: Timestamp) -> NodesReply {
             },
             Node {
                 name: machine("hangzhou"),
+                device: false,
+                standing: None,
+                place: None,
                 online: Some(false),
                 since: Some(ago(now, 95)),
                 facts: Err("it is offline".into()),
@@ -719,6 +729,12 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     machines.data(Data::Sessions(Ok(crate::sessions::Status {
         codex: crate::sessions::Standing::In,
         claude: crate::sessions::Standing::Out,
+        codex_tools: Some(Box::new(fastctx_install::apply::ToolCheck {
+            host: "Codex",
+            scope: "effective Codex features in this directory".into(),
+            result: Ok(()),
+        })),
+        claude_tools: None,
         legacy: Some(fastctx_install::upgrade::Summary {
             record: "C:/Users/me/.fastctx/upgrade-clean.json".into(),
             archives: vec!["C:/Users/me/.fastctx/legacy-archive-2026-10-04".into()],
