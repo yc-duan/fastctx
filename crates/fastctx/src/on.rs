@@ -37,9 +37,8 @@ pub const AFTER_HELP: &str = "The command's words are sent exactly as this shell
 It acts as a subshell placed there: the script's own variables, functions and options go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused.
 If the connection drops, it goes on there and its end still reaches you. It exits 255 when the World could not carry it there.";
 
-/// Run part of a script on another machine of the World: `on MACHINE
-/// [COMMAND [ARG...]]` in the World's shell; without a command, standard
-/// input is the script.
+/// Run part of a script on another machine of the World, as the World's
+/// shell writes it (`USAGE`).
 #[derive(Args)]
 pub struct OnArgs {
     /// The shell running the `on` function, which this follower ends with:
@@ -52,10 +51,11 @@ pub struct OnArgs {
     /// The command line the shell function quoted from the command's words.
     #[arg(long, value_name = "FILE", hide = true)]
     command: Option<PathBuf>,
-    /// The machine, as `fastctx nodes` names it.
+    /// The machine, as `fastctx nodes` names it; the usage says it.
+    #[arg(hide = true)]
     machine: Option<String>,
     /// A command and its words; without them, standard input is the script.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
     words: Vec<String>,
 }
 
@@ -75,7 +75,7 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
     }
     let Some(machine) = args.machine else {
         bail!(
-            "usage: on MACHINE [COMMAND [ARG...]]; without a command, standard input is the script. `fastctx nodes` lists the machines"
+            "usage: on MACHINE COMMAND [ARG...], or on MACHINE with the script on standard input. `fastctx nodes` lists the machines"
         );
     };
     let machine = MachineName::try_from(machine.as_str())?;

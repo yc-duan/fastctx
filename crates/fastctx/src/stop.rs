@@ -13,16 +13,21 @@ use fastctx_types::{Call, JobId, MachineName, Reply};
 /// Stop a job and everything it started, on whichever machine it runs.
 #[derive(Args)]
 pub struct StopArgs {
-    /// The job, as `fastctx w` shows it, such as j-k3x9a2.
+    /// The job, as `fastctx w` shows it, such as j-k3x9a2; j-k3x9a2@laptop
+    /// names the machine it runs on, when jobs on several have this id.
     job: String,
-    /// The machine it runs on, when jobs on several machines have this id.
-    #[arg(long)]
+    /// The machine, written the older way.
+    #[arg(long, hide = true)]
     machine: Option<String>,
 }
 
 pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
-    let job = JobId::try_from(args.job.as_str())?;
-    let machine = args.machine.as_deref().map(MachineName::try_from).transpose()?;
+    let (job, named) = match args.job.split_once('@') {
+        Some((job, machine)) => (job, Some(machine)),
+        None => (args.job.as_str(), None),
+    };
+    let job = JobId::try_from(job)?;
+    let machine = named.or(args.machine.as_deref()).map(MachineName::try_from).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let reply = runtime.block_on(async {

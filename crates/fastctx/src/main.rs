@@ -29,7 +29,7 @@ mod world;
 mod writers;
 
 #[derive(Parser)]
-#[command(name = "fastctx", version, about = "One world, many machines.")]
+#[command(name = "fastctx", bin_name = "fastctx", version, about = "One world, many machines.")]
 struct Cli {
     /// Without a command, in a terminal, the TUI opens.
     #[command(subcommand)]
@@ -109,7 +109,8 @@ enum Command {
         #[arg(long, default_value = "on", value_parser = ["on", "off"])]
         writes: String,
     },
-    /// Look at files: text with line numbers, images as images.
+    /// Look at files: text with line numbers, images as images, a PDF's text
+    /// by page or its pages as images, Word, PowerPoint and Excel content.
     View(view::ViewArgs),
     /// Edit a file using SEARCH/REPLACE blocks from standard input.
     Edit(writers::EditArgs),
@@ -119,17 +120,24 @@ enum Command {
     /// writes one: `*** Begin Patch` … `*** End Patch`; paths are absolute.
     #[command(hide = true)]
     ApplyPatch,
-    /// See who is here and what each is doing.
+    /// See what is happening now and what happened since your last turn;
+    /// with ids, one resident or job.
     W(w::WArgs),
-    /// Run part of a script on another machine; the World's shell calls it
-    /// as `on`.
+    /// Run part of a script on another machine of the World.
     #[command(override_usage = on::USAGE, after_help = on::AFTER_HELP)]
     On(on::OnArgs),
     /// Stop a job and everything it started, on whichever machine it runs.
     Stop(stop::StopArgs),
     /// See the World's machines: which are online and what each is like.
     Nodes,
-    /// Copy a file or a directory from one machine to another.
+    /// Copy a file or a directory from one machine of the World to another.
+    ///
+    /// Each end is MACHINE:PATH, or a path on this machine. The destination
+    /// path is what the copy becomes; ending it with / copies into that
+    /// directory instead. Files already there with the same contents are not
+    /// sent again, so running the same copy again sends only what changed.
+    /// Links are copied as links. The bytes go between the machines, never
+    /// through the terminal.
     Copy(copy::CopyArgs),
     /// Talk to a resident on any machine, or open a session to talk to.
     Talk(talk::TalkArgs),
@@ -191,7 +199,10 @@ fn main() -> ExitCode {
         eprintln!("fastctx: {error:#}");
         return ExitCode::FAILURE;
     }
-    let cli = Cli::parse();
+    let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&command_line().get_matches()) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
+    };
     let Some(command) = cli.command else {
         // The TUI needs a terminal on both sides; anything else asked for
         // help, as a command without arguments does.
@@ -199,7 +210,7 @@ fn main() -> ExitCode {
         if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
             return finish(fastctx_tui::run().map(|()| ExitCode::SUCCESS));
         }
-        let _ = <Cli as clap::CommandFactory>::command().print_help();
+        let _ = command_line().print_help();
         return ExitCode::from(2);
     };
     let result = match command {
@@ -259,6 +270,25 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The commands a person runs on a machine: its node, joining and managing
+/// the World, talking to residents, the TUI.
+const PEOPLE_ONLY: [&str; 18] = [
+    "ui", "node", "renew", "service", "server", "serve", "talk", "attach", "join", "invite", "grant", "route", "relay",
+    "revoke", "leave", "hub", "apply", "unapply",
+];
+
+/// The command line; in a resident's shell its help lists what a resident
+/// works with, the others staying callable.
+fn command_line() -> clap::Command {
+    let mut command = <Cli as clap::CommandFactory>::command();
+    if std::env::var_os("FASTCTX_RESIDENT").is_some() {
+        for name in PEOPLE_ONLY {
+            command = command.mut_subcommand(name, |subcommand| subcommand.hide(true));
+        }
+    }
+    command
 }
 
 /// A command that sets its own exit code, or fails.

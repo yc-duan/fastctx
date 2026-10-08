@@ -34,7 +34,18 @@ impl SessionChange {
             }
             // Codex shows its own notice only when the host asks for it.
             SessionChange::Safety { buffering } if buffering["showBufferingUi"] == true => {
-                (HealthKind::Safety, "OpenAI is holding this turn's output for extra safety processing".into())
+                // The use and the reason OpenAI gives, such as cyber and
+                // probes, say what the person who asked may want to change.
+                let listed = |key: &str| {
+                    let words: Vec<&str> = buffering[key].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    if words.is_empty() { "unspecified".to_string() } else { words.join(", ") }
+                };
+                let text = format!(
+                    "OpenAI is holding this turn's output for extra safety processing (use: {}; reason: {})",
+                    listed("useCases"),
+                    listed("reasons")
+                );
+                (HealthKind::Safety, text)
             }
             SessionChange::Error { error, will_retry } => (
                 if *will_retry { HealthKind::Reconnecting } else { HealthKind::Error },

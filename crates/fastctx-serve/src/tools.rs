@@ -92,7 +92,7 @@ const RUN_REST: &str = "\
   on hangzhou <<'EOF'
   cd /srv/app && tail -n 200 app.log | grep ERROR
   EOF
-It acts as a subshell placed there: the script's own variables and functions go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused. If the connection drops, it goes on there and its end still reaches you.
+It acts as a subshell placed there: the script's own variables, functions and options go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused. If the connection drops, it goes on there and its end still reaches you.
 
 Every machine runs bash with the GNU tools and ripgrep (`rg`), Windows ones too (Git Bash), where paths are written like C:/Users/me and `df`, `du`, `ls` and `find` answer what PowerShell would. Git Bash rewrites arguments shaped like Unix paths, such as /FI, before a Windows program sees them: put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
 
@@ -112,10 +112,10 @@ const RUN_WRITING: &str = "\
 ";
 
 const RUN_COMMANDS: &str = "\
-- `fastctx view PATH...` shows files with line numbers, several at once, images as images; a PDF as its text by page, `--pages 3-5` to choose, `--image` to see them.
+- `fastctx view PATH...` shows files with line numbers, several at once, images as images; a PDF as its text by page, `--pages 3-5` to choose, `--image` to see them; Word, PowerPoint and Excel as their content, Excel cells by address.
 - `fastctx w` shows what is happening in your town now and what happened since your last turn; `fastctx w ID` shows one resident or job.
 - `fastctx nodes` lists the machines, which are online and what each runs.
-- `fastctx copy MACHINE:PATH MACHINE:PATH` copies files and directories between machines.
+- `fastctx copy MACHINE:PATH MACHINE:PATH` copies files and directories between machines; the destination path is what the copy becomes, and ending it with / copies into that directory.
 - `fastctx stop JOB` stops a job and everything it started.
 - `fastctx project` lists the towns, each a project, and shows their maps; `fastctx project enter TOWN` moves you into one, only when the user says which project to work on.
 - `fastctx journal` reads and adds to your town's journals; `fastctx page` publishes a page, HTML the user opens in the World's app.";
@@ -130,7 +130,7 @@ fn ask_colleague_definition(woken: bool, machines: Option<&Machines>) -> Value {
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "What you need from the colleague, in your own words. It is delivered word for word as its first message."
+                    "description": "What you need from the colleague, in your own words. It reaches the colleague word for word, under a line naming you, as its first message."
                 },
                 "description": {
                     "type": "string",

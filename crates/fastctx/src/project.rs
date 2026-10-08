@@ -28,7 +28,8 @@ pub enum ProjectCommand {
     /// Live and work in a town from now on, and get its map. Only when the
     /// user says which project to work on; do not change towns on your own.
     Enter { town: String },
-    /// Open a town: the first version of its record.
+    /// Open a town: the first version of its record. Only when the user
+    /// asks for a new project, or agrees to one.
     New {
         /// Its short name: lowercase letters, digits and hyphens.
         town: String,
@@ -144,7 +145,7 @@ impl Fields {
 
 fn list(here: &MachineName, towns: &[TownSummary]) -> String {
     if towns.is_empty() {
-        return format!("=== towns on {here}: none; fastctx project new opens one ===\n");
+        return format!("=== towns on {here}: none ===\n");
     }
     let mut text = format!("=== towns on {here} ({}) ===\n", towns.len());
     for town in towns {

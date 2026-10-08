@@ -6,14 +6,7 @@ use clap::Args;
 use fastctx_types::copy::{CopyReport, Place};
 use fastctx_types::{Call, MachineName, Reply};
 
-/// Copy a file or a directory from one machine of the World to another.
-///
-/// Each end is MACHINE:PATH, or a path on this machine. The destination
-/// path is what the copy becomes; ending it with / copies into that
-/// directory instead. Files already there with the same contents are not
-/// sent again, so running the same copy again sends only what changed.
-/// Links are copied as links. The bytes go between the machines, never
-/// through the terminal.
+/// The two ends of a copy; what a copy does is said on the `copy` command.
 #[derive(Args)]
 pub struct CopyArgs {
     /// What to copy: MACHINE:PATH, or a path on this machine.
