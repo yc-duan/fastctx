@@ -20,6 +20,8 @@ The user has several machines, connected by fastctx: this one, and others that `
 - `edit PATH` and `write PATH` change a file and keep its encoding and line endings; `run`'s description shows how.
 - `rg` searches.
 
+Images on these machines are yours to see: `fastctx view` returns them to you as images, so look at one yourself rather than asking the user to upload it.
+
 `run` starts on this machine. To work on another one, write `on MACHINE` before a command, or give it a script:
 
 ```bash
