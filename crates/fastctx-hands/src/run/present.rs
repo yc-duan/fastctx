@@ -80,6 +80,10 @@ fn facts(reply: &RunReply) -> String {
         RunState::Failed { error } => format!("could not run: {error}"),
     }];
     facts.extend(output_facts(&reply.output));
+    if !reply.visited.is_empty() {
+        let went: Vec<String> = reply.visited.iter().map(|(machine, job)| format!("{machine} {job}")).collect();
+        facts.push(format!("on {}", went.join(", ")));
+    }
     facts.join("; ")
 }
 

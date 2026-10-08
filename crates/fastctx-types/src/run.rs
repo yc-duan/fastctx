@@ -32,6 +32,10 @@ pub struct RunReply {
     pub job: JobId,
     pub state: RunState,
     pub output: OutputWindow,
+    /// The machines the script's `on`s went to so far, each with the job it
+    /// is there (`world-run.md`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub visited: Vec<(MachineName, JobId)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +198,21 @@ pub struct JobRecord {
     /// The World's write commands refuse in this job (`RunRequest`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub writes_off: bool,
+    /// Set for a job an `on` sent here from another machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<OnJob>,
+}
+
+/// What a job an `on` sent here has besides a script (`world-run.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnJob {
+    /// The sending script's own state, which the prelude restores first.
+    pub state: String,
+    /// The file its standard input is read from, whole; none for none.
+    pub input: Option<String>,
+    /// The file its standard error goes to, apart from its output, which
+    /// `on` hands back separately.
+    pub errors: String,
 }
 
 /// A resident or an open page that started a job. The resident wire shape

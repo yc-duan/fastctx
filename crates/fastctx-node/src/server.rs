@@ -89,6 +89,33 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
             continue;
         }
+        if let Call::On { resident, town, request } = call {
+            // Only the World's shell of that resident sends its `on`s: the
+            // command speaks as the resident its job belongs to.
+            let ended = match &hello.peer {
+                Peer::Command { resident: Some(speaker), .. } if *speaker == resident => {
+                    let origin = fastctx_types::on::OnOrigin { resident, town };
+                    match crate::on::send(node, origin, request).await {
+                        Err(failure) => Err(failure),
+                        Ok(mut pieces) => loop {
+                            tokio::select! {
+                                piece = pieces.recv() => match piece {
+                                    Some(Ok(piece)) => writer.send(&json(&NodeFrame::On { id, piece })).await?,
+                                    Some(Err(failure)) => break Err(failure),
+                                    None => break Ok(Reply::Done),
+                                },
+                                // The client says nothing more on an `on`;
+                                // its leaving stops the job.
+                                _ = reader.recv() => return Ok(()),
+                            }
+                        },
+                    }
+                }
+                _ => Err(Failure::new("on is for the World's shell, as the resident whose script it is")),
+            };
+            writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
+            continue;
+        }
         // A call is answered whole or not taken on: a node handing the
         // World to its successor answers what it has begun, then goes.
         let Some(_answering) = node.handoff.call() else {
@@ -395,6 +422,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::attach::command(node, &resident).await.map(Reply::Attachable)
         }
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
+        Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
         Call::Upload { .. } => Err(Failure::new("an upload requires its byte stream on a dedicated connection")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),

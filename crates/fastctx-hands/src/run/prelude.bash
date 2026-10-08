@@ -63,6 +63,12 @@ on() {
         fastctx on
         return
     fi
+    # A whole script as one word is how ssh is written; here one word is the
+    # name of a program to run, so it is refused before anything is sent.
+    if [ $# -eq 2 ] && [[ $2 == *[[:space:]\;\|\&\<\>\$\`\(\)]* ]]; then
+        printf '%s\n' "on: '$2' is one word, the name of a program to run on $1. For a script, give it on standard input: on $1 <<'EOF' ... EOF" >&2
+        return 255
+    fi
     local __fastctx_file="${FASTCTX_SCRATCH:?the World did not start this shell}/on-$BASHPID-$RANDOM$RANDOM.state"
     {
         # A bash the script started has no prelude, and so no record of the

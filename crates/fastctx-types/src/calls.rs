@@ -36,6 +36,15 @@ pub enum Call {
         request: RunRequest,
         node: Option<MachineName>,
     },
+    /// Runs part of a script on another machine for `resident`, which may
+    /// live elsewhere when this script is itself an `on` (`world-run.md`).
+    /// The node answers with `NodeFrame::On` pieces as the job goes, then a
+    /// `Reply`; the client closing the connection first stops the job.
+    On {
+        resident: Address,
+        town: Option<TownName>,
+        request: crate::on::OnRequest,
+    },
     /// Writes files for a resident of this machine, on this machine or on
     /// the machine `node` names.
     Write {

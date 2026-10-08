@@ -5,6 +5,7 @@ use crate::agents::AgentsReply;
 use crate::management::{Managed, Management};
 use serde::{Deserialize, Serialize};
 
+use crate::JobId;
 use crate::copy::{CopyReport, Place};
 use crate::ipc::Failure;
 use crate::project::CanonHead;
@@ -36,6 +37,29 @@ pub enum RemoteCall {
         resident: ResidentId,
         town: Option<TownName>,
         request: RunRequest,
+    },
+    /// Run a part of a script there (`world-run.md`, `on`). The package
+    /// follows on the data connection, `sizes` long; then the machine says
+    /// `OnWord`s and the job's output on it until the job ends.
+    On {
+        origin: crate::on::OnOrigin,
+        sizes: crate::on::OnSizes,
+        /// The World's write commands are off in the sending shell.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        writes_off: bool,
+    },
+    /// Go on handing over an `on` job's output from these byte offsets, on
+    /// the data connection, after the one it started on broke.
+    Follow {
+        origin: crate::on::OnOrigin,
+        job: JobId,
+        out_from: u64,
+        err_from: u64,
+    },
+    /// Stop an `on` job: its sender stopped it on purpose.
+    StopOn {
+        origin: crate::on::OnOrigin,
+        job: JobId,
     },
     /// Write files there for a resident of the calling machine.
     Write {
@@ -199,6 +223,8 @@ pub enum RemoteReply {
     },
     Uploaded(crate::attachments::Attachment),
     Run(RunReply),
+    /// An `on` job's end was handed over, or it was stopped.
+    OnDone,
     Written {
         outcome: WriteOutcome,
     },

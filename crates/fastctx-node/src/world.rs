@@ -211,7 +211,9 @@ struct Handler {
 
 impl fastctx_net::link::Node for Handler {
     fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, Failure> {
-        if matches!(call, RemoteCall::Watch { .. }) {
+        // A watch and an `on` go on for as long as they go on: a node
+        // handing the World on does not wait for them.
+        if matches!(call, RemoteCall::Watch { .. } | RemoteCall::On { .. } | RemoteCall::Follow { .. }) {
             return Ok(None);
         }
         let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
@@ -254,6 +256,15 @@ impl fastctx_net::link::Node for Handler {
                     let (reply, _) = node.jobs.run(&node, owner.into(), town, request).await?;
                     Ok(RemoteReply::Run(reply))
                 }
+                RemoteCall::On { origin, sizes, writes_off } => {
+                    let stream = stream.ok_or_else(|| Failure::new("an on comes with a data connection"))?;
+                    crate::on::serve_on(&node, origin, sizes, writes_off, stream).await
+                }
+                RemoteCall::Follow { origin, job, out_from, err_from } => {
+                    let stream = stream.ok_or_else(|| Failure::new("following an on needs a data connection"))?;
+                    crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
+                }
+                RemoteCall::StopOn { origin, job } => crate::on::serve_stop(&node, origin, job).await,
                 RemoteCall::Ask { asker, town, label, prompt } => {
                     let asker = Address { machine: from, resident: asker };
                     let colleague = crate::colleagues::ask_here(&node, asker, town, label, prompt).await?;

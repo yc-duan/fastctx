@@ -49,6 +49,7 @@ fn main() -> anyhow::Result<()> {
                         job: Some(&job.id),
                         scratch: None,
                         writes_off: false,
+                        on_state: None,
                     },
                 );
                 Ok(shell::Prepared {
@@ -124,6 +125,7 @@ fn exercise() -> anyhow::Result<()> {
     let launched = {
         let _lock = FileLock::acquire(&world.node_lock())?;
         run::launch(&run::Launch {
+            on: None,
             world: &world,
             machine: &machine,
             owner: &owner.clone().into(),

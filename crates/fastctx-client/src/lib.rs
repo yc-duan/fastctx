@@ -203,9 +203,20 @@ impl Client {
             NodeFrame::Reply { id: answered, .. } => {
                 Err(broken(format!("the node answered call {answered}, not {id}")))
             }
-            NodeFrame::Watched { .. } => Err(broken("the node answered a call as a watch".to_string())),
+            NodeFrame::Watched { .. } | NodeFrame::On { .. } => {
+                Err(broken("the node answered a call as a stream".to_string()))
+            }
             NodeFrame::FileRead { .. } => Err(broken("use read_file to consume a file byte stream".to_string())),
         }
+    }
+
+    /// Sends an `On` call; the connection carries the job's output from then
+    /// on, and closing it stops the job.
+    pub async fn on(mut self, call: Call) -> Result<OnStream, CallError> {
+        self.next += 1;
+        let id = self.next;
+        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        Ok(OnStream { client: self, id })
     }
 
     /// Sends a `Watch` call; the connection carries the watch from then on.
@@ -214,6 +225,32 @@ impl Client {
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
         Ok(Watching { transport: WatchingTransport::Local { client: self, id } })
+    }
+}
+
+/// An `on` job's output as the node hands it over; dropping it stops the
+/// job.
+pub struct OnStream {
+    client: Client,
+    id: u64,
+}
+
+impl OnStream {
+    /// The next piece; `None` once the call ended as it should.
+    pub async fn next(&mut self) -> Result<Option<fastctx_types::on::OnPiece>, CallError> {
+        let frame = self
+            .client
+            .connection
+            .recv()
+            .await
+            .map_err(CallError::Broken)?
+            .ok_or_else(|| CallError::Broken(std::io::ErrorKind::UnexpectedEof.into()))?;
+        let broken = |what: String| CallError::Broken(std::io::Error::other(what));
+        match serde_json::from_slice::<NodeFrame>(&frame).map_err(|error| broken(error.to_string()))? {
+            NodeFrame::On { id, piece } if id == self.id => Ok(Some(piece)),
+            NodeFrame::Reply { id, reply } if id == self.id => reply.map(|_| None).map_err(CallError::Failed),
+            _ => Err(broken("the node answered another call on an on".to_string())),
+        }
     }
 }
 

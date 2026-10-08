@@ -118,6 +118,7 @@ pub fn fixtures() -> Fixtures {
                 legacy: None,
                 escaped_lines: 0,
             },
+            visited: Vec::new(),
         }),
         PageResult::Said { to, landed: Landed::Sent },
         PageResult::EntryAdded { journal, id: "20261004T120000Z-desktop".parse().unwrap() },

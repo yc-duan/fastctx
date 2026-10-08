@@ -32,6 +32,9 @@ pub struct Context<'a> {
     pub scratch: Option<&'a Path>,
     /// The World's write commands refuse in this shell (`world-write.md`).
     pub writes_off: bool,
+    /// The state an `on` brought from the sending script, which the
+    /// prelude restores before the script runs.
+    pub on_state: Option<&'a Path>,
 }
 
 /// A shell invocation, with its complete environment already resolved.
@@ -92,6 +95,10 @@ pub fn environment_from(mut env: Vec<(OsString, OsString)>, context: &Context<'_
     match context.scratch {
         Some(scratch) => set(&mut env, "FASTCTX_SCRATCH", forward_slashes(scratch)),
         None => unset(&mut env, "FASTCTX_SCRATCH"),
+    }
+    match context.on_state {
+        Some(state) => set(&mut env, "FASTCTX_ON_STATE", forward_slashes(state)),
+        None => unset(&mut env, "FASTCTX_ON_STATE"),
     }
     if context.writes_off {
         set(&mut env, "FASTCTX_WRITES", "off");

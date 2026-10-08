@@ -12,6 +12,7 @@ mod attach;
 mod copy;
 mod journal;
 mod keep;
+mod on;
 mod page;
 mod project;
 mod renew;
@@ -100,6 +101,9 @@ enum Command {
     View(view::ViewArgs),
     /// See who is here and what each is doing.
     W(w::WArgs),
+    /// Run part of a script on another machine; the World's shell calls it
+    /// as `on`.
+    On(on::OnArgs),
     /// See the World's machines: which are online and what each is like.
     Nodes,
     /// Copy a file or a directory from one machine to another.
@@ -196,6 +200,7 @@ fn main() -> ExitCode {
         Command::Serve { writer, writes } => serve(&writer, writes == "off"),
         Command::View(args) => view::run(args),
         Command::W(args) => w::run(args),
+        Command::On(args) => return on::run(args),
         Command::Nodes => world::nodes(),
         Command::Copy(args) => return finish(copy::run(args)),
         Command::Talk(args) => talk::run(args),
