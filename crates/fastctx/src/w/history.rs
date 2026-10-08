@@ -33,6 +33,14 @@ pub(super) fn render(history: &WorldSince, previous: bool, full: bool, now: Time
         {
             continue;
         }
+        // A job done within its `run` call was answered to its caller there:
+        // routine work, in that resident's actions. One that went on in the
+        // background is news.
+        if let SinceKind::JobEnded { elapsed_ms, .. } = &event.what
+            && u128::try_from(*elapsed_ms).is_ok_and(|ms| ms < fastctx_hands::run::WAIT.as_millis())
+        {
+            continue;
+        }
         // Registration refreshes and delivery receipts are not new work.
         // A turn end already says who was answered; it is not repeated here.
         if matches!(event.what, SinceKind::ClaudeRegistered { .. })
@@ -44,7 +52,7 @@ pub(super) fn render(history: &WorldSince, previous: bool, full: bool, now: Time
         }
         lines.push(format!(
             "  {}  {}  {}{}\n",
-            clock(event.at, now),
+            when(event.at, now),
             event.machine,
             fact(event),
             if history.town.is_some()
@@ -78,8 +86,8 @@ pub(super) fn render(history: &WorldSince, previous: bool, full: bool, now: Time
     if lines.is_empty() && issues.is_empty() {
         return String::new();
     }
-    let from = if previous { "your last recorded turn end at " } else { "" };
-    let mut text = format!("since {from}{}\n", clock(history.since, now));
+    let from = if previous { "your last turn ended, " } else { "" };
+    let mut text = format!("since {from}{}\n", when(history.since, now));
     if !full && lines.len() > RECENT {
         let town = history.town.as_ref().map(|town| format!(" {town}")).unwrap_or_default();
         text.push_str(&format!(

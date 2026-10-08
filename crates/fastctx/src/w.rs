@@ -17,7 +17,7 @@ use jiff::Timestamp;
 /// See current work and what happened while you were away.
 #[derive(Args)]
 pub struct WArgs {
-    /// Include residents who are idle, asleep or gone, with their last action.
+    /// Include residents who are idle or asleep, which words can still reach, with their last action.
     #[arg(short = 'a', long = "all")]
     all: bool,
     /// Read history after this time: 2h, 14:00, or an RFC 3339 timestamp.
@@ -128,7 +128,7 @@ fn host(host: &Host) -> String {
 
 fn first_line(text: &str) -> String {
     let mut lines = text.lines();
-    let first = lines.next().unwrap_or_default();
+    let first = lines.next().unwrap_or_default().trim_end();
     if lines.next().is_some() { format!("{first} …") } else { first.to_string() }
 }
 
@@ -136,8 +136,8 @@ fn ago(then: Timestamp, now: Timestamp) -> String {
     duration(now.as_second().saturating_sub(then.as_second()).max(0) as u64)
 }
 
-fn clock(at: Timestamp, now: Timestamp) -> String {
-    let zone = jiff::tz::TimeZone::system();
-    let (at, now) = (at.to_zoned(zone.clone()), now.to_zoned(zone));
-    if at.date() == now.date() { at.strftime("%H:%M").to_string() } else { at.strftime("%Y-%m-%d %H:%M").to_string() }
+/// When something happened, as a model reads it without knowing the
+/// machine's clock or zone: how long ago.
+fn when(at: Timestamp, now: Timestamp) -> String {
+    format!("{} ago", ago(at, now))
 }

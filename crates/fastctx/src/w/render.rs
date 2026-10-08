@@ -22,7 +22,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
         match state {
             MachineState::Answered(_) => {}
             MachineState::Offline { machine, since: Some(since) } => {
-                machines.push(format!("{machine} offline since {}", clock(*since, now)))
+                machines.push(format!("{machine} offline for {}", ago(*since, now)))
             }
             MachineState::Offline { machine, since: None } => machines.push(format!("{machine} offline")),
             MachineState::NoAnswer { machine, reason } => machines.push(format!("{machine} did not answer ({reason})")),
@@ -79,7 +79,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                                 ago(moved.at, now)
                             )
                         } else {
-                            " (not here; departure time unrecorded)".into()
+                            " (left)".into()
                         }
                     }
                     None if !view.answered(&owner.machine) => " (owner's machine did not answer)".into(),
@@ -91,7 +91,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
         };
         running.push((
             job.machine.clone(),
-            format!("  {}  {}  {}  {owner}  {}\n", job.machine, job.job, ago(job.started_at, now), job.command),
+            format!("  {}  {}  {}  {owner}  {}\n", job.machine, job.job, ago(job.started_at, now), brief(&job.command)),
         ));
     }
     for resident in &view.residents {
@@ -119,6 +119,7 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     let mut working = String::new();
     let mut waiting = String::new();
     let mut resting = String::new();
+    let mut left = 0;
     for resident in &view.residents {
         if busy(resident) || (resident.here && resident.now.is_none()) {
             let mark = if Some(&address(resident)) == you { " (you)" } else { "" };
@@ -130,6 +131,10 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 task(resident),
                 step(resident, now)
             ));
+        } else if all && resident.now.is_none() && resident.removed.is_none() && resident.moved.is_none() {
+            // A session that has left cannot be woken or spoken to again;
+            // what it did is in the history, and `w ID` finds it.
+            left += 1;
         } else if all {
             let state = if let Some(at) = resident.removed {
                 format!("removed {} ago", ago(at, now))
@@ -144,13 +149,13 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                     Activity::Asleep => "asleep".into(),
                 }
             } else {
-                "left; departure time unrecorded".into()
+                unreachable!("residents that left are counted, not listed")
             };
             let last = resident
                 .last_action
                 .as_ref()
                 .map(|action| {
-                    format!("; {} {} ago: {} -> {}", action.hand, ago(action.at, now), action.what, action.result)
+                    format!("; {} {} ago: {} -> {}", action.hand, ago(action.at, now), brief(&action.what), action.result)
                 })
                 .unwrap_or_default();
             resting.push_str(&format!(
@@ -186,12 +191,23 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             }
         }
     }
+    if left > 0 {
+        resting.push_str(&format!("  and {left} sessions that have left; `fastctx w ID` shows one\n"));
+    }
     for (label, body) in [("working", working), ("waiting", waiting), ("inactive", resting)] {
         if !body.is_empty() {
             text.push_str(&format!("{label}\n{body}"));
         }
     }
     text
+}
+
+/// A command as one line of a list: its first line, no longer than a
+/// terminal line, marked where cut; `w ID` gives it whole.
+pub(super) fn brief(command: &str) -> String {
+    const WIDTH: usize = 100;
+    let first = first_line(command);
+    if first.chars().count() <= WIDTH { first } else { format!("{} …", first.chars().take(WIDTH).collect::<String>()) }
 }
 
 pub(super) fn person(address: &Address, machine: &MachineName) -> String {
