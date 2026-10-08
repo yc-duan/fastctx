@@ -81,7 +81,7 @@ pub fn map(view: &MapView) -> String {
         ));
     } else {
         text.push_str(&format!(
-            "Journals ({}, the latest written first; files in {}/journals; read one with fastctx journal read <journal>):\n",
+            "Journals ({}, the latest written first; files in {}/journals; read one with `fastctx journal read JOURNAL`):\n",
             view.journals.len(),
             view.ledger
         ));
@@ -90,7 +90,7 @@ pub fn map(view: &MapView) -> String {
         }
     }
 
-    text.push_str(&format!("\nPages ({}; read one with fastctx page read <page>):\n", view.pages.len()));
+    text.push_str(&format!("\nPages ({}; read one with `fastctx page read PAGE`):\n", view.pages.len()));
     for page in &view.pages {
         text.push_str(&format!("  {}\n", crate::pages::line(page)));
     }

@@ -130,25 +130,24 @@ fn starting_directory(launch: &Launch<'_>) -> Result<PathBuf, Failure> {
     let Some(cwd) = &launch.request.cwd else {
         return Ok(launch.home.to_path_buf());
     };
-    // A path that is not this machine's is most often another machine's:
-    // the model meant to work there, which `on` does, not `cwd`.
-    let path = fastctx_platform::local_path(cwd).map_err(|error| {
+    // A path that is not this machine's is most often another machine's,
+    // written either way: the model meant to work there, which `on` does,
+    // not `cwd`. Every refusal says so, whatever this machine found.
+    let refused = |reason: String| {
         Failure::new(format!(
-            "cwd {cwd:?} is not a directory of {}, where cwd is ({error}); to work in another machine's directory, write `on MACHINE` in the script and `cd` there",
+            "cwd {cwd:?} is not a directory of {}, where the script starts ({reason}); to work in another machine's directory, write `on MACHINE` in the script and `cd` there",
             launch.machine
         ))
-    })?;
+    };
+    let path = fastctx_platform::local_path(cwd).map_err(|error| refused(error.to_string()))?;
     if !path.is_absolute() {
         let example = if cfg!(windows) { "C:/Users/me/project" } else { "/home/me/project" };
-        return Err(Failure::new(format!(
-            "cwd {cwd:?} is not an absolute path on {}; write it the way this machine does, such as {example}",
-            launch.machine
-        )));
+        return Err(refused(format!("not an absolute path here, where paths are written like {example}")));
     }
     match std::fs::metadata(&path) {
         Ok(metadata) if metadata.is_dir() => Ok(path),
-        Ok(_) => Err(Failure::new(format!("cwd {cwd:?} on {} is not a directory", launch.machine))),
-        Err(error) => Err(failure(&format!("cwd {cwd:?} on {}", launch.machine), &error)),
+        Ok(_) => Err(refused("it is a file".into())),
+        Err(error) => Err(refused(error.to_string())),
     }
 }
 

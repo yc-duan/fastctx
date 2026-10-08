@@ -258,7 +258,7 @@ fn words(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin
     let place = match (town, origin) {
         (Some(town), _) => format!("You live on the machine {machine}, in the town {town}; its map follows."),
         (None, Origin::User) => format!(
-            "You live on the machine {machine}, in no town yet. When the user names the project to work on, enter its town with `fastctx project enter <town>` (`fastctx project list` lists them)."
+            "You live on the machine {machine}, in no town yet. When the user names the project to work on, enter its town with `fastctx project enter TOWN` (`fastctx project list` lists them)."
         ),
         (None, Origin::Colleague { .. }) => format!("You live on the machine {machine}, in no town."),
     };
