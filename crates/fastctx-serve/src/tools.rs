@@ -3,25 +3,6 @@
 use fastctx_hands::run::{Content, window};
 use serde_json::{Value, json};
 
-/// Which way of writing files a session's host is given (`world-write.md`):
-/// Codex's patches, or the exact replacements other hosts use. Only one is
-/// listed, so a model never weighs two ways of doing one thing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Writer {
-    Edit,
-    ApplyPatch,
-}
-
-impl Writer {
-    /// Whether the tool `name` is one this session writes with.
-    pub fn lists(self, name: &str) -> bool {
-        match self {
-            Writer::Edit => name == "edit" || name == "write",
-            Writer::ApplyPatch => name == "apply_patch",
-        }
-    }
-}
-
 /// The machines a session works on as its tools were listed: this one, and
 /// the others its scope reaches.
 pub struct Machines {
@@ -29,13 +10,12 @@ pub struct Machines {
     pub others: Vec<String>,
 }
 
-/// The tools this session lists. A colleague has no colleague tools of its
-/// own: the World is one level deep (`world-colleagues.md`).
-pub fn definitions(writer: Writer, colleague: bool, machines: Option<&Machines>) -> Value {
-    let mut tools = match writer {
-        Writer::Edit => vec![run_definition(machines), edit_definition(machines), write_definition(machines)],
-        Writer::ApplyPatch => vec![run_definition(machines), apply_patch_definition(machines)],
-    };
+/// The tools this session lists: the World's shell, and the colleague tools,
+/// which a colleague has none of: the World is one level deep
+/// (`world-colleagues.md`). Writing files and going to other machines are
+/// commands in the shell (`world-run.md`, `world-write.md`).
+pub fn definitions(writes_off: bool, colleague: bool, machines: Option<&Machines>) -> Value {
+    let mut tools = vec![run_definition(writes_off, machines)];
     if !colleague {
         tools.push(ask_colleague_definition(machines));
         tools.push(message_colleague_definition());
@@ -48,27 +28,30 @@ pub fn definitions(writer: Writer, colleague: bool, machines: Option<&Machines>)
     Value::Array(tools)
 }
 
-/// The `node` parameter, naming the machines there are when the node could
-/// say: a model that knows them reaches the right one by the user's words.
-fn node(subject: &str, machines: Option<&Machines>) -> Value {
-    let description = match machines {
+/// The machines there are, when the node could say: a model that knows
+/// them reaches the right one by the user's words.
+fn machine_names(machines: Option<&Machines>) -> String {
+    match machines {
         Some(machines) => {
             let mut names = vec![format!("{} (this one)", machines.here)];
             names.extend(machines.others.iter().cloned());
-            format!(
-                "{subject}, by name; without it, this machine. The World's machines when this session began: {}.",
-                names.join(", ")
-            )
+            format!("The World's machines when this session began: {}.", names.join(", "))
         }
-        None => format!("{subject}, by name, as `fastctx nodes` lists them; without it, this machine."),
-    };
+        None => "`fastctx nodes` lists the World's machines.".to_string(),
+    }
+}
+
+/// The `node` parameter of the colleague tool.
+fn node(subject: &str, machines: Option<&Machines>) -> Value {
+    let description = format!("{subject}, by name; without it, this machine. {}", machine_names(machines));
     json!({ "type": "string", "description": description })
 }
 
-fn run_definition(machines: Option<&Machines>) -> Value {
+fn run_definition(writes_off: bool, machines: Option<&Machines>) -> Value {
+    let writing = if writes_off { "" } else { RUN_WRITING };
     json!({
         "name": "run",
-        "description": RUN_DESCRIPTION,
+        "description": format!("{RUN_START}{}\n\n{RUN_REST}{writing}{RUN_COMMANDS}", machine_names(machines)),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -78,9 +61,8 @@ fn run_definition(machines: Option<&Machines>) -> Value {
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "The absolute path of the directory to start in, on the machine the script runs on. Without it the script starts in that machine's home directory."
-                },
-                "node": node("The machine to run on", machines)
+                    "description": "The absolute path of the directory to start in, on this machine. Without it the script starts in the home directory."
+                }
             },
             "required": ["command"],
             "additionalProperties": false
@@ -95,98 +77,38 @@ fn run_definition(machines: Option<&Machines>) -> Value {
     })
 }
 
-const RUN_DESCRIPTION: &str = "\
-Run a bash script on a machine of the World and read what it prints.
+const RUN_START: &str = "\
+Run a bash script on this machine and read what it prints. Inside it, `on MACHINE` runs a part of it on another machine of the World, with no address, login or key. ";
 
-The script runs on this machine unless `node` names another; everything in it then happens on that machine, with its files, programs and environment. Every machine runs it in bash with the GNU tools, Windows ones too, where paths are written like C:/Users/me; there `df`, `du`, `ls` and `find` answer what PowerShell would, without the second layer of quoting that PowerShell inside bash needs and that breaks easily. On Windows that bash is Git Bash, which rewrites arguments shaped like Unix paths, such as /FI, before a Windows program sees them; put MSYS_NO_PATHCONV=1 before such a command. The first line of the answer names the machine it ran on.
+const RUN_REST: &str = "\
+`on` takes a command and its words, sent exactly as this shell expanded them, or a script on standard input, read only by that machine's bash:
+  on laptop cargo test --release
+  on hangzhou <<'EOF'
+  cd /srv/app && tail -n 200 app.log | grep ERROR
+  EOF
+It acts as a subshell placed there: the script's own variables and functions go along; the machine's own settings, such as PATH, HOME and LANG, are that machine's. Its output, exit code and standard input work as any command's, in pipelines and `if` too. A script written as one quoted word is refused. If the connection drops, it goes on there and its end still reaches you.
 
-Each call is a fresh login shell: no directory, variable or function carries over from an earlier call, and nothing is read from standard input, so a program that asks for input fails at once instead of waiting. The script starts in the machine's home directory unless `cwd` names another. Standard output and standard error arrive together, in the order a terminal would show them. Images that a program draws with the kitty or iTerm2 terminal graphics protocols come back as images.
+Every machine runs bash with the GNU tools and ripgrep (`rg`), Windows ones too (Git Bash), where paths are written like C:/Users/me and `df`, `du`, `ls` and `find` answer what PowerShell would. Git Bash rewrites arguments shaped like Unix paths, such as /FI, before a Windows program sees them: put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
 
-Besides the machine's own programs, the shell has the World's commands, each explained by its `--help`: `fastctx nodes` lists the machines, which are online and what each runs; `fastctx copy` copies files and directories between machines, written MACHINE:PATH; `fastctx view` shows files, several at once, with line numbers, and images as images; `fastctx w` shows who is in your town and what each is doing; `fastctx project` lists the towns, each a project, and shows their maps, and `fastctx project enter <town>` moves you into one, only when the user says which project to work on; `fastctx journal` reads and adds to your town's journals; `fastctx page` publishes a page, HTML the user opens in World's interface.
+Each call is a fresh login shell, starting in the home directory unless `cwd` names another; nothing carries over between calls, and standard input is empty. Standard output and standard error arrive together. Images a program draws with the kitty or iTerm2 terminal protocols come back as images. A call waits up to 15 seconds; a script still running then goes on in the background, the answer names the file its output continues in, and you are told when it ends.
 
-A call waits up to 15 seconds. A script still running then goes on in the background; the answer names the file its output continues in, which you can read while it grows. When it ends you are told, with the answer to your next call of a World tool.";
+The World's commands in this shell; each explains itself with --help:
+";
 
-fn edit_definition(machines: Option<&Machines>) -> Value {
-    json!({
-        "name": "edit",
-        "description": EDIT_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "file_path": { "type": "string", "description": "The absolute path of the file to change." },
-                "old_string": { "type": "string", "description": "The text to replace, exactly as it is in the file." },
-                "new_string": { "type": "string", "description": "The text to put in its place." },
-                "replace_all": { "type": "boolean", "description": "Replace every occurrence of old_string, not just one. Default false." },
-                "node": node("The machine whose files to change", machines)
-            },
-            "required": ["file_path", "old_string", "new_string"],
-            "additionalProperties": false
-        },
-        "annotations": write_annotations("Edit a file")
-    })
-}
+const RUN_WRITING: &str = "\
+- `edit PATH` changes a file by the blocks on its standard input: `<<<<<<< SEARCH`, the exact text now in the file, `=======`, what replaces it, `>>>>>>> REPLACE`. The text must be there exactly once (`--all` replaces every one); all blocks apply, or none.
+- `write PATH` makes standard input the whole file (`-n` leaves off the final newline).
+  Give their text as a quoted here-document, <<'EOF', so bash changes nothing in it; paths are absolute.
+";
 
-const EDIT_DESCRIPTION: &str = "\
-Replace exact text in a file on a machine of the World.
-
-`old_string` must appear in the file exactly as given, whitespace and indentation included, and only once: include enough surrounding lines to make it unique, or set `replace_all` to replace every occurrence. The file keeps its encoding and line endings. `file_path` is absolute, written the way the machine `node` names writes paths. The answer shows the changed lines with their line numbers.";
-
-fn write_definition(machines: Option<&Machines>) -> Value {
-    json!({
-        "name": "write",
-        "description": WRITE_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "file_path": { "type": "string", "description": "The absolute path of the file to create or replace." },
-                "content": { "type": "string", "description": "The file's whole new contents." },
-                "node": node("The machine whose files to change", machines)
-            },
-            "required": ["file_path", "content"],
-            "additionalProperties": false
-        },
-        "annotations": write_annotations("Write a file")
-    })
-}
-
-const WRITE_DESCRIPTION: &str = "\
-Create a file, or replace a file's whole contents, on a machine of the World.
-
-To change part of a file, use `edit`. A file you looked at with `fastctx view` that has changed since is not overwritten, so nobody's change is lost unseen: look at it again first. Missing parent directories are created. `file_path` is absolute, written the way the machine `node` names writes paths.";
-
-fn apply_patch_definition(machines: Option<&Machines>) -> Value {
-    json!({
-        "name": "apply_patch",
-        "description": APPLY_PATCH_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "description": "The whole patch, from *** Begin Patch to *** End Patch." },
-                "node": node("The machine whose files to change", machines)
-            },
-            "required": ["input"],
-            "additionalProperties": false
-        },
-        "annotations": write_annotations("Apply a patch")
-    })
-}
-
-const APPLY_PATCH_DESCRIPTION: &str = "\
-Edit files on a machine of the World with a patch.
-
-*** Begin Patch
-*** Update File: /home/me/app/greet.py
-@@ def greet():
--    print(\"Hi\")
-+    print(\"Hello, world!\")
-*** Add File: /home/me/app/notes.txt
-+first line
-*** Delete File: /home/me/app/old.txt
-*** End Patch
-
-Each file's section starts with `*** Add File:`, `*** Delete File:` or `*** Update File:`, which may be followed by `*** Move to:` and a new path. In an update, each hunk starts with `@@`, optionally followed by a line that locates it, such as the function it is in; its lines start with a space for context, `-` for a line removed and `+` for a line added. Give about three lines of context around each change. Every new file's lines start with `+`.
-
-Every path is absolute, written the way the machine `node` names writes paths; a relative path is refused. Files keep their encoding and line endings. The answer lists what changed: A added, M modified, D deleted.";
+const RUN_COMMANDS: &str = "\
+- `fastctx view PATH...` shows files with line numbers, several at once, images as images.
+- `fastctx w` shows what is happening in your town now and what happened since your last turn; `fastctx w ID` shows one resident or job.
+- `fastctx nodes` lists the machines, which are online and what each runs.
+- `fastctx copy MACHINE:PATH MACHINE:PATH` copies files and directories between machines.
+- `fastctx stop JOB` stops a job and everything it started.
+- `fastctx project` lists the towns, each a project, and shows their maps; `fastctx project enter TOWN` moves you into one, only when the user says which project to work on.
+- `fastctx journal` reads and adds to your town's journals; `fastctx page` publishes a page, HTML the user opens in the World's app.";
 
 fn ask_colleague_definition(machines: Option<&Machines>) -> Value {
     json!({
@@ -265,16 +187,6 @@ const MESSAGE_COLLEAGUE_DESCRIPTION: &str = "\
 Send words to a colleague: one you asked for, or any other in the town, including one that has gone to sleep.
 
 If it is working, the words join its current turn at its next tool call; if it is idle or asleep, they start a new turn. Either way, the last message of the turn they go into is delivered to you. A colleague on another machine gets them as soon as its machine is reachable.";
-
-fn write_annotations(title: &str) -> Value {
-    json!({
-        "title": title,
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false
-    })
-}
 
 /// A tool's answer as MCP carries it.
 pub fn result(content: &[Content], is_error: bool) -> Value {

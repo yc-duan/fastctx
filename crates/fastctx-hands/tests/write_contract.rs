@@ -67,6 +67,47 @@ fn publication_and_observation_lifecycle() {
 }
 
 #[test]
+fn edit_blocks_publish_only_complete_batches() {
+    let dir = tempfile::tempdir().unwrap();
+    let writer = Writer::new(&WorldDir::under(dir.path()), "test").unwrap();
+    let path = dir.path().join("batch.txt");
+    let before = b"first\r\nlast\r\n";
+    fs::write(&path, before).unwrap();
+    let first = "<<<<<<< SEARCH\nfirst\n=======\nchanged\n>>>>>>> REPLACE\n";
+    for second in [
+        "<<<<<<< SEARCH\nmissing\n=======\nend\n>>>>>>> REPLACE\n",
+        "<<<<<<< SEARCH\nlast\n=======\nend\n<<<<<<< SEARCH\n",
+    ] {
+        let error = writer
+            .edit_blocks(
+                EditBlocksRequest { file_path: path.clone(), input: format!("{first}{second}"), replace_all: false },
+                &SeenFiles::new(),
+            )
+            .unwrap_err();
+        assert!(error.message.contains("Block 2"), "{error}");
+        assert!(error.changes.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+    let mut reader = fs::File::open(&path).unwrap();
+    let result = writer
+        .edit_blocks(
+            EditBlocksRequest {
+                file_path: path.clone(),
+                input: format!("{first}<<<<<<< SEARCH\nchanged\n=======\nfinal\nline\n>>>>>>> REPLACE\n"),
+                replace_all: false,
+            },
+            &SeenFiles::new(),
+        )
+        .unwrap();
+    assert_eq!(result.changes.len(), 1);
+    assert!(result.text.contains("2 changes"));
+    assert_eq!(fs::read(&path).unwrap(), b"final\r\nline\r\nlast\r\n");
+    let mut held = Vec::new();
+    reader.read_to_end(&mut held).unwrap();
+    assert_eq!(held, before);
+}
+
+#[test]
 fn concurrent_writers_preserve_every_successful_edit() {
     let dir = tempfile::tempdir().unwrap();
     let world = WorldDir::under(dir.path());

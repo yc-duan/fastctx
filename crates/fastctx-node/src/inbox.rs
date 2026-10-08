@@ -270,7 +270,9 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         return Ok(());
     };
     let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(&record.id);
-    if !owed.exists() {
+    // An `on` job's follower takes its end; a letter goes only when nobody
+    // follows it then (`on`).
+    if !owed.exists() || !crate::on::unfollowed(node, &record.id) {
         return Ok(());
     }
     let notice = Notice::JobEnded {

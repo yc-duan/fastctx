@@ -1,4 +1,4 @@
-//! The frozen protocol-5 subset used by already running tool adapters and
+//! The frozen protocol-5/6 subset used by already running tool adapters and
 //! job supervisors. A GUI is never admitted through this compatibility path.
 //! It can discover the mismatch and renew through the maintenance envelope.
 

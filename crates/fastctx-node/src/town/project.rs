@@ -130,12 +130,24 @@ async fn checked(node: &Arc<Node>, mut record: Record) -> Result<Record, Failure
         )));
     }
     for place in &mut record.places {
+        if place.location.machine == node.machine() {
+            place.location.path = fastctx_platform::local_path(&place.location.path)
+                .map_err(|error| Failure::new(error.to_string()))?
+                .to_string_lossy()
+                .into_owned();
+        }
         place.location.path = absolute(&place.location.path).map_err(Failure::new)?;
         if place.what.trim().is_empty() {
             return Err(Failure::new(format!("the place {} says nothing of what is there", place.location.path)));
         }
     }
     if let Some(canon) = &mut record.canon {
+        if canon.machine == node.machine() {
+            canon.path = fastctx_platform::local_path(&canon.path)
+                .map_err(|error| Failure::new(error.to_string()))?
+                .to_string_lossy()
+                .into_owned();
+        }
         canon.path = absolute(&canon.path).map_err(Failure::new)?;
     }
     Ok(record)

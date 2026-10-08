@@ -64,6 +64,7 @@ pub fn run(command: PageCommand) -> anyhow::Result<()> {
     let mut reading = false;
     let call = match command {
         PageCommand::Publish { name, file, title, description, run, say, write, base, town: given } => {
+            let file = fastctx_platform::local_path(file)?;
             let bytes = std::fs::read(&file).map_err(|e| anyhow::anyhow!("reading {}: {e}", file.display()))?;
             let html = String::from_utf8(bytes)
                 .map_err(|_| anyhow::anyhow!("{} is not UTF-8 text; write the page in UTF-8", file.display()))?;
@@ -89,7 +90,7 @@ pub fn run(command: PageCommand) -> anyhow::Result<()> {
         }
         PageCommand::Read { name, version, out, town: given } => {
             reading = true;
-            output = out;
+            output = out.map(fastctx_platform::local_path).transpose()?;
             PageCall::Read { town: town(given)?, page: name.parse()?, version }
         }
         PageCommand::List { town: given } => PageCall::List { town: town(given)? },

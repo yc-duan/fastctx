@@ -2,10 +2,14 @@
 //! the environment block.
 //!
 //! A Windows process receives one command-line string, which the program
-//! splits into arguments itself. Programs built with the Microsoft C
-//! runtime, and MSYS programs such as Git Bash, split by the same rules;
-//! quoting each argument for those rules makes the program see exactly the
-//! arguments given.
+//! splits into arguments itself. Quoting each argument for the Microsoft C
+//! runtime's rules makes such a program see exactly the arguments given.
+//! MSYS programs such as Git Bash split by rules of their own: outside
+//! double quotes they strip single quotes and expand braces and wildcards,
+//! and inside them they also halve doubled backslashes. So an argument with
+//! any of those characters is put in double quotes, which the C runtime
+//! reads the same either way; one that holds backslashes as well as
+//! characters needing quotes does not reach an MSYS program unchanged.
 
 use std::cmp::Ordering;
 use std::ffi::{OsStr, OsString};
@@ -44,10 +48,11 @@ pub fn command_line(program: &OsStr, args: &[&OsStr]) -> io::Result<Vec<u16>> {
     Ok(line)
 }
 
-/// Appends `arg` quoted for the C runtime's splitting rules.
+/// Appends `arg` quoted for the C runtime's splitting rules, and in quotes
+/// whenever MSYS would read it otherwise.
 fn quote(arg: &[u16], line: &mut Vec<u16>) {
-    let needs_quotes =
-        arg.is_empty() || arg.iter().any(|&c| c == u16::from(b' ') || c == u16::from(b'\t') || c == u16::from(b'"'));
+    const SPECIAL: &[u8] = b" \t\"'{}*?[]";
+    let needs_quotes = arg.is_empty() || arg.iter().any(|&c| SPECIAL.iter().any(|&s| c == u16::from(s)));
     if !needs_quotes {
         line.extend_from_slice(arg);
         return;

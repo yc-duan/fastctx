@@ -53,6 +53,11 @@ fn asked(call: &RemoteCall) -> Asked<'_> {
     let resident = |resident: &ResidentId| Some(resident.agent());
     let (action, agent, town) = match call {
         RemoteCall::Run { town, .. } => (Action::Run, None, town.as_ref()),
+        // Whoever may run commands there may stop what runs there.
+        RemoteCall::StopJob { .. } => (Action::Run, None, None),
+        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } | RemoteCall::StopOn { origin, .. } => {
+            (Action::Run, None, origin.town.as_ref())
+        }
         RemoteCall::Write { town, .. } => (Action::Write, None, town.as_ref()),
         RemoteCall::CopySend { .. } | RemoteCall::CopyReceive { .. } | RemoteCall::CopyFetch { .. } => {
             (Action::Copy, None, None)

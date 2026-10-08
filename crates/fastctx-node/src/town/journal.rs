@@ -205,7 +205,8 @@ async fn stage(node: &Arc<Node>, staging: &Path, attach: &[Attach]) -> Result<Ve
         let path = staging.join(&name);
         match one.machine.as_ref().filter(|machine| **machine != here) {
             None => {
-                let (from, to) = (PathBuf::from(&one.path), path.clone());
+                let from = fastctx_platform::local_path(&one.path).map_err(|error| Failure::new(error.to_string()))?;
+                let to = path.clone();
                 tokio::task::spawn_blocking(move || std::fs::copy(&from, &to))
                     .await
                     .map_err(|error| Failure::new(error.to_string()))?

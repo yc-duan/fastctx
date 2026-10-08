@@ -99,6 +99,10 @@ jobs:
           python -m pip install ziglang==0.14.1
           cargo install --locked cargo-zigbuild --version 0.23.0
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
+      - name: Verify bundled ripgrep offline
+        run: |
+          python scripts/ripgrep.py verify
+          cargo test --locked -p fastctx-ripgrep --target '${{ matrix.target }}'
       - name: Verify executable lifetime across node replacement
         if: runner.os == 'Windows' || runner.os == 'Linux'
         run: |
@@ -118,6 +122,21 @@ jobs:
             "${tests[0]}"
           else
             cargo test --locked --release -p fastctx-node --test own_lifetime --target '${{ matrix.target }}'
+          fi
+      - name: Verify job control and byte streams
+        if: runner.os == 'Windows' || runner.os == 'Linux'
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            export FASTCTX_TEST_BASH="$(cygpath -m /usr/bin/bash.exe)"
+            cargo test --locked --release -j 2 -p fastctx-hands --test job_lifecycle --target '${{ matrix.target }}'
+          else
+            export FASTCTX_TEST_BASH=/bin/bash
+            build_target='${{ matrix.target }}'
+            build_target="${build_target/-gnu/-musl}"
+            cargo zigbuild --locked --release -j 2 -p fastctx-hands --test job_lifecycle --target "$build_target"
+            mapfile -t tests < <(find "target/$build_target/release/deps" -maxdepth 1 -name 'job_lifecycle-*' ! -name '*.d' -type f -executable)
+            test "${#tests[@]}" = 1
+            "${tests[0]}"
           fi
       - name: Verify version and package the native program
         run: |

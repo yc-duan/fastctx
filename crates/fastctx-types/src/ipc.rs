@@ -16,7 +16,7 @@ use crate::{Address, JobId, MachineName};
 
 /// Raised whenever a change would make an older client or node misread a
 /// frame. A node refuses a client speaking another protocol.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +92,8 @@ pub enum NodeFrame {
     Watched { id: u64, watched: crate::session::Watched },
     /// A byte-read header; see `FileReadPart` for the following binary frame.
     FileRead { id: u64, part: crate::file_read::FileReadPart },
+    /// Part of what an `On` call hands over, until its `Reply`.
+    On { id: u64, piece: crate::on::OnPiece },
 }
 
 /// Why a call did not do what it asked, in words for whoever reads the

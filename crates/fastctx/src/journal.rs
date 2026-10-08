@@ -79,6 +79,7 @@ pub fn run(command: JournalCommand) -> anyhow::Result<()> {
     let mut json = false;
     let call = match command {
         JournalCommand::Add { journal, file, description, cite, attach, attach_from, model, town: given } => {
+            let file = fastctx_platform::local_path(file)?;
             let text = std::fs::read(&file).map_err(|error| anyhow::anyhow!("reading {}: {error}", file.display()))?;
             let text = String::from_utf8(text)
                 .map_err(|_| anyhow::anyhow!("{} is not UTF-8 text; write the draft in UTF-8", file.display()))?;
@@ -152,5 +153,5 @@ pub fn run(command: JournalCommand) -> anyhow::Result<()> {
 /// A path as the node reads it: the node may stand elsewhere, so a relative
 /// path is made whole from where this command runs.
 fn absolute(path: &Path) -> anyhow::Result<PathBuf> {
-    Ok(if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) })
+    Ok(std::path::absolute(fastctx_platform::local_path(path)?)?)
 }

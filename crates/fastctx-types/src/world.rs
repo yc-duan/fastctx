@@ -21,6 +21,12 @@ pub struct MachineFacts {
     /// as the platform has it by default.
     pub case_sensitive: bool,
     pub version: String,
+    /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
+    /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
+    /// before a Windows program sees them (`world-run.md`). Empty when the
+    /// machine runs an older fastctx that does not say.
+    #[serde(default)]
+    pub shell: String,
 }
 
 /// How this machine's link to the hub stands.

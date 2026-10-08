@@ -45,6 +45,48 @@ impl Jobs {
         crate::inbox::tell_if_ended(node, &record).await.map_err(|error| failure("telling the job's end", error))
     }
 
+    /// Listens for changes to jobs' records: each change names its job.
+    pub fn subscribe(&self) -> broadcast::Receiver<JobId> {
+        self.changes.subscribe()
+    }
+
+    /// Starts `request` for `owner` and returns at once.
+    pub async fn launch(
+        &self,
+        node: &Arc<Node>,
+        owner: fastctx_types::run::JobOwner,
+        town: Option<TownName>,
+        request: RunRequest,
+        on: Option<(fastctx_types::run::OnJob, Option<PathBuf>)>,
+    ) -> Result<run::Launched, Failure> {
+        let (world, machine, executable) = (node.world.clone(), node.machine(), node.fastctx.clone());
+        tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
+            let home = user_home().map_err(|error| failure("finding the home directory", error))?;
+            let environment =
+                world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
+            // An `on` job hands its standard error back apart from its output,
+            // and reads the input that came with it (`world-run.md`).
+            let (on, mode, input) = match on {
+                Some((on, input)) => (Some(on), fastctx_types::run::OutputMode::Separate, input),
+                None => (None, fastctx_types::run::OutputMode::Merged, None),
+            };
+            let launch = Launch {
+                world: &world,
+                machine: &machine,
+                owner: &owner,
+                town: town.as_ref(),
+                request: &request,
+                home: &home,
+                executable: &executable,
+                environment: &environment,
+                on: on.as_ref(),
+            };
+            run::launch_with_io(&launch, mode, input.as_deref())
+        })
+        .await
+        .map_err(|error| Failure::new(format!("starting the job: {error}")))?
+    }
+
     /// Starts `request` for `owner` and waits until the job settles or the
     /// wait is over. Returns the answer and the job's record as it stood.
     pub async fn run(
@@ -58,26 +100,7 @@ impl Jobs {
         let deadline = Instant::now() + WAIT;
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
-        let launched = {
-            let (world, machine, executable) = (world.clone(), machine.clone(), node.fastctx.clone());
-            tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
-                let home = user_home().map_err(|error| failure("finding the home directory", error))?;
-                let environment =
-                    world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
-                run::launch(&Launch {
-                    world: &world,
-                    machine: &machine,
-                    owner: &owner,
-                    town: town.as_ref(),
-                    request: &request,
-                    home: &home,
-                    executable: &executable,
-                    environment: &environment,
-                })
-            })
-            .await
-            .map_err(|error| Failure::new(format!("starting the job: {error}")))??
-        };
+        let launched = self.launch(node, owner, town, request, None).await?;
         loop {
             let record = read(&launched.record).await?;
             if settled(&record) {
@@ -115,7 +138,9 @@ impl Jobs {
                 .map_err(|error| failure("noting that the job's end is owed", error))?;
             crate::inbox::tell_if_ended(node, &now).await.map_err(|error| failure("telling the job's end", error))?;
         }
-        let reply = RunReply { machine: machine.clone(), job: launched.job, state: state(&record), output };
+        let visited =
+            visited(&node.world.job_owner(machine, record.town.as_ref(), &record.owner).jobs(), &launched.job);
+        let reply = RunReply { machine: machine.clone(), job: launched.job, state: state(&record), output, visited };
         Ok((reply, record))
     }
 }
@@ -160,8 +185,12 @@ fn outcome(reply: &RunReply) -> String {
 
 /// Whether the call can answer now: the job ended, or its shell exited
 /// and its output is complete.
+/// Whether the answer can be given now. With no process left, the end is
+/// moments away and the answer waits for it, so the resident is not also
+/// told by letter of an end it has already read.
 fn settled(record: &JobRecord) -> bool {
-    record.end.is_some() || (record.exit.is_some() && record.output_ended_at.is_some())
+    record.end.is_some()
+        || (record.exit.is_some() && record.output_ended_at.is_some() && record.remaining.is_some_and(|n| n > 0))
 }
 
 fn state(record: &JobRecord) -> RunState {
@@ -194,7 +223,18 @@ async fn supervisor_gone(record: &JobRecord, launched: &run::Launched) -> bool {
     }
 }
 
-async fn read(path: &Path) -> Result<JobRecord, Failure> {
+/// The machines a job's `on`s went to, as `on` noted them beside it.
+fn visited(jobs: &Path, job: &JobId) -> Vec<(fastctx_types::MachineName, JobId)> {
+    let Ok(text) = std::fs::read_to_string(jobs.join(format!("{job}.on"))) else { return Vec::new() };
+    text.lines()
+        .filter_map(|line| {
+            let (machine, job) = line.split_once(' ')?;
+            Some((fastctx_types::MachineName::try_from(machine).ok()?, JobId::try_from(job).ok()?))
+        })
+        .collect()
+}
+
+pub(crate) async fn read(path: &Path) -> Result<JobRecord, Failure> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || record::read(&path))
         .await
@@ -271,4 +311,12 @@ fn read_dir(path: &Path) -> std::io::Result<Vec<PathBuf>> {
 
 fn failure(what: &str, error: std::io::Error) -> Failure {
     Failure::new(format!("{what}: {error}"))
+}
+
+/// Stops the job at `record_path`: its supervisor ends everything it
+/// started and records who stopped it. Returns the job's final record; one
+/// that had already ended is returned as it was.
+pub async fn stop(node: &Arc<Node>, record_path: &Path, by: &str, reason: &str) -> Result<JobRecord, Failure> {
+    let request = fastctx_types::run::StopRequest { by: by.to_string(), reason: reason.to_string() };
+    run::stop(&node.world, record_path, None, request).await
 }

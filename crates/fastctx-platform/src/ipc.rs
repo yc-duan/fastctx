@@ -25,6 +25,13 @@ impl Endpoint {
     pub fn for_world(world_dir: &Path) -> io::Result<Self> {
         imp::address(world_dir).map(Self)
     }
+
+    /// A job supervisor's same-user-only endpoint. The PID locates it;
+    /// callers must also check Connection::server_process against the
+    /// recorded identity, since a PID can be reused.
+    pub fn for_supervisor(world_dir: &Path, pid: u32) -> io::Result<Self> {
+        imp::supervisor_address(world_dir, pid).map(Self)
+    }
 }
 
 impl fmt::Display for Endpoint {
@@ -190,37 +197,75 @@ mod imp {
     use super::{Connection, with_place};
 
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct Address(PathBuf);
+    pub struct Address {
+        path: PathBuf,
+        same_user: bool,
+    }
 
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            self.0.display().fmt(f)
+            self.path.display().fmt(f)
         }
     }
 
     pub fn address(world_dir: &Path) -> io::Result<Address> {
-        Ok(Address(world_dir.join("node.sock")))
+        Ok(Address { path: world_dir.join("node.sock"), same_user: false })
     }
 
-    pub struct Listener(UnixListener);
+    pub fn supervisor_address(world_dir: &Path, pid: u32) -> io::Result<Address> {
+        Ok(Address { path: world_dir.join(format!("job-{pid}.sock")), same_user: true })
+    }
+
+    pub struct Listener {
+        socket: UnixListener,
+        address: Address,
+    }
+
+    impl Drop for Listener {
+        fn drop(&mut self) {
+            if self.address.same_user {
+                // Only this supervisor uses its PID endpoint while alive.
+                let _ = std::fs::remove_file(&self.address.path);
+            }
+        }
+    }
+
+    fn same_user(stream: &UnixStream) -> io::Result<()> {
+        // SAFETY: geteuid has no preconditions.
+        if stream.peer_cred()?.uid() != unsafe { libc::geteuid() } {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the supervisor connection belongs to another user",
+            ));
+        }
+        Ok(())
+    }
 
     impl Listener {
         pub fn bind(address: &Address) -> io::Result<Self> {
-            match std::fs::remove_file(&address.0) {
+            match std::fs::remove_file(&address.path) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(with_place(error, address)),
                 _ => {}
             }
-            UnixListener::bind(&address.0).map(Self).map_err(|error| with_place(error, address))
+            UnixListener::bind(&address.path)
+                .map(|listener| Self { socket: listener, address: address.clone() })
+                .map_err(|error| with_place(error, address))
         }
 
         pub async fn accept(&mut self) -> io::Result<Connection> {
-            let (stream, _) = self.0.accept().await?;
+            let (stream, _) = self.socket.accept().await?;
+            if self.address.same_user {
+                same_user(&stream)?;
+            }
             Ok(Connection::new(stream))
         }
     }
 
     pub async fn connect(address: &Address) -> io::Result<Connection> {
-        let stream = UnixStream::connect(&address.0).await.map_err(|error| with_place(error, address))?;
+        let stream = UnixStream::connect(&address.path).await.map_err(|error| with_place(error, address))?;
+        if address.same_user {
+            same_user(&stream)?;
+        }
         let identity = stream.peer_cred()?.pid().map(|pid| crate::identity_of(pid as u32)).transpose()?.flatten();
         let mut connection = Connection::new(stream);
         connection.server = identity;
@@ -246,11 +291,14 @@ mod imp {
     use crate::windows_user::{OwnerOnly, current_user_sid, object_owner_sid};
 
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct Address(String);
+    pub struct Address {
+        name: String,
+        same_user: bool,
+    }
 
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            self.0.fmt(f)
+            self.name.fmt(f)
         }
     }
 
@@ -267,7 +315,12 @@ mod imp {
                 hash = hash.wrapping_mul(0x0100_0000_01b3);
             }
         }
-        Ok(Address(format!(r"\\.\pipe\fastctx-node-{hash:016x}")))
+        Ok(Address { name: format!(r"\\.\pipe\fastctx-node-{hash:016x}"), same_user: false })
+    }
+
+    pub fn supervisor_address(world_dir: &Path, pid: u32) -> io::Result<Address> {
+        let world = address(world_dir)?;
+        Ok(Address { name: format!("{}-job-{pid}", world.name), same_user: true })
     }
 
     pub struct Listener {
@@ -279,7 +332,8 @@ mod imp {
 
     impl Listener {
         pub fn bind(address: &Address) -> io::Result<Self> {
-            let mut listener = Self { address: address.clone(), access: OwnerOnly::new(false)?, next: None };
+            let access = if address.same_user { OwnerOnly::user_only()? } else { OwnerOnly::new(false)? };
+            let mut listener = Self { address: address.clone(), access, next: None };
             listener.next = Some(listener.instance(true).map_err(|error| with_place(error, address))?);
             Ok(listener)
         }
@@ -319,14 +373,14 @@ mod imp {
                 ServerOptions::new()
                     .first_pipe_instance(first)
                     .reject_remote_clients(true)
-                    .create_with_security_attributes_raw(&self.address.0, (&raw mut attributes).cast())
+                    .create_with_security_attributes_raw(&self.address.name, (&raw mut attributes).cast())
             }
         }
     }
 
     pub async fn connect(address: &Address) -> io::Result<Connection> {
         let client = loop {
-            match ClientOptions::new().open(&address.0) {
+            match ClientOptions::new().open(&address.name) {
                 Ok(client) => break client,
                 // Every instance is taken for the moment between the node
                 // accepting one client and making the next instance.

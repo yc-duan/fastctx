@@ -140,7 +140,8 @@ impl<'de, T: Ord + DeserializeOwned> Deserialize<'de> for Set<T> {
 pub enum Action {
     /// Run commands there.
     Run,
-    /// Write files there: `edit`, `write` and `apply_patch`.
+    /// Write a project's records there: its attributes, journals and pages.
+    /// Files there are written in its shell, which `Run` covers.
     Write,
     /// Copy files to or from there.
     Copy,

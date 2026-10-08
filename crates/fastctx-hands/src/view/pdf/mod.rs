@@ -34,10 +34,6 @@ pub(super) fn look(
             None,
         ));
     }
-    let canonical = match std::path::absolute(path).and_then(|path| crate::files::canonical_path(&path)) {
-        Ok(path) => path,
-        Err(error) => return Ok((Section::note(path, options, &super::describe_error(&error)), None)),
-    };
     // Keep the file open while mapped. The mapping faults in only the xref,
     // page tree and selected page resources, rather than copying the whole PDF.
     // Like any file-backed mapping, the source must not be truncated while read.
@@ -55,7 +51,7 @@ pub(super) fn look(
         Err(_) => Section::note(path, options, "PDF processing failed; the PDF engine rejected this file"),
     };
     let seen = section.shown.then(|| Seen {
-        path: canonical.to_string_lossy().into_owned(),
+        path: path.to_string_lossy().into_owned(),
         at: Timestamp::now(),
         // Extracted text and rasterized pages are views of the file, not its
         // complete bytes; hashing would require reading all unselected data.
@@ -87,12 +83,13 @@ fn open(data: PdfData) -> Result<Pdf, String> {
 fn read(path: &Path, options: &Options, budget: usize, data: PdfData) -> Result<Section, String> {
     let mut pdf = open(data.clone())?;
     let total = pdf.pages().len() as u64;
+    let pages = super::plural(total, "page", "pages");
     let (first, asked_last) = options.pages.unwrap_or((1, total));
     if first == 0 || asked_last < first || first > total {
-        return Ok(Section::note(path, options, &format!("PDF, {total} pages; no pages in the range asked")));
+        return Ok(Section::note(path, options, &format!("PDF, {pages}; no pages in the range asked")));
     }
     let last = asked_last.min(total);
-    let mut section = Section::note(path, options, &format!("PDF, {total} pages"));
+    let mut section = Section::note(path, options, &format!("PDF, {pages}"));
     // Reserve the longest possible stopping location before reading a page.
     // All page, line and character counts are usize/u64, at most 20 digits.
     let tail = format!(

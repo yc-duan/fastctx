@@ -36,6 +36,7 @@ mod log;
 mod look;
 mod machine;
 mod management;
+mod on;
 mod own;
 mod pages;
 mod relay;
@@ -50,6 +51,7 @@ mod session_options;
 mod session_record;
 mod since;
 mod speech;
+mod stop;
 mod talk;
 mod town;
 mod turns;
@@ -58,6 +60,7 @@ mod watchdog;
 mod who;
 mod world;
 mod write;
+mod write_command;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -112,6 +115,9 @@ pub(crate) struct Node {
     /// The machines residents here are asking something of right now
     /// (`admission::letters`).
     reaching: admission::letters::Reaching,
+    /// The `on` jobs here whose sender is following them now: their end
+    /// goes to it, not in a letter, unless it leaves first (`on`).
+    following: std::sync::Mutex<std::collections::HashMap<fastctx_types::JobId, usize>>,
     effects_ready: std::sync::atomic::AtomicBool,
     effects_changed: tokio::sync::Notify,
     /// Whether turns may start, while a guardian may ask for the World to
@@ -294,6 +300,7 @@ pub async fn run_replacing(
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
         reaching: Default::default(),
+        following: Default::default(),
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),
         handoff: Arc::new(handoff::Handoff::default()),

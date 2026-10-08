@@ -20,7 +20,6 @@ use tokio::task::{AbortHandle, JoinSet};
 
 use session::Session;
 use stdio::{Input, Output};
-pub use tools::Writer;
 
 /// The MCP revisions this server speaks; it answers in the client's when it
 /// knows it, and in the newest otherwise, as the protocol asks.
@@ -29,8 +28,8 @@ const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", 
 /// Serves one session until its host closes standard input, then lets the
 /// calls in flight answer. Each call ends within the `run` wait, so this
 /// ends too.
-pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
-    let session = Arc::new(Session::new(world)?);
+pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
+    let session = Arc::new(Session::new(world, writes_off)?);
     let mut input = stdio::input();
     let (output, printing) = Output::start();
     let mut calls = JoinSet::new();
@@ -73,7 +72,7 @@ pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
             (Some("ping"), Some(id)) => output.send(&response(&id, json!({}))),
             (Some("tools/list"), Some(id)) => {
                 let machines = session.machines().await;
-                let tools = tools::definitions(writer, session.colleague(), machines.as_ref());
+                let tools = tools::definitions(writes_off, session.colleague(), machines.as_ref());
                 output.send(&response(&id, json!({ "tools": tools })))
             }
             (Some("tools/call"), Some(id)) => {
@@ -83,7 +82,9 @@ pub async fn serve(world: WorldDir, writer: Writer) -> anyhow::Result<()> {
                     let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
                     let mut answer = match name {
                         "run" => session.run(&arguments, params.get("_meta")).await,
-                        name if writer.lists(name) => session.write(name, &arguments, params.get("_meta")).await,
+                        // Sessions whose host listed the tools before writing
+                        // became the shell's commands may still call these.
+                        "edit" | "write" | "apply_patch" => session.write(name, &arguments, params.get("_meta")).await,
                         "ask_colleague" if !session.colleague() => session.ask(&arguments, params.get("_meta")).await,
                         "message_colleague" if !session.colleague() => {
                             session.message(&arguments, params.get("_meta")).await

@@ -36,12 +36,29 @@ pub enum Call {
         request: RunRequest,
         node: Option<MachineName>,
     },
-    /// Writes files for a resident of this machine, on this machine or on
-    /// the machine `node` names.
+    /// Runs part of a script on another machine for `resident`, which may
+    /// live elsewhere when this script is itself an `on` (`world-run.md`).
+    /// The node answers with `NodeFrame::On` pieces as the job goes, then a
+    /// `Reply`; the client closing the connection first stops the job.
+    On {
+        resident: Address,
+        town: Option<TownName>,
+        request: crate::on::OnRequest,
+    },
+    /// Writes for an MCP resident, or for the command's peer when `resident`
+    /// is absent. Commands write here; their shell supplies a visitor's town.
     Write {
-        resident: ResidentId,
+        resident: Option<ResidentId>,
         op: WriteOp,
         node: Option<MachineName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        town: Option<TownName>,
+    },
+    /// Stops a job and everything it started: on `machine`, or on the one
+    /// machine that has a job with this id (`fastctx stop`).
+    StopJob {
+        job: JobId,
+        machine: Option<MachineName>,
     },
     /// Copies files or a directory from one machine to another.
     Copy {
@@ -409,6 +426,12 @@ pub enum Reply {
     Machines {
         here: MachineName,
         others: Vec<MachineName>,
+    },
+    /// A job stopped, or found already ended: on `machine`, as its record
+    /// now stands.
+    JobStopped {
+        machine: MachineName,
+        record: Box<crate::run::JobRecord>,
     },
     Done,
 }

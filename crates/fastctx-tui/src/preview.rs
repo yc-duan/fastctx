@@ -263,6 +263,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         path_separator: ';',
         case_sensitive: false,
         version: "1.0.0".into(),
+        shell: String::new(),
     };
     NodesReply {
         machine: machine("desktop"),

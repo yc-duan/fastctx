@@ -4,6 +4,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import ripgrep
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -26,6 +28,7 @@ def main():
     patch_notice = (ROOT/'crates/fastctx-hands/src/write/patch/NOTICE').read_text(encoding='utf-8')
     pdf_notice = (ROOT/'crates/fastctx-hands/src/view/pdf/NOTICE').read_text(encoding='utf-8')
     with args.output.open('a', encoding='utf-8', newline='\n') as output:
+        output.write(ripgrep.notices())
         output.write('\n'+args.syntax_notices.read_text(encoding='utf-8'))
         output.write('\n## OpenAI Codex portions\n\n'+patch_notice)
         output.write('\n'+pdf_notice)

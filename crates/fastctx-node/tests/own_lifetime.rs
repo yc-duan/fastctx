@@ -1,5 +1,5 @@
 //! Exercises the production copy cleanup and job supervisor with native
-//! processes. The caller supplies bash so no user profile or registry is read.
+//! processes. The caller supplies bash and the fixture supplies its login profile.
 
 use std::ffi::OsString;
 use std::fs;
@@ -47,11 +47,15 @@ fn main() -> anyhow::Result<()> {
                         fastctx_dir: fastctx.parent().expect("program directory"),
                         fastctx_home: Some(root.as_os_str()),
                         job: Some(&job.id),
+                        scratch: None,
+                        writes_off: false,
+                        on_state: None,
                     },
                 );
+                shell::ensure_prelude(fastctx.parent().expect("program directory"))?;
                 Ok(shell::Prepared {
                     program: bash,
-                    args: vec!["--noprofile".into(), "--norc".into(), script_path(&resident.job_script(&job.id))],
+                    args: vec!["--login".into(), script_path(&resident.job_script(&job.id))],
                     environment,
                 })
             })?;
@@ -80,10 +84,17 @@ fn exercise() -> anyhow::Result<()> {
     anyhow::ensure!(base.is_absolute() && base.is_dir());
     let root = base.join(format!("fastctx-own-lifetime-{}", std::process::id()));
     fs::create_dir(&root)?;
+    fs::write(root.join(".bash_profile"), "export PATH=/usr/bin:/bin\nexport FASTCTX_TEST_PROFILE=yes\n")?;
     let world = WorldDir::under(&root);
     ensure_private_dir(world.path())?;
     let executable = std::env::current_exe()?;
-    let old = pin(&executable, &world, &root, &bash)?;
+    let cache = root.join("npm-cache");
+    fs::create_dir(&cache)?;
+    let cached = cache.join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
+    fs::copy(&executable, &cached)?;
+    let old = pin(&cached, &world, &root, &bash)?;
+    fs::remove_file(&cached)?;
+    fs::remove_dir(&cache)?;
     let old_program = PathBuf::from(old["copy"].as_str().expect("old copy"));
     let old_hash = hash(&old_program)?;
     let new_program = root.join(if cfg!(windows) { "successor.exe" } else { "successor" });
@@ -106,12 +117,12 @@ fn exercise() -> anyhow::Result<()> {
     fs::write(
         &delayed,
         format!(
-            "fastctx wait '{address}'\nfastctx --version\nresult=$?\nprintf '%s\\n' \"$result\" > '{}'\nexit \"$result\"\n",
+            "fastctx wait '{address}'\nfastctx --version || exit\nprintf 'bundled-ripgrep\\n' | rg '^bundled-ripgrep$'\nresult=$?\nprintf '%s\\n' \"$result\" > '{}'\nexit \"$result\"\n",
             display(&status)
         ),
     )?;
     let script = format!(
-        "'{}' --noprofile --norc '{}' > '{}' 2>&1 < /dev/null &\nexit 0\n",
+        "test \"$FASTCTX_TEST_PROFILE\" = yes || exit 9\ntest -z \"${{BASH_ENV+x}}\" || exit 10\n'{}' --noprofile --norc '{}' > '{}' 2>&1 < /dev/null &\nexit 0\n",
         display(&bash),
         display(&delayed),
         display(&output)
@@ -122,11 +133,12 @@ fn exercise() -> anyhow::Result<()> {
     let launched = {
         let _lock = FileLock::acquire(&world.node_lock())?;
         run::launch(&run::Launch {
+            on: None,
             world: &world,
             machine: &machine,
             owner: &owner.clone().into(),
             town: None,
-            request: &RunRequest { script, cwd: Some(display(&root)) },
+            request: &RunRequest { script, cwd: Some(display(&root)), writes_off: false },
             home: &root,
             executable: &old_program,
             environment: &environment,
@@ -182,7 +194,7 @@ fn exercise() -> anyhow::Result<()> {
         thread::sleep(Duration::from_millis(10));
     }
     let text = fs::read_to_string(&output)?;
-    anyhow::ensure!(text.replace('\r', "") == format!("program {old_hash}\n"), "{text}");
+    anyhow::ensure!(text.replace('\r', "") == format!("program {old_hash}\nbundled-ripgrep\n"), "{text}");
     anyhow::ensure!(fs::read_to_string(status)?.trim() == "0");
     let cleaned = pin(&new_program, &world, &root, &bash)?;
     anyhow::ensure!(!old_program.parent().expect("old directory").exists());

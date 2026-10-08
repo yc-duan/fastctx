@@ -26,9 +26,9 @@ pub fn finalize() -> anyhow::Result<()> {
     let Some(request) = std::env::var_os(FINALIZE) else { return Ok(()) };
     // SAFETY: called first in `main`, before any other thread exists.
     unsafe { std::env::remove_var(FINALIZE) };
-    let path = PathBuf::from(request);
+    let path = fastctx_platform::local_path(PathBuf::from(request))?;
     let bytes = std::fs::read(&path).with_context(|| format!("reading the upgrade request {}", path.display()))?;
-    let request: Request =
+    let mut request: Request =
         serde_json::from_slice(&bytes).with_context(|| format!("reading the upgrade request {}", path.display()))?;
     if !(1..=3).contains(&request.schema_version) {
         bail!(
@@ -37,6 +37,7 @@ pub fn finalize() -> anyhow::Result<()> {
             request.schema_version
         );
     }
+    request.health_file = fastctx_platform::local_path(request.health_file)?;
     // Created afresh, as the upgrader expects: a file already there was not
     // written by this start.
     let mut health = std::fs::OpenOptions::new()

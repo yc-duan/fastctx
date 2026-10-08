@@ -25,7 +25,7 @@ use fastctx_platform::FileLock;
 use fastctx_types::layout::WorldDir;
 use serde::{Deserialize, Serialize};
 
-use crate::briefing::{self, Writer};
+use crate::briefing;
 use crate::claude::plugins::{self, PluginApply, PluginCommand, PluginFailure, PluginHost, PluginReceipt};
 use crate::claude::settings::{self, SettingsReceipt};
 use crate::codex::{self, Approval, Ownership};
@@ -325,7 +325,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             File { path: &config_path, bytes: config.bytes() },
             File { path: &agents_path, bytes: agents.bytes() },
             &CodexPlan::new(&installed),
-            &briefing::guidance(Writer::ApplyPatch),
+            &briefing::guidance(),
             ownership,
             approval,
         )?;
@@ -346,7 +346,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         let path = text(claude_md.path());
         let applied = guidance::apply(
             File { path: &path, bytes: claude_md.bytes() },
-            &briefing::guidance(Writer::Edit),
+            &briefing::guidance(),
             record.claude_md.as_ref(),
         )?;
         let previous = read_plugin_record(&places.plugin_record(), initial_settings.path(), &record)?;

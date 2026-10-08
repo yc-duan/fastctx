@@ -20,6 +20,7 @@ pub mod hostname;
 pub mod identity;
 pub mod ipc;
 pub mod legacy_text;
+pub mod local_path;
 pub mod lock;
 pub mod private;
 #[cfg(target_os = "linux")]
@@ -48,6 +49,7 @@ pub use home::{fastctx_root, user_home};
 pub use hostname::hostname;
 pub use identity::{current_identity, identity_of, is_alive};
 pub use legacy_text::decode_legacy;
+pub use local_path::local_path;
 pub use lock::FileLock;
 pub use private::ensure_private_dir;
 #[cfg(any(target_os = "linux", windows))]

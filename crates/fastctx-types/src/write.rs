@@ -12,6 +12,15 @@ pub struct EditRequest {
     pub replace_all: bool,
 }
 
+/// Ordered SEARCH/REPLACE blocks, committed together to one file.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct EditBlocksRequest {
+    pub file_path: PathBuf,
+    pub input: String,
+    #[serde(default)]
+    pub replace_all: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct WriteRequest {
     pub file_path: PathBuf,
@@ -29,6 +38,7 @@ pub struct ApplyPatchRequest {
 #[serde(rename_all = "snake_case", tag = "tool")]
 pub enum WriteOp {
     Edit(EditRequest),
+    EditBlocks(EditBlocksRequest),
     Write(WriteRequest),
     ApplyPatch(ApplyPatchRequest),
 }
@@ -37,7 +47,7 @@ impl WriteOp {
     /// The tool's name, as the resident's actions record it.
     pub fn tool(&self) -> &'static str {
         match self {
-            WriteOp::Edit(_) => "edit",
+            WriteOp::Edit(_) | WriteOp::EditBlocks(_) => "edit",
             WriteOp::Write(_) => "write",
             WriteOp::ApplyPatch(_) => "apply_patch",
         }
@@ -74,6 +84,9 @@ pub struct FileChange {
     pub kind: ChangeKind,
     pub before_hash: Option<String>,
     pub after_hash: Option<String>,
+    /// The encoding actually used for the published bytes, absent for deletions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

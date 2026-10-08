@@ -1,37 +1,35 @@
-//! A job's supervisor: one process per job, from its first moment to its
-//! last.
-//!
-//! It starts the job's shell as a process tree, copies every byte of output
-//! into the log, and keeps the job's record: when the shell started, when
-//! and how it exited, when the output ended, when nothing of the job ran
-//! any more. After each change it tells the node, which may be waiting to
-//! answer the `run` that started the job, or to tell the resident that it
-//! ended. If the node is not there to hear, the record still holds it, and
-//! the node reads it when it starts.
+//! One supervisor per job, owning its tree, output and durable record.
+//! Every record change prompts the node through JobChanged; a node absent
+//! at that moment reads the record when it returns.
 
-use std::fs::{File, OpenOptions};
-use std::io::{self, Read as _, Write as _};
+use std::fs::OpenOptions;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use fastctx_client::Client;
+use fastctx_platform::ipc::Connection;
 use fastctx_platform::{FileLock, ProcessTree, current_identity, in_job};
 use fastctx_types::Call;
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::run::{Ended, EndedHow, ExitStatus, Exited, JobRecord, OutputLost};
+use fastctx_types::run::{
+    Ended, EndedHow, ExitStatus, Exited, JobRecord, OutputLost, OutputMode, StopRequest, StopRequested,
+};
 use jiff::Timestamp;
+use tokio::sync::mpsc;
 
-use super::{record, shell};
+use super::{control, output, record, shell};
 
-/// Runs the job whose first record the node wrote at `record_path`, in the
-/// World kept in `world`, until nothing of it runs any more.
+/// Runs the job at `record_path` until nothing of it runs any more.
 pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Result<()> {
     supervise_with(world, record_path, |world, record| {
         let resident = world.job_owner(&record.machine, record.town.as_ref(), &record.owner);
         let (program, args) = shell::command(&resident.job_script(&record.id))?;
+        shell::ensure_prelude(fastctx_dir)?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
+        let scratch = resident.out();
+        let on_state = record.on.as_ref().map(|on| std::path::PathBuf::from(&on.state));
         let environment = shell::environment(&shell::Context {
             machine: &record.machine,
             owner: &record.owner,
@@ -39,13 +37,16 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
             fastctx_dir,
             fastctx_home: fastctx_home.as_deref(),
             job: Some(&record.id),
+            scratch: Some(&scratch),
+            writes_off: record.writes_off,
+            on_state: on_state.as_deref(),
         })?;
         Ok(shell::Prepared { program, args, environment })
     })
 }
 
-/// Supervises a complete process tree with a caller-resolved shell. The
-/// lifecycle and durable record are the same as for the default login shell.
+/// Supervises a complete tree with a caller-resolved shell. Lifecycle,
+/// control and durable records are the same as for the default login shell.
 pub fn supervise_with(
     world: &Path,
     record_path: &Path,
@@ -54,95 +55,180 @@ pub fn supervise_with(
     let world = WorldDir::at(world);
     let _lock = FileLock::try_acquire(&record::lock_path(record_path))?
         .ok_or_else(|| io::Error::other(format!("another supervisor holds {}", record_path.display())))?;
-    let mut job = Job { record: record::read(record_path)?, path: record_path.to_path_buf(), world };
-    if let Err(error) = job.run(prepare) {
-        // The job could not be started, or its supervision broke down: say
-        // so in the record, whatever state it had reached.
-        job.record.end = Some(Ended { at: Timestamp::now(), how: EndedHow::Failed { error: error.to_string() } });
-        job.publish()?;
-        return Err(error);
+    let mut job =
+        Job { record: record::read(record_path)?, path: record_path.to_path_buf(), world, waiting: Vec::new() };
+    if job.record.end.is_some() {
+        return Err(io::Error::other("cannot supervise an already ended job"));
     }
-    Ok(())
+    #[cfg(unix)]
+    let stop_signals = signals::block()?;
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    runtime.block_on(async {
+        let result = job
+            .run(
+                prepare,
+                #[cfg(unix)]
+                stop_signals,
+            )
+            .await;
+        if let Err(error) = &result {
+            job.record.end = Some(Ended { at: Timestamp::now(), how: EndedHow::Failed { error: error.to_string() } });
+            job.publish().await?;
+        }
+        // Closing is the receipt: each caller reads the final record. The
+        // supervisor never depends on a caller consuming response bytes.
+        job.waiting.clear();
+        result
+    })
 }
 
 struct Job {
     record: JobRecord,
     path: PathBuf,
     world: WorldDir,
+    waiting: Vec<Connection>,
+}
+
+enum Event {
+    Main(io::Result<std::process::ExitStatus>),
+    Output {
+        stderr: bool,
+        result: io::Result<Option<OutputLost>>,
+    },
+    Empty(io::Result<()>),
+    #[cfg(unix)]
+    Stop(io::Result<StopRequest>),
 }
 
 impl Job {
-    fn run(&mut self, prepare: impl FnOnce(&WorldDir, &JobRecord) -> io::Result<shell::Prepared>) -> io::Result<()> {
-        #[cfg(unix)]
-        let stop_signals = signals::block()?;
+    async fn run(
+        &mut self,
+        prepare: impl FnOnce(&WorldDir, &JobRecord) -> io::Result<shell::Prepared>,
+        #[cfg(unix)] stop_signals: libc::sigset_t,
+    ) -> io::Result<()> {
+        let mut server = control::Server::bind(&self.world, &self.record)?;
         let shell = prepare(&self.world, &self.record)?;
         let args: Vec<&std::ffi::OsStr> = shell.args.iter().map(|arg| arg.as_os_str()).collect();
         let log = OpenOptions::new().append(true).open(&self.record.output)?;
-
+        let stderr = self.record.stderr.as_ref().map(|path| OpenOptions::new().append(true).open(path)).transpose()?;
+        let mode = if stderr.is_some() { OutputMode::Separate } else { OutputMode::Merged };
         self.record.supervisor = Some(current_identity()?);
         self.record.ends_with_node = in_job()?;
-        let (tree, output) =
-            ProcessTree::spawn(&shell.program, &args, Path::new(&self.record.cwd), &shell.environment)?;
+        let (tree, output) = ProcessTree::spawn_with_io(
+            &shell.program,
+            &args,
+            Path::new(&self.record.cwd),
+            &shell.environment,
+            mode,
+            self.record.stdin.as_deref().map(Path::new),
+        )?;
         let tree = Arc::new(tree);
         self.record.pid = Some(tree.main_pid());
-        self.publish()?;
-
-        let stopped = Arc::new(AtomicBool::new(false));
-        #[cfg(unix)]
-        signals::stop_on_signal(stop_signals, tree.clone(), stopped.clone());
-        let copier = std::thread::spawn(move || copy_output(output, log));
-
-        let status = tree.wait_main()?;
-        self.record.exit = Some(Exited { status: exit_status(status), at: Timestamp::now() });
-        self.publish()?;
-
-        let lost = copier.join().map_err(|_| io::Error::other("the output copier panicked"))??;
-        self.record.output_ended_at = Some(Timestamp::now());
-        self.record.output_lost = lost;
-        let remaining = tree.count()?;
-        self.record.remaining = Some(u32::try_from(remaining).unwrap_or(u32::MAX));
-        // With nothing left running the job is over; the end is written in
-        // the same record, so nobody reads it as still going.
-        if remaining > 0 {
-            self.publish()?;
+        let (sender, mut events) = mpsc::unbounded_channel();
+        let mut workers = Vec::new();
+        {
+            let (tree, sender) = (tree.clone(), sender.clone());
+            workers.push(std::thread::spawn(move || {
+                let _ = sender.send(Event::Main(tree.wait_main()));
+                let _ = sender.send(Event::Empty(tree.wait_empty()));
+            }));
         }
-
-        tree.wait_empty()?;
-        let how = if stopped.load(Ordering::SeqCst) { EndedHow::Stopped } else { EndedHow::Finished };
-        self.record.end = Some(Ended { at: Timestamp::now(), how });
-        self.publish()
-    }
-
-    /// Writes the record and tells the node it changed.
-    fn publish(&self) -> io::Result<()> {
-        record::write(&self.path, &self.record)?;
-        tell_node(&self.world, &self.record);
-        Ok(())
-    }
-}
-
-/// Copies the output into the log until every writer has closed it. If the
-/// log stops taking bytes, the rest is read and dropped, so no process of
-/// the job ever blocks on a pipe nobody reads.
-fn copy_output(mut output: io::PipeReader, mut log: File) -> io::Result<Option<OutputLost>> {
-    let mut buffer = vec![0u8; 64 * 1024];
-    let mut kept = 0u64;
-    let mut lost = None;
-    loop {
-        let read = match output.read(&mut buffer) {
-            Ok(0) => return Ok(lost),
-            Ok(read) => read,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            // A broken pipe is how Windows reports that every writer closed.
-            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return Ok(lost),
-            Err(error) => return Err(error),
-        };
-        if lost.is_none() {
-            match log.write_all(&buffer[..read]) {
-                Ok(()) => kept += read as u64,
-                Err(error) => lost = Some(OutputLost { kept_bytes: kept, error: error.to_string() }),
+        let mut streams = 1;
+        if let (Some(reader), Some(log)) = (output.stderr, stderr) {
+            streams += 1;
+            let sender = sender.clone();
+            workers.push(std::thread::spawn(move || {
+                let _ = sender.send(Event::Output { stderr: true, result: output::copy(reader, log) });
+            }));
+        }
+        {
+            let sender = sender.clone();
+            workers.push(std::thread::spawn(move || {
+                let _ = sender.send(Event::Output { stderr: false, result: output::copy(output.stdout, log) });
+            }));
+        }
+        #[cfg(unix)]
+        signals::stop_on_signal(stop_signals, sender.clone());
+        drop(sender);
+        let result = self.observe(&tree, &mut server, &mut events, streams).await;
+        if let Err(error) = &result {
+            // Linux has no kill-on-close tree handle. Clean up explicitly,
+            // and never report a successful stop if cleanup itself failed.
+            if let Err(cleanup) = tree.kill() {
+                return Err(io::Error::other(format!(
+                    "{error}; stopping the remaining processes also failed: {cleanup}"
+                )));
             }
         }
+        for worker in workers {
+            worker.join().map_err(|_| io::Error::other("a job supervisor worker panicked"))?;
+        }
+        result
+    }
+
+    async fn observe(
+        &mut self,
+        tree: &ProcessTree,
+        server: &mut control::Server,
+        events: &mut mpsc::UnboundedReceiver<Event>,
+        mut streams: usize,
+    ) -> io::Result<()> {
+        self.publish().await?;
+        let mut empty = false;
+        loop {
+            tokio::select! {
+                request = server.next() => {
+                    let (connection, request) = request?;
+                    self.waiting.push(connection);
+                    self.stop(tree, request).await?;
+                }
+                event = events.recv() => {
+                    match event.ok_or_else(|| io::Error::other("the job's lifecycle channel closed before it ended"))? {
+                        Event::Main(status) => {
+                            self.record.exit = Some(Exited { status: exit_status(status?), at: Timestamp::now() });
+                        }
+                        Event::Output { stderr, result } => {
+                            if stderr { self.record.stderr_lost = result?; } else { self.record.output_lost = result?; }
+                            streams -= 1;
+                            if streams == 0 {
+                                self.record.output_ended_at = Some(Timestamp::now());
+                            }
+                        }
+                        Event::Empty(result) => { result?; empty = true; }
+                        #[cfg(unix)]
+                        Event::Stop(request) => {
+                            self.stop(tree, request?).await?;
+                            continue;
+                        },
+                    }
+                    if self.record.exit.is_some() && streams == 0 {
+                        self.record.remaining = Some(u32::try_from(tree.count()?).map_err(io::Error::other)?);
+                    }
+                    if empty && streams == 0 {
+                        let how = if self.record.stop.is_some() { EndedHow::Stopped } else { EndedHow::Finished };
+                        self.record.end = Some(Ended { at: Timestamp::now(), how });
+                        return self.publish().await;
+                    }
+                    self.publish().await?;
+                }
+            }
+        }
+    }
+
+    async fn stop(&mut self, tree: &ProcessTree, request: StopRequest) -> io::Result<()> {
+        if self.record.stop.is_none() {
+            self.record.stop = Some(StopRequested { at: Timestamp::now(), request });
+            // Attribution survives even a failure while terminating the tree.
+            self.publish().await?;
+            tree.kill()?;
+        }
+        Ok(())
+    }
+
+    async fn publish(&self) -> io::Result<()> {
+        record::write(&self.path, &self.record)?;
+        tell_node(&self.world, &self.record).await;
+        Ok(())
     }
 }
 
@@ -155,40 +241,27 @@ fn exit_status(status: std::process::ExitStatus) -> ExitStatus {
     }
 }
 
-/// Windows exit codes are 32 bits, kept unsigned.
 #[cfg(windows)]
 fn exit_status(status: std::process::ExitStatus) -> ExitStatus {
-    let code = status.code().expect("a Windows process always has an exit code");
-    ExitStatus::Code(i64::from(code as u32))
+    ExitStatus::Code(i64::from(status.code().expect("a Windows process always has an exit code") as u32))
 }
 
-/// Tells the node the record changed. A node that is not running, or not
-/// reachable, reads the record when it starts; the record is the truth and
-/// this is only a prompt, so its failure is not the job's.
-fn tell_node(world: &WorldDir, record: &JobRecord) {
+/// The record is authoritative. An absent node reads it on startup, so a
+/// failed prompt is not a failure of the job.
+async fn tell_node(world: &WorldDir, record: &JobRecord) {
     let call = Call::JobChanged { job: record.id.clone(), owner: record.owner.clone(), town: record.town.clone() };
     let peer = Peer::Supervisor { job: record.id.clone() };
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
-        return;
-    };
-    runtime.block_on(async {
-        if let Ok(mut client) = Client::connect(world, peer).await {
-            let _ = client.call(call).await;
-        }
-    });
+    if let Ok(mut client) = Client::connect(world, peer).await {
+        let _ = client.call(call).await;
+    }
 }
 
 #[cfg(unix)]
 mod signals {
     use std::io;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
-    use fastctx_platform::ProcessTree;
-
-    /// Blocks the signals that ask the supervisor to stop, in this thread and
-    /// every thread it starts, so one thread can wait for them. The shell
-    /// does not inherit the block: a new program starts with none.
+    /// The main thread and every thread it creates block these signals so
+    /// sigwaitinfo can receive them. ProcessTree resets the child's mask.
     pub fn block() -> io::Result<libc::sigset_t> {
         // SAFETY: building and installing a signal mask for this thread.
         unsafe {
@@ -205,20 +278,25 @@ mod signals {
         }
     }
 
-    /// When asked to stop, stops the whole job and remembers that it did.
-    pub fn stop_on_signal(set: libc::sigset_t, tree: Arc<ProcessTree>, stopped: Arc<AtomicBool>) {
+    pub fn stop_on_signal(set: libc::sigset_t, sender: tokio::sync::mpsc::UnboundedSender<super::Event>) {
         std::thread::spawn(move || {
-            let mut signal = 0;
-            // SAFETY: waits for one of the blocked signals.
-            if unsafe { libc::sigwait(&set, &mut signal) } == 0 {
-                // Marked first, so the job reads as stopped however soon its
-                // last process is gone; unmarked if it could not be stopped
-                // and runs on.
-                stopped.store(true, Ordering::SeqCst);
-                if tree.kill().is_err() {
-                    stopped.store(false, Ordering::SeqCst);
+            let result = loop {
+                // SAFETY: an out-parameter for one of the blocked signals.
+                let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                let signal = unsafe { libc::sigwaitinfo(&set, &mut info) };
+                if signal >= 0 {
+                    break Ok(fastctx_types::run::StopRequest {
+                        // SAFETY: sigwaitinfo initialized the sender fields.
+                        by: unsafe { format!("process {} (uid {})", info.si_pid(), info.si_uid()) },
+                        reason: format!("signal {signal}"),
+                    });
                 }
-            }
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::Interrupted {
+                    break Err(error);
+                }
+            };
+            let _ = sender.send(super::Event::Stop(result));
         });
     }
 }

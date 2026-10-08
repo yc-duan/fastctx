@@ -35,7 +35,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return writer.drain().await;
     }
     let hello: Hello = parse(&hello)?;
-    let legacy = hello.protocol == 5 && crate::renewal_legacy::peer(&hello.peer);
+    let legacy = matches!(hello.protocol, 5 | 6) && crate::renewal_legacy::peer(&hello.peer);
     if hello.protocol != PROTOCOL && !legacy {
         let reason = format!(
             "this node is fastctx {} and speaks protocol {PROTOCOL}; the client is fastctx {} and speaks protocol {}",
@@ -64,7 +64,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer
                 .send(&json(&NodeFrame::Reply {
                     id,
-                    reply: Err(Failure::new("this call is outside the frozen protocol-5 tool and job contract")),
+                    reply: Err(Failure::new("this call is outside the frozen protocol-5/6 tool and job contract")),
                 }))
                 .await?;
             return writer.drain().await;
@@ -85,6 +85,33 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                         _ = reader.recv() => return Ok(()),
                     }
                 },
+            };
+            writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
+            continue;
+        }
+        if let Call::On { resident, town, request } = call {
+            // Only the World's shell of that resident sends its `on`s: the
+            // command speaks as the resident its job belongs to.
+            let ended = match &hello.peer {
+                Peer::Command { resident: Some(speaker), .. } if *speaker == resident => {
+                    let origin = fastctx_types::on::OnOrigin { resident, town };
+                    match crate::on::send(node, origin, request).await {
+                        Err(failure) => Err(failure),
+                        Ok(mut pieces) => loop {
+                            tokio::select! {
+                                piece = pieces.recv() => match piece {
+                                    Some(Ok(piece)) => writer.send(&json(&NodeFrame::On { id, piece })).await?,
+                                    Some(Err(failure)) => break Err(failure),
+                                    None => break Ok(Reply::Done),
+                                },
+                                // The client says nothing more on an `on`;
+                                // its leaving stops the job.
+                                _ = reader.recv() => return Ok(()),
+                            }
+                        },
+                    }
+                }
+                _ => Err(Failure::new("on is for the World's shell, as the resident whose script it is")),
             };
             writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
             continue;
@@ -319,9 +346,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let town = town_of(node, &resident)?;
             run(node, resident, town, request, target).await.map(Reply::Run)
         }
-        Call::Write { resident, op, node: target } => {
+        Call::Write { resident: Some(resident), op, node: target, .. } => {
             let town = town_of(node, &resident)?;
             write(node, resident, town, op, target).await.map(|outcome| Reply::Written { outcome })
+        }
+        Call::Write { resident: None, op, node: target, town } => {
+            if target.is_some() {
+                return Err(Failure::new(
+                    "write commands run on this machine; run the command on the destination machine",
+                ));
+            }
+            crate::write_command::write(node, peer, town, op).await.map(|outcome| Reply::Written { outcome })
         }
         Call::JobChanged { job, owner, town } => node.jobs.changed(node, job, owner, town).await.map(|()| Reply::Done),
         Call::Saw { owner, town, seen } => {
@@ -338,6 +373,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Since { since, town } => crate::since::query(node, since, town).await.map(Reply::Since),
         Call::Look { ids } => Ok(Reply::Looked { looked: crate::look::look(node, ids).await }),
+        Call::StopJob { job, machine } => {
+            let by = match caller::of(node, peer)? {
+                Caller::Resident(address) => address.tag(),
+                Caller::User => "the user".to_string(),
+                Caller::Session(agent) => format!("a {agent} session"),
+                Caller::Page(page) => format!("the page {}", page.page),
+            };
+            crate::stop::stop(node, by, job, machine).await
+        }
         Call::Talk { to, machine, text, attachments } => {
             users_voice(node, peer)?;
             crate::talk::talk(node, to, machine, text, attachments)
@@ -395,6 +439,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::attach::command(node, &resident).await.map(Reply::Attachable)
         }
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
+        Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
         Call::Upload { .. } => Err(Failure::new("an upload requires its byte stream on a dedicated connection")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
