@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["vendor/pdf_oxide"]
+
+[patch.crates-io]
+pdf_oxide = { path = "vendor/pdf_oxide" }
 
 [workspace.package]
 version = "1.0.0"

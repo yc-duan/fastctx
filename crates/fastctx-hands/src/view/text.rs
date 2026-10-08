@@ -279,7 +279,7 @@ impl Reader {
 /// `\xNN` per byte: a terminal, or the `run` that reads this output as one,
 /// would otherwise play them (a carriage return overwriting the line and its
 /// number) instead of showing what the file holds.
-fn visible(text: &str) -> String {
+pub(super) fn visible(text: &str) -> String {
     let mut shown = String::with_capacity(text.len());
     for c in text.chars() {
         if c.is_control() && c != '\t' {

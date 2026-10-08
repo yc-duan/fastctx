@@ -80,3 +80,44 @@ fn pdf_view_contract() {
     assert!(text.contains("remaining text not shown"));
     assert!(text.contains("(not shown)"));
 }
+
+#[test]
+fn mixed_pdf_baselines_preserve_body_order() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("directions.pdf");
+    let content = b"BT /F1 12 Tf 0 1 -1 0 25 150 Tm (Left margin reads upward) Tj ET
+BT /F1 12 Tf 0 -1 1 0 580 650 Tm (Right margin reads downward) Tj ET
+BT /F1 12 Tf 72 650 Td (Second paragraph remains after the first paragraph in the body.) Tj ET
+BT /F1 12 Tf 72 700 Td (First paragraph remains before the second paragraph in the body.) Tj ET
+BT /F1 12 Tf -1 0 0 -1 400 50 Tm (Upside down footer) Tj ET";
+    for quarter_turns in 0..4 {
+        let angle = f64::from(quarter_turns) * std::f64::consts::FRAC_PI_2;
+        let (sin, cos) = angle.sin_cos();
+        let a = cos * 0.6;
+        let b = sin * 0.6;
+        let c = -b;
+        let d = a;
+        let mut rotated =
+            format!("q {a} {b} {c} {d} {} {} cm\n", 306.0 - a * 306.0 - c * 396.0, 396.0 - b * 306.0 - d * 396.0)
+                .into_bytes();
+        rotated.extend_from_slice(content);
+        rotated.extend_from_slice(b"\nQ");
+        std::fs::write(&path, pdf(1, &rotated)).unwrap();
+        let mut output = Vec::new();
+        view(std::slice::from_ref(&path), &Options::default(), &mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        let lines: Vec<_> = output.lines().filter_map(|line| line.split_once('\t').map(|(_, text)| text)).collect();
+        assert_eq!(
+            &lines[..3],
+            [
+                "First paragraph remains before the second paragraph in the body.",
+                "Second paragraph remains after the first paragraph in the body.",
+                "Upside down footer",
+            ],
+            "rotation {quarter_turns}: {output}"
+        );
+        assert_eq!(lines.len(), 5, "{output}");
+        assert!(lines[3..].contains(&"Left margin reads upward"), "{output}");
+        assert!(lines[3..].contains(&"Right margin reads downward"), "{output}");
+    }
+}
