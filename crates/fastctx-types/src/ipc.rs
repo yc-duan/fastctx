@@ -15,7 +15,11 @@ use crate::residents::Host;
 use crate::{Address, JobId, MachineName};
 
 /// Raised whenever a change would make an older client or node misread a
-/// frame. A node refuses a client speaking another protocol.
+/// frame, including a nested reply type. Already running adapters and job
+/// supervisors need an explicit historical contract in the node when this
+/// changes; other mismatched clients are refused before any call executes.
+/// `tests/ipc_contract.rs` and `scripts/check-ipc-contract.py` check both the
+/// declarations and actual historical readers.
 pub const PROTOCOL: u32 = 7;
 
 /// The first frame on every connection.

@@ -13,3 +13,7 @@ jiff = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+quote = "1"
+syn = { version = "2", features = ["full"] }

@@ -1405,8 +1405,10 @@ name = "fastctx-types"
 version = "1.0.0"
 dependencies = [
  "jiff",
+ "quote",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "thiserror",
 ]
 
