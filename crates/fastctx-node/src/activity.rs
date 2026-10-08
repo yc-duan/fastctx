@@ -34,14 +34,7 @@ fn recorded(world: &WorldDir) -> io::Result<(Vec<crate::residents::OnRecord>, Ve
     let mut residents = Vec::new();
     let mut former = Vec::new();
     for parent in world.resident_parents()? {
-        let town = parent
-            .parent()
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .filter(|name| *name != "outside")
-            .map(TownName::try_from)
-            .transpose()
-            .map_err(io::Error::other)?;
+        let town = crate::residents::town_of(world, &parent);
         for path in entries(&parent)? {
             if !path.join("about").exists() {
                 continue;

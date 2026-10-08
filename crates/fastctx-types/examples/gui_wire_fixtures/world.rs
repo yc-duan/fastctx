@@ -183,6 +183,7 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                                 pid,
                                 command: "echo fixture".into(),
                                 output: "C:/example/job.log".into(),
+                                stderr: None,
                             })
                             .collect(),
                     },

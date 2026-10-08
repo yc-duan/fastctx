@@ -194,6 +194,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             pid: Some(18344),
             command: "cargo test --workspace".into(),
             output: "~/.fastctx/world/towns/mark50/residents/codex-7f3a/out/j-k3x9a2.log".into(),
+            stderr: None,
         },
         RunningJob {
             town: Some(town("mark50")),
@@ -204,6 +205,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             pid: Some(9120),
             command: "python train.py --epochs 400".into(),
             output: "~/.fastctx/world/towns/mark50/residents/codex-0d1e/out/j-p0q1r2.log".into(),
+            stderr: None,
         },
     ];
     (vec![claude, codex, finder, outside], jobs)

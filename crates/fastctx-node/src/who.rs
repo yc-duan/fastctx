@@ -31,14 +31,7 @@ pub fn who(
             || matches!(resident.about.origin, fastctx_types::residents::Origin::Colleague { .. })
             || resident.now.as_ref().is_some_and(|now| now.last_tool_at.is_some() || now.desk || !now.owed.is_empty());
         for parent in world.resident_parents()? {
-            let place = parent
-                .parent()
-                .and_then(|path| path.file_name())
-                .and_then(|name| name.to_str())
-                .filter(|name| *name != "outside")
-                .map(TownName::try_from)
-                .transpose()
-                .map_err(io::Error::other)?;
+            let place = crate::residents::town_of(world, &parent);
             if let Some(action) = last_action(world, &resident.id, place.as_ref())? {
                 participated = true;
                 if last.as_ref().is_none_or(|prior| action.at > prior.at) {
@@ -126,6 +119,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
                 pid: job.pid,
                 command: first_line(&job.script),
                 output: job.output,
+                stderr: job.stderr,
             });
         }
     }

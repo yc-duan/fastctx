@@ -46,18 +46,7 @@ pub(super) fn read(
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
     let mut residents = BTreeMap::<ResidentId, ResidentFiles>::new();
     for parent in world.job_parents()? {
-        let home = parent.parent().expect("a resident parent belongs to a place");
-        let place = if home.file_name().is_some_and(|name| name == "outside") {
-            None
-        } else {
-            Some(
-                home.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .parse()
-                    .map_err(io::Error::other)?,
-            )
-        };
+        let place = crate::residents::town_of(world, &parent);
         for directory in scan.dirs(&parent) {
             scan.jobs(&directory.join("jobs"));
             let original_directory = directory;

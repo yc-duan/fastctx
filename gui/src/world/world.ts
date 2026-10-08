@@ -82,6 +82,7 @@ export interface RunningJob {
   pid: number | null;
   command: string;
   output: string;
+  stderr?: string;
 }
 
 export interface WhoReply {
@@ -368,6 +369,7 @@ export interface JobRecord {
   script: string;
   cwd: string;
   output: string;
+  stderr?: string;
   started_at: Timestamp;
   pid: number | null;
   exit: { status: ExitStatus; at: Timestamp } | null;

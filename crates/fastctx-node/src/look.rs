@@ -100,6 +100,18 @@ pub(crate) fn read_here(
     record: Option<&OnRecord>,
     tools: Vec<CurrentTool>,
 ) -> io::Result<Option<Looked>> {
+    // Hex-only job suffixes also satisfy the legacy resident-id grammar.
+    // Resolve the typed job id before trying a resident with that spelling.
+    if let Ok(job) = JobId::try_from(id) {
+        for parent in world.job_parents()? {
+            for resident in entries(&parent)? {
+                let path = resident.join("jobs").join(format!("{job}.json"));
+                if path.exists() {
+                    return Ok(Some(Looked::Job { record: Box::new(record::read(&path)?) }));
+                }
+            }
+        }
+    }
     if ResidentId::try_from(id).is_ok() {
         let Some(record) = record else { return Ok(None) };
         let directory = world.resident(record.town.as_ref(), &record.id);
@@ -139,16 +151,6 @@ pub(crate) fn read_here(
             answers,
             jobs,
         }))))
-    } else if let Ok(job) = JobId::try_from(id) {
-        for parent in world.job_parents()? {
-            for resident in entries(&parent)? {
-                let path = resident.join("jobs").join(format!("{job}.json"));
-                if path.exists() {
-                    return Ok(Some(Looked::Job { record: Box::new(record::read(&path)?) }));
-                }
-            }
-        }
-        Ok(None)
     } else {
         Ok(None)
     }
@@ -171,7 +173,7 @@ fn lines<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> io::Result<V
 }
 
 pub(crate) fn jobs_for(world: &WorldDir, id: &str) -> io::Result<Vec<fastctx_types::town::RunningJob>> {
-    if ResidentId::try_from(id).is_err() {
+    if JobId::try_from(id).is_ok() || ResidentId::try_from(id).is_err() {
         return Ok(Vec::new());
     }
     let mut jobs = Vec::new();

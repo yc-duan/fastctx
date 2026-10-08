@@ -763,7 +763,7 @@ fn live_town(world: &WorldDir, id: &ResidentId, homes: &Homes) -> io::Result<Opt
 }
 
 /// The town a directory of residents belongs to, from where it lies.
-fn town_of(world: &WorldDir, parent: &std::path::Path) -> Option<TownName> {
+pub(crate) fn town_of(world: &WorldDir, parent: &std::path::Path) -> Option<TownName> {
     let towns = world.path().join("towns");
     let town = parent.parent()?.strip_prefix(&towns).ok()?;
     TownName::try_from(town.to_str()?).ok()

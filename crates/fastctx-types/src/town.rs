@@ -67,6 +67,9 @@ pub struct RunningJob {
     pub command: String,
     /// The log holding its output, on that machine.
     pub output: String,
+    /// Separate standard error, when the job keeps it apart from stdout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
 }
 
 /// `fastctx w` in a town or across the World: each machine's answer, or why

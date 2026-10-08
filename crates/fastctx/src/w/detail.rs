@@ -36,6 +36,9 @@ pub(super) fn detail(looked: &LookedUp, now: Timestamp) -> String {
             job.machine,
             job.output
         ));
+        if let Some(stderr) = &job.stderr {
+            text.push_str(&format!("         stderr: {} {stderr}\n", job.machine));
+        }
     }
     text
 }
@@ -94,6 +97,9 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
             job.machine,
             job.output
         ));
+        if let Some(stderr) = &job.stderr {
+            text.push_str(&format!("         stderr: {} {stderr}\n", job.machine));
+        }
     }
     if detail.actions_total > 0 {
         text.push_str(&format!(
@@ -160,7 +166,10 @@ fn job_detail(record: &JobRecord, now: Timestamp) -> String {
     };
     text.push_str(&format!("state    {state}\n"));
     text.push_str(&format!("command  {}\n", first_line(&record.script)));
-    text.push_str(&format!("output   {} {}\n", record.machine, record.output.replace('\\', "/")));
+    text.push_str(&format!("output   {} {}\n", record.machine, record.output));
+    if let Some(stderr) = &record.stderr {
+        text.push_str(&format!("stderr   {} {stderr}\n", record.machine));
+    }
     text
 }
 
