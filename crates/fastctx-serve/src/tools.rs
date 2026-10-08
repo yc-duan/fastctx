@@ -124,7 +124,7 @@ Files:
     fastctx view --pages 3-5 /srv/app/design.pdf
     fastctx view --image --pages 3 /srv/app/design.pdf
     fastctx view --sheet Sales --range B2:F40 C:/Users/me/q3.xlsx
-  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. `--encoding gbk` selects GB18030 for reading and writing. For a known mixed log, `--encoding utf-8,gb18030` tries those encodings in that order for each complete line. Segment notes give the actual encoding and its basis; unresolved lines are read-only byte previews.
+  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. `--encoding gbk` selects GB18030 for reading and writing. For a known mixed log, `--encoding utf-8,gb18030` tries those encodings in that order for each complete line. Legacy encodings are recognized from byte statistics; the header names the encoding and its basis. Notes in the body mark encoding changes. Uncertain lines show a short byte preview and up to three likely readings; select one with `--encoding`.
 ";
 
 const RUN_WRITING: &str = "\

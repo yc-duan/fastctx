@@ -16,7 +16,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::decode::Hashed;
 use super::{Options, Section, head, hex, plural};
-use crate::encoding::file::{Plan, visit};
+use crate::encoding::file::{Plan, excerpt, visit};
 pub(crate) use crate::text::visible;
 
 pub fn look(
@@ -42,30 +42,51 @@ pub fn look(
     };
     file.rewind()?;
     let mut stream = Hashed { reader: file, hash: Sha256::new() };
-    let mut reader = Reader::new(budget_for_body(path, options, budget, &plan.facts()), options.lines);
+    let mut reader = Reader::new(budget_for_body(path, options, budget), options.lines);
     let mut labels = std::collections::BTreeSet::new();
     let mut readonly = false;
-    let mut announced = String::new();
+    let mut previous = None;
+    let mut first = plan.known_encoding().map(|(codec, basis)| (codec.label(), basis));
+    if let Some((label, _)) = first {
+        labels.insert(label);
+    }
+    let mut first_shown = None;
     if let Err(facts) = visit(&mut stream, &plan, |line| {
         let label = line.codec.map(|codec| codec.label());
         if let Some(label) = label {
             labels.insert(label);
+            first.get_or_insert((label, line.basis));
         } else {
             readonly = true;
         }
-        let key =
-            format!("{:?}:{}:{:?}:{:?}", label, line.basis, line.issue, line.issue.as_ref().map(|_| line.bytes.start));
-        if reader.wanted() && key != announced {
-            let note = match &line.issue {
-                Some(issue) => {
-                    format!("[bytes {}..{}: read-only byte preview; {issue}]", line.bytes.start, line.bytes.end)
-                }
-                None => format!("[from byte {}: {}; {}]", line.bytes.start, label.expect("decoded line"), line.basis),
-            };
-            reader.note(&note);
-            announced = key;
+        if reader.wanted() {
+            let beginning = first_shown.is_none();
+            if let Some(label) = label {
+                first_shown.get_or_insert((label, line.basis));
+            }
+            if let Some(issue) = &line.issue {
+                reader.note(&format!("[bytes {}..{}: read-only; {issue}]", line.bytes.start, line.bytes.end));
+            } else if !beginning && previous != label {
+                let label = label.expect("decoded line");
+                let basis = if label == "UTF-8" { String::new() } else { format!("; {}", line.basis) };
+                reader.note(&format!("[byte {}: {label}{basis}]", line.bytes.start));
+            }
         }
-        reader.take(&line.text);
+        if label.is_some() {
+            previous = label;
+        }
+        if line.issue.is_some() {
+            let ending = if line.text.ends_with("\r\n") {
+                "\r\n"
+            } else if line.text.ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            reader.take(&format!("{}{ending}", excerpt(crate::text::line_content(&line.text))));
+        } else {
+            reader.take(&line.text);
+        }
         Ok(())
     }) {
         return Ok((Section::note(path, options, &format!("not shown: {facts}")), None));
@@ -83,7 +104,19 @@ pub fn look(
     }
     let read = reader.finish();
 
-    let mut facts = plan.facts();
+    let mut facts = String::new();
+    if labels.len() > 1 {
+        if let Some((label, _)) = first_shown.or(first) {
+            facts.push_str(&format!("mixed encodings; shown text starts as {label}; "));
+        }
+    } else if let Some((label, basis)) = first
+        && label != "UTF-8"
+    {
+        facts.push_str(&format!("{label}; {basis}; "));
+    }
+    if readonly {
+        facts.push_str("contains read-only lines; ");
+    }
     facts.push_str(&line_endings(read.crlf, read.lf));
     let total = read.total_lines;
     let whole = read.shown_lines == read.total_lines && read.cut.is_none();
@@ -139,7 +172,9 @@ fn kind(start: &[u8]) -> Option<&'static str> {
 /// The budget left for the lines once the head note is paid for, the head
 /// at its longest: the path, the machine, and numbers of up to twenty
 /// digits in the longest form of the facts.
-fn budget_for_body(path: &Path, options: &Options, budget: usize, encoding: &str) -> usize {
+fn budget_for_body(path: &Path, options: &Options, budget: usize) -> usize {
+    // Longest encoding facts currently emitted, including read-only lines.
+    let encoding = "ISO-2022-JP; ISO-2022-JP escape sequences and strict validation; contains read-only lines; ";
     let longest_facts = format!(
         "{encoding}{}lines {n}-{n} of {n} shown; line {n}: characters 1-{n} of {n} shown",
         line_endings(u64::MAX, u64::MAX),
@@ -184,6 +219,7 @@ pub(super) struct Reader {
     range: Option<(u64, u64)>,
     body: String,
     body_cost: usize,
+    pending_note: String,
     line: String,
     line_chars: u64,
     visible_chars: u64,
@@ -204,6 +240,7 @@ impl Reader {
             range,
             body: String::new(),
             body_cost: 0,
+            pending_note: String::new(),
             line: String::new(),
             line_chars: 0,
             visible_chars: 0,
@@ -237,14 +274,13 @@ impl Reader {
     }
 
     fn note(&mut self, note: &str) {
-        let cost = note.chars().count() + 1;
-        if self.body_cost + cost <= self.budget {
-            self.body.push_str(note);
-            self.body.push('\n');
-            self.body_cost += cost;
-        } else {
-            self.out_of_budget = true;
-        }
+        self.pending_note = format!("{note}\n");
+    }
+
+    fn show_note(&mut self) {
+        self.body_cost += self.pending_note.chars().count();
+        self.body.push_str(&self.pending_note);
+        self.pending_note.clear();
     }
 
     fn wanted(&self) -> bool {
@@ -278,9 +314,14 @@ impl Reader {
             let length = content.chars().count() as u64;
             let complete = self.line_chars == self.line.chars().count() as u64;
             let entry_cost = self.number.to_string().len() + 1 + content.chars().count() + 1;
-            if complete && self.body_cost + entry_cost <= self.budget {
+            let note_cost = self.pending_note.chars().count();
+            if complete && self.body_cost + note_cost + entry_cost <= self.budget {
+                self.show_note();
                 self.show(&content, length as usize);
-            } else if self.shown_lines == 0 {
+            } else if self.shown_lines == 0
+                && self.body_cost + note_cost + self.number.to_string().len() + 3 < self.budget
+            {
+                self.show_note();
                 // Not even one whole line fits: show its start.
                 let prefix = self.number.to_string().len() + 1 + 1;
                 let room = self.budget.saturating_sub(self.body_cost + prefix);
@@ -292,6 +333,7 @@ impl Reader {
                 self.out_of_budget = true;
             }
         }
+        self.pending_note.clear();
         self.line.clear();
         self.line_chars = 0;
         self.visible_chars = 0;

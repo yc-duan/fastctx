@@ -1,8 +1,8 @@
 use std::io::{self, BufRead, BufReader, Read};
 use std::ops::Range;
 
-use super::evidence::printable;
 use super::file::{Plan, describe_error, hex};
+use super::statistics::{BASIS, Statistics};
 use super::{TextDecoder, TextEncoding};
 
 pub(crate) struct Line {
@@ -25,6 +25,7 @@ pub(crate) fn visit(
     let mut offset = bom_len;
     let unit = plan.fixed.map_or(1, |c| c.unit());
     let newline = plan.fixed.map(|c| c.encode("\n").expect("newline is representable")).unwrap_or_else(|| vec![b'\n']);
+    let mut previous = plan.fixed.or_else(|| plan.legacy.first().copied()).unwrap_or_else(TextEncoding::utf8);
     let mut state_error = None;
     let mut stateful = plan.fixed.filter(|c| c.is_stateful()).map(|c| TextDecoder::new(c.without_bom()));
     loop {
@@ -73,7 +74,7 @@ pub(crate) fn visit(
                 }
             }
         } else {
-            decode(&raw, offset, plan, end)
+            decode(&raw, offset, plan, end, previous)
         };
         if line.issue.is_some() {
             let crlf =
@@ -95,13 +96,16 @@ pub(crate) fn visit(
             line.text = preview(&raw[..raw.len() - removed]).replace('\r', r"\x0D").replace('\n', r"\x0A");
             line.text.push_str(ending);
         }
+        if let Some(codec) = line.codec {
+            previous = codec;
+        }
         offset += raw.len();
         consume(line)?;
     }
     Ok(())
 }
 
-fn decode(raw: &[u8], offset: usize, plan: &Plan, end: bool) -> Line {
+fn decode(raw: &[u8], offset: usize, plan: &Plan, end: bool, previous: TextEncoding) -> Line {
     if let Some(codec) = plan.fixed {
         return match codec.decode_at(raw, offset) {
             Ok(text) => Line {
@@ -134,74 +138,155 @@ fn decode(raw: &[u8], offset: usize, plan: &Plan, end: bool) -> Line {
         return Line {
             bytes: offset..offset + raw.len(),
             text: text.into(),
-            codec: Some(TextEncoding::utf8()),
-            basis: "UTF-8 by convention, not proof of origin",
+            codec: Some(if raw.is_ascii() && !previous.is_stateful() { previous } else { TextEncoding::utf8() }),
+            basis: if raw.is_ascii() && previous != TextEncoding::utf8() { BASIS } else { "UTF-8" },
             issue: None,
         };
     }
-    let mut chosen: Option<(TextEncoding, String)> = None;
-    let mut names = Vec::new();
-    let mut interpretations = Vec::new();
-    let preview_budget = crate::run::window::BUDGET / (plan.choices.len() + 1);
-    let mut different = false;
-    for &codec in &plan.choices {
-        if let Ok(text) = codec.decode_at(raw, offset)
-            && (plan.ordered || text.chars().all(printable))
-        {
-            if codec.is_stateful() && !isolated_state(raw, end) {
-                return state_boundary(raw, offset);
-            }
-            names.push(codec.label());
-            let content = crate::text::line_content(&text);
-            let total = crate::text::visible_length(content);
-            let kept: String = content.chars().take(preview_budget).collect();
-            let prefix: String = crate::text::visible(&kept).chars().take(preview_budget).collect();
-            let note = if total > preview_budget {
-                format!(" ({} of {total} characters shown)", prefix.chars().count())
-            } else {
-                String::new()
-            };
-            interpretations.push(format!("{}: {prefix:?}{note}", codec.label()));
-            if let Some((prior_codec, prior)) = &chosen {
-                different |= *prior != text;
-                if !different && codec.label() < prior_codec.label() {
-                    chosen = Some((codec, text));
+    if plan.ordered {
+        for &codec in &plan.choices {
+            if let Ok(text) = codec.decode_at(raw, offset) {
+                if codec.is_stateful() && !isolated_state(raw, end) {
+                    return state_boundary(raw, offset);
                 }
-            } else {
-                chosen = Some((codec, text));
-            }
-            if plan.ordered {
-                break;
+                return decoded(raw, offset, codec, text, plan.basis);
             }
         }
     }
-    if !different && let Some((codec, text)) = chosen {
-        return Line {
-            bytes: offset..offset + raw.len(),
-            text,
-            codec: Some(codec.without_bom()),
-            basis: if plan.ordered { plan.basis } else { "supported candidates agree on the text" },
-            issue: None,
+    let statistics = Statistics::for_line(raw);
+    if !plan.ordered {
+        // A positive local score permits short lines to use the pooled legacy
+        // evidence. A locally implausible codec cannot overrule a different line.
+        let context =
+            plan.legacy.iter().copied().filter(|codec| statistics.score(*codec).is_some_and(|score| score > 0));
+        let context = select(raw, offset, context);
+        let local = select(raw, offset, statistics.leaders().into_iter());
+        let selected = match (context, local) {
+            (Some(context), Some(local)) if context.0 != local.0 && stable(raw, local.0) => Some(local),
+            (Some(context), _) => Some(context),
+            (None, local) => local,
         };
+        if let Some((codec, text)) = selected {
+            return decoded(raw, offset, codec, text, BASIS);
+        }
     }
+    let mut alternatives = Vec::new();
+    let mut readings = Vec::new();
+    if !plan.ordered {
+        for (codec, _) in statistics.ranked() {
+            if let Ok(text) = codec.decode_at(raw, offset)
+                && !readings.contains(&text)
+            {
+                alternatives.push(codec);
+                readings.push(text);
+                if alternatives.len() == 3 {
+                    break;
+                }
+            }
+        }
+    }
+    let focus = readings.first().map_or(0, |first| {
+        readings
+            .iter()
+            .skip(1)
+            .map(|other| first.chars().zip(other.chars()).take_while(|(a, b)| a == b).count())
+            .min()
+            .unwrap_or(0)
+    });
+    let alternatives: Vec<_> = alternatives
+        .iter()
+        .zip(&readings)
+        .map(|(codec, text)| format!("{}: {:?}", codec.label(), excerpt_at(crate::text::line_content(text), focus)))
+        .collect();
     let invalid = std::str::from_utf8(raw).err().map_or(0, |e| e.valid_up_to());
-    let reason = if different {
+    let reason = if !alternatives.is_empty() {
         format!(
-            "Different text interpretations at byte {} (hex {}); candidates: {}. Select the known encoding with fastctx view --encoding <label> -- <path>",
+            "Encoding uncertain at byte {} (hex {}); likely readings: {}. Choose with fastctx view --encoding <label> -- <path>",
             offset + invalid,
             hex(&raw[invalid..invalid + 1]),
-            format!("{}; interpretations: {}", names.join(", "), interpretations.join("; "))
+            alternatives.join("; ")
         )
     } else {
-        let labels: Vec<_> = plan.choices.iter().map(|c| c.label()).collect();
+        let labels = if plan.ordered {
+            plan.choices.iter().map(|c| c.label()).collect::<Vec<_>>().join(", ")
+        } else {
+            "UTF-8 and statistical legacy candidates".into()
+        };
         format!(
-            "No complete line decoding at byte {} (hex {}) using {}; this may be mixed or damaged text. Inspect the original bytes with xxd or select the known encoding with fastctx view --encoding <label> -- <path>",
+            "No complete line decoding at byte {} (hex {}) using {labels}; mixed or damaged bytes. Inspect with xxd or select a known encoding with fastctx view --encoding <label> -- <path>",
             offset + invalid,
-            hex(&raw[invalid..invalid + 1]),
-            labels.join(", ")
+            hex(&raw[invalid..invalid + 1])
         )
     };
     readonly(raw, offset, reason)
+}
+
+fn stable(raw: &[u8], codec: TextEncoding) -> bool {
+    let Some(first) = raw.iter().position(|byte| !byte.is_ascii()) else {
+        return false;
+    };
+    let last = raw.iter().rposition(|byte| !byte.is_ascii()).expect("non-ASCII input");
+    // Test whether independent halves of the non-ASCII span support the same
+    // reading. This distinguishes a real encoding switch from a short heading
+    // whose winner changes with a few bytes; no score-margin threshold is used.
+    let middle = first + (last + 1 - first) / 2;
+    let Some(split) = (middle..=last)
+        .find(|&split| split > first && codec.decode(&raw[..split]).is_ok() && codec.decode(&raw[split..]).is_ok())
+    else {
+        return false;
+    };
+    [&raw[..split], &raw[split..]].into_iter().all(|part| {
+        let statistics = Statistics::for_line(part);
+        select(part, 0, statistics.leaders().into_iter()).is_some_and(|(candidate, _)| candidate == codec)
+    })
+}
+
+fn select(raw: &[u8], offset: usize, codecs: impl Iterator<Item = TextEncoding>) -> Option<(TextEncoding, String)> {
+    let mut selected: Option<(TextEncoding, String)> = None;
+    for codec in codecs {
+        if let Ok(text) = codec.decode_at(raw, offset) {
+            if let Some((_, previous)) = &selected {
+                if previous != &text {
+                    return None;
+                }
+            } else {
+                selected = Some((codec, text));
+            }
+        }
+    }
+    selected
+}
+
+fn decoded(raw: &[u8], offset: usize, codec: TextEncoding, text: String, basis: &'static str) -> Line {
+    Line { bytes: offset..offset + raw.len(), text, codec: Some(codec.without_bom()), basis, issue: None }
+}
+
+/// Diagnostic previews show up to 80 rendered characters around the evidence.
+/// Omission counts make shortening explicit; the source text stays whole.
+pub(crate) fn excerpt(text: &str) -> String {
+    let focus = text.find(r"\x").map_or(0, |at| text[..at].chars().count());
+    excerpt_at(text, focus)
+}
+
+fn excerpt_at(text: &str, focus: usize) -> String {
+    const WIDTH: usize = 80;
+    let length = crate::text::visible_length(text);
+    if length <= WIDTH {
+        return crate::text::visible(text);
+    }
+    let start = focus.saturating_sub(WIDTH / 2);
+    let start = text.char_indices().nth(start).map_or(text.len(), |(byte, _)| byte);
+    let before = crate::text::visible_length(&text[..start]);
+    let kept: String = text[start..].chars().take(WIDTH).collect();
+    let mut shown: String = crate::text::visible(&kept).chars().take(WIDTH).collect();
+    let after = length - before - shown.chars().count();
+    if before > 0 {
+        shown = format!("({before} characters before)… {shown}");
+    }
+    if after > 0 {
+        shown.push_str(&format!("… ({after} more characters)"));
+    }
+    shown
 }
 
 fn readonly(raw: &[u8], offset: usize, reason: String) -> Line {

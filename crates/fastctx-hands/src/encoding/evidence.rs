@@ -1,6 +1,7 @@
 use std::io::{self, Read};
 
 use super::file::{Plan, describe_error};
+use super::statistics::Statistics;
 use super::{Codec, TextDecoder, TextEncoding, bom, explicit};
 
 struct Validation {
@@ -69,12 +70,21 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
         if codecs.iter().any(|codec| codec.unit() != 1) {
             return Err("An encoding list requires codecs whose line separator is the byte LF; select UTF-16 or UTF-32 on its own".into());
         }
-        return Ok(Plan { fixed: None, choices: codecs, basis: "explicit per-line encoding order", ordered: true });
+        return Ok(Plan {
+            fixed: None,
+            choices: codecs,
+            basis: "explicit per-line encoding order",
+            ordered: true,
+            legacy: Vec::new(),
+        });
     }
     if let Some(codec) = bom(first) {
         return Ok(Plan::fixed(codec, "BOM"));
     }
 
+    let mut statistics = Statistics::new();
+    let mut line = Vec::new();
+    let mut utf8 = Validation::new("utf-8");
     let mut le = Validation::new("utf-16le");
     let mut be = Validation::new("utf-16be");
     let mut iso = Validation::new("iso-2022-jp");
@@ -84,6 +94,24 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
     let mut escape = [0u8; 3];
     let mut iso_offset = None;
     let mut probe = |bytes: &[u8], end| {
+        utf8.feed(bytes, end);
+        for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
+            line.extend_from_slice(piece);
+            if piece.ends_with(b"\n") {
+                // Valid UTF-8 lines have their own evidence. Pool the remaining
+                // lines so a short legacy heading can borrow the file's context.
+                if std::str::from_utf8(&line).is_err() {
+                    statistics.feed(&line, false);
+                }
+                line.clear();
+            }
+        }
+        if end {
+            if std::str::from_utf8(&line).is_err() {
+                statistics.feed(&line, false);
+            }
+            statistics.feed(&[], true);
+        }
         le.feed(bytes, end);
         be.feed(bytes, end);
         iso.feed(bytes, end);
@@ -134,58 +162,16 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
             ));
         }
     }
-    Ok(Plan { fixed: None, choices: candidates(), basis: "automatic candidates", ordered: false })
-}
-
-fn candidates() -> Vec<TextEncoding> {
-    let mut names = Vec::new();
-    for page in fastctx_platform::legacy_text::code_pages() {
-        if let Some(label) = page.label() {
-            names.push(label);
-        }
+    if utf8.valid && iso_offset.is_none() {
+        return Ok(Plan::fixed(TextEncoding::utf8(), "UTF-8"));
     }
-    names.extend([
-        "gb18030",
-        "big5",
-        "shift_jis",
-        "euc-kr",
-        "euc-jp",
-        "windows-874",
-        "windows-1250",
-        "windows-1251",
-        "windows-1252",
-        "windows-1253",
-        "windows-1254",
-        "windows-1255",
-        "windows-1256",
-        "windows-1257",
-        "windows-1258",
-        "koi8-r",
-        "koi8-u",
-        "ibm866",
-        "macintosh",
-        "x-mac-cyrillic",
-        "iso-8859-2",
-        "iso-8859-3",
-        "iso-8859-4",
-        "iso-8859-5",
-        "iso-8859-6",
-        "iso-8859-7",
-        "iso-8859-8",
-        "iso-8859-10",
-        "iso-8859-13",
-        "iso-8859-14",
-        "iso-8859-15",
-        "iso-8859-16",
-    ]);
-    let mut codecs = Vec::new();
-    for name in names {
-        let codec = explicit(name, &[]).expect("supported candidate");
-        if codec != TextEncoding::utf8() && !codecs.contains(&codec) {
-            codecs.push(codec);
-        }
-    }
-    codecs
+    Ok(Plan {
+        fixed: None,
+        choices: Vec::new(),
+        basis: super::statistics::BASIS,
+        ordered: false,
+        legacy: statistics.leaders(),
+    })
 }
 
 impl TextEncoding {

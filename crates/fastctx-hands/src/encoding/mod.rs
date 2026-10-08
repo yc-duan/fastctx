@@ -10,6 +10,7 @@ pub(crate) mod file;
 mod iso2022;
 mod line;
 mod mapping;
+mod statistics;
 mod stream;
 pub use stream::TextDecoder;
 

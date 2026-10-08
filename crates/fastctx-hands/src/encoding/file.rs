@@ -4,13 +4,14 @@ use std::io::{Cursor, Read};
 use std::ops::Range;
 
 use super::{EncodingError, TextEncoding, evidence, iso2022, line, mapping::Mapping};
-pub(crate) use line::visit;
+pub(crate) use line::{excerpt, visit};
 
 pub(crate) struct Plan {
     pub(super) fixed: Option<TextEncoding>,
     pub(super) choices: Vec<TextEncoding>,
     pub(super) basis: &'static str,
     pub(super) ordered: bool,
+    pub(super) legacy: Vec<TextEncoding>,
 }
 
 impl Plan {
@@ -19,28 +20,15 @@ impl Plan {
     }
 
     pub(super) fn fixed(codec: TextEncoding, basis: &'static str) -> Self {
-        Self { fixed: Some(codec), choices: Vec::new(), basis, ordered: false }
+        Self { fixed: Some(codec), choices: Vec::new(), basis, ordered: false, legacy: Vec::new() }
+    }
+
+    pub fn known_encoding(&self) -> Option<(TextEncoding, &'static str)> {
+        self.fixed.map(|codec| (codec, self.basis))
     }
 
     pub fn signature(&self) -> Option<TextEncoding> {
         self.fixed.into_iter().chain(self.choices.iter().copied()).find(|codec| codec.bom_len() > 0)
-    }
-
-    pub fn facts(&self) -> String {
-        match self.fixed {
-            Some(codec) => format!(
-                "{}; {}; {}; ",
-                codec.label(),
-                self.basis,
-                if codec.bom_len() == 0 { "no BOM" } else { "BOM preserved" }
-            ),
-            None => format!(
-                "per-segment decoding; {}; ",
-                self.signature()
-                    .map(|codec| format!("{} BOM preserved", codec.label()))
-                    .unwrap_or_else(|| "no BOM".into())
-            ),
-        }
     }
 }
 
