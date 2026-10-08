@@ -85,23 +85,24 @@ fn replace(
     if block.old == block.new {
         return Err("SEARCH and REPLACE are identical; supply a different replacement".into());
     }
-    let Some(first) = document.text.find(block.old) else {
-        return Err("SEARCH was not found exactly; view the current file and copy its text, including whitespace and line endings".into());
+    // A SEARCH written in a here-document has LF line endings whatever the
+    // file has, so both are matched with each CRLF read as LF; the matches
+    // are mapped back to the file's own text, whose line endings stay.
+    let plain = Plain::of(&document.text);
+    let old = block.old.replace("\r\n", "\n");
+    let Some(first) = plain.text.find(&old) else {
+        return Err("SEARCH was not found; view the current file and copy its text exactly, including whitespace".into());
     };
     // Count overlapping occurrences too: "aa" occurs twice in "aaa".
-    let next = first + block.old.chars().next().expect("nonempty pattern").len_utf8();
-    if !replace_all && document.text[next..].contains(block.old) {
+    let next = first + old.chars().next().expect("nonempty pattern").len_utf8();
+    if !replace_all && plain.text[next..].contains(&old) {
         return Err(format!("SEARCH occurs more than once; include more context, or use {all_option}"));
     }
-    let matches: Vec<_> =
-        document.text.match_indices(block.old).map(|(start, text)| start..start + text.len()).collect();
-    for matched in &matches {
-        if [matched.start, matched.end].into_iter().any(|i| {
-            i > 0 && document.text.as_bytes().get(i) == Some(&b'\n') && document.text.as_bytes()[i - 1] == b'\r'
-        }) {
-            return Err("SEARCH splits a CRLF line ending; include the complete line ending".into());
-        }
-    }
+    let matches: Vec<_> = plain
+        .text
+        .match_indices(&old)
+        .map(|(start, text)| plain.original(start)..plain.original(start + text.len()))
+        .collect();
     let replacement = document.newlines(block.new);
     document.encode(&replacement)?;
     let mut updated = String::new();
@@ -124,6 +125,36 @@ fn replace(
     ranges.extend(applied.into_iter().map(|(_, after)| after));
     document.text = updated;
     Ok(())
+}
+
+/// A text with each CRLF read as LF, and where the LF of each such pair
+/// landed in it, so that an offset in it maps back to the text it came from.
+struct Plain {
+    text: String,
+    joined: Vec<usize>,
+}
+
+impl Plain {
+    fn of(text: &str) -> Self {
+        let mut plain = String::with_capacity(text.len());
+        let mut joined = Vec::new();
+        let mut last = 0;
+        for (at, _) in text.match_indices("\r\n") {
+            plain.push_str(&text[last..at]);
+            joined.push(plain.len());
+            plain.push('\n');
+            last = at + 2;
+        }
+        plain.push_str(&text[last..]);
+        Self { text: plain, joined }
+    }
+
+    /// The offset in the original text of a boundary in the plain one. A
+    /// boundary just before a joined LF lands before its CR, so a match never
+    /// starts or ends between the two.
+    fn original(&self, offset: usize) -> usize {
+        offset + self.joined.partition_point(|&lf| lf < offset)
+    }
 }
 
 fn relocated(offset: usize, edits: &[(Range<usize>, Range<usize>)], right: bool) -> usize {
