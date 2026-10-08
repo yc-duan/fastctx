@@ -900,12 +900,12 @@ fn through(record: &JobRecord) -> Option<OnEnd> {
     }
     if let Some(end) = &record.end {
         return Some(match (&end.how, status) {
-            (EndedHow::Finished, Some(status)) => OnEnd::Exited { status },
+            (EndedHow::Finished, Some(status)) => OnEnd::Exited { status, remaining: 0 },
             (how, status) => OnEnd::Otherwise { how: how.clone(), status },
         });
     }
     match (status, &record.output_ended_at) {
-        (Some(status), Some(_)) => Some(OnEnd::Exited { status }),
+        (Some(status), Some(_)) => Some(OnEnd::Exited { status, remaining: record.remaining.unwrap_or(0) }),
         _ => None,
     }
 }
