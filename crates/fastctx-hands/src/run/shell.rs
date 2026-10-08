@@ -1,8 +1,7 @@
 //! Which bash runs a job, and the environment it starts with.
 //!
-//! Until the World's own interpreter replaces it (`world-run.md`), the shell
-//! is the machine's bash on Unix and Git for Windows' bash on Windows. It
-//! runs as a login shell: it gets the environment a person logging in
+//! The shell is the machine's own bash: `/bin/bash` on Unix and Git for
+//! Windows' bash on Windows (`world-run.md`). It runs as a login shell: it gets the environment a person logging in
 //! gets, then reads the profile as their shell would, so a command sees
 //! the machine as a person at it does, whichever process started the node.
 
@@ -147,8 +146,7 @@ pub fn bash() -> io::Result<PathBuf> {
     }
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "Git for Windows was not found: run needs its bash until the World's own shell replaces it; \
-         install it from https://git-scm.com",
+        "Git for Windows was not found: run needs its bash; install it from https://git-scm.com",
     ))
 }
 
