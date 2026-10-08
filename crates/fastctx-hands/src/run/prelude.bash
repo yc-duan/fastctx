@@ -59,10 +59,10 @@ __fastctx_state() {
 # another machine (world-run.md, 去别的机器). With a command, its words are
 # sent as they are; without one, standard input is the script.
 on() {
-    if [ $# -eq 0 ]; then
-        fastctx on
-        return
-    fi
+    case $#:${1-} in
+        0:) fastctx on; return ;;
+        1:-h | 1:--help) fastctx on --help; return ;;
+    esac
     # A whole script as one word is how ssh is written; here one word is the
     # name of a program to run, so it is refused before anything is sent.
     if [ $# -eq 2 ] && [[ $2 == *[[:space:]\;\|\&\<\>\$\`\(\)]* ]]; then

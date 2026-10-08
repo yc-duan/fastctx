@@ -115,12 +115,15 @@ enum Command {
     Edit(writers::EditArgs),
     /// Create or replace a file with the text from standard input.
     Write(writers::WriteArgs),
+    /// Apply a patch from standard input, written as Codex's apply_patch
+    /// writes one: `*** Begin Patch` … `*** End Patch`; paths are absolute.
     #[command(hide = true)]
     ApplyPatch,
     /// See who is here and what each is doing.
     W(w::WArgs),
     /// Run part of a script on another machine; the World's shell calls it
     /// as `on`.
+    #[command(override_usage = on::USAGE, after_help = on::AFTER_HELP)]
     On(on::OnArgs),
     /// Stop a job and everything it started, on whichever machine it runs.
     Stop(stop::StopArgs),
